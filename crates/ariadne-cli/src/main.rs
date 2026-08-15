@@ -1,6 +1,7 @@
 //! ariadne — CLI for the Ariadne daemon.
 
 mod commands;
+mod complete;
 mod output;
 mod query;
 
@@ -67,9 +68,10 @@ enum Command {
     /// Attach to the tmux session of a task's or goal's agent
     Attach {
         /// Task or goal id
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(complete::attach_ids))]
         id: String,
         /// engineer | reviewer | planner (default: engineer for tasks, planner for goals)
-        #[arg(long, value_parser = commands::parse_role)]
+        #[arg(long, value_parser = commands::parse_role, add = clap_complete::engine::ArgValueCandidates::new(complete::roles))]
         role: Option<ariadne_core::Role>,
     },
     /// Serve Ariadne MCP tools over stdio (spawned by coding agents)
@@ -119,10 +121,25 @@ enum DaemonCommand {
     },
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let cli = Cli::parse();
+fn main() -> Result<()> {
+    // Dynamic shell completion: when invoked by the completion shim
+    // (COMPLETE=<shell> in the environment) this answers the request and
+    // exits before anything else runs. Candidate functions query the daemon
+    // with their own tiny runtime, so this must happen before tokio starts.
+    clap_complete::CompleteEnv::with_factory(|| {
+        use clap::CommandFactory;
+        Cli::command()
+    })
+    .complete();
 
+    let cli = Cli::parse();
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(run(cli))
+}
+
+async fn run(cli: Cli) -> Result<()> {
     let client = match &cli.host {
         Some(h) if h.starts_with("http://") || h.starts_with("https://") => Client::tcp(h.clone()),
         Some(h) => Client::unix(h),
