@@ -7,6 +7,7 @@ use ariadne_api::profiles::{CreateProfileRequest, ProfileDto, UpdateProfileReque
 use ariadne_client::Client;
 use ariadne_core::{AgentKind, Role};
 
+use super::parse_role;
 use crate::output::{Format, print_json, print_kv, print_table};
 
 #[derive(Subcommand)]
@@ -55,10 +56,6 @@ pub enum ProfileCommand {
     },
     /// Delete a profile
     Rm { id: String },
-}
-
-fn parse_role(s: &str) -> Result<Role, String> {
-    s.parse()
 }
 
 fn parse_agent(s: &str) -> Result<AgentKind, String> {

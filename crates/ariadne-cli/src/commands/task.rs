@@ -5,10 +5,12 @@ use clap::Subcommand;
 
 use ariadne_api::messages::{CreateMessageRequest, MessageDto};
 use ariadne_api::reviews::ReviewDto;
-use ariadne_api::tasks::{TaskDto, TaskTransitionDto};
+use ariadne_api::tasks::{TaskDto, TaskListQuery, TaskTransitionDto};
 use ariadne_client::Client;
+use ariadne_core::TaskStatus;
 
 use crate::output::{Format, print_json, print_kv, print_table};
+use crate::query::query_path;
 
 #[derive(Subcommand)]
 pub enum TaskCommand {
@@ -18,8 +20,8 @@ pub enum TaskCommand {
         #[arg(long)]
         goal: Option<String>,
         /// Filter by status
-        #[arg(long)]
-        status: Option<String>,
+        #[arg(long, value_enum)]
+        status: Option<TaskStatus>,
     },
     /// Show a task
     Inspect { id: String },
@@ -41,13 +43,13 @@ pub enum TaskCommand {
     Attach {
         id: String,
         /// engineer (default) or reviewer
-        #[arg(long, value_parser = crate::commands::attach::parse_role)]
+        #[arg(long, value_parser = crate::commands::parse_role)]
         role: Option<ariadne_core::Role>,
     },
     /// Show recent terminal output of the task's agent
     Logs {
         id: String,
-        #[arg(long, value_parser = crate::commands::attach::parse_role)]
+        #[arg(long, value_parser = crate::commands::parse_role)]
         role: Option<ariadne_core::Role>,
     },
 }
@@ -55,14 +57,8 @@ pub enum TaskCommand {
 pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()> {
     match cmd {
         TaskCommand::Ls { goal, status } => {
-            let mut path = "/v1/tasks?".to_string();
-            if let Some(g) = goal {
-                path.push_str(&format!("goal={g}&"));
-            }
-            if let Some(s) = status {
-                path.push_str(&format!("status={s}&"));
-            }
-            let tasks: Vec<TaskDto> = client.get_json(path.trim_end_matches(['?', '&'])).await?;
+            let path = query_path("/v1/tasks", &TaskListQuery { goal, status })?;
+            let tasks: Vec<TaskDto> = client.get_json(&path).await?;
             match format {
                 Format::Json => print_json(&tasks)?,
                 Format::Table => print_table(
