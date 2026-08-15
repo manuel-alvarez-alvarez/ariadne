@@ -226,23 +226,94 @@ fn claude_models() -> Vec<CompletionCandidate> {
     .collect()
 }
 
-/// Codex has no model-list command either; the configured default in
-/// $CODEX_HOME/config.toml is the one authoritative local source.
+/// Codex has no model-list command, but every session rollout under
+/// $CODEX_HOME/sessions records the model it ran with — the configured
+/// default plus models seen in recent sessions make an honest local catalog.
 fn codex_models() -> Vec<CompletionCandidate> {
-    let mut out = Vec::new();
-    let home = std::env::var_os("CODEX_HOME")
+    let Some(home) = std::env::var_os("CODEX_HOME")
         .map(std::path::PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|h| h.join(".codex")));
-    if let Some(config) = home.map(|h| h.join("config.toml"))
-        && let Ok(raw) = std::fs::read_to_string(config)
-    {
+        .or_else(|| dirs::home_dir().map(|h| h.join(".codex")))
+    else {
+        return Vec::new();
+    };
+
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+
+    if let Ok(raw) = std::fs::read_to_string(home.join("config.toml")) {
         for line in raw.lines() {
             if let Some(rest) = line.strip_prefix("model =") {
                 let model = rest.trim().trim_matches('"');
-                if !model.is_empty() {
+                if !model.is_empty() && seen.insert(model.to_string()) {
                     out.push(candidate(model, "codex: configured default".into()));
                 }
             }
+        }
+    }
+
+    // Newest rollout files first; the model name appears within the first
+    // few KB (session meta / turn context).
+    let mut rollouts = Vec::new();
+    collect_rollouts(&home.join("sessions"), 0, &mut rollouts);
+    rollouts.sort_unstable_by(|a, b| b.cmp(a));
+    for path in rollouts.into_iter().take(100) {
+        for model in models_in_rollout_head(&path) {
+            if seen.insert(model.clone()) {
+                out.push(candidate(&model, "codex: used in recent sessions".into()));
+            }
+        }
+    }
+    out
+}
+
+/// Gather rollout-*.jsonl paths under sessions/YYYY/MM/DD (bounded depth).
+fn collect_rollouts(dir: &std::path::Path, depth: u8, out: &mut Vec<std::path::PathBuf>) {
+    if depth > 3 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_rollouts(&path, depth + 1, out);
+        } else if path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with("rollout-") && n.ends_with(".jsonl"))
+        {
+            out.push(path);
+        }
+    }
+}
+
+/// Extract `"model":"..."` values from the head of a rollout file. The
+/// session-meta line carries the full instruction payload before the model
+/// field, so the window must be generous (128KB, still trivial to read).
+fn models_in_rollout_head(path: &std::path::Path) -> Vec<String> {
+    use std::io::Read;
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return Vec::new();
+    };
+    let mut buf = vec![0u8; 128 * 1024];
+    let Ok(n) = file.read(&mut buf[..]) else {
+        return Vec::new();
+    };
+    let head = String::from_utf8_lossy(&buf[..n]).into_owned();
+    let mut out = Vec::new();
+    let needle = "\"model\":\"";
+    let mut rest = head.as_str();
+    while let Some(i) = rest.find(needle) {
+        rest = &rest[i + needle.len()..];
+        if let Some(end) = rest.find('"') {
+            let model = &rest[..end];
+            if !model.is_empty() && model.len() < 64 {
+                out.push(model.to_string());
+            }
+            rest = &rest[end..];
+        } else {
+            break;
         }
     }
     out
