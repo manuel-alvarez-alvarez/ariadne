@@ -336,7 +336,10 @@ async fn set_dependencies_on_ready_task_downgrades_with_audit() {
         store.get_task(&task.id).await.unwrap().status(),
         TaskStatus::Pending
     );
-    assert_eq!(store.list_task_transitions(&task.id).await.unwrap().len(), 2);
+    assert_eq!(
+        store.list_task_transitions(&task.id).await.unwrap().len(),
+        2
+    );
 }
 
 #[tokio::test]
