@@ -14,21 +14,30 @@ pub enum SessionCommand {
     /// List live agent sessions (docker-style; --all includes history)
     Ls {
         /// Filter by task id
-        #[arg(long)]
+        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
         task: Option<String>,
         /// Filter by goal id
-        #[arg(long)]
+        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
         goal: Option<String>,
         /// Include finished sessions (exited/failed), not just live ones
         #[arg(short, long)]
         all: bool,
     },
     /// Show a session
-    Inspect { id: String },
+    Inspect {
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::session_ids))]
+        id: String,
+    },
     /// Show recent terminal output of a session
-    Logs { id: String },
+    Logs {
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::session_ids))]
+        id: String,
+    },
     /// Kill a session's tmux process
-    Kill { id: String },
+    Kill {
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::session_ids))]
+        id: String,
+    },
 }
 
 pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result<()> {
