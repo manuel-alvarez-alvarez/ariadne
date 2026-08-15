@@ -10,20 +10,16 @@ use anyhow::{Context, Result, anyhow};
 use ariadne_core::{Role, SessionStatus, TaskStatus};
 use ariadne_store::{AgentSession, NewSession, SessionFilter, Store};
 
-use crate::agents::{SpawnCtx, adapter_for, detect_first_available, prompts};
+use crate::agents::{SpawnCtx, SpawnPlan, adapter_for, detect_first_available, prompts};
 use crate::config::Config;
 use crate::gitwt::GitManager;
-use crate::tmux::{TmuxManager, TmuxSpawn, session_name};
+use crate::tmux::{TmuxManager, TmuxSpawn, session_name, tail};
 
 pub struct Launcher {
     pub cfg: Arc<Config>,
     pub store: Store,
     pub tmux: TmuxManager,
     pub git: GitManager,
-}
-
-fn tail(id: &str) -> &str {
-    &id[id.len().saturating_sub(8)..]
 }
 
 impl Launcher {
@@ -112,15 +108,16 @@ impl Launcher {
         });
     }
 
-    async fn spawn(
+    /// Assemble the adapter context for launching `session` in `cwd`.
+    fn spawn_ctx(
         &self,
         session: &AgentSession,
         cwd: PathBuf,
+        profile: &ariadne_store::Profile,
         system_prompt: String,
         initial_prompt: String,
-    ) -> Result<()> {
-        let profile = self.store.get_profile(&session.profile_id).await?;
-        let ctx = SpawnCtx {
+    ) -> SpawnCtx {
+        SpawnCtx {
             session_id: session.id.clone(),
             goal_id: session.goal_id.clone(),
             task_id: session.task_id.clone(),
@@ -133,8 +130,13 @@ impl Launcher {
             initial_prompt,
             model: profile.model.clone(),
             extra_flags: profile.extra_flags(),
-        };
-        let plan = adapter_for(session.agent_kind()).plan_spawn(&ctx)?;
+        }
+    }
+
+    /// Shared launch tail for fresh spawns and resumes: persist the internal
+    /// session id, start the tmux process, mark the session running and watch
+    /// for the directory-trust dialog.
+    async fn launch(&self, session: &AgentSession, plan: SpawnPlan) -> Result<()> {
         if let Some(internal) = &plan.internal_session_id {
             self.store
                 .set_session_internal_id(&session.id, internal)
@@ -157,6 +159,19 @@ impl Launcher {
             .await?;
         self.auto_accept_trust(session.tmux_session.clone());
         Ok(())
+    }
+
+    async fn spawn(
+        &self,
+        session: &AgentSession,
+        cwd: PathBuf,
+        system_prompt: String,
+        initial_prompt: String,
+    ) -> Result<()> {
+        let profile = self.store.get_profile(&session.profile_id).await?;
+        let ctx = self.spawn_ctx(session, cwd, &profile, system_prompt, initial_prompt);
+        let plan = adapter_for(session.agent_kind()).plan_spawn(&ctx)?;
+        self.launch(session, plan).await
     }
 
     /// Spawn the planner for a goal (cwd = first repo).
@@ -379,39 +394,15 @@ impl Launcher {
             })
             .await?;
 
-        let ctx = SpawnCtx {
-            session_id: session.id.clone(),
-            goal_id: goal.id.clone(),
-            task_id: Some(task.id.clone()),
-            role: Role::Engineer,
-            run_dir: self.run_dir(&session.id),
-            cwd: worktree.clone(),
-            socket_path: self.cfg.socket_path.clone(),
-            cli_bin: self.cfg.cli_bin.clone(),
-            system_prompt: prompts::system_prompt(&profile, Role::Engineer),
-            initial_prompt: String::new(),
-            model: profile.model.clone(),
-            extra_flags: profile.extra_flags(),
-        };
+        let ctx = self.spawn_ctx(
+            &session,
+            worktree,
+            &profile,
+            prompts::system_prompt(&profile, Role::Engineer),
+            String::new(),
+        );
         let plan = adapter_for(previous.agent_kind()).plan_resume(&ctx, &internal, instruction)?;
-        if let Some(id) = &plan.internal_session_id {
-            self.store.set_session_internal_id(&session.id, id).await?;
-        }
-        let mut env = plan.env;
-        env.push(("ARIADNE_CLI".into(), self.cfg.cli_bin.clone()));
-        self.tmux
-            .new_session(&TmuxSpawn {
-                session: session.tmux_session.clone(),
-                cwd: plan.cwd,
-                env,
-                argv: plan.argv,
-                log_file: Some(self.run_dir(&session.id).join("console.log")),
-            })
-            .await?;
-        self.store
-            .set_session_status(&session.id, SessionStatus::Running)
-            .await?;
-        self.auto_accept_trust(session.tmux_session.clone());
+        self.launch(&session, plan).await?;
         self.store
             .get_session(&session.id)
             .await
