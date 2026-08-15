@@ -41,9 +41,13 @@ pub enum ProfileCommand {
         role: Option<Role>,
     },
     /// Show a profile (by id or name)
-    Inspect { id: String },
+    Inspect {
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::profile_names))]
+        id: String,
+    },
     /// Update a profile
     Update {
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::profile_names))]
         id: String,
         #[arg(long)]
         name: Option<String>,
@@ -55,7 +59,10 @@ pub enum ProfileCommand {
         prompt_file: Option<std::path::PathBuf>,
     },
     /// Delete a profile
-    Rm { id: String },
+    Rm {
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::profile_names))]
+        id: String,
+    },
 }
 
 fn parse_agent(s: &str) -> Result<AgentKind, String> {

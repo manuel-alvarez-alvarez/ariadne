@@ -17,39 +17,66 @@ pub enum TaskCommand {
     /// List tasks
     Ls {
         /// Filter by goal id
-        #[arg(long)]
+        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
         goal: Option<String>,
         /// Filter by status
         #[arg(long, value_enum)]
         status: Option<TaskStatus>,
     },
     /// Show a task
-    Inspect { id: String },
+    Inspect {
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
+        id: String,
+    },
     /// Show a task's conversation
-    Messages { id: String },
+    Messages {
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
+        id: String,
+    },
     /// Post a message into a task's conversation
-    Msg { id: String, body: String },
+    Msg {
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
+        id: String,
+        body: String,
+    },
     /// Show a task's reviews
-    Reviews { id: String },
+    Reviews {
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
+        id: String,
+    },
     /// Show a task's transition history
-    History { id: String },
+    History {
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
+        id: String,
+    },
     /// Cancel a task
-    Cancel { id: String },
+    Cancel {
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
+        id: String,
+    },
     /// Retry a failed task
-    Retry { id: String },
+    Retry {
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
+        id: String,
+    },
     /// Show the diff of the task branch against its base
-    Diff { id: String },
+    Diff {
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
+        id: String,
+    },
     /// Attach to the task's agent tmux session
     Attach {
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
         id: String,
         /// engineer (default) or reviewer
-        #[arg(long, value_parser = crate::commands::parse_role)]
+        #[arg(long, value_parser = crate::commands::parse_role, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::roles))]
         role: Option<ariadne_core::Role>,
     },
     /// Show recent terminal output of the task's agent
     Logs {
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
         id: String,
-        #[arg(long, value_parser = crate::commands::parse_role)]
+        #[arg(long, value_parser = crate::commands::parse_role, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::roles))]
         role: Option<ariadne_core::Role>,
     },
 }

@@ -22,7 +22,7 @@ pub enum GoalCommand {
         #[arg(long = "repo", required = true)]
         repos: Vec<String>,
         /// Planner profile id or name (default: the built-in Planner profile)
-        #[arg(long, default_value = "Planner")]
+        #[arg(long, default_value = "Planner", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::planner_profiles))]
         planner: String,
         /// Reviewer approvals required to merge a task
         #[arg(long)]
@@ -34,13 +34,25 @@ pub enum GoalCommand {
     /// List goals
     Ls,
     /// Show a goal
-    Inspect { id: String },
+    Inspect {
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
+        id: String,
+    },
     /// Cancel a goal
-    Cancel { id: String },
+    Cancel {
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
+        id: String,
+    },
     /// Show the goal-level conversation
-    Messages { id: String },
+    Messages {
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
+        id: String,
+    },
     /// Attach to the goal's planner tmux session
-    Attach { id: String },
+    Attach {
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
+        id: String,
+    },
 }
 
 pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()> {

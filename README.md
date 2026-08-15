@@ -62,8 +62,11 @@ scripts/uninstall.sh --purge   # ...and deletes the data too
 
 The daemon then runs as a user service with restart-on-failure
 (`launchctl bootout gui/$(id -u)/dev.ariadne.daemon` /
-`systemctl --user stop ariadned` to stop it). Completions for other shells:
-`ariadne completions <shell>` (bash, zsh, fish, elvish, powershell).
+`systemctl --user stop ariadned` to stop it). Completions are **dynamic**: on
+TAB the shell asks the daemon, so task/goal/session ids and profile names
+complete with live values (annotated with status and title). Other shells:
+`source <(COMPLETE=fish ariadne)` for dynamic, or `ariadne completions
+<shell>` for a static script.
 
 ## Quick start
 

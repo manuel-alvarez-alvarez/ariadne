@@ -82,31 +82,31 @@ BASH_DIR="$DATA_DIR/bash-completion/completions"
 ZSH_DIR="$DATA_DIR/zsh/site-functions"
 ZSHRC="${ZDOTDIR:-$HOME}/.zshrc"
 if [ "$WITH_COMPLETIONS" = 1 ]; then
-    say "installing bash completions to $BASH_DIR/ariadne"
-    mkdir -p "$BASH_DIR"
-    "$PREFIX/ariadne" completions bash > "$BASH_DIR/ariadne"
+    say "registering dynamic shell completions"
+    # Completions are dynamic: the shell sources a shim that calls back into
+    # the ariadne binary on TAB, which queries the daemon for live candidates
+    # (task/goal/session ids, profile names). Remove static files from older
+    # installs so they cannot shadow the dynamic registration.
+    rm -f "$BASH_DIR/ariadne" "$ZSH_DIR/_ariadne"
+
     if [ -f "$HOME/.bashrc" ]; then
         strip_block "$HOME/.bashrc"
         cat >> "$HOME/.bashrc" <<EOF
 # >>> ariadne >>>
-[ -f "$BASH_DIR/ariadne" ] && source "$BASH_DIR/ariadne"
+[ -x "$PREFIX/ariadne" ] && source <(COMPLETE=bash "$PREFIX/ariadne")
 # <<< ariadne <<<
 EOF
     fi
 
-    say "installing zsh completions to $ZSH_DIR/_ariadne"
-    mkdir -p "$ZSH_DIR"
-    "$PREFIX/ariadne" completions zsh > "$ZSH_DIR/_ariadne"
     if [ -f "$ZSHRC" ]; then
         strip_block "$ZSHRC"
-        # The block usually lands after the user's compinit (oh-my-zsh etc.),
-        # when fpath changes no longer register anything — so when compinit
-        # has already run (compdef exists), bind the completer explicitly;
-        # zsh then autoloads _ariadne from the fpath entry on first use.
+        # compdef only exists after compinit; the guard keeps shells without
+        # compsys working.
         cat >> "$ZSHRC" <<EOF
 # >>> ariadne >>>
-fpath=("$ZSH_DIR" \$fpath)
-(( \$+functions[compdef] )) && compdef _ariadne ariadne
+if [ -x "$PREFIX/ariadne" ] && (( \$+functions[compdef] )); then
+    source <(COMPLETE=zsh "$PREFIX/ariadne")
+fi
 # <<< ariadne <<<
 EOF
         say "completion registered in $ZSHRC (takes effect in new shells)"
