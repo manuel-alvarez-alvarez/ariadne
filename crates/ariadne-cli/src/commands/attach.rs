@@ -33,12 +33,22 @@ async fn candidates(
     Ok((sessions, role.unwrap_or(Role::Planner)))
 }
 
+/// True when the tmux session actually exists (the DB may lag: the
+/// liveness sweep marks dead sessions every 15s).
+fn tmux_alive(name: &str) -> bool {
+    std::process::Command::new("tmux")
+        .args(["has-session", "-t", name])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 /// Find the live tmux session for a task or goal.
 pub async fn resolve_tmux(client: &Client, id: &str, role: Option<Role>) -> Result<SessionDto> {
     let (sessions, wanted) = candidates(client, id, role).await?;
     sessions
         .into_iter()
-        .find(|s| s.role == wanted && s.status.is_live())
+        .find(|s| s.role == wanted && s.status.is_live() && tmux_alive(&s.tmux_session))
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "no live {} session found for {id} (is the agent running?)",
