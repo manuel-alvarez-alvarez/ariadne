@@ -20,9 +20,9 @@ pub enum ProfileCommand {
         #[arg(long, value_parser = parse_role)]
         role: Role,
         /// claude_code | codex | opencode (omit for auto: first installed CLI)
-        #[arg(long, value_parser = parse_agent)]
+        #[arg(long, value_parser = parse_agent, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::agent_kinds))]
         agent: Option<AgentKind>,
-        #[arg(long)]
+        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
         model: Option<String>,
         /// Inline system prompt
         #[arg(long, conflicts_with = "prompt_file")]
@@ -53,10 +53,10 @@ pub enum ProfileCommand {
         name: Option<String>,
         /// claude_code | codex | opencode, or "auto" to resolve the first
         /// installed CLI at spawn time
-        #[arg(long)]
+        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::agent_kinds_or_auto))]
         agent: Option<String>,
         /// Model name, or "default" to clear back to the agent's default
-        #[arg(long)]
+        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
         model: Option<String>,
         #[arg(long, conflicts_with = "prompt_file")]
         prompt: Option<String>,
