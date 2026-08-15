@@ -51,6 +51,11 @@ pub enum ProfileCommand {
         id: String,
         #[arg(long)]
         name: Option<String>,
+        /// claude_code | codex | opencode, or "auto" to resolve the first
+        /// installed CLI at spawn time
+        #[arg(long)]
+        agent: Option<String>,
+        /// Model name, or "default" to clear back to the agent's default
         #[arg(long)]
         model: Option<String>,
         #[arg(long, conflicts_with = "prompt_file")]
@@ -144,6 +149,7 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
         ProfileCommand::Update {
             id,
             name,
+            agent,
             model,
             prompt,
             prompt_file,
@@ -157,6 +163,8 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
                     &format!("/v1/profiles/{id}"),
                     &UpdateProfileRequest {
                         name,
+                        // Accept dash spelling too (claude-code).
+                        agent_kind: agent.map(|a| a.replace('-', "_")),
                         model,
                         system_prompt,
                         extra_flags: None,

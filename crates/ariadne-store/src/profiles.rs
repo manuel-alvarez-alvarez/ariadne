@@ -19,6 +19,9 @@ pub struct NewProfile {
 #[derive(Debug, Clone, Default)]
 pub struct ProfileUpdate {
     pub name: Option<String>,
+    /// Some(None) clears back to auto.
+    pub agent_kind: Option<Option<AgentKind>>,
+    /// Some(None) clears back to the agent default.
     pub model: Option<Option<String>>,
     pub system_prompt: Option<String>,
     pub extra_flags: Option<Vec<String>>,
@@ -98,6 +101,10 @@ impl Store {
     pub async fn update_profile(&self, id: &str, update: ProfileUpdate) -> Result<Profile> {
         let current = self.get_profile(id).await?;
         let name = update.name.unwrap_or(current.name);
+        let agent_kind = match update.agent_kind {
+            Some(k) => k.map(|k| k.as_str().to_string()),
+            None => current.agent_kind,
+        };
         let model = update.model.unwrap_or(current.model);
         let system_prompt = update.system_prompt.unwrap_or(current.system_prompt);
         let extra_flags = match update.extra_flags {
@@ -105,10 +112,11 @@ impl Store {
             None => current.extra_flags,
         };
         sqlx::query(
-            "UPDATE profiles SET name = ?, model = ?, system_prompt = ?, extra_flags = ?, updated_at = ?
+            "UPDATE profiles SET name = ?, agent_kind = ?, model = ?, system_prompt = ?, extra_flags = ?, updated_at = ?
              WHERE id = ?",
         )
         .bind(&name)
+        .bind(&agent_kind)
         .bind(&model)
         .bind(&system_prompt)
         .bind(&extra_flags)

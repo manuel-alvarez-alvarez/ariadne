@@ -12,7 +12,7 @@ use ariadne_store::{NewProfile, ProfileUpdate};
 
 use super::AppState;
 use super::convert::profile_dto;
-use super::error::ApiResult;
+use super::error::{ApiError, ApiResult};
 
 #[derive(Debug, Default, Deserialize, IntoParams)]
 pub struct ProfileListQuery {
@@ -84,7 +84,15 @@ pub async fn update(
             &id,
             ProfileUpdate {
                 name: req.name,
-                model: req.model.map(Some),
+                agent_kind: match req.agent_kind.as_deref() {
+                    None => None,
+                    Some("auto") => Some(None),
+                    Some(kind) => Some(Some(kind.parse().map_err(ApiError::bad_request)?)),
+                },
+                model: req.model.map(|m| match m.as_str() {
+                    "" | "default" => None,
+                    _ => Some(m),
+                }),
                 system_prompt: req.system_prompt,
                 extra_flags: req.extra_flags,
             },
