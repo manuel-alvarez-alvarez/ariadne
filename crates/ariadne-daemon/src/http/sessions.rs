@@ -1,0 +1,139 @@
+//! Agent-session endpoints.
+
+use axum::Json;
+use axum::extract::{Path, Query, State};
+
+use ariadne_api::sessions::{SessionDto, SessionListQuery, SessionLogsResponse};
+use ariadne_store::SessionFilter;
+
+use super::AppState;
+use super::convert::session_dto;
+use super::error::{ApiError, ApiResult};
+
+/// List agent sessions.
+#[utoipa::path(get, path = "/v1/sessions", tag = "sessions",
+    params(SessionListQuery),
+    responses((status = 200, body = [SessionDto])))]
+pub async fn list(
+    State(state): State<AppState>,
+    Query(q): Query<SessionListQuery>,
+) -> ApiResult<Json<Vec<SessionDto>>> {
+    let sessions = state
+        .store
+        .list_sessions(SessionFilter {
+            goal_id: q.goal,
+            task_id: q.task,
+            status: q.status,
+            live_only: false,
+        })
+        .await?;
+    Ok(Json(sessions.into_iter().map(session_dto).collect()))
+}
+
+/// Inspect a session.
+#[utoipa::path(get, path = "/v1/sessions/{id}", tag = "sessions",
+    params(("id" = String, Path, description = "session id")),
+    responses((status = 200, body = SessionDto), (status = 404)))]
+pub async fn get(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<SessionDto>> {
+    Ok(Json(session_dto(state.store.get_session(&id).await?)))
+}
+
+/// Kill a session's tmux process.
+#[utoipa::path(post, path = "/v1/sessions/{id}/kill", tag = "sessions",
+    params(("id" = String, Path, description = "session id")),
+    responses((status = 200, body = SessionDto), (status = 404)))]
+pub async fn kill(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<SessionDto>> {
+    state
+        .launcher
+        .kill_session(&id)
+        .await
+        .map_err(|e| ApiError::conflict(e.to_string()))?;
+    Ok(Json(session_dto(state.store.get_session(&id).await?)))
+}
+
+/// Recent tmux pane output of a session.
+#[utoipa::path(get, path = "/v1/sessions/{id}/logs", tag = "sessions",
+    params(("id" = String, Path, description = "session id")),
+    responses((status = 200, body = SessionLogsResponse), (status = 404), (status = 409)))]
+pub async fn logs(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<SessionLogsResponse>> {
+    let session = state.store.get_session(&id).await?;
+    let logs = if state.launcher.tmux.has_session(&session.tmux_session).await {
+        state
+            .launcher
+            .tmux
+            .capture_pane(&session.tmux_session, 1000)
+            .await
+            .map_err(|e| ApiError::conflict(e.to_string()))?
+    } else {
+        // Fall back to the piped console log of a finished session.
+        std::fs::read_to_string(
+            state
+                .launcher
+                .cfg
+                .run_dir
+                .join(&session.id)
+                .join("console.log"),
+        )
+        .unwrap_or_default()
+    };
+    Ok(Json(SessionLogsResponse {
+        session_id: session.id,
+        tmux_session: session.tmux_session,
+        logs,
+    }))
+}
+
+/// Body of the internal debug-spawn endpoint.
+#[derive(Debug, serde::Deserialize)]
+pub struct DebugSpawnRequest {
+    pub role: ariadne_core::Role,
+    pub goal_id: Option<String>,
+    pub task_id: Option<String>,
+    /// Reviewer profile (id or name) when role = reviewer.
+    pub profile: Option<String>,
+}
+
+/// Manually spawn an agent session (debug/testing path until the scheduler
+/// drives spawns automatically). Not part of the public OpenAPI surface.
+pub async fn debug_spawn(
+    State(state): State<AppState>,
+    axum::Json(req): axum::Json<DebugSpawnRequest>,
+) -> ApiResult<Json<SessionDto>> {
+    use ariadne_core::Role;
+    let launcher = &state.launcher;
+    let session = match req.role {
+        Role::Planner => {
+            let goal = req
+                .goal_id
+                .ok_or_else(|| ApiError::bad_request("goal_id required"))?;
+            launcher.spawn_planner(&goal).await
+        }
+        Role::Engineer => {
+            let task = req
+                .task_id
+                .ok_or_else(|| ApiError::bad_request("task_id required"))?;
+            launcher.spawn_engineer(&task).await
+        }
+        Role::Reviewer => {
+            let task = req
+                .task_id
+                .ok_or_else(|| ApiError::bad_request("task_id required"))?;
+            let spec = req
+                .profile
+                .ok_or_else(|| ApiError::bad_request("profile required"))?;
+            let profile = state.store.resolve_profile(&spec).await?;
+            launcher.spawn_reviewer(&task, &profile.id).await
+        }
+    }
+    .map_err(|e| ApiError::conflict(e.to_string()))?;
+    Ok(Json(session_dto(session)))
+}
