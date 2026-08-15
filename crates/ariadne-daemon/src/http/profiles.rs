@@ -78,6 +78,8 @@ pub async fn update(
     Path(id): Path<String>,
     Json(req): Json<UpdateProfileRequest>,
 ) -> ApiResult<Json<ProfileDto>> {
+    // Accept id or unique name, like GET.
+    let id = state.store.resolve_profile(&id).await?.id;
     let profile = state
         .store
         .update_profile(
@@ -109,6 +111,8 @@ pub async fn delete(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
+    // Accept id or unique name, like GET.
+    let id = state.store.resolve_profile(&id).await?.id;
     state.store.delete_profile(&id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
