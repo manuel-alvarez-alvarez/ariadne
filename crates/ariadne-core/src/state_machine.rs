@@ -135,6 +135,7 @@ impl std::str::FromStr for Actor {
 /// | from                | to                 | actor            |
 /// |---------------------|--------------------|------------------|
 /// | pending             | ready              | daemon           |
+/// | ready               | pending            | planner, daemon  |
 /// | ready               | in_progress        | daemon           |
 /// | in_progress         | under_review       | engineer         |
 /// | under_review        | changes_requested  | daemon           |
@@ -172,20 +173,22 @@ pub fn check_transition(
         _ => {}
     }
 
-    let allowed_actor = match (from, to) {
-        (S::Pending, S::Ready) => A::Daemon,
-        (S::Ready, S::InProgress) => A::Daemon,
-        (S::InProgress, S::UnderReview) => A::Engineer,
-        (S::UnderReview, S::ChangesRequested) => A::Daemon,
-        (S::UnderReview, S::Approved) => A::Daemon,
-        (S::ChangesRequested, S::InProgress) => A::Daemon,
-        (S::Approved, S::Merging) => A::Daemon,
-        (S::Merging, S::Merged) => A::Engineer,
-        (S::Failed, S::Ready) => A::User,
+    let allowed_actors: &[Actor] = match (from, to) {
+        (S::Pending, S::Ready) => &[A::Daemon],
+        // Re-added dependencies can send a ready task back to waiting.
+        (S::Ready, S::Pending) => &[A::Planner, A::Daemon],
+        (S::Ready, S::InProgress) => &[A::Daemon],
+        (S::InProgress, S::UnderReview) => &[A::Engineer],
+        (S::UnderReview, S::ChangesRequested) => &[A::Daemon],
+        (S::UnderReview, S::Approved) => &[A::Daemon],
+        (S::ChangesRequested, S::InProgress) => &[A::Daemon],
+        (S::Approved, S::Merging) => &[A::Daemon],
+        (S::Merging, S::Merged) => &[A::Engineer],
+        (S::Failed, S::Ready) => &[A::User],
         _ => return Err(TransitionError::IllegalTransition { from, to }),
     };
 
-    if actor == allowed_actor {
+    if allowed_actors.contains(&actor) {
         Ok(())
     } else {
         Err(TransitionError::Forbidden { from, to, actor })
@@ -203,6 +206,8 @@ mod tests {
     /// The complete set of legal (from, to, actor) triples.
     const LEGAL: &[(S, S, A)] = &[
         (S::Pending, S::Ready, A::Daemon),
+        (S::Ready, S::Pending, A::Planner),
+        (S::Ready, S::Pending, A::Daemon),
         (S::Ready, S::InProgress, A::Daemon),
         (S::InProgress, S::UnderReview, A::Engineer),
         (S::UnderReview, S::ChangesRequested, A::Daemon),
