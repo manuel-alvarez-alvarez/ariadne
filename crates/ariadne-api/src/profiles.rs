@@ -37,6 +37,11 @@ pub struct CreateProfileRequest {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
 pub struct UpdateProfileRequest {
     pub name: Option<String>,
+    /// New agent kind, or "auto" to clear it (resolve the first installed
+    /// CLI at spawn time). Absent = unchanged.
+    pub agent_kind: Option<String>,
+    /// New model, or "default" (or empty) to clear it back to the agent's
+    /// default. Absent = unchanged.
     pub model: Option<String>,
     pub system_prompt: Option<String>,
     pub extra_flags: Option<Vec<String>>,
