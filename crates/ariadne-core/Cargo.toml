@@ -1,0 +1,19 @@
+[package]
+name = "ariadne-core"
+description = "Ariadne domain types: ids, roles, task state machine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+ulid = { workspace = true }
+utoipa = { workspace = true, optional = true }
+
+[features]
+# Derives utoipa::ToSchema on the public enums for OpenAPI generation.
+openapi = ["dep:utoipa"]
+
+[lints]
+workspace = true

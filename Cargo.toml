@@ -1,0 +1,62 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+# workspace crates
+ariadne-core = { path = "crates/ariadne-core" }
+ariadne-api = { path = "crates/ariadne-api" }
+ariadne-store = { path = "crates/ariadne-store" }
+ariadne-client = { path = "crates/ariadne-client" }
+
+# async runtime / http
+tokio = { version = "1", features = ["full"] }
+axum = "0.8"
+hyper = { version = "1", features = ["http1"] }
+hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"] }
+hyperlocal = "0.9"
+http = "1"
+http-body-util = "0.1"
+bytes = "1"
+
+# openapi
+utoipa = { version = "5", features = ["axum_extras"] }
+utoipa-swagger-ui = { version = "9", features = ["axum", "vendored"] }
+
+# database
+sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite", "migrate"] }
+
+# serialization / config
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.9"
+
+# cli
+clap = { version = "4.6", features = ["derive", "env"] }
+
+# errors / logging
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# misc
+ulid = { version = "3", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "6"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+lto = "thin"
+strip = "symbols"
