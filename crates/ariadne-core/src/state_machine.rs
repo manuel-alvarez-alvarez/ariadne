@@ -9,6 +9,11 @@ use serde::{Deserialize, Serialize};
 /// Task lifecycle status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(
+    feature = "clap",
+    derive(clap::ValueEnum),
+    value(rename_all = "snake_case")
+)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
     /// Created by the planner; waiting for dependencies to merge.

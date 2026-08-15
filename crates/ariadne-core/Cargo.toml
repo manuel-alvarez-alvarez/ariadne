@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+clap = { workspace = true, optional = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 ulid = { workspace = true }
@@ -14,6 +15,8 @@ utoipa = { workspace = true, optional = true }
 [features]
 # Derives utoipa::ToSchema on the public enums for OpenAPI generation.
 openapi = ["dep:utoipa"]
+# Derives clap::ValueEnum on the public enums for CLI argument parsing.
+clap = ["dep:clap"]
 
 [lints]
 workspace = true

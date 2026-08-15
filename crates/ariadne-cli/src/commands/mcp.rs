@@ -14,7 +14,11 @@ use rmcp::model::*;
 use rmcp::service::{RequestContext, RoleServer};
 use rmcp::{ErrorData as McpError, ServiceExt, schemars, tool, tool_router};
 
+use ariadne_api::messages::CreateMessageRequest;
+use ariadne_api::reviews::CreateReviewRequest;
+use ariadne_api::tasks::{CreateTaskRequest, TransitionRequest, UpdateTaskRequest};
 use ariadne_client::Client;
+use ariadne_core::{ReviewVerdict, TaskStatus};
 
 #[derive(Clone, Debug, PartialEq)]
 enum McpRole {
@@ -94,7 +98,9 @@ pub struct ListProfilesReq {
     pub role: Option<String>,
 }
 
-#[derive(serde::Deserialize, schemars::JsonSchema)]
+/// Also serialized as the request body: the daemon's `FinalizePlanRequest`
+/// wire type is not exported by `ariadne-api`, and this struct matches it.
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub struct FinalizePlanReq {
     /// Short summary of the agreed plan.
@@ -198,24 +204,28 @@ impl AriadneMcp {
         self.client.get_json(path).await.map_err(to_mcp_err)
     }
 
-    async fn post(
+    async fn post<B: serde::Serialize>(
         &self,
         path: &str,
-        body: serde_json::Value,
+        body: &B,
     ) -> Result<serde_json::Value, McpError> {
-        self.client.post_json(path, &body).await.map_err(to_mcp_err)
+        self.client.post_json(path, body).await.map_err(to_mcp_err)
     }
 
     async fn submit_verdict(
         &self,
-        verdict: &str,
+        verdict: ReviewVerdict,
         body: Option<String>,
     ) -> Result<CallToolResult, McpError> {
         let task = self.own_task(None)?;
         let value = self
             .post(
                 &format!("/v1/tasks/{task}/reviews"),
-                serde_json::json!({ "verdict": verdict, "body": body }),
+                &CreateReviewRequest {
+                    verdict,
+                    body,
+                    reviewer_profile: None,
+                },
             )
             .await?;
         json_result(value)
@@ -264,7 +274,7 @@ impl AriadneMcp {
             None => format!("/v1/goals/{}/messages", self.goal_id),
         };
         json_result(
-            self.post(&path, serde_json::json!({ "body": req.body }))
+            self.post(&path, &CreateMessageRequest { body: req.body })
                 .await?,
         )
     }
@@ -276,16 +286,16 @@ impl AriadneMcp {
         &self,
         Parameters(req): Parameters<CreateTaskReq>,
     ) -> Result<CallToolResult, McpError> {
-        let body = serde_json::json!({
-            "title": req.title,
-            "description": req.description,
-            "engineer_profile": req.engineer_profile,
-            "reviewer_profiles": req.reviewer_profiles,
-            "depends_on": req.depends_on.unwrap_or_default(),
-            "repo_id": req.repo_id,
-        });
+        let body = CreateTaskRequest {
+            title: req.title,
+            description: req.description,
+            repo_id: req.repo_id,
+            engineer_profile: req.engineer_profile,
+            reviewer_profiles: req.reviewer_profiles,
+            depends_on: req.depends_on.unwrap_or_default(),
+        };
         json_result(
-            self.post(&format!("/v1/goals/{}/tasks", self.goal_id), body)
+            self.post(&format!("/v1/goals/{}/tasks", self.goal_id), &body)
                 .await?,
         )
     }
@@ -306,11 +316,12 @@ impl AriadneMcp {
         &self,
         Parameters(req): Parameters<UpdateTaskReq>,
     ) -> Result<CallToolResult, McpError> {
-        let body = serde_json::json!({
-            "title": req.title,
-            "description": req.description,
-            "reviewer_profiles": req.reviewer_profiles,
-        });
+        let body = UpdateTaskRequest {
+            title: req.title,
+            description: req.description,
+            reviewer_profiles: req.reviewer_profiles,
+            depends_on: None,
+        };
         let value = self
             .client
             .patch_json(&format!("/v1/tasks/{}", req.task_id), &body)
@@ -324,7 +335,10 @@ impl AriadneMcp {
         &self,
         Parameters(req): Parameters<SetDependenciesReq>,
     ) -> Result<CallToolResult, McpError> {
-        let body = serde_json::json!({ "depends_on": req.depends_on });
+        let body = UpdateTaskRequest {
+            depends_on: Some(req.depends_on),
+            ..Default::default()
+        };
         let value = self
             .client
             .patch_json(&format!("/v1/tasks/{}", req.task_id), &body)
@@ -352,9 +366,8 @@ impl AriadneMcp {
         &self,
         Parameters(req): Parameters<FinalizePlanReq>,
     ) -> Result<CallToolResult, McpError> {
-        let body = serde_json::json!({ "summary": req.summary });
         json_result(
-            self.post(&format!("/v1/goals/{}/finalize", self.goal_id), body)
+            self.post(&format!("/v1/goals/{}/finalize", self.goal_id), &req)
                 .await?,
         )
     }
@@ -370,13 +383,19 @@ impl AriadneMcp {
         // Summary first (reviewers read it), then the status transition.
         self.post(
             &format!("/v1/tasks/{task}/messages"),
-            serde_json::json!({ "body": format!("Review requested: {}", req.summary) }),
+            &CreateMessageRequest {
+                body: format!("Review requested: {}", req.summary),
+            },
         )
         .await?;
         let value = self
             .post(
                 &format!("/v1/tasks/{task}/transitions"),
-                serde_json::json!({ "to": "under_review", "reason": req.summary }),
+                &TransitionRequest {
+                    to: TaskStatus::UnderReview,
+                    reason: Some(req.summary),
+                    merge_commit: None,
+                },
             )
             .await?;
         json_result(value)
@@ -402,7 +421,11 @@ impl AriadneMcp {
         let value = self
             .post(
                 &format!("/v1/tasks/{task}/transitions"),
-                serde_json::json!({ "to": "merged", "merge_commit": req.merge_commit }),
+                &TransitionRequest {
+                    to: TaskStatus::Merged,
+                    reason: None,
+                    merge_commit: Some(req.merge_commit),
+                },
             )
             .await?;
         json_result(value)
@@ -427,7 +450,7 @@ impl AriadneMcp {
         &self,
         Parameters(req): Parameters<VerdictReq>,
     ) -> Result<CallToolResult, McpError> {
-        self.submit_verdict("approve", req.body).await
+        self.submit_verdict(ReviewVerdict::Approve, req.body).await
     }
 
     #[tool(
@@ -437,7 +460,8 @@ impl AriadneMcp {
         &self,
         Parameters(req): Parameters<VerdictReq>,
     ) -> Result<CallToolResult, McpError> {
-        self.submit_verdict("request_changes", req.body).await
+        self.submit_verdict(ReviewVerdict::RequestChanges, req.body)
+            .await
     }
 }
 
