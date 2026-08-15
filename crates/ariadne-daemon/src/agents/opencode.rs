@@ -104,9 +104,12 @@ impl AgentAdapter for OpencodeAdapter {
             "ariadne".into(),
             "--session".into(),
             internal_id.to_string(),
-            "--prompt".into(),
-            instruction.to_string(),
         ];
+        // Empty instruction = interactive resume without a message.
+        if !instruction.is_empty() {
+            argv.push("--prompt".into());
+            argv.push(instruction.to_string());
+        }
         argv.extend(ctx.extra_flags.iter().cloned());
         Ok(SpawnPlan {
             env: self.env_with_config(ctx, &config_file),

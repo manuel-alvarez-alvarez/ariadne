@@ -106,7 +106,11 @@ impl AgentAdapter for ClaudeAdapter {
         argv.push("--resume".into());
         argv.push(internal_id.to_string());
         self.common_tail(ctx, &mut argv);
-        argv.push(instruction.to_string());
+        // Empty instruction = interactive resume (used by `ariadne attach`
+        // when reviving a session): drop into the TUI without a message.
+        if !instruction.is_empty() {
+            argv.push(instruction.to_string());
+        }
         Ok(SpawnPlan {
             argv,
             env: base_env(ctx),

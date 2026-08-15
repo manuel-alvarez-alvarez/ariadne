@@ -41,6 +41,25 @@ pub async fn get(
     Ok(Json(session_dto(state.store.get_session(&id).await?)))
 }
 
+/// Revive an ended session: new tmux, same agent conversation (resumed via
+/// the stored internal session id). Returns the session to attach to — the
+/// original if its tmux is still alive, otherwise a fresh one reusing the
+/// same tmux name.
+#[utoipa::path(post, path = "/v1/sessions/{id}/resume", tag = "sessions",
+    params(("id" = String, Path, description = "session id")),
+    responses((status = 200, body = SessionDto), (status = 404), (status = 409)))]
+pub async fn resume(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<SessionDto>> {
+    let session = state
+        .launcher
+        .revive_session(&id, None)
+        .await
+        .map_err(|e| ApiError::conflict(e.to_string()))?;
+    Ok(Json(session_dto(session)))
+}
+
 /// Kill a session's tmux process.
 #[utoipa::path(post, path = "/v1/sessions/{id}/kill", tag = "sessions",
     params(("id" = String, Path, description = "session id")),
