@@ -37,6 +37,8 @@ struct Cli {
 enum Command {
     /// Show client and daemon version
     Version,
+    /// Generate shell completions (bash, zsh, fish, ...) to stdout
+    Completions { shell: clap_complete::Shell },
     /// Manage the ariadned daemon
     Daemon {
         #[command(subcommand)]
@@ -129,6 +131,16 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Command::Version => commands::version(&client).await,
+        Command::Completions { shell } => {
+            use clap::CommandFactory;
+            clap_complete::generate(
+                shell,
+                &mut Cli::command(),
+                "ariadne",
+                &mut std::io::stdout(),
+            );
+            Ok(())
+        }
         Command::Daemon { command } => match command {
             DaemonCommand::Start { home } => commands::daemon_start(&client, home).await,
             DaemonCommand::Stop => commands::daemon_stop(),
