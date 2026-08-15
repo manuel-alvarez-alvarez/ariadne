@@ -16,6 +16,11 @@ use anyhow::{Context, Result, bail};
 
 use ariadne_client::Client;
 
+/// Shared `--role` value parser (planner | engineer | reviewer).
+pub fn parse_role(s: &str) -> Result<ariadne_core::Role, String> {
+    s.parse()
+}
+
 /// `ariadne version` — client version always, daemon version when reachable.
 pub async fn version(client: &Client) -> Result<()> {
     println!("client:  ariadne {}", env!("CARGO_PKG_VERSION"));

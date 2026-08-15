@@ -2,6 +2,7 @@
 
 mod commands;
 mod output;
+mod query;
 
 use std::path::PathBuf;
 
@@ -66,7 +67,7 @@ enum Command {
         /// Task or goal id
         id: String,
         /// engineer | reviewer | planner (default: engineer for tasks, planner for goals)
-        #[arg(long, value_parser = commands::attach::parse_role)]
+        #[arg(long, value_parser = commands::parse_role)]
         role: Option<ariadne_core::Role>,
     },
     /// Serve Ariadne MCP tools over stdio (spawned by coding agents)
