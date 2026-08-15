@@ -159,7 +159,7 @@ impl Scheduler {
 
     async fn reconcile_goal_logged(&mut self, goal_id: &str) {
         if let Err(e) = self.reconcile_goal(goal_id).await {
-            warn!(goal = %goal_id, error = %e, "goal reconciliation failed");
+            warn!(goal = %goal_id, error = %format!("{e:#}"), "goal reconciliation failed");
         }
     }
 
@@ -245,7 +245,7 @@ impl Scheduler {
 
     async fn reconcile_task_logged(&mut self, task_id: &str) {
         if let Err(e) = self.reconcile_task(task_id).await {
-            warn!(task = %task_id, error = %e, "task reconciliation failed");
+            warn!(task = %task_id, error = %format!("{e:#}"), "task reconciliation failed");
             self.record_spawn_failure(task_id).await;
         }
     }
