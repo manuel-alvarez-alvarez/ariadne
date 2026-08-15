@@ -208,150 +208,62 @@ fn agent_hint() -> Option<ariadne_core::AgentKind> {
     profile.get("agent_kind")?.as_str()?.parse().ok()
 }
 
-/// Claude Code has no model-list command; complete its documented aliases
-/// plus the model ids recorded in recent session transcripts under
-/// ~/.claude/projects (assistant messages carry `"model":"..."`).
+/// Claude Code model catalog (curated, no discovery).
 fn claude_models() -> Vec<CompletionCandidate> {
-    let mut seen = std::collections::HashSet::new();
-    let mut out: Vec<CompletionCandidate> = [
-        ("fable", "alias for the latest Fable model"),
-        ("opus", "alias for the latest Opus model"),
-        ("sonnet", "alias for the latest Sonnet model"),
-        ("haiku", "alias for the latest Haiku model"),
+    [
+        ("claude-fable-5", "Frontier: highest capability; intricate multi-step agentic workflows and full SDLC loops"),
+        ("claude-mythos-5", "Frontier: specialized high-end reasoning within secure configurations"),
+        ("claude-opus-5", "Opus tier: massive contextual analysis, legal boilerplate logic, deep math/science"),
+        ("claude-opus-4-7", "Opus tier: pinned version for multi-file architecture refactoring and complex bugs"),
+        ("claude-sonnet-4-8", "Sonnet tier: production sweet spot; high speed with near-Opus engineering capability"),
+        ("claude-sonnet-4-6", "Sonnet tier: legacy production staple; quick diagnostics, lower task latency"),
+        ("claude-haiku-4-5", "Haiku tier: ultra-fast; inline completions, text touch-ups, shell command generation"),
     ]
     .into_iter()
-    .map(|(m, help)| {
-        seen.insert(m.to_string());
-        candidate(m, format!("claude_code: {help}"))
-    })
-    .collect();
-
-    let Some(projects) = dirs::home_dir().map(|h| h.join(".claude").join("projects")) else {
-        return out;
-    };
-    // Newest transcripts first.
-    let mut transcripts: Vec<(std::time::SystemTime, std::path::PathBuf)> = Vec::new();
-    if let Ok(dirs) = std::fs::read_dir(&projects) {
-        for dir in dirs.flatten() {
-            if let Ok(files) = std::fs::read_dir(dir.path()) {
-                for file in files.flatten() {
-                    let path = file.path();
-                    if path.extension().is_some_and(|e| e == "jsonl")
-                        && let Ok(meta) = file.metadata()
-                        && let Ok(modified) = meta.modified()
-                    {
-                        transcripts.push((modified, path));
-                    }
-                }
-            }
-        }
-    }
-    transcripts.sort_unstable_by_key(|(modified, _)| std::cmp::Reverse(*modified));
-    for (_, path) in transcripts.into_iter().take(30) {
-        for model in models_in_rollout_head(&path) {
-            // Transcripts also contain "<synthetic>" placeholder entries.
-            if model.starts_with("claude-") && seen.insert(model.clone()) {
-                out.push(candidate(
-                    &model,
-                    "claude_code: used in recent sessions".into(),
-                ));
-            }
-        }
-    }
-    out
+    .map(|(m, help)| candidate(m, format!("claude_code — {help}")))
+    .collect()
 }
 
-/// Codex has no model-list command, but every session rollout under
-/// $CODEX_HOME/sessions records the model it ran with — the configured
-/// default plus models seen in recent sessions make an honest local catalog.
+/// Codex model catalog (curated, no discovery).
 fn codex_models() -> Vec<CompletionCandidate> {
-    let Some(home) = std::env::var_os("CODEX_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|h| h.join(".codex")))
-    else {
-        return Vec::new();
-    };
-
-    let mut seen = std::collections::HashSet::new();
-    let mut out = Vec::new();
-
-    if let Ok(raw) = std::fs::read_to_string(home.join("config.toml")) {
-        for line in raw.lines() {
-            if let Some(rest) = line.strip_prefix("model =") {
-                let model = rest.trim().trim_matches('"');
-                if !model.is_empty() && seen.insert(model.to_string()) {
-                    out.push(candidate(model, "codex: configured default".into()));
-                }
-            }
-        }
-    }
-
-    // Newest rollout files first; the model name appears within the first
-    // few KB (session meta / turn context).
-    let mut rollouts = Vec::new();
-    collect_rollouts(&home.join("sessions"), 0, &mut rollouts);
-    rollouts.sort_unstable_by(|a, b| b.cmp(a));
-    for path in rollouts.into_iter().take(100) {
-        for model in models_in_rollout_head(&path) {
-            if seen.insert(model.clone()) {
-                out.push(candidate(&model, "codex: used in recent sessions".into()));
-            }
-        }
-    }
-    out
-}
-
-/// Gather rollout-*.jsonl paths under sessions/YYYY/MM/DD (bounded depth).
-fn collect_rollouts(dir: &std::path::Path, depth: u8, out: &mut Vec<std::path::PathBuf>) {
-    if depth > 3 {
-        return;
-    }
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_rollouts(&path, depth + 1, out);
-        } else if path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|n| n.starts_with("rollout-") && n.ends_with(".jsonl"))
-        {
-            out.push(path);
-        }
-    }
-}
-
-/// Extract `"model":"..."` values from the head of a rollout file. The
-/// session-meta line carries the full instruction payload before the model
-/// field, so the window must be generous (128KB, still trivial to read).
-fn models_in_rollout_head(path: &std::path::Path) -> Vec<String> {
-    use std::io::Read;
-    let Ok(mut file) = std::fs::File::open(path) else {
-        return Vec::new();
-    };
-    let mut buf = vec![0u8; 128 * 1024];
-    let Ok(n) = file.read(&mut buf[..]) else {
-        return Vec::new();
-    };
-    let head = String::from_utf8_lossy(&buf[..n]).into_owned();
-    let mut out = Vec::new();
-    let needle = "\"model\":\"";
-    let mut rest = head.as_str();
-    while let Some(i) = rest.find(needle) {
-        rest = &rest[i + needle.len()..];
-        if let Some(end) = rest.find('"') {
-            let model = &rest[..end];
-            if !model.is_empty() && model.len() < 64 {
-                out.push(model.to_string());
-            }
-            rest = &rest[end..];
-        } else {
-            break;
-        }
-    }
-    out
+    [
+        (
+            "gpt-5.6-sol",
+            "Frontier reasoning: multi-step agentic loops, codebase-wide architecture planning",
+        ),
+        (
+            "gpt-5.5-sol",
+            "Frontier reasoning: deep logic reasoning, long-horizon bug resolution",
+        ),
+        (
+            "gpt-5.3-codex",
+            "Codex developer: default enterprise LTS; optimal for active engineering contexts",
+        ),
+        (
+            "gpt-5.2-codex",
+            "Codex developer: native context compaction; single/multi-file refactoring",
+        ),
+        (
+            "codex-mini-latest",
+            "Low latency: ultra-fast inline edits, quick explanation cards, shell tasks",
+        ),
+        (
+            "o4-mini",
+            "Diagnostic: low-latency diagnostic tracking and fast debugging runs",
+        ),
+        (
+            "o3",
+            "Diagnostic: classic reasoning checkups and quick inline completion blocks",
+        ),
+        ("gpt-5.6-terra", "Balanced: high-volume execution layer"),
+        (
+            "gpt-5.6-luna",
+            "Balanced: cost-effective subagent processing queues",
+        ),
+    ]
+    .into_iter()
+    .map(|(m, help)| candidate(m, format!("codex — {help}")))
+    .collect()
 }
 
 /// OpenCode lists its models natively (`opencode models`, provider/model).
