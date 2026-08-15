@@ -84,9 +84,11 @@ impl Store {
             .max_connections(1)
             .connect_with(options.clone())
             .await?;
+        // Safe to open read-only: the write pool above connected with
+        // `create_if_missing`, so the file already exists.
         let read = SqlitePoolOptions::new()
             .max_connections(4)
-            .connect_with(options.read_only(false))
+            .connect_with(options.read_only(true))
             .await?;
 
         sqlx::migrate!("./migrations")
