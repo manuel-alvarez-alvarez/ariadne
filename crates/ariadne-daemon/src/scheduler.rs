@@ -100,8 +100,23 @@ impl Scheduler {
                         continue;
                     }
                 };
+                // Tasks with live sessions are reconciled even when
+                // terminal, so a crash between merge/cancel and cleanup
+                // still converges on the next tick.
+                let live_task_ids: std::collections::HashSet<String> = self
+                    .store
+                    .list_sessions(SessionFilter {
+                        goal_id: Some(goal.id.clone()),
+                        live_only: true,
+                        ..Default::default()
+                    })
+                    .await
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|s| s.task_id)
+                    .collect();
                 for task in tasks {
-                    if !task.status().is_terminal() {
+                    if !task.status().is_terminal() || live_task_ids.contains(&task.id) {
                         self.reconcile_task_logged(&task.id).await;
                     }
                 }
@@ -203,7 +218,7 @@ impl Scheduler {
                             )
                             .await;
                     }
-                    let _ = self.launcher.cleanup_task(&task.id, false).await;
+                    let _ = self.launcher.cleanup_task(&task.id, false, false).await;
                 }
                 self.kill_goal_sessions(&goal.id).await;
             }
@@ -428,18 +443,26 @@ impl Scheduler {
                 self.check_stall(&task).await?;
             }
             TaskStatus::Merged => {
-                // Post-merge cleanup, then wake dependents.
-                if task.worktree_path.is_some() {
-                    info!(task = %task.id, "merged: cleaning up worktrees and sessions");
-                    self.launcher
-                        .cleanup_task(&task.id, self.launcher.cfg.delete_merged_branches)
-                        .await?;
-                }
+                // Post-merge cleanup (idempotent), then wake dependents.
+                // Worktrees are kept unless delete_merged_worktrees is set,
+                // so merged work can be inspected later.
+                self.launcher
+                    .cleanup_task(
+                        &task.id,
+                        self.launcher.cfg.delete_merged_worktrees,
+                        self.launcher.cfg.delete_merged_branches,
+                    )
+                    .await?;
                 for dependent in self.dependents_of(&task).await? {
                     Box::pin(self.reconcile_task(&dependent)).await?;
                 }
             }
-            TaskStatus::Cancelled | TaskStatus::Failed => {}
+            TaskStatus::Cancelled => {
+                // Kill leftover agents; always keep worktrees and branch — a
+                // cancelled task may hold uncommitted work worth salvaging.
+                self.launcher.cleanup_task(&task.id, false, false).await?;
+            }
+            TaskStatus::Failed => {}
         }
         Ok(())
     }
