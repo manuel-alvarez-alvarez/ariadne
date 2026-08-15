@@ -128,6 +128,12 @@ if [ "$WITH_SERVICE" = 1 ]; then
     <key>Label</key><string>$PLIST_LABEL</string>
     <key>ProgramArguments</key>
     <array><string>$PREFIX/ariadned</string></array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- launchd services get a bare PATH; the daemon needs tmux, git and
+             the agent CLIs, so bake in the installing user's PATH. -->
+        <key>PATH</key><string>$PATH</string>
+    </dict>
     <key>RunAtLoad</key><true/>
     <key>KeepAlive</key>
     <dict><key>SuccessfulExit</key><false/></dict>
@@ -148,6 +154,8 @@ Description=Ariadne coding-agent orchestrator daemon
 
 [Service]
 ExecStart=$PREFIX/ariadned
+# systemd user services also get a minimal PATH.
+Environment="PATH=$PATH"
 Restart=on-failure
 RestartSec=10
 
