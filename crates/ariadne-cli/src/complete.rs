@@ -209,21 +209,56 @@ fn agent_hint() -> Option<ariadne_core::AgentKind> {
 }
 
 /// Claude Code has no model-list command; complete its documented aliases
-/// and current model ids.
+/// plus the model ids recorded in recent session transcripts under
+/// ~/.claude/projects (assistant messages carry `"model":"..."`).
 fn claude_models() -> Vec<CompletionCandidate> {
-    [
+    let mut seen = std::collections::HashSet::new();
+    let mut out: Vec<CompletionCandidate> = [
         ("fable", "alias for the latest Fable model"),
         ("opus", "alias for the latest Opus model"),
         ("sonnet", "alias for the latest Sonnet model"),
         ("haiku", "alias for the latest Haiku model"),
-        ("claude-fable-5", "Fable 5"),
-        ("claude-opus-5", "Opus 5"),
-        ("claude-sonnet-5", "Sonnet 5"),
-        ("claude-haiku-4-5-20251001", "Haiku 4.5"),
     ]
     .into_iter()
-    .map(|(m, help)| candidate(m, format!("claude_code: {help}")))
-    .collect()
+    .map(|(m, help)| {
+        seen.insert(m.to_string());
+        candidate(m, format!("claude_code: {help}"))
+    })
+    .collect();
+
+    let Some(projects) = dirs::home_dir().map(|h| h.join(".claude").join("projects")) else {
+        return out;
+    };
+    // Newest transcripts first.
+    let mut transcripts: Vec<(std::time::SystemTime, std::path::PathBuf)> = Vec::new();
+    if let Ok(dirs) = std::fs::read_dir(&projects) {
+        for dir in dirs.flatten() {
+            if let Ok(files) = std::fs::read_dir(dir.path()) {
+                for file in files.flatten() {
+                    let path = file.path();
+                    if path.extension().is_some_and(|e| e == "jsonl")
+                        && let Ok(meta) = file.metadata()
+                        && let Ok(modified) = meta.modified()
+                    {
+                        transcripts.push((modified, path));
+                    }
+                }
+            }
+        }
+    }
+    transcripts.sort_unstable_by_key(|(modified, _)| std::cmp::Reverse(*modified));
+    for (_, path) in transcripts.into_iter().take(30) {
+        for model in models_in_rollout_head(&path) {
+            // Transcripts also contain "<synthetic>" placeholder entries.
+            if model.starts_with("claude-") && seen.insert(model.clone()) {
+                out.push(candidate(
+                    &model,
+                    "claude_code: used in recent sessions".into(),
+                ));
+            }
+        }
+    }
+    out
 }
 
 /// Codex has no model-list command, but every session rollout under
