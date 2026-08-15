@@ -15,6 +15,7 @@ ariadne-client = { workspace = true }
 ariadne-core = { workspace = true, features = ["clap"] }
 anyhow = { workspace = true }
 clap = { workspace = true }
+clap_complete = { workspace = true }
 dirs = { workspace = true }
 http = { workspace = true }
 rmcp = { version = "3", features = ["server", "transport-io", "macros"] }

@@ -49,6 +49,22 @@ Agents run with permissions bypassed (`--dangerously-skip-permissions`,
 session/tool event back to the daemon, and each agent's internal session id
 is tracked so sessions can be resumed and attached.
 
+## Install
+
+```sh
+scripts/install.sh             # builds, installs to ~/.local/bin, registers the
+                               # daemon service (launchd / systemd --user) and
+                               # bash+zsh completions. Idempotent — re-run to upgrade.
+scripts/install.sh --prefix /usr/local/bin   # custom location
+scripts/uninstall.sh           # removes everything, keeps ~/.ariadne data
+scripts/uninstall.sh --purge   # ...and deletes the data too
+```
+
+The daemon then runs as a user service with restart-on-failure
+(`launchctl bootout gui/$(id -u)/dev.ariadne.daemon` /
+`systemctl --user stop ariadned` to stop it). Completions for other shells:
+`ariadne completions <shell>` (bash, zsh, fish, elvish, powershell).
+
 ## Quick start
 
 ```sh
