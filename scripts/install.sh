@@ -99,12 +99,17 @@ EOF
     "$PREFIX/ariadne" completions zsh > "$ZSH_DIR/_ariadne"
     if [ -f "$ZSHRC" ]; then
         strip_block "$ZSHRC"
+        # The block usually lands after the user's compinit (oh-my-zsh etc.),
+        # when fpath changes no longer register anything — so when compinit
+        # has already run (compdef exists), bind the completer explicitly;
+        # zsh then autoloads _ariadne from the fpath entry on first use.
         cat >> "$ZSHRC" <<EOF
 # >>> ariadne >>>
 fpath=("$ZSH_DIR" \$fpath)
+(( \$+functions[compdef] )) && compdef _ariadne ariadne
 # <<< ariadne <<<
 EOF
-        say "completion fpath registered in $ZSHRC (takes effect in new shells)"
+        say "completion registered in $ZSHRC (takes effect in new shells)"
     fi
 fi
 
