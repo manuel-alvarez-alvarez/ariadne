@@ -87,7 +87,10 @@ impl AgentAdapter for CodexAdapter {
         ];
         // Known Codex issue: bypass/config flags are not inherited on resume.
         argv.extend(self.config_flags(ctx));
-        argv.push(instruction.to_string());
+        // Empty instruction = interactive resume without a message.
+        if !instruction.is_empty() {
+            argv.push(instruction.to_string());
+        }
         Ok(SpawnPlan {
             argv,
             env: base_env(ctx),

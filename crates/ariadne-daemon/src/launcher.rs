@@ -409,6 +409,87 @@ impl Launcher {
             .map_err(Into::into)
     }
 
+    /// Revive an ended session in a fresh tmux, continuing the same agent
+    /// conversation via its stored internal id. Used by `ariadne attach` when
+    /// no tmux is alive. `instruction: None` resumes into an idle TUI so the
+    /// user can type themselves.
+    pub async fn revive_session(
+        &self,
+        session_id: &str,
+        instruction: Option<&str>,
+    ) -> Result<AgentSession> {
+        let previous = self.store.get_session(session_id).await?;
+        if self.tmux.has_session(&previous.tmux_session).await {
+            // Already alive — attaching needs nothing from us.
+            return Ok(previous);
+        }
+        let internal = previous.internal_session_id.clone().with_context(|| {
+            format!(
+                "session {} has no internal agent id to resume from",
+                previous.id
+            )
+        })?;
+        let profile = self.store.get_profile(&previous.profile_id).await?;
+        let role = previous.role();
+
+        let cwd = match role {
+            Role::Planner => {
+                let repos = self.store.list_goal_repos(&previous.goal_id).await?;
+                PathBuf::from(&repos.first().context("goal has no repos")?.path)
+            }
+            Role::Engineer | Role::Reviewer => PathBuf::from(
+                previous
+                    .worktree_path
+                    .clone()
+                    .context("session has no worktree to revive in")?,
+            ),
+        };
+        if !cwd.is_dir() {
+            anyhow::bail!(
+                "cannot revive session {}: its working directory {} is gone \
+                 (task finished and was cleaned up?)",
+                previous.id,
+                cwd.display()
+            );
+        }
+
+        if previous.status().is_live() {
+            self.store
+                .set_session_status(&previous.id, SessionStatus::Exited)
+                .await?;
+        }
+        let session = self
+            .store
+            .create_session(NewSession {
+                goal_id: previous.goal_id.clone(),
+                task_id: previous.task_id.clone(),
+                role,
+                profile_id: profile.id.clone(),
+                agent_kind: previous.agent_kind(),
+                tmux_session: previous.tmux_session.clone(),
+                worktree_path: previous.worktree_path.clone(),
+                review_round: previous.review_round,
+            })
+            .await?;
+        let ctx = self.spawn_ctx(
+            &session,
+            cwd,
+            &profile,
+            prompts::system_prompt(&profile, role),
+            String::new(),
+        );
+        let plan = adapter_for(previous.agent_kind()).plan_resume(
+            &ctx,
+            &internal,
+            instruction.unwrap_or(""),
+        )?;
+        self.launch(&session, plan).await?;
+        self.store
+            .get_session(&session.id)
+            .await
+            .map_err(Into::into)
+    }
+
     /// Kill a session's tmux process and mark it exited.
     pub async fn kill_session(&self, session_id: &str) -> Result<()> {
         let session = self.store.get_session(session_id).await?;
@@ -425,7 +506,17 @@ impl Launcher {
 
     /// Cleanup after a merged/cancelled task: kill sessions, remove worktrees,
     /// optionally delete the branch.
-    pub async fn cleanup_task(&self, task_id: &str, delete_branch: bool) -> Result<()> {
+    /// Idempotent: safe to call repeatedly on the same task.
+    ///
+    /// `remove_worktrees = false` keeps the worktrees on disk (and therefore
+    /// also the branch — the engineer worktree has it checked out, which pins
+    /// it) so merged or cancelled work can be inspected later.
+    pub async fn cleanup_task(
+        &self,
+        task_id: &str,
+        remove_worktrees: bool,
+        delete_branch: bool,
+    ) -> Result<()> {
         let task = self.store.get_task(task_id).await?;
         let repo = self.store.get_goal_repo(&task.repo_id).await?;
         let repo_path = PathBuf::from(&repo.path);
@@ -439,8 +530,16 @@ impl Launcher {
             })
             .await?
         {
+            if self.tmux.has_session(&session.tmux_session).await {
+                tracing::info!(task = %task.id, session = %session.id, "cleanup: killing agent session");
+            }
             self.kill_session(&session.id).await.ok();
         }
+
+        if !remove_worktrees {
+            return Ok(());
+        }
+
         for session in self
             .store
             .list_sessions(SessionFilter {
@@ -452,6 +551,7 @@ impl Launcher {
             if let Some(wt) = &session.worktree_path {
                 let wt = PathBuf::from(wt);
                 if wt.exists() {
+                    tracing::info!(task = %task.id, worktree = %wt.display(), "cleanup: removing worktree");
                     self.git.remove_worktree(&repo_path, &wt).await.ok();
                 }
             }
@@ -459,6 +559,7 @@ impl Launcher {
         if let Some(wt) = &task.worktree_path {
             let wt = PathBuf::from(wt);
             if wt.exists() {
+                tracing::info!(task = %task.id, worktree = %wt.display(), "cleanup: removing worktree");
                 self.git.remove_worktree(&repo_path, &wt).await.ok();
             }
             self.store.set_task_worktree(&task.id, None).await?;

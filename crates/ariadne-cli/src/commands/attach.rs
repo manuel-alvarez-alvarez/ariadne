@@ -1,4 +1,8 @@
 //! Attach/logs helpers: resolve an Ariadne id to a tmux session and exec.
+//!
+//! When no tmux is alive for the id, attach revives the most recent matching
+//! session through the daemon (`POST /v1/sessions/{id}/resume`): a fresh tmux
+//! is created resuming the same agent conversation, and we attach to that.
 
 use anyhow::{Result, bail};
 
@@ -6,34 +10,65 @@ use ariadne_api::sessions::SessionDto;
 use ariadne_client::Client;
 use ariadne_core::Role;
 
-/// Live sessions for a query string like `task=<id>` / `goal=<id>`.
-async fn live_sessions(client: &Client, query: &str) -> Result<Vec<SessionDto>> {
-    let sessions: Vec<SessionDto> = client.get_json(&format!("/v1/sessions?{query}")).await?;
-    Ok(sessions
-        .into_iter()
-        .filter(|s| s.status.is_live())
-        .collect())
+/// All sessions (any status) for a query string like `task=<id>` / `goal=<id>`.
+async fn sessions_for(client: &Client, query: &str) -> Result<Vec<SessionDto>> {
+    client
+        .get_json(&format!("/v1/sessions?{query}"))
+        .await
+        .map_err(Into::into)
 }
 
-/// Find the tmux session for a task (default engineer) or goal (planner).
+/// Sessions matching the id, plus the role to attach to: task first (default
+/// engineer), then goal (default planner).
+async fn candidates(
+    client: &Client,
+    id: &str,
+    role: Option<Role>,
+) -> Result<(Vec<SessionDto>, Role)> {
+    let sessions = sessions_for(client, &format!("task={id}")).await?;
+    if !sessions.is_empty() {
+        return Ok((sessions, role.unwrap_or(Role::Engineer)));
+    }
+    let sessions = sessions_for(client, &format!("goal={id}")).await?;
+    Ok((sessions, role.unwrap_or(Role::Planner)))
+}
+
+/// Find the live tmux session for a task or goal.
 pub async fn resolve_tmux(client: &Client, id: &str, role: Option<Role>) -> Result<SessionDto> {
-    // Try as task first, then as goal.
-    let mut candidates = live_sessions(client, &format!("task={id}")).await?;
-    let wanted = if candidates.is_empty() {
-        candidates = live_sessions(client, &format!("goal={id}")).await?;
-        role.unwrap_or(Role::Planner)
-    } else {
-        role.unwrap_or(Role::Engineer)
-    };
-    candidates
+    let (sessions, wanted) = candidates(client, id, role).await?;
+    sessions
         .into_iter()
-        .find(|s| s.role == wanted)
+        .find(|s| s.role == wanted && s.status.is_live())
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "no live {} session found for {id} (is the agent running?)",
                 wanted.as_str()
             )
         })
+}
+
+/// No live tmux: revive the most recent resumable session of the wanted role.
+async fn revive(client: &Client, id: &str, role: Option<Role>) -> Result<SessionDto> {
+    let (sessions, wanted) = candidates(client, id, role).await?;
+    let target = sessions
+        .into_iter()
+        .rev() // ids are time-sortable: last = most recent
+        .find(|s| s.role == wanted && s.internal_session_id.is_some())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "no {} session (live or finished) found for {id} that can be resumed",
+                wanted.as_str()
+            )
+        })?;
+    eprintln!(
+        "no live tmux for {id} — reviving session {} ({})",
+        target.id,
+        target.agent_kind.as_str()
+    );
+    client
+        .post_empty(&format!("/v1/sessions/{}/resume", target.id))
+        .await
+        .map_err(Into::into)
 }
 
 /// Replace this process with `tmux attach`.
@@ -46,8 +81,38 @@ pub fn exec_tmux_attach(tmux_session: &str) -> Result<()> {
     bail!("failed to exec tmux attach -t {tmux_session}: {err}");
 }
 
+/// A terminal task whose worktrees were removed has no agents left to attach
+/// to — fail with pointers to the history instead of a raw revive conflict.
+/// (With the default `delete_merged_worktrees = false` policy the worktree is
+/// kept, and reviving the agent to inspect the merged work is allowed.)
+async fn ensure_task_not_finished(client: &Client, id: &str) -> Result<()> {
+    use ariadne_api::tasks::TaskDto;
+    use ariadne_core::TaskStatus;
+    if let Ok(task) = client.get_json::<TaskDto>(&format!("/v1/tasks/{id}")).await
+        && matches!(task.status, TaskStatus::Merged | TaskStatus::Cancelled)
+        && task.worktree_path.is_none()
+    {
+        bail!(
+            "task {id} is {status} — its agents and worktrees have been cleaned up.\n\
+             Inspect what happened instead:\n\
+             \x20 ariadne task history {id}\n\
+             \x20 ariadne task reviews {id}\n\
+             \x20 ariadne task messages {id}\n\
+             \x20 ariadne session ls --all --task {id}   (then: ariadne session logs <session-id>)",
+            status = task.status.as_str()
+        );
+    }
+    Ok(())
+}
+
 pub async fn attach(client: &Client, id: &str, role: Option<Role>) -> Result<()> {
-    let session = resolve_tmux(client, id, role).await?;
+    let session = match resolve_tmux(client, id, role).await {
+        Ok(session) => session,
+        Err(_) => {
+            ensure_task_not_finished(client, id).await?;
+            revive(client, id, role).await?
+        }
+    };
     eprintln!(
         "attaching to {} ({} / {})",
         session.tmux_session,
