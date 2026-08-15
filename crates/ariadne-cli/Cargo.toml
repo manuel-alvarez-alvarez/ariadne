@@ -12,7 +12,7 @@ path = "src/main.rs"
 [dependencies]
 ariadne-api = { workspace = true }
 ariadne-client = { workspace = true }
-ariadne-core = { workspace = true }
+ariadne-core = { workspace = true, features = ["clap"] }
 anyhow = { workspace = true }
 clap = { workspace = true }
 dirs = { workspace = true }
@@ -20,6 +20,7 @@ http = { workspace = true }
 rmcp = { version = "3", features = ["server", "transport-io", "macros"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde_urlencoded = { workspace = true }
 tokio = { workspace = true }
 
 [lints]

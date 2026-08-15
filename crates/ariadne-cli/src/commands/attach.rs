@@ -56,7 +56,3 @@ pub async fn attach(client: &Client, id: &str, role: Option<Role>) -> Result<()>
     );
     exec_tmux_attach(&session.tmux_session)
 }
-
-pub fn parse_role(s: &str) -> Result<Role, String> {
-    s.parse()
-}

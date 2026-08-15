@@ -3,10 +3,11 @@
 use anyhow::Result;
 use clap::Subcommand;
 
-use ariadne_api::sessions::SessionDto;
+use ariadne_api::sessions::{SessionDto, SessionListQuery};
 use ariadne_client::Client;
 
 use crate::output::{Format, print_json, print_table};
+use crate::query::query_path;
 
 #[derive(Subcommand)]
 pub enum SessionCommand {
@@ -30,15 +31,14 @@ pub enum SessionCommand {
 pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result<()> {
     match cmd {
         SessionCommand::Ls { task, goal } => {
-            let mut path = "/v1/sessions?".to_string();
-            if let Some(t) = task {
-                path.push_str(&format!("task={t}&"));
-            }
-            if let Some(g) = goal {
-                path.push_str(&format!("goal={g}&"));
-            }
-            let sessions: Vec<SessionDto> =
-                client.get_json(path.trim_end_matches(['?', '&'])).await?;
+            let query = SessionListQuery {
+                goal,
+                task,
+                status: None,
+            };
+            let sessions: Vec<SessionDto> = client
+                .get_json(&query_path("/v1/sessions", &query)?)
+                .await?;
             match format {
                 Format::Json => print_json(&sessions)?,
                 Format::Table => print_table(
