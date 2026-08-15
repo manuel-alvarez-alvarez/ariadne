@@ -299,6 +299,47 @@ async fn dependencies_gate_and_reject_cycles() {
 }
 
 #[tokio::test]
+async fn set_dependencies_on_ready_task_downgrades_with_audit() {
+    let (store, _dir) = test_store().await;
+    let planner = seed_profile(&store, "planner", Role::Planner).await;
+    let (goal, repo) = seed_goal(&store, &planner, None).await;
+    let dep = seed_task(&store, &goal, &repo, vec![]).await;
+    let task = seed_task(&store, &goal, &repo, vec![]).await;
+
+    store
+        .transition_task(&task.id, TaskStatus::Ready, Actor::Daemon, None, None)
+        .await
+        .unwrap();
+
+    // Adding a dependency to a ready task sends it back to pending...
+    store
+        .set_task_dependencies(&task.id, std::slice::from_ref(&dep.id))
+        .await
+        .unwrap();
+    let task = store.get_task(&task.id).await.unwrap();
+    assert_eq!(task.status(), TaskStatus::Pending);
+    assert_eq!(
+        store.list_task_dependencies(&task.id).await.unwrap(),
+        vec![dep.id.clone()]
+    );
+
+    // ...and the downgrade is audited like any other transition.
+    let audit = store.list_task_transitions(&task.id).await.unwrap();
+    assert_eq!(audit.len(), 2);
+    assert_eq!(audit[1].from_status, "ready");
+    assert_eq!(audit[1].to_status, "pending");
+    assert_eq!(audit[1].actor, "planner");
+
+    // Clearing the dependencies of a pending task leaves the status alone.
+    store.set_task_dependencies(&task.id, &[]).await.unwrap();
+    assert_eq!(
+        store.get_task(&task.id).await.unwrap().status(),
+        TaskStatus::Pending
+    );
+    assert_eq!(store.list_task_transitions(&task.id).await.unwrap().len(), 2);
+}
+
+#[tokio::test]
 async fn one_review_verdict_per_round() {
     let (store, _dir) = test_store().await;
     let planner = seed_profile(&store, "planner", Role::Planner).await;
