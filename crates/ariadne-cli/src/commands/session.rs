@@ -11,7 +11,7 @@ use crate::query::query_path;
 
 #[derive(Subcommand)]
 pub enum SessionCommand {
-    /// List agent sessions
+    /// List live agent sessions (docker-style; --all includes history)
     Ls {
         /// Filter by task id
         #[arg(long)]
@@ -19,6 +19,9 @@ pub enum SessionCommand {
         /// Filter by goal id
         #[arg(long)]
         goal: Option<String>,
+        /// Include finished sessions (exited/failed), not just live ones
+        #[arg(short, long)]
+        all: bool,
     },
     /// Show a session
     Inspect { id: String },
@@ -30,15 +33,18 @@ pub enum SessionCommand {
 
 pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result<()> {
     match cmd {
-        SessionCommand::Ls { task, goal } => {
+        SessionCommand::Ls { task, goal, all } => {
             let query = SessionListQuery {
                 goal,
                 task,
                 status: None,
             };
-            let sessions: Vec<SessionDto> = client
+            let mut sessions: Vec<SessionDto> = client
                 .get_json(&query_path("/v1/sessions", &query)?)
                 .await?;
+            if !all {
+                sessions.retain(|s| s.status.is_live());
+            }
             match format {
                 Format::Json => print_json(&sessions)?,
                 Format::Table => print_table(
