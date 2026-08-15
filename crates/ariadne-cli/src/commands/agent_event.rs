@@ -6,19 +6,11 @@
 use std::io::Read;
 use std::time::Duration;
 
+use ariadne_api::events::IngestEventRequest;
 use ariadne_client::Client;
 use ariadne_core::AgentKind;
 
 const SESSION_ENV: &str = "ARIADNE_SESSION_ID";
-
-/// Normalized event as ingested by the daemon.
-#[derive(serde::Serialize)]
-struct Ingest {
-    session_id: String,
-    agent_kind: AgentKind,
-    kind: String,
-    payload: serde_json::Value,
-}
 
 pub async fn run(kind: String, argv_json: Option<String>, json: Option<String>) {
     // Never propagate failures to the calling hook.
@@ -75,7 +67,7 @@ async fn forward(kind: String, argv_json: Option<String>, json: Option<String>) 
     let _ = client
         .post_json::<serde_json::Value, _>(
             "/internal/agent-events",
-            &Ingest {
+            &IngestEventRequest {
                 session_id,
                 agent_kind,
                 kind: event_kind,
