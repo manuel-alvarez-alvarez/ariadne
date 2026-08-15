@@ -134,6 +134,12 @@ impl TmuxManager {
     }
 }
 
+/// Short display form of a ULID: ULIDs are long; the trailing 8 chars are
+/// the distinctive random part.
+pub(crate) fn tail(id: &str) -> &str {
+    &id[id.len().saturating_sub(8)..]
+}
+
 /// Build the canonical tmux session name for an agent session.
 pub fn session_name(
     goal_id: &str,
@@ -141,10 +147,6 @@ pub fn session_name(
     role: &str,
     round: Option<i64>,
 ) -> String {
-    // ULIDs are long; the trailing 8 chars are the distinctive random part.
-    fn tail(id: &str) -> &str {
-        &id[id.len().saturating_sub(8)..]
-    }
     let mut name = format!("ariadne-{}", tail(goal_id));
     if let Some(task) = task_id {
         name.push_str(&format!("-{}", tail(task)));
