@@ -107,14 +107,16 @@ impl Store {
 
     /// Replace the dependency set of a task (planner, pre-start only).
     pub async fn set_task_dependencies(&self, task_id: &str, depends_on: &[String]) -> Result<()> {
-        let task = self.get_task(task_id).await?;
+        let mut tx = self.w().begin().await?;
+        // Status is validated on the row inside the write transaction: a check
+        // against the read pool could be stale by the time we hold the lock.
+        let task = Self::get_task_in_tx(&mut tx, task_id).await?;
         if !matches!(task.status(), TaskStatus::Pending | TaskStatus::Ready) {
             return Err(StoreError::Conflict(format!(
                 "dependencies can only change while pending/ready, task is {}",
                 task.status
             )));
         }
-        let mut tx = self.w().begin().await?;
         sqlx::query("DELETE FROM task_dependencies WHERE task_id = ?")
             .bind(task_id)
             .execute(&mut *tx)
@@ -122,11 +124,15 @@ impl Store {
         Self::insert_dependencies(&mut tx, &task.goal_id, task_id, depends_on).await?;
         // A task that was already ready may need to wait again.
         if task.status() == TaskStatus::Ready && !depends_on.is_empty() {
-            sqlx::query("UPDATE tasks SET status = 'pending', updated_at = ? WHERE id = ?")
-                .bind(now())
-                .bind(task_id)
-                .execute(&mut *tx)
-                .await?;
+            Self::transition_in_tx(
+                &mut tx,
+                &task,
+                TaskStatus::Pending,
+                Actor::Planner,
+                Some("dependencies changed"),
+                None,
+            )
+            .await?;
         }
         tx.commit().await?;
         Ok(())
@@ -227,7 +233,10 @@ impl Store {
     }
 
     pub async fn update_task(&self, id: &str, update: TaskUpdate) -> Result<Task> {
-        let task = self.get_task(id).await?;
+        let mut tx = self.w().begin().await?;
+        // Status is validated on the row inside the write transaction: a check
+        // against the read pool could be stale by the time we hold the lock.
+        let task = Self::get_task_in_tx(&mut tx, id).await?;
         if !matches!(task.status(), TaskStatus::Pending | TaskStatus::Ready) {
             return Err(StoreError::Conflict(format!(
                 "task can only be edited while pending/ready, it is {}",
@@ -236,7 +245,6 @@ impl Store {
         }
         let title = update.title.unwrap_or(task.title);
         let description = update.description.unwrap_or(task.description);
-        let mut tx = self.w().begin().await?;
         sqlx::query("UPDATE tasks SET title = ?, description = ?, updated_at = ? WHERE id = ?")
             .bind(&title)
             .bind(&description)
@@ -283,11 +291,36 @@ impl Store {
         merge_commit: Option<&str>,
     ) -> Result<Task> {
         let mut tx = self.w().begin().await?;
-        let task = sqlx::query_as::<_, Task>("SELECT * FROM tasks WHERE id = ?")
+        let task = Self::get_task_in_tx(&mut tx, id).await?;
+        Self::transition_in_tx(&mut tx, &task, to, actor, reason, merge_commit).await?;
+        tx.commit().await?;
+        self.get_task(id).await
+    }
+
+    /// Fetch a task row inside an open write transaction, so status checks see
+    /// the state the transaction will actually commit against.
+    async fn get_task_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        id: &str,
+    ) -> Result<Task> {
+        sqlx::query_as::<_, Task>("SELECT * FROM tasks WHERE id = ?")
             .bind(id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await?
-            .ok_or_else(|| not_found("task", id))?;
+            .ok_or_else(|| not_found("task", id))
+    }
+
+    /// Validate against the state machine, apply the status change with its
+    /// side-column updates, and write the audit row — the shared body of every
+    /// status change, inside the caller's transaction.
+    async fn transition_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        task: &Task,
+        to: TaskStatus,
+        actor: Actor,
+        reason: Option<&str>,
+        merge_commit: Option<&str>,
+    ) -> Result<()> {
         let from = task.status();
         check_transition(from, to, actor)?;
 
@@ -312,8 +345,8 @@ impl Store {
         .bind(review_round)
         .bind(merge_commit)
         .bind(now())
-        .bind(id)
-        .execute(&mut *tx)
+        .bind(&task.id)
+        .execute(&mut **tx)
         .await?;
 
         sqlx::query(
@@ -321,17 +354,16 @@ impl Store {
              VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(new_id())
-        .bind(id)
+        .bind(&task.id)
         .bind(from.as_str())
         .bind(to.as_str())
         .bind(actor.as_str())
         .bind(reason)
         .bind(now())
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
-        tx.commit().await?;
-        self.get_task(id).await
+        Ok(())
     }
 
     pub async fn list_task_transitions(&self, task_id: &str) -> Result<Vec<TaskTransition>> {
