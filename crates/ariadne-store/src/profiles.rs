@@ -1,0 +1,151 @@
+//! Profile repository.
+
+use ariadne_core::id::new_id;
+use ariadne_core::{AgentKind, Role};
+
+use crate::{Profile, Result, Store, StoreError, not_found, now};
+
+#[derive(Debug, Clone)]
+pub struct NewProfile {
+    pub name: String,
+    pub role: Role,
+    /// None = auto: resolved at spawn time to the first installed agent CLI.
+    pub agent_kind: Option<AgentKind>,
+    pub model: Option<String>,
+    pub system_prompt: String,
+    pub extra_flags: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ProfileUpdate {
+    pub name: Option<String>,
+    pub model: Option<Option<String>>,
+    pub system_prompt: Option<String>,
+    pub extra_flags: Option<Vec<String>>,
+}
+
+impl Store {
+    pub async fn create_profile(&self, new: NewProfile) -> Result<Profile> {
+        let id = new_id();
+        let ts = now();
+        let flags = serde_json::to_string(&new.extra_flags)
+            .map_err(|e| StoreError::Invalid(e.to_string()))?;
+        sqlx::query(
+            "INSERT INTO profiles (id, name, role, agent_kind, model, system_prompt, extra_flags, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&id)
+        .bind(&new.name)
+        .bind(new.role.as_str())
+        .bind(new.agent_kind.map(|k| k.as_str()))
+        .bind(&new.model)
+        .bind(&new.system_prompt)
+        .bind(&flags)
+        .bind(&ts)
+        .bind(&ts)
+        .execute(self.w())
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::Database(ref db) if db.is_unique_violation() => {
+                StoreError::Conflict(format!("profile name already exists: {}", new.name))
+            }
+            other => StoreError::Db(other),
+        })?;
+        self.get_profile(&id).await
+    }
+
+    pub async fn get_profile(&self, id: &str) -> Result<Profile> {
+        sqlx::query_as::<_, Profile>("SELECT * FROM profiles WHERE id = ?")
+            .bind(id)
+            .fetch_optional(self.r())
+            .await?
+            .ok_or_else(|| not_found("profile", id))
+    }
+
+    pub async fn get_profile_by_name(&self, name: &str) -> Result<Profile> {
+        sqlx::query_as::<_, Profile>("SELECT * FROM profiles WHERE name = ?")
+            .bind(name)
+            .fetch_optional(self.r())
+            .await?
+            .ok_or_else(|| not_found("profile", name))
+    }
+
+    /// Resolve a profile by id or by unique name (CLI convenience).
+    pub async fn resolve_profile(&self, id_or_name: &str) -> Result<Profile> {
+        match self.get_profile(id_or_name).await {
+            Err(StoreError::NotFound { .. }) => self.get_profile_by_name(id_or_name).await,
+            other => other,
+        }
+    }
+
+    pub async fn list_profiles(&self, role: Option<Role>) -> Result<Vec<Profile>> {
+        let rows = match role {
+            Some(r) => {
+                sqlx::query_as::<_, Profile>("SELECT * FROM profiles WHERE role = ? ORDER BY name")
+                    .bind(r.as_str())
+                    .fetch_all(self.r())
+                    .await?
+            }
+            None => {
+                sqlx::query_as::<_, Profile>("SELECT * FROM profiles ORDER BY name")
+                    .fetch_all(self.r())
+                    .await?
+            }
+        };
+        Ok(rows)
+    }
+
+    pub async fn update_profile(&self, id: &str, update: ProfileUpdate) -> Result<Profile> {
+        let current = self.get_profile(id).await?;
+        let name = update.name.unwrap_or(current.name);
+        let model = update.model.unwrap_or(current.model);
+        let system_prompt = update.system_prompt.unwrap_or(current.system_prompt);
+        let extra_flags = match update.extra_flags {
+            Some(f) => serde_json::to_string(&f).map_err(|e| StoreError::Invalid(e.to_string()))?,
+            None => current.extra_flags,
+        };
+        sqlx::query(
+            "UPDATE profiles SET name = ?, model = ?, system_prompt = ?, extra_flags = ?, updated_at = ?
+             WHERE id = ?",
+        )
+        .bind(&name)
+        .bind(&model)
+        .bind(&system_prompt)
+        .bind(&extra_flags)
+        .bind(now())
+        .bind(id)
+        .execute(self.w())
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::Database(ref db) if db.is_unique_violation() => {
+                StoreError::Conflict(format!("profile name already exists: {name}"))
+            }
+            other => StoreError::Db(other),
+        })?;
+        self.get_profile(id).await
+    }
+
+    /// Delete a profile; fails with `Conflict` while anything references it.
+    pub async fn delete_profile(&self, id: &str) -> Result<()> {
+        self.get_profile(id).await?;
+        let referenced: i64 = sqlx::query_scalar(
+            "SELECT (SELECT COUNT(*) FROM goals WHERE planner_profile_id = ?1)
+                  + (SELECT COUNT(*) FROM tasks WHERE engineer_profile_id = ?1)
+                  + (SELECT COUNT(*) FROM task_reviewers WHERE profile_id = ?1)
+                  + (SELECT COUNT(*) FROM agent_sessions WHERE profile_id = ?1)",
+        )
+        .bind(id)
+        .fetch_one(self.r())
+        .await?;
+        if referenced > 0 {
+            return Err(StoreError::Conflict(format!(
+                "profile {id} is referenced by {referenced} record(s)"
+            )));
+        }
+        sqlx::query("DELETE FROM profiles WHERE id = ?")
+            .bind(id)
+            .execute(self.w())
+            .await?;
+        Ok(())
+    }
+}
