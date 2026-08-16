@@ -42,7 +42,7 @@ export function TaskHistory({ taskId }: { taskId: string }) {
   }
 
   if (transitions.data.length === 0) {
-    return <EmptyState title="The task has not moved yet." />
+    return <EmptyState emphasis="quiet" title="The task has not moved yet." />
   }
 
   return (

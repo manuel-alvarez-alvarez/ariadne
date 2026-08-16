@@ -80,6 +80,7 @@ export function GoalsListPage() {
 
       {goals.error ? (
         <ErrorState
+          showIcon
           title="Could not load goals"
           error={goals.error}
           onRetry={() => void goals.refetch()}

@@ -68,7 +68,7 @@ export function TaskConversation({ taskId }: { taskId: string }) {
   }
 
   if (messages.data.length === 0) {
-    return <EmptyState title="Nothing has been said on this task yet." />
+    return <EmptyState emphasis="quiet" title="Nothing has been said on this task yet." />
   }
 
   return (

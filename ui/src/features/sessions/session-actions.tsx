@@ -101,7 +101,7 @@ export function SessionActions({
           kill.mutate(session.id, {
             onSuccess: (killed) => {
               setConfirmKill(false)
-              toast.success(`Session is now ${sessionStatusLabel(killed.status).toLowerCase()}`)
+              toast.success(`Session status: ${sessionStatusLabel(killed.status)}`)
             },
             onError: (error) =>
               toast.error("Could not kill", { description: describeError(error) }),

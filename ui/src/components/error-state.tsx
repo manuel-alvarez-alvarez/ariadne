@@ -4,6 +4,9 @@
  * The daemon's own words are what goes on screen (see
  * {@link import("@/lib/errors").describeError}), and where the caller can ask
  * again, the retry sits in the alert rather than somewhere below it.
+ *
+ * The icon is opt-in, because the surfaces disagree and did before: the ones
+ * that lead a screen carry it, the ones inside a panel tab or a dialog do not.
  */
 
 import { AlertCircleIcon } from "lucide-react"
@@ -18,6 +21,7 @@ export function ErrorState({
   error,
   description,
   onRetry,
+  showIcon = false,
   className,
 }: {
   title: string
@@ -26,11 +30,13 @@ export function ErrorState({
   description?: ReactNode
   /** Usually a query's `refetch`; without one, the alert has no retry. */
   onRetry?: () => void
+  /** Draws the alert icon, for the surfaces that lead a screen with it. */
+  showIcon?: boolean
   className?: string
 }) {
   return (
     <Alert variant="destructive" className={className}>
-      <AlertCircleIcon />
+      {showIcon ? <AlertCircleIcon /> : null}
       <AlertTitle>{title}</AlertTitle>
       <AlertDescription>{description ?? describeError(error)}</AlertDescription>
       {onRetry ? (
