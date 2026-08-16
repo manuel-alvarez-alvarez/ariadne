@@ -93,6 +93,7 @@ ariadne task attach <task-id>          # engineer terminal (or --role reviewer)
 ariadne task diff <task-id>            # current branch diff
 ariadne task msg <task-id> "hold on, use the middleware crate instead"
 ariadne session ls                     # every agent session + internal ids
+ariadne attach <id>                    # session, task or goal id
 ```
 
 ## Commands
@@ -104,7 +105,7 @@ ariadne session ls                     # every agent session + internal ids
 | `ariadne goal create\|ls\|inspect\|attach\|messages\|cancel` | goals |
 | `ariadne task ls\|inspect\|diff\|attach\|logs\|messages\|msg\|reviews\|history\|cancel\|retry` | tasks |
 | `ariadne session ls\|inspect\|logs\|kill` | agent sessions |
-| `ariadne attach <id>` | attach to a task's or goal's agent |
+| `ariadne attach <id>` | attach to a session, task or goal id |
 
 Every command takes `--format json`; the daemon exposes its full API as
 OpenAPI at `/api-docs/openapi.json` with Swagger UI at `/docs`.
