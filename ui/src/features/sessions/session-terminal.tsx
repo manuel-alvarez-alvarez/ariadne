@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils"
 import { useBaseUrl } from "@/stores/settings"
 
 import { type SessionLogStatus, SessionLogStream, sessionLogStreamUrl } from "./log-stream"
+import { writeDelta, writeSnapshot } from "./terminal-sink"
 
 /** Lines kept above the viewport. A busy agent fills a pane fast. */
 const SCROLLBACK = 5_000
@@ -160,16 +161,18 @@ export function SessionTerminal({
   // One stream per session and daemon. Every connection opens with a full
   // snapshot, so a reconnect replaces the contents instead of appending to
   // them — splicing a fresh capture onto stale output would invent a history
-  // the agent never printed.
+  // the agent never printed. See `terminal-sink.ts` for why "replaces" is a
+  // write and not a `reset()` call.
   useEffect(() => {
     const stream = new SessionLogStream(sessionLogStreamUrl(baseUrl, sessionId), {
       onSnapshot: (chunk) => {
         const terminal = terminalRef.current
-        if (!terminal) return
-        terminal.reset()
-        terminal.write(chunk)
+        if (terminal) writeSnapshot(terminal, chunk)
       },
-      onDelta: (chunk) => terminalRef.current?.write(chunk),
+      onDelta: (chunk) => {
+        const terminal = terminalRef.current
+        if (terminal) writeDelta(terminal, chunk)
+      },
       onEnd: () => {},
       onStatus: (next, reason) => {
         setStatus(next)
