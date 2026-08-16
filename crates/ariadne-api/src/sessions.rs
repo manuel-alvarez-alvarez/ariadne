@@ -42,3 +42,22 @@ pub struct SessionLogsResponse {
     /// Recent pane contents captured from tmux.
     pub logs: String,
 }
+
+/// Payload of the `snapshot` and `delta` events of
+/// `GET /v1/sessions/{id}/logs/stream`.
+///
+/// Terminal output is raw bytes — newlines, escape sequences, control
+/// characters — none of which survive SSE's line-oriented `data:` framing on
+/// their own, so every chunk travels as JSON.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SessionLogChunk {
+    /// Terminal output as written, decoded lossily from UTF-8.
+    pub chunk: String,
+}
+
+/// Payload of the final `end` event of `GET /v1/sessions/{id}/logs/stream`:
+/// the session is over and no further output is coming.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SessionLogEnd {
+    pub session_id: String,
+}
