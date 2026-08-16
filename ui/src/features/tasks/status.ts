@@ -17,17 +17,39 @@ export const BOARD_STATUSES = [
   "ready",
   "in_progress",
   "under_review",
-  "changes_requested",
-  "approved",
-  "merging",
   "merged",
 ] as const satisfies readonly TaskStatus[]
 
 /** Statuses that leave the pipeline; shown apart from the board. */
 export const OFF_BOARD_STATUSES = ["cancelled", "failed"] as const satisfies readonly TaskStatus[]
 
-/** Every status, board order first. Used for filter menus. */
-export const ALL_STATUSES: readonly TaskStatus[] = [...BOARD_STATUSES, ...OFF_BOARD_STATUSES]
+/**
+ * The daemon statuses the UI folds into a primary one: `changes_requested`
+ * and `merging` are phases of `in_progress`, `approved` is a phase of
+ * `under_review`. The raw status stays visible as a sub-status badge.
+ */
+const SUB_STATUS_OF = {
+  changes_requested: "in_progress",
+  merging: "in_progress",
+  approved: "under_review",
+} as const satisfies Partial<Record<TaskStatus, TaskStatus>>
+
+/** The column a status belongs to: itself, unless it is a sub-status. */
+export function primaryStatus(status: TaskStatus): TaskStatus {
+  return (SUB_STATUS_OF as Partial<Record<TaskStatus, TaskStatus>>)[status] ?? status
+}
+
+/** The refining meta ("Merging", …) when `status` is a sub-status, else undefined. */
+export function subStatus(status: TaskStatus): StatusMeta | undefined {
+  return status in SUB_STATUS_OF ? TASK_STATUS_META[status] : undefined
+}
+
+/** "In progress · Merging" for a sub-status, the plain primary label otherwise. */
+export function displayLabel(status: TaskStatus): string {
+  const sub = subStatus(status)
+  const primary = TASK_STATUS_META[primaryStatus(status)].label
+  return sub ? `${primary} · ${sub.label}` : primary
+}
 
 interface StatusMeta {
   label: string
@@ -54,13 +76,13 @@ export const TASK_STATUS_META: Record<TaskStatus, StatusMeta> = {
   },
   in_progress: {
     label: "In progress",
-    hint: "An engineer session is working in the task worktree.",
+    hint: "An engineer session is working on the task: implementing, applying review feedback, or merging.",
     badge: "bg-blue-500/12 text-blue-700 dark:bg-blue-400/15 dark:text-blue-300",
     dot: "bg-blue-500",
   },
   under_review: {
     label: "Under review",
-    hint: "Review requested; reviewer sessions are active.",
+    hint: "Review requested: reviewer sessions are active, or the task is approved and waiting to merge.",
     badge: "bg-violet-500/12 text-violet-700 dark:bg-violet-400/15 dark:text-violet-300",
     dot: "bg-violet-500",
   },
@@ -103,7 +125,7 @@ export const TASK_STATUS_META: Record<TaskStatus, StatusMeta> = {
 }
 
 export function statusLabel(status: TaskStatus): string {
-  return TASK_STATUS_META[status].label
+  return TASK_STATUS_META[primaryStatus(status)].label
 }
 
 /** Terminal statuses are frozen: nothing, and nobody, moves a task out of them. */

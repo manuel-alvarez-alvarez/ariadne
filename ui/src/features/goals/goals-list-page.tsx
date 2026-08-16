@@ -1,7 +1,9 @@
 /**
- * `ariadne goal ls`: every goal, newest first, filtered server-side by status.
+ * `ariadne goal ls` as a board: every goal, newest first, filtered server-side
+ * by status — each one a horizontal swimlane of its tasks under shared
+ * pipeline columns.
  *
- * Nothing here polls. The rows come out of the query cache, which the single
+ * Nothing here polls. The lanes come out of the query cache, which the single
  * SSE connection patches and invalidates, so a goal created or cancelled
  * anywhere — this window, another one, the CLI, the daemon itself — shows up
  * without a refresh.
@@ -10,7 +12,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { AlertCircleIcon, PlusIcon } from "lucide-react"
 import { useState } from "react"
-import { Link } from "react-router-dom"
 
 import { ApiError, type GoalStatus } from "@/api"
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -23,18 +24,9 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { paths } from "@/routes/paths"
 import { CreateGoalDialog } from "./create-goal-dialog"
-import { formatRelative } from "./format"
-import { GOAL_STATUSES, GoalStatusBadge } from "./goal-status-badge"
+import { GOAL_STATUSES } from "./goal-status-badge"
+import { GoalSwimlanes } from "./goal-swimlanes"
 import { goalsQueryOptions } from "./queries"
 
 /** Sentinel for "no status filter" — `Select` needs a value for every item. */
@@ -114,61 +106,7 @@ export function GoalsListPage() {
         </div>
       ) : null}
 
-      {goals.data?.length ? (
-        <div className="rounded-lg border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Title</TableHead>
-                <TableHead className="w-28">Status</TableHead>
-                <TableHead>Repositories</TableHead>
-                <TableHead className="w-24 text-right">Approvals</TableHead>
-                <TableHead className="w-32 text-right">Created</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {goals.data.map((goal) => (
-                <TableRow key={goal.id}>
-                  <TableCell>
-                    <Link
-                      to={paths.goal(goal.id)}
-                      className="font-medium underline-offset-4 hover:underline"
-                    >
-                      {goal.title}
-                    </Link>
-                    <div className="font-mono text-xs text-muted-foreground">{goal.id}</div>
-                  </TableCell>
-                  <TableCell>
-                    <GoalStatusBadge status={goal.status} />
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {/* Repo paths are long and rarely differ at the front, so the
-                        row keeps its shape and the full path lives in the title. */}
-                    <ul className="flex max-w-sm flex-col gap-0.5">
-                      {goal.repos.map((repo) => (
-                        <li
-                          key={repo.id}
-                          className="truncate font-mono text-xs"
-                          title={`${repo.path} [${repo.base_branch}]`}
-                        >
-                          {repo.path}
-                          <span className="text-muted-foreground/70"> [{repo.base_branch}]</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {goal.required_approvals}
-                  </TableCell>
-                  <TableCell className="text-right text-muted-foreground">
-                    {formatRelative(goal.created_at)}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-      ) : null}
+      {goals.data?.length ? <GoalSwimlanes goals={goals.data} /> : null}
 
       <CreateGoalDialog open={createOpen} onOpenChange={setCreateOpen} />
     </div>

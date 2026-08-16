@@ -13,6 +13,7 @@ import { Outlet } from "react-router-dom"
 
 import { AppSidebar } from "@/components/app-sidebar"
 import { ConnectionStatus } from "@/components/connection-status"
+import { DetailPanels } from "@/components/detail-panels"
 import { SettingsDialog } from "@/components/settings-dialog"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
@@ -51,6 +52,7 @@ export function AppShell() {
         </main>
       </div>
 
+      <DetailPanels />
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
     </div>
   )

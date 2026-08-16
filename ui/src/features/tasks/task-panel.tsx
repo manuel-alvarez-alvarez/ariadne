@@ -1,27 +1,29 @@
 /**
- * One task in full — the `task inspect` equivalent, plus everything hanging off
- * it: its thread, its reviews, its transition log and its branch diff.
+ * One task in full, in a side panel over whatever screen it was opened from —
+ * the `task inspect` equivalent, plus everything hanging off it: its thread,
+ * its reviews, its transition log and its branch diff.
  *
- * The tab lives in the URL so a link can point at, say, the diff of a task, and
- * a reload stays where the user was.
+ * The tab lives in the URL (like the panel itself) so a link can point at,
+ * say, the diff of a task, and a reload stays where the user was.
  */
 
 import { useQueries, useQuery } from "@tanstack/react-query"
 import { GitBranchIcon, GitCommitHorizontalIcon, TriangleAlertIcon } from "lucide-react"
 import type { ReactNode } from "react"
-import { Link, useParams, useSearchParams } from "react-router-dom"
+import { Link, useSearchParams } from "react-router-dom"
 
 import type { TaskDto } from "@/api"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
-import { paths } from "@/routes/paths"
+import { paths, useTaskPanelTo } from "@/routes/paths"
 import { describeError, formatAbsolute, formatRelative, shortSha } from "./format"
 import { Markdown } from "./markdown"
 import { taskQueryOptions } from "./queries"
-import { TASK_STATUS_META } from "./status"
+import { primaryStatus, subStatus, TASK_STATUS_META } from "./status"
 import { TaskActions } from "./task-actions"
 import { TaskConversation } from "./task-conversation"
 import { TaskDiff } from "./task-diff"
@@ -31,8 +33,7 @@ import { TaskReviews } from "./task-reviews"
 const TABS = ["conversation", "reviews", "history", "diff"] as const
 type Tab = (typeof TABS)[number]
 
-export function TaskDetailPage() {
-  const { taskId = "" } = useParams<{ taskId: string }>()
+export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => void }) {
   const [search, setSearch] = useSearchParams()
   const task = useQuery(taskQueryOptions(taskId))
   const tab = TABS.find((value) => value === search.get("tab")) ?? "conversation"
@@ -43,77 +44,80 @@ export function TaskDetailPage() {
     setSearch(params, { replace: true })
   }
 
-  if (task.isPending) {
-    return (
-      <div className="mx-auto flex max-w-5xl flex-col gap-4">
-        <Skeleton className="h-7 w-2/3" />
-        <Skeleton className="h-28 w-full" />
-        <Skeleton className="h-64 w-full" />
-      </div>
-    )
-  }
-
-  if (task.error) {
-    return (
-      <Alert variant="destructive" className="mx-auto max-w-2xl">
-        <AlertTitle>Could not load task {taskId}</AlertTitle>
-        <AlertDescription>{describeError(task.error)}</AlertDescription>
-      </Alert>
-    )
-  }
-
   return (
-    <div className="mx-auto flex max-w-5xl flex-col gap-5">
-      <TaskHeader task={task.data} />
-      <TaskFacts task={task.data} />
+    <Sheet open onOpenChange={(open) => open || onClose()}>
+      <SheetContent className="sm:max-w-3xl">
+        {task.isPending ? (
+          <>
+            <SheetTitle className="sr-only">Loading task</SheetTitle>
+            <Skeleton className="h-7 w-2/3" />
+            <Skeleton className="h-28 w-full" />
+            <Skeleton className="h-64 w-full" />
+          </>
+        ) : task.error ? (
+          <>
+            <SheetTitle className="sr-only">Task {taskId}</SheetTitle>
+            <Alert variant="destructive">
+              <AlertTitle>Could not load task {taskId}</AlertTitle>
+              <AlertDescription>{describeError(task.error)}</AlertDescription>
+            </Alert>
+          </>
+        ) : (
+          <>
+            <TaskHeader task={task.data} />
+            <TaskFacts task={task.data} />
 
-      {task.data.description.trim().length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">Description</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Markdown>{task.data.description}</Markdown>
-          </CardContent>
-        </Card>
-      )}
+            {task.data.description.trim().length > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-sm">Description</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <Markdown>{task.data.description}</Markdown>
+                </CardContent>
+              </Card>
+            )}
 
-      <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
-        <TabsList>
-          <TabsTrigger value="conversation">Conversation</TabsTrigger>
-          <TabsTrigger value="reviews">Reviews</TabsTrigger>
-          <TabsTrigger value="history">History</TabsTrigger>
-          <TabsTrigger value="diff">Diff</TabsTrigger>
-        </TabsList>
-        <TabsContent value="conversation" className="pt-3">
-          <TaskConversation taskId={taskId} />
-        </TabsContent>
-        <TabsContent value="reviews" className="pt-3">
-          <TaskReviews taskId={taskId} />
-        </TabsContent>
-        <TabsContent value="history" className="pt-3">
-          <TaskHistory taskId={taskId} />
-        </TabsContent>
-        <TabsContent value="diff" className="pt-3">
-          <TaskDiff taskId={taskId} />
-        </TabsContent>
-      </Tabs>
-    </div>
+            <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
+              <TabsList>
+                <TabsTrigger value="conversation">Conversation</TabsTrigger>
+                <TabsTrigger value="reviews">Reviews</TabsTrigger>
+                <TabsTrigger value="history">History</TabsTrigger>
+                <TabsTrigger value="diff">Diff</TabsTrigger>
+              </TabsList>
+              <TabsContent value="conversation" className="pt-3">
+                <TaskConversation taskId={taskId} />
+              </TabsContent>
+              <TabsContent value="reviews" className="pt-3">
+                <TaskReviews taskId={taskId} />
+              </TabsContent>
+              <TabsContent value="history" className="pt-3">
+                <TaskHistory taskId={taskId} />
+              </TabsContent>
+              <TabsContent value="diff" className="pt-3">
+                <TaskDiff taskId={taskId} />
+              </TabsContent>
+            </Tabs>
+          </>
+        )}
+      </SheetContent>
+    </Sheet>
   )
 }
 
 function TaskHeader({ task }: { task: TaskDto }) {
-  const status = TASK_STATUS_META[task.status]
+  const status = TASK_STATUS_META[primaryStatus(task.status)]
+  const sub = subStatus(task.status)
   return (
-    <header className="space-y-2">
+    <SheetHeader>
       <Link
         to={paths.goal(task.goal_id)}
-        className="text-xs text-muted-foreground underline-offset-3 hover:underline"
+        className="w-fit text-xs text-muted-foreground underline-offset-3 hover:underline"
       >
-        ← Back to the goal
+        ← Open the goal
       </Link>
       <div className="flex flex-wrap items-start gap-3">
-        <h1 className="font-heading text-lg leading-tight font-semibold">{task.title}</h1>
+        <SheetTitle>{task.title}</SheetTitle>
         <div className="ml-auto shrink-0">
           <TaskActions task={task} />
         </div>
@@ -125,6 +129,11 @@ function TaskHeader({ task }: { task: TaskDto }) {
         >
           {status.label}
         </span>
+        {sub && (
+          <span className={cn("rounded-full px-2 py-0.5 font-medium", sub.badge)} title={sub.hint}>
+            {sub.label}
+          </span>
+        )}
         {task.stalled && (
           <span
             className="flex items-center gap-1 rounded-full bg-amber-500/12 px-2 py-0.5 font-medium text-amber-700 dark:bg-amber-400/15 dark:text-amber-300"
@@ -147,7 +156,7 @@ function TaskHeader({ task }: { task: TaskDto }) {
           updated {formatRelative(task.updated_at)}
         </span>
       </div>
-    </header>
+    </SheetHeader>
   )
 }
 
@@ -223,17 +232,11 @@ function Dependencies({ ids }: { ids: string[] }) {
     <ul className="flex flex-col gap-1">
       {ids.map((id, index) => {
         const dependency = results[index]?.data
-        const status = dependency ? TASK_STATUS_META[dependency.status] : undefined
+        const status = dependency ? TASK_STATUS_META[primaryStatus(dependency.status)] : undefined
         return (
           <li key={id} className="flex min-w-0 items-center gap-1.5">
             {status && <span className={cn("size-1.5 shrink-0 rounded-full", status.dot)} />}
-            <Link
-              to={paths.task(id)}
-              className="truncate text-xs underline-offset-3 hover:underline"
-              title={id}
-            >
-              {dependency?.title ?? id}
-            </Link>
+            <DependencyLink id={id} title={dependency?.title} />
             {status && (
               <span className="shrink-0 text-xs text-muted-foreground">{status.label}</span>
             )}
@@ -241,5 +244,15 @@ function Dependencies({ ids }: { ids: string[] }) {
         )
       })}
     </ul>
+  )
+}
+
+/** Swaps the open panel over to the dependency. */
+function DependencyLink({ id, title }: { id: string; title?: string }) {
+  const to = useTaskPanelTo(id)
+  return (
+    <Link to={to} className="truncate text-xs underline-offset-3 hover:underline" title={id}>
+      {title ?? id}
+    </Link>
   )
 }

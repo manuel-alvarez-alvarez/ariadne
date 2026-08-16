@@ -179,7 +179,7 @@ function RawDiff({ text, bare = false }: { text: string; bare?: boolean }) {
   return (
     <pre
       className={cn(
-        "max-h-[70vh] overflow-auto px-3 py-2 font-mono text-xs leading-relaxed",
+        "overflow-x-auto px-3 py-2 font-mono text-xs leading-relaxed",
         !bare && "rounded-lg border bg-muted/20",
       )}
     >

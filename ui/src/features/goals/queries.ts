@@ -119,22 +119,6 @@ export function useCreateGoal() {
   })
 }
 
-export function usePostGoalMessage(goalId: string) {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (body: string) =>
-      unwrap(
-        api().POST("/v1/goals/{id}/messages", {
-          params: { path: { id: goalId } },
-          body: { body },
-        }),
-      ),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: qk.goals.messages(goalId) })
-    },
-  })
-}
-
 export function useFinalizeGoalPlan(goalId: string) {
   const queryClient = useQueryClient()
   return useMutation({
