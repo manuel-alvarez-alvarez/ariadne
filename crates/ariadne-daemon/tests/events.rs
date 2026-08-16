@@ -14,7 +14,7 @@ use http_body_util::BodyExt;
 use tokio::sync::broadcast::Receiver;
 use tower::ServiceExt;
 
-use ariadne_api::stream::DomainEvent;
+use ariadne_api::stream::{DeletedDto, DomainEvent};
 use ariadne_core::{AgentKind, GoalStatus, Role, TaskStatus};
 use ariadne_daemon::bus::{BusEvent, EventBus};
 use ariadne_daemon::config::Config;
@@ -32,6 +32,7 @@ struct Harness {
     store: Store,
     bus: EventBus,
     launcher: Arc<Launcher>,
+    state: AppState,
     router: Router,
     dir: tempfile::TempDir,
 }
@@ -48,18 +49,19 @@ async fn harness() -> Harness {
         tmux: TmuxManager::default(),
         git: GitManager,
     });
-    let router = http::router(AppState {
+    let state = AppState {
         store: store.clone(),
         started_at: Instant::now(),
         launcher: launcher.clone(),
         sched_tx: None,
         events: bus.clone(),
-    });
+    };
     Harness {
+        router: http::router(state.clone()),
         store,
         bus,
         launcher,
-        router,
+        state,
         dir,
     }
 }
@@ -327,6 +329,56 @@ async fn sse_stream_frames_events_and_honours_the_goal_filter() {
     assert_eq!(payload["task"]["id"], task.id);
     assert_eq!(payload["task"]["status"], "ready");
     assert_eq!(payload["transition"]["to_status"], "ready");
+}
+
+/// A client that falls behind must be told, not left silently stale: it gets
+/// a final `resync` event and the connection is closed, which is what drives
+/// an `EventSource` to reconnect and refetch.
+#[tokio::test]
+async fn sse_stream_signals_resync_and_closes_when_a_client_lags() {
+    let h = harness().await;
+    // A tiny bus, so a handful of unread events overflows this subscriber.
+    let bus = EventBus::with_capacity(2);
+    let router = http::router(AppState {
+        events: bus.clone(),
+        ..h.state.clone()
+    });
+
+    let response = router.oneshot(get("/v1/events/stream")).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body();
+
+    // Nothing reads the body yet, so these pile up in the subscriber's buffer.
+    for i in 0..8 {
+        bus.publish(BusEvent {
+            event: DomainEvent::ProfileDeleted(DeletedDto {
+                id: format!("profile-{i}"),
+            }),
+            goal_id: None,
+            task_id: None,
+        });
+    }
+
+    let message = next_sse_message(&mut body).await;
+    assert!(
+        message.contains("event: resync"),
+        "a lagged client is told to resync, got: {message:?}"
+    );
+    let data = message
+        .lines()
+        .find_map(|l| l.strip_prefix("data: "))
+        .expect("resync carries a payload");
+    let payload: serde_json::Value = serde_json::from_str(data).unwrap();
+    assert!(
+        payload["missed"].as_u64().is_some_and(|n| n > 0),
+        "resync reports how many events were lost: {payload}"
+    );
+
+    // ...and the stream ends, rather than carrying on with a hole in it.
+    let end = tokio::time::timeout(TIMEOUT, body.frame())
+        .await
+        .expect("stream must close after resync, not hang");
+    assert!(end.is_none(), "no frames follow the resync event");
 }
 
 #[tokio::test]

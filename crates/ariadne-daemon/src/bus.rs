@@ -6,8 +6,9 @@
 //! hook sits in the repository layer, HTTP handlers, the scheduler and the
 //! launcher all feed the bus without knowing it exists.
 //!
-//! Delivery is best-effort and history-free: a subscriber that cannot keep up
-//! is lagged by the broadcast channel and must resync over REST.
+//! Delivery is history-free: a subscriber that cannot keep up is lagged by the
+//! broadcast channel, and the stream tells it to resync over REST rather than
+//! leaving it quietly stale (see `http::stream`).
 
 use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, warn};
@@ -58,8 +59,14 @@ impl Default for EventBus {
 
 impl EventBus {
     pub fn new() -> Self {
+        Self::with_capacity(CAPACITY)
+    }
+
+    /// A bus buffering `capacity` events per subscriber. Tests use a small
+    /// one to exercise the lag path without publishing a thousand events.
+    pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            tx: broadcast::Sender::new(CAPACITY),
+            tx: broadcast::Sender::new(capacity),
         }
     }
 
