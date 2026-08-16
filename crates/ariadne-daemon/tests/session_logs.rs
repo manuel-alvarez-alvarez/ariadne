@@ -274,10 +274,9 @@ async fn an_exited_session_without_a_console_log_still_ends() {
     assert_eq!(name, "end");
 }
 
-/// tmux session names are reused: `revive_session` and `resume_engineer`
-/// start the successor under the dead session's name. Asking for the old
-/// session's logs must yield *its* console log, never the pane its successor
-/// is now drawing.
+/// tmux session names are per (task, role), so another session can hold the
+/// name of one that is over. Asking for the finished session's logs must
+/// yield *its* console log, never the pane the live one is now drawing.
 #[tokio::test]
 async fn an_exited_session_ignores_the_pane_that_took_over_its_name() {
     let h = harness_with_stub_tmux().await;

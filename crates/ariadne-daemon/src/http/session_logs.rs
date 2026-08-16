@@ -110,10 +110,9 @@ pub async fn logs_stream(
     // in between is then sent twice rather than not at all.
     log.skip_existing().await;
 
-    // Both halves matter: tmux names are deliberately reused by
-    // `revive_session`/`resume_engineer`, so a live pane under this session's
-    // name may well belong to its successor — the row's own status is what
-    // says whether *this* session is still running.
+    // Both halves matter: tmux names are per (task, role), so a live pane
+    // under this session's name need not be this session's — the row's own
+    // status is what says whether *this* session is still running.
     let mut alive =
         session.status().is_live() && state.launcher.tmux.has_session(&session.tmux_session).await;
     let snapshot = if alive {
