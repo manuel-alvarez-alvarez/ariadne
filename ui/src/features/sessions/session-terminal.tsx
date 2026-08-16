@@ -6,15 +6,6 @@
  * rather than rendered as text: anything less would show the control codes of
  * a full-screen TUI instead of what the agent is actually drawing.
  *
- * The emulator runs at the pane's grid, never at the panel's. A pane is 80×24,
- * or whatever a client last attached with, and its TUI addresses the cursor
- * and erases lines in *that* grid: rendered even a column wider, every line
- * that wraps in the pane but not here shifts the rows below it, and each
- * repaint lands on the wrong one. So the frame's width picks the font size
- * instead of the column count — a narrower panel shows the same pane, smaller
- * — and the grid changes only when the daemon says the pane changed (see
- * `log-stream.ts`).
- *
  * Typing goes the other way, to `POST /v1/sessions/{id}/input`, and only for a
  * live session — a finished one has no pane to type into, so its terminal
  * stays display-only rather than swallowing keystrokes. Nothing is echoed
@@ -25,57 +16,24 @@
 import { FitAddon } from "@xterm/addon-fit"
 import { type ITheme, Terminal } from "@xterm/xterm"
 import "@xterm/xterm/css/xterm.css"
-import {
-  ArrowDownToLineIcon,
-  KeyboardIcon,
-  PlugZapIcon,
-  RotateCwIcon,
-  SquareIcon,
-} from "lucide-react"
+import { KeyboardIcon, PlugZapIcon, RotateCwIcon, SquareIcon } from "lucide-react"
 import { useTheme } from "next-themes"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 
 import type { SessionStatus } from "@/api"
 import { Button } from "@/components/ui/button"
-import { Skeleton } from "@/components/ui/skeleton"
 import { describeError } from "@/lib/errors"
 import { cn } from "@/lib/utils"
 import { useBaseUrl } from "@/stores/settings"
 
-import {
-  type PaneSize,
-  type SessionLogStatus,
-  SessionLogStream,
-  sessionLogStreamUrl,
-} from "./log-stream"
+import { type SessionLogStatus, SessionLogStream, sessionLogStreamUrl } from "./log-stream"
 import { sendSessionInput } from "./queries"
 import { isLiveStatus } from "./session-display"
-import { writeDelta, writeResize, writeSnapshot } from "./terminal-sink"
+import { writeDelta, writeSnapshot } from "./terminal-sink"
 
 /** Lines kept above the viewport. A busy agent fills a pane fast. */
 const SCROLLBACK = 5_000
-
-/**
- * What to draw at until the daemon says otherwise: tmux's own default size,
- * which is what these panes are created at. A session that is already over
- * has no pane left to measure, and its console log was written at whatever
- * size the pane had then.
- */
-const DEFAULT_PANE_SIZE: PaneSize = { cols: 80, rows: 24 }
-
-/**
- * Font sizes the pane may be scaled to. Below the lower bound a monospace
- * grid stops being readable, so a pane too wide for the frame overflows it
- * and scrolls sideways instead of shrinking into illegibility.
- */
-const MIN_FONT_SIZE = 8
-const MAX_FONT_SIZE = 15
-/** Where scaling starts, and what a pane is drawn at when it fits as it is. */
-const BASE_FONT_SIZE = 12
-const LINE_HEIGHT = 1.2
-/** Tallest the grid may get before the font shrinks to fit it in (`28rem`). */
-const MAX_SCREEN_HEIGHT = 448
 
 /**
  * The terminal cannot inherit the app's palette: ANSI colours have to be real
@@ -89,11 +47,6 @@ const DARK_THEME: ITheme = {
   cursor: "#e5e5e5",
   cursorAccent: "#171717",
   selectionBackground: "#ffffff33",
-  // The scrollbar is the only sign that there is history above the viewport,
-  // so it is drawn stronger than xterm's default of 20% foreground.
-  scrollbarSliderBackground: "#ffffff33",
-  scrollbarSliderHoverBackground: "#ffffff55",
-  scrollbarSliderActiveBackground: "#ffffff77",
   black: "#000000",
   red: "#cd3131",
   green: "#0dbc79",
@@ -118,9 +71,6 @@ const LIGHT_THEME: ITheme = {
   cursor: "#0a0a0a",
   cursorAccent: "#ffffff",
   selectionBackground: "#00000022",
-  scrollbarSliderBackground: "#00000026",
-  scrollbarSliderHoverBackground: "#00000044",
-  scrollbarSliderActiveBackground: "#00000066",
   black: "#000000",
   red: "#cd3131",
   green: "#00a000",
@@ -153,56 +103,21 @@ export function SessionTerminal({
   /** Whether the session can still be typed into; see {@link isLiveStatus}. */
   status: SessionStatus
   className?: string
-  /** Classes for the frame the emulator draws in. Merged over the default. */
+  /**
+   * Classes for the box the emulator draws in — a height above all, which a
+   * panel has less of than a page. Merged over the default, so passing one
+   * wins (see `cn`).
+   */
   screenClassName?: string
 }) {
   const live = isLiveStatus(status)
   const baseUrl = useBaseUrl()
   const { resolvedTheme } = useTheme()
-  const frameRef = useRef<HTMLDivElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
-  const fitRef = useRef<FitAddon | null>(null)
   const streamRef = useRef<SessionLogStream | null>(null)
   const [streamStatus, setStreamStatus] = useState<SessionLogStatus>("connecting")
   const [error, setError] = useState<string | null>(null)
-  /** Whether anything has been drawn yet; until then the frame is a placeholder. */
-  const [attached, setAttached] = useState(false)
-  /** Whether the viewport is on the newest output rather than up in the history. */
-  const [following, setFollowing] = useState(true)
-
-  /**
-   * Fit the pane's grid into the frame by scaling the font — the one dimension
-   * that is ours to choose.
-   *
-   * Both factors are measured rather than derived: `proposeDimensions` says
-   * how many columns the current font gets out of the frame, and the screen's
-   * own height says what a row costs, neither of which follows from the font
-   * size alone. The ratio to the grid we want is the factor the font is off
-   * by, and a pass or two settles it — the size is quantised, so the first
-   * answer is rarely exact.
-   */
-  const scaleToFit = useCallback(() => {
-    const terminal = terminalRef.current
-    const fit = fitRef.current
-    const container = containerRef.current
-    if (!terminal || !fit || !container) return
-    for (let pass = 0; pass < 4; pass++) {
-      const proposed = fit.proposeDimensions()
-      if (!proposed || !Number.isFinite(proposed.cols)) return
-      const current = terminal.options.fontSize ?? BASE_FONT_SIZE
-      const height = container.querySelector<HTMLElement>(".xterm-screen")?.clientHeight ?? 0
-      // Whichever runs out first: the width there is, or the height the grid
-      // may take before it is worth showing smaller.
-      const scale = Math.min(
-        proposed.cols / terminal.cols,
-        height > 0 ? MAX_SCREEN_HEIGHT / height : Number.POSITIVE_INFINITY,
-      )
-      const next = clamp(quantise(current * scale), MIN_FONT_SIZE, MAX_FONT_SIZE)
-      if (next === current) return
-      terminal.options.fontSize = next
-    }
-  }, [])
 
   // The emulator itself: created once, and kept across daemon-URL changes so a
   // reconnect does not flash an empty box.
@@ -214,9 +129,6 @@ export function SessionTerminal({
       // tmux's captured pane ends its lines with a bare newline; without this
       // every line would start where the previous one stopped.
       convertEol: true,
-      // Never fitted to the box: the stream is what says how big the grid is.
-      cols: DEFAULT_PANE_SIZE.cols,
-      rows: DEFAULT_PANE_SIZE.rows,
       // Turned on by the input effect below once the session is known to be
       // live; a terminal that cannot reach a pane must not pretend to.
       disableStdin: true,
@@ -224,33 +136,33 @@ export function SessionTerminal({
       cursorInactiveStyle: "none",
       scrollback: SCROLLBACK,
       fontFamily: "'Geist Mono Variable', ui-monospace, monospace",
-      fontSize: BASE_FONT_SIZE,
-      lineHeight: LINE_HEIGHT,
+      fontSize: 12,
+      lineHeight: 1.2,
       allowTransparency: false,
       // Read off the class `next-themes` puts on <html> rather than from the
       // hook: the hook resolves a tick after mount, and the terminal would
       // flash its own default palette in between.
       theme: currentTerminalTheme(),
     })
-    // Loaded for its measurements alone — see `scaleToFit`. The grid stays the
-    // pane's, so `fit()` itself is never called.
     const fit = new FitAddon()
     terminal.loadAddon(fit)
     terminal.open(container)
     terminalRef.current = terminal
-    fitRef.current = fit
 
-    // Scrolled up into the history, the viewer stops seeing what the agent is
-    // doing now; the frame offers a way back rather than leaving them there.
-    const scrolled = terminal.onScroll(() => {
-      const buffer = terminal.buffer.active
-      setFollowing(buffer.viewportY >= buffer.baseY)
-    })
-
-    // The grid arrives in the stream and applies whenever the parser reaches
-    // it, so the emulator itself — not the message that caused it — is what
-    // says a new one is in effect and the font has to be scaled to it.
-    const resized = terminal.onResize(() => scaleToFit())
+    // The pane is not resized by us — this only decides how much of it fits on
+    // screen — so a failed measurement (a hidden or zero-sized container) is
+    // nothing to report, just nothing to do.
+    const refit = () => {
+      try {
+        fit.fit()
+      } catch {
+        // container has no usable size yet
+      }
+    }
+    refit()
+    const observer = new ResizeObserver(refit)
+    observer.observe(container)
+    window.addEventListener("resize", refit)
 
     // xterm focuses itself when its own screen is clicked; this covers the
     // padding around it, so the whole box is somewhere to start typing.
@@ -261,31 +173,12 @@ export function SessionTerminal({
 
     return () => {
       container.removeEventListener("click", focusTerminal)
-      scrolled.dispose()
-      resized.dispose()
+      window.removeEventListener("resize", refit)
+      observer.disconnect()
       terminalRef.current = null
-      fitRef.current = null
       terminal.dispose()
     }
-  }, [scaleToFit])
-
-  // The frame's width is the only input to the font size, so resizing the
-  // window, the panel or the sheet it sits in re-scales the same grid.
-  useEffect(() => {
-    const frame = frameRef.current
-    if (!frame) return
-    scaleToFit()
-    let width = frame.clientWidth
-    const observer = new ResizeObserver(() => {
-      // The frame's height follows the terminal's, which follows the font, so
-      // reacting to height would be a loop: only a new width is a new fit.
-      if (frame.clientWidth === width) return
-      width = frame.clientWidth
-      scaleToFit()
-    })
-    observer.observe(frame)
-    return () => observer.disconnect()
-  }, [scaleToFit])
+  }, [])
 
   useEffect(() => {
     const terminal = terminalRef.current
@@ -323,17 +216,12 @@ export function SessionTerminal({
   // snapshot, so a reconnect replaces the contents instead of appending to
   // them — splicing a fresh capture onto stale output would invent a history
   // the agent never printed. See `terminal-sink.ts` for why "replaces" is a
-  // write and not a `reset()` call, and why the grid is a write too.
+  // write and not a `reset()` call.
   useEffect(() => {
     const stream = new SessionLogStream(sessionLogStreamUrl(baseUrl, sessionId), {
-      onResize: (size) => {
-        const terminal = terminalRef.current
-        if (terminal) writeResize(terminal, size.cols, size.rows)
-      },
       onSnapshot: (chunk) => {
         const terminal = terminalRef.current
         if (terminal) writeSnapshot(terminal, chunk)
-        setAttached(true)
       },
       onDelta: (chunk) => {
         const terminal = terminalRef.current
@@ -369,79 +257,14 @@ export function SessionTerminal({
           </span>
         ) : null}
       </div>
-      {/*
-        The frame is what makes the pane read as its own scrolling region:
-        wheeling over it moves the pane's history and not the panel behind it,
-        which is only ever obvious if the region visibly is one.
-      */}
       <div
-        ref={frameRef}
+        ref={containerRef}
+        // xterm measures its parent, so the box has to have a size of its own.
         className={cn(
-          "relative overflow-hidden rounded-lg border bg-card shadow-xs",
+          "h-[28rem] min-h-0 overflow-hidden rounded-lg border bg-card p-2",
           screenClassName,
         )}
-      >
-        {/*
-          Full width even when the grid is narrower, because it is the width
-          `scaleToFit` measures to pick the font — and it is the frame's, not
-          the terminal's own. Sideways scrolling is the last resort for a pane
-          too wide to shrink into (see MIN_FONT_SIZE).
-        */}
-        <div ref={containerRef} className="w-full overflow-x-auto p-2" />
-        {attached ? null : <ConnectingScreen />}
-        {attached && !following ? (
-          <Button
-            variant="secondary"
-            size="xs"
-            className="absolute right-3 bottom-3 shadow-sm"
-            onClick={() => terminalRef.current?.scrollToBottom()}
-          >
-            <ArrowDownToLineIcon />
-            Jump to latest
-          </Button>
-        ) : null}
-      </div>
-    </div>
-  )
-}
-
-/**
- * What the frame holds until the first snapshot lands. It covers the empty
- * emulator rather than standing in for it, so the frame already has the height
- * it will keep and nothing jumps when the output arrives.
- */
-/** Widths of the placeholder's lines. Uneven: terminal output is not prose. */
-const PLACEHOLDER_LINES = [
-  "w-1/3",
-  "w-3/5",
-  "w-2/5",
-  "w-4/5",
-  "w-1/2",
-  "w-2/3",
-  "w-1/4",
-  "w-3/4",
-  "w-2/5",
-  "w-3/5",
-  "w-1/2",
-  "w-1/3",
-]
-
-function ConnectingScreen() {
-  return (
-    <div
-      className="absolute inset-0 flex flex-col justify-end gap-2.5 overflow-hidden bg-card p-3"
-      data-slot="terminal-connecting"
-      aria-hidden
-    >
-      {PLACEHOLDER_LINES.map((width, index) => (
-        <Skeleton
-          key={width + String(index)}
-          className={cn("h-2.5 shrink-0", width)}
-          // Staggered, so it reads as output arriving rather than as one block
-          // pulsing; the last lines are the newest and lead.
-          style={{ animationDelay: `${(PLACEHOLDER_LINES.length - index) * 90}ms` }}
-        />
-      ))}
+      />
     </div>
   )
 }
@@ -465,15 +288,7 @@ function StreamStatus({ status, error }: { status: SessionLogStatus; error: stri
     )
   }
   if (status === "connecting") {
-    return (
-      <span className="flex items-center gap-1.5">
-        <span
-          className="size-1.5 shrink-0 animate-pulse rounded-full bg-muted-foreground"
-          aria-hidden
-        />
-        Connecting to the session's output…
-      </span>
-    )
+    return <span>Connecting to the session's output…</span>
   }
   return (
     <span className="flex items-center gap-1.5">
@@ -481,17 +296,4 @@ function StreamStatus({ status, error }: { status: SessionLogStatus; error: stri
       Live
     </span>
   )
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value))
-}
-
-/**
- * Down to the nearest half pixel. Rounding up would overflow the frame the
- * size was measured against, and whole pixels alone would leave a visible
- * margin at the small sizes a wide pane needs.
- */
-function quantise(fontSize: number): number {
-  return Math.floor(fontSize * 2) / 2
 }

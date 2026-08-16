@@ -16,37 +16,6 @@ pub struct TmuxManager {
     bin: String,
 }
 
-/// A pane's screen: its grid, and where its cursor sits in it (0-based, from
-/// the top-left of the visible area).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PaneGeometry {
-    pub cols: u16,
-    pub rows: u16,
-    pub cursor_x: u16,
-    pub cursor_y: u16,
-}
-
-/// `"80x24 2,21"`, as [`TmuxManager::pane_geometry`] asks tmux to print it.
-fn parse_geometry(raw: &str) -> Option<PaneGeometry> {
-    let (size, cursor) = raw.split_once(' ')?;
-    let (cols, rows) = parse_size(size)?;
-    let (x, y) = cursor.split_once(',')?;
-    Some(PaneGeometry {
-        cols,
-        rows,
-        cursor_x: x.trim().parse().ok()?,
-        cursor_y: y.trim().parse().ok()?,
-    })
-}
-
-/// `"80x24"` — the size half of a geometry, which is also how a pane's last
-/// known size is stored for a session that has ended (see
-/// `Launcher::record_pane_size`).
-pub fn parse_size(raw: &str) -> Option<(u16, u16)> {
-    let (cols, rows) = raw.split_once('x')?;
-    Some((cols.trim().parse().ok()?, rows.trim().parse().ok()?))
-}
-
 /// Everything needed to launch one agent in a detached tmux session.
 #[derive(Debug, Clone)]
 pub struct TmuxSpawn {
@@ -123,39 +92,13 @@ impl TmuxManager {
         Ok(())
     }
 
-    /// Whether tmux has this session, with "could not ask" folded into "no" —
-    /// which is what most callers want, since they go on to create or replace
-    /// the session either way. Anything that would *conclude* something from a
-    /// "no" — that a session is over, say — wants
-    /// [`Self::has_session_checked`] instead.
     pub async fn has_session(&self, name: &str) -> bool {
-        self.has_session_checked(name).await.unwrap_or(false)
-    }
-
-    /// Whether the session might still be there, with "could not ask" folded
-    /// into "yes".
-    ///
-    /// For deciding whether to *create* something — a second agent for a role
-    /// that may already have one — where a wrong "no" duplicates work that is
-    /// already under way, while a wrong "yes" costs a scheduler tick that does
-    /// nothing and asks again in fifteen seconds.
-    pub async fn has_session_or_unknown(&self, name: &str) -> bool {
-        self.has_session_checked(name).await.unwrap_or(true)
-    }
-
-    /// Whether tmux has this session, as an answer rather than a guess.
-    ///
-    /// `Err` means the question never reached tmux, which is not the same as
-    /// tmux saying no: a daemon that cannot spawn a process for a moment has
-    /// learned nothing about the pane, and a viewer told the session is over
-    /// stops asking for good.
-    pub async fn has_session_checked(&self, name: &str) -> Result<bool> {
-        let output = Command::new(&self.bin)
+        Command::new(&self.bin)
             .args(["has-session", "-t", name])
             .output()
             .await
-            .with_context(|| format!("running {} has-session -t {name}", self.bin))?;
-        Ok(output.status.success())
+            .map(|o| o.status.success())
+            .unwrap_or(false)
     }
 
     pub async fn kill_session(&self, name: &str) -> Result<()> {
@@ -163,46 +106,9 @@ impl TmuxManager {
     }
 
     /// Snapshot of the last `lines` of the pane (including scrollback).
-    ///
-    /// `-e` keeps the escape sequences that colour it. Without them the
-    /// capture is plain text, and everything an agent printed before a viewer
-    /// connected would arrive grey while only later output had colour.
     pub async fn capture_pane(&self, name: &str, lines: u32) -> Result<String> {
-        self.tmux(&[
-            "capture-pane",
-            "-p",
-            "-e",
-            "-t",
-            name,
-            "-S",
-            &format!("-{lines}"),
-        ])
-        .await
-    }
-
-    /// Where the pane's screen stands: how big it is and where its cursor is.
-    ///
-    /// The size is what the agent's TUI draws against — cursor addressing and
-    /// line erasing are relative to it — so anything rendering the pane's
-    /// bytes has to use the same one. It is not fixed: tmux creates these
-    /// sessions at its default size and resizes the window to whatever client
-    /// attaches to it later.
-    ///
-    /// The cursor matters for the same reason. A capture says what is on the
-    /// screen but not where the pane was about to write next, and a TUI's next
-    /// repaint is addressed from there.
-    pub async fn pane_geometry(&self, name: &str) -> Result<PaneGeometry> {
-        let out = self
-            .tmux(&[
-                "display-message",
-                "-p",
-                "-t",
-                name,
-                "#{pane_width}x#{pane_height} #{cursor_x},#{cursor_y}",
-            ])
-            .await?;
-        let raw = out.trim();
-        parse_geometry(raw).with_context(|| format!("unexpected pane geometry for {name}: {raw:?}"))
+        self.tmux(&["capture-pane", "-p", "-t", name, "-S", &format!("-{lines}")])
+            .await
     }
 
     /// Type `text` into the session followed by Enter (used to nudge

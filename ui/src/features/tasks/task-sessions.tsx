@@ -25,6 +25,7 @@ import { ArrowLeftIcon } from "lucide-react"
 import { Link } from "react-router-dom"
 
 import { ErrorState } from "@/components/error-state"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -61,20 +62,20 @@ export function TaskSessionView({
   /** The task's own name, when it is already loaded, for the way back. */
   taskTitle?: string
   sessionId: string
-  /** Selects another session, or goes back to the task with `undefined`. */
-  onSelect: (sessionId: string | undefined) => void
+  /** Selects another session, or goes back to the task with `null`. */
+  onSelect: (sessionId: string | null) => void
 }) {
   const session = useQuery(sessionQueryOptions(sessionId))
+  // `GET /v1/sessions/{id}` is not scoped to a task, so a link can hand this
+  // panel a session of some *other* task (or a goal's planner session, which
+  // is nobody's task). It is not one of this task's, and the panel would
+  // present it as if it were — with kill and resume on it.
+  const foreign = session.data !== undefined && session.data.task_id !== taskId
 
   return (
     <>
       <SheetHeader>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="-ml-2 w-fit"
-          onClick={() => onSelect(undefined)}
-        >
+        <Button variant="ghost" size="sm" className="-ml-2 w-fit" onClick={() => onSelect(null)}>
           <ArrowLeftIcon />
           Back to {taskTitle ?? `task ${shortId(taskId)}`}
         </Button>
@@ -95,6 +96,13 @@ export function TaskSessionView({
           error={session.error}
           onRetry={() => void session.refetch()}
         />
+      ) : foreign ? (
+        <Alert variant="destructive">
+          <AlertTitle>Not a session of this task</AlertTitle>
+          <AlertDescription>
+            Session {shortId(sessionId)} belongs to another task, so it is not shown here.
+          </AlertDescription>
+        </Alert>
       ) : (
         <SessionDetailView
           session={session.data}

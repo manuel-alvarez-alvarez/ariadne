@@ -187,18 +187,6 @@ async fn tmux_session_lifecycle() {
     let logged = std::fs::read_to_string(&log).unwrap_or_default();
     assert!(logged.contains("VAR=hello-tmux"), "log: {logged}");
 
-    // The screen the pane draws on: what a viewer of those bytes has to
-    // reproduce for them to land where they were addressed.
-    let geometry = tmux.pane_geometry(&name).await.unwrap();
-    assert!(
-        geometry.cols > 0 && geometry.rows > 0,
-        "pane geometry: {geometry:?}"
-    );
-    assert!(
-        geometry.cursor_x < geometry.cols && geometry.cursor_y < geometry.rows,
-        "the cursor is on the screen it was measured with: {geometry:?}"
-    );
-
     tmux.kill_session(&name).await.unwrap();
     assert!(!tmux.has_session(&name).await);
 }
