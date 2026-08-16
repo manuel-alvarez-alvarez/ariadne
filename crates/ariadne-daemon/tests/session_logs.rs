@@ -5,6 +5,7 @@
 //! framing and lifecycle the acceptance criteria pin down. Following a live
 //! pane is the tailing logic, unit-tested in `logtail`.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -12,9 +13,10 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use http_body_util::BodyExt;
+use tokio::io::AsyncWriteExt;
 use tower::ServiceExt;
 
-use ariadne_core::{AgentKind, Role};
+use ariadne_core::{AgentKind, Role, SessionStatus};
 use ariadne_daemon::config::Config;
 use ariadne_daemon::gitwt::GitManager;
 use ariadne_daemon::http::{self, AppState};
@@ -28,18 +30,35 @@ struct Harness {
     store: Store,
     launcher: Arc<Launcher>,
     router: Router,
-    _dir: tempfile::TempDir,
+    dir: tempfile::TempDir,
 }
 
 async fn harness() -> Harness {
+    build(false).await
+}
+
+/// A harness whose `tmux` is a stub script: `has-session` succeeds while a
+/// marker file exists and `capture-pane` prints a file the test controls.
+/// That makes the live path — a running pane whose session ends underneath it
+/// — reproducible without tmux and without a real agent.
+async fn harness_with_stub_tmux() -> Harness {
+    build(true).await
+}
+
+async fn build(stub_tmux: bool) -> Harness {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(dir.path().join("test.db")).await.unwrap();
     let bus = ariadne_daemon::bus::start(store.clone());
     let cfg = Arc::new(Config::load(Some(dir.path().join("home"))).unwrap());
+    let tmux = if stub_tmux {
+        write_tmux_stub(dir.path())
+    } else {
+        TmuxManager::default()
+    };
     let launcher = Arc::new(Launcher {
         cfg,
         store: store.clone(),
-        tmux: TmuxManager::default(),
+        tmux,
         git: GitManager,
     });
     let state = AppState {
@@ -53,8 +72,27 @@ async fn harness() -> Harness {
         router: http::router(state),
         store,
         launcher,
-        _dir: dir,
+        dir,
     }
+}
+
+fn write_tmux_stub(dir: &std::path::Path) -> TmuxManager {
+    use std::os::unix::fs::PermissionsExt;
+
+    let bin = dir.join("tmux-stub.sh");
+    let script = format!(
+        "#!/bin/sh\n\
+         case \"$1\" in\n\
+         \x20 has-session) [ -f '{alive}' ] || exit 1 ;;\n\
+         \x20 capture-pane) cat '{pane}' 2>/dev/null ;;\n\
+         esac\n\
+         exit 0\n",
+        alive = dir.join("tmux-alive").display(),
+        pane = dir.join("pane.txt").display(),
+    );
+    std::fs::write(&bin, script).unwrap();
+    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+    TmuxManager::new(bin.display().to_string())
 }
 
 impl Harness {
@@ -106,10 +144,25 @@ impl Harness {
     }
 
     /// Write the console log tmux `pipe-pane` would have produced.
-    fn write_console_log(&self, session_id: &str, contents: &str) {
-        let dir = self.launcher.cfg.run_dir.join(session_id);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("console.log"), contents).unwrap();
+    fn write_console_log(&self, session_id: &str, contents: impl AsRef<[u8]>) {
+        let path = self.console_log(session_id);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, contents).unwrap();
+    }
+
+    fn console_log(&self, session_id: &str) -> PathBuf {
+        self.launcher
+            .cfg
+            .run_dir
+            .join(session_id)
+            .join("console.log")
+    }
+
+    /// What the stub tmux's `capture-pane` prints, and whether it has a
+    /// session at all.
+    fn stub_pane(&self, contents: &str) {
+        std::fs::write(self.dir.path().join("pane.txt"), contents).unwrap();
+        std::fs::write(self.dir.path().join("tmux-alive"), "").unwrap();
     }
 }
 
@@ -217,6 +270,132 @@ async fn an_exited_session_without_a_console_log_still_ends() {
     let (name, payload) = parse(&next_sse_message(&mut body).await);
     assert_eq!(name, "snapshot");
     assert_eq!(payload["chunk"], "");
+    let (name, _) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "end");
+}
+
+/// tmux session names are reused: `revive_session` and `resume_engineer`
+/// start the successor under the dead session's name. Asking for the old
+/// session's logs must yield *its* console log, never the pane its successor
+/// is now drawing.
+#[tokio::test]
+async fn an_exited_session_ignores_the_pane_that_took_over_its_name() {
+    let h = harness_with_stub_tmux().await;
+    let session = h.session("ariadne-reused-name").await;
+    h.store
+        .set_session_status(&session.id, SessionStatus::Exited)
+        .await
+        .unwrap();
+    h.write_console_log(&session.id, "the old session's output\n");
+    // Its successor is live under the very same tmux name.
+    h.stub_pane("the successor's pane\n");
+
+    let response = h
+        .router
+        .clone()
+        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body();
+
+    let (name, payload) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "snapshot");
+    assert_eq!(
+        payload["chunk"], "the old session's output\n",
+        "an exited session serves its own console log, not the live pane"
+    );
+
+    let (name, _) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "end", "a session that is already over ends at once");
+    let eof = tokio::time::timeout(TIMEOUT, body.frame()).await.unwrap();
+    assert!(eof.is_none());
+}
+
+/// The stream must not be kept alive by its own traffic: a pane writing on
+/// every poll still has to notice that the session behind it is finished.
+#[tokio::test]
+async fn a_terminal_status_ends_the_stream_even_while_output_keeps_coming() {
+    let h = harness_with_stub_tmux().await;
+    let session = h.session("ariadne-chatty").await;
+    h.stub_pane("pane snapshot\n");
+    h.write_console_log(&session.id, "");
+
+    // Output on every single poll, for longer than this test can run.
+    let log = h.console_log(&session.id);
+    tokio::spawn(async move {
+        for i in 0..1_000 {
+            let mut file = tokio::fs::OpenOptions::new()
+                .append(true)
+                .open(&log)
+                .await
+                .unwrap();
+            file.write_all(format!("tick {i}\n").as_bytes())
+                .await
+                .unwrap();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    });
+
+    let response = h
+        .router
+        .clone()
+        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
+        .await
+        .unwrap();
+    let mut body = response.into_body();
+
+    let (name, payload) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "snapshot");
+    assert_eq!(payload["chunk"], "pane snapshot\n");
+    let (name, _) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "delta", "the pane is producing output");
+
+    // The process is gone as far as the daemon is concerned — the pane in
+    // tmux (the stub still has one) is no longer this session's.
+    h.store
+        .set_session_status(&session.id, SessionStatus::Failed)
+        .await
+        .unwrap();
+
+    let mut last = String::new();
+    for _ in 0..40 {
+        let (name, _) = parse(&next_sse_message(&mut body).await);
+        last = name;
+        if last == "end" {
+            break;
+        }
+    }
+    assert_eq!(last, "end", "a terminal status ends the stream");
+    let eof = tokio::time::timeout(TIMEOUT, body.frame()).await.unwrap();
+    assert!(eof.is_none(), "nothing follows the end event");
+}
+
+/// pipe-pane can stop mid-character. Those bytes are part of "whatever
+/// remains", so they go out lossily instead of vanishing.
+#[tokio::test]
+async fn a_half_written_character_still_reaches_the_client() {
+    let h = harness().await;
+    let session = h.dead_session().await;
+    let mut console = b"cut off: ".to_vec();
+    // Two thirds of a three-byte character.
+    console.extend_from_slice(&"│".as_bytes()[..2]);
+    h.write_console_log(&session.id, &console);
+
+    let response = h
+        .router
+        .clone()
+        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
+        .await
+        .unwrap();
+    let mut body = response.into_body();
+
+    let (name, payload) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "snapshot");
+    assert_eq!(
+        payload["chunk"], "cut off: \u{fffd}",
+        "the truncated character is replaced, not dropped"
+    );
     let (name, _) = parse(&next_sse_message(&mut body).await);
     assert_eq!(name, "end");
 }

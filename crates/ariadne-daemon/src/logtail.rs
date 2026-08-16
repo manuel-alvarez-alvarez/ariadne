@@ -78,6 +78,18 @@ impl LogTail {
         self.decode(buf)
     }
 
+    /// Everything that is left, for when nothing more will ever be appended:
+    /// the last unread bytes plus any half-written character carried from an
+    /// earlier read, this time decoded lossily. Nothing is held back.
+    pub async fn drain(&mut self) -> String {
+        let mut out = self.read_new().await;
+        if !self.pending.is_empty() {
+            let leftover = std::mem::take(&mut self.pending);
+            out.push_str(&String::from_utf8_lossy(&leftover));
+        }
+        out
+    }
+
     fn decode(&mut self, bytes: Vec<u8>) -> String {
         let buf = if self.pending.is_empty() {
             bytes
@@ -202,6 +214,36 @@ mod tests {
         append(&log, &bar[2..]).await;
         append(&log, b"b").await;
         assert_eq!(tail.read_new().await, "│b");
+    }
+
+    /// Nothing more is coming, so the half-written character has to go out
+    /// lossily rather than be swallowed.
+    #[tokio::test]
+    async fn drain_flushes_a_half_written_character() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("console.log");
+        let bar = "│".as_bytes();
+        append(&log, b"cut off: ").await;
+        append(&log, &bar[..2]).await;
+
+        let mut tail = LogTail::new(&log);
+        assert_eq!(
+            tail.read_new().await,
+            "cut off: ",
+            "the partial character is held back while more may still arrive"
+        );
+        assert_eq!(tail.drain().await, "\u{fffd}");
+        assert_eq!(tail.drain().await, "", "nothing is left to flush twice");
+    }
+
+    #[tokio::test]
+    async fn drain_returns_the_unread_tail_as_well() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("console.log");
+        append(&log, b"bye\n").await;
+
+        let mut tail = LogTail::new(&log);
+        assert_eq!(tail.drain().await, "bye\n");
     }
 
     #[tokio::test]
