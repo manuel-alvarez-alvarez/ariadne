@@ -53,7 +53,15 @@ export interface DomainEventStreamHandlers {
   onEvent: (event: DomainEvent) => void
   /** The daemon dropped events for this connection and is closing it. */
   onResync: (payload: ResyncDto) => void
-  /** The stream opened. `reconnected` is false only for the very first open. */
+  /**
+   * The stream opened.
+   *
+   * `reconnected` is false only for a first connection that succeeded straight
+   * away, where nothing can have been missed. Any open that follows a failed
+   * attempt or a forced drop reports true — including the first one, because
+   * REST queries may well have loaded during the gap and events since then are
+   * gone for good.
+   */
   onOpen: (info: { reconnected: boolean }) => void
   /** Status changes worth showing in the UI. */
   onStatus: (status: StreamStatus, error?: string | null) => void
@@ -66,6 +74,13 @@ export class DomainEventStream {
   #retryTimer: ReturnType<typeof setTimeout> | null = null
   #backoff = INITIAL_BACKOFF_MS
   #everOpened = false
+  /**
+   * Whether anything went wrong since the last successful open: a failed
+   * attempt, or a drop forced from outside. This — not `#everOpened` — is what
+   * makes an open count as a reconnect, because a first connection that only
+   * came up after a few failures had a gap just the same.
+   */
+  #interrupted = false
   #stopped = true
 
   constructor(url: () => string, handlers: DomainEventStreamHandlers) {
@@ -104,6 +119,8 @@ export class DomainEventStream {
     this.#clearRetry()
     this.#closeSource()
     this.#backoff = INITIAL_BACKOFF_MS
+    // Whatever the old connection was doing, we are not sure we saw all of it.
+    this.#interrupted = true
     this.#connect(reason)
   }
 
@@ -120,7 +137,8 @@ export class DomainEventStream {
   #connect(reason?: string): void {
     if (this.#stopped) return
     this.#closeSource()
-    this.#handlers.onStatus(this.#everOpened ? "reconnecting" : "connecting", reason)
+    const retrying = this.#everOpened || this.#interrupted
+    this.#handlers.onStatus(retrying ? "reconnecting" : "connecting", reason)
 
     let source: EventSource
     try {
@@ -133,8 +151,9 @@ export class DomainEventStream {
 
     source.onopen = () => {
       this.#backoff = INITIAL_BACKOFF_MS
-      const reconnected = this.#everOpened
+      const reconnected = this.#everOpened || this.#interrupted
       this.#everOpened = true
+      this.#interrupted = false
       this.#handlers.onOpen({ reconnected })
     }
 
@@ -164,6 +183,9 @@ export class DomainEventStream {
   #scheduleRetry(error: string): void {
     if (this.#stopped || this.#retryTimer !== null) return
     this.#closeSource()
+    // An attempt failed, so the next open is a reconnect even if no attempt has
+    // ever succeeded: events during the gap are gone, there is no replay.
+    this.#interrupted = true
     this.#handlers.onStatus("reconnecting", error)
     // Jitter so a daemon restart does not get a thundering herd of windows.
     const delay = this.#backoff * (0.5 + Math.random() / 2)
