@@ -47,7 +47,7 @@ export function AppSidebar() {
           <Icon className="size-4 shrink-0" />
           {label}
           {to === paths.attention() && count > 0 ? (
-            <span className="ml-auto rounded-full bg-destructive/12 px-1.5 py-0.5 text-xs font-medium tabular-nums text-destructive">
+            <span className="ml-auto rounded-full bg-status-danger-soft px-1.5 py-0.5 text-xs font-medium tabular-nums text-status-danger-fg">
               {count}
               <span className="sr-only"> needing attention</span>
             </span>

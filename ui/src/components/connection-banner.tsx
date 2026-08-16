@@ -37,8 +37,8 @@ export function ConnectionBanner({ onOpenSettings }: { onOpenSettings: () => voi
       className={cn(
         "flex h-9 shrink-0 items-center gap-2 border-b px-3 text-sm",
         unreachable
-          ? "border-destructive/30 bg-destructive/10 text-destructive"
-          : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+          ? "bg-status-danger-soft text-status-danger-fg"
+          : "bg-status-warn-soft text-status-warn-fg",
       )}
     >
       <PlugZapIcon className="size-4 shrink-0" aria-hidden />

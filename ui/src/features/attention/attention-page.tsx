@@ -108,7 +108,7 @@ function TaskRow({ item: { task, reason } }: { item: AttentionTask }) {
           <StatusBadge
             box="badge"
             label="Stalled"
-            tone="bg-amber-500/12 text-amber-700 dark:bg-amber-400/15 dark:text-amber-300"
+            tone="bg-status-warn-soft text-status-warn-fg"
             title="The agent went idle without advancing the task."
           />
         ) : null}
