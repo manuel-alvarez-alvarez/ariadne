@@ -9,6 +9,10 @@
  * The dismiss button says "Cancel" unless the dangerous verb is itself
  * "Cancel …", where the caller passes the opposite ("Keep goal") so the same
  * word is never both the safe and the destructive choice in one dialog.
+ *
+ * The confirming click is where `variant="destructive"` earns its solid red:
+ * whatever the trigger that opened this dialog looked like, the button that
+ * cannot be taken back is never the quieter one on screen.
  */
 
 import type { ReactNode } from "react"
@@ -32,7 +36,6 @@ export function ConfirmDialog({
   description,
   children,
   confirmLabel,
-  pendingLabel = "Working…",
   dismissLabel = "Cancel",
   destructive = false,
   pending = false,
@@ -50,8 +53,6 @@ export function ConfirmDialog({
   /** Anything the dialog needs below the description — a field, an explanation. */
   children?: ReactNode
   confirmLabel: string
-  /** The confirm button while the request is in flight. */
-  pendingLabel?: string
   dismissLabel?: string
   destructive?: boolean
   pending?: boolean
@@ -84,10 +85,11 @@ export function ConfirmDialog({
           <Button
             type="button"
             variant={destructive ? "destructive" : "default"}
-            disabled={pending || confirmDisabled}
+            pending={pending}
+            disabled={confirmDisabled}
             onClick={onConfirm}
           >
-            {pending ? pendingLabel : confirmLabel}
+            {confirmLabel}
           </Button>
         </DialogFooter>
       </DialogContent>
