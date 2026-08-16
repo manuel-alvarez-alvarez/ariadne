@@ -2,19 +2,17 @@
  * Every agent session the daemon knows about — the screen equivalent of
  * `ariadne session ls --all`.
  *
- * The list stays live on its own: `session_created` and `session_updated`
- * invalidate `sessions.lists()` in the event dispatcher, so a session starting,
- * going idle or being killed shows up here without a refresh.
+ * The screen is the filter bar; the table itself is {@link SessionsList},
+ * which the goal and task panels embed too. Picking a row here opens the
+ * session's own screen.
  *
  * Filters live in the URL so coming back from a session keeps the view you
  * left, and so a filtered list can be reloaded as-is.
  */
 
 import { useQuery } from "@tanstack/react-query"
-import { Link, useSearchParams } from "react-router-dom"
+import { useNavigate, useSearchParams } from "react-router-dom"
 
-import type { SessionDto } from "@/api"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   Select,
   SelectContent,
@@ -22,35 +20,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Skeleton } from "@/components/ui/skeleton"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
 import { paths } from "@/routes/paths"
 
 import {
-  byId,
   goalsQueryOptions,
-  profilesQueryOptions,
   type SessionListFilters,
   sessionsQueryOptions,
   tasksQueryOptions,
 } from "./queries"
-import { reason } from "./session-actions"
-import {
-  AGENT_KIND_LABELS,
-  formatAge,
-  formatTimestamp,
-  ROLE_LABELS,
-  SESSION_STATUSES,
-  SessionStatusBadge,
-} from "./session-display"
-import { useNow } from "./use-now"
+import { SESSION_STATUSES } from "./session-display"
+import { SessionsList } from "./sessions-list"
 
 /** Select value standing for "no filter"; an empty value is not selectable. */
 const ANY = "any"
@@ -61,7 +40,7 @@ function filterValue(value: string | null): string | undefined {
 }
 
 export function SessionsListPage() {
-  const now = useNow()
+  const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
 
   const goal = params.get("goal") ?? undefined
@@ -72,11 +51,10 @@ export function SessionsListPage() {
   const status = SESSION_STATUSES.find((value) => value === statusParam)
   const filters: SessionListFilters = { goal, task, status }
 
+  // The same query the list runs, for the count next to the filters.
   const sessions = useQuery(sessionsQueryOptions(filters))
   const goals = useQuery(goalsQueryOptions())
   const tasks = useQuery(tasksQueryOptions(goal))
-  const profiles = useQuery(profilesQueryOptions())
-  const profilesById = byId(profiles.data)
 
   function setFilter(next: Partial<Record<"goal" | "task" | "status", string | undefined>>) {
     const updated = new URLSearchParams(params)
@@ -170,111 +148,10 @@ export function SessionsListPage() {
         ) : null}
       </div>
 
-      {sessions.isError ? (
-        <Alert variant="destructive">
-          <AlertTitle>Could not load sessions</AlertTitle>
-          <AlertDescription>{reason(sessions.error)}</AlertDescription>
-        </Alert>
-      ) : null}
-
-      <div className="rounded-lg border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Session</TableHead>
-              <TableHead>Role</TableHead>
-              <TableHead>Agent</TableHead>
-              <TableHead>Profile</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="text-right">Round</TableHead>
-              <TableHead className="text-right">Last activity</TableHead>
-              <TableHead className="text-right">Ended</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {sessions.isPending ? <LoadingRows /> : null}
-            {sessions.data?.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
-                  No sessions match these filters.
-                </TableCell>
-              </TableRow>
-            ) : null}
-            {sessions.data?.map((session) => (
-              <SessionRow
-                key={session.id}
-                session={session}
-                profileName={profilesById.get(session.profile_id)?.name}
-                now={now}
-              />
-            ))}
-          </TableBody>
-        </Table>
-      </div>
+      <SessionsList
+        filters={filters}
+        onSelect={(session) => void navigate(paths.session(session.id))}
+      />
     </div>
-  )
-}
-
-function SessionRow({
-  session,
-  profileName,
-  now,
-}: {
-  session: SessionDto
-  profileName: string | undefined
-  now: number
-}) {
-  return (
-    <TableRow className="relative">
-      <TableCell className="font-mono text-xs">
-        {/* Stretched over the whole row, so the row is clickable without a
-            `<tr onClick>` that the keyboard could not reach. */}
-        <Link
-          to={paths.session(session.id)}
-          className="after:absolute after:inset-0 hover:underline"
-        >
-          {session.id}
-        </Link>
-      </TableCell>
-      <TableCell>{ROLE_LABELS[session.role]}</TableCell>
-      <TableCell className="text-muted-foreground">
-        {AGENT_KIND_LABELS[session.agent_kind]}
-      </TableCell>
-      <TableCell className="text-muted-foreground">
-        {profileName ?? <span className="font-mono text-xs">{session.profile_id}</span>}
-      </TableCell>
-      <TableCell>
-        <SessionStatusBadge status={session.status} />
-      </TableCell>
-      <TableCell className="text-right tabular-nums text-muted-foreground">
-        {session.review_round ?? "—"}
-      </TableCell>
-      <TableCell
-        className="text-right tabular-nums text-muted-foreground"
-        title={formatTimestamp(session.last_activity_at)}
-      >
-        {formatAge(session.last_activity_at, now)}
-      </TableCell>
-      <TableCell
-        className="text-right tabular-nums text-muted-foreground"
-        title={formatTimestamp(session.ended_at)}
-      >
-        {formatAge(session.ended_at, now)}
-      </TableCell>
-    </TableRow>
-  )
-}
-
-function LoadingRows() {
-  return (
-    <>
-      {[0, 1, 2].map((row) => (
-        <TableRow key={row}>
-          <TableCell colSpan={8}>
-            <Skeleton className="h-5 w-full" />
-          </TableCell>
-        </TableRow>
-      ))}
-    </>
   )
 }

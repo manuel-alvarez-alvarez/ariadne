@@ -24,10 +24,14 @@ export function DetailPanels() {
     setSearch(next)
   }
 
+  // A closing panel takes its own state with it: `tab` and `session` say where
+  // *inside* a panel the user was, and mean nothing once it is gone.
   return (
     <>
-      {goalId && <GoalPanel goalId={goalId} onClose={() => close("goal", "task", "tab")} />}
-      {taskId && <TaskPanel taskId={taskId} onClose={() => close("task", "tab")} />}
+      {goalId && (
+        <GoalPanel goalId={goalId} onClose={() => close("goal", "task", "tab", "session")} />
+      )}
+      {taskId && <TaskPanel taskId={taskId} onClose={() => close("task", "tab", "session")} />}
     </>
   )
 }

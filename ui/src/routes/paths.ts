@@ -23,11 +23,16 @@ export const paths = {
  * Link target that opens the task's panel over the current screen: same
  * pathname, `?task=` added, every other filter or panel param kept — so a
  * task opened from a goal's lane stacks on that goal's panel.
+ *
+ * The panel's own params go: `tab` and `session` belong to whichever panel
+ * put them there, and would otherwise open the new one on a tab or a session
+ * that is not its.
  */
 export function taskPanelTo(current: URLSearchParams, taskId: string): { search: string } {
   const next = new URLSearchParams(current)
   next.set("task", taskId)
   next.delete("tab")
+  next.delete("session")
   return { search: `?${next.toString()}` }
 }
 
