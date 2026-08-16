@@ -27,6 +27,38 @@ impl Launcher {
         self.cfg.run_dir.join(session_id)
     }
 
+    /// Where the last measured pane grid is kept, beside the console log it
+    /// belongs to.
+    fn pane_size_file(&self, session_id: &str) -> PathBuf {
+        self.run_dir(session_id).join("pane-size")
+    }
+
+    /// Remember the grid a pane is drawing at.
+    ///
+    /// A session's console log is raw terminal bytes, and they only mean
+    /// anything at the size they were written at — but once the session ends,
+    /// tmux no longer has a pane to ask. So every measurement taken while it
+    /// lives is written down, and the last one is what a viewer of the
+    /// finished log gets. Best effort: a size we fail to store only costs the
+    /// viewer a default.
+    pub async fn record_pane_size(&self, session_id: &str, cols: u16, rows: u16) {
+        let path = self.pane_size_file(session_id);
+        let contents = format!("{cols}x{rows}\n");
+        // The run dir exists from the spawn that wrote the agent's config into
+        // it; a session with no run dir has no console log to size either.
+        if let Err(e) = tokio::fs::write(&path, contents).await {
+            tracing::debug!(session = %session_id, error = %e, "storing the pane size failed");
+        }
+    }
+
+    /// The last grid recorded for a session, if one ever was.
+    pub async fn last_pane_size(&self, session_id: &str) -> Option<(u16, u16)> {
+        let raw = tokio::fs::read_to_string(self.pane_size_file(session_id))
+            .await
+            .ok()?;
+        crate::tmux::parse_size(raw.trim())
+    }
+
     /// Agent kind for a profile: explicit, or the first installed CLI
     /// (claude_code, then codex, then opencode) for auto profiles.
     fn resolve_agent_kind(
@@ -46,6 +78,12 @@ impl Launcher {
 
     /// Refuse to double-spawn: one live session per (task, role) —
     /// per (task, role, profile) for reviewers.
+    ///
+    /// A pane tmux will not answer for counts as live. This is the last guard
+    /// before a second agent starts working on somebody else's task, and the
+    /// two ways of being wrong are not comparable: a spawn refused because
+    /// tmux was briefly unreachable is retried on the next tick, while one
+    /// allowed on the same grounds has to be noticed by a human.
     async fn assert_no_live_session(
         &self,
         goal_id: &str,
@@ -65,7 +103,7 @@ impl Launcher {
         for s in live {
             if s.role() == role
                 && (role != Role::Reviewer || profile_id.is_none_or(|p| p == s.profile_id))
-                && self.tmux.has_session(&s.tmux_session).await
+                && self.tmux.has_session_or_unknown(&s.tmux_session).await
             {
                 return Err(anyhow!(
                     "a live {} session already exists: {} (tmux {})",
