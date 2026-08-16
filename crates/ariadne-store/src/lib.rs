@@ -5,6 +5,7 @@
 //! [`Store::transition_task`], which validates against the core state machine
 //! and records the audit row in the same transaction.
 
+mod change;
 mod entities;
 mod events;
 mod goals;
@@ -14,6 +15,7 @@ mod reviews;
 mod sessions;
 mod tasks;
 
+pub use change::Change;
 pub use entities::*;
 pub use events::{EventFilter, NewAgentEvent};
 pub use goals::NewGoal;
@@ -25,10 +27,12 @@ pub use tasks::{NewTask, TaskFilter, TaskUpdate};
 
 use std::path::Path;
 use std::str::FromStr;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Pool, Sqlite};
+use tokio::sync::mpsc;
 
 use ariadne_core::TransitionError;
 
@@ -67,6 +71,9 @@ pub struct Store {
     write: Pool<Sqlite>,
     /// Read-only pool for queries.
     read: Pool<Sqlite>,
+    /// Change sink installed by [`Store::watch_changes`]. Shared by every
+    /// clone, so a write through any handle is announced.
+    changes: Arc<OnceLock<mpsc::UnboundedSender<Change>>>,
 }
 
 impl Store {
@@ -96,7 +103,11 @@ impl Store {
             .await
             .map_err(|e| StoreError::Invalid(format!("migration failed: {e}")))?;
 
-        Ok(Self { write, read })
+        Ok(Self {
+            write,
+            read,
+            changes: Arc::default(),
+        })
     }
 
     /// In-memory store for tests.
@@ -118,7 +129,27 @@ impl Store {
         Ok(Self {
             read: write.clone(),
             write,
+            changes: Arc::default(),
         })
+    }
+
+    /// Subscribe to committed writes (see [`Change`]).
+    ///
+    /// Returns `None` when a watcher is already installed: there is exactly
+    /// one consumer, the daemon's event bus, installed at startup. Changes
+    /// written before it is installed — or with no watcher at all — are
+    /// dropped, since clients bootstrap their state over REST anyway.
+    pub fn watch_changes(&self) -> Option<mpsc::UnboundedReceiver<Change>> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.changes.set(tx).ok()?;
+        Some(rx)
+    }
+
+    /// Announce a committed write. Non-blocking; a no-op without a watcher.
+    pub(crate) fn publish(&self, change: Change) {
+        if let Some(tx) = self.changes.get() {
+            let _ = tx.send(change);
+        }
     }
 
     pub(crate) fn w(&self) -> &Pool<Sqlite> {

@@ -3,7 +3,7 @@
 use ariadne_core::AuthorRole;
 use ariadne_core::id::new_id;
 
-use crate::{Message, Result, Store, now};
+use crate::{Change, Message, Result, Store, now};
 
 #[derive(Debug, Clone)]
 pub struct NewMessage {
@@ -31,12 +31,12 @@ impl Store {
         .bind(now())
         .execute(self.w())
         .await?;
-        Ok(
-            sqlx::query_as::<_, Message>("SELECT * FROM messages WHERE id = ?")
-                .bind(&id)
-                .fetch_one(self.r())
-                .await?,
-        )
+        let message = sqlx::query_as::<_, Message>("SELECT * FROM messages WHERE id = ?")
+            .bind(&id)
+            .fetch_one(self.r())
+            .await?;
+        self.publish(Change::MessageCreated(message.clone()));
+        Ok(message)
     }
 
     /// Messages of a task thread, keyset-paginated by id.
