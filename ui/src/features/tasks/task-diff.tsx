@@ -4,6 +4,11 @@
  * The daemon answers `409` while the branch does not exist yet (nothing has
  * been committed, or the task never started), which is a normal state for most
  * of a task's life rather than an error, so it gets its own empty state.
+ *
+ * The panel it lives in is narrow, and a wide diff does not fit it, so the same
+ * viewer — toolbar, file sections, raw fallback and all — can be lifted into a
+ * near-fullscreen dialog. It is lifted rather than duplicated: one instance,
+ * mounted in whichever of the two frames is showing.
  */
 
 import { useQuery } from "@tanstack/react-query"
@@ -14,7 +19,10 @@ import {
   FileIcon,
   FileMinusIcon,
   FilePlusIcon,
+  Maximize2Icon,
+  Minimize2Icon,
   RefreshCwIcon,
+  WrapTextIcon,
 } from "lucide-react"
 import { useMemo, useState } from "react"
 
@@ -23,10 +31,12 @@ import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import { DiffEditor, LARGE_FILE_LINES } from "./diff-editor"
-import { type DiffFile, parseUnifiedDiff } from "./diff-parse"
+import { type DiffFile, type ParsedDiff, parseUnifiedDiff } from "./diff-parse"
+import { useDiffWrap } from "./diff-prefs"
 import { taskDiffQueryOptions } from "./queries"
 
 const CHANGE_META: Record<DiffFile["change"], { label: string; icon: typeof FileIcon }> = {
@@ -39,6 +49,8 @@ const CHANGE_META: Record<DiffFile["change"], { label: string; icon: typeof File
 export function TaskDiff({ taskId }: { taskId: string }) {
   const diff = useQuery(taskDiffQueryOptions(taskId))
   const [raw, setRaw] = useState(false)
+  const [expanded, setExpanded] = useState(false)
+  const { wrap, setWrap } = useDiffWrap()
   const parsed = useMemo(() => parseUnifiedDiff(diff.data ?? ""), [diff.data])
 
   if (diff.isPending) {
@@ -54,56 +66,152 @@ export function TaskDiff({ taskId }: { taskId: string }) {
 
   const empty = (diff.data ?? "").trim().length === 0
 
-  return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm text-muted-foreground">
-          {empty
-            ? "No changes"
-            : `${parsed.files.length} ${parsed.files.length === 1 ? "file" : "files"} changed`}
-        </span>
-        {!empty && <DiffStat additions={parsed.additions} deletions={parsed.deletions} />}
-        <div className="ml-auto flex items-center gap-1">
-          <Button
-            variant={raw ? "secondary" : "ghost"}
-            size="sm"
-            onClick={() => setRaw((current) => !current)}
-            disabled={empty}
-          >
-            Raw
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => void diff.refetch()}
-            disabled={diff.isFetching}
-          >
-            <RefreshCwIcon className={cn(diff.isFetching && "animate-spin")} />
-            Refresh
-          </Button>
-        </div>
-      </div>
+  const toolbar = (
+    <DiffToolbar
+      files={parsed.files.length}
+      additions={parsed.additions}
+      deletions={parsed.deletions}
+      empty={empty}
+      raw={raw}
+      onRaw={() => setRaw((current) => !current)}
+      wrap={wrap}
+      onWrap={() => setWrap(!wrap)}
+      expanded={expanded}
+      onExpanded={() => setExpanded((current) => !current)}
+      fetching={diff.isFetching}
+      onRefresh={() => void diff.refetch()}
+    />
+  )
 
-      {empty ? (
-        <EmptyState
-          emphasis="quiet"
-          title="The branch exists but has no changes against its base yet."
-        />
-      ) : raw || parsed.files.length === 0 ? (
-        <RawDiff text={diff.data ?? ""} />
-      ) : (
-        <div className="space-y-3">
-          {parsed.preamble && <RawDiff text={parsed.preamble} />}
-          {parsed.files.map((file) => (
-            <DiffFileSection key={file.id} file={file} />
-          ))}
-        </div>
-      )}
+  const body = empty ? (
+    <EmptyState
+      emphasis="quiet"
+      title="The branch exists but has no changes against its base yet."
+    />
+  ) : raw || parsed.files.length === 0 ? (
+    <RawDiff text={diff.data ?? ""} wrap={wrap} />
+  ) : (
+    <DiffFiles parsed={parsed} wrap={wrap} />
+  )
+
+  if (!expanded) {
+    return (
+      <div className="space-y-3">
+        {toolbar}
+        {body}
+      </div>
+    )
+  }
+
+  return (
+    <>
+      {/* The viewer itself is in the dialog; the tab keeps its height rather
+          than collapsing behind it, and says where the diff went. */}
+      <EmptyState
+        emphasis="quiet"
+        title="The diff is open in the expanded view."
+        action={
+          <Button variant="outline" size="sm" onClick={() => setExpanded(false)}>
+            <Minimize2Icon />
+            Back to the panel
+          </Button>
+        }
+      />
+      <Dialog open onOpenChange={(open) => open || setExpanded(false)}>
+        {/* Near-fullscreen, and a two-row grid so only the diff scrolls: the
+            toolbar — file navigation, Raw, wrap — stays put above it. */}
+        <DialogContent
+          showCloseButton={false}
+          className="h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] grid-rows-[auto_minmax(0,1fr)] gap-3 sm:max-w-[calc(100vw-2rem)]"
+        >
+          <DialogTitle className="sr-only">Diff of the task branch</DialogTitle>
+          {toolbar}
+          <div className="min-h-0 overflow-y-auto">{body}</div>
+        </DialogContent>
+      </Dialog>
+    </>
+  )
+}
+
+function DiffToolbar({
+  files,
+  additions,
+  deletions,
+  empty,
+  raw,
+  onRaw,
+  wrap,
+  onWrap,
+  expanded,
+  onExpanded,
+  fetching,
+  onRefresh,
+}: {
+  files: number
+  additions: number
+  deletions: number
+  empty: boolean
+  raw: boolean
+  onRaw: () => void
+  wrap: boolean
+  onWrap: () => void
+  expanded: boolean
+  onExpanded: () => void
+  fetching: boolean
+  onRefresh: () => void
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-sm text-muted-foreground">
+        {empty ? "No changes" : `${files} ${files === 1 ? "file" : "files"} changed`}
+      </span>
+      {!empty && <DiffStat additions={additions} deletions={deletions} />}
+      <div className="ml-auto flex items-center gap-1">
+        <Button
+          variant={wrap ? "secondary" : "ghost"}
+          size="sm"
+          onClick={onWrap}
+          aria-pressed={wrap}
+          title={wrap ? "Stop wrapping long lines" : "Wrap long lines"}
+        >
+          <WrapTextIcon />
+          Wrap
+        </Button>
+        <Button variant={raw ? "secondary" : "ghost"} size="sm" onClick={onRaw} disabled={empty}>
+          Raw
+        </Button>
+        <Button variant="ghost" size="sm" onClick={onRefresh} disabled={fetching}>
+          <RefreshCwIcon className={cn(fetching && "animate-spin")} />
+          Refresh
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={onExpanded}
+          disabled={empty}
+          aria-pressed={expanded}
+          aria-label={expanded ? "Collapse the diff back into the panel" : "Expand the diff"}
+          title={expanded ? "Collapse the diff back into the panel" : "Expand the diff"}
+        >
+          {expanded ? <Minimize2Icon /> : <Maximize2Icon />}
+        </Button>
+      </div>
     </div>
   )
 }
 
-function DiffFileSection({ file }: { file: DiffFile }) {
+function DiffFiles({ parsed, wrap }: { parsed: ParsedDiff; wrap: boolean }) {
+  return (
+    <div className="space-y-3">
+      {parsed.preamble && <RawDiff text={parsed.preamble} wrap={wrap} />}
+      {parsed.files.map((file) => (
+        <DiffFileSection key={file.id} file={file} wrap={wrap} />
+      ))}
+    </div>
+  )
+}
+
+function DiffFileSection({ file, wrap }: { file: DiffFile; wrap: boolean }) {
   const lineCount = useMemo(
     () => file.hunks.reduce((total, hunk) => total + hunk.lines.length, 0),
     [file],
@@ -158,9 +266,9 @@ function DiffFileSection({ file }: { file: DiffFile }) {
               </Button>
             </div>
           ) : huge ? (
-            <RawDiff text={file.raw} bare />
+            <RawDiff text={file.raw} wrap={wrap} bare />
           ) : (
-            <DiffEditor file={file} />
+            <DiffEditor file={file} wrap={wrap} />
           )}
         </div>
       )}
@@ -171,18 +279,21 @@ function DiffFileSection({ file }: { file: DiffFile }) {
 function DiffStat({ additions, deletions }: { additions: number; deletions: number }) {
   return (
     <span className="shrink-0 font-mono text-xs">
-      <span className="text-emerald-600 dark:text-emerald-400">+{additions}</span>{" "}
-      <span className="text-red-600 dark:text-red-400">−{deletions}</span>
+      <span className="text-diff-add-fg">+{additions}</span>{" "}
+      <span className="text-diff-remove-fg">−{deletions}</span>
     </span>
   )
 }
 
 /** The fallback: the diff exactly as the daemon sent it. */
-function RawDiff({ text, bare = false }: { text: string; bare?: boolean }) {
+function RawDiff({ text, wrap, bare = false }: { text: string; wrap: boolean; bare?: boolean }) {
   return (
     <pre
       className={cn(
-        "overflow-x-auto px-3 py-2 font-mono text-xs leading-relaxed",
+        "px-3 py-2 font-mono text-xs leading-relaxed",
+        // The wrap toggle means the same thing here as it does in the editor,
+        // so the raw view follows it rather than always scrolling sideways.
+        wrap ? "whitespace-pre-wrap break-words" : "overflow-x-auto",
         !bare && "rounded-lg border bg-muted/20",
       )}
     >

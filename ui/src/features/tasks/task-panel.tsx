@@ -8,19 +8,10 @@
  * tab keeps its selection there too, under `?session=` — and a selected
  * session is a drill-down: it takes the panel over, task header and tabs
  * included, with a link back to the task.
- *
- * Opened from a goal's panel (`stackedOnGoal`), it is the second sheet of a
- * stack: narrower than the goal's, so that one keeps showing at its left, and
- * carrying the breadcrumb back to it.
  */
 
 import { useQueries, useQuery } from "@tanstack/react-query"
-import {
-  ChevronRightIcon,
-  GitBranchIcon,
-  GitCommitHorizontalIcon,
-  TriangleAlertIcon,
-} from "lucide-react"
+import { GitBranchIcon, GitCommitHorizontalIcon, TriangleAlertIcon } from "lucide-react"
 import type { ReactNode } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 
@@ -33,11 +24,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { goalQueryOptions } from "@/features/goals/queries"
-import { shortId } from "@/lib/ids"
 import { formatAbsolute, formatRelative } from "@/lib/time"
 import { cn } from "@/lib/utils"
-import { paths, usePanelSessionNavigation, useTaskPanelTo } from "@/routes/paths"
+import { paths, useTaskPanelTo } from "@/routes/paths"
 import { shortSha } from "./format"
 import { taskQueryOptions } from "./queries"
 import { primaryStatus, subStatus, TASK_STATUS_META } from "./status"
@@ -51,21 +40,11 @@ import { TaskSessions, TaskSessionView } from "./task-sessions"
 const TABS = ["conversation", "reviews", "history", "diff", "sessions"] as const
 type Tab = (typeof TABS)[number]
 
-export function TaskPanel({
-  taskId,
-  onClose,
-  stackedOnGoal,
-}: {
-  taskId: string
-  onClose: () => void
-  /** The goal whose panel this one opened over, when there is one under it. */
-  stackedOnGoal?: string
-}) {
+export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => void }) {
   const [search, setSearch] = useSearchParams()
   const task = useQuery(taskQueryOptions(taskId))
   const tab = TABS.find((value) => value === search.get("tab")) ?? "conversation"
   const session = search.get("session") ?? undefined
-  const selectSession = usePanelSessionNavigation()
 
   function setTab(next: Tab) {
     const params = new URLSearchParams(search)
@@ -73,28 +52,17 @@ export function TaskPanel({
     setSearch(params, { replace: true })
   }
 
+  /** The session the panel is drilled into; `undefined` goes back to the task. */
+  function selectSession(next: string | undefined) {
+    const params = new URLSearchParams(search)
+    if (next === undefined) params.delete("session")
+    else params.set("session", next)
+    setSearch(params, { replace: true })
+  }
+
   return (
     <Sheet open onOpenChange={(open) => open || onClose()}>
-      <SheetContent
-        // Stacked, it leaves the goal's sheet showing at its left and takes
-        // the one darkening of the stack with it — the sheet underneath gives
-        // its own up (see `GoalSheet`), so the screen is dimmed once and the
-        // goal reads as being behind this.
-        className={cn(
-          "sm:max-w-3xl",
-          stackedOnGoal && "w-[calc(100%-2.5rem)] shadow-2xl sm:max-w-2xl",
-        )}
-        overlay={stackedOnGoal ? { forceRender: true } : undefined}
-      >
-        {stackedOnGoal ? (
-          <PanelBreadcrumb
-            goalId={stackedOnGoal}
-            taskTitle={task.data?.title}
-            taskId={taskId}
-            onOpenGoal={onClose}
-          />
-        ) : null}
-
+      <SheetContent className="sm:max-w-3xl">
         {/* A selected session replaces the task view entirely — the panel is
             that session's now, and the way back is the link it carries. It is
             checked before the task query so a link into a session opens on it
@@ -124,7 +92,7 @@ export function TaskPanel({
           </>
         ) : (
           <>
-            <TaskHeader task={task.data} showGoalLink={stackedOnGoal === undefined} />
+            <TaskHeader task={task.data} />
             <TaskFacts task={task.data} />
 
             {task.data.description.trim().length > 0 && (
@@ -169,60 +137,17 @@ export function TaskPanel({
   )
 }
 
-/**
- * Where this panel sits: the goal it belongs to, then the task itself. The
- * goal segment drops this panel back onto the one underneath it, which is what
- * closing it does — the goal's sheet is already open behind this one.
- */
-function PanelBreadcrumb({
-  goalId,
-  taskId,
-  taskTitle,
-  onOpenGoal,
-}: {
-  goalId: string
-  taskId: string
-  /** The task's own name, once it is loaded. */
-  taskTitle?: string
-  onOpenGoal: () => void
-}) {
-  const goal = useQuery(goalQueryOptions(goalId))
-  return (
-    <nav
-      aria-label="Breadcrumb"
-      // Clears the sheet's own close button, which floats over this row.
-      className="flex min-w-0 items-center gap-1.5 pr-8 text-xs text-muted-foreground"
-    >
-      <button
-        type="button"
-        onClick={onOpenGoal}
-        className="min-w-0 truncate underline-offset-3 hover:text-foreground hover:underline"
-      >
-        {goal.data?.title ?? "Goal"}
-      </button>
-      <ChevronRightIcon className="size-3 shrink-0" aria-hidden />
-      <span className="min-w-0 truncate font-medium text-foreground" aria-current="page">
-        {taskTitle ?? `task ${shortId(taskId)}`}
-      </span>
-    </nav>
-  )
-}
-
-function TaskHeader({ task, showGoalLink }: { task: TaskDto; showGoalLink: boolean }) {
+function TaskHeader({ task }: { task: TaskDto }) {
   const status = TASK_STATUS_META[primaryStatus(task.status)]
   const sub = subStatus(task.status)
   return (
     <SheetHeader>
-      {/* Only when the goal is not already open behind this panel: stacked,
-          the breadcrumb above is the way back to it. */}
-      {showGoalLink ? (
-        <Link
-          to={paths.goal(task.goal_id)}
-          className="w-fit text-xs text-muted-foreground underline-offset-3 hover:underline"
-        >
-          ← Open the goal
-        </Link>
-      ) : null}
+      <Link
+        to={paths.goal(task.goal_id)}
+        className="w-fit text-xs text-muted-foreground underline-offset-3 hover:underline"
+      >
+        ← Open the goal
+      </Link>
       <div className="flex flex-wrap items-start gap-3">
         <SheetTitle>{task.title}</SheetTitle>
         <div className="ml-auto shrink-0">
@@ -357,20 +282,11 @@ function Dependencies({ ids }: { ids: string[] }) {
   )
 }
 
-/**
- * Swaps the open panel over to the dependency. It replaces rather than pushes:
- * the panel is still the same one entry of history, so closing it closes it
- * instead of stepping back through the tasks it was pointed at.
- */
+/** Swaps the open panel over to the dependency. */
 function DependencyLink({ id, title }: { id: string; title?: string }) {
   const to = useTaskPanelTo(id)
   return (
-    <Link
-      to={to}
-      replace
-      className="truncate text-xs underline-offset-3 hover:underline"
-      title={id}
-    >
+    <Link to={to} className="truncate text-xs underline-offset-3 hover:underline" title={id}>
       {title ?? id}
     </Link>
   )

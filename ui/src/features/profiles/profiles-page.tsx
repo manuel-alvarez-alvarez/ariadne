@@ -17,7 +17,6 @@ import { Fragment, type ReactNode, useState } from "react"
 import { ApiError, type ProfileDto, type Role } from "@/api"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
-import { PageHeader } from "@/components/page-header"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -73,17 +72,20 @@ export function ProfilesPage() {
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <PageHeader
-        title="Profiles"
-        description="What an agent runs as: a role in the orchestration, an agent CLI and model, and the system prompt it is spawned with."
-        actions={
-          <Button onClick={openCreate}>
-            <PlusIcon />
-            New profile
-          </Button>
-        }
-      />
+    <div className="mx-auto flex w-full max-w-5xl flex-col gap-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex flex-col gap-1">
+          <h1 className="font-heading text-xl font-semibold tracking-tight">Profiles</h1>
+          <p className="max-w-prose text-sm text-muted-foreground">
+            What an agent runs as: a role in the orchestration, an agent CLI and model, and the
+            system prompt it is spawned with.
+          </p>
+        </div>
+        <Button onClick={openCreate}>
+          <PlusIcon />
+          New profile
+        </Button>
+      </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Tabs value={roleFilter} onValueChange={(value) => setRoleFilter(value as RoleFilter)}>

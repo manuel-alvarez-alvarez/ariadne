@@ -79,12 +79,11 @@ src/
   api/             typed HTTP client, generated types, query-key convention
   events/          the SSE connection and its dispatcher
   stores/          zustand: settings (daemon URL), stream status
-  hooks/           shared hooks (connection state, global shortcuts)
+  hooks/           shared hooks (connection state)
   routes/          router, URL helpers, 404
   components/      app shell, sidebar, theme + settings + status
     ui/            shadcn/ui primitives
   features/
-    command-palette/ ⌘K: search over every entity, plus the actions
     goals/         goals list + goal detail (incl. its task board)
     tasks/         task detail
     sessions/      session list + session detail, embedded by the panels
@@ -204,40 +203,6 @@ one). `#/sessions` is not a URL the app answers — it falls through to the 404.
 A **hash router** is used on purpose: in a packaged build the frontend is served
 straight off Tauri's asset protocol with no history fallback, so a reload on a
 deep link has to resolve client-side.
-
-### Keyboard
-
-| Chord | What it does |
-|---|---|
-| `⌘K` / `Ctrl+K` | the command palette |
-| `⌘,` / `Ctrl+,` | settings |
-| `Escape` | closes the palette, then the topmost panel |
-
-Both chords answer to **either** modifier, on every platform: the app runs in a
-Tauri WebView and in a browser tab, and a chord that silently does nothing
-because the platform was sniffed wrong is worse than one that answers to both.
-Only the hint printed next to the header's search button picks a side
-(`shortcutLabel` in `src/lib/shortcuts.ts`).
-
-They are bound once, by the shell, in `src/hooks/use-global-shortcuts.ts` —
-`window`, bubble phase, skipped when the keystroke was already handled or is
-going into a text field, a CodeMirror editor or the textarea xterm reads a
-session's pane through. `Escape` is deliberately *not* bound: it belongs to
-whatever is on top, and Base UI's dialogs already close the topmost one, so a
-global handler would take two layers down at once.
-
-The palette (`src/features/command-palette/`) searches the goal, task, session
-and profile lists that are **already in the query cache** — the same keys their
-own screens read, fetched only while it is open — and its rows navigate through
-`src/routes/paths.ts`, so a task stacks its panel on whatever screen it was
-opened over. Two notes on the matching, both in `score.ts`:
-
-- ulids live in an entry's `keywords`, matched literally, never fuzzily: 26
-  characters of random letters answer to almost any subsequence query, so
-  leaving them in the scored text let `planner` find a task called "Keyboard
-  support";
-- cmdk sorts the rows *inside* a group and leaves the groups where they were
-  written, so the palette orders the groups itself, by their best match.
 
 ### UI components
 
