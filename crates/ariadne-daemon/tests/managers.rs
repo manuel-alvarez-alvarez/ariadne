@@ -257,8 +257,10 @@ fn session_names_are_stable_and_short() {
         session_name(goal, Some(task), "engineer", None),
         "ariadne-tjs6gk44-c5dm7hk9-eng"
     );
+    // Reviewers are told apart by profile, not by round: one name for all of
+    // a reviewer's rounds on a task.
     assert_eq!(
-        session_name(goal, Some(task), "reviewer", Some(2)),
-        "ariadne-tjs6gk44-c5dm7hk9-rev-r2"
+        session_name(goal, Some(task), "reviewer", Some("dm7hk9pf")),
+        "ariadne-tjs6gk44-c5dm7hk9-rev-dm7hk9pf"
     );
 }

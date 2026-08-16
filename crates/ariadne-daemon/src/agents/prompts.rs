@@ -142,6 +142,27 @@ pub fn reviewer_briefing(
     )
 }
 
+/// Resume prompt for a reviewer coming back to a task it already reviewed.
+///
+/// Its worktree moved under it while it was away, so the first thing it is
+/// told is that what it read last round is stale — and which round the verdict
+/// it now owes belongs to, since reviews are recorded per round.
+pub fn reviewer_resume_briefing(task: &Task, summary: Option<&str>) -> String {
+    format!(
+        "The engineer revised the change: this is review round {round} of \"{title}\".\n\n\
+         Your worktree has been moved to the new tip of {branch}, so the diff you \
+         read last round is out of date. Fetch it again with `get_diff`, review the \
+         change as it stands now — checking whether the feedback you gave was \
+         addressed — and submit exactly one verdict for round {round}: `approve` or \
+         `request_changes`.\n\n\
+         ## Engineer's summary of this revision\n{summary}",
+        round = task.review_round,
+        title = task.title,
+        branch = task.branch,
+        summary = summary.unwrap_or("(none provided)")
+    )
+}
+
 /// Resume prompt for an engineer after change requests.
 pub fn changes_requested_briefing(feedback: &[(String, String)]) -> String {
     let items = feedback

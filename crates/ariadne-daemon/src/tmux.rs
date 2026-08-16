@@ -261,19 +261,24 @@ pub(crate) fn tail(id: &str) -> &str {
 }
 
 /// Build the canonical tmux session name for an agent session.
+///
+/// The name is the session's identity for its whole life, so it names what
+/// does not change: the goal, the task, the role — and, for a reviewer, which
+/// reviewer (`suffix`), since a task can have several and each keeps one
+/// session across every review round.
 pub fn session_name(
     goal_id: &str,
     task_id: Option<&str>,
     role: &str,
-    round: Option<i64>,
+    suffix: Option<&str>,
 ) -> String {
     let mut name = format!("ariadne-{}", tail(goal_id));
     if let Some(task) = task_id {
         name.push_str(&format!("-{}", tail(task)));
     }
     name.push_str(&format!("-{}", &role[..3.min(role.len())]));
-    if let Some(r) = round {
-        name.push_str(&format!("-r{r}"));
+    if let Some(suffix) = suffix {
+        name.push_str(&format!("-{suffix}"));
     }
     name
 }

@@ -8,7 +8,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result, anyhow};
 
 use ariadne_core::{Role, SessionStatus, TaskStatus};
-use ariadne_store::{AgentSession, NewSession, SessionFilter, Store};
+use ariadne_store::{AgentSession, NewSession, SessionFilter, Store, Task};
 
 use crate::agents::{SpawnCtx, SpawnPlan, adapter_for, detect_first_available, prompts};
 use crate::config::Config;
@@ -303,8 +303,46 @@ impl Launcher {
             .map_err(Into::into)
     }
 
-    /// Spawn one reviewer for a task's current round (detached worktree at
-    /// the branch tip).
+    /// The reviewer's detached worktree, pinned at the branch tip: created on
+    /// the first round, re-pointed at the tip on every later one — the same
+    /// worktree serves the whole review, as the same session does.
+    async fn reviewer_worktree(&self, task: &Task, profile_id: &str) -> Result<PathBuf> {
+        let worktree = self
+            .cfg
+            .worktree_root
+            .join(tail(&task.goal_id))
+            .join(format!("{}-rev-{}", tail(&task.id), tail(profile_id)));
+        if worktree.exists() {
+            // New round: refresh to the current branch tip.
+            self.git.checkout_detached(&worktree, &task.branch).await?;
+        } else {
+            let repo = self.store.get_goal_repo(&task.repo_id).await?;
+            std::fs::create_dir_all(worktree.parent().unwrap())?;
+            self.git
+                .add_detached_worktree(&PathBuf::from(&repo.path), &worktree, &task.branch)
+                .await?;
+        }
+        Ok(worktree)
+    }
+
+    /// The engineer's review-request summary: the latest message it wrote, if
+    /// any.
+    pub(crate) async fn engineer_summary(&self, task_id: &str) -> Result<Option<String>> {
+        Ok(self
+            .store
+            .list_task_messages(task_id, None, 200)
+            .await?
+            .into_iter()
+            .rev()
+            .find(|m| m.author_role() == ariadne_core::AuthorRole::Engineer)
+            .map(|m| m.body))
+    }
+
+    /// Spawn one reviewer for a task (detached worktree at the branch tip).
+    ///
+    /// The session is not tied to the round it starts in: later rounds resume
+    /// this very session (see [`Launcher::resume_reviewer`]), so its name says
+    /// which reviewer of which task it is and nothing about when it began.
     pub async fn spawn_reviewer(&self, task_id: &str, profile_id: &str) -> Result<AgentSession> {
         let task = self.store.get_task(task_id).await?;
         let goal = self.store.get_goal(&task.goal_id).await?;
@@ -325,22 +363,7 @@ impl Launcher {
         self.assert_no_live_session(&goal.id, Some(task_id), Role::Reviewer, Some(&profile.id))
             .await?;
 
-        let worktree = self.cfg.worktree_root.join(tail(&goal.id)).join(format!(
-            "{}-rev-{}",
-            tail(&task.id),
-            tail(&profile.id)
-        ));
-        let repo_path = PathBuf::from(&repo.path);
-        if worktree.exists() {
-            // New round: refresh to the current branch tip.
-            self.git.checkout_detached(&worktree, &task.branch).await?;
-        } else {
-            std::fs::create_dir_all(worktree.parent().unwrap())?;
-            self.git
-                .add_detached_worktree(&repo_path, &worktree, &task.branch)
-                .await?;
-        }
-
+        let worktree = self.reviewer_worktree(&task, &profile.id).await?;
         let session = self
             .store
             .create_session(NewSession {
@@ -352,26 +375,89 @@ impl Launcher {
                 tmux_session: session_name(
                     &goal.id,
                     Some(&task.id),
-                    &format!("rev{}", tail(&profile.id)),
-                    Some(task.review_round),
+                    "reviewer",
+                    Some(tail(&profile.id)),
                 ),
                 worktree_path: Some(worktree.display().to_string()),
                 review_round: Some(task.review_round),
             })
             .await?;
 
-        // The engineer's review-request summary is the latest message, if any.
-        let summary = self
-            .store
-            .list_task_messages(&task.id, None, 200)
-            .await?
-            .into_iter()
-            .rev()
-            .find(|m| m.author_role() == ariadne_core::AuthorRole::Engineer)
-            .map(|m| m.body);
+        let summary = self.engineer_summary(&task.id).await?;
         let system = prompts::system_prompt(&profile, Role::Reviewer);
         let briefing = prompts::reviewer_briefing(&task, &goal, &repo, summary.as_deref());
         self.spawn(&session, worktree, system, briefing).await?;
+        self.store
+            .get_session(&session.id)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Resume a reviewer's previous agent session for the task's current
+    /// round, relaunching the very same session — row, id and tmux name — so
+    /// a reviewer that sees a task through several rounds remembers what it
+    /// asked for last time instead of reading the change afresh every round
+    /// (spawn afresh if there is nothing to resume).
+    ///
+    /// The reviewer's worktree is re-pointed at the branch tip before the
+    /// agent starts, so the tree it wakes up in is the one it is asked about;
+    /// the row's `review_round` moves to the round being reviewed now.
+    pub async fn resume_reviewer(
+        &self,
+        task_id: &str,
+        profile_id: &str,
+        instruction: &str,
+    ) -> Result<AgentSession> {
+        let task = self.store.get_task(task_id).await?;
+        let profile = self.store.get_profile(profile_id).await?;
+
+        // Find this reviewer's most recent session with a captured internal id
+        // (codex and opencode report theirs from a hook, so a session that
+        // never got going may have none — that is nothing to resume).
+        let previous = self
+            .store
+            .list_sessions(SessionFilter {
+                task_id: Some(task.id.clone()),
+                ..Default::default()
+            })
+            .await?
+            .into_iter()
+            .rev()
+            .find(|s| {
+                s.role() == Role::Reviewer
+                    && s.profile_id == profile.id
+                    && s.internal_session_id.is_some()
+            });
+        let Some(previous) = previous else {
+            return self.spawn_reviewer(task_id, profile_id).await;
+        };
+        let internal = previous
+            .internal_session_id
+            .clone()
+            .expect("filtered above");
+
+        let worktree = self.reviewer_worktree(&task, &profile.id).await?;
+        if self.tmux.has_session(&previous.tmux_session).await {
+            self.tmux.kill_session(&previous.tmux_session).await.ok();
+        }
+        let session = self
+            .store
+            .restart_session(
+                &previous.id,
+                Some(&worktree.display().to_string()),
+                Some(task.review_round),
+            )
+            .await?;
+
+        let ctx = self.spawn_ctx(
+            &session,
+            worktree,
+            &profile,
+            prompts::system_prompt(&profile, Role::Reviewer),
+            String::new(),
+        );
+        let plan = adapter_for(session.agent_kind()).plan_resume(&ctx, &internal, instruction)?;
+        self.launch(&session, plan).await?;
         self.store
             .get_session(&session.id)
             .await
@@ -419,7 +505,7 @@ impl Launcher {
         // agent actually produced.
         let session = self
             .store
-            .restart_session(&previous.id, Some(&worktree.display().to_string()))
+            .restart_session(&previous.id, Some(&worktree.display().to_string()), None)
             .await?;
 
         let ctx = self.spawn_ctx(
@@ -482,7 +568,9 @@ impl Launcher {
             );
         }
 
-        let session = self.store.restart_session(&previous.id, None).await?;
+        // Neither the worktree nor (for a reviewer) the round changes: this is
+        // the same session put back on its feet, not a new round of work.
+        let session = self.store.restart_session(&previous.id, None, None).await?;
         let ctx = self.spawn_ctx(
             &session,
             cwd,
