@@ -26,12 +26,12 @@ const VERDICT_META: Record<
 > = {
   approve: {
     label: "Approved",
-    badge: "bg-emerald-500/12 text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-300",
+    badge: "bg-status-done-soft text-status-done-fg",
     icon: CheckCircle2Icon,
   },
   request_changes: {
     label: "Changes requested",
-    badge: "bg-orange-500/12 text-orange-700 dark:bg-orange-400/15 dark:text-orange-300",
+    badge: "bg-status-warn-soft text-status-warn-fg",
     icon: MessageSquareWarningIcon,
   },
 }
