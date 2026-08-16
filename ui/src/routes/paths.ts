@@ -3,9 +3,10 @@
  * hand-writing paths so a feature can move its routes without breaking the
  * links other features have to it.
  *
- * Goals and tasks have no pages of their own: their details open in side
- * panels driven by search params (`?goal=` on the goals board, `?task=` on
- * any screen), which `src/components/detail-panels.tsx` reads.
+ * Goals, tasks and sessions have no pages of their own: their details open in
+ * side panels driven by search params (`?goal=` on the goals board, `?task=`
+ * on any screen, `?tab=sessions&session=` inside either panel), which
+ * `src/components/detail-panels.tsx` reads.
  */
 
 import { useSearchParams } from "react-router-dom"
@@ -14,8 +15,6 @@ export const paths = {
   goals: () => "/goals",
   /** The goals board with this goal's panel open. */
   goal: (goalId: string) => `/goals?goal=${goalId}`,
-  sessions: () => "/sessions",
-  session: (sessionId: string) => `/sessions/${sessionId}`,
   profiles: () => "/profiles",
 } as const
 

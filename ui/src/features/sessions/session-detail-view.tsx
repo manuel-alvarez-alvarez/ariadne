@@ -1,7 +1,7 @@
 /**
  * One agent session laid out in full: what it is, what it is printing, and
- * what it reported. No page chrome, so it renders the same on the session
- * screen and inside the goal and task panels.
+ * what it reported. No page chrome, so it renders the same inside the goal
+ * panel and the task panel.
  *
  * The metadata comes from the query cache, which the event dispatcher keeps
  * current — a session going idle or being killed elsewhere updates this view

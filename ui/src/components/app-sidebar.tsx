@@ -1,4 +1,4 @@
-import { CpuIcon, TargetIcon, TerminalIcon } from "lucide-react"
+import { CpuIcon, TargetIcon } from "lucide-react"
 import { NavLink } from "react-router-dom"
 
 import { cn } from "@/lib/utils"
@@ -6,7 +6,6 @@ import { paths } from "@/routes/paths"
 
 const NAV_ITEMS = [
   { to: paths.goals(), label: "Goals", icon: TargetIcon },
-  { to: paths.sessions(), label: "Sessions", icon: TerminalIcon },
   { to: paths.profiles(), label: "Profiles", icon: CpuIcon },
 ] as const
 

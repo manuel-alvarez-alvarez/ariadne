@@ -8,8 +8,8 @@
  * panel takes it away with it (see `src/components/detail-panels.tsx`).
  *
  * The list is {@link SessionsList} and the detail is {@link SessionDetailView},
- * the same two the sessions screen is made of — both stay live off the query
- * cache the event dispatcher patches.
+ * the same two the task panel's sessions tab is made of — both stay live off
+ * the query cache the event dispatcher patches.
  */
 
 import { useQuery } from "@tanstack/react-query"
