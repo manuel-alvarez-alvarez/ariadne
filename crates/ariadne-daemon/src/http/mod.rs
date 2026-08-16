@@ -80,7 +80,7 @@ impl AppState {
         sessions::list, sessions::get, sessions::kill, sessions::resume, sessions::logs,
         events::list, stream::stream,
     ),
-    components(schemas(ariadne_api::stream::DomainEvent)),
+    components(schemas(ariadne_api::stream::DomainEvent, ariadne_api::stream::ResyncDto)),
     tags(
         (name = "system", description = "Daemon health and metadata"),
         (name = "profiles", description = "Agent profiles (role + system prompt + agent CLI)"),

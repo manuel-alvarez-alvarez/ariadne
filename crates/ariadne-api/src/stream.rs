@@ -3,6 +3,9 @@
 //! Events are *fat*: each one carries the full updated DTO so a client can
 //! patch its state without a refetch. There is no replay — a client that
 //! (re)connects bootstraps over REST and then follows the stream.
+//!
+//! Besides the [`DomainEvent`] kinds, the stream has one control event,
+//! `resync` (see [`ResyncDto`]), sent when a connection has lost events.
 
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
@@ -29,6 +32,18 @@ pub struct TaskUpdatedDto {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DeletedDto {
     pub id: String,
+}
+
+/// Payload of the `resync` control event.
+///
+/// Sent as the last message of a connection that fell too far behind: the
+/// daemon dropped `missed` events for it and closes the stream. The client
+/// must refetch its REST state before following the stream again (an
+/// `EventSource` reconnects on its own).
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ResyncDto {
+    /// Events this connection lost. Informational: they cannot be recovered.
+    pub missed: u64,
 }
 
 /// One domain event. Serialized as `{"event": "<kind>", "data": <payload>}`;
