@@ -420,15 +420,24 @@ impl Scheduler {
                     return Box::pin(self.reconcile_task(task_id)).await;
                 }
 
-                // Spawn reviewers that have no verdict and no live session.
+                // Start the reviewers that have no verdict and no live
+                // session. A reviewer keeps one session for the whole task,
+                // so what runs for round two onwards is that same session
+                // resumed — its round is not part of its identity, only of
+                // the briefing it is woken with.
                 let verdict_by: std::collections::HashSet<_> = reviews
                     .iter()
                     .map(|r| r.reviewer_profile_id.clone())
                     .collect();
-                for profile_id in reviewers {
-                    if verdict_by.contains(&profile_id) {
-                        continue;
-                    }
+                let pending: Vec<String> = reviewers
+                    .into_iter()
+                    .filter(|p| !verdict_by.contains(p))
+                    .collect();
+                if pending.is_empty() {
+                    return Ok(());
+                }
+                let summary = self.launcher.engineer_summary(&task.id).await?;
+                for profile_id in pending {
                     let live = self
                         .store
                         .list_sessions(SessionFilter {
@@ -444,7 +453,6 @@ impl Scheduler {
                     for s in &live {
                         if s.role() == Role::Reviewer
                             && s.profile_id == profile_id
-                            && s.review_round == Some(task.review_round)
                             && self
                                 .launcher
                                 .tmux
@@ -456,8 +464,16 @@ impl Scheduler {
                         }
                     }
                     if !has_live {
-                        info!(task = %task.id, reviewer = %profile_id, round = task.review_round, "spawning reviewer");
-                        self.launcher.spawn_reviewer(&task.id, &profile_id).await?;
+                        info!(task = %task.id, reviewer = %profile_id, round = task.review_round, "starting reviewer");
+                        // Resumes the reviewer's earlier session when there is
+                        // one, spawns a first for it otherwise.
+                        self.launcher
+                            .resume_reviewer(
+                                &task.id,
+                                &profile_id,
+                                &prompts::reviewer_resume_briefing(&task, summary.as_deref()),
+                            )
+                            .await?;
                         self.spawn_failures.remove(&task.id);
                     }
                 }

@@ -513,7 +513,7 @@ async fn restarting_a_session_reopens_the_same_row() {
     );
 
     let restarted = store
-        .restart_session(&session.id, Some("/tmp/wt2"))
+        .restart_session(&session.id, Some("/tmp/wt2"), Some(2))
         .await
         .unwrap();
     assert_eq!(restarted.id, session.id, "the same row is reused");
@@ -521,6 +521,11 @@ async fn restarting_a_session_reopens_the_same_row() {
     assert_eq!(restarted.ended_at, None, "it has not ended after all");
     assert!(restarted.last_activity_at.is_some());
     assert_eq!(restarted.worktree_path.as_deref(), Some("/tmp/wt2"));
+    assert_eq!(
+        restarted.review_round,
+        Some(2),
+        "a reviewer's row names the round it is being relaunched for"
+    );
     assert_eq!(
         restarted.internal_session_id.as_deref(),
         Some("uuid-1234"),
@@ -538,13 +543,17 @@ async fn restarting_a_session_reopens_the_same_row() {
             .len(),
         1
     );
-    // An omitted worktree leaves the stored one alone.
-    let again = store.restart_session(&session.id, None).await.unwrap();
+    // Omitted values leave the stored ones alone.
+    let again = store
+        .restart_session(&session.id, None, None)
+        .await
+        .unwrap();
     assert_eq!(again.worktree_path.as_deref(), Some("/tmp/wt2"));
+    assert_eq!(again.review_round, Some(2));
 
     assert!(
         store
-            .restart_session("01ARZ3NDEKTSV4RRFFQ69G5FAV", None)
+            .restart_session("01ARZ3NDEKTSV4RRFFQ69G5FAV", None, None)
             .await
             .is_err()
     );
