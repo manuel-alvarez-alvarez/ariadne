@@ -133,9 +133,11 @@ async fn session_by_id(client: &Client, id: &str) -> Result<Option<SessionDto>> 
 }
 
 /// Attach to one specific session: its own tmux when alive, else revive it.
-/// A worktree that is gone surfaces the daemon's revive error as-is.
+/// The tmux itself decides — the persisted status can be stale in either
+/// direction, and the daemon's resume treats tmux existence as authoritative
+/// too. A worktree that is gone surfaces the daemon's revive error as-is.
 async fn attach_session(client: &Client, session: SessionDto) -> Result<()> {
-    let session = if session.status.is_live() && tmux_alive(&session.tmux_session) {
+    let session = if tmux_alive(&session.tmux_session) {
         session
     } else {
         eprintln!(
