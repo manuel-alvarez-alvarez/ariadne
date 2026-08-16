@@ -318,11 +318,15 @@ export interface paths {
         };
         /**
          * Follow a session's terminal output.
-         * @description The first message is a `snapshot` event carrying the scrollback the
-         *     `/logs` endpoint would return; every later `delta` event carries only what
-         *     has been written since. Both payloads are a `SessionLogChunk`: raw
-         *     terminal bytes, escape sequences and all, are JSON-encoded so they cannot
-         *     break SSE's line framing.
+         * @description A live pane opens with a `resize` event (`SessionPaneSize`) carrying the
+         *     grid it draws against: the snapshot is wrapped at that width and every
+         *     later repaint is addressed in it, so it comes first and is repeated
+         *     whenever the pane is resized under us — by `ariadne attach`, say.
+         *
+         *     Then a `snapshot` event carrying the scrollback the `/logs` endpoint would
+         *     return, and a `delta` event per burst of new output. Both payloads are a
+         *     `SessionLogChunk`: raw terminal bytes, escape sequences and all, are
+         *     JSON-encoded so they cannot break SSE's line framing.
          *
          *     When the session ends — or if it was already over when the request arrived
          *     — the remaining output is flushed, a final `end` event (`SessionLogEnd`)
@@ -349,9 +353,9 @@ export interface paths {
         put?: never;
         /**
          * Revive an ended session: new tmux, same agent conversation (resumed via
-         *     the stored internal session id). Returns the session to attach to — the
-         *     original if its tmux is still alive, otherwise a fresh one reusing the
-         *     same tmux name.
+         *     the stored internal session id). Returns the session to attach to, which
+         *     is this one either way — relaunched under its own id and tmux name, or
+         *     untouched when its tmux turned out to be alive already.
          */
         post: operations["sessions_resume"];
         delete?: never;
@@ -822,6 +826,20 @@ export interface components {
             logs: string;
             session_id: string;
             tmux_session: string;
+        };
+        /**
+         * @description Payload of the `resize` event of `GET /v1/sessions/{id}/logs/stream`: the
+         *     grid the pane is drawing against, in cells.
+         *
+         *     A terminal stream only means anything at a size. The agent addresses the
+         *     cursor and erases lines against *this* grid, so a viewer that renders the
+         *     bytes at any other one has every repaint land on the wrong row.
+         */
+        SessionPaneSize: {
+            /** Format: int32 */
+            cols: number;
+            /** Format: int32 */
+            rows: number;
         };
         /**
          * @description Agent session lifecycle status.
@@ -1534,7 +1552,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description SSE stream of terminal output (text/event-stream). One `snapshot` event with the current scrollback, then a `delta` event per burst of new output — both `{"chunk": "..."}` (SessionLogChunk) — and a final `end` event (SessionLogEnd) when the session is over, after which the stream closes. */
+            /** @description SSE stream of terminal output (text/event-stream). For a live pane, a `resize` event with the grid it draws against (`{"cols": 80, "rows": 24}`, SessionPaneSize), repeated whenever the pane is resized. Then one `snapshot` event with the current scrollback and a `delta` event per burst of new output — both `{"chunk": "..."}` (SessionLogChunk) — and a final `end` event (SessionLogEnd) when the session is over, after which the stream closes. */
             200: {
                 headers: {
                     [name: string]: unknown;

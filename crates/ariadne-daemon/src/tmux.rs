@@ -16,6 +16,29 @@ pub struct TmuxManager {
     bin: String,
 }
 
+/// A pane's screen: its grid, and where its cursor sits in it (0-based, from
+/// the top-left of the visible area).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PaneGeometry {
+    pub cols: u16,
+    pub rows: u16,
+    pub cursor_x: u16,
+    pub cursor_y: u16,
+}
+
+/// `"80x24 2,21"`, as [`TmuxManager::pane_geometry`] asks tmux to print it.
+fn parse_geometry(raw: &str) -> Option<PaneGeometry> {
+    let (size, cursor) = raw.split_once(' ')?;
+    let (cols, rows) = size.split_once('x')?;
+    let (x, y) = cursor.split_once(',')?;
+    Some(PaneGeometry {
+        cols: cols.trim().parse().ok()?,
+        rows: rows.trim().parse().ok()?,
+        cursor_x: x.trim().parse().ok()?,
+        cursor_y: y.trim().parse().ok()?,
+    })
+}
+
 /// Everything needed to launch one agent in a detached tmux session.
 #[derive(Debug, Clone)]
 pub struct TmuxSpawn {
@@ -106,9 +129,46 @@ impl TmuxManager {
     }
 
     /// Snapshot of the last `lines` of the pane (including scrollback).
+    ///
+    /// `-e` keeps the escape sequences that colour it. Without them the
+    /// capture is plain text, and everything an agent printed before a viewer
+    /// connected would arrive grey while only later output had colour.
     pub async fn capture_pane(&self, name: &str, lines: u32) -> Result<String> {
-        self.tmux(&["capture-pane", "-p", "-t", name, "-S", &format!("-{lines}")])
-            .await
+        self.tmux(&[
+            "capture-pane",
+            "-p",
+            "-e",
+            "-t",
+            name,
+            "-S",
+            &format!("-{lines}"),
+        ])
+        .await
+    }
+
+    /// Where the pane's screen stands: how big it is and where its cursor is.
+    ///
+    /// The size is what the agent's TUI draws against — cursor addressing and
+    /// line erasing are relative to it — so anything rendering the pane's
+    /// bytes has to use the same one. It is not fixed: tmux creates these
+    /// sessions at its default size and resizes the window to whatever client
+    /// attaches to it later.
+    ///
+    /// The cursor matters for the same reason. A capture says what is on the
+    /// screen but not where the pane was about to write next, and a TUI's next
+    /// repaint is addressed from there.
+    pub async fn pane_geometry(&self, name: &str) -> Result<PaneGeometry> {
+        let out = self
+            .tmux(&[
+                "display-message",
+                "-p",
+                "-t",
+                name,
+                "#{pane_width}x#{pane_height} #{cursor_x},#{cursor_y}",
+            ])
+            .await?;
+        let raw = out.trim();
+        parse_geometry(raw).with_context(|| format!("unexpected pane geometry for {name}: {raw:?}"))
     }
 
     /// Type `text` into the session followed by Enter (used to nudge
