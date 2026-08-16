@@ -204,21 +204,20 @@ function PaletteEntities({
   entries: PaletteEntries
   onPick: (entry: PaletteEntry) => void
 }) {
-  const search = useCommandState((state) => state.search)
+  const query = useCommandState((state) => state.search).trim()
 
+  // Stable sort: groups that match equally well keep the order declared above.
   const ordered = useMemo(
     () =>
       GROUPS.map((group) => ({
         ...group,
         rows: entries[group.key],
-        best: bestScore(PALETTE_FILTER, entries[group.key], search),
-        // Sorting is stable, so groups that match equally well — including all
-        // of them, before anything is typed — keep the order above.
+        best: query ? bestScore(PALETTE_FILTER, entries[group.key], query) : 0,
       })).sort((a, b) => b.best - a.best),
-    [entries, search],
+    [entries, query],
   )
 
-  if (!search.trim()) return null
+  if (!query) return null
   return (
     <>
       {ordered.map((group) => (
