@@ -19,6 +19,7 @@ export function EventStreamProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient()
   const baseUrl = useBaseUrl()
   const streamRef = useRef<DomainEventStream | null>(null)
+  const prevBaseUrl = useRef(baseUrl)
 
   // The same health probe the connection indicator shows, reused as the
   // stream's liveness watchdog (see below).
@@ -29,8 +30,17 @@ export function EventStreamProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const store = useStreamStore.getState()
-    // Nothing cached from a previously configured daemon may survive.
-    queryClient.clear()
+    // Nothing cached from a previously configured daemon may survive a
+    // base-URL *switch* — and only a switch. On first mount the cache is
+    // brand new, and wiping it here would destroy the queries the routed
+    // screen already started (this effect runs after theirs, effects being
+    // bottom-up), leaving every cold load stuck on skeletons.
+    // `resetQueries`, not `clear`: it refetches for the observers that are
+    // mounted instead of stranding them on removed queries.
+    if (prevBaseUrl.current !== baseUrl) {
+      prevBaseUrl.current = baseUrl
+      void queryClient.resetQueries()
+    }
     store.reset()
 
     const stream = new DomainEventStream(() => eventStreamUrl(baseUrl), {
