@@ -120,6 +120,21 @@ function hunkHeaderDecorations(docs: DiffDocuments): DecorationSet {
   return builder.finish()
 }
 
+/**
+ * A file with nothing on the old side is every line added. Saying that with a
+ * line decoration rather than a merge view avoids the empty deleted chunk the
+ * merge view would otherwise draw above the first line.
+ */
+function addedLineDecorations(docs: DiffDocuments): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>()
+  let offset = 0
+  for (const line of docs.doc.split("\n")) {
+    builder.add(offset, offset, Decoration.line({ class: "cm-addedLine" }))
+    offset += line.length + 1
+  }
+  return builder.finish()
+}
+
 /** Chrome shared by both themes; only the tints below differ. */
 const baseTheme = EditorView.theme({
   "&": {
@@ -164,7 +179,9 @@ function tintTheme(dark: boolean): Extension {
   const removedText = dark ? "rgba(248, 113, 113, 0.28)" : "rgba(239, 68, 68, 0.22)"
   return EditorView.theme(
     {
-      "&.cm-merge-b .cm-changedLine, .cm-inlineChangedLine": { backgroundColor: added },
+      "&.cm-merge-b .cm-changedLine, .cm-inlineChangedLine, .cm-addedLine": {
+        backgroundColor: added,
+      },
       "&.cm-merge-b .cm-changedText": { background: addedText },
       ".cm-deletedChunk": { backgroundColor: removed, paddingLeft: "0" },
       ".cm-deletedChunk .cm-deletedLine": { padding: "0 0.75rem" },
@@ -181,6 +198,9 @@ export function DiffEditor({ file }: { file: DiffFile }) {
   const host = useRef<HTMLDivElement | null>(null)
   const docs = useMemo(() => buildDiffDocuments(file), [file])
   const path = file.newPath ?? file.oldPath ?? ""
+  // Nothing to compare against: the file is new (or its whole content is one
+  // added hunk), so there is no old side for the merge view to diff.
+  const allAdded = docs.original.length === 0 && docs.doc.length > 0
 
   useEffect(() => {
     const parent = host.current
@@ -200,18 +220,20 @@ export function DiffEditor({ file }: { file: DiffFile }) {
           tintTheme(dark),
           syntaxHighlighting(dark ? oneDarkHighlightStyle : defaultHighlightStyle),
           ...languageFor(path),
-          unifiedMergeView({
-            original: docs.original,
-            mergeControls: false,
-            gutter: false,
-          }),
+          allAdded
+            ? EditorView.decorations.of(addedLineDecorations(docs))
+            : unifiedMergeView({
+                original: docs.original,
+                mergeControls: false,
+                gutter: false,
+              }),
         ],
       }),
     })
     return () => {
       view.destroy()
     }
-  }, [docs, dark, path])
+  }, [docs, dark, path, allAdded])
 
   return <div ref={host} />
 }
