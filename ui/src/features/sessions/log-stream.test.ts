@@ -11,6 +11,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { SessionLogStream, type SessionLogStreamHandlers, sessionLogStreamUrl } from "./log-stream"
+import { SNAPSHOT_PREFIX, writeDelta, writeSnapshot } from "./terminal-sink"
 
 /** Minimal stand-in for the browser's `EventSource`, driven by the tests. */
 class FakeEventSource {
@@ -199,5 +200,60 @@ describe("SessionLogStream reconnection", () => {
     advancePastBackoff()
 
     expect(sources()).toHaveLength(1)
+  })
+})
+
+describe("SessionLogStream feeding a terminal", () => {
+  /** The wiring `SessionTerminal` uses, against a terminal that only records. */
+  function terminalStream() {
+    const terminal = { write: vi.fn<(data: string) => void>(), reset: vi.fn() }
+    stream = new SessionLogStream("http://127.0.0.1:7676/v1/sessions/01S/logs/stream", {
+      onSnapshot: (chunk) => writeSnapshot(terminal, chunk),
+      onDelta: (chunk) => writeDelta(terminal, chunk),
+      onEnd: vi.fn(),
+      onStatus: vi.fn(),
+    })
+    return { terminal, stream }
+  }
+
+  it("replaces the terminal on reconnect, in order with what the old connection queued", () => {
+    const { terminal, stream: s } = terminalStream()
+    s.start()
+    latest().succeed()
+    latest().emit("snapshot", { chunk: "first snapshot\r\n" })
+    latest().emit("delta", { chunk: "output before the drop\r\n" })
+    // A chunk cut off mid-sequence is exactly what a dropped connection leaves
+    // behind, and it is what a bare `reset()` would fail to recover from.
+    latest().emit("delta", { chunk: "truncated \x1b[3" })
+
+    latest().fail()
+    advancePastBackoff()
+    latest().succeed()
+    latest().emit("snapshot", { chunk: "second snapshot\r\n" })
+
+    expect(terminal.write.mock.calls.map(([data]) => data)).toEqual([
+      `${SNAPSHOT_PREFIX}first snapshot\r\n`,
+      "output before the drop\r\n",
+      "truncated \x1b[3",
+      // The reset rides along with the replacement snapshot, after everything
+      // the dropped connection had written, and cancels the unfinished
+      // sequence it left in the parser.
+      `${SNAPSHOT_PREFIX}second snapshot\r\n`,
+    ])
+    expect(terminal.reset).not.toHaveBeenCalled()
+  })
+
+  it("re-reads a finished log without carrying the old contents over", () => {
+    const { terminal, stream: s } = terminalStream()
+    s.start()
+    latest().succeed()
+    latest().emit("snapshot", { chunk: "the log\r\n" })
+    latest().emit("end", { session_id: "01S" })
+
+    s.restart()
+    latest().succeed()
+    latest().emit("snapshot", { chunk: "the log again\r\n" })
+
+    expect(terminal.write.mock.calls.at(-1)).toEqual([`${SNAPSHOT_PREFIX}the log again\r\n`])
   })
 })
