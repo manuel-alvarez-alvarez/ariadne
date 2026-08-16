@@ -38,9 +38,10 @@ async fn harness() -> Harness {
 }
 
 /// A harness whose `tmux` is a stub script: `has-session` succeeds while a
-/// marker file exists and `capture-pane` prints a file the test controls.
-/// That makes the live path — a running pane whose session ends underneath it
-/// — reproducible without tmux and without a real agent.
+/// marker file exists, `capture-pane` prints a file the test controls and
+/// `display-message` prints the pane size from another. That makes the live
+/// path — a running pane whose session ends or is resized underneath it —
+/// reproducible without tmux and without a real agent.
 async fn harness_with_stub_tmux() -> Harness {
     build(true).await
 }
@@ -85,10 +86,12 @@ fn write_tmux_stub(dir: &std::path::Path) -> TmuxManager {
          case \"$1\" in\n\
          \x20 has-session) [ -f '{alive}' ] || exit 1 ;;\n\
          \x20 capture-pane) cat '{pane}' 2>/dev/null ;;\n\
+         \x20 display-message) cat '{size}' 2>/dev/null ;;\n\
          esac\n\
          exit 0\n",
         alive = dir.join("tmux-alive").display(),
         pane = dir.join("pane.txt").display(),
+        size = dir.join("pane-size.txt").display(),
     );
     std::fs::write(&bin, script).unwrap();
     std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -159,10 +162,21 @@ impl Harness {
     }
 
     /// What the stub tmux's `capture-pane` prints, and whether it has a
-    /// session at all.
+    /// session at all. The pane is tmux's default 80×24 with its cursor at the
+    /// bottom left until a test says otherwise.
     fn stub_pane(&self, contents: &str) {
         std::fs::write(self.dir.path().join("pane.txt"), contents).unwrap();
         std::fs::write(self.dir.path().join("tmux-alive"), "").unwrap();
+        self.stub_pane_geometry(80, 24, 0, 23);
+    }
+
+    /// What the stub tmux's `display-message` reports about the pane's screen.
+    fn stub_pane_geometry(&self, cols: u16, rows: u16, cursor_x: u16, cursor_y: u16) {
+        std::fs::write(
+            self.dir.path().join("pane-size.txt"),
+            format!("{cols}x{rows} {cursor_x},{cursor_y}\n"),
+        )
+        .unwrap();
     }
 }
 
@@ -344,9 +358,11 @@ async fn a_terminal_status_ends_the_stream_even_while_output_keeps_coming() {
         .unwrap();
     let mut body = response.into_body();
 
+    let (name, _) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "resize");
     let (name, payload) = parse(&next_sse_message(&mut body).await);
     assert_eq!(name, "snapshot");
-    assert_eq!(payload["chunk"], "pane snapshot\n");
+    assert_eq!(payload["chunk"], "pane snapshot\u{1b}[24;1H");
     let (name, _) = parse(&next_sse_message(&mut body).await);
     assert_eq!(name, "delta", "the pane is producing output");
 
@@ -368,6 +384,107 @@ async fn a_terminal_status_ends_the_stream_even_while_output_keeps_coming() {
     assert_eq!(last, "end", "a terminal status ends the stream");
     let eof = tokio::time::timeout(TIMEOUT, body.frame()).await.unwrap();
     assert!(eof.is_none(), "nothing follows the end event");
+}
+
+/// The snapshot is wrapped at the pane's width and everything after it is
+/// addressed in the pane's grid, so the grid has to arrive first — a viewer
+/// that renders those bytes at any other size draws every repaint on the
+/// wrong row.
+#[tokio::test]
+async fn a_live_stream_opens_with_the_grid_the_pane_draws_against() {
+    let h = harness_with_stub_tmux().await;
+    let session = h.session("ariadne-sized").await;
+    h.stub_pane("pane snapshot\n");
+    h.stub_pane_geometry(100, 30, 4, 9);
+
+    let response = h
+        .router
+        .clone()
+        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
+        .await
+        .unwrap();
+    let mut body = response.into_body();
+
+    let (name, payload) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "resize", "the grid comes before anything drawn in it");
+    assert_eq!(payload["cols"], 100);
+    assert_eq!(payload["rows"], 30);
+
+    let (name, payload) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "snapshot");
+    assert_eq!(
+        payload["chunk"], "pane snapshot\u{1b}[10;5H",
+        "the capture is a screen: its last row is the pane's last row, and it \
+         leaves the cursor where the pane has it"
+    );
+}
+
+/// The capture's trailing newline and the cursor are the difference between a
+/// copy of the screen and the screen itself: without them the repaints that
+/// follow are addressed a row too high, on top of output that is still there.
+#[tokio::test]
+async fn a_snapshot_ends_where_the_pane_left_its_cursor() {
+    let h = harness_with_stub_tmux().await;
+    let session = h.session("ariadne-cursor").await;
+    // Three rows, the cursor at the start of the second: what a TUI holding
+    // its prompt above a status line looks like.
+    h.stub_pane("first\nsecond\nthird\n");
+    h.stub_pane_geometry(80, 3, 0, 1);
+
+    let response = h
+        .router
+        .clone()
+        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
+        .await
+        .unwrap();
+    let mut body = response.into_body();
+
+    let (name, _) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "resize");
+    let (name, payload) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "snapshot");
+    assert_eq!(payload["chunk"], "first\nsecond\nthird\u{1b}[2;1H");
+}
+
+/// tmux resizes a session's window to whatever client attaches to it, so the
+/// grid can change under a stream that is already running. The redraw that
+/// follows is only legible at the new one.
+#[tokio::test]
+async fn a_pane_resized_under_the_stream_reports_its_new_grid() {
+    let h = harness_with_stub_tmux().await;
+    let session = h.session("ariadne-resized").await;
+    h.stub_pane("pane snapshot\n");
+
+    let response = h
+        .router
+        .clone()
+        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
+        .await
+        .unwrap();
+    let mut body = response.into_body();
+
+    let (name, payload) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "resize");
+    assert_eq!(payload["cols"], 80);
+    let (name, _) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "snapshot");
+
+    // Somebody attached with a wider terminal.
+    h.stub_pane_geometry(120, 40, 0, 39);
+
+    let mut sizes = Vec::new();
+    for _ in 0..10 {
+        let (name, payload) = parse(&next_sse_message(&mut body).await);
+        if name == "resize" {
+            sizes.push((payload["cols"].as_u64(), payload["rows"].as_u64()));
+            break;
+        }
+    }
+    assert_eq!(
+        sizes,
+        vec![(Some(120), Some(40))],
+        "the new grid is reported, and only when it changes"
+    );
 }
 
 /// pipe-pane can stop mid-character. Those bytes are part of "whatever
@@ -436,8 +553,15 @@ async fn a_live_session_streams_new_output_until_it_is_killed() {
     assert_eq!(response.status(), StatusCode::OK);
     let mut body = response.into_body();
 
+    let (name, payload) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "resize", "the pane's grid comes first");
+    assert!(
+        payload["cols"].as_u64().is_some_and(|c| c > 0),
+        "a real pane reports a real grid: {payload}"
+    );
+
     let (name, _) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "snapshot", "the pane snapshot comes first");
+    assert_eq!(name, "snapshot", "then the pane snapshot");
 
     // New output reaches the client as a delta, not as a fresh snapshot.
     let (name, payload) = parse(&next_sse_message(&mut body).await);
