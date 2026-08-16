@@ -8,6 +8,9 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, bail};
 use tokio::process::Command;
 
+/// Input bytes per `send-keys -H` call; see [`TmuxManager::send_raw`].
+const RAW_SEND_BATCH: usize = 512;
+
 #[derive(Debug, Clone)]
 pub struct TmuxManager {
     bin: String,
@@ -114,6 +117,29 @@ impl TmuxManager {
         // -l = literal (no key-name lookup), then a separate Enter press.
         self.tmux(&["send-keys", "-t", name, "-l", text]).await?;
         self.tmux(&["send-keys", "-t", name, "Enter"]).await?;
+        Ok(())
+    }
+
+    /// Type `data` into the session's pane exactly as given: no Enter
+    /// appended, no key-name lookup, no shell-quoting hazards.
+    ///
+    /// This is what a terminal in front of a user produces — `\r` for Return,
+    /// `\x03` for Ctrl-C, `\x1b[A` for Up — so the bytes have to reach the
+    /// pane untouched. `-H` takes one hexadecimal byte per argument, which is
+    /// the only `send-keys` form that carries control bytes and escape
+    /// sequences through verbatim; `-l` would still mangle a leading `-` and
+    /// key names would reinterpret the rest.
+    pub async fn send_raw(&self, name: &str, data: &[u8]) -> Result<()> {
+        // tmux is exec'd, so the whole payload rides in argv — three bytes of
+        // argument per input byte. Long pastes are split to stay clear of
+        // ARG_MAX; a pane receives them as one uninterrupted burst either way.
+        for batch in data.chunks(RAW_SEND_BATCH) {
+            let mut args: Vec<String> =
+                vec!["send-keys".into(), "-t".into(), name.into(), "-H".into()];
+            args.extend(batch.iter().map(|b| format!("{b:02x}")));
+            let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+            self.tmux(&arg_refs).await?;
+        }
         Ok(())
     }
 

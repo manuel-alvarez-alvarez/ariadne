@@ -78,7 +78,8 @@ impl AppState {
         tasks::transition, tasks::cancel, tasks::retry, tasks::list_transitions,
         tasks::list_messages, tasks::post_message,
         tasks::list_reviews, tasks::post_review, tasks::diff,
-        sessions::list, sessions::get, sessions::kill, sessions::resume, sessions::logs,
+        sessions::list, sessions::get, sessions::kill, sessions::resume,
+        sessions::input, sessions::logs,
         session_logs::logs_stream,
         events::list, stream::stream,
     ),
@@ -143,6 +144,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{id}", get(sessions::get))
         .route("/v1/sessions/{id}/kill", post(sessions::kill))
         .route("/v1/sessions/{id}/resume", post(sessions::resume))
+        .route("/v1/sessions/{id}/input", post(sessions::input))
         .route("/v1/sessions/{id}/logs", get(sessions::logs))
         .route(
             "/v1/sessions/{id}/logs/stream",
