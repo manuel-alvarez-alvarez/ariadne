@@ -21,7 +21,9 @@
  * to neither, so the daemon starts the client over rather than splicing it.
  * `snapshot` therefore always means "replace everything shown so far",
  * whenever it arrives — which is what `onSnapshot` already had to mean for
- * reconnects.
+ * reconnects. If the daemon cannot get a screen at the new size it closes the
+ * connection instead of sending output the client cannot place; that arrives
+ * here as a drop, and the reconnect below is the recovery.
  *
  * A session that ended before it was ever measured has no grid to report, and
  * `onResize` never fires; the consumer draws at whatever default it has.
