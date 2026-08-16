@@ -16,12 +16,12 @@
  */
 
 import { useQuery } from "@tanstack/react-query"
+import { ChevronRightIcon } from "lucide-react"
 import type { ReactNode } from "react"
 import { useSearchParams } from "react-router-dom"
 
 import { ApiError, api, type GoalDto, qk, unwrap } from "@/api"
 import { CopyableId, CopyableIdMenu } from "@/components/copyable-id"
-import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { Markdown } from "@/components/markdown"
 import { StatusBadge } from "@/components/status-badge"
@@ -30,7 +30,6 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { goalCopyEntries } from "@/lib/copy-entries"
 import { formatAbsolute, formatRelative } from "@/lib/time"
-import { cn } from "@/lib/utils"
 import { usePanelSessionNavigation } from "@/routes/paths"
 import { GoalActions } from "./goal-actions"
 import { GoalSessions, GoalSessionView } from "./goal-sessions"
@@ -39,9 +38,7 @@ import { GoalThread } from "./goal-thread"
 import { goalQueryOptions } from "./queries"
 import { GOAL_STATUS_META } from "./status"
 
-// Description leads the strip — it is what the goal *is* — but the panel still
-// opens on the tasks, which are what a goal comes down to.
-const TABS = ["description", "tasks", "thread", "sessions"] as const
+const TABS = ["tasks", "thread", "sessions"] as const
 type Tab = (typeof TABS)[number]
 
 export function GoalPanel({
@@ -155,9 +152,8 @@ function GoalView({
   onSelectSession: (sessionId: string) => void
 }) {
   const [search, setSearch] = useSearchParams()
-  // Tasks by default, whatever the URL says if it says something else: what a
-  // goal comes down to is its tasks, and they are otherwise on the board this
-  // panel covers.
+  // Tasks first: what a goal *is* is its tasks, and they are otherwise on the
+  // board this panel covers.
   const tab = TABS.find((value) => value === search.get("tab")) ?? "tasks"
 
   function setTab(next: Tab) {
@@ -187,22 +183,23 @@ function GoalView({
 
       <GoalActions goal={goal} />
 
+      {/* Both fold away: what the panel is for is the tabs below, and on a
+          laptop an open description and a details card push them off the
+          screen. Closed, each still says what it holds. */}
+      {goal.description.trim() ? (
+        <Fold title="Description" preview={firstLine(goal.description)}>
+          <Markdown>{goal.description}</Markdown>
+        </Fold>
+      ) : null}
+
       <GoalMetadata goal={goal} />
 
       <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
         <TabsList>
-          <TabsTrigger value="description">Description</TabsTrigger>
           <TabsTrigger value="tasks">Tasks</TabsTrigger>
           <TabsTrigger value="thread">Thread</TabsTrigger>
           <TabsTrigger value="sessions">Sessions</TabsTrigger>
         </TabsList>
-        <TabsContent value="description" className="pt-3">
-          {goal.description.trim() ? (
-            <Markdown>{goal.description}</Markdown>
-          ) : (
-            <EmptyState emphasis="quiet" title="This goal has no description." />
-          )}
-        </TabsContent>
         <TabsContent value="tasks" className="pt-3">
           <GoalTasks goalId={goal.id} />
         </TabsContent>
@@ -218,58 +215,87 @@ function GoalView({
 }
 
 /**
- * What the goal is allowed to do, always on show: the same facts grid the task
- * panel opens with, so the two panels read as the one thing seen twice.
+ * A card that stays out of the way: closed it is one line — its name and a
+ * glimpse of what is inside — open it is its content.
+ *
+ * A plain `<details>` rather than a primitive of its own: it is what the
+ * element is for, and it comes with the keyboard and the screen reader already
+ * done. The marker is hidden on both engines Tauri ships with.
  */
-function GoalMetadata({ goal }: { goal: GoalDto }) {
-  return (
-    <dl className="grid gap-x-6 gap-y-3 rounded-lg border bg-card p-3 text-sm sm:grid-cols-2">
-      <Detail label="Planner">
-        <PlannerProfileName profileId={goal.planner_profile_id} />
-      </Detail>
-      <Detail label="Approvals">
-        <span className="tabular-nums">{goal.required_approvals}</span>
-      </Detail>
-      <Detail label="Max tasks">
-        <span className="tabular-nums">{goal.max_tasks ?? "unbounded"}</span>
-      </Detail>
-      <Detail label="Created">
-        <span title={formatAbsolute(goal.created_at)}>{formatRelative(goal.created_at)}</span>
-      </Detail>
-      <Detail label="Updated">
-        <span title={formatAbsolute(goal.updated_at)}>{formatRelative(goal.updated_at)}</span>
-      </Detail>
-      {/* Last, and across both columns: a path is long, and there can be
-          several of them. */}
-      <Detail label="Repositories" className="sm:col-span-2">
-        <ul className="flex flex-col gap-1">
-          {goal.repos.map((repo) => (
-            <li key={repo.id} className="min-w-0">
-              <CopyableId value={repo.path} label="repository path" wrap className="text-xs" />
-              <span className="font-mono text-xs text-muted-foreground">
-                base: {repo.base_branch}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </Detail>
-    </dl>
-  )
-}
-
-function Detail({
-  label,
-  className,
+function Fold({
+  title,
+  preview,
   children,
 }: {
-  label: string
-  className?: string
+  title: string
+  /** What the fold holds, in a few words, while it is closed. */
+  preview?: string
   children: ReactNode
 }) {
   return (
-    <div className={cn("min-w-0", className)}>
-      <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="mt-0.5 min-w-0">{children}</dd>
+    <details className="group rounded-lg border bg-card">
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs [&::-webkit-details-marker]:hidden">
+        <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
+        <span className="shrink-0 font-medium">{title}</span>
+        {preview ? (
+          <span className="truncate text-muted-foreground group-open:hidden">{preview}</span>
+        ) : null}
+      </summary>
+      <div className="border-t px-3 py-2.5">{children}</div>
+    </details>
+  )
+}
+
+/** The first thing the text says, for a fold that is closed over it. */
+function firstLine(text: string): string {
+  return text.trim().split("\n", 1)[0] ?? ""
+}
+
+function GoalMetadata({ goal }: { goal: GoalDto }) {
+  const repos = goal.repos.length
+  return (
+    <Fold
+      title="Details"
+      preview={`${goal.required_approvals} ${goal.required_approvals === 1 ? "approval" : "approvals"} · ${repos} ${repos === 1 ? "repository" : "repositories"}`}
+    >
+      <div className="flex flex-col gap-3 text-sm">
+        <Detail label="Planner">
+          <PlannerProfileName profileId={goal.planner_profile_id} />
+        </Detail>
+        <Detail label="Approvals">
+          <span className="tabular-nums">{goal.required_approvals}</span>
+        </Detail>
+        <Detail label="Max tasks">
+          <span className="tabular-nums">{goal.max_tasks ?? "unbounded"}</span>
+        </Detail>
+        <Detail label="Repositories">
+          <ul className="flex flex-col gap-1">
+            {goal.repos.map((repo) => (
+              <li key={repo.id} className="min-w-0">
+                <CopyableId value={repo.path} label="repository path" wrap className="text-xs" />
+                <span className="font-mono text-xs text-muted-foreground">
+                  base: {repo.base_branch}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Detail>
+        <Detail label="Created">
+          <span title={formatAbsolute(goal.created_at)}>{formatRelative(goal.created_at)}</span>
+        </Detail>
+        <Detail label="Updated">
+          <span title={formatAbsolute(goal.updated_at)}>{formatRelative(goal.updated_at)}</span>
+        </Detail>
+      </div>
+    </Fold>
+  )
+}
+
+function Detail({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="grid grid-cols-[7rem_1fr] items-baseline gap-2">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <div className="min-w-0">{children}</div>
     </div>
   )
 }

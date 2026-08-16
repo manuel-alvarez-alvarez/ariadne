@@ -113,20 +113,25 @@ impl Store {
     /// relaunched under its own id: resuming an agent conversation in a fresh
     /// tmux keeps the one row (same id, same console log) instead of leaving a
     /// sibling behind per review round. `worktree_path` overwrites the stored
-    /// one when given — the relaunch decides where the agent actually runs.
+    /// one when given — the relaunch decides where the agent actually runs —
+    /// and so does `review_round`, which for a reviewer session names the
+    /// round it is being relaunched for.
     pub async fn restart_session(
         &self,
         id: &str,
         worktree_path: Option<&str>,
+        review_round: Option<i64>,
     ) -> Result<AgentSession> {
         let n = sqlx::query(
             "UPDATE agent_sessions
                 SET status = 'starting', ended_at = NULL, last_activity_at = ?,
-                    worktree_path = COALESCE(?, worktree_path)
+                    worktree_path = COALESCE(?, worktree_path),
+                    review_round = COALESCE(?, review_round)
               WHERE id = ?",
         )
         .bind(now())
         .bind(worktree_path)
+        .bind(review_round)
         .bind(id)
         .execute(self.w())
         .await?
