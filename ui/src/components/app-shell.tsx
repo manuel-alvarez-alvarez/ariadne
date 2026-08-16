@@ -1,19 +1,23 @@
 /**
  * The frame every screen renders inside: sidebar navigation on the left, a
- * header naming the screen and carrying the theme and settings controls, the
- * connection banner under it when the daemon is not answering, and the routed
- * screen in the middle.
+ * header naming the screen and carrying the search, theme and settings
+ * controls, the connection banner under it when the daemon is not answering,
+ * and the routed screen in the middle.
  *
  * The header's title comes from the route's own `handle` (see
  * `src/routes/page-title.ts`), so this file knows nothing about which screens
  * exist.
  *
+ * It also binds the app's global chords and mounts the two things they open —
+ * the command palette and the settings dialog — because both have to work from
+ * every screen, over any panel.
+ *
  * Shared file — feature tasks should not need to touch it. Add navigation
  * entries in `app-sidebar.tsx`, routes in your own feature's `routes.tsx`.
  */
 
-import { SettingsIcon } from "lucide-react"
-import { useState } from "react"
+import { SearchIcon, SettingsIcon } from "lucide-react"
+import { useCallback, useState } from "react"
 import { Outlet } from "react-router-dom"
 
 import { AppSidebar } from "@/components/app-sidebar"
@@ -24,11 +28,19 @@ import { SettingsDialog } from "@/components/settings-dialog"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
+import { CommandPalette } from "@/features/command-palette/command-palette"
+import { PALETTE_SHORTCUT, useGlobalShortcuts } from "@/hooks/use-global-shortcuts"
+import { shortcutLabel } from "@/lib/shortcuts"
 import { usePageTitle } from "@/routes/page-title"
 
 export function AppShell() {
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [paletteOpen, setPaletteOpen] = useState(false)
   const pageTitle = usePageTitle()
+
+  const openPalette = useCallback(() => setPaletteOpen(true), [])
+  const openSettings = useCallback(() => setSettingsOpen(true), [])
+  useGlobalShortcuts({ onOpenPalette: openPalette, onOpenSettings: openSettings })
 
   return (
     <div className="flex h-svh w-full overflow-hidden bg-background text-foreground">
@@ -49,24 +61,38 @@ export function AppShell() {
            *is*, so it reads as chrome rather than as a second heading. */}
           <span className="truncate text-sm font-medium">{pageTitle}</span>
           <div className="ml-auto flex items-center gap-1">
-            <ThemeToggle />
+            {/* The palette's affordance: a chord nobody can see is a chord
+                nobody uses, so the header carries it with its hint. */}
             <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Settings"
-              onClick={() => setSettingsOpen(true)}
+              variant="outline"
+              size="sm"
+              className="gap-2 text-muted-foreground font-normal"
+              onClick={openPalette}
             >
+              <SearchIcon />
+              Search
+              <kbd className="rounded border bg-muted px-1 font-mono text-[0.7rem] leading-4">
+                {shortcutLabel(PALETTE_SHORTCUT)}
+              </kbd>
+            </Button>
+            <ThemeToggle />
+            <Button variant="ghost" size="icon" aria-label="Settings" onClick={openSettings}>
               <SettingsIcon />
             </Button>
           </div>
         </header>
-        <ConnectionBanner onOpenSettings={() => setSettingsOpen(true)} />
+        <ConnectionBanner onOpenSettings={openSettings} />
         <main className="min-h-0 flex-1 overflow-auto p-6">
           <Outlet />
         </main>
       </div>
 
       <DetailPanels />
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        onOpenSettings={openSettings}
+      />
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
     </div>
   )
