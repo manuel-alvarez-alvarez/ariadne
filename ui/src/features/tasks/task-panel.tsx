@@ -356,11 +356,20 @@ function Dependencies({ ids }: { ids: string[] }) {
   )
 }
 
-/** Swaps the open panel over to the dependency. */
+/**
+ * Swaps the open panel over to the dependency. It replaces rather than pushes:
+ * the panel is still the same one entry of history, so closing it closes it
+ * instead of stepping back through the tasks it was pointed at.
+ */
 function DependencyLink({ id, title }: { id: string; title?: string }) {
   const to = useTaskPanelTo(id)
   return (
-    <Link to={to} className="truncate text-xs underline-offset-3 hover:underline" title={id}>
+    <Link
+      to={to}
+      replace
+      className="truncate text-xs underline-offset-3 hover:underline"
+      title={id}
+    >
       {title ?? id}
     </Link>
   )
