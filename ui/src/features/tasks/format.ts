@@ -1,16 +1,23 @@
 /**
  * Small formatting helpers for the task screens. The daemon stamps everything
  * with RFC 3339 in UTC; the user reads it in their own zone.
+ *
+ * The locale is pinned rather than taken from the system: these strings sit in
+ * the middle of English sentences ("updated 3 minutes ago"), and a machine set
+ * to another language would otherwise produce half-translated lines. The time
+ * zone still comes from the system, which is the part that matters.
  */
 
 import { ApiError } from "@/api"
 
-const ABSOLUTE = new Intl.DateTimeFormat(undefined, {
+const LOCALE = "en"
+
+const ABSOLUTE = new Intl.DateTimeFormat(LOCALE, {
   dateStyle: "medium",
   timeStyle: "short",
 })
 
-const RELATIVE = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" })
+const RELATIVE = new Intl.RelativeTimeFormat(LOCALE, { numeric: "auto" })
 
 const UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
   ["year", 365 * 24 * 3600],
