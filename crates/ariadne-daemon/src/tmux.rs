@@ -123,13 +123,28 @@ impl TmuxManager {
         Ok(())
     }
 
+    /// Whether tmux has this session, with "could not ask" folded into "no" —
+    /// which is what most callers want, since they go on to create or replace
+    /// the session either way. Anything that would *conclude* something from a
+    /// "no" — that a session is over, say — wants
+    /// [`Self::has_session_checked`] instead.
     pub async fn has_session(&self, name: &str) -> bool {
-        Command::new(&self.bin)
+        self.has_session_checked(name).await.unwrap_or(false)
+    }
+
+    /// Whether tmux has this session, as an answer rather than a guess.
+    ///
+    /// `Err` means the question never reached tmux, which is not the same as
+    /// tmux saying no: a daemon that cannot spawn a process for a moment has
+    /// learned nothing about the pane, and a viewer told the session is over
+    /// stops asking for good.
+    pub async fn has_session_checked(&self, name: &str) -> Result<bool> {
+        let output = Command::new(&self.bin)
             .args(["has-session", "-t", name])
             .output()
             .await
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+            .with_context(|| format!("running {} has-session -t {name}", self.bin))?;
+        Ok(output.status.success())
     }
 
     pub async fn kill_session(&self, name: &str) -> Result<()> {

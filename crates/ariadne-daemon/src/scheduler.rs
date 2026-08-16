@@ -156,17 +156,31 @@ impl Scheduler {
                         .record_pane_size(&session.id, geometry.cols, geometry.rows)
                         .await;
                 }
-                // Confirmed before acting on it: marking a session exited ends
-                // its work, which is too much to hang on a line of tmux output
-                // that failed to parse.
-                Err(_) if self.launcher.tmux.has_session(&session.tmux_session).await => {}
-                Err(_) => {
-                    info!(session = %session.id, tmux = %session.tmux_session, "session process gone, marking exited");
-                    let _ = self
-                        .store
-                        .set_session_status(&session.id, SessionStatus::Exited)
-                        .await;
-                }
+                // Confirmed before acting on it, and only an answer counts as
+                // confirmation: marking a session exited ends its work, which
+                // is too much to hang on a line of tmux output that failed to
+                // parse — or on a `has-session` that never ran. Both leave the
+                // session alone for the next sweep to ask again.
+                Err(e) => match self
+                    .launcher
+                    .tmux
+                    .has_session_checked(&session.tmux_session)
+                    .await
+                {
+                    Ok(false) => {
+                        info!(session = %session.id, tmux = %session.tmux_session, "session process gone, marking exited");
+                        let _ = self
+                            .store
+                            .set_session_status(&session.id, SessionStatus::Exited)
+                            .await;
+                    }
+                    Ok(true) => {
+                        warn!(session = %session.id, error = %e, "measuring the pane failed")
+                    }
+                    Err(check) => {
+                        warn!(session = %session.id, error = %e, check = %check, "cannot reach tmux")
+                    }
+                },
             }
         }
     }
