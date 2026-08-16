@@ -44,6 +44,7 @@ unreachable. Hover it for the URL, daemon version and uptime.
 | `npm run dev` | Vite dev server on port 1420 (fixed — `tauri dev` points at it) |
 | `npm run build` | typecheck + production bundle into `dist/` |
 | `npm run typecheck` | `tsc -b`, no emit |
+| `npm run test` | Vitest, once (`test:watch` to keep it running) |
 | `npm run lint` | Biome lint + format check |
 | `npm run lint:fix` | Biome, applying safe fixes |
 | `npm run format` | Biome formatter only |
@@ -164,6 +165,13 @@ is simply gone. So both a reconnect and the daemon's `resync` control event
 invalidate *everything*. `DomainEventStream` handles reconnection itself with
 capped exponential backoff and jitter, and publishes its state through
 `useStreamStore`.
+
+"Reconnect" here means *any open that follows a gap*, not just an open that
+follows a previous one. A first connection that only came up after a few failed
+attempts — the app launched before the daemon did — is a reconnect too: REST
+queries may have loaded during those seconds, and whatever the daemon published
+in between is unrecoverable. Only a first connection that succeeded straight
+away skips the invalidation. `src/events/stream.test.ts` pins both directions.
 
 An `EventSource` alone is **not** enough to notice a daemon that went away: the
 socket can stay in `OPEN` with no `error` ever firing, and the UI would go
