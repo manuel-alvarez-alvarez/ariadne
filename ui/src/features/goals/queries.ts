@@ -22,15 +22,12 @@ import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query
 
 import {
   api,
-  type CacheSnapshot,
   type CreateGoalRequest,
   type GoalDto,
   type GoalStatus,
   type MessageDto,
-  optimisticStatus,
   type ProfileDto,
   qk,
-  restoreCache,
   unwrap,
 } from "@/api"
 
@@ -142,25 +139,11 @@ export function useFinalizeGoalPlan(goalId: string) {
   })
 }
 
-/**
- * Cancelling is optimistic on the goal itself: the user confirmed it, the
- * status it lands in is known, and the goal header should stop saying "active"
- * on the click. The tear-down it triggers (sessions, unfinished tasks) is not
- * guessed at — those lists are invalidated once the daemon has answered.
- */
 export function useCancelGoal(goalId: string) {
   const queryClient = useQueryClient()
-  return useMutation<GoalDto, Error, void, CacheSnapshot | undefined>({
+  return useMutation({
     mutationFn: () =>
       unwrap(api().POST("/v1/goals/{id}/cancel", { params: { path: { id: goalId } } })),
-    onMutate: () =>
-      optimisticStatus(queryClient, {
-        detailKey: qk.goals.detail(goalId),
-        listsKey: qk.goals.lists(),
-        id: goalId,
-        status: "cancelled" satisfies GoalStatus,
-      }),
-    onError: (_error, _variables, snapshot) => restoreCache(queryClient, snapshot),
     onSuccess: (goal) => {
       queryClient.setQueryData(qk.goals.detail(goalId), goal)
       void queryClient.invalidateQueries({ queryKey: qk.goals.lists() })
