@@ -1,0 +1,2601 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Ariadne Daemon API",
+    "description": "REST API of ariadned, the coding-agent orchestrator daemon.",
+    "license": {
+      "name": "MIT OR Apache-2.0",
+      "identifier": "MIT OR Apache-2.0"
+    },
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/v1/events": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "List agent events (poll with `after` for tailing).",
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "query",
+            "description": "Filter by session id.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "task",
+            "in": "query",
+            "description": "Filter by task id.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "Return items with id greater than this.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max items to return (default 50, cap 200).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AgentEventDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/events/stream": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Subscribe to the live domain-event stream.",
+        "description": "Every state change in the daemon — from HTTP calls, from the scheduler and\nfrom agent activity alike — is published here. Each message carries a fresh\nULID `id`, the event kind as its `event` name, and the full updated DTO as\n`data`, so clients patch their state without refetching.\n\nThere is **no replay or backfill**: the `id` is informational and\n`Last-Event-ID` is ignored. On (re)connect, refetch the REST state you care\nabout and then follow the stream.\n\nA client that falls too far behind loses events. It is never left silently\nstale: the daemon sends a final `resync` event (`{\"missed\": n}`) and closes\nthe connection, so an `EventSource` reconnects and takes the refetch path\nabove.",
+        "operationId": "stream",
+        "parameters": [
+          {
+            "name": "goal",
+            "in": "query",
+            "description": "Only events belonging to this goal.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "task",
+            "in": "query",
+            "description": "Only events belonging to this task.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "SSE stream of domain events (text/event-stream). No replay on reconnect: refetch REST state first. A lagging client gets a final `resync` event (ResyncDto) and the connection is closed.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/DomainEvent"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/goals": {
+      "get": {
+        "tags": [
+          "goals"
+        ],
+        "summary": "List goals.",
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Filter by status.",
+            "required": false,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/components/schemas/GoalStatus"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GoalDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "goals"
+        ],
+        "summary": "Create a goal. Validates repos and resolves base branches; the planner\nsession is spawned by the scheduler once agent execution lands.",
+        "operationId": "create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateGoalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/goals/{goal_id}/tasks": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Create a task in a goal (planner via MCP, or the user).",
+        "operationId": "create",
+        "parameters": [
+          {
+            "name": "goal_id",
+            "in": "path",
+            "description": "goal id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/goals/{id}": {
+      "get": {
+        "tags": [
+          "goals"
+        ],
+        "summary": "Inspect a goal.",
+        "operationId": "get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "goal id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/goals/{id}/cancel": {
+      "post": {
+        "tags": [
+          "goals"
+        ],
+        "summary": "Cancel a goal.",
+        "operationId": "cancel",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "goal id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/goals/{id}/finalize": {
+      "post": {
+        "tags": [
+          "goals"
+        ],
+        "summary": "Finalize planning: goal moves planning -> active (planner or user).",
+        "operationId": "finalize",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "goal id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FinalizePlanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/goals/{id}/messages": {
+      "get": {
+        "tags": [
+          "goals"
+        ],
+        "summary": "Goal-level message thread (planner discussion).",
+        "operationId": "list_messages",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "goal id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "Return items with id greater than this.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max items to return (default 50, cap 200).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MessageDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "goals"
+        ],
+        "summary": "Post to the goal-level thread.",
+        "operationId": "post_message",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "goal id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/health": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Daemon liveness probe.",
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Daemon is healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/profiles": {
+      "get": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "List profiles.",
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "role",
+            "in": "query",
+            "description": "Filter by role.",
+            "required": false,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/components/schemas/Role"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ProfileDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Create a profile.",
+        "operationId": "create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProfileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "name already exists"
+          }
+        }
+      }
+    },
+    "/v1/profiles/{id}": {
+      "get": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Get a profile by id or unique name.",
+        "operationId": "get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "profile id or name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Update a profile.",
+        "operationId": "update",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "profile id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProfileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Delete a profile (409 while referenced).",
+        "operationId": "delete",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "profile id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/sessions": {
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "List agent sessions.",
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "goal",
+            "in": "query",
+            "description": "Filter by goal id.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "task",
+            "in": "query",
+            "description": "Filter by task id.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Filter by status.",
+            "required": false,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/components/schemas/SessionStatus"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SessionDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}": {
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Inspect a session.",
+        "operationId": "get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "session id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}/kill": {
+      "post": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Kill a session's tmux process.",
+        "operationId": "kill",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "session id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}/logs": {
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Recent tmux pane output of a session.",
+        "operationId": "logs",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "session id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionLogsResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}/resume": {
+      "post": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Revive an ended session: new tmux, same agent conversation (resumed via\nthe stored internal session id). Returns the session to attach to — the\noriginal if its tmux is still alive, otherwise a fresh one reusing the\nsame tmux name.",
+        "operationId": "resume",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "session id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/tasks": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "List tasks.",
+        "operationId": "list",
+        "parameters": [
+          {
+            "name": "goal",
+            "in": "query",
+            "description": "Filter by goal id.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Filter by status.",
+            "required": false,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/components/schemas/TaskStatus"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TaskDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tasks/{id}": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Inspect a task.",
+        "operationId": "get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Edit a pending/ready task (planner or user).",
+        "operationId": "update",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/tasks/{id}/cancel": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Cancel a task (user).",
+        "operationId": "cancel",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/tasks/{id}/diff": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Diff of the task branch against its base (`git diff base...branch`).",
+        "operationId": "diff",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/tasks/{id}/messages": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Task conversation.",
+        "operationId": "list_messages",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "Return items with id greater than this.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max items to return (default 50, cap 200).",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MessageDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Post into the task conversation.",
+        "operationId": "post_message",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tasks/{id}/retry": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Retry a failed task (user): failed -> ready.",
+        "operationId": "retry",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/tasks/{id}/reviews": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Reviews of a task.",
+        "operationId": "list_reviews",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ReviewDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Submit a review verdict for the current round.",
+        "operationId": "post_review",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateReviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/tasks/{id}/transitions": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Transition audit log of a task.",
+        "operationId": "list_transitions",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TaskTransitionDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Request a status transition. The actor is derived from the call context.",
+        "operationId": "transition",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransitionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/version": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Daemon name and version.",
+        "operationId": "version",
+        "responses": {
+          "200": {
+            "description": "Daemon version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AgentEventDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "payload",
+          "created_at"
+        ],
+        "properties": {
+          "agent_kind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "e.g. session_start, post_tool_use, stop, turn_complete"
+          },
+          "payload": {},
+          "session_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "task_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "AgentKind": {
+        "type": "string",
+        "description": "Which coding-agent CLI a profile runs on.",
+        "enum": [
+          "claude_code",
+          "codex",
+          "opencode"
+        ]
+      },
+      "AuthorRole": {
+        "type": "string",
+        "description": "Author of a conversation message.",
+        "enum": [
+          "planner",
+          "engineer",
+          "reviewer",
+          "user",
+          "system"
+        ]
+      },
+      "CreateGoalRequest": {
+        "type": "object",
+        "required": [
+          "title",
+          "repos",
+          "planner_profile"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "max_tasks": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Max tasks the planner may create (default: unbounded)."
+          },
+          "planner_profile": {
+            "type": "string",
+            "description": "Planner profile id or unique name."
+          },
+          "repos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RepoSpec"
+            }
+          },
+          "required_approvals": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Approvals required to merge a task (default 1)."
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateMessageRequest": {
+        "type": "object",
+        "required": [
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateProfileRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "role",
+          "system_prompt"
+        ],
+        "properties": {
+          "agent_kind": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AgentKind",
+                "description": "Omit for auto: the first installed agent CLI is used at spawn time."
+              }
+            ]
+          },
+          "extra_flags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "example": "rust-engineer"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "system_prompt": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateReviewRequest": {
+        "type": "object",
+        "required": [
+          "verdict"
+        ],
+        "properties": {
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reviewer_profile": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Reviewer profile id or name. Derived from the session context when the\ncall comes from an agent; required for user-submitted reviews."
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/ReviewVerdict"
+          }
+        }
+      },
+      "CreateTaskRequest": {
+        "type": "object",
+        "required": [
+          "title",
+          "engineer_profile",
+          "reviewer_profiles"
+        ],
+        "properties": {
+          "depends_on": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Task ids this task depends on."
+          },
+          "description": {
+            "type": "string"
+          },
+          "engineer_profile": {
+            "type": "string",
+            "description": "Engineer profile id or unique name."
+          },
+          "repo_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Repo id within the goal; may be omitted when the goal has exactly one repo."
+          },
+          "reviewer_profiles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Reviewer profile ids or names, in review order. At least one."
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "DeletedDto": {
+        "type": "object",
+        "description": "Payload of the deletion events: the id of the gone entity.",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        }
+      },
+      "DomainEvent": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/GoalDto"
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "goal_created"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Covers status changes: finalize, cancel, completion.",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/GoalDto",
+                "description": "Covers status changes: finalize, cancel, completion."
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "goal_updated"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/TaskDto"
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "task_created"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Covers status transitions, edits, stall flags and worktree changes.",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/TaskUpdatedDto",
+                "description": "Covers status transitions, edits, stall flags and worktree changes."
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "task_updated"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/MessageDto"
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "message_created"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/ReviewDto"
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "review_created"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/SessionDto"
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "session_created"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Covers status changes: kill, resume, exit, activity.",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/SessionDto",
+                "description": "Covers status changes: kill, resume, exit, activity."
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "session_updated"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A raw agent event reported by a hook.",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/AgentEventDto",
+                "description": "A raw agent event reported by a hook."
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "agent_event"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/ProfileDto"
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "profile_created"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/ProfileDto"
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "profile_updated"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/DeletedDto"
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "profile_deleted"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "One domain event. Serialized as `{\"event\": \"<kind>\", \"data\": <payload>}`;\non the SSE wire the kind becomes the `event:` field and the payload alone\nthe `data:` field."
+      },
+      "FinalizePlanRequest": {
+        "type": "object",
+        "required": [
+          "summary"
+        ],
+        "properties": {
+          "summary": {
+            "type": "string",
+            "description": "Plan summary, recorded in the goal thread."
+          }
+        }
+      },
+      "GoalDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "description",
+          "status",
+          "required_approvals",
+          "planner_profile_id",
+          "repos",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "max_tasks": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "None = unbounded."
+          },
+          "planner_profile_id": {
+            "type": "string"
+          },
+          "repos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GoalRepoDto"
+            }
+          },
+          "required_approvals": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "status": {
+            "$ref": "#/components/schemas/GoalStatus"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
+      "GoalRepoDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "path",
+          "base_branch"
+        ],
+        "properties": {
+          "base_branch": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        }
+      },
+      "GoalStatus": {
+        "type": "string",
+        "description": "Goal lifecycle status.",
+        "enum": [
+          "planning",
+          "active",
+          "completed",
+          "cancelled"
+        ]
+      },
+      "HealthResponse": {
+        "type": "object",
+        "description": "Response of `GET /v1/health`.",
+        "required": [
+          "status",
+          "uptime_secs"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "Always \"ok\" when the daemon is able to answer.",
+            "example": "ok"
+          },
+          "uptime_secs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Seconds since the daemon started.",
+            "minimum": 0
+          }
+        }
+      },
+      "MessageDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "goal_id",
+          "author_role",
+          "body",
+          "created_at"
+        ],
+        "properties": {
+          "author_role": {
+            "$ref": "#/components/schemas/AuthorRole"
+          },
+          "author_session_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "body": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "goal_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "None = goal-level thread."
+          }
+        }
+      },
+      "ProfileDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "role",
+          "system_prompt",
+          "extra_flags",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "agent_kind": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AgentKind",
+                "description": "None = auto: resolved at spawn time to the first installed agent CLI\n(claude_code, then codex, then opencode)."
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "extra_flags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Extra argv flags appended when spawning the agent CLI."
+          },
+          "id": {
+            "type": "string"
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "system_prompt": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
+      "RepoSpec": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "base_branch": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Base branch tasks merge into; defaults to the repo's current branch."
+          },
+          "path": {
+            "type": "string",
+            "description": "Absolute path to an existing git repository.",
+            "example": "/home/me/projects/webapp"
+          }
+        }
+      },
+      "ResyncDto": {
+        "type": "object",
+        "description": "Payload of the `resync` control event.\n\nSent as the last message of a connection that fell too far behind: the\ndaemon dropped `missed` events for it and closes the stream. The client\nmust refetch its REST state before following the stream again (an\n`EventSource` reconnects on its own).",
+        "required": [
+          "missed"
+        ],
+        "properties": {
+          "missed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Events this connection lost. Informational: they cannot be recovered.",
+            "minimum": 0
+          }
+        }
+      },
+      "ReviewDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "task_id",
+          "round",
+          "reviewer_profile_id",
+          "verdict",
+          "created_at"
+        ],
+        "properties": {
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "reviewer_profile_id": {
+            "type": "string"
+          },
+          "round": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "session_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "task_id": {
+            "type": "string"
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/ReviewVerdict"
+          }
+        }
+      },
+      "ReviewVerdict": {
+        "type": "string",
+        "description": "Review verdict for one reviewer in one round.",
+        "enum": [
+          "approve",
+          "request_changes"
+        ]
+      },
+      "Role": {
+        "type": "string",
+        "description": "The role an agent plays in the orchestration.",
+        "enum": [
+          "planner",
+          "engineer",
+          "reviewer"
+        ]
+      },
+      "SessionDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "goal_id",
+          "role",
+          "profile_id",
+          "agent_kind",
+          "tmux_session",
+          "status",
+          "created_at"
+        ],
+        "properties": {
+          "agent_kind": {
+            "$ref": "#/components/schemas/AgentKind"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "ended_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "goal_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "internal_session_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Agent-internal id: claude session uuid / codex thread id / opencode session id."
+          },
+          "last_activity_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "profile_id": {
+            "type": "string"
+          },
+          "review_round": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SessionStatus"
+          },
+          "task_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "None = planner session."
+          },
+          "tmux_session": {
+            "type": "string"
+          },
+          "worktree_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "SessionLogsResponse": {
+        "type": "object",
+        "description": "Response of `GET /v1/sessions/{id}/logs`.",
+        "required": [
+          "session_id",
+          "tmux_session",
+          "logs"
+        ],
+        "properties": {
+          "logs": {
+            "type": "string",
+            "description": "Recent pane contents captured from tmux."
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "tmux_session": {
+            "type": "string"
+          }
+        }
+      },
+      "SessionStatus": {
+        "type": "string",
+        "description": "Agent session lifecycle status.",
+        "enum": [
+          "starting",
+          "running",
+          "idle",
+          "exited",
+          "failed"
+        ]
+      },
+      "TaskDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "goal_id",
+          "repo_id",
+          "title",
+          "description",
+          "status",
+          "engineer_profile_id",
+          "reviewer_profile_ids",
+          "depends_on",
+          "branch",
+          "review_round",
+          "stalled",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "branch": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "depends_on": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Ids of tasks that must merge before this one starts."
+          },
+          "description": {
+            "type": "string"
+          },
+          "engineer_profile_id": {
+            "type": "string"
+          },
+          "goal_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "merge_commit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "repo_id": {
+            "type": "string"
+          },
+          "review_round": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "reviewer_profile_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Reviewer profile ids in planner-assigned order."
+          },
+          "stalled": {
+            "type": "boolean",
+            "description": "Set when the agent went idle without advancing the task."
+          },
+          "status": {
+            "$ref": "#/components/schemas/TaskStatus"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "worktree_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "TaskStatus": {
+        "type": "string",
+        "description": "Task lifecycle status.",
+        "enum": [
+          "pending",
+          "ready",
+          "in_progress",
+          "under_review",
+          "changes_requested",
+          "approved",
+          "merging",
+          "merged",
+          "cancelled",
+          "failed"
+        ]
+      },
+      "TaskTransitionDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "from_status",
+          "to_status",
+          "actor",
+          "created_at"
+        ],
+        "properties": {
+          "actor": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "from_status": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "to_status": {
+            "type": "string"
+          }
+        }
+      },
+      "TaskUpdatedDto": {
+        "type": "object",
+        "description": "Payload of `task_updated`: the task as it now stands, plus the audit row\nwhen the update was a status transition.",
+        "required": [
+          "task"
+        ],
+        "properties": {
+          "task": {
+            "$ref": "#/components/schemas/TaskDto"
+          },
+          "transition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TaskTransitionDto",
+                "description": "Present when this update was a status transition."
+              }
+            ]
+          }
+        }
+      },
+      "TransitionRequest": {
+        "type": "object",
+        "required": [
+          "to"
+        ],
+        "properties": {
+          "merge_commit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Required when `to` is `merged`."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "to": {
+            "$ref": "#/components/schemas/TaskStatus"
+          }
+        }
+      },
+      "UpdateProfileRequest": {
+        "type": "object",
+        "description": "Partial update; absent fields stay unchanged.",
+        "properties": {
+          "agent_kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New agent kind, or \"auto\" to clear it (resolve the first installed\nCLI at spawn time). Absent = unchanged."
+          },
+          "extra_flags": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New model, or \"default\" (or empty) to clear it back to the agent's\ndefault. Absent = unchanged."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "system_prompt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "UpdateTaskRequest": {
+        "type": "object",
+        "description": "Partial update; only allowed while the task is pending/ready.",
+        "properties": {
+          "depends_on": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reviewer_profiles": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "VersionResponse": {
+        "type": "object",
+        "description": "Response of `GET /v1/version`.",
+        "required": [
+          "name",
+          "version"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "example": "ariadned"
+          },
+          "version": {
+            "type": "string",
+            "example": "0.1.0"
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "system",
+      "description": "Daemon health and metadata"
+    },
+    {
+      "name": "profiles",
+      "description": "Agent profiles (role + system prompt + agent CLI)"
+    },
+    {
+      "name": "goals",
+      "description": "Goals and their planning threads"
+    },
+    {
+      "name": "tasks",
+      "description": "Tasks, transitions, conversations, reviews"
+    },
+    {
+      "name": "sessions",
+      "description": "Agent sessions (tmux-hosted)"
+    },
+    {
+      "name": "events",
+      "description": "Raw agent events from hooks, and the live domain-event stream"
+    }
+  ]
+}
