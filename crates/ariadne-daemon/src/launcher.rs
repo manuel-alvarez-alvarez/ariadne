@@ -341,10 +341,11 @@ impl Launcher {
     }
 
     /// Resume the engineer's previous agent session with a new instruction,
-    /// reusing the same tmux session name (spawn again if nothing to resume).
+    /// relaunching the very same session — row, id and tmux name — so a task
+    /// bounced through several review rounds keeps one engineer session rather
+    /// than one per round (spawn afresh if there is nothing to resume).
     pub async fn resume_engineer(&self, task_id: &str, instruction: &str) -> Result<AgentSession> {
         let task = self.store.get_task(task_id).await?;
-        let goal = self.store.get_goal(&task.goal_id).await?;
         let profile = self.store.get_profile(&task.engineer_profile_id).await?;
 
         // Find the most recent engineer session with a captured internal id.
@@ -374,24 +375,13 @@ impl Launcher {
         if self.tmux.has_session(&previous.tmux_session).await {
             self.tmux.kill_session(&previous.tmux_session).await.ok();
         }
-        if previous.status().is_live() {
-            self.store
-                .set_session_status(&previous.id, SessionStatus::Exited)
-                .await?;
-        }
-
+        // Same conversation, same session: the row goes back to `starting` and
+        // is launched again. Its console log is appended to rather than rolled
+        // over, so the terminal reads as the one continuous transcript the
+        // agent actually produced.
         let session = self
             .store
-            .create_session(NewSession {
-                goal_id: goal.id.clone(),
-                task_id: Some(task.id.clone()),
-                role: Role::Engineer,
-                profile_id: profile.id.clone(),
-                agent_kind: previous.agent_kind(),
-                tmux_session: previous.tmux_session.clone(),
-                worktree_path: Some(worktree.display().to_string()),
-                review_round: None,
-            })
+            .restart_session(&previous.id, Some(&worktree.display().to_string()))
             .await?;
 
         let ctx = self.spawn_ctx(
@@ -401,7 +391,7 @@ impl Launcher {
             prompts::system_prompt(&profile, Role::Engineer),
             String::new(),
         );
-        let plan = adapter_for(previous.agent_kind()).plan_resume(&ctx, &internal, instruction)?;
+        let plan = adapter_for(session.agent_kind()).plan_resume(&ctx, &internal, instruction)?;
         self.launch(&session, plan).await?;
         self.store
             .get_session(&session.id)
@@ -410,9 +400,10 @@ impl Launcher {
     }
 
     /// Revive an ended session in a fresh tmux, continuing the same agent
-    /// conversation via its stored internal id. Used by `ariadne attach` when
-    /// no tmux is alive. `instruction: None` resumes into an idle TUI so the
-    /// user can type themselves.
+    /// conversation via its stored internal id. The session itself is revived
+    /// — same row, same id — so the caller gets back what it asked for. Used
+    /// by `ariadne attach` when no tmux is alive. `instruction: None` resumes
+    /// into an idle TUI so the user can type themselves.
     pub async fn revive_session(
         &self,
         session_id: &str,
@@ -453,24 +444,7 @@ impl Launcher {
             );
         }
 
-        if previous.status().is_live() {
-            self.store
-                .set_session_status(&previous.id, SessionStatus::Exited)
-                .await?;
-        }
-        let session = self
-            .store
-            .create_session(NewSession {
-                goal_id: previous.goal_id.clone(),
-                task_id: previous.task_id.clone(),
-                role,
-                profile_id: profile.id.clone(),
-                agent_kind: previous.agent_kind(),
-                tmux_session: previous.tmux_session.clone(),
-                worktree_path: previous.worktree_path.clone(),
-                review_round: previous.review_round,
-            })
-            .await?;
+        let session = self.store.restart_session(&previous.id, None).await?;
         let ctx = self.spawn_ctx(
             &session,
             cwd,
@@ -478,7 +452,7 @@ impl Launcher {
             prompts::system_prompt(&profile, role),
             String::new(),
         );
-        let plan = adapter_for(previous.agent_kind()).plan_resume(
+        let plan = adapter_for(session.agent_kind()).plan_resume(
             &ctx,
             &internal,
             instruction.unwrap_or(""),
