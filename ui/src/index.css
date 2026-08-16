@@ -49,6 +49,21 @@
   --color-status-danger-fg: var(--status-danger-fg);
   --color-status-danger-soft: var(--status-danger-soft);
 
+  /*
+   * The diff pair. Same shape as the status ramp — the bare token is the solid,
+   * `-fg` is text, `-soft` is the tint a changed line sits on — plus `-strong`,
+   * the word-level highlight inside such a line, which has to read on top of
+   * `-soft` rather than next to it.
+   */
+  --color-diff-add: var(--diff-add);
+  --color-diff-add-fg: var(--diff-add-fg);
+  --color-diff-add-soft: var(--diff-add-soft);
+  --color-diff-add-strong: var(--diff-add-strong);
+  --color-diff-remove: var(--diff-remove);
+  --color-diff-remove-fg: var(--diff-remove-fg);
+  --color-diff-remove-soft: var(--diff-remove-soft);
+  --color-diff-remove-strong: var(--diff-remove-strong);
+
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
@@ -132,6 +147,15 @@
   --status-danger: var(--destructive);
   --status-danger-fg: oklch(0.47 0.19 27.325);
   --status-danger-soft: oklch(0.577 0.245 27.325 / 0.14);
+
+  --diff-add: oklch(0.62 0.13 155);
+  --diff-add-fg: oklch(0.45 0.11 155);
+  --diff-add-soft: oklch(0.62 0.13 155 / 0.14);
+  --diff-add-strong: oklch(0.62 0.13 155 / 0.28);
+  --diff-remove: oklch(0.58 0.2 27.325);
+  --diff-remove-fg: oklch(0.47 0.19 27.325);
+  --diff-remove-soft: oklch(0.58 0.2 27.325 / 0.12);
+  --diff-remove-strong: oklch(0.58 0.2 27.325 / 0.26);
 }
 
 /*
@@ -188,6 +212,15 @@
   --status-danger: var(--destructive);
   --status-danger-fg: oklch(0.82 0.11 22.216);
   --status-danger-soft: oklch(0.704 0.191 22.216 / 0.2);
+
+  --diff-add: oklch(0.7 0.14 155);
+  --diff-add-fg: oklch(0.84 0.11 155);
+  --diff-add-soft: oklch(0.7 0.14 155 / 0.16);
+  --diff-add-strong: oklch(0.7 0.14 155 / 0.3);
+  --diff-remove: oklch(0.7 0.19 22.216);
+  --diff-remove-fg: oklch(0.82 0.11 22.216);
+  --diff-remove-soft: oklch(0.7 0.19 22.216 / 0.16);
+  --diff-remove-strong: oklch(0.7 0.19 22.216 / 0.3);
 }
 
 @layer base {
