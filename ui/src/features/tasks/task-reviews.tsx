@@ -10,6 +10,7 @@ import { CheckCircle2Icon, MessageSquareWarningIcon } from "lucide-react"
 import { useMemo } from "react"
 
 import type { ReviewDto, ReviewVerdict } from "@/api"
+import { CopyableId } from "@/components/copyable-id"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
@@ -94,9 +95,11 @@ function ReviewCard({ review }: { review: ReviewDto }) {
           <Icon className="size-3" />
           {label}
         </span>
-        <span className="font-mono text-muted-foreground" title={review.reviewer_profile_id}>
-          {review.reviewer_profile_id}
-        </span>
+        <CopyableId
+          value={review.reviewer_profile_id}
+          label="profile id"
+          className="text-muted-foreground"
+        />
         {review.session_id && <SessionLink sessionId={review.session_id} />}
         <time
           className="ml-auto text-muted-foreground"

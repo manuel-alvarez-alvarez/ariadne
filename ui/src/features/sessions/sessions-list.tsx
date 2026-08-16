@@ -124,7 +124,10 @@ function SessionRow({
     <TableRow className="relative" data-state={selected ? "selected" : undefined}>
       <TableCell className="font-mono text-xs">
         {/* Stretched over the whole row, so the row is clickable without a
-            `<tr onClick>` that the keyboard could not reach. */}
+            `<tr onClick>` that the keyboard could not reach. The click belongs
+            to the selection — the id is copyable from the session's own header
+            once it is open (see `session-detail-view.tsx`), which is also the
+            only place a second click target would not sit under this one. */}
         <button
           type="button"
           onClick={onSelect}
