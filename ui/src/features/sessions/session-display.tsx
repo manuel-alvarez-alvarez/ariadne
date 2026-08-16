@@ -1,6 +1,6 @@
 /**
  * How a session is spelled out on screen: labels, the status badge, and the
- * timestamp formatting the list and the detail screen share.
+ * timestamp formatting the list and the detail view share.
  *
  * The label maps are declared as total records over the generated enums, so a
  * new role, agent kind or status in the daemon fails to compile here until it

@@ -1,5 +1,5 @@
 /**
- * Everything the sessions screens read from and write to the daemon.
+ * Everything the session views read from and write to the daemon.
  *
  * Nothing here subscribes to domain events: `session_created` and
  * `session_updated` already patch `sessions.detail` and invalidate

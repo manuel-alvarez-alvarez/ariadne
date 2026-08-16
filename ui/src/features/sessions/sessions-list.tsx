@@ -2,10 +2,10 @@
  * The sessions table on its own, told what to show and what is selected.
  *
  * Rows select instead of linking anywhere, so the same table serves the
- * sessions screen and the session tabs inside the goal and task panels — a
- * panel picks a session without leaving the screen it is floating over.
+ * session tabs of both the goal and the task panel — a panel picks a session
+ * without leaving the screen it is floating over.
  *
- * The filters come from the caller (`{goal}`, `{task}`, whatever the screen
+ * The filters come from the caller (`{goal}`, `{task}`, whatever the panel
  * has); this component only reads them. The list stays live on its own:
  * `session_created` and `session_updated` invalidate `sessions.lists()` in the
  * event dispatcher, so a session starting, going idle or being killed shows up

@@ -4,7 +4,7 @@
  * selected session laid out under it.
  *
  * Both pieces are the sessions feature's own components, so this tab shows a
- * session exactly the way its screen does, terminal and actions included.
+ * session in full, terminal and actions included.
  *
  * The selection lives in the URL (`?session=`), like the tab itself: a link
  * can point at one agent's terminal inside a task, and the panel closing takes
