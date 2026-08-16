@@ -1,7 +1,8 @@
 /**
- * The sessions of one goal, inside its panel: every agent the goal has run —
- * the planner's own session and the ones of each of its tasks — as a list, and
- * the one that was picked from it, in full.
+ * The sessions of one goal, inside its panel: the goal's own agent — the
+ * planner, once per resume or restart — as a list, and the one that was picked
+ * from it, in full. The sessions of the goal's tasks are not here; each task
+ * panel has its own sessions tab for those.
  *
  * Picking one is drilling into it: {@link GoalSessionView} takes over the whole
  * panel (see `goal-panel.tsx`), goal header and tabs included, with a link back
@@ -38,7 +39,12 @@ export function GoalSessions({
 }) {
   // The selected row marks itself: `SessionsList` reads the same `?session=`
   // this panel drives, so nothing has to be threaded through the panel.
-  return <SessionsList filters={{ goal: goalId }} onSelect={(session) => onSelect(session.id)} />
+  return (
+    <SessionsList
+      filters={{ goal: goalId, role: "planner" }}
+      onSelect={(session) => onSelect(session.id)}
+    />
+  )
 }
 
 /** The selected session as the panel's whole body, with the way back to the goal. */
