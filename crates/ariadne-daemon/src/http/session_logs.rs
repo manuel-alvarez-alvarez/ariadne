@@ -36,14 +36,12 @@ const RESYNC_TIMEOUT: Duration = Duration::from_secs(3);
 enum Phase {
     /// Following the console log for new output.
     Following,
-    /// The pane changed shape and the screen that replaces the client's has
-    /// not been captured yet. Nothing goes out meanwhile: every byte the pane
-    /// writes from here belongs to a grid the client does not have, and the
-    /// bytes already read belong to one it is about to lose.
-    Resynchronising {
-        geometry: PaneGeometry,
-        since: Instant,
-    },
+    /// The screen the client should be holding has not been captured yet —
+    /// the pane changed shape, or could not be read when the stream opened.
+    /// Nothing goes out meanwhile: every byte the pane writes from here
+    /// belongs to a grid the client does not have, and the bytes already read
+    /// belong to one it is about to lose. `since` bounds the wait.
+    Resynchronising { since: Instant },
     /// The last output is out; `end` comes next.
     Ending,
     /// `end` is out; the stream closes.
@@ -70,6 +68,32 @@ enum Pane {
     /// Still running, and drawing on this screen.
     Alive(PaneGeometry),
     /// No more output is possible.
+    Gone,
+}
+
+/// What a connection has to open with.
+enum Opening {
+    /// A pane, and the screen it is drawing.
+    Screen {
+        geometry: PaneGeometry,
+        snapshot: String,
+    },
+    /// A pane that is there but could not be read. The stream waits for one
+    /// that can be (see [`Phase::Resynchronising`]) rather than saying
+    /// anything about a screen it does not have.
+    Unreadable,
+    /// No pane: the piped console log is the whole of it.
+    Log(String),
+}
+
+/// What one attempt at a coherent screen came to.
+enum Resync {
+    /// The `resize` and the `snapshot` it describes are queued.
+    Done,
+    /// Nothing happened and nothing was committed: the pane could not be read,
+    /// or changed shape while it was being read.
+    Retry,
+    /// The pane is gone; there is no screen to be had.
     Gone,
 }
 
@@ -109,9 +133,8 @@ impl Follower {
         self.checked_alive_at.elapsed() >= LIVENESS
     }
 
-    /// Start the client over at `geometry`: a `resize`, then a `snapshot`
-    /// taken in it, queued in that order. `false` if the screen could not be
-    /// captured, in which case nothing has changed and the caller retries.
+    /// Start the client over on the pane's current screen: a `resize`, then a
+    /// `snapshot` taken in it, queued in that order.
     ///
     /// A resize cannot be spliced into the byte stream. The output waiting to
     /// go out straddles the moment the pane changed shape — some of it drawn
@@ -121,13 +144,21 @@ impl Follower {
     /// redrawn by whatever is running in it anyway, the whole screen is
     /// captured again and the pending bytes are dropped along with the size
     /// they were meant for: the snapshot supersedes them, scrollback included.
-    async fn resynchronise(&mut self, geometry: PaneGeometry) -> bool {
+    ///
+    /// The pane is measured on both sides of the capture, and a screen whose
+    /// grid changed under it is thrown away rather than reported at either:
+    /// the whole point of the exercise is that a screen and the grid it is
+    /// described by have to be the same screen's.
+    async fn resynchronise(&mut self) -> Resync {
+        let Pane::Alive(before) = self.poll().await else {
+            return Resync::Gone;
+        };
         // Where the log stands *before* the capture, so that whatever the pane
         // writes in between is sent twice rather than not at all. The tail
-        // only moves there once there is a screen to have replaced it: a
-        // capture that fails must leave the follower exactly as it found it,
-        // or the bytes it skipped are lost and the client is left drawing the
-        // new grid's output at the old one.
+        // only moves there once there is a screen to have replaced it: an
+        // attempt that comes to nothing must leave the follower exactly as it
+        // found it, or the bytes it skipped are lost and the client is left
+        // drawing the new grid's output at the old one.
         let end = self.log.end_offset().await;
         let capture = match self
             .state
@@ -139,23 +170,32 @@ impl Follower {
             Ok(capture) => capture,
             Err(e) => {
                 warn!(session = %self.session_id, error = %e, "capturing the resized pane failed");
-                return false;
+                return Resync::Retry;
             }
         };
+        let Pane::Alive(after) = self.poll().await else {
+            return Resync::Gone;
+        };
+        if after != before {
+            // Resized again while it was being read: this capture describes
+            // neither grid for certain, so nothing is claimed about it.
+            return Resync::Retry;
+        }
+
         self.log.skip_to(end);
         let size = SessionPaneSize {
-            cols: geometry.cols,
-            rows: geometry.rows,
+            cols: after.cols,
+            rows: after.rows,
         };
         self.size = Some(size);
         self.state
             .launcher
-            .record_pane_size(&self.session_id, geometry.cols, geometry.rows)
+            .record_pane_size(&self.session_id, after.cols, after.rows)
             .await;
         self.queue.push_back(resize_event(size));
         self.queue
-            .push_back(chunk_event("snapshot", &as_screen(capture, geometry)));
-        true
+            .push_back(chunk_event("snapshot", &as_screen(capture, after)));
+        Resync::Done
     }
 
     /// Has the pane drawn on a grid the client has not been told about?
@@ -247,33 +287,44 @@ pub async fn logs_stream(
     } else {
         None
     };
-    let mut alive = geometry.is_some();
 
-    let snapshot = if alive {
-        match state
+    let opening = match geometry {
+        Some(geometry) => match state
             .launcher
             .tmux
             .capture_pane(&session.tmux_session, SNAPSHOT_LINES)
             .await
         {
-            Ok(pane) => match geometry {
-                Some(geometry) => as_screen(pane, geometry),
-                None => pane,
+            Ok(pane) => Opening::Screen {
+                geometry,
+                snapshot: as_screen(pane, geometry),
             },
-            // The pane went away between the two calls, or tmux is unwell:
-            // degrade to the piped console log, as `/logs` does for a
-            // finished session, and treat the session as over.
             Err(e) => {
-                warn!(session = %session.id, error = %e, "capturing pane failed; falling back to the console log");
-                alive = false;
-                log.rewind();
-                log.drain().await
+                // Which of the two it is decides everything: a pane that has
+                // gone is a finished session, and one that merely cannot be
+                // read is a stream that has to wait rather than declare the
+                // session over — an `end` stops the client from ever asking
+                // again.
+                let still_there = state
+                    .launcher
+                    .tmux
+                    .pane_geometry(&session.tmux_session)
+                    .await
+                    .is_ok();
+                warn!(session = %session.id, error = %e, still_there, "capturing the pane failed");
+                if still_there {
+                    Opening::Unreadable
+                } else {
+                    log.rewind();
+                    Opening::Log(log.drain().await)
+                }
             }
-        }
-    } else {
+        },
         // Already dead: the full piped log is all there will ever be.
-        log.rewind();
-        log.drain().await
+        None => {
+            log.rewind();
+            Opening::Log(log.drain().await)
+        }
     };
 
     // A live pane is measured; a finished one is served at the last size it
@@ -281,18 +332,21 @@ pub async fn logs_stream(
     // log is raw terminal bytes wrapped at that width, so replaying it at a
     // default would corrupt exactly the sessions that are only ever read as
     // history.
-    let size = match alive.then_some(geometry).flatten() {
-        Some(g) => {
+    let size = match &opening {
+        Opening::Screen { geometry, .. } => {
             state
                 .launcher
-                .record_pane_size(&session.id, g.cols, g.rows)
+                .record_pane_size(&session.id, geometry.cols, geometry.rows)
                 .await;
             Some(SessionPaneSize {
-                cols: g.cols,
-                rows: g.rows,
+                cols: geometry.cols,
+                rows: geometry.rows,
             })
         }
-        None => state
+        // Nothing is claimed about a screen there is no screen for: the
+        // `resize` comes with the capture that earns it.
+        Opening::Unreadable => None,
+        Opening::Log(_) => state
             .launcher
             .last_pane_size(&session.id)
             .await
@@ -303,18 +357,26 @@ pub async fn logs_stream(
     if let Some(size) = size {
         queue.push_back(resize_event(size));
     }
-    queue.push_back(chunk_event("snapshot", &snapshot));
+    let phase = match opening {
+        Opening::Screen { snapshot, .. } => {
+            queue.push_back(chunk_event("snapshot", &snapshot));
+            Phase::Following
+        }
+        Opening::Unreadable => Phase::Resynchronising {
+            since: Instant::now(),
+        },
+        Opening::Log(snapshot) => {
+            queue.push_back(chunk_event("snapshot", &snapshot));
+            Phase::Ending
+        }
+    };
 
     let follower = Follower {
         state,
         session_id: session.id,
         tmux_session: session.tmux_session,
         log,
-        phase: if alive {
-            Phase::Following
-        } else {
-            Phase::Ending
-        },
+        phase,
         queue,
         size,
         checked_alive_at: Instant::now(),
@@ -351,7 +413,6 @@ pub async fn logs_stream(
                             // new grid to replace the client's with.
                             Pane::Alive(geometry) if f.regridded(geometry) => {
                                 f.phase = Phase::Resynchronising {
-                                    geometry,
                                     since: Instant::now(),
                                 };
                                 continue;
@@ -363,37 +424,33 @@ pub async fn logs_stream(
                         return Some((Ok(chunk_event("delta", &new)), f));
                     }
                 }
-                Phase::Resynchronising { geometry, since } => {
-                    if f.resynchronise(geometry).await {
+                Phase::Resynchronising { since } => match f.resynchronise().await {
+                    Resync::Done => {
                         f.phase = Phase::Following;
                         continue;
                     }
-                    // The pane is measured again rather than retried blindly:
-                    // it may have gone, or changed shape a second time.
-                    match f.poll().await {
-                        Pane::Gone => {
-                            // Whatever is left was drawn at a grid the client
-                            // never got, so it goes no further; the finished
-                            // session's own log is coherent and is what a
-                            // reload serves.
-                            f.phase = Phase::Done;
-                            return Some((Ok(end_event(&f.session_id)), f));
-                        }
-                        Pane::Alive(geometry) => {
-                            if since.elapsed() >= RESYNC_TIMEOUT {
-                                // Out of ways to make this connection make
-                                // sense. Closing it without an `end` is not a
-                                // lie about the session and puts the client
-                                // on a fresh one, which starts from a grid
-                                // and a screen that agree.
-                                warn!(session = %f.session_id, "no screen at the pane's new grid; closing the stream to resynchronise");
-                                return None;
-                            }
-                            f.phase = Phase::Resynchronising { geometry, since };
-                        }
+                    Resync::Gone => {
+                        // Whatever is left was drawn at a grid the client
+                        // never got, so it goes no further; the finished
+                        // session's own log is coherent and is what a reload
+                        // serves.
+                        f.phase = Phase::Done;
+                        return Some((Ok(end_event(&f.session_id)), f));
                     }
-                    tokio::time::sleep(POLL).await;
-                }
+                    Resync::Retry => {
+                        if since.elapsed() >= RESYNC_TIMEOUT {
+                            // Out of ways to make this connection make sense.
+                            // Closing it without an `end` is not a lie about
+                            // the session, and the connection the client opens
+                            // next starts over from a grid and a screen that
+                            // agree — or waits here again, which is the truth
+                            // of the matter while tmux cannot be read.
+                            warn!(session = %f.session_id, "no coherent screen from the pane; closing the stream to resynchronise");
+                            return None;
+                        }
+                        tokio::time::sleep(POLL).await;
+                    }
+                },
                 Phase::Ending => {
                     f.phase = Phase::Done;
                     return Some((Ok(end_event(&f.session_id)), f));
