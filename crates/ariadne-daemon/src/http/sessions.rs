@@ -45,9 +45,9 @@ pub async fn get(
 }
 
 /// Revive an ended session: new tmux, same agent conversation (resumed via
-/// the stored internal session id). Returns the session to attach to — the
-/// original if its tmux is still alive, otherwise a fresh one reusing the
-/// same tmux name.
+/// the stored internal session id). Returns the session to attach to, which
+/// is this one either way — relaunched under its own id and tmux name, or
+/// untouched when its tmux turned out to be alive already.
 #[utoipa::path(post, path = "/v1/sessions/{id}/resume", tag = "sessions",
     params(("id" = String, Path, description = "session id")),
     responses((status = 200, body = SessionDto), (status = 404), (status = 409)))]
