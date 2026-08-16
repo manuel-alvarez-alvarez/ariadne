@@ -87,6 +87,7 @@ export function SessionActivity({ sessionId }: { sessionId: string }) {
   if (data.length === 0) {
     return (
       <EmptyState
+        emphasis="quiet"
         title="No agent events yet."
         description="Hooks report them as the agent starts, uses tools and finishes turns."
         className="border-0"

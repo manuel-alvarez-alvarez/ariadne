@@ -60,7 +60,7 @@ export function TaskReviews({ taskId }: { taskId: string }) {
   }
 
   if (rounds.length === 0) {
-    return <EmptyState title="No review has been submitted yet." />
+    return <EmptyState emphasis="quiet" title="No review has been submitted yet." />
   }
 
   return (

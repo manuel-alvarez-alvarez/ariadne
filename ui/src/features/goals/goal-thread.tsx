@@ -45,6 +45,7 @@ export function GoalThread({ goalId, className }: { goalId: string; className?: 
       <CardContent className="flex flex-col gap-3">
         {messages.error ? (
           <ErrorState
+            showIcon
             title="Could not load the conversation"
             error={messages.error}
             onRetry={() => void messages.refetch()}
@@ -66,7 +67,7 @@ export function GoalThread({ goalId, className }: { goalId: string; className?: 
 
 function MessageList({ messages }: { messages: MessageDto[] }) {
   if (messages.length === 0) {
-    return <EmptyState title="Nothing in the thread yet." />
+    return <EmptyState emphasis="quiet" title="Nothing in the thread yet." />
   }
 
   // The list does not scroll on its own: it grows, and the panel around it

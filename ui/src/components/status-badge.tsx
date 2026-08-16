@@ -5,6 +5,11 @@
  * it: each feature's status module owns the tone (and the dot) for its own
  * vocabulary, and this component owns the shape. That keeps a status the same
  * pill wherever it appears, and keeps the colours in one file per feature.
+ *
+ * `box` is the one thing the call sites still differ on, because they always
+ * have: the goal and session pills are the bordered badge box (a fixed height,
+ * so the border does not grow them), the board's are plain spans that size
+ * themselves. Both are kept as they were rather than picked for them here.
  */
 
 import { cva, type VariantProps } from "class-variance-authority"
@@ -20,15 +25,18 @@ const statusBadgeVariants = cva(
         sm: "px-1.5",
         md: "px-2",
       },
-      /** An outlined pill takes its meaning from the dot rather than a fill. */
-      outline: {
-        true: "border border-border",
-        false: "",
+      box: {
+        /** Sizes itself to its text. */
+        plain: "",
+        /** The badge box: fixed height, and a border that takes no colour. */
+        badge: "h-5 overflow-hidden border border-transparent",
+        /** The badge box with the border drawn, for a pill whose colour is its dot. */
+        outlined: "h-5 overflow-hidden border border-border",
       },
     },
     defaultVariants: {
       size: "md",
-      outline: false,
+      box: "plain",
     },
   },
 )
@@ -39,7 +47,7 @@ export function StatusBadge({
   dot,
   pulse = false,
   size,
-  outline,
+  box,
   title,
   className,
 }: VariantProps<typeof statusBadgeVariants> & {
@@ -56,7 +64,7 @@ export function StatusBadge({
   className?: string
 }) {
   return (
-    <span className={cn(statusBadgeVariants({ size, outline }), tone, className)} title={title}>
+    <span className={cn(statusBadgeVariants({ size, box }), tone, className)} title={title}>
       {dot ? (
         <span
           className={cn("size-1.5 shrink-0 rounded-full", dot, pulse && "animate-pulse")}

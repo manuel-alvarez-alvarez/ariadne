@@ -86,7 +86,11 @@ export function SessionsList({
               <TableRow>
                 <TableCell colSpan={8} className="p-0">
                   {/* Inside the table's own frame, so the empty state drops its box. */}
-                  <EmptyState title="No sessions match these filters." className="border-0" />
+                  <EmptyState
+                    emphasis="quiet"
+                    title="No sessions match these filters."
+                    className="border-0"
+                  />
                 </TableCell>
               </TableRow>
             ) : null}
