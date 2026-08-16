@@ -1,0 +1,26 @@
+[package]
+name = "ariadne-ui"
+version = "0.1.0"
+description = "Ariadne desktop UI"
+authors = ["Ariadne"]
+license = "MIT OR Apache-2.0"
+edition = "2021"
+rust-version = "1.77.2"
+
+# Deliberately not a member of the root workspace (see `exclude` in the root
+# Cargo.toml): `cargo build --workspace` must not build the desktop shell.
+[workspace]
+
+[lib]
+name = "ariadne_ui_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.3" }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.11.3" }
+tauri-plugin-log = "2"
