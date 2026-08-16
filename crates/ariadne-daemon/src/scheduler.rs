@@ -124,7 +124,15 @@ impl Scheduler {
         }
     }
 
-    /// Mark sessions whose tmux process died as exited.
+    /// Mark sessions whose tmux process died as exited, and note the grid the
+    /// living ones are drawing at.
+    ///
+    /// Measuring a pane answers both: `display-message` fails on a session
+    /// that is not there. The size is written down because it is only
+    /// knowable while the pane exists — a viewer opening the console log of a
+    /// session that has ended has no other way to learn what width its bytes
+    /// were written at (see `Launcher::record_pane_size`). This sweep is the
+    /// only place that sees every session, watched or not.
     async fn liveness_sweep(&mut self) {
         let Ok(live) = self
             .store
@@ -137,12 +145,28 @@ impl Scheduler {
             return;
         };
         for session in live {
-            if !self.launcher.tmux.has_session(&session.tmux_session).await {
-                info!(session = %session.id, tmux = %session.tmux_session, "session process gone, marking exited");
-                let _ = self
-                    .store
-                    .set_session_status(&session.id, SessionStatus::Exited)
-                    .await;
+            match self
+                .launcher
+                .tmux
+                .pane_geometry(&session.tmux_session)
+                .await
+            {
+                Ok(geometry) => {
+                    self.launcher
+                        .record_pane_size(&session.id, geometry.cols, geometry.rows)
+                        .await;
+                }
+                // Confirmed before acting on it: marking a session exited ends
+                // its work, which is too much to hang on a line of tmux output
+                // that failed to parse.
+                Err(_) if self.launcher.tmux.has_session(&session.tmux_session).await => {}
+                Err(_) => {
+                    info!(session = %session.id, tmux = %session.tmux_session, "session process gone, marking exited");
+                    let _ = self
+                        .store
+                        .set_session_status(&session.id, SessionStatus::Exited)
+                        .await;
+                }
             }
         }
     }

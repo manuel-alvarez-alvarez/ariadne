@@ -29,14 +29,22 @@ pub struct PaneGeometry {
 /// `"80x24 2,21"`, as [`TmuxManager::pane_geometry`] asks tmux to print it.
 fn parse_geometry(raw: &str) -> Option<PaneGeometry> {
     let (size, cursor) = raw.split_once(' ')?;
-    let (cols, rows) = size.split_once('x')?;
+    let (cols, rows) = parse_size(size)?;
     let (x, y) = cursor.split_once(',')?;
     Some(PaneGeometry {
-        cols: cols.trim().parse().ok()?,
-        rows: rows.trim().parse().ok()?,
+        cols,
+        rows,
         cursor_x: x.trim().parse().ok()?,
         cursor_y: y.trim().parse().ok()?,
     })
+}
+
+/// `"80x24"` — the size half of a geometry, which is also how a pane's last
+/// known size is stored for a session that has ended (see
+/// `Launcher::record_pane_size`).
+pub fn parse_size(raw: &str) -> Option<(u16, u16)> {
+    let (cols, rows) = raw.split_once('x')?;
+    Some((cols.trim().parse().ok()?, rows.trim().parse().ok()?))
 }
 
 /// Everything needed to launch one agent in a detached tmux session.

@@ -290,6 +290,34 @@ describe("SessionLogStream feeding a terminal", () => {
     expect(terminal.resize).toHaveBeenCalledWith(120, 40)
   })
 
+  it("takes a resized pane's replacement screen as a replacement, at the new grid", () => {
+    const { terminal, stream: s } = terminalStream()
+    s.start()
+    latest().succeed()
+    latest().emit("resize", { cols: 80, rows: 24 })
+    latest().emit("snapshot", { chunk: "80 columns\r\n" })
+
+    // Somebody attached with a wider terminal: the daemon starts the client
+    // over rather than continuing with deltas drawn at neither size.
+    latest().emit("resize", { cols: 120, rows: 40 })
+    latest().emit("snapshot", { chunk: "120 columns\r\n" })
+
+    // The resize is queued ahead of the screen it applies to, and the screen
+    // brings its own reset — so nothing of the 80-column one survives, and
+    // none of it is laid out at 120 columns on the way out.
+    expect(terminal.write.mock.calls.map(([data]) => data)).toEqual([
+      "",
+      `${SNAPSHOT_PREFIX}80 columns\r\n`,
+      "",
+      `${SNAPSHOT_PREFIX}120 columns\r\n`,
+    ])
+    for (const [, apply] of terminal.write.mock.calls) apply?.()
+    expect(terminal.resize.mock.calls).toEqual([
+      [80, 24],
+      [120, 40],
+    ])
+  })
+
   it("re-reads a finished log without carrying the old contents over", () => {
     const { terminal, stream: s } = terminalStream()
     s.start()
