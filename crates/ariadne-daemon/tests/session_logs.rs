@@ -82,8 +82,10 @@ fn write_tmux_stub(dir: &std::path::Path) -> TmuxManager {
     use std::os::unix::fs::PermissionsExt;
 
     let bin = dir.join("tmux-stub.sh");
-    // `capture-pane` can be made to fail, and to resize the pane as it reads
-    // it — the one window a stream cannot otherwise reach into.
+    // `capture-pane` and `display-message` can each be made to fail on their
+    // own — a pane that is there but says nothing is a different thing from
+    // one that is gone — and `capture-pane` can resize the pane as it reads
+    // it, which is the one window a stream cannot otherwise reach into.
     let script = format!(
         "#!/bin/sh\n\
          case \"$1\" in\n\
@@ -92,11 +94,15 @@ fn write_tmux_stub(dir: &std::path::Path) -> TmuxManager {
          \x20   [ -f '{no_capture}' ] && exit 1\n\
          \x20   if [ -f '{resize}' ]; then cat '{resize}' > '{size}'; rm '{resize}'; fi\n\
          \x20   cat '{pane}' 2>/dev/null ;;\n\
-         \x20 display-message) cat '{size}' 2>/dev/null ;;\n\
+         \x20 display-message)\n\
+         \x20   [ -f '{no_measure}' ] && exit 1\n\
+         \x20   [ -f '{alive}' ] || exit 1\n\
+         \x20   cat '{size}' 2>/dev/null ;;\n\
          esac\n\
          exit 0\n",
         alive = dir.join("tmux-alive").display(),
         no_capture = dir.join("capture-fails").display(),
+        no_measure = dir.join("measure-fails").display(),
         resize = dir.join("resize-on-capture.txt").display(),
         pane = dir.join("pane.txt").display(),
         size = dir.join("pane-size.txt").display(),
@@ -207,8 +213,18 @@ impl Harness {
     /// Whether the stub tmux's `capture-pane` fails — a pane that is there
     /// (`display-message` still answers) but cannot be read.
     fn stub_capture_fails(&self, fails: bool) {
-        let marker = self.dir.path().join("capture-fails");
-        if fails {
+        self.stub_marker("capture-fails", fails);
+    }
+
+    /// Whether the stub tmux's `display-message` fails — a pane that is there
+    /// (`has-session` still succeeds) but cannot be measured.
+    fn stub_measure_fails(&self, fails: bool) {
+        self.stub_marker("measure-fails", fails);
+    }
+
+    fn stub_marker(&self, name: &str, set: bool) {
+        let marker = self.dir.path().join(name);
+        if set {
             std::fs::write(marker, "").unwrap();
         } else {
             let _ = std::fs::remove_file(marker);
@@ -727,6 +743,113 @@ async fn output_while_the_resized_pane_cannot_be_captured_waits_for_the_new_scre
         !chunk.contains("DRAWN-AT-120-COLUMNS"),
         "the replacement screen covers what came before it: {chunk:?}"
     );
+}
+
+/// The first screen a client is given is as much a screen-and-its-grid as any
+/// later one: a pane that resizes during that very first capture must not be
+/// announced at the size it was measured at beforehand. Opening goes through
+/// the same coherent capture as a resize does, so this is that guarantee at
+/// the one moment the client has nothing to fall back on.
+#[tokio::test]
+async fn a_pane_that_resizes_during_the_opening_capture_is_reported_at_the_grid_it_reached() {
+    let h = harness_with_stub_tmux().await;
+    let session = h.session("ariadne-resized-on-open").await;
+    h.stub_pane("132-column screen\n");
+    // Armed before the first request: the pane reads 80×24, and reading it
+    // turns it into a 132×43 one.
+    h.stub_resize_on_capture(132, 43, 0, 42);
+
+    let mut body = h
+        .router
+        .clone()
+        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
+        .await
+        .unwrap()
+        .into_body();
+
+    let (name, payload) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "resize");
+    assert_eq!(
+        (payload["cols"].as_u64(), payload["rows"].as_u64()),
+        (Some(132), Some(43)),
+        "the opening grid is the captured screen's, not the one measured before it"
+    );
+    let (name, payload) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "snapshot");
+    assert_eq!(payload["chunk"], "132-column screen\u{1b}[43;1H");
+}
+
+/// A pane that cannot be *measured* is not a pane that is gone either, and the
+/// difference is the same one `end` turns into a dead viewer. tmux is asked
+/// outright — `has-session` — before anything is concluded, at the opening
+/// and while resynchronising alike.
+#[tokio::test]
+async fn a_pane_that_cannot_be_measured_is_not_reported_as_a_finished_session() {
+    let h = harness_with_stub_tmux().await;
+    let session = h.session("ariadne-unmeasurable").await;
+    h.stub_pane("a screen nobody can measure\n");
+    h.write_console_log(&session.id, "console output\n");
+    h.stub_measure_fails(true);
+
+    // Opening: the session is live and tmux still has it, so there is nothing
+    // to declare — least of all that it is over.
+    let mut body = h
+        .router
+        .clone()
+        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
+        .await
+        .unwrap()
+        .into_body();
+    match next_sse(&mut body, Duration::from_millis(700)).await {
+        Sse::Silent => {}
+        other => panic!("expected silence while the pane cannot be measured, got {other:?}"),
+    }
+
+    h.stub_measure_fails(false);
+    let (name, payload) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "resize");
+    assert_eq!(payload["cols"], 80);
+    let (name, payload) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "snapshot");
+    assert_eq!(payload["chunk"], "a screen nobody can measure\u{1b}[24;1H");
+
+    // And again mid-stream: a resize sends the follower looking for a screen,
+    // and the measurements it needs start failing while it looks.
+    h.stub_pane_screen("120-column screen\n");
+    h.stub_pane_geometry(120, 40, 0, 39);
+    tokio::time::sleep(Duration::from_millis(1_100)).await;
+    h.stub_measure_fails(true);
+
+    for _ in 0..3 {
+        match next_sse(&mut body, Duration::from_millis(400)).await {
+            Sse::Silent => {}
+            Sse::Message(message) => {
+                let (name, _) = parse(&message);
+                assert_ne!(name, "end", "a live session must not be declared over");
+            }
+            Sse::Closed => break,
+        }
+    }
+
+    h.stub_measure_fails(false);
+    // Whether the connection above survived the wait or gave way to a fresh
+    // one, what the client ends up with is the new grid and its screen.
+    let mut body = h
+        .router
+        .clone()
+        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
+        .await
+        .unwrap()
+        .into_body();
+    let (name, payload) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "resize");
+    assert_eq!(
+        (payload["cols"].as_u64(), payload["rows"].as_u64()),
+        (Some(120), Some(40))
+    );
+    let (name, payload) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "snapshot");
+    assert_eq!(payload["chunk"], "120-column screen\u{1b}[40;1H");
 }
 
 /// A pane that cannot be read is not a session that has ended, and the two
