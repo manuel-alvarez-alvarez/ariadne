@@ -2,11 +2,13 @@
 //!
 //! A task bounced back by its reviewers is the same engineer, in the same
 //! conversation, in the same worktree — so it stays one session however many
-//! rounds it takes, rather than growing a sibling row per round.
+//! rounds it takes, rather than growing a sibling row per round. The same
+//! holds for each reviewer: one session for the whole review.
 //!
 //! No tmux and no agent CLI needed: `tmux` is a stub script that records the
 //! commands the launcher issues, which is also how the console-log wiring is
-//! checked without a pane to pipe.
+//! checked without a pane to pipe. `git` is real — a reviewer's worktree has
+//! to actually move to the branch tip between rounds.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -15,7 +17,8 @@ use std::time::Duration;
 use tokio::sync::broadcast::Receiver;
 
 use ariadne_api::stream::DomainEvent;
-use ariadne_core::{AgentKind, Role, SessionStatus};
+use ariadne_core::{Actor, AgentKind, Role, SessionStatus, TaskStatus};
+use ariadne_daemon::agents::prompts;
 use ariadne_daemon::bus::{BusEvent, EventBus};
 use ariadne_daemon::config::Config;
 use ariadne_daemon::gitwt::GitManager;
@@ -52,6 +55,17 @@ async fn harness() -> Harness {
         launcher,
         dir,
     }
+}
+
+/// Run a shell command in `dir` (repo setup), failing the test if it does not.
+fn sh(dir: &Path, cmd: &str) {
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(cmd)
+        .current_dir(dir)
+        .status()
+        .unwrap();
+    assert!(status.success(), "command failed: {cmd}");
 }
 
 /// A `tmux` that has no sessions and records every command it is given, so a
@@ -156,6 +170,90 @@ impl Harness {
         (task, self.store.get_session(&session.id).await.unwrap())
     }
 
+    /// A task under review for real: a repo on disk with a commit on the task
+    /// branch, and one reviewer assigned to it (whose id is returned).
+    async fn task_under_review(&self) -> (Task, String) {
+        let planner = self.profile("planner", Role::Planner).await;
+        let engineer = self.profile("engineer", Role::Engineer).await;
+        let reviewer = self.profile("reviewer", Role::Reviewer).await;
+        let repo_path = self.dir.path().join("repo-git");
+        std::fs::create_dir_all(&repo_path).unwrap();
+        sh(
+            &repo_path,
+            "git init -q -b main && echo v1 > file.txt && git add . && \
+             git -c user.email=t@t -c user.name=t commit -qm init",
+        );
+        let goal = self
+            .store
+            .create_goal(NewGoal {
+                title: "Ship the UI".into(),
+                description: "desc".into(),
+                planner_profile_id: planner,
+                max_tasks: None,
+                required_approvals: 1,
+                repos: vec![(repo_path.display().to_string(), "main".into())],
+            })
+            .await
+            .unwrap();
+        let repo = self
+            .store
+            .list_goal_repos(&goal.id)
+            .await
+            .unwrap()
+            .remove(0);
+        let task = self
+            .store
+            .create_task(NewTask {
+                goal_id: goal.id.clone(),
+                repo_id: repo.id,
+                title: "task".into(),
+                description: "do things".into(),
+                engineer_profile_id: engineer,
+                reviewer_profile_ids: vec![reviewer.clone()],
+                depends_on: vec![],
+            })
+            .await
+            .unwrap();
+        sh(&repo_path, &format!("git branch {}", task.branch));
+        for (to, actor) in [
+            (TaskStatus::Ready, Actor::Daemon),
+            (TaskStatus::InProgress, Actor::Daemon),
+            (TaskStatus::UnderReview, Actor::Engineer),
+        ] {
+            self.store
+                .transition_task(&task.id, to, actor, None, None)
+                .await
+                .unwrap();
+        }
+        (self.store.get_task(&task.id).await.unwrap(), reviewer)
+    }
+
+    /// The reviewer bounces the task back and the engineer pushes another
+    /// commit: the task returns to review one round on, one commit ahead.
+    async fn next_round(&self, task: &Task) -> Task {
+        let repo_path = PathBuf::from(&self.store.get_goal_repo(&task.repo_id).await.unwrap().path);
+        sh(
+            &repo_path,
+            &format!(
+                "git checkout -q {branch} && echo v2 > file.txt && git add . && \
+                 git -c user.email=t@t -c user.name=t commit -qm revision && \
+                 git checkout -q main",
+                branch = task.branch
+            ),
+        );
+        for (to, actor) in [
+            (TaskStatus::ChangesRequested, Actor::Daemon),
+            (TaskStatus::InProgress, Actor::Daemon),
+            (TaskStatus::UnderReview, Actor::Engineer),
+        ] {
+            self.store
+                .transition_task(&task.id, to, actor, None, None)
+                .await
+                .unwrap();
+        }
+        self.store.get_task(&task.id).await.unwrap()
+    }
+
     async fn profile(&self, name: &str, role: Role) -> String {
         self.store
             .create_profile(NewProfile {
@@ -254,6 +352,151 @@ async fn resuming_the_engineer_reuses_its_session_across_review_rounds() {
         .filter(|c| c.contains("--resume uuid-1234"))
         .count();
     assert_eq!(resumes, 2, "commands: {commands:?}");
+}
+
+/// A reviewer that sees a task through two rounds is one reviewer with one
+/// memory of it: round two wakes the session it already has — same row, same
+/// tmux name, same conversation — in a worktree moved to the new tip, and is
+/// told which round it is now judging.
+#[tokio::test]
+async fn a_reviewer_reuses_its_session_across_review_rounds() {
+    let h = harness().await;
+    let (task, reviewer) = h.task_under_review().await;
+
+    // Round one: nothing to resume, so this is the reviewer's first spawn.
+    let first = h
+        .launcher
+        .resume_reviewer(&task.id, &reviewer, "(unused: no session yet)")
+        .await
+        .unwrap();
+    assert_eq!(first.role(), Role::Reviewer);
+    assert_eq!(first.review_round, Some(1));
+    assert!(
+        !first.tmux_session.ends_with("-r1"),
+        "the round is no part of the session's name: {}",
+        first.tmux_session
+    );
+    let internal = first
+        .internal_session_id
+        .clone()
+        .expect("claude picks its session uuid at spawn");
+
+    // The task leaves review, so the daemon tears the reviewer's tmux down;
+    // then the engineer revises and it comes back for round two.
+    h.launcher.kill_session(&first.id).await.unwrap();
+    let task = h.next_round(&task).await;
+    assert_eq!(task.review_round, 2);
+
+    let second = h
+        .launcher
+        .resume_reviewer(
+            &task.id,
+            &reviewer,
+            &prompts::reviewer_resume_briefing(&task, Some("I rewrote the thing.")),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second.id, first.id, "round 2 reused the session");
+    assert_eq!(
+        second.tmux_session, first.tmux_session,
+        "and keeps its tmux name"
+    );
+    assert_eq!(
+        second.internal_session_id.as_deref(),
+        Some(internal.as_str()),
+        "on the same agent conversation"
+    );
+    assert_eq!(second.status(), SessionStatus::Running);
+    assert_eq!(second.ended_at, None, "the session is live again");
+    assert_eq!(
+        second.review_round,
+        Some(2),
+        "and its row says which round it is on"
+    );
+    let sessions: Vec<AgentSession> = h
+        .sessions_of(&task)
+        .await
+        .into_iter()
+        .filter(|s| s.role() == Role::Reviewer)
+        .collect();
+    assert_eq!(
+        sessions.len(),
+        1,
+        "two rounds left more than one reviewer session: {sessions:?}"
+    );
+
+    // The worktree it wakes up in is the branch as it stands now.
+    let worktree = PathBuf::from(second.worktree_path.as_deref().unwrap());
+    assert_eq!(
+        std::fs::read_to_string(worktree.join("file.txt")).unwrap(),
+        "v2\n",
+        "the reviewer woke up in the tree it already reviewed"
+    );
+
+    let commands = h.tmux_commands();
+    let log = commands.join("\n");
+    assert!(
+        log.contains(&format!("--resume {internal}")),
+        "round 2 resumed the stored conversation: {log}"
+    );
+    assert!(
+        log.contains("review round 2"),
+        "and was told which round it is reviewing: {log}"
+    );
+    // One console log, appended to across both rounds.
+    let expected = format!("cat >> '{}'", h.console_log(&first.id).display());
+    let pipes: Vec<&String> = commands
+        .iter()
+        .filter(|c| c.starts_with("pipe-pane"))
+        .collect();
+    assert_eq!(pipes.len(), 2, "one pipe-pane per launch: {pipes:?}");
+    for pipe in pipes {
+        assert!(
+            pipe.contains(&expected),
+            "both rounds pipe into the one console log: {pipe}"
+        );
+    }
+}
+
+/// A reviewer session that never reported an agent id is no conversation to
+/// go back to — codex and opencode only report theirs from a hook — so the
+/// next round spawns a fresh one rather than failing.
+#[tokio::test]
+async fn a_reviewer_without_an_agent_id_is_spawned_afresh() {
+    let h = harness().await;
+    let (task, reviewer) = h.task_under_review().await;
+    let stillborn = h
+        .store
+        .create_session(NewSession {
+            goal_id: task.goal_id.clone(),
+            task_id: Some(task.id.clone()),
+            role: Role::Reviewer,
+            profile_id: reviewer.clone(),
+            agent_kind: AgentKind::ClaudeCode,
+            tmux_session: session_name(&task.goal_id, Some(&task.id), "reviewer", Some("rev")),
+            worktree_path: None,
+            review_round: Some(1),
+        })
+        .await
+        .unwrap();
+    h.store
+        .set_session_status(&stillborn.id, SessionStatus::Exited)
+        .await
+        .unwrap();
+
+    let spawned = h
+        .launcher
+        .resume_reviewer(&task.id, &reviewer, "(unused: nothing to resume)")
+        .await
+        .unwrap();
+    assert_ne!(spawned.id, stillborn.id, "a fresh session, not that one");
+    assert_eq!(spawned.status(), SessionStatus::Running);
+    assert!(spawned.internal_session_id.is_some());
+    assert_eq!(
+        h.store.get_session(&stillborn.id).await.unwrap().status(),
+        SessionStatus::Exited,
+        "an un-resumable session stays finished"
+    );
 }
 
 /// The UI's caches are driven by domain events, and a reused row only ever
