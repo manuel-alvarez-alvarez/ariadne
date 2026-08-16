@@ -41,3 +41,23 @@ export function useTaskPanelTo(taskId: string): { search: string } {
   const [search] = useSearchParams()
   return taskPanelTo(search, taskId)
 }
+
+/**
+ * Link target that shows a session inside the panel that is already open:
+ * everything else is kept, `tab` and `session` point the panel at it.
+ *
+ * This is how a session id mentioned somewhere in a panel — a message's
+ * author, a review's session — becomes a way to watch that agent.
+ */
+export function panelSessionTo(current: URLSearchParams, sessionId: string): { search: string } {
+  const next = new URLSearchParams(current)
+  next.set("tab", "sessions")
+  next.set("session", sessionId)
+  return { search: `?${next.toString()}` }
+}
+
+/** `panelSessionTo` against the current location. */
+export function usePanelSessionTo(sessionId: string): { search: string } {
+  const [search] = useSearchParams()
+  return panelSessionTo(search, sessionId)
+}

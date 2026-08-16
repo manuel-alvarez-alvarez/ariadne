@@ -1,10 +1,11 @@
 /**
  * One task in full, in a side panel over whatever screen it was opened from —
  * the `task inspect` equivalent, plus everything hanging off it: its thread,
- * its reviews, its transition log and its branch diff.
+ * its reviews, its transition log, its branch diff and the agents that ran it.
  *
  * The tab lives in the URL (like the panel itself) so a link can point at,
- * say, the diff of a task, and a reload stays where the user was.
+ * say, the diff of a task, and a reload stays where the user was. The sessions
+ * tab keeps its selection there too, under `?session=`.
  */
 
 import { useQueries, useQuery } from "@tanstack/react-query"
@@ -29,18 +30,28 @@ import { TaskConversation } from "./task-conversation"
 import { TaskDiff } from "./task-diff"
 import { TaskHistory } from "./task-history"
 import { TaskReviews } from "./task-reviews"
+import { TaskSessions } from "./task-sessions"
 
-const TABS = ["conversation", "reviews", "history", "diff"] as const
+const TABS = ["conversation", "reviews", "history", "diff", "sessions"] as const
 type Tab = (typeof TABS)[number]
 
 export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => void }) {
   const [search, setSearch] = useSearchParams()
   const task = useQuery(taskQueryOptions(taskId))
   const tab = TABS.find((value) => value === search.get("tab")) ?? "conversation"
+  const session = search.get("session") ?? undefined
 
   function setTab(next: Tab) {
     const params = new URLSearchParams(search)
     params.set("tab", next)
+    setSearch(params, { replace: true })
+  }
+
+  /** The sessions tab's selection; `undefined` goes back to the bare list. */
+  function selectSession(next: string | undefined) {
+    const params = new URLSearchParams(search)
+    if (next === undefined) params.delete("session")
+    else params.set("session", next)
     setSearch(params, { replace: true })
   }
 
@@ -84,6 +95,7 @@ export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => 
                 <TabsTrigger value="reviews">Reviews</TabsTrigger>
                 <TabsTrigger value="history">History</TabsTrigger>
                 <TabsTrigger value="diff">Diff</TabsTrigger>
+                <TabsTrigger value="sessions">Sessions</TabsTrigger>
               </TabsList>
               <TabsContent value="conversation" className="pt-3">
                 <TaskConversation taskId={taskId} />
@@ -96,6 +108,9 @@ export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => 
               </TabsContent>
               <TabsContent value="diff" className="pt-3">
                 <TaskDiff taskId={taskId} />
+              </TabsContent>
+              <TabsContent value="sessions" className="pt-3">
+                <TaskSessions taskId={taskId} selectedId={session} onSelect={selectSession} />
               </TabsContent>
             </Tabs>
           </>

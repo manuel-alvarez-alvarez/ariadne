@@ -13,9 +13,10 @@ import type { ReviewDto, ReviewVerdict } from "@/api"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
-import { describeError, formatAbsolute, formatRelative, shortId } from "./format"
+import { describeError, formatAbsolute, formatRelative } from "./format"
 import { Markdown } from "./markdown"
 import { taskReviewsQueryOptions } from "./queries"
+import { SessionLink } from "./task-sessions"
 
 const VERDICT_META: Record<
   ReviewVerdict,
@@ -96,11 +97,7 @@ function ReviewCard({ review }: { review: ReviewDto }) {
         <span className="font-mono text-muted-foreground" title={review.reviewer_profile_id}>
           {review.reviewer_profile_id}
         </span>
-        {review.session_id && (
-          <span className="font-mono text-muted-foreground" title={review.session_id}>
-            session {shortId(review.session_id)}
-          </span>
-        )}
+        {review.session_id && <SessionLink sessionId={review.session_id} />}
         <time
           className="ml-auto text-muted-foreground"
           dateTime={review.created_at}
