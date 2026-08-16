@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { panelSessionTo, taskPanelTo } from "./paths"
+import { panelSessionTo, taskPanelTo, taskSessionPanelTo } from "./paths"
 
 describe("taskPanelTo", () => {
   it("keeps the params the screen owns", () => {
@@ -33,5 +33,33 @@ describe("panelSessionTo", () => {
   it("replaces the session that was selected", () => {
     const to = panelSessionTo(new URLSearchParams("task=t1&tab=sessions&session=s1"), "s2")
     expect(new URLSearchParams(to.search).get("session")).toBe("s2")
+  })
+
+  it("comes back out of the session onto the list it came from", () => {
+    const to = panelSessionTo(new URLSearchParams("task=t1&tab=sessions&session=s1"), null)
+    const params = new URLSearchParams(to.search)
+    expect(params.get("task")).toBe("t1")
+    expect(params.get("tab")).toBe("sessions")
+    expect(params.has("session")).toBe(false)
+  })
+})
+
+describe("taskSessionPanelTo", () => {
+  it("opens the task's panel on the session, keeping the screen's filters", () => {
+    const to = taskSessionPanelTo(new URLSearchParams("status=failed&role=reviewer"), "t1", "s1")
+    const params = new URLSearchParams(to.search)
+    expect(params.get("status")).toBe("failed")
+    expect(params.get("role")).toBe("reviewer")
+    expect(params.get("task")).toBe("t1")
+    expect(params.get("tab")).toBe("sessions")
+    expect(params.get("session")).toBe("s1")
+  })
+
+  it("moves a panel that was open on another task's session", () => {
+    const to = taskSessionPanelTo(new URLSearchParams("task=t1&tab=diff&session=s1"), "t2", "s2")
+    const params = new URLSearchParams(to.search)
+    expect(params.get("task")).toBe("t2")
+    expect(params.get("tab")).toBe("sessions")
+    expect(params.get("session")).toBe("s2")
   })
 })
