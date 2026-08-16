@@ -78,6 +78,12 @@ impl Launcher {
 
     /// Refuse to double-spawn: one live session per (task, role) —
     /// per (task, role, profile) for reviewers.
+    ///
+    /// A pane tmux will not answer for counts as live. This is the last guard
+    /// before a second agent starts working on somebody else's task, and the
+    /// two ways of being wrong are not comparable: a spawn refused because
+    /// tmux was briefly unreachable is retried on the next tick, while one
+    /// allowed on the same grounds has to be noticed by a human.
     async fn assert_no_live_session(
         &self,
         goal_id: &str,
@@ -97,7 +103,7 @@ impl Launcher {
         for s in live {
             if s.role() == role
                 && (role != Role::Reviewer || profile_id.is_none_or(|p| p == s.profile_id))
-                && self.tmux.has_session(&s.tmux_session).await
+                && self.tmux.has_session_or_unknown(&s.tmux_session).await
             {
                 return Err(anyhow!(
                     "a live {} session already exists: {} (tmux {})",
