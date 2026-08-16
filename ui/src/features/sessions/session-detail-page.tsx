@@ -17,7 +17,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
-import { paths } from "@/routes/paths"
+import { paths, useTaskPanelTo } from "@/routes/paths"
 
 import {
   goalQueryOptions,
@@ -77,6 +77,7 @@ function SessionDetail({ session }: { session: SessionDto }) {
   })
   const profiles = useQuery(profilesQueryOptions())
   const profile = profiles.data?.find((item) => item.id === session.profile_id)
+  const taskTo = useTaskPanelTo(session.task_id ?? "")
 
   return (
     <div className="space-y-4">
@@ -106,7 +107,7 @@ function SessionDetail({ session }: { session: SessionDto }) {
             </Detail>
             <Detail label="Task">
               {session.task_id ? (
-                <Link to={paths.task(session.task_id)} className="hover:underline">
+                <Link to={taskTo} className="hover:underline">
                   {task.data?.title ?? <Mono>{session.task_id}</Mono>}
                 </Link>
               ) : (
