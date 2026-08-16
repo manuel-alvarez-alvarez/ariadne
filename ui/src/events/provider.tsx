@@ -73,12 +73,17 @@ export function EventStreamProvider({ children }: { children: ReactNode }) {
   // stopping. The REST probe is the independent signal: when it loses the
   // daemon, drop the stream; when it finds it again, stop waiting out the
   // backoff.
+  const wasUnreachable = useRef(false)
   useEffect(() => {
     const stream = streamRef.current
     if (!stream) return
     if (daemonUnreachable) {
+      wasUnreachable.current = true
       stream.forceReconnect("daemon health probe failed")
-    } else {
+    } else if (wasUnreachable.current) {
+      // Only on the way back up: on the very first probe there is nothing to
+      // recover from, and forcing a reconnect would cut off the initial one.
+      wasUnreachable.current = false
       stream.reconnectIfClosed("daemon health probe recovered")
     }
   }, [daemonUnreachable])
