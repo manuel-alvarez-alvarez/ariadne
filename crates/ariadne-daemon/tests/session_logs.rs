@@ -19,7 +19,7 @@ use ariadne_daemon::config::Config;
 use ariadne_daemon::gitwt::GitManager;
 use ariadne_daemon::http::{self, AppState};
 use ariadne_daemon::launcher::Launcher;
-use ariadne_daemon::tmux::TmuxManager;
+use ariadne_daemon::tmux::{TmuxManager, TmuxSpawn};
 use ariadne_store::{AgentSession, NewGoal, NewProfile, NewSession, Store};
 
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -60,6 +60,12 @@ async fn harness() -> Harness {
 impl Harness {
     /// A session whose tmux is not (and never was) running.
     async fn dead_session(&self) -> AgentSession {
+        // Deliberately not a live tmux session.
+        self.session("ariadne-test-no-such-session").await
+    }
+
+    /// A planner session bound to the tmux session `tmux_name`.
+    async fn session(&self, tmux_name: &str) -> AgentSession {
         let planner = self
             .store
             .create_profile(NewProfile {
@@ -91,8 +97,7 @@ impl Harness {
                 role: Role::Planner,
                 profile_id: planner.id,
                 agent_kind: AgentKind::ClaudeCode,
-                // Deliberately not a live tmux session.
-                tmux_session: "ariadne-test-no-such-session".into(),
+                tmux_session: tmux_name.into(),
                 worktree_path: None,
                 review_round: None,
             })
@@ -214,6 +219,72 @@ async fn an_exited_session_without_a_console_log_still_ends() {
     assert_eq!(payload["chunk"], "");
     let (name, _) = parse(&next_sse_message(&mut body).await);
     assert_eq!(name, "end");
+}
+
+/// The live path end to end: pane output shows up as deltas within a second
+/// of being written, and killing the session closes the stream with `end`.
+#[tokio::test]
+#[ignore = "requires tmux"]
+async fn a_live_session_streams_new_output_until_it_is_killed() {
+    let h = harness().await;
+    let tmux_name = format!("ariadne-test-logstream-{}", std::process::id());
+    let session = h.session(&tmux_name).await;
+    let run_dir = h.launcher.cfg.run_dir.join(&session.id);
+    std::fs::create_dir_all(&run_dir).unwrap();
+
+    // Emits forever: pipe-pane only sees output produced after it attaches.
+    h.launcher
+        .tmux
+        .new_session(&TmuxSpawn {
+            session: tmux_name.clone(),
+            cwd: run_dir.clone(),
+            env: vec![],
+            argv: vec![
+                "sh".into(),
+                "-c".into(),
+                "while true; do echo tick; sleep 0.2; done".into(),
+            ],
+            log_file: Some(run_dir.join("console.log")),
+        })
+        .await
+        .unwrap();
+
+    let response = h
+        .router
+        .clone()
+        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body();
+
+    let (name, _) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "snapshot", "the pane snapshot comes first");
+
+    // New output reaches the client as a delta, not as a fresh snapshot.
+    let (name, payload) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "delta");
+    assert!(
+        payload["chunk"].as_str().unwrap().contains("tick"),
+        "delta carries the new pane output: {payload}"
+    );
+
+    h.launcher.tmux.kill_session(&tmux_name).await.unwrap();
+
+    // Trailing output may still be drained; `end` is what closes the stream.
+    let mut last = String::new();
+    for _ in 0..10 {
+        let (name, _) = parse(&next_sse_message(&mut body).await);
+        last = name;
+        if last == "end" {
+            break;
+        }
+    }
+    assert_eq!(last, "end", "killing the session ends the stream");
+    let eof = tokio::time::timeout(TIMEOUT, body.frame())
+        .await
+        .expect("the stream must close after end");
+    assert!(eof.is_none(), "nothing follows the end event");
 }
 
 #[tokio::test]

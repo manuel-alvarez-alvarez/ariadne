@@ -74,13 +74,13 @@ impl Follower {
 /// Follow a session's terminal output.
 ///
 /// The first message is a `snapshot` event carrying the scrollback the
-/// [`logs`](super::sessions::logs) endpoint would return; every later `delta`
-/// event carries only what has been written since. Both payloads are a
-/// [`SessionLogChunk`]: raw terminal bytes, escape sequences and all, are
-/// JSON-encoded so they cannot break SSE's line framing.
+/// `/logs` endpoint would return; every later `delta` event carries only what
+/// has been written since. Both payloads are a `SessionLogChunk`: raw
+/// terminal bytes, escape sequences and all, are JSON-encoded so they cannot
+/// break SSE's line framing.
 ///
 /// When the session ends — or if it was already over when the request arrived
-/// — the remaining output is flushed, a final `end` event ([`SessionLogEnd`])
+/// — the remaining output is flushed, a final `end` event (`SessionLogEnd`)
 /// is sent and the connection closes. There is no replay and no
 /// `Last-Event-ID`: reconnecting starts again from a fresh snapshot.
 #[utoipa::path(get, path = "/v1/sessions/{id}/logs/stream", tag = "sessions",

@@ -119,6 +119,13 @@ event and the connection closes, which an `EventSource` turns into a
 reconnect. CORS is wide open on the TCP listener so webview and browser
 clients can use it.
 
+`GET /v1/sessions/{id}/logs/stream` does the same for one agent's terminal: a
+`snapshot` event with the current scrollback, a `delta` event per burst of new
+output (tailed from the console log tmux pipes for every session), and a final
+`end` event when the session is over, after which the stream closes. Chunks
+travel as `{"chunk": "..."}`, so raw ANSI cannot break SSE framing — feed them
+straight into a terminal emulator.
+
 ## Configuration
 
 `~/.ariadne/config.toml` (all optional):
