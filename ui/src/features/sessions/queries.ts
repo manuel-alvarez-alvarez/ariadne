@@ -131,13 +131,24 @@ export function sendSessionInput(id: string, data: string): Promise<void> {
 }
 
 async function drainSessionInput(id: string): Promise<void> {
-  for (;;) {
-    const data = inputQueue.get(id)
-    if (data === undefined) return
+  try {
+    for (;;) {
+      const data = inputQueue.get(id)
+      if (data === undefined) return
+      inputQueue.delete(id)
+      await unwrap(
+        api().POST("/v1/sessions/{id}/input", { params: { path: { id } }, body: { data } }),
+      )
+    }
+  } catch (error) {
+    // Everything typed while the failed request was in flight goes with it.
+    // Keeping it would contradict the no-retry rule by another route: it
+    // would ride out behind the *next* keystroke, minutes later, and a
+    // Return or Ctrl-C replayed out of context acts on whatever the pane is
+    // showing by then. A session that briefly has no pane while it starts up
+    // is exactly where this happens.
     inputQueue.delete(id)
-    await unwrap(
-      api().POST("/v1/sessions/{id}/input", { params: { path: { id } }, body: { data } }),
-    )
+    throw error
   }
 }
 
