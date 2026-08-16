@@ -7,6 +7,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use axum::Router;
@@ -470,6 +471,7 @@ async fn a_pane_resized_under_the_stream_reports_its_new_grid() {
     assert_eq!(name, "snapshot");
 
     // Somebody attached with a wider terminal.
+    h.stub_pane("the redrawn pane\n");
     h.stub_pane_geometry(120, 40, 0, 39);
 
     let mut sizes = Vec::new();
@@ -484,6 +486,159 @@ async fn a_pane_resized_under_the_stream_reports_its_new_grid() {
         sizes,
         vec![(Some(120), Some(40))],
         "the new grid is reported, and only when it changes"
+    );
+
+    let (name, payload) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(
+        name, "snapshot",
+        "a resize is followed by the screen it applies to, not by more deltas"
+    );
+    assert_eq!(payload["chunk"], "the redrawn pane\u{1b}[40;1H");
+}
+
+/// Output waiting to go out when a pane is resized belongs to neither grid:
+/// part of it was drawn before the change and part after, and nothing in the
+/// byte stream says where the boundary is. Sending it either side of the
+/// `resize` renders some of it at the wrong width — the corruption this whole
+/// change is about — so it is dropped for a fresh screen instead.
+///
+/// The pane writes continuously, so there is always output in flight when the
+/// resize is noticed: had it been ordered against the new grid rather than
+/// replaced, a `delta` would follow the `resize` instead of a `snapshot`, and
+/// old-grid lines would keep arriving after it.
+#[tokio::test]
+async fn output_in_flight_when_the_pane_resizes_is_replaced_rather_than_reordered() {
+    let h = harness_with_stub_tmux().await;
+    let session = h.session("ariadne-straddle").await;
+    h.stub_pane("80-column screen\n");
+    h.write_console_log(&session.id, "");
+
+    // Writes every 50ms — faster than the stream polls — switching what it
+    // draws the moment the pane changes shape.
+    let resized_pane = Arc::new(AtomicBool::new(false));
+    let writer = {
+        let log = h.console_log(&session.id);
+        let resized_pane = resized_pane.clone();
+        tokio::spawn(async move {
+            loop {
+                let line = if resized_pane.load(Ordering::SeqCst) {
+                    "DRAWN-AT-120-COLUMNS\n"
+                } else {
+                    "DRAWN-AT-80-COLUMNS\n"
+                };
+                let mut file = tokio::fs::OpenOptions::new()
+                    .append(true)
+                    .open(&log)
+                    .await
+                    .unwrap();
+                file.write_all(line.as_bytes()).await.unwrap();
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+    };
+
+    let response = h
+        .router
+        .clone()
+        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
+        .await
+        .unwrap();
+    let mut body = response.into_body();
+    let (name, _) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "resize");
+    let (name, _) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "snapshot");
+
+    // Somebody attached with a wider terminal, mid-output.
+    h.stub_pane("120-column screen\n");
+    h.stub_pane_geometry(120, 40, 0, 39);
+    resized_pane.store(true, Ordering::SeqCst);
+
+    let mut resized = false;
+    for _ in 0..20 {
+        let (name, _) = parse(&next_sse_message(&mut body).await);
+        if name == "resize" {
+            resized = true;
+            break;
+        }
+    }
+    assert!(resized, "the resize is reported");
+
+    let (name, payload) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(
+        name, "snapshot",
+        "a resize is followed by a screen taken at the new grid, not by the \
+         output that was waiting to go out at the old one"
+    );
+    assert_eq!(payload["chunk"], "120-column screen\u{1b}[40;1H");
+
+    // The tail moved past the dropped bytes with it, so nothing drawn at the
+    // old grid arrives with what the pane writes next either.
+    for _ in 0..4 {
+        let (name, payload) = parse(&next_sse_message(&mut body).await);
+        let chunk = payload["chunk"].as_str().unwrap_or("");
+        assert!(
+            !chunk.contains("DRAWN-AT-80-COLUMNS"),
+            "output drawn at the old grid must not be replayed at the new one: {name} {chunk:?}"
+        );
+    }
+
+    writer.abort();
+}
+
+/// A session that has ended has no pane left to measure, and its console log
+/// is raw terminal bytes that only wrap correctly at the width they were
+/// written at. The last size it was seen at is what it is served at — a
+/// history view is where this matters most, since that is all such a session
+/// will ever be.
+#[tokio::test]
+async fn a_finished_session_is_served_at_the_grid_it_was_last_seen_at() {
+    let h = harness().await;
+    let session = h.dead_session().await;
+    h.write_console_log(&session.id, "output from a 120-column pane\n");
+    h.launcher.record_pane_size(&session.id, 120, 40).await;
+
+    let response = h
+        .router
+        .clone()
+        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
+        .await
+        .unwrap();
+    let mut body = response.into_body();
+
+    let (name, payload) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "resize", "a finished log has a width too");
+    assert_eq!(payload["cols"], 120);
+    assert_eq!(payload["rows"], 40);
+
+    let (name, payload) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "snapshot");
+    assert_eq!(
+        payload["chunk"], "output from a 120-column pane\n",
+        "the console log is replayed as written, cursor sequence and all"
+    );
+}
+
+/// Nothing was ever recorded — the session ended before anyone watched it —
+/// so there is no grid to report and the client falls back to its own default.
+#[tokio::test]
+async fn a_finished_session_never_measured_reports_no_grid() {
+    let h = harness().await;
+    let session = h.dead_session().await;
+    h.write_console_log(&session.id, "unmeasured output\n");
+
+    let response = h
+        .router
+        .clone()
+        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
+        .await
+        .unwrap();
+    let mut body = response.into_body();
+
+    let (name, _) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(
+        name, "snapshot",
+        "no size was ever known, so none is claimed"
     );
 }
 

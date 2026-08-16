@@ -10,14 +10,21 @@
  *
  * The protocol is a `resize` event carrying the pane's grid (`{"cols": 80,
  * "rows": 24}`) — the size the snapshot is wrapped at and every later repaint
- * is addressed in, repeated whenever the pane is resized under us — then one
- * `snapshot` event carrying the scrollback, then a `delta` event per burst of
- * new output — both `{"chunk": "..."}`, raw terminal bytes JSON-encoded so
- * escape sequences survive SSE's line framing — and a final `end` event when
- * the session is over, after which the daemon closes the connection.
+ * is addressed in — then a `snapshot` event carrying the scrollback, then a
+ * `delta` event per burst of new output — both `{"chunk": "..."}`, raw
+ * terminal bytes JSON-encoded so escape sequences survive SSE's line framing
+ * — and a final `end` event when the session is over, after which the daemon
+ * closes the connection.
  *
- * A session that is already over has no pane left to measure, so its stream
- * opens straight at the snapshot and `onResize` never fires.
+ * A pane resized under the stream sends another `resize`, followed by a fresh
+ * `snapshot`: the output in flight was drawn partly at each size and belongs
+ * to neither, so the daemon starts the client over rather than splicing it.
+ * `snapshot` therefore always means "replace everything shown so far",
+ * whenever it arrives — which is what `onSnapshot` already had to mean for
+ * reconnects.
+ *
+ * A session that ended before it was ever measured has no grid to report, and
+ * `onResize` never fires; the consumer draws at whatever default it has.
  *
  * There is no replay and no `Last-Event-ID`: every connection starts from a
  * fresh snapshot. So a reconnect is not a resumption — the consumer has to
@@ -61,7 +68,7 @@ export interface SessionLogStreamHandlers {
    * snapshot, and again whenever the pane is resized under the stream.
    */
   onResize: (size: PaneSize) => void
-  /** The connection's opening scrollback: replaces everything shown so far. */
+  /** Scrollback drawn at the last reported grid: replaces everything shown. */
   onSnapshot: (chunk: string) => void
   /** Output written since the last message: append it. */
   onDelta: (chunk: string) => void
