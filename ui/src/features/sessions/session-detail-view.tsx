@@ -14,6 +14,7 @@ import type { ReactNode } from "react"
 import { Link } from "react-router-dom"
 
 import type { SessionDto } from "@/api"
+import { CopyableId } from "@/components/copyable-id"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { paths, useTaskPanelTo } from "@/routes/paths"
 
@@ -64,7 +65,11 @@ export function SessionDetailView({
           {ROLE_LABELS[session.role]} session
         </h1>
         <SessionStatusBadge status={session.status} />
-        <code className="font-mono text-xs text-muted-foreground">{session.id}</code>
+        <CopyableId
+          value={session.id}
+          label="session id"
+          className="text-xs text-muted-foreground"
+        />
         <div className="ml-auto">
           <SessionActions session={session} onResumed={onResumed} />
         </div>
@@ -95,20 +100,42 @@ export function SessionDetailView({
               </Detail>
             )}
             <Detail label="Profile">
-              {profile?.name ?? <Mono>{session.profile_id}</Mono>}
+              {profile?.name ?? (
+                <CopyableId value={session.profile_id} label="profile id" className="text-xs" />
+              )}
               <span className="text-muted-foreground">
                 {" "}
                 · {AGENT_KIND_LABELS[session.agent_kind]}
               </span>
             </Detail>
             <Detail label="tmux session">
-              <Mono>{session.tmux_session}</Mono>
+              <CopyableId
+                value={session.tmux_session}
+                label="tmux session"
+                className="max-w-full truncate text-xs"
+              />
             </Detail>
             <Detail label="Worktree">
-              {session.worktree_path ? <Mono>{session.worktree_path}</Mono> : <Dash />}
+              {session.worktree_path ? (
+                <CopyableId
+                  value={session.worktree_path}
+                  label="worktree path"
+                  className="max-w-full truncate text-xs"
+                />
+              ) : (
+                <Dash />
+              )}
             </Detail>
             <Detail label="Agent session id">
-              {session.internal_session_id ? <Mono>{session.internal_session_id}</Mono> : <Dash />}
+              {session.internal_session_id ? (
+                <CopyableId
+                  value={session.internal_session_id}
+                  label="agent session id"
+                  className="max-w-full truncate text-xs"
+                />
+              ) : (
+                <Dash />
+              )}
             </Detail>
             <Detail label="Review round">{session.review_round ?? <Dash />}</Detail>
             <Detail label="Started">
@@ -165,6 +192,11 @@ function Ago({ at, now }: { at: string | null | undefined; now: number }) {
   )
 }
 
+/**
+ * The plain mono face, for ids that stand in for a name inside a link: the
+ * click there belongs to the link, so those ids are not copy targets — the
+ * session's own id in the header above is.
+ */
 function Mono({ children }: { children: ReactNode }) {
   return <code className="font-mono text-xs">{children}</code>
 }

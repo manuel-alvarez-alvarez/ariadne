@@ -16,6 +16,7 @@ import type { ReactNode } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 
 import type { TaskDto } from "@/api"
+import { CopyableId } from "@/components/copyable-id"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
@@ -174,9 +175,7 @@ function TaskHeader({ task }: { task: TaskDto }) {
         <span className="text-muted-foreground">
           review round <span className="font-mono">{task.review_round}</span>
         </span>
-        <span className="font-mono text-muted-foreground" title={task.id}>
-          {task.id}
-        </span>
+        <CopyableId value={task.id} label="task id" className="text-muted-foreground" />
         <span
           className="ml-auto text-muted-foreground"
           title={`created ${formatAbsolute(task.created_at)}`}
@@ -192,28 +191,37 @@ function TaskFacts({ task }: { task: TaskDto }) {
   return (
     <dl className="grid gap-x-6 gap-y-3 rounded-lg border bg-card p-3 text-sm sm:grid-cols-2">
       <Fact label="Branch">
-        <span className="flex items-center gap-1.5 font-mono text-xs">
+        <span className="flex items-center gap-1.5">
           <GitBranchIcon className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className="truncate" title={task.branch}>
-            {task.branch}
-          </span>
+          <CopyableId value={task.branch} label="branch" className="min-w-0 truncate text-xs" />
         </span>
       </Fact>
       <Fact label="Worktree">
         {task.worktree_path ? (
-          <span className="block truncate font-mono text-xs" title={task.worktree_path}>
-            {task.worktree_path}
-          </span>
+          <CopyableId
+            value={task.worktree_path}
+            label="worktree path"
+            className="block max-w-full truncate text-xs"
+          />
         ) : (
           <Muted>not created yet</Muted>
         )}
       </Fact>
       <Fact label="Engineer">
-        <span className="font-mono text-xs">{task.engineer_profile_id}</span>
+        <CopyableId value={task.engineer_profile_id} label="profile id" className="text-xs" />
       </Fact>
       <Fact label="Reviewers">
         {task.reviewer_profile_ids.length > 0 ? (
-          <span className="font-mono text-xs">{task.reviewer_profile_ids.join(", ")}</span>
+          // Each id is its own click target; the separators are plain text so
+          // the row still reads as the single list it was.
+          <span className="text-xs">
+            {task.reviewer_profile_ids.map((id, index) => (
+              <span key={id}>
+                {index > 0 ? ", " : null}
+                <CopyableId value={id} label="profile id" className="text-xs" />
+              </span>
+            ))}
+          </span>
         ) : (
           <Muted>none assigned</Muted>
         )}
@@ -223,9 +231,14 @@ function TaskFacts({ task }: { task: TaskDto }) {
       </Fact>
       <Fact label="Merge commit">
         {task.merge_commit ? (
-          <span className="flex items-center gap-1.5 font-mono text-xs" title={task.merge_commit}>
+          <span className="flex items-center gap-1.5">
             <GitCommitHorizontalIcon className="size-3.5 shrink-0 text-muted-foreground" />
-            {shortSha(task.merge_commit)}
+            <CopyableId
+              value={task.merge_commit}
+              display={shortSha}
+              label="merge commit"
+              className="text-xs"
+            />
           </span>
         ) : (
           <Muted>not merged</Muted>
