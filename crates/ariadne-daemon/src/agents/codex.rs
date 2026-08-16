@@ -1,10 +1,15 @@
 //! Codex CLI adapter.
 //!
 //! - Bypass: `--dangerously-bypass-approvals-and-sandbox`
-//! - Events: `notify = [...]` config override calling
-//!   `ariadne agent-event --kind codex --argv-json <json>` (only
-//!   agent-turn-complete exists; the payload carries `thread-id` which the
-//!   ingestion endpoint uses to capture the internal session id)
+//! - Events: `-c hooks.<Event>=[...]` overrides piping each hook's JSON
+//!   payload into `ariadne agent-event --kind codex`
+//!   ([`ariadne_core::codex_hooks`]). Nothing is written to the user's
+//!   `~/.codex`: the declaration is per session, and the trust the user grants
+//!   once at install time covers it because codex keys command-line hook trust
+//!   on a synthetic path rather than the worktree. The `SessionStart` payload
+//!   carries `session_id`, captured by the ingestion endpoint before the first
+//!   turn — notify only fired on agent-turn-complete, which a session killed
+//!   mid-turn never reaches.
 //! - System prompt: no append-safe flag — prepended to the initial prompt
 //! - Resume: `codex resume <thread-id>`; flags must be re-passed (they are
 //!   not inherited from the original session)
@@ -21,10 +26,6 @@ impl CodexAdapter {
     fn config_flags(&self, ctx: &SpawnCtx) -> Vec<String> {
         // TOML inline values passed via -c key=value (no shell quoting: these
         // go straight into argv).
-        let notify = format!(
-            "notify=[\"{}\",\"agent-event\",\"--kind\",\"codex\",\"--argv-json\"]",
-            ctx.cli_bin
-        );
         let env_table = super::base_env(ctx)
             .into_iter()
             .map(|(k, v)| format!("{k} = \"{v}\""))
@@ -33,14 +34,15 @@ impl CodexAdapter {
         let mut flags = vec![
             "--dangerously-bypass-approvals-and-sandbox".to_string(),
             "-c".into(),
-            notify,
-            "-c".into(),
             format!("mcp_servers.ariadne.command=\"{}\"", ctx.cli_bin),
             "-c".into(),
             "mcp_servers.ariadne.args=[\"mcp\",\"serve\"]".to_string(),
             "-c".into(),
             format!("mcp_servers.ariadne.env={{ {env_table} }}"),
         ];
+        // Byte-identical to what `ariadne setup codex-hooks` had the user
+        // trust; anything else and the session stalls at a trust prompt.
+        flags.extend(ariadne_core::codex_hooks::config_flags(&ctx.cli_bin));
         if let Some(model) = &ctx.model {
             flags.push("-m".into());
             flags.push(model.clone());
@@ -69,7 +71,7 @@ impl AgentAdapter for CodexAdapter {
             argv,
             env: base_env(ctx),
             cwd: ctx.cwd.clone(),
-            // thread-id arrives with the first notify event.
+            // The session id arrives with the SessionStart hook event.
             internal_session_id: None,
         })
     }

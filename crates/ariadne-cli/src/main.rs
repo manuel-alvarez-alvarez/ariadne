@@ -75,6 +75,11 @@ enum Command {
         #[arg(long, value_parser = commands::parse_role, add = clap_complete::engine::ArgValueCandidates::new(complete::roles))]
         role: Option<ariadne_core::Role>,
     },
+    /// One-time host setup for the coding agents
+    Setup {
+        #[command(subcommand)]
+        command: SetupCommand,
+    },
     /// Serve Ariadne MCP tools over stdio (spawned by coding agents)
     #[command(hide = true)]
     Mcp {
@@ -87,12 +92,20 @@ enum Command {
         /// claude | codex | opencode
         #[arg(long, default_value = "claude")]
         kind: String,
-        /// Codex notify payload (final argv argument)
-        #[arg(long)]
-        argv_json: Option<String>,
         /// OpenCode plugin payload
         #[arg(long)]
         json: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum SetupCommand {
+    /// Trust Ariadne's Codex hooks (starts codex once so it can ask)
+    CodexHooks {
+        /// The `ariadne` binary the hooks call (default: this one). Must match
+        /// the daemon's `cli_bin`.
+        #[arg(long)]
+        cli_bin: Option<String>,
     },
 }
 
@@ -170,12 +183,11 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Goal { command } => commands::goal::run(&client, command, cli.format).await,
         Command::Task { command } => commands::task::run(&client, command, cli.format).await,
         Command::Session { command } => commands::session::run(&client, command, cli.format).await,
-        Command::AgentEvent {
-            kind,
-            argv_json,
-            json,
-        } => {
-            commands::agent_event::run(kind, argv_json, json).await;
+        Command::Setup {
+            command: SetupCommand::CodexHooks { cli_bin },
+        } => commands::setup::codex_hooks(cli_bin),
+        Command::AgentEvent { kind, json } => {
+            commands::agent_event::run(kind, json).await;
             Ok(()) // always succeeds: hooks must never fail
         }
         Command::Mcp {

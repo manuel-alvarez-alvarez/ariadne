@@ -1,26 +1,30 @@
 #!/usr/bin/env bash
 # Ariadne installer: builds from source, installs the binaries, registers the
-# daemon as a user service (launchd on macOS, systemd --user on Linux) and
-# installs bash/zsh completions.
+# daemon as a user service (launchd on macOS, systemd --user on Linux),
+# installs bash/zsh completions and has the user trust Ariadne's Codex hooks.
 #
 # Idempotent: safe to re-run after upgrades or config changes; every step
 # replaces what a previous run installed. What was installed where is
 # recorded in ~/.ariadne/install.env, which uninstall.sh reads.
 #
 # Usage: scripts/install.sh [--prefix DIR] [--no-service] [--no-completions]
+#                           [--no-codex-hooks]
 #   --prefix DIR       install binaries into DIR (default: ~/.local/bin)
 #   --no-service       skip daemon service registration
 #   --no-completions   skip shell completion installation
+#   --no-codex-hooks   skip the Codex hook trust prompt
 set -euo pipefail
 
 PREFIX="${PREFIX:-$HOME/.local/bin}"
 WITH_SERVICE=1
 WITH_COMPLETIONS=1
+WITH_CODEX_HOOKS=1
 while [ $# -gt 0 ]; do
     case "$1" in
         --prefix) PREFIX="$2"; shift 2 ;;
         --no-service) WITH_SERVICE=0; shift ;;
         --no-completions) WITH_COMPLETIONS=0; shift ;;
+        --no-codex-hooks) WITH_CODEX_HOOKS=0; shift ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
 done
@@ -178,6 +182,16 @@ EOF
         sleep 1
     done
     "$PREFIX/ariadne" daemon status
+fi
+
+# --- codex hooks -----------------------------------------------------------------------
+# Codex carries its hooks per session, but only runs them once the user has
+# trusted them — and it asks at the start of a session. The last step of the
+# install therefore opens one, with the very flags the daemon will spawn with,
+# so the user can answer. Nothing is written to ~/.codex by us.
+if [ "$WITH_CODEX_HOOKS" = 1 ]; then
+    say "trusting Ariadne's Codex hooks"
+    "$PREFIX/ariadne" setup codex-hooks --cli-bin "$PREFIX/ariadne" || true
 fi
 
 # --- manifest (read by uninstall.sh) ---------------------------------------------------
