@@ -1,14 +1,19 @@
 /**
  * One goal in a side panel over the goals board: what it is, what it is
- * allowed to do, and the planner thread. `ariadne goal inspect` plus
- * `goal messages` — its tasks stay on the board behind the panel.
+ * allowed to do, its planner thread and the sessions it has run.
+ * `ariadne goal inspect` plus `goal messages` — its tasks stay on the board
+ * behind the panel.
  *
  * Everything reads the query cache, which the SSE dispatcher patches, so a
  * status change made from the CLI or by the daemon lands here on its own.
+ *
+ * The tab lives in the URL (like the panel itself), so a link can point at,
+ * say, a session of a goal, and a reload stays where the user was.
  */
 
 import { useQuery } from "@tanstack/react-query"
 import { AlertCircleIcon } from "lucide-react"
+import { useSearchParams } from "react-router-dom"
 
 import { ApiError, api, type GoalDto, qk, unwrap } from "@/api"
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -16,12 +21,17 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { formatAbsolute, formatRelative } from "./format"
 import { GoalActions } from "./goal-actions"
+import { GoalSessions } from "./goal-sessions"
 import { GoalStatusBadge } from "./goal-status-badge"
 import { GoalThread } from "./goal-thread"
 import { Markdown } from "./markdown"
 import { goalQueryOptions } from "./queries"
+
+const TABS = ["thread", "sessions"] as const
+type Tab = (typeof TABS)[number]
 
 export function GoalPanel({ goalId, onClose }: { goalId: string; onClose: () => void }) {
   const goal = useQuery(goalQueryOptions(goalId))
@@ -29,7 +39,8 @@ export function GoalPanel({ goalId, onClose }: { goalId: string; onClose: () => 
 
   return (
     <Sheet open onOpenChange={(open) => open || onClose()}>
-      <SheetContent aria-describedby={undefined}>
+      {/* As wide as the task panel: the sessions tab holds a table. */}
+      <SheetContent className="sm:max-w-3xl" aria-describedby={undefined}>
         {error ? (
           <>
             <SheetTitle className="sr-only">Goal {goalId}</SheetTitle>
@@ -65,6 +76,24 @@ export function GoalPanel({ goalId, onClose }: { goalId: string; onClose: () => 
 }
 
 function GoalView({ goal }: { goal: GoalDto }) {
+  const [search, setSearch] = useSearchParams()
+  const tab = TABS.find((value) => value === search.get("tab")) ?? "thread"
+  const sessionId = search.get("session")
+
+  function setTab(next: Tab) {
+    const params = new URLSearchParams(search)
+    params.set("tab", next)
+    setSearch(params, { replace: true })
+  }
+
+  /** The selected session, or the list again when there is none. */
+  function selectSession(next: string | null) {
+    const params = new URLSearchParams(search)
+    if (next === null) params.delete("session")
+    else params.set("session", next)
+    setSearch(params, { replace: true })
+  }
+
   return (
     <>
       <SheetHeader>
@@ -90,7 +119,18 @@ function GoalView({ goal }: { goal: GoalDto }) {
 
       <GoalMetadata goal={goal} />
 
-      <GoalThread goalId={goal.id} />
+      <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
+        <TabsList>
+          <TabsTrigger value="thread">Thread</TabsTrigger>
+          <TabsTrigger value="sessions">Sessions</TabsTrigger>
+        </TabsList>
+        <TabsContent value="thread" className="pt-3">
+          <GoalThread goalId={goal.id} />
+        </TabsContent>
+        <TabsContent value="sessions" className="pt-3">
+          <GoalSessions goalId={goal.id} sessionId={sessionId} onSelect={selectSession} />
+        </TabsContent>
+      </Tabs>
     </>
   )
 }
