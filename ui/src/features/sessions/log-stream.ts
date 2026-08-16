@@ -8,11 +8,16 @@
  * into xterm as it arrives), and only exists while somebody is looking at that
  * session, so it is opened and closed with the view.
  *
- * The protocol is one `snapshot` event carrying the scrollback, then a `delta`
- * event per burst of new output — both `{"chunk": "..."}`, raw terminal bytes
- * JSON-encoded so escape sequences survive SSE's line framing — and a final
- * `end` event when the session is over, after which the daemon closes the
- * connection.
+ * The protocol is a `resize` event carrying the pane's grid (`{"cols": 80,
+ * "rows": 24}`) — the size the snapshot is wrapped at and every later repaint
+ * is addressed in, repeated whenever the pane is resized under us — then one
+ * `snapshot` event carrying the scrollback, then a `delta` event per burst of
+ * new output — both `{"chunk": "..."}`, raw terminal bytes JSON-encoded so
+ * escape sequences survive SSE's line framing — and a final `end` event when
+ * the session is over, after which the daemon closes the connection.
+ *
+ * A session that is already over has no pane left to measure, so its stream
+ * opens straight at the snapshot and `onResize` never fires.
  *
  * There is no replay and no `Last-Event-ID`: every connection starts from a
  * fresh snapshot. So a reconnect is not a resumption — the consumer has to
@@ -39,11 +44,23 @@ export type SessionLogStatus =
 const INITIAL_BACKOFF_MS = 500
 const MAX_BACKOFF_MS = 5_000
 
+export const RESIZE_EVENT = "resize"
 export const SNAPSHOT_EVENT = "snapshot"
 export const DELTA_EVENT = "delta"
 export const END_EVENT = "end"
 
+/** The pane's grid, in cells. */
+export interface PaneSize {
+  cols: number
+  rows: number
+}
+
 export interface SessionLogStreamHandlers {
+  /**
+   * The grid the output that follows was drawn for. Fires before the
+   * snapshot, and again whenever the pane is resized under the stream.
+   */
+  onResize: (size: PaneSize) => void
   /** The connection's opening scrollback: replaces everything shown so far. */
   onSnapshot: (chunk: string) => void
   /** Output written since the last message: append it. */
@@ -125,6 +142,11 @@ export class SessionLogStream {
       this.#scheduleRetry("log stream disconnected")
     }
 
+    source.addEventListener(RESIZE_EVENT, (message) => {
+      const size = parseSize(message.data)
+      if (size !== undefined) this.#handlers.onResize(size)
+    })
+
     source.addEventListener(SNAPSHOT_EVENT, (message) => {
       const chunk = parseChunk(message.data)
       if (chunk !== undefined) this.#handlers.onSnapshot(chunk)
@@ -176,14 +198,34 @@ export class SessionLogStream {
 
 /** `{"chunk": "..."}` → the chunk, or `undefined` if the payload was junk. */
 function parseChunk(raw: string): string | undefined {
+  const parsed = parsePayload(raw)
+  if (parsed === undefined) return undefined
+  const chunk = (parsed as { chunk?: unknown }).chunk
+  return typeof chunk === "string" ? chunk : undefined
+}
+
+/**
+ * `{"cols": 80, "rows": 24}` → the grid. A size that is not two positive
+ * numbers is dropped rather than resized to: rendering at the size we already
+ * have is wrong, but rendering at zero columns is worse.
+ */
+function parseSize(raw: string): PaneSize | undefined {
+  const parsed = parsePayload(raw)
+  if (parsed === undefined) return undefined
+  const { cols, rows } = parsed as { cols?: unknown; rows?: unknown }
+  if (typeof cols !== "number" || typeof rows !== "number") return undefined
+  if (!Number.isFinite(cols) || !Number.isFinite(rows) || cols < 1 || rows < 1) return undefined
+  return { cols, rows }
+}
+
+function parsePayload(raw: string): object | undefined {
   let parsed: unknown
   try {
     parsed = JSON.parse(raw)
   } catch (cause) {
-    console.error("[session-logs] dropping unparseable chunk", cause, raw)
+    console.error("[session-logs] dropping unparseable payload", cause, raw)
     return undefined
   }
   if (typeof parsed !== "object" || parsed === null) return undefined
-  const chunk = (parsed as { chunk?: unknown }).chunk
-  return typeof chunk === "string" ? chunk : undefined
+  return parsed
 }

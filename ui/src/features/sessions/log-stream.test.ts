@@ -11,7 +11,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { SessionLogStream, type SessionLogStreamHandlers, sessionLogStreamUrl } from "./log-stream"
-import { SNAPSHOT_PREFIX, writeDelta, writeSnapshot } from "./terminal-sink"
+import { SNAPSHOT_PREFIX, writeDelta, writeResize, writeSnapshot } from "./terminal-sink"
 
 /** Minimal stand-in for the browser's `EventSource`, driven by the tests. */
 class FakeEventSource {
@@ -63,6 +63,7 @@ class FakeEventSource {
 
 function handlers() {
   return {
+    onResize: vi.fn(),
     onSnapshot: vi.fn(),
     onDelta: vi.fn(),
     onEnd: vi.fn(),
@@ -124,6 +125,28 @@ describe("SessionLogStream payloads", () => {
 
     expect(spies.onSnapshot).toHaveBeenCalledWith("[32mhello[0m\n")
     expect(spies.onDelta).toHaveBeenCalledWith("more")
+  })
+
+  it("reports the pane's grid", () => {
+    const spies = handlers()
+    makeStream(spies).start()
+    latest().succeed()
+
+    latest().emit("resize", { cols: 120, rows: 40 })
+
+    expect(spies.onResize).toHaveBeenCalledWith({ cols: 120, rows: 40 })
+  })
+
+  it("ignores a grid that is not one", () => {
+    const spies = handlers()
+    makeStream(spies).start()
+    latest().succeed()
+
+    // Drawing at zero columns is worse than drawing at the size we have.
+    latest().emit("resize", { cols: 0, rows: 24 })
+    latest().emit("resize", { cols: "80", rows: 24 })
+
+    expect(spies.onResize).not.toHaveBeenCalled()
   })
 
   it("drops an unparseable chunk instead of throwing", () => {
@@ -206,8 +229,13 @@ describe("SessionLogStream reconnection", () => {
 describe("SessionLogStream feeding a terminal", () => {
   /** The wiring `SessionTerminal` uses, against a terminal that only records. */
   function terminalStream() {
-    const terminal = { write: vi.fn<(data: string) => void>(), reset: vi.fn() }
+    const terminal = {
+      write: vi.fn<(data: string, callback?: () => void) => void>(),
+      resize: vi.fn(),
+      reset: vi.fn(),
+    }
     stream = new SessionLogStream("http://127.0.0.1:7676/v1/sessions/01S/logs/stream", {
+      onResize: ({ cols, rows }) => writeResize(terminal, cols, rows),
       onSnapshot: (chunk) => writeSnapshot(terminal, chunk),
       onDelta: (chunk) => writeDelta(terminal, chunk),
       onEnd: vi.fn(),
@@ -241,6 +269,25 @@ describe("SessionLogStream feeding a terminal", () => {
       `${SNAPSHOT_PREFIX}second snapshot\r\n`,
     ])
     expect(terminal.reset).not.toHaveBeenCalled()
+  })
+
+  it("queues the pane's grid behind the output that was drawn at the old one", () => {
+    const { terminal, stream: s } = terminalStream()
+    s.start()
+    latest().succeed()
+    latest().emit("snapshot", { chunk: "80 columns wide\r\n" })
+    latest().emit("delta", { chunk: "still 80 columns wide\r\n" })
+    latest().emit("resize", { cols: 120, rows: 40 })
+
+    // Writes are parsed asynchronously, so a resize applied the moment it
+    // arrives would lay the two chunks above out at a width they were never
+    // drawn for. It goes into the stream instead, as an empty write whose
+    // callback runs once everything before it has been parsed.
+    expect(terminal.resize).not.toHaveBeenCalled()
+    const [data, applyResize] = terminal.write.mock.calls.at(-1) ?? []
+    expect(data).toBe("")
+    applyResize?.()
+    expect(terminal.resize).toHaveBeenCalledWith(120, 40)
   })
 
   it("re-reads a finished log without carrying the old contents over", () => {
