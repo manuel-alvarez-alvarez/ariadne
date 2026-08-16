@@ -104,6 +104,8 @@ export function SettingsDialog({
               Reset to default
             </Button>
             <DialogClose render={<Button type="button" variant="outline" />}>Cancel</DialogClose>
+            {/* No `pending`: this writes to the local store and nothing else.
+                There is no request to wait for, so a spinner would be a lie. */}
             <Button type="submit">Save</Button>
           </DialogFooter>
         </form>
