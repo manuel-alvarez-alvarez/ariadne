@@ -8,6 +8,7 @@ pub mod gitutil;
 pub mod gitwt;
 pub mod http;
 pub mod launcher;
+pub mod logtail;
 pub mod opencode_plugin;
 pub mod scheduler;
 pub mod tmux;
