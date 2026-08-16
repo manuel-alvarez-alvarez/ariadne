@@ -123,9 +123,9 @@ export function buildPaletteEntries({
  * palette was opened over — which is what makes a task stack on the goal that
  * is already open rather than replacing it.
  *
- * A planner session belongs to no task, and the goal panel only exists on the
- * board, so that one leaves the current screen for it: the same rule the
- * sessions list follows.
+ * A session is shown inside the panel of the task it ran; a planner session
+ * belongs to no task, and the goal panel only exists on the board, so that one
+ * leaves the current screen for it.
  */
 export function paletteTargetTo(
   target: PaletteTarget,
