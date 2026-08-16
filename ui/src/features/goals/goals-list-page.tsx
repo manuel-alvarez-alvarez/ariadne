@@ -40,6 +40,12 @@ import { goalsQueryOptions } from "./queries"
 /** Sentinel for "no status filter" — `Select` needs a value for every item. */
 const ALL = "all"
 
+/** `items` is what makes the trigger show the label rather than the raw value. */
+const STATUS_ITEMS = [
+  { label: "All statuses", value: ALL },
+  ...GOAL_STATUSES.map((status) => ({ label: status, value: status })),
+]
+
 export function GoalsListPage() {
   const [status, setStatus] = useState<GoalStatus | typeof ALL>(ALL)
   const [createOpen, setCreateOpen] = useState(false)
@@ -60,15 +66,15 @@ export function GoalsListPage() {
           <Select
             value={status}
             onValueChange={(value) => setStatus((value as GoalStatus | typeof ALL) ?? ALL)}
+            items={STATUS_ITEMS}
           >
             <SelectTrigger aria-label="Filter by status" className="w-40">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value={ALL}>All statuses</SelectItem>
-              {GOAL_STATUSES.map((value) => (
-                <SelectItem key={value} value={value}>
-                  {value}
+              {STATUS_ITEMS.map((item) => (
+                <SelectItem key={item.value} value={item.value}>
+                  {item.label}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -136,9 +142,15 @@ export function GoalsListPage() {
                     <GoalStatusBadge status={goal.status} />
                   </TableCell>
                   <TableCell className="text-muted-foreground">
-                    <ul className="flex flex-col gap-0.5">
+                    {/* Repo paths are long and rarely differ at the front, so the
+                        row keeps its shape and the full path lives in the title. */}
+                    <ul className="flex max-w-sm flex-col gap-0.5">
                       {goal.repos.map((repo) => (
-                        <li key={repo.id} className="font-mono text-xs">
+                        <li
+                          key={repo.id}
+                          className="truncate font-mono text-xs"
+                          title={`${repo.path} [${repo.base_branch}]`}
+                        >
                           {repo.path}
                           <span className="text-muted-foreground/70"> [{repo.base_branch}]</span>
                         </li>

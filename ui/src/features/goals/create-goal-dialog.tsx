@@ -10,7 +10,7 @@
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useQuery } from "@tanstack/react-query"
 import { AlertCircleIcon, PlusIcon, XIcon } from "lucide-react"
-import { useEffect } from "react"
+import { useEffect, useMemo } from "react"
 import { Controller, useFieldArray, useForm } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
@@ -113,6 +113,10 @@ export function CreateGoalDialog({
   // The daemon's own default is the built-in "Planner" profile; match it so the
   // common case is one click.
   const plannerOptions = planners.data
+  const plannerItems = useMemo(
+    () => (plannerOptions ?? []).map((profile) => ({ label: profile.name, value: profile.id })),
+    [plannerOptions],
+  )
   const selectedPlanner = form.watch("planner_profile")
   useEffect(() => {
     if (!open || !plannerOptions?.length || selectedPlanner) return
@@ -120,6 +124,16 @@ export function CreateGoalDialog({
       plannerOptions.find((profile) => profile.name === "Planner") ?? plannerOptions[0]
     if (preferred) form.setValue("planner_profile", preferred.id)
   }, [open, plannerOptions, selectedPlanner, form.setValue])
+
+  const submitError = ApiError.is(createGoal.error) ? createGoal.error : null
+
+  // "repo path does not exist" must not still be on screen once the path has
+  // been corrected, so the first edit after a failure drops the alert.
+  useEffect(() => {
+    if (!submitError) return
+    const subscription = form.watch(() => createGoal.reset())
+    return () => subscription.unsubscribe()
+  }, [submitError, form.watch, createGoal.reset])
 
   async function onSubmit(values: CreateGoalForm) {
     const body: CreateGoalRequest = {
@@ -142,8 +156,6 @@ export function CreateGoalDialog({
       // Rendered inline below: the daemon's message is the useful part.
     }
   }
-
-  const submitError = ApiError.is(createGoal.error) ? createGoal.error : null
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -248,6 +260,8 @@ export function CreateGoalDialog({
                     value={field.value || null}
                     onValueChange={(value) => field.onChange(value ?? "")}
                     disabled={!plannerOptions?.length}
+                    // Without this the trigger would show the raw profile id.
+                    items={plannerItems}
                   >
                     <SelectTrigger id="goal-planner" className="w-full">
                       <SelectValue placeholder={plannerPlaceholder(planners)} />

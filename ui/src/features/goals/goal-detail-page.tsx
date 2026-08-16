@@ -13,7 +13,7 @@ import { useQuery } from "@tanstack/react-query"
 import { AlertCircleIcon, ChevronLeftIcon } from "lucide-react"
 import { Link, useParams } from "react-router-dom"
 
-import { api, ApiError, type GoalDto, qk, unwrap } from "@/api"
+import { ApiError, api, type GoalDto, qk, unwrap } from "@/api"
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
