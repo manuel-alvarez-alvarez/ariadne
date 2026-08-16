@@ -3,7 +3,7 @@
 use ariadne_core::id::new_id;
 use ariadne_core::{AgentKind, Role, SessionStatus};
 
-use crate::{AgentSession, Result, Store, not_found, now};
+use crate::{AgentSession, Change, Result, Store, not_found, now};
 
 #[derive(Debug, Clone)]
 pub struct NewSession {
@@ -47,7 +47,9 @@ impl Store {
         .bind(now())
         .execute(self.w())
         .await?;
-        self.get_session(&id).await
+        let session = self.get_session(&id).await?;
+        self.publish(Change::SessionCreated(session.clone()));
+        Ok(session)
     }
 
     pub async fn get_session(&self, id: &str) -> Result<AgentSession> {
@@ -104,7 +106,7 @@ impl Store {
         if n == 0 {
             return Err(not_found("session", id));
         }
-        Ok(())
+        self.publish_session_update(id).await
     }
 
     /// Record the agent-internal id (claude session uuid / codex thread id /
@@ -119,15 +121,25 @@ impl Store {
         if n == 0 {
             return Err(not_found("session", id));
         }
-        Ok(())
+        self.publish_session_update(id).await
     }
 
     pub async fn touch_session(&self, id: &str) -> Result<()> {
-        sqlx::query("UPDATE agent_sessions SET last_activity_at = ? WHERE id = ?")
+        let n = sqlx::query("UPDATE agent_sessions SET last_activity_at = ? WHERE id = ?")
             .bind(now())
             .bind(id)
             .execute(self.w())
-            .await?;
+            .await?
+            .rows_affected();
+        if n == 0 {
+            return Ok(());
+        }
+        self.publish_session_update(id).await
+    }
+
+    async fn publish_session_update(&self, id: &str) -> Result<()> {
+        let session = self.get_session(id).await?;
+        self.publish(Change::SessionUpdated(session));
         Ok(())
     }
 }

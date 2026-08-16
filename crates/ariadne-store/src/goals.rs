@@ -3,7 +3,7 @@
 use ariadne_core::GoalStatus;
 use ariadne_core::id::new_id;
 
-use crate::{Goal, GoalRepo, Result, Store, StoreError, not_found, now};
+use crate::{Change, Goal, GoalRepo, Result, Store, StoreError, not_found, now};
 
 #[derive(Debug, Clone)]
 pub struct NewGoal {
@@ -56,7 +56,9 @@ impl Store {
             .await?;
         }
         tx.commit().await?;
-        self.get_goal(&id).await
+        let goal = self.get_goal(&id).await?;
+        self.publish(Change::GoalCreated(goal.clone()));
+        Ok(goal)
     }
 
     pub async fn get_goal(&self, id: &str) -> Result<Goal> {
@@ -95,11 +97,14 @@ impl Store {
         if n == 0 {
             return Err(not_found("goal", id));
         }
-        self.get_goal(id).await
+        let goal = self.get_goal(id).await?;
+        self.publish(Change::GoalUpdated(goal.clone()));
+        Ok(goal)
     }
 
     /// Hard-delete a goal and (via ON DELETE CASCADE) all its children.
-    /// Admin/maintenance path — the normal lifecycle uses cancel.
+    /// Admin/maintenance path — the normal lifecycle uses cancel, and there
+    /// is no domain event for it (nothing exposes it over HTTP).
     pub async fn delete_goal(&self, id: &str) -> Result<()> {
         let n = sqlx::query("DELETE FROM goals WHERE id = ?")
             .bind(id)

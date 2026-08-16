@@ -3,7 +3,7 @@
 use ariadne_core::ReviewVerdict;
 use ariadne_core::id::new_id;
 
-use crate::{Result, Review, Store, StoreError, now};
+use crate::{Change, Result, Review, Store, StoreError, now};
 
 #[derive(Debug, Clone)]
 pub struct NewReview {
@@ -43,12 +43,12 @@ impl Store {
             ),
             other => StoreError::Db(other),
         })?;
-        Ok(
-            sqlx::query_as::<_, Review>("SELECT * FROM reviews WHERE id = ?")
-                .bind(&id)
-                .fetch_one(self.r())
-                .await?,
-        )
+        let review = sqlx::query_as::<_, Review>("SELECT * FROM reviews WHERE id = ?")
+            .bind(&id)
+            .fetch_one(self.r())
+            .await?;
+        self.publish(Change::ReviewCreated(review.clone()));
+        Ok(review)
     }
 
     pub async fn list_reviews(&self, task_id: &str, round: Option<i64>) -> Result<Vec<Review>> {

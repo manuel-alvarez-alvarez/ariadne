@@ -3,7 +3,7 @@
 use ariadne_core::AgentKind;
 use ariadne_core::id::new_id;
 
-use crate::{AgentEvent, Result, Store, now};
+use crate::{AgentEvent, Change, Result, Store, now};
 
 #[derive(Debug, Clone)]
 pub struct NewAgentEvent {
@@ -38,12 +38,12 @@ impl Store {
         .bind(now())
         .execute(self.w())
         .await?;
-        Ok(
-            sqlx::query_as::<_, AgentEvent>("SELECT * FROM agent_events WHERE id = ?")
-                .bind(&id)
-                .fetch_one(self.r())
-                .await?,
-        )
+        let event = sqlx::query_as::<_, AgentEvent>("SELECT * FROM agent_events WHERE id = ?")
+            .bind(&id)
+            .fetch_one(self.r())
+            .await?;
+        self.publish(Change::AgentEventCreated(event.clone()));
+        Ok(event)
     }
 
     pub async fn list_events(&self, filter: EventFilter) -> Result<Vec<AgentEvent>> {
