@@ -9,7 +9,16 @@
 
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query"
 
-import { api, qk, type TaskDto, type TaskStatus, unwrap } from "@/api"
+import {
+  api,
+  type CacheSnapshot,
+  optimisticStatus,
+  qk,
+  restoreCache,
+  type TaskDto,
+  type TaskStatus,
+  unwrap,
+} from "@/api"
 
 /** The filters `GET /v1/tasks` actually supports. */
 export interface TaskListFilters {
@@ -89,12 +98,23 @@ export function taskDiffQueryOptions(taskId: string) {
   })
 }
 
+/**
+ * Cancel is optimistic: it is a confirmed, terminal state flip, so the card
+ * moves to `cancelled` on the click and only comes back if the daemon refuses
+ * (it does, with a `409`, when the task already left a cancellable state).
+ */
 export function useCancelTask(taskId: string) {
-  return useTaskAction(taskId, () =>
-    unwrap(api().POST("/v1/tasks/{id}/cancel", { params: { path: { id: taskId } } })),
+  return useTaskAction(
+    taskId,
+    () => unwrap(api().POST("/v1/tasks/{id}/cancel", { params: { path: { id: taskId } } })),
+    "cancelled",
   )
 }
 
+/**
+ * Retry is not optimistic. The daemon does not just flip a status: it schedules
+ * a fresh engineer session, and the task's next status is its answer, not ours.
+ */
 export function useRetryTask(taskId: string) {
   return useTaskAction(taskId, () =>
     unwrap(api().POST("/v1/tasks/{id}/retry", { params: { path: { id: taskId } } })),
@@ -102,10 +122,25 @@ export function useRetryTask(taskId: string) {
 }
 
 /** Both user actions answer with the updated task and move it between columns. */
-function useTaskAction(taskId: string, mutationFn: () => Promise<TaskDto>) {
+function useTaskAction(
+  taskId: string,
+  mutationFn: () => Promise<TaskDto>,
+  /** The status the task lands in, when the client can know it in advance. */
+  optimistic?: TaskStatus,
+) {
   const queryClient = useQueryClient()
-  return useMutation({
+  return useMutation<TaskDto, Error, void, CacheSnapshot | undefined>({
     mutationFn,
+    onMutate: optimistic
+      ? () =>
+          optimisticStatus(queryClient, {
+            detailKey: qk.tasks.detail(taskId),
+            listsKey: qk.tasks.lists(),
+            id: taskId,
+            status: optimistic,
+          })
+      : undefined,
+    onError: (_error, _variables, snapshot) => restoreCache(queryClient, snapshot),
     onSuccess: (task) => {
       queryClient.setQueryData(qk.tasks.detail(taskId), task)
       void queryClient.invalidateQueries({ queryKey: qk.tasks.lists() })
