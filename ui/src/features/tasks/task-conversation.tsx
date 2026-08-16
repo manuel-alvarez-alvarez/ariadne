@@ -11,9 +11,10 @@ import type { AuthorRole, MessageDto } from "@/api"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
-import { describeError, formatAbsolute, formatRelative, shortId } from "./format"
+import { describeError, formatAbsolute, formatRelative } from "./format"
 import { Markdown } from "./markdown"
 import { taskMessagesQueryOptions } from "./queries"
+import { SessionLink } from "./task-sessions"
 
 const ROLE_META: Record<AuthorRole, { label: string; badge: string; card: string }> = {
   planner: {
@@ -91,11 +92,7 @@ function MessageCard({ message }: { message: MessageDto }) {
         <span className={cn("rounded-full px-1.5 py-0.5 font-medium", role.badge)}>
           {role.label}
         </span>
-        {message.author_session_id && (
-          <span className="font-mono text-muted-foreground" title={message.author_session_id}>
-            session {shortId(message.author_session_id)}
-          </span>
-        )}
+        {message.author_session_id && <SessionLink sessionId={message.author_session_id} />}
         <time
           className="ml-auto text-muted-foreground"
           dateTime={message.created_at}
