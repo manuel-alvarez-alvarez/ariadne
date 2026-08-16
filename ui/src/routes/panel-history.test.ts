@@ -95,24 +95,6 @@ describe("closing a panel", () => {
     history.close("goal")
     expect(history.current).toBe("status=active")
   })
-
-  it("steps back out of a session opened over a list", () => {
-    // The sessions screen, filtered, with a row picked from it.
-    const history = new History("status=failed")
-    history.push("status=failed&session=s1")
-
-    history.close("session")
-    expect(history.current).toBe("status=failed")
-    expect(history.index).toBe(0)
-  })
-
-  it("closes a deep-linked session in place", () => {
-    const history = new History("status=failed&session=s1")
-
-    history.close("session")
-    expect(history.current).toBe("status=failed")
-    expect(history.entries).toHaveLength(1)
-  })
 })
 
 describe("withoutPanel", () => {
@@ -124,14 +106,6 @@ describe("withoutPanel", () => {
   it("takes the task stacked on a goal down with the goal", () => {
     const left = withoutPanel("goal", new URLSearchParams("status=active&goal=g1&task=t1&tab=diff"))
     expect(left.toString()).toBe("status=active")
-  })
-
-  it("leaves the screen's own params when a session panel closes", () => {
-    const left = withoutPanel(
-      "session",
-      new URLSearchParams("status=failed&role=engineer&session=s1"),
-    )
-    expect(left.toString()).toBe("status=failed&role=engineer")
   })
 })
 

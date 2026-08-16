@@ -21,14 +21,10 @@
  * The params each panel owns. A closing panel takes its own state with it:
  * `tab` and `session` say where *inside* a panel the user was and mean nothing
  * once it is gone, and a goal takes the task stacked on it down with it.
- *
- * The session panel is the one `session` with no panel around it (see
- * `components/detail-panels.tsx`), so that param is all it has to take.
  */
 export const PANEL_PARAMS = {
   goal: ["goal", "task", "tab", "session"],
   task: ["task", "tab", "session"],
-  session: ["session"],
 } as const satisfies Record<string, readonly string[]>
 
 export type Panel = keyof typeof PANEL_PARAMS
@@ -53,14 +49,9 @@ export function closePanel(
  * behind the other's backdrop, and Escape goes to the top one. Closing through
  * a panel that still has one stacked on it would take the stack apart a layer
  * at a time, so it rewrites the URL and takes the whole stack down at once.
- *
- * There is only ever one stack, and only one way to stack: a task over a goal.
- * So a goal with a task on it is the single case of a panel that is not the
- * top one — the session panel opens where neither of those is, and nothing
- * opens over it.
  */
 function isTopmost(panel: Panel, search: URLSearchParams): boolean {
-  return panel !== "goal" || !search.has("task")
+  return panel === "task" || !search.has("task")
 }
 
 /**

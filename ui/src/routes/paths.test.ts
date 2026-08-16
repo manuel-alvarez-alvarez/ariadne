@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { panelSessionTo, sessionPanelTo, taskPanelTo, taskSessionPanelTo } from "./paths"
+import { panelSessionTo, taskPanelTo, taskSessionPanelTo } from "./paths"
 
 describe("taskPanelTo", () => {
   it("keeps the params the screen owns", () => {
@@ -17,25 +17,6 @@ describe("taskPanelTo", () => {
     expect(params.get("task")).toBe("t2")
     expect(params.has("tab")).toBe(false)
     expect(params.has("session")).toBe(false)
-  })
-})
-
-describe("sessionPanelTo", () => {
-  it("keeps the filters of the screen it opens over", () => {
-    const to = sessionPanelTo(new URLSearchParams("status=failed&role=reviewer"), "s1")
-    const params = new URLSearchParams(to.search)
-    expect(params.get("status")).toBe("failed")
-    expect(params.get("role")).toBe("reviewer")
-    expect(params.get("session")).toBe("s1")
-  })
-
-  it("leaves no panel around the session", () => {
-    const to = sessionPanelTo(new URLSearchParams("goal=g1&task=t1&tab=diff&session=s1"), "s2")
-    const params = new URLSearchParams(to.search)
-    expect(params.get("session")).toBe("s2")
-    expect(params.has("goal")).toBe(false)
-    expect(params.has("task")).toBe(false)
-    expect(params.has("tab")).toBe(false)
   })
 })
 

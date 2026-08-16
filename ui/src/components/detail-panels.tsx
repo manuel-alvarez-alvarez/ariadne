@@ -1,18 +1,13 @@
 /**
  * The URL-driven side panels: `?goal=` (on the goals board) opens the goal
- * panel, `?task=` (on any screen) opens the task panel on top of it, and a
- * `?session=` with neither of those around it opens that session's own panel.
- * Mounted once by the shell, so a task or a session can be opened from the
- * board, a list or another panel without leaving the screen it was on.
+ * panel, `?task=` (on any screen) opens the task panel on top of it. Mounted
+ * once by the shell, so a task can be opened from the board or a session
+ * without leaving that screen.
  *
- * Inside a goal's or a task's panel, `?session=` means something else — the
- * session the panel is drilled into (`?tab=sessions&session=`) — which is why
- * the standalone one is exactly the case where no panel owns it.
- *
- * Open together, the goal and the task are one stack rather than two panels:
- * the task panel is handed to the goal panel, which renders it inside its own
- * dialog (see `goal-panel.tsx`), so the goal keeps showing behind it, the
- * screen is darkened once, and Escape closes only the sheet on top.
+ * Open together, they are one stack rather than two panels: the task panel is
+ * handed to the goal panel, which renders it inside its own dialog (see
+ * `goal-panel.tsx`), so the goal keeps showing behind it, the screen is
+ * darkened once, and Escape closes only the sheet on top.
  *
  * Closing a panel unwinds the history entry that opened it — see
  * `routes/panel-history.ts` for why that is not the same as rewriting the URL.
@@ -21,7 +16,6 @@
 import { Navigate, useLocation, useNavigate, useSearchParams } from "react-router-dom"
 
 import { GoalPanel } from "@/features/goals/goal-panel"
-import { SessionPanel } from "@/features/sessions/session-panel"
 import { TaskPanel } from "@/features/tasks"
 import { closePanel, type Panel } from "@/routes/panel-history"
 import { paths } from "@/routes/paths"
@@ -33,7 +27,6 @@ export function DetailPanels() {
 
   const goalId = search.get("goal")
   const taskId = search.get("task")
-  const sessionId = search.get("session")
   const onGoalsBoard = location.pathname === paths.goals()
 
   function close(panel: Panel) {
@@ -47,13 +40,6 @@ export function DetailPanels() {
   // Replaced, so Back returns to the screen the link was on.
   if (goalId && !onGoalsBoard) {
     return <Navigate to={{ pathname: paths.goals(), search: location.search }} replace />
-  }
-
-  // Nothing else claims this `?session=`, so it is a session in its own right:
-  // its panel opens over whichever screen it was picked from, list and filters
-  // still behind it.
-  if (sessionId && !goalId && !taskId) {
-    return <SessionPanel sessionId={sessionId} onClose={() => close("session")} />
   }
 
   const taskPanel = taskId ? (
