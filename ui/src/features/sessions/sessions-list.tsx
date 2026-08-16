@@ -149,8 +149,14 @@ function SessionRow({
       // button below selects by itself, so neither needs the row to act for it.
       // The id *text* is not one of them — it is read here, and clicking it is
       // still a click on the row.
+      //
+      // The `contains` is what keeps the copy menu whole: React events travel
+      // the component tree rather than the DOM, so a click on an entry of a
+      // menu portalled out of the table arrives here all the same — and it is
+      // a copy, not a pick.
       onClick={(event) => {
-        if (!(event.target as Element).closest("button")) onSelect()
+        const target = event.target as Element
+        if (event.currentTarget.contains(target) && !target.closest("button")) onSelect()
       }}
     >
       {/* These ids are read here on their way into a terminal, and the row is
