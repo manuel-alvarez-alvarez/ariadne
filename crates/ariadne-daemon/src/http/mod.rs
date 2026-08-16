@@ -6,6 +6,7 @@ mod error;
 mod events;
 mod goals;
 mod profiles;
+mod session_logs;
 mod sessions;
 mod stream;
 mod tasks;
@@ -78,9 +79,13 @@ impl AppState {
         tasks::list_messages, tasks::post_message,
         tasks::list_reviews, tasks::post_review, tasks::diff,
         sessions::list, sessions::get, sessions::kill, sessions::resume, sessions::logs,
+        session_logs::logs_stream,
         events::list, stream::stream,
     ),
-    components(schemas(ariadne_api::stream::DomainEvent, ariadne_api::stream::ResyncDto)),
+    components(schemas(
+        ariadne_api::stream::DomainEvent, ariadne_api::stream::ResyncDto,
+        ariadne_api::sessions::SessionLogChunk, ariadne_api::sessions::SessionLogEnd,
+    )),
     tags(
         (name = "system", description = "Daemon health and metadata"),
         (name = "profiles", description = "Agent profiles (role + system prompt + agent CLI)"),
@@ -139,6 +144,10 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{id}/kill", post(sessions::kill))
         .route("/v1/sessions/{id}/resume", post(sessions::resume))
         .route("/v1/sessions/{id}/logs", get(sessions::logs))
+        .route(
+            "/v1/sessions/{id}/logs/stream",
+            get(session_logs::logs_stream),
+        )
         // events
         .route("/v1/events", get(events::list))
         .route("/v1/events/stream", get(stream::stream))
