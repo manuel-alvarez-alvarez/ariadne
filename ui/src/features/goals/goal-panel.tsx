@@ -21,13 +21,14 @@ import type { ReactNode } from "react"
 import { useSearchParams } from "react-router-dom"
 
 import { ApiError, api, type GoalDto, qk, unwrap } from "@/api"
-import { CopyableId } from "@/components/copyable-id"
+import { CopyableId, CopyableIdMenu } from "@/components/copyable-id"
 import { ErrorState } from "@/components/error-state"
 import { Markdown } from "@/components/markdown"
 import { StatusBadge } from "@/components/status-badge"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { goalCopyEntries } from "@/lib/copy-entries"
 import { formatAbsolute, formatRelative } from "@/lib/time"
 import { usePanelSessionNavigation } from "@/routes/paths"
 import { GoalActions } from "./goal-actions"
@@ -172,7 +173,12 @@ function GoalView({
             tone={GOAL_STATUS_META[goal.status].badge}
           />
         </div>
-        <CopyableId value={goal.id} label="goal id" className="text-xs text-muted-foreground" />
+        <CopyableIdMenu
+          value={goal.id}
+          label="goal id"
+          entries={goalCopyEntries(goal.id)}
+          className="text-xs text-muted-foreground"
+        />
       </SheetHeader>
 
       <GoalActions goal={goal} />
@@ -266,11 +272,7 @@ function GoalMetadata({ goal }: { goal: GoalDto }) {
           <ul className="flex flex-col gap-1">
             {goal.repos.map((repo) => (
               <li key={repo.id} className="min-w-0">
-                <CopyableId
-                  value={repo.path}
-                  label="repository path"
-                  className="block text-xs break-all"
-                />
+                <CopyableId value={repo.path} label="repository path" className="text-xs" />
                 <span className="font-mono text-xs text-muted-foreground">
                   base: {repo.base_branch}
                 </span>

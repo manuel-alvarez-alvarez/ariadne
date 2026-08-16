@@ -25,7 +25,7 @@ import type { ReactNode } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 
 import type { TaskDto } from "@/api"
-import { CopyableId } from "@/components/copyable-id"
+import { CopyableId, CopyableIdMenu } from "@/components/copyable-id"
 import { ErrorState } from "@/components/error-state"
 import { Markdown } from "@/components/markdown"
 import { StatusBadge } from "@/components/status-badge"
@@ -34,6 +34,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { goalQueryOptions } from "@/features/goals/queries"
+import { taskCopyEntries } from "@/lib/copy-entries"
 import { shortId } from "@/lib/ids"
 import { formatAbsolute, formatRelative } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -244,7 +245,12 @@ function TaskHeader({ task, showGoalLink }: { task: TaskDto; showGoalLink: boole
         <span className="text-muted-foreground">
           review round <span className="font-mono">{task.review_round}</span>
         </span>
-        <CopyableId value={task.id} label="task id" className="text-muted-foreground" />
+        <CopyableIdMenu
+          value={task.id}
+          label="task id"
+          entries={taskCopyEntries(task.id)}
+          className="text-muted-foreground"
+        />
         <span
           className="ml-auto text-muted-foreground"
           title={`created ${formatAbsolute(task.created_at)}`}
@@ -262,16 +268,12 @@ function TaskFacts({ task }: { task: TaskDto }) {
       <Fact label="Branch">
         <span className="flex items-center gap-1.5">
           <GitBranchIcon className="size-3.5 shrink-0 text-muted-foreground" />
-          <CopyableId value={task.branch} label="branch" className="min-w-0 truncate text-xs" />
+          <CopyableId value={task.branch} label="branch" className="text-xs" />
         </span>
       </Fact>
       <Fact label="Worktree">
         {task.worktree_path ? (
-          <CopyableId
-            value={task.worktree_path}
-            label="worktree path"
-            className="block max-w-full truncate text-xs"
-          />
+          <CopyableId value={task.worktree_path} label="worktree path" className="text-xs" />
         ) : (
           <Muted>not created yet</Muted>
         )}
