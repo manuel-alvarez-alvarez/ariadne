@@ -3,6 +3,7 @@
 //! Pure domain layer: no IO, no async. Everything here is shared by the
 //! daemon, the store, the API DTOs and the CLI.
 
+pub mod codex_hooks;
 pub mod id;
 pub mod state_machine;
 

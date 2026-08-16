@@ -100,8 +100,13 @@ enum Command {
 
 #[derive(Subcommand)]
 enum SetupCommand {
-    /// Declare Ariadne's hooks in Codex's global hooks file (~/.codex/hooks.json)
-    CodexHooks,
+    /// Trust Ariadne's Codex hooks (starts codex once so it can ask)
+    CodexHooks {
+        /// The `ariadne` binary the hooks call (default: this one). Must match
+        /// the daemon's `cli_bin`.
+        #[arg(long)]
+        cli_bin: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -179,8 +184,8 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Task { command } => commands::task::run(&client, command, cli.format).await,
         Command::Session { command } => commands::session::run(&client, command, cli.format).await,
         Command::Setup {
-            command: SetupCommand::CodexHooks,
-        } => commands::setup::codex_hooks(),
+            command: SetupCommand::CodexHooks { cli_bin },
+        } => commands::setup::codex_hooks(cli_bin),
         Command::AgentEvent { kind, json } => {
             commands::agent_event::run(kind, json).await;
             Ok(()) // always succeeds: hooks must never fail
