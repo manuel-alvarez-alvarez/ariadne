@@ -54,15 +54,20 @@ export function useTaskPanelTo(taskId: string): { search: string } {
 
 /**
  * Link target that shows a session inside the panel that is already open:
- * everything else is kept, `tab` and `session` point the panel at it.
+ * everything else is kept, `tab` and `session` point the panel at it. `null`
+ * is the way back out of the session, onto the list it came from.
  *
  * This is how a session id mentioned somewhere in a panel — a message's
  * author, a review's session — becomes a way to watch that agent.
  */
-export function panelSessionTo(current: URLSearchParams, sessionId: string): { search: string } {
+export function panelSessionTo(
+  current: URLSearchParams,
+  sessionId: string | null,
+): { search: string } {
   const next = new URLSearchParams(current)
   next.set("tab", "sessions")
-  next.set("session", sessionId)
+  if (sessionId === null) next.delete("session")
+  else next.set("session", sessionId)
   return { search: `?${next.toString()}` }
 }
 
@@ -70,6 +75,19 @@ export function panelSessionTo(current: URLSearchParams, sessionId: string): { s
 export function usePanelSessionTo(sessionId: string): { search: string } {
   const [search] = useSearchParams()
   return panelSessionTo(search, sessionId)
+}
+
+/**
+ * Drilling the open panel into a session (and back out of it with `null`) as
+ * something to call rather than to link: the sessions list hands back the row
+ * that was clicked, not a target.
+ *
+ * Replaces rather than pushes — where the user is *inside* a panel is not a
+ * step of its own, and Back should leave the panel, not walk its tabs.
+ */
+export function usePanelSessionNavigation(): (sessionId: string | null) => void {
+  const [search, setSearch] = useSearchParams()
+  return (sessionId) => setSearch(panelSessionTo(search, sessionId).search, { replace: true })
 }
 
 /**
