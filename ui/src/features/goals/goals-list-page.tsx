@@ -12,8 +12,8 @@
 import { useQuery } from "@tanstack/react-query"
 import { PlusIcon } from "lucide-react"
 import { useState } from "react"
+import { useSearchParams } from "react-router-dom"
 
-import type { GoalStatus } from "@/api"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { Button } from "@/components/ui/button"
@@ -24,14 +24,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Skeleton } from "@/components/ui/skeleton"
 import { CreateGoalDialog } from "./create-goal-dialog"
-import { GoalSwimlanes } from "./goal-swimlanes"
+import { ALL, readStatusFilter, type StatusFilter, withStatusFilter } from "./filters"
+import { BoardSkeleton, GoalSwimlanes } from "./goal-swimlanes"
 import { goalsQueryOptions } from "./queries"
 import { GOAL_STATUS_META, GOAL_STATUSES } from "./status"
-
-/** Sentinel for "no status filter" — `Select` needs a value for every item. */
-const ALL = "all"
 
 /** `items` is what makes the trigger show the label rather than the raw value. */
 const STATUS_ITEMS = [
@@ -40,13 +37,28 @@ const STATUS_ITEMS = [
 ]
 
 export function GoalsListPage() {
-  const [status, setStatus] = useState<GoalStatus | typeof ALL>(ALL)
+  const [search, setSearch] = useSearchParams()
+  const status = readStatusFilter(search)
   const [createOpen, setCreateOpen] = useState(false)
 
   const goals = useQuery(goalsQueryOptions(status === ALL ? {} : { status }))
 
+  /** A filter is not a place: it replaces the entry rather than piling up back steps. */
+  function filterBy(value: StatusFilter) {
+    setSearch(withStatusFilter(search, value), { replace: true })
+  }
+
+  /** The goal just created opens its own panel — no hunting for it on the board. */
+  function openGoal(goalId: string) {
+    const next = new URLSearchParams(search)
+    next.set("goal", goalId)
+    setSearch(next)
+  }
+
+  // The board owns the scrolling (its headers stick to it), so the screen is a
+  // fixed-height column rather than a page that grows.
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex h-full min-h-0 flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h1 className="font-heading text-lg font-semibold">Goals</h1>
@@ -57,7 +69,7 @@ export function GoalsListPage() {
         <div className="flex items-center gap-2">
           <Select
             value={status}
-            onValueChange={(value) => setStatus((value as GoalStatus | typeof ALL) ?? ALL)}
+            onValueChange={(value) => filterBy((value as StatusFilter) ?? ALL)}
             items={STATUS_ITEMS}
           >
             <SelectTrigger aria-label="Filter by status" className="w-40">
@@ -87,7 +99,7 @@ export function GoalsListPage() {
         />
       ) : null}
 
-      {goals.isPending ? <GoalsSkeleton /> : null}
+      {goals.isPending ? <BoardSkeleton /> : null}
 
       {goals.data?.length === 0 ? (
         <EmptyState
@@ -106,17 +118,11 @@ export function GoalsListPage() {
 
       {goals.data?.length ? <GoalSwimlanes goals={goals.data} /> : null}
 
-      <CreateGoalDialog open={createOpen} onOpenChange={setCreateOpen} />
-    </div>
-  )
-}
-
-function GoalsSkeleton() {
-  return (
-    <div className="flex flex-col gap-2 rounded-lg border p-4">
-      {[0, 1, 2].map((row) => (
-        <Skeleton key={row} className="h-10 w-full" />
-      ))}
+      <CreateGoalDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        onCreated={(goal) => openGoal(goal.id)}
+      />
     </div>
   )
 }

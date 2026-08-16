@@ -25,12 +25,18 @@ const ROLE_LABELS: Record<AuthorRole, string> = {
   system: "System",
 }
 
-/** Who said it has to be readable at a glance, so each role gets its own tint. */
+/**
+ * Who said it has to be readable at a glance, so each role gets its own tint,
+ * from the status ramp: the planner keeps the violet of a goal in planning,
+ * the engineer the accent of work in progress, the reviewer the teal that the
+ * warm steps of the ramp are reserved against. The ramp's tints carry dark
+ * mode, taken down to a fraction here because these back a whole row of prose.
+ */
 const ROLE_CLASSES: Record<AuthorRole, string> = {
-  planner: "border-l-violet-500/60 bg-violet-500/[0.04]",
-  engineer: "border-l-sky-500/60 bg-sky-500/[0.04]",
-  reviewer: "border-l-amber-500/60 bg-amber-500/[0.04]",
-  user: "border-l-primary/60 bg-primary/[0.04]",
+  planner: "border-l-status-review/60 bg-status-review-soft/35",
+  engineer: "border-l-status-active/60 bg-status-active-soft/35",
+  reviewer: "border-l-status-ready/60 bg-status-ready-soft/35",
+  user: "border-l-foreground/50 bg-foreground/[0.04]",
   system: "border-l-border bg-muted/40",
 }
 

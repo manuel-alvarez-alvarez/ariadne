@@ -16,14 +16,17 @@ export function ConnectionStatus({ className }: { className?: string }) {
   const { status, streamStatus, baseUrl, version, uptimeSecs, error } = useConnection()
 
   const live = status === "connected" && streamStatus === "open"
+  // Straight off the status ramp: green while both links are up, the warn step
+  // for a half-connected or still-connecting daemon, the danger step when it
+  // is gone.
   const tone =
     status === "connected"
       ? live
-        ? "bg-emerald-500"
-        : "bg-amber-500"
+        ? "bg-status-done"
+        : "bg-status-warn"
       : status === "connecting"
-        ? "bg-amber-500"
-        : "bg-destructive"
+        ? "bg-status-warn"
+        : "bg-status-danger"
 
   const label =
     status === "connected"

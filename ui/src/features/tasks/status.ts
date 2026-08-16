@@ -55,60 +55,67 @@ interface StatusMeta {
   label: string
   /** What the status means, for tooltips and empty columns. */
   hint: string
-  /** Badge classes; tinted so light and dark both keep the text readable. */
+  /** Badge classes, from the status ramp in `index.css`: it carries dark mode. */
   badge: string
   /** Solid dot classes, for the board column headers. */
   dot: string
 }
 
+/**
+ * Which step of the ramp each status takes. The pipeline reads left to right —
+ * pending grey, ready teal, in progress accent, review violet, merged green —
+ * and the two statuses that mean "something is wrong" (changes requested,
+ * failed) are the only warm ones, so a stalled task is never mistaken for a
+ * waiting one.
+ */
 export const TASK_STATUS_META: Record<TaskStatus, StatusMeta> = {
   pending: {
     label: "Pending",
     hint: "Waiting for its dependencies to merge.",
-    badge: "bg-zinc-500/12 text-zinc-700 dark:bg-zinc-400/15 dark:text-zinc-300",
-    dot: "bg-zinc-400 dark:bg-zinc-500",
+    badge: "bg-status-pending-soft text-status-pending-fg",
+    dot: "bg-status-pending",
   },
   ready: {
     label: "Ready",
     hint: "Dependencies merged; waiting for an engineer session.",
-    badge: "bg-amber-500/12 text-amber-700 dark:bg-amber-400/15 dark:text-amber-300",
-    dot: "bg-amber-500",
+    badge: "bg-status-ready-soft text-status-ready-fg",
+    dot: "bg-status-ready",
   },
   in_progress: {
     label: "In progress",
     hint: "An engineer session is working on the task: implementing, applying review feedback, or merging.",
-    badge: "bg-blue-500/12 text-blue-700 dark:bg-blue-400/15 dark:text-blue-300",
-    dot: "bg-blue-500",
+    badge: "bg-status-active-soft text-status-active-fg",
+    dot: "bg-status-active",
   },
   under_review: {
     label: "Under review",
     hint: "Review requested: reviewer sessions are active, or the task is approved and waiting to merge.",
-    badge: "bg-violet-500/12 text-violet-700 dark:bg-violet-400/15 dark:text-violet-300",
-    dot: "bg-violet-500",
+    badge: "bg-status-review-soft text-status-review-fg",
+    dot: "bg-status-review",
   },
   changes_requested: {
     label: "Changes requested",
     hint: "A reviewer asked for changes this round.",
-    badge: "bg-orange-500/12 text-orange-700 dark:bg-orange-400/15 dark:text-orange-300",
-    dot: "bg-orange-500",
+    badge: "bg-status-warn-soft text-status-warn-fg",
+    dot: "bg-status-warn",
   },
   approved: {
     label: "Approved",
     hint: "Enough approvals collected; waiting to be told to merge.",
-    badge: "bg-teal-500/12 text-teal-700 dark:bg-teal-400/15 dark:text-teal-300",
-    dot: "bg-teal-500",
+    badge: "bg-status-ready-soft text-status-ready-fg",
+    dot: "bg-status-ready",
   },
   merging: {
     label: "Merging",
     hint: "The engineer is merging into the base branch.",
-    badge: "bg-cyan-500/12 text-cyan-700 dark:bg-cyan-400/15 dark:text-cyan-300",
-    dot: "bg-cyan-500",
+    badge: "bg-status-active-soft text-status-active-fg",
+    dot: "bg-status-active",
   },
   merged: {
     label: "Merged",
     hint: "Merge verified on the base branch.",
-    badge: "bg-emerald-500/12 text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-300",
-    dot: "bg-emerald-500",
+    badge: "bg-status-done-soft text-status-done-fg",
+    dot: "bg-status-done",
   },
   cancelled: {
     label: "Cancelled",
@@ -119,8 +126,8 @@ export const TASK_STATUS_META: Record<TaskStatus, StatusMeta> = {
   failed: {
     label: "Failed",
     hint: "Unrecoverable failure; the user can retry it.",
-    badge: "bg-destructive/12 text-destructive dark:bg-destructive/20",
-    dot: "bg-destructive",
+    badge: "bg-status-danger-soft text-status-danger-fg",
+    dot: "bg-status-danger",
   },
 }
 

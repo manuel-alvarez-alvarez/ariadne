@@ -32,8 +32,8 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { sessionQueryOptions } from "@/features/sessions/queries"
 import { SessionDetailView } from "@/features/sessions/session-detail-view"
 import { SessionsList } from "@/features/sessions/sessions-list"
+import { shortId } from "@/lib/ids"
 import { usePanelSessionTo } from "@/routes/paths"
-import { shortId } from "./format"
 
 export function TaskSessions({
   taskId,
@@ -43,6 +43,8 @@ export function TaskSessions({
   /** Selects a session, which opens it over the whole panel. */
   onSelect: (sessionId: string) => void
 }) {
+  // The selected row marks itself: `SessionsList` reads the same `?session=`
+  // this panel drives, so nothing has to be threaded through the panel.
   return <SessionsList filters={{ task: taskId }} onSelect={(session) => onSelect(session.id)} />
 }
 

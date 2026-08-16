@@ -12,19 +12,38 @@
 
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query"
 
-import { api, qk, type SessionDto, type SessionStatus, unwrap } from "@/api"
+import {
+  api,
+  type CacheSnapshot,
+  optimisticStatus,
+  qk,
+  type Role,
+  restoreCache,
+  type SessionDto,
+  type SessionStatus,
+  unwrap,
+} from "@/api"
 
-/** The filters `GET /v1/sessions` actually takes. */
+/** What the sessions list can be narrowed by. */
 export interface SessionListFilters {
   goal?: string
   task?: string
   status?: SessionStatus
+  /**
+   * Applied here rather than by the daemon: `GET /v1/sessions` takes no role.
+   * The request — and so the cache entry — is the same one an unfiltered list
+   * makes, and the role is a per-observer `select` over it.
+   */
+  role?: Role
 }
 
-export function sessionsQueryOptions(filters: SessionListFilters = {}) {
+export function sessionsQueryOptions({ role, ...query }: SessionListFilters = {}) {
   return queryOptions({
-    queryKey: qk.sessions.list(filters),
-    queryFn: () => unwrap(api().GET("/v1/sessions", { params: { query: filters } })),
+    queryKey: qk.sessions.list(query),
+    queryFn: () => unwrap(api().GET("/v1/sessions", { params: { query } })),
+    select: role
+      ? (sessions: SessionDto[]) => sessions.filter((session) => session.role === role)
+      : undefined,
   })
 }
 
@@ -61,12 +80,27 @@ export function taskQueryOptions(id: string) {
   })
 }
 
-/** Kill a session's tmux process. Only meaningful while the session is live. */
+/**
+ * Kill a session's tmux process. Only meaningful while the session is live.
+ *
+ * Optimistic: the daemon tears the pane down and marks the session `exited`,
+ * which is the one status the client can know in advance, and a row that still
+ * says "running" after a confirmed kill is the wrong thing to be looking at.
+ * A refusal puts the previous row straight back.
+ */
 export function useKillSession() {
   const queryClient = useQueryClient()
-  return useMutation({
+  return useMutation<SessionDto, Error, string, CacheSnapshot | undefined>({
     mutationFn: (id: string) =>
       unwrap(api().POST("/v1/sessions/{id}/kill", { params: { path: { id } } })),
+    onMutate: (id) =>
+      optimisticStatus(queryClient, {
+        detailKey: qk.sessions.detail(id),
+        listsKey: qk.sessions.lists(),
+        id,
+        status: "exited" satisfies SessionStatus,
+      }),
+    onError: (_error, _id, snapshot) => restoreCache(queryClient, snapshot),
     onSuccess: (session) => cacheSession(queryClient, session),
   })
 }

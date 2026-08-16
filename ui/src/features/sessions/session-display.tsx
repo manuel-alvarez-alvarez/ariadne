@@ -49,16 +49,20 @@ export const AGENT_KIND_LABELS: Record<AgentKind, string> = {
 
 interface SessionStatusMeta {
   label: string
-  /** Dot colour; the live statuses are the saturated end of the scale. */
+  /**
+   * Dot colour, from the status ramp in `index.css`; the live statuses are the
+   * saturated end of the scale. An idle session is the one waiting on you, so
+   * it takes the accent rather than a colour it would share with a warning.
+   */
   dot: string
 }
 
 export const SESSION_STATUS_META: Record<SessionStatus, SessionStatusMeta> = {
-  starting: { label: "Starting", dot: "bg-amber-500" },
-  running: { label: "Running", dot: "bg-emerald-500" },
-  idle: { label: "Idle", dot: "bg-sky-500" },
+  starting: { label: "Starting", dot: "bg-status-ready" },
+  running: { label: "Running", dot: "bg-status-done" },
+  idle: { label: "Idle", dot: "bg-status-active" },
   exited: { label: "Exited", dot: "bg-muted-foreground/60" },
-  failed: { label: "Failed", dot: "bg-destructive" },
+  failed: { label: "Failed", dot: "bg-status-danger" },
 }
 
 export function sessionStatusLabel(status: SessionStatus): string {
