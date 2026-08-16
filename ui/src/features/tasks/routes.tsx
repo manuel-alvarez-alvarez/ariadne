@@ -6,9 +6,5 @@
 import type { RouteObject } from "react-router-dom"
 
 import { TaskDetailPage } from "./task-detail-page"
-import { TasksListPage } from "./tasks-list-page"
 
-export const taskRoutes: RouteObject[] = [
-  { path: "tasks", element: <TasksListPage /> },
-  { path: "tasks/:taskId", element: <TaskDetailPage /> },
-]
+export const taskRoutes: RouteObject[] = [{ path: "tasks/:taskId", element: <TaskDetailPage /> }]
