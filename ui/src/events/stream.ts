@@ -8,6 +8,13 @@
  * The browser's own reconnect is deliberately not used: this wrapper closes the
  * source on error and reconnects with capped exponential backoff, so the UI can
  * report an honest status and run a full refetch whenever a gap opened.
+ *
+ * `EventSource` is not enough on its own to notice a dead daemon. A socket can
+ * stay open long after the daemon stopped answering — `ariadned` in particular
+ * keeps an SSE connection alive through its own shutdown (see `forceReconnect`
+ * callers) — and then no `error` ever fires and the UI goes quietly stale. So
+ * the stream also accepts an outside liveness signal: the REST health probe
+ * calls [`forceReconnect`] when it stops getting answers.
  */
 
 import type { DomainEvent, DomainEventKind, ResyncDto } from "@/api"
@@ -78,6 +85,33 @@ export class DomainEventStream {
     this.#stopped = true
     this.#clearRetry()
     this.#closeSource()
+  }
+
+  /** True while a source is open and delivering. */
+  get isOpen(): boolean {
+    return this.#source?.readyState === EventSource.OPEN
+  }
+
+  /**
+   * Drop the current connection and reconnect straight away.
+   *
+   * For when something outside the stream knows it is dead — the health probe
+   * losing the daemon — because a socket can sit in `OPEN` indefinitely without
+   * `error` ever firing.
+   */
+  forceReconnect(reason: string): void {
+    if (this.#stopped) return
+    this.#clearRetry()
+    this.#closeSource()
+    this.#backoff = INITIAL_BACKOFF_MS
+    this.#handlers.onStatus("reconnecting", reason)
+    this.#connect()
+  }
+
+  /** Retry now instead of waiting out the backoff, if not already connected. */
+  reconnectIfClosed(reason: string): void {
+    if (this.#stopped || this.isOpen) return
+    this.forceReconnect(reason)
   }
 
   #connect(): void {
