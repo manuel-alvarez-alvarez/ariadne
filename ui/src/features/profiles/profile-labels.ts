@@ -52,17 +52,3 @@ export function agentKindLabel(kind: AgentKind | null | undefined): string {
 export function modelLabel(model: string | null | undefined): string {
   return model ? model : DEFAULT_MODEL_LABEL
 }
-
-const TIMESTAMP_FORMAT = new Intl.DateTimeFormat(undefined, {
-  dateStyle: "medium",
-  timeStyle: "short",
-})
-
-/**
- * The daemon's RFC 3339 timestamps in the viewer's locale and time zone. An
- * unparsable value is passed through rather than shown as "Invalid Date".
- */
-export function formatTimestamp(value: string): string {
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : TIMESTAMP_FORMAT.format(date)
-}

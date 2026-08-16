@@ -19,12 +19,12 @@
 import { useQuery } from "@tanstack/react-query"
 import { ArrowLeftIcon } from "lucide-react"
 
+import { ErrorState } from "@/components/error-state"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { sessionQueryOptions } from "@/features/sessions/queries"
-import { reason } from "@/features/sessions/session-actions"
 import { SessionDetailView } from "@/features/sessions/session-detail-view"
 import { SessionsList } from "@/features/sessions/sessions-list"
 
@@ -80,10 +80,11 @@ export function GoalSessionView({
       ) : session.isError ? (
         // A link can point at a session that is gone altogether; the panel says
         // so and keeps the way back.
-        <Alert variant="destructive">
-          <AlertTitle>Could not load session {sessionId}</AlertTitle>
-          <AlertDescription>{reason(session.error)}</AlertDescription>
-        </Alert>
+        <ErrorState
+          title={`Could not load session ${sessionId}`}
+          error={session.error}
+          onRetry={() => void session.refetch()}
+        />
       ) : foreign ? (
         <Alert variant="destructive">
           <AlertTitle>Not a session of this goal</AlertTitle>
@@ -92,8 +93,6 @@ export function GoalSessionView({
           </AlertDescription>
         </Alert>
       ) : (
-        // No `terminalClassName`: the session has the panel to itself now, so
-        // the terminal keeps the height it has on a page of its own.
         <SessionDetailView
           session={session.data}
           context="goal"

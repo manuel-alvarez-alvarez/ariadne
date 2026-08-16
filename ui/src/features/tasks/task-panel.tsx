@@ -17,15 +17,17 @@ import { Link, useSearchParams } from "react-router-dom"
 
 import type { TaskDto } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { ErrorState } from "@/components/error-state"
+import { Markdown } from "@/components/markdown"
+import { StatusBadge } from "@/components/status-badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { formatAbsolute, formatRelative } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { paths, useTaskPanelTo } from "@/routes/paths"
-import { describeError, formatAbsolute, formatRelative, shortSha } from "./format"
-import { Markdown } from "./markdown"
+import { shortSha } from "./format"
 import { taskQueryOptions } from "./queries"
 import { primaryStatus, subStatus, TASK_STATUS_META } from "./status"
 import { TaskActions } from "./task-actions"
@@ -82,10 +84,11 @@ export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => 
         ) : task.error ? (
           <>
             <SheetTitle className="sr-only">Task {taskId}</SheetTitle>
-            <Alert variant="destructive">
-              <AlertTitle>Could not load task {taskId}</AlertTitle>
-              <AlertDescription>{describeError(task.error)}</AlertDescription>
-            </Alert>
+            <ErrorState
+              title={`Could not load task ${taskId}`}
+              error={task.error}
+              onRetry={() => void task.refetch()}
+            />
           </>
         ) : (
           <>
@@ -152,17 +155,8 @@ function TaskHeader({ task }: { task: TaskDto }) {
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-2 text-xs">
-        <span
-          className={cn("rounded-full px-2 py-0.5 font-medium", status.badge)}
-          title={status.hint}
-        >
-          {status.label}
-        </span>
-        {sub && (
-          <span className={cn("rounded-full px-2 py-0.5 font-medium", sub.badge)} title={sub.hint}>
-            {sub.label}
-          </span>
-        )}
+        <StatusBadge label={status.label} tone={status.badge} title={status.hint} />
+        {sub && <StatusBadge label={sub.label} tone={sub.badge} title={sub.hint} />}
         {task.stalled && (
           <span
             className="flex items-center gap-1 rounded-full bg-amber-500/12 px-2 py-0.5 font-medium text-amber-700 dark:bg-amber-400/15 dark:text-amber-300"

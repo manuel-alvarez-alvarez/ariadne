@@ -23,12 +23,12 @@ import { toast } from "sonner"
 
 import type { SessionStatus } from "@/api"
 import { Button } from "@/components/ui/button"
+import { describeError } from "@/lib/errors"
 import { cn } from "@/lib/utils"
 import { useBaseUrl } from "@/stores/settings"
 
 import { type SessionLogStatus, SessionLogStream, sessionLogStreamUrl } from "./log-stream"
 import { sendSessionInput } from "./queries"
-import { reason } from "./session-actions"
 import { isLiveStatus } from "./session-display"
 import { writeDelta, writeSnapshot } from "./terminal-sink"
 
@@ -205,7 +205,7 @@ export function SessionTerminal({
         // bury the screen in identical toasts.
         toast.error("Could not send that keystroke", {
           id: `session-input-${sessionId}`,
-          description: reason(error),
+          description: describeError(error),
         })
       })
     })

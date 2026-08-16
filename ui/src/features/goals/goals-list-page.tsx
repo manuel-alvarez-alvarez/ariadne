@@ -10,11 +10,12 @@
  */
 
 import { useQuery } from "@tanstack/react-query"
-import { AlertCircleIcon, PlusIcon } from "lucide-react"
+import { PlusIcon } from "lucide-react"
 import { useState } from "react"
 
-import { ApiError, type GoalStatus } from "@/api"
-import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import type { GoalStatus } from "@/api"
+import { EmptyState } from "@/components/empty-state"
+import { ErrorState } from "@/components/error-state"
 import { Button } from "@/components/ui/button"
 import {
   Select,
@@ -25,9 +26,9 @@ import {
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { CreateGoalDialog } from "./create-goal-dialog"
-import { GOAL_STATUSES } from "./goal-status-badge"
 import { GoalSwimlanes } from "./goal-swimlanes"
 import { goalsQueryOptions } from "./queries"
+import { GOAL_STATUS_META, GOAL_STATUSES } from "./status"
 
 /** Sentinel for "no status filter" — `Select` needs a value for every item. */
 const ALL = "all"
@@ -35,7 +36,7 @@ const ALL = "all"
 /** `items` is what makes the trigger show the label rather than the raw value. */
 const STATUS_ITEMS = [
   { label: "All statuses", value: ALL },
-  ...GOAL_STATUSES.map((status) => ({ label: status, value: status })),
+  ...GOAL_STATUSES.map((status) => ({ label: GOAL_STATUS_META[status].label, value: status })),
 ]
 
 export function GoalsListPage() {
@@ -43,7 +44,6 @@ export function GoalsListPage() {
   const [createOpen, setCreateOpen] = useState(false)
 
   const goals = useQuery(goalsQueryOptions(status === ALL ? {} : { status }))
-  const error = ApiError.is(goals.error) ? goals.error : null
 
   return (
     <div className="flex flex-col gap-4">
@@ -78,32 +78,29 @@ export function GoalsListPage() {
         </div>
       </div>
 
-      {error ? (
-        <Alert variant="destructive">
-          <AlertCircleIcon />
-          <AlertTitle>Could not load goals</AlertTitle>
-          <AlertDescription>{error.message}</AlertDescription>
-          <AlertAction>
-            <Button variant="outline" size="sm" onClick={() => void goals.refetch()}>
-              Retry
-            </Button>
-          </AlertAction>
-        </Alert>
+      {goals.error ? (
+        <ErrorState
+          title="Could not load goals"
+          error={goals.error}
+          onRetry={() => void goals.refetch()}
+        />
       ) : null}
 
       {goals.isPending ? <GoalsSkeleton /> : null}
 
       {goals.data?.length === 0 ? (
-        <div className="rounded-lg border border-dashed p-8 text-center">
-          <p className="text-sm font-medium">
-            {status === ALL ? "No goals yet" : `No ${status} goals`}
-          </p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {status === ALL
+        <EmptyState
+          title={
+            status === ALL
+              ? "No goals yet"
+              : `No ${GOAL_STATUS_META[status].label.toLowerCase()} goals`
+          }
+          description={
+            status === ALL
               ? "Create one and the planner will break it into tasks."
-              : "Try another status filter."}
-          </p>
-        </div>
+              : "Try another status filter."
+          }
+        />
       ) : null}
 
       {goals.data?.length ? <GoalSwimlanes goals={goals.data} /> : null}

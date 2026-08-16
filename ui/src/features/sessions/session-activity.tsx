@@ -17,11 +17,13 @@ import { ChevronRightIcon } from "lucide-react"
 import { useRef, useState } from "react"
 
 import { type AgentEventDto, api, qk, unwrap } from "@/api"
+import { EmptyState } from "@/components/empty-state"
+import { ErrorState } from "@/components/error-state"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
+import { formatAbsolute, formatAge } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
-import { formatAge, formatTimestamp } from "./session-display"
 import { useNow } from "./use-now"
 
 /** Page size; the daemon caps `limit` at 200. */
@@ -43,7 +45,7 @@ export function SessionActivity({ sessionId }: { sessionId: string }) {
   // Survives refetches, reset when the screen moves to another session.
   const tail = useRef<Tail>({ sessionId, cursor: undefined, events: [] })
 
-  const { data, isPending, isError, error } = useQuery({
+  const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: qk.agentEvents.list({ session: sessionId }),
     queryFn: async () => {
       if (tail.current.sessionId !== sessionId) {
@@ -73,14 +75,22 @@ export function SessionActivity({ sessionId }: { sessionId: string }) {
   }
 
   if (isError) {
-    return <p className="text-sm text-destructive">{error.message}</p>
+    return (
+      <ErrorState
+        title="Could not load the agent events"
+        error={error}
+        onRetry={() => void refetch()}
+      />
+    )
   }
 
   if (data.length === 0) {
     return (
-      <p className="text-sm text-muted-foreground">
-        No agent events yet. Hooks report them as the agent starts, uses tools and finishes turns.
-      </p>
+      <EmptyState
+        title="No agent events yet."
+        description="Hooks report them as the agent starts, uses tools and finishes turns."
+        className="border-0"
+      />
     )
   }
 
@@ -120,7 +130,7 @@ function ActivityRow({ event, now }: { event: AgentEventDto; now: number }) {
         <time
           className="shrink-0 text-xs text-muted-foreground tabular-nums"
           dateTime={event.created_at}
-          title={formatTimestamp(event.created_at)}
+          title={formatAbsolute(event.created_at)}
         >
           {formatAge(event.created_at, now)}
         </time>
