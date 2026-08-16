@@ -43,6 +43,15 @@ pub struct SessionLogsResponse {
     pub logs: String,
 }
 
+/// Body of `POST /v1/sessions/{id}/input`.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SessionInputRequest {
+    /// Keystrokes to type into the pane, exactly as the terminal produced
+    /// them: `\r` for Return, `\x03` for Ctrl-C, `\x1b[A` for Up. Sent
+    /// verbatim — nothing is appended, so a submit has to carry its own `\r`.
+    pub data: String,
+}
+
 /// Payload of the `snapshot` and `delta` events of
 /// `GET /v1/sessions/{id}/logs/stream`.
 ///
