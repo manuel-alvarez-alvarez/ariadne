@@ -33,9 +33,9 @@ export function SessionActions({
 }: {
   session: SessionDto
   /**
-   * Handed the session a resume revived this one into, when that is a new
-   * one. Where to go from there is the caller's call — a panel selects it —
-   * so these buttons stay usable wherever they are rendered.
+   * Handed the revived session — this same one, relaunched. Where to go from
+   * there is the caller's call — a panel selects it — so these buttons stay
+   * usable wherever they are rendered.
    */
   onResumed?: (session: SessionDto) => void
 }) {
@@ -64,17 +64,17 @@ export function SessionActions({
           onClick={() => {
             resume.mutate(session.id, {
               onSuccess: (revived) => {
-                // The daemon answers with the session to attach to: a new one
-                // carrying the same agent conversation when it really revived,
-                // or this one unchanged when its pane turned out to be alive
-                // after all (the scheduler may have respawned it already).
-                if (revived.id === session.id) {
+                // The daemon answers with this same session either way: live
+                // again when it really relaunched it, or untouched when its
+                // pane turned out to be alive after all (the scheduler may
+                // have respawned it already) — which its status is what says.
+                if (!isLiveStatus(revived.status)) {
                   toast.info("That pane is already alive", {
                     description: `${revived.tmux_session} has a running agent; nothing to resume.`,
                   })
                   return
                 }
-                toast.success("Resumed as a new session", {
+                toast.success("Session resumed", {
                   description: `${revived.tmux_session} · same agent conversation`,
                 })
                 onResumed?.(revived)
