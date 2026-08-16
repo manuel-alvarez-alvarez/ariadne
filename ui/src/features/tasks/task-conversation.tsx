@@ -17,25 +17,30 @@ import { cn } from "@/lib/utils"
 import { taskMessagesQueryOptions } from "./queries"
 import { SessionLink } from "./task-sessions"
 
+/**
+ * One tint per role, from the status ramp in `index.css` and the same one the
+ * goal thread gives that role: the planner violet, the engineer the accent,
+ * the reviewer teal — never the warm steps, which mean something is wrong.
+ */
 const ROLE_META: Record<AuthorRole, { label: string; badge: string; card: string }> = {
   planner: {
     label: "Planner",
-    badge: "bg-violet-500/12 text-violet-700 dark:bg-violet-400/15 dark:text-violet-300",
-    card: "border-violet-500/25",
+    badge: "bg-status-review-soft text-status-review-fg",
+    card: "border-status-review/25",
   },
   engineer: {
     label: "Engineer",
-    badge: "bg-blue-500/12 text-blue-700 dark:bg-blue-400/15 dark:text-blue-300",
-    card: "border-blue-500/25",
+    badge: "bg-status-active-soft text-status-active-fg",
+    card: "border-status-active/25",
   },
   reviewer: {
     label: "Reviewer",
-    badge: "bg-amber-500/12 text-amber-700 dark:bg-amber-400/15 dark:text-amber-300",
-    card: "border-amber-500/25",
+    badge: "bg-status-ready-soft text-status-ready-fg",
+    card: "border-status-ready/25",
   },
   user: {
     label: "You",
-    badge: "bg-primary/12 text-foreground",
+    badge: "bg-foreground/10 text-foreground",
     card: "border-foreground/25",
   },
   system: {

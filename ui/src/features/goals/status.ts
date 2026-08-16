@@ -19,9 +19,13 @@ export const GOAL_STATUSES: readonly GoalStatus[] = [
 interface GoalStatusMeta {
   label: string
   /**
-   * Badge classes; colour carries the meaning here, so it is spelled out per
-   * status rather than mapped onto the badge variants, which only cover
-   * neutral/primary/destructive.
+   * Badge classes, from the status ramp in `index.css`: colour carries the
+   * meaning here, so it is spelled out per status rather than mapped onto the
+   * badge variants, which only cover neutral/primary/destructive. The ramp
+   * carries dark mode, so the tint is never a light one left on a dark screen.
+   *
+   * The steps are the goal's counterparts of the task ones: planning is the
+   * planner's violet, an active goal is the accent, completed is done.
    */
   badge: string
 }
@@ -29,15 +33,15 @@ interface GoalStatusMeta {
 export const GOAL_STATUS_META: Record<GoalStatus, GoalStatusMeta> = {
   planning: {
     label: "Planning",
-    badge: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
+    badge: "bg-status-review-soft text-status-review-fg",
   },
   active: {
     label: "Active",
-    badge: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
+    badge: "bg-status-active-soft text-status-active-fg",
   },
   completed: {
     label: "Completed",
-    badge: "bg-sky-500/15 text-sky-700 dark:text-sky-400",
+    badge: "bg-status-done-soft text-status-done-fg",
   },
   cancelled: {
     label: "Cancelled",
