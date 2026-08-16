@@ -127,4 +127,12 @@ impl GitManager {
         self.git(repo, &["diff", &format!("{base}...{branch}")])
             .await
     }
+
+    /// What `commit` brought into the branch it landed on: the diff against
+    /// its first parent. For a task's merge commit that is the task's whole
+    /// change as merged; works for fast-forward (single-parent) commits too.
+    pub async fn diff_against_first_parent(&self, repo: &Path, commit: &str) -> Result<String> {
+        self.git(repo, &["diff", &format!("{commit}^1"), commit])
+            .await
+    }
 }
