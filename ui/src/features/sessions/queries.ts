@@ -1,0 +1,112 @@
+/**
+ * Everything the sessions screens read from and write to the daemon.
+ *
+ * Nothing here subscribes to domain events: `session_created` and
+ * `session_updated` already patch `sessions.detail` and invalidate
+ * `sessions.lists` in `src/events/dispatch.ts`, so these queries go live for
+ * free. The mutations still write their response into the cache, because the
+ * action's result should be on screen before the event that confirms it
+ * arrives — and because the event never arrives at all when the stream is
+ * down.
+ */
+
+import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query"
+
+import { api, qk, type SessionDto, type SessionStatus, unwrap } from "@/api"
+
+/** The filters `GET /v1/sessions` actually takes. */
+export interface SessionListFilters {
+  goal?: string
+  task?: string
+  status?: SessionStatus
+}
+
+export function sessionsQueryOptions(filters: SessionListFilters = {}) {
+  return queryOptions({
+    queryKey: qk.sessions.list(filters),
+    queryFn: () => unwrap(api().GET("/v1/sessions", { params: { query: filters } })),
+  })
+}
+
+export function sessionQueryOptions(id: string) {
+  return queryOptions({
+    queryKey: qk.sessions.detail(id),
+    queryFn: () => unwrap(api().GET("/v1/sessions/{id}", { params: { path: { id } } })),
+  })
+}
+
+/**
+ * Profiles, goals and tasks are read only to turn the ids on a session into
+ * names. They are owned by other screens; these keys are the shared ones from
+ * `qk`, so whichever screen loads them first serves the others.
+ */
+export function profilesQueryOptions() {
+  return queryOptions({
+    queryKey: qk.profiles.list(),
+    queryFn: () => unwrap(api().GET("/v1/profiles")),
+  })
+}
+
+export function goalsQueryOptions() {
+  return queryOptions({
+    queryKey: qk.goals.list(),
+    queryFn: () => unwrap(api().GET("/v1/goals")),
+  })
+}
+
+export function tasksQueryOptions(goal?: string) {
+  return queryOptions({
+    queryKey: qk.tasks.list({ goal }),
+    queryFn: () => unwrap(api().GET("/v1/tasks", { params: { query: { goal } } })),
+  })
+}
+
+export function goalQueryOptions(id: string) {
+  return queryOptions({
+    queryKey: qk.goals.detail(id),
+    queryFn: () => unwrap(api().GET("/v1/goals/{id}", { params: { path: { id } } })),
+  })
+}
+
+export function taskQueryOptions(id: string) {
+  return queryOptions({
+    queryKey: qk.tasks.detail(id),
+    queryFn: () => unwrap(api().GET("/v1/tasks/{id}", { params: { path: { id } } })),
+  })
+}
+
+/** Kill a session's tmux process. Only meaningful while the session is live. */
+export function useKillSession() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      unwrap(api().POST("/v1/sessions/{id}/kill", { params: { path: { id } } })),
+    onSuccess: (session) => cacheSession(queryClient, session),
+  })
+}
+
+/**
+ * Revive an ended session. The daemon answers with the session to attach to,
+ * which is a *new* one whenever the original's tmux is gone — so callers have
+ * to follow the id in the response rather than assume it is the one they sent.
+ * `409` is the "not resumable" answer (no internal session id, still running,
+ * agent cannot resume) and carries the reason in its envelope.
+ */
+export function useResumeSession() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      unwrap(api().POST("/v1/sessions/{id}/resume", { params: { path: { id } } })),
+    onSuccess: (session) => cacheSession(queryClient, session),
+  })
+}
+
+function cacheSession(queryClient: ReturnType<typeof useQueryClient>, session: SessionDto): void {
+  queryClient.setQueryData(qk.sessions.detail(session.id), session)
+  void queryClient.invalidateQueries({ queryKey: qk.sessions.lists() })
+}
+
+/** Index a list response by id, for turning the ids on a session into names. */
+export function byId<T extends { id: string }>(items: T[] | undefined): Map<string, T> {
+  return new Map((items ?? []).map((item) => [item.id, item]))
+}
