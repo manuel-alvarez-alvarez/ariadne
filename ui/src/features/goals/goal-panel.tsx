@@ -8,7 +8,9 @@
  * status change made from the CLI or by the daemon lands here on its own.
  *
  * The tab lives in the URL (like the panel itself), so a link can point at,
- * say, a session of a goal, and a reload stays where the user was.
+ * say, a session of a goal, and a reload stays where the user was. A session
+ * (`?session=`) is a drill-down: it takes the panel over, goal header and tabs
+ * included, with a link back to the goal.
  */
 
 import { useQuery } from "@tanstack/react-query"
@@ -24,7 +26,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { formatAbsolute, formatRelative } from "./format"
 import { GoalActions } from "./goal-actions"
-import { GoalSessions } from "./goal-sessions"
+import { GoalSessions, GoalSessionView } from "./goal-sessions"
 import { GoalStatusBadge } from "./goal-status-badge"
 import { GoalThread } from "./goal-thread"
 import { Markdown } from "./markdown"
@@ -36,61 +38,95 @@ type Tab = (typeof TABS)[number]
 export function GoalPanel({ goalId, onClose }: { goalId: string; onClose: () => void }) {
   const goal = useQuery(goalQueryOptions(goalId))
   const error = ApiError.is(goal.error) ? goal.error : null
+  const [search, setSearch] = useSearchParams()
+  const sessionId = search.get("session")
 
+  /** The session the panel is drilled into; `null` goes back to the goal. */
+  function selectSession(next: string | null) {
+    const params = new URLSearchParams(search)
+    if (next === null) params.delete("session")
+    else params.set("session", next)
+    setSearch(params, { replace: true })
+  }
+
+  // A selected session replaces the goal view entirely — the panel is that
+  // session's now, and the way back is the link it carries. It is checked
+  // before the goal query so a link into a session opens on it instead of
+  // waiting for the goal it hangs off.
+  if (sessionId) {
+    return (
+      <GoalSheet onClose={onClose}>
+        <GoalSessionView
+          goalId={goalId}
+          goalTitle={goal.data?.title}
+          sessionId={sessionId}
+          onSelect={selectSession}
+        />
+      </GoalSheet>
+    )
+  }
+
+  return (
+    <GoalSheet onClose={onClose}>
+      {error ? (
+        <>
+          <SheetTitle className="sr-only">Goal {goalId}</SheetTitle>
+          <Alert variant="destructive">
+            <AlertCircleIcon />
+            <AlertTitle>
+              {error.status === 404 ? "No such goal" : "Could not load the goal"}
+            </AlertTitle>
+            <AlertDescription>{error.message}</AlertDescription>
+            {error.status === 404 ? null : (
+              <AlertAction>
+                <Button variant="outline" size="sm" onClick={() => void goal.refetch()}>
+                  Retry
+                </Button>
+              </AlertAction>
+            )}
+          </Alert>
+        </>
+      ) : null}
+
+      {goal.isPending ? (
+        <>
+          <SheetTitle className="sr-only">Loading goal</SheetTitle>
+          <Skeleton className="h-7 w-2/3" />
+          <Skeleton className="h-40 w-full" />
+        </>
+      ) : null}
+
+      {goal.data ? <GoalView goal={goal.data} onSelectSession={selectSession} /> : null}
+    </GoalSheet>
+  )
+}
+
+/** The panel itself, the same one whichever of the two views is inside it. */
+function GoalSheet({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
   return (
     <Sheet open onOpenChange={(open) => open || onClose()}>
       {/* As wide as the task panel: the sessions tab holds a table. */}
       <SheetContent className="sm:max-w-3xl" aria-describedby={undefined}>
-        {error ? (
-          <>
-            <SheetTitle className="sr-only">Goal {goalId}</SheetTitle>
-            <Alert variant="destructive">
-              <AlertCircleIcon />
-              <AlertTitle>
-                {error.status === 404 ? "No such goal" : "Could not load the goal"}
-              </AlertTitle>
-              <AlertDescription>{error.message}</AlertDescription>
-              {error.status === 404 ? null : (
-                <AlertAction>
-                  <Button variant="outline" size="sm" onClick={() => void goal.refetch()}>
-                    Retry
-                  </Button>
-                </AlertAction>
-              )}
-            </Alert>
-          </>
-        ) : null}
-
-        {goal.isPending ? (
-          <>
-            <SheetTitle className="sr-only">Loading goal</SheetTitle>
-            <Skeleton className="h-7 w-2/3" />
-            <Skeleton className="h-40 w-full" />
-          </>
-        ) : null}
-
-        {goal.data ? <GoalView goal={goal.data} /> : null}
+        {children}
       </SheetContent>
     </Sheet>
   )
 }
 
-function GoalView({ goal }: { goal: GoalDto }) {
+function GoalView({
+  goal,
+  onSelectSession,
+}: {
+  goal: GoalDto
+  /** Opens a session over the whole panel; owned by {@link GoalPanel}. */
+  onSelectSession: (sessionId: string) => void
+}) {
   const [search, setSearch] = useSearchParams()
   const tab = TABS.find((value) => value === search.get("tab")) ?? "thread"
-  const sessionId = search.get("session")
 
   function setTab(next: Tab) {
     const params = new URLSearchParams(search)
     params.set("tab", next)
-    setSearch(params, { replace: true })
-  }
-
-  /** The selected session, or the list again when there is none. */
-  function selectSession(next: string | null) {
-    const params = new URLSearchParams(search)
-    if (next === null) params.delete("session")
-    else params.set("session", next)
     setSearch(params, { replace: true })
   }
 
@@ -128,7 +164,7 @@ function GoalView({ goal }: { goal: GoalDto }) {
           <GoalThread goalId={goal.id} />
         </TabsContent>
         <TabsContent value="sessions" className="pt-3">
-          <GoalSessions goalId={goal.id} sessionId={sessionId} onSelect={selectSession} />
+          <GoalSessions goalId={goal.id} onSelect={onSelectSession} />
         </TabsContent>
       </Tabs>
     </>

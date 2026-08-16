@@ -5,7 +5,9 @@
  *
  * The tab lives in the URL (like the panel itself) so a link can point at,
  * say, the diff of a task, and a reload stays where the user was. The sessions
- * tab keeps its selection there too, under `?session=`.
+ * tab keeps its selection there too, under `?session=` — and a selected
+ * session is a drill-down: it takes the panel over, task header and tabs
+ * included, with a link back to the task.
  */
 
 import { useQueries, useQuery } from "@tanstack/react-query"
@@ -30,7 +32,7 @@ import { TaskConversation } from "./task-conversation"
 import { TaskDiff } from "./task-diff"
 import { TaskHistory } from "./task-history"
 import { TaskReviews } from "./task-reviews"
-import { TaskSessions } from "./task-sessions"
+import { TaskSessions, TaskSessionView } from "./task-sessions"
 
 const TABS = ["conversation", "reviews", "history", "diff", "sessions"] as const
 type Tab = (typeof TABS)[number]
@@ -47,7 +49,7 @@ export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => 
     setSearch(params, { replace: true })
   }
 
-  /** The sessions tab's selection; `undefined` goes back to the bare list. */
+  /** The session the panel is drilled into; `undefined` goes back to the task. */
   function selectSession(next: string | undefined) {
     const params = new URLSearchParams(search)
     if (next === undefined) params.delete("session")
@@ -58,7 +60,18 @@ export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => 
   return (
     <Sheet open onOpenChange={(open) => open || onClose()}>
       <SheetContent className="sm:max-w-3xl">
-        {task.isPending ? (
+        {/* A selected session replaces the task view entirely — the panel is
+            that session's now, and the way back is the link it carries. It is
+            checked before the task query so a link into a session opens on it
+            instead of waiting for the task it hangs off. */}
+        {session ? (
+          <TaskSessionView
+            taskId={taskId}
+            taskTitle={task.data?.title}
+            sessionId={session}
+            onSelect={selectSession}
+          />
+        ) : task.isPending ? (
           <>
             <SheetTitle className="sr-only">Loading task</SheetTitle>
             <Skeleton className="h-7 w-2/3" />
@@ -110,7 +123,7 @@ export function TaskPanel({ taskId, onClose }: { taskId: string; onClose: () => 
                 <TaskDiff taskId={taskId} />
               </TabsContent>
               <TabsContent value="sessions" className="pt-3">
-                <TaskSessions taskId={taskId} selectedId={session} onSelect={selectSession} />
+                <TaskSessions taskId={taskId} onSelect={selectSession} />
               </TabsContent>
             </Tabs>
           </>
