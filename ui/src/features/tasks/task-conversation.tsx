@@ -1,25 +1,19 @@
 /**
- * The task thread — the `task messages` / `task msg` equivalent.
- *
- * The thread is where the user talks to the agents working the task, so the
- * composer is part of the tab rather than hidden behind a dialog. New messages
+ * The task thread, read-only — the `task messages` equivalent: what the
+ * planner, engineer and reviewers said while working the task. New messages
  * arrive through the event stream: `message_created` invalidates this query,
  * so a message an agent posts shows up without a refresh.
  */
 
 import { useQuery } from "@tanstack/react-query"
-import { SendHorizontalIcon } from "lucide-react"
-import { useState } from "react"
 
 import type { AuthorRole, MessageDto } from "@/api"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 import { describeError, formatAbsolute, formatRelative, shortId } from "./format"
 import { Markdown } from "./markdown"
-import { taskMessagesQueryOptions, usePostTaskMessage } from "./queries"
+import { taskMessagesQueryOptions } from "./queries"
 
 const ROLE_META: Record<AuthorRole, { label: string; badge: string; card: string }> = {
   planner: {
@@ -52,34 +46,40 @@ const ROLE_META: Record<AuthorRole, { label: string; badge: string; card: string
 export function TaskConversation({ taskId }: { taskId: string }) {
   const messages = useQuery(taskMessagesQueryOptions(taskId))
 
-  return (
-    <div className="space-y-4">
-      {messages.isPending ? (
-        <div className="space-y-2">
-          <Skeleton className="h-16 w-full" />
-          <Skeleton className="h-16 w-full" />
-        </div>
-      ) : messages.error ? (
-        <Alert variant="destructive">
-          <AlertTitle>Could not load the conversation</AlertTitle>
-          <AlertDescription>{describeError(messages.error)}</AlertDescription>
-        </Alert>
-      ) : messages.data.length === 0 ? (
-        <p className="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
-          Nothing has been said on this task yet.
-        </p>
-      ) : (
-        <ol className="space-y-3">
-          {messages.data.map((message) => (
-            <li key={message.id}>
-              <MessageCard message={message} />
-            </li>
-          ))}
-        </ol>
-      )}
+  if (messages.isPending) {
+    return (
+      <div className="space-y-2">
+        <Skeleton className="h-16 w-full" />
+        <Skeleton className="h-16 w-full" />
+      </div>
+    )
+  }
 
-      <MessageComposer taskId={taskId} />
-    </div>
+  if (messages.error) {
+    return (
+      <Alert variant="destructive">
+        <AlertTitle>Could not load the conversation</AlertTitle>
+        <AlertDescription>{describeError(messages.error)}</AlertDescription>
+      </Alert>
+    )
+  }
+
+  if (messages.data.length === 0) {
+    return (
+      <p className="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
+        Nothing has been said on this task yet.
+      </p>
+    )
+  }
+
+  return (
+    <ol className="space-y-3">
+      {messages.data.map((message) => (
+        <li key={message.id}>
+          <MessageCard message={message} />
+        </li>
+      ))}
+    </ol>
   )
 }
 
@@ -106,53 +106,5 @@ function MessageCard({ message }: { message: MessageDto }) {
       </header>
       <Markdown>{message.body}</Markdown>
     </article>
-  )
-}
-
-function MessageComposer({ taskId }: { taskId: string }) {
-  const [body, setBody] = useState("")
-  const post = usePostTaskMessage(taskId)
-  const canSend = body.trim().length > 0 && !post.isPending
-
-  function send() {
-    if (!canSend) return
-    post.mutate(body.trim(), { onSuccess: () => setBody("") })
-  }
-
-  return (
-    <form
-      className="space-y-2"
-      onSubmit={(event) => {
-        event.preventDefault()
-        send()
-      }}
-    >
-      <Textarea
-        value={body}
-        onChange={(event) => setBody(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-            event.preventDefault()
-            send()
-          }
-        }}
-        rows={3}
-        placeholder="Message the agents working this task…"
-        aria-label="Message"
-      />
-      {post.error && (
-        <Alert variant="destructive">
-          <AlertTitle>Message not posted</AlertTitle>
-          <AlertDescription>{describeError(post.error)}</AlertDescription>
-        </Alert>
-      )}
-      <div className="flex items-center justify-end gap-2">
-        <span className="text-xs text-muted-foreground">⌘↵ to send</span>
-        <Button type="submit" disabled={!canSend}>
-          <SendHorizontalIcon />
-          {post.isPending ? "Sending…" : "Send"}
-        </Button>
-      </div>
-    </form>
   )
 }
