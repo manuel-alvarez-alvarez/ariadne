@@ -110,7 +110,12 @@ pub async fn logs_stream(
     // in between is then sent twice rather than not at all.
     log.skip_existing().await;
 
-    let mut alive = state.launcher.tmux.has_session(&session.tmux_session).await;
+    // Both halves matter: tmux names are deliberately reused by
+    // `revive_session`/`resume_engineer`, so a live pane under this session's
+    // name may well belong to its successor — the row's own status is what
+    // says whether *this* session is still running.
+    let mut alive =
+        session.status().is_live() && state.launcher.tmux.has_session(&session.tmux_session).await;
     let snapshot = if alive {
         match state
             .launcher
@@ -126,13 +131,13 @@ pub async fn logs_stream(
                 warn!(session = %session.id, error = %e, "capturing pane failed; falling back to the console log");
                 alive = false;
                 log.rewind();
-                log.read_new().await
+                log.drain().await
             }
         }
     } else {
         // Already dead: the full piped log is all there will ever be.
         log.rewind();
-        log.read_new().await
+        log.drain().await
     };
 
     let follower = Follower {
@@ -155,19 +160,23 @@ pub async fn logs_stream(
         match f.phase {
             Phase::Following => loop {
                 tokio::time::sleep(POLL).await;
-                let new = f.log.read_new().await;
-                if !new.is_empty() {
-                    return Some((Ok(chunk_event("delta", &new)), f));
-                }
+                let mut new = f.log.read_new().await;
+                // Checked even when there is output to send: a pane that
+                // writes on every poll must not keep a finished session's
+                // stream open forever.
                 if f.due_for_liveness_check() && !f.alive().await {
-                    // Drain what the session wrote on its way out.
-                    let last = f.log.read_new().await;
-                    if last.is_empty() {
+                    // Whatever the session wrote on its way out, half-written
+                    // characters included.
+                    new.push_str(&f.log.drain().await);
+                    if new.is_empty() {
                         f.phase = Phase::Done;
                         return Some((Ok(end_event(&f.session_id)), f));
                     }
                     f.phase = Phase::Ending;
-                    return Some((Ok(chunk_event("delta", &last)), f));
+                    return Some((Ok(chunk_event("delta", &new)), f));
+                }
+                if !new.is_empty() {
+                    return Some((Ok(chunk_event("delta", &new)), f));
                 }
             },
             Phase::Ending => {
