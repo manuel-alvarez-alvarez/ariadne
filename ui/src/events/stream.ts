@@ -104,20 +104,23 @@ export class DomainEventStream {
     this.#clearRetry()
     this.#closeSource()
     this.#backoff = INITIAL_BACKOFF_MS
-    this.#handlers.onStatus("reconnecting", reason)
-    this.#connect()
+    this.#connect(reason)
   }
 
-  /** Retry now instead of waiting out the backoff, if not already connected. */
+  /**
+   * Retry now instead of waiting out the backoff — but only when nothing is in
+   * flight, so this never interrupts a connection that is still being made.
+   */
   reconnectIfClosed(reason: string): void {
-    if (this.#stopped || this.isOpen) return
+    if (this.#stopped) return
+    if (this.#source !== null && this.#source.readyState !== EventSource.CLOSED) return
     this.forceReconnect(reason)
   }
 
-  #connect(): void {
+  #connect(reason?: string): void {
     if (this.#stopped) return
     this.#closeSource()
-    this.#handlers.onStatus(this.#everOpened ? "reconnecting" : "connecting")
+    this.#handlers.onStatus(this.#everOpened ? "reconnecting" : "connecting", reason)
 
     let source: EventSource
     try {
