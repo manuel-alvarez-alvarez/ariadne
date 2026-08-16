@@ -897,7 +897,7 @@
           "sessions"
         ],
         "summary": "Follow a session's terminal output.",
-        "description": "The first message is a `snapshot` event carrying the scrollback the\n`/logs` endpoint would return; every later `delta` event carries only what\nhas been written since. Both payloads are a `SessionLogChunk`: raw\nterminal bytes, escape sequences and all, are JSON-encoded so they cannot\nbreak SSE's line framing.\n\nWhen the session ends — or if it was already over when the request arrived\n— the remaining output is flushed, a final `end` event (`SessionLogEnd`)\nis sent and the connection closes. There is no replay and no\n`Last-Event-ID`: reconnecting starts again from a fresh snapshot.",
+        "description": "A live pane opens with a `resize` event (`SessionPaneSize`) carrying the\ngrid it draws against: the snapshot is wrapped at that width and every\nlater repaint is addressed in it, so it comes first and is repeated\nwhenever the pane is resized under us — by `ariadne attach`, say.\n\nThen a `snapshot` event carrying the scrollback the `/logs` endpoint would\nreturn, and a `delta` event per burst of new output. Both payloads are a\n`SessionLogChunk`: raw terminal bytes, escape sequences and all, are\nJSON-encoded so they cannot break SSE's line framing.\n\nWhen the session ends — or if it was already over when the request arrived\n— the remaining output is flushed, a final `end` event (`SessionLogEnd`)\nis sent and the connection closes. There is no replay and no\n`Last-Event-ID`: reconnecting starts again from a fresh snapshot.",
         "operationId": "logs_stream",
         "parameters": [
           {
@@ -912,7 +912,7 @@
         ],
         "responses": {
           "200": {
-            "description": "SSE stream of terminal output (text/event-stream). One `snapshot` event with the current scrollback, then a `delta` event per burst of new output — both `{\"chunk\": \"...\"}` (SessionLogChunk) — and a final `end` event (SessionLogEnd) when the session is over, after which the stream closes.",
+            "description": "SSE stream of terminal output (text/event-stream). For a live pane, a `resize` event with the grid it draws against (`{\"cols\": 80, \"rows\": 24}`, SessionPaneSize), repeated whenever the pane is resized. Then one `snapshot` event with the current scrollback and a `delta` event per burst of new output — both `{\"chunk\": \"...\"}` (SessionLogChunk) — and a final `end` event (SessionLogEnd) when the session is over, after which the stream closes.",
             "content": {
               "text/event-stream": {
                 "schema": {
@@ -932,7 +932,7 @@
         "tags": [
           "sessions"
         ],
-        "summary": "Revive an ended session: new tmux, same agent conversation (resumed via\nthe stored internal session id). Returns the session to attach to — the\noriginal if its tmux is still alive, otherwise a fresh one reusing the\nsame tmux name.",
+        "summary": "Revive an ended session: new tmux, same agent conversation (resumed via\nthe stored internal session id). Returns the session to attach to, which\nis this one either way — relaunched under its own id and tmux name, or\nuntouched when its tmux turned out to be alive already.",
         "operationId": "resume",
         "parameters": [
           {
@@ -2396,6 +2396,26 @@
           },
           "tmux_session": {
             "type": "string"
+          }
+        }
+      },
+      "SessionPaneSize": {
+        "type": "object",
+        "description": "Payload of the `resize` event of `GET /v1/sessions/{id}/logs/stream`: the\ngrid the pane is drawing against, in cells.\n\nA terminal stream only means anything at a size. The agent addresses the\ncursor and erases lines against *this* grid, so a viewer that renders the\nbytes at any other one has every repaint land on the wrong row.",
+        "required": [
+          "cols",
+          "rows"
+        ],
+        "properties": {
+          "cols": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "rows": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           }
         }
       },
