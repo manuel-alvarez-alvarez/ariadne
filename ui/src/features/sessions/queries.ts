@@ -12,19 +12,28 @@
 
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query"
 
-import { api, qk, type SessionDto, type SessionStatus, unwrap } from "@/api"
+import { api, qk, type Role, type SessionDto, type SessionStatus, unwrap } from "@/api"
 
-/** The filters `GET /v1/sessions` actually takes. */
+/** What the sessions list can be narrowed by. */
 export interface SessionListFilters {
   goal?: string
   task?: string
   status?: SessionStatus
+  /**
+   * Applied here rather than by the daemon: `GET /v1/sessions` takes no role.
+   * The request — and so the cache entry — is the same one an unfiltered list
+   * makes, and the role is a per-observer `select` over it.
+   */
+  role?: Role
 }
 
-export function sessionsQueryOptions(filters: SessionListFilters = {}) {
+export function sessionsQueryOptions({ role, ...query }: SessionListFilters = {}) {
   return queryOptions({
-    queryKey: qk.sessions.list(filters),
-    queryFn: () => unwrap(api().GET("/v1/sessions", { params: { query: filters } })),
+    queryKey: qk.sessions.list(query),
+    queryFn: () => unwrap(api().GET("/v1/sessions", { params: { query } })),
+    select: role
+      ? (sessions: SessionDto[]) => sessions.filter((session) => session.role === role)
+      : undefined,
   })
 }
 
