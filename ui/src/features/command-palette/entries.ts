@@ -27,16 +27,20 @@ export type PaletteTarget =
 
 export interface PaletteEntry {
   /**
-   * cmdk's item value: what the fuzzy filter scores, and what tells two rows
-   * apart. The id is part of it so that a search for an id finds the row and
-   * two tasks with the same title stay two rows.
+   * cmdk's item value: what the row is *named*, and what tells two rows apart.
+   * The shortened id ends it, because two tasks can share a title and two rows
+   * with the same value are one row as far as cmdk is concerned.
+   *
+   * The full id is a keyword rather than part of this: `score.ts` matches the
+   * keywords literally but never fuzzily, and 26 characters of ulid in the
+   * fuzzy-matched text answers to almost any query.
    */
   value: string
   /** The row's own text. */
   label: string
   /** Secondary text on the right of the row: the id, the branch, the role. */
   detail?: string
-  /** Also searchable, without being written on the row. */
+  /** Searchable, literally, without being part of the row's name. */
   keywords: string[]
   target: PaletteTarget
 }
@@ -67,20 +71,20 @@ export function buildPaletteEntries({
 
   return {
     goals: (goals ?? []).map((goal) => ({
-      value: `${goal.title} ${goal.id}`,
+      value: `${goal.title} ${shortId(goal.id)}`,
       label: goal.title,
       detail: shortId(goal.id),
-      keywords: [goal.status],
+      keywords: [goal.id, goal.status],
       target: { kind: "goal", goalId: goal.id },
     })),
 
     tasks: (tasks ?? []).map((task) => ({
-      value: `${task.title} ${task.id}`,
+      // The branch is what a task is called outside Ariadne, so it names the
+      // row as much as the title does — and it is what the row shows.
+      value: `${task.title} ${task.branch}`,
       label: task.title,
-      // The branch is what a task is called outside Ariadne, so it is both
-      // written on the row and searchable.
       detail: task.branch,
-      keywords: [task.status, task.branch, goalTitles.get(task.goal_id) ?? ""],
+      keywords: [task.id, task.status, goalTitles.get(task.goal_id) ?? ""],
       target: { kind: "task", taskId: task.id },
     })),
 
@@ -91,10 +95,10 @@ export function buildPaletteEntries({
         (session.task_id ? taskTitles.get(session.task_id) : undefined) ??
         goalTitles.get(session.goal_id)
       return {
-        value: `${ROLE_LABELS[session.role]} ${of ?? ""} ${session.id}`,
+        value: `${ROLE_LABELS[session.role]} ${of ?? ""} ${shortId(session.id)}`,
         label: of ? `${ROLE_LABELS[session.role]} · ${of}` : ROLE_LABELS[session.role],
         detail: shortId(session.id),
-        keywords: [session.status, session.tmux_session, session.agent_kind],
+        keywords: [session.id, session.status, session.tmux_session, session.agent_kind],
         target: {
           kind: "session",
           sessionId: session.id,
@@ -105,10 +109,10 @@ export function buildPaletteEntries({
     }),
 
     profiles: (profiles ?? []).map((profile) => ({
-      value: `${profile.name} ${profile.id}`,
+      value: `${profile.name} ${shortId(profile.id)}`,
       label: profile.name,
       detail: roleLabel(profile.role),
-      keywords: [profile.role, profile.agent_kind ?? "", profile.model ?? ""],
+      keywords: [profile.id, profile.role, profile.agent_kind ?? "", profile.model ?? ""],
       target: { kind: "page", path: paths.profiles() },
     })),
   }

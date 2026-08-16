@@ -18,6 +18,7 @@
  */
 
 import { useQuery } from "@tanstack/react-query"
+import { defaultFilter, useCommandState } from "cmdk"
 import {
   CpuIcon,
   ListChecksIcon,
@@ -30,7 +31,7 @@ import {
   TriangleAlertIcon,
 } from "lucide-react"
 import { useTheme } from "next-themes"
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 
 import {
@@ -52,7 +53,16 @@ import { SETTINGS_SHORTCUT } from "@/hooks/use-global-shortcuts"
 import { shortcutLabel } from "@/lib/shortcuts"
 import { paths } from "@/routes/paths"
 
-import { buildPaletteEntries, type PaletteEntry, paletteTargetTo } from "./entries"
+import {
+  buildPaletteEntries,
+  type PaletteEntries,
+  type PaletteEntry,
+  paletteTargetTo,
+} from "./entries"
+import { bestScore, preferLiteralMatches } from "./score"
+
+/** cmdk's subsequence scoring, with the rows the query names pulled on top. */
+const PALETTE_FILTER = preferLiteralMatches(defaultFilter)
 
 export function CommandPalette({
   open,
@@ -68,15 +78,9 @@ export function CommandPalette({
   const [search] = useSearchParams()
   const { resolvedTheme, setTheme } = useTheme()
 
-  const [query, setQuery] = useState("")
   const [createGoalOpen, setCreateGoalOpen] = useState(false)
 
   const entries = usePaletteEntries(open)
-
-  // Every open starts from an empty search, never from the last one.
-  useEffect(() => {
-    if (open) setQuery("")
-  }, [open])
 
   /** A pick always closes the palette; what it then does is the argument. */
   function run(action: () => void) {
@@ -97,13 +101,13 @@ export function CommandPalette({
         title="Command palette"
         description="Search goals, tasks, sessions and profiles, or run an action."
       >
-        <Command loop>
-          <CommandInput
-            autoFocus
-            value={query}
-            onValueChange={setQuery}
-            placeholder="Search goals, tasks, sessions, profiles…"
-          />
+        {/* The search is cmdk's own state, not React's: cmdk sorts the rows by
+            reordering the DOM, and a re-render on every keystroke — which is
+            what holding the query up here would cause — puts them back in the
+            order they were written in. The palette is unmounted while closed,
+            so that state also starts empty every time. */}
+        <Command loop filter={PALETTE_FILTER}>
+          <CommandInput autoFocus placeholder="Search goals, tasks, sessions, profiles…" />
           <CommandList>
             <CommandEmpty>No matches.</CommandEmpty>
 
@@ -145,30 +149,7 @@ export function CommandPalette({
               ))}
             </CommandGroup>
 
-            {/* Entities only once there is something to filter them by. */}
-            {query ? (
-              <>
-                <EntryGroup heading="Goals" icon={TargetIcon} entries={entries.goals} onPick={go} />
-                <EntryGroup
-                  heading="Tasks"
-                  icon={ListChecksIcon}
-                  entries={entries.tasks}
-                  onPick={go}
-                />
-                <EntryGroup
-                  heading="Sessions"
-                  icon={RadioTowerIcon}
-                  entries={entries.sessions}
-                  onPick={go}
-                />
-                <EntryGroup
-                  heading="Profiles"
-                  icon={CpuIcon}
-                  entries={entries.profiles}
-                  onPick={go}
-                />
-              </>
-            ) : null}
+            <PaletteEntities entries={entries} onPick={go} />
           </CommandList>
         </Command>
       </CommandDialog>
@@ -192,6 +173,72 @@ const PAGES = [
   { label: "Profiles", path: paths.profiles(), icon: CpuIcon },
 ] as const
 
+/** The entity groups, in the order they are listed when nothing separates them. */
+const GROUPS = [
+  { key: "goals", heading: "Goals", icon: TargetIcon },
+  { key: "tasks", heading: "Tasks", icon: ListChecksIcon },
+  { key: "sessions", heading: "Sessions", icon: RadioTowerIcon },
+  { key: "profiles", heading: "Profiles", icon: CpuIcon },
+] as const satisfies readonly {
+  key: keyof PaletteEntries
+  heading: string
+  icon: typeof TargetIcon
+}[]
+
+/**
+ * The entity half of the list, which only exists once something has been typed.
+ *
+ * It subscribes to cmdk's search itself rather than being handed it, so that a
+ * keystroke re-renders these rows and nothing above them — the input keeps its
+ * focus and its cursor, and the palette's own layout is not rebuilt under
+ * cmdk's ordering.
+ *
+ * The groups are then ordered by their best match, because cmdk only sorts the
+ * rows within a group: without this, one strong match would sit under a group
+ * of weak ones, and the row Enter takes would be the wrong one.
+ */
+function PaletteEntities({
+  entries,
+  onPick,
+}: {
+  entries: PaletteEntries
+  onPick: (entry: PaletteEntry) => void
+}) {
+  const search = useCommandState((state) => state.search)
+
+  const ordered = useMemo(
+    () =>
+      GROUPS.map((group) => ({
+        ...group,
+        rows: entries[group.key],
+        best: bestScore(PALETTE_FILTER, entries[group.key], search),
+        // Sorting is stable, so groups that match equally well — including all
+        // of them, before anything is typed — keep the order above.
+      })).sort((a, b) => b.best - a.best),
+    [entries, search],
+  )
+
+  if (!search.trim()) return null
+  return (
+    <>
+      {ordered.map((group) => (
+        <EntryGroup
+          key={group.key}
+          heading={group.heading}
+          icon={group.icon}
+          entries={group.rows}
+          onPick={onPick}
+        />
+      ))}
+    </>
+  )
+}
+
+/**
+ * One group of rows. Always rendered, empty or not: cmdk hides a group with no
+ * matches on its own, and a group that comes and goes is a group React has to
+ * insert again — which is what would undo the ordering cmdk just applied.
+ */
 function EntryGroup({
   heading,
   icon: Icon,
@@ -203,7 +250,6 @@ function EntryGroup({
   entries: PaletteEntry[]
   onPick: (entry: PaletteEntry) => void
 }) {
-  if (entries.length === 0) return null
   return (
     <CommandGroup heading={heading}>
       {entries.map((entry) => (
