@@ -11,7 +11,8 @@
  * alongside it and fed to the gutter.
  *
  * Everything is styled off the app's CSS variables so the viewer follows the
- * theme, with the add/delete tints spelled out per mode.
+ * theme — the add/remove tints included, which is why nothing here spells a
+ * colour out per mode.
  */
 
 import { javascript } from "@codemirror/lang-javascript"
@@ -135,7 +136,12 @@ function addedLineDecorations(docs: DiffDocuments): DecorationSet {
   return builder.finish()
 }
 
-/** Chrome shared by both themes; only the tints below differ. */
+/**
+ * The whole viewer's styling. Both themes share it: every colour is a token
+ * that already resolves to the right value for the mode the app is in, so the
+ * only thing left for the theme to say is which mode that is — `darkTheme`
+ * below, which is what CodeMirror's own defaults key off.
+ */
 const baseTheme = EditorView.theme({
   "&": {
     backgroundColor: "transparent",
@@ -170,29 +176,17 @@ const baseTheme = EditorView.theme({
   ".cm-hunkHeading": { opacity: "0.75" },
   // The merge extension's accept/reject buttons have nothing to act on here.
   ".cm-deletedChunk .cm-chunkButtons": { display: "none" },
+  "&.cm-merge-b .cm-changedLine, .cm-inlineChangedLine, .cm-addedLine": {
+    backgroundColor: "var(--diff-add-soft)",
+  },
+  "&.cm-merge-b .cm-changedText": { background: "var(--diff-add-strong)" },
+  ".cm-deletedChunk": { backgroundColor: "var(--diff-remove-soft)", paddingLeft: "0" },
+  ".cm-deletedChunk .cm-deletedLine": { padding: "0 0.75rem" },
+  ".cm-deletedChunk .cm-deletedText": { background: "var(--diff-remove-strong)" },
+  ".cm-changeGutter": { display: "none" },
 })
 
-function tintTheme(dark: boolean): Extension {
-  const added = dark ? "rgba(52, 211, 153, 0.13)" : "rgba(16, 185, 129, 0.13)"
-  const addedText = dark ? "rgba(52, 211, 153, 0.28)" : "rgba(16, 185, 129, 0.25)"
-  const removed = dark ? "rgba(248, 113, 113, 0.13)" : "rgba(239, 68, 68, 0.11)"
-  const removedText = dark ? "rgba(248, 113, 113, 0.28)" : "rgba(239, 68, 68, 0.22)"
-  return EditorView.theme(
-    {
-      "&.cm-merge-b .cm-changedLine, .cm-inlineChangedLine, .cm-addedLine": {
-        backgroundColor: added,
-      },
-      "&.cm-merge-b .cm-changedText": { background: addedText },
-      ".cm-deletedChunk": { backgroundColor: removed, paddingLeft: "0" },
-      ".cm-deletedChunk .cm-deletedLine": { padding: "0 0.75rem" },
-      ".cm-deletedChunk .cm-deletedText": { background: removedText },
-      ".cm-changeGutter": { display: "none" },
-    },
-    { dark },
-  )
-}
-
-export function DiffEditor({ file }: { file: DiffFile }) {
+export function DiffEditor({ file, wrap }: { file: DiffFile; wrap: boolean }) {
   const { resolvedTheme } = useTheme()
   const dark = resolvedTheme === "dark"
   const host = useRef<HTMLDivElement | null>(null)
@@ -213,11 +207,13 @@ export function DiffEditor({ file }: { file: DiffFile }) {
         extensions: [
           EditorState.readOnly.of(true),
           EditorView.editable.of(false),
-          EditorView.lineWrapping,
+          // Unwrapped, a long line scrolls the editor sideways instead of
+          // folding — which is the point of the toggle on a wide diff.
+          ...(wrap ? [EditorView.lineWrapping] : []),
           lineNumbers({ formatNumber: (line) => String(docs.lineNumbers[line - 1] ?? "") }),
           EditorView.decorations.of(hunkHeaderDecorations(docs)),
           baseTheme,
-          tintTheme(dark),
+          EditorView.darkTheme.of(dark),
           syntaxHighlighting(dark ? oneDarkHighlightStyle : defaultHighlightStyle),
           ...languageFor(path),
           allAdded
@@ -233,7 +229,7 @@ export function DiffEditor({ file }: { file: DiffFile }) {
     return () => {
       view.destroy()
     }
-  }, [docs, dark, path, allAdded])
+  }, [docs, dark, path, allAdded, wrap])
 
   return <div ref={host} />
 }

@@ -2,10 +2,12 @@
  * Kill and resume, the two things the UI can do *to* a session.
  *
  * Kill is destructive and irreversible — it tears down the agent's tmux
- * process mid-thought — so it asks first. Resume is not destructive, but it
- * fails often and for reasons worth reading (the daemon answers `409` when the
- * session has no agent-internal id to resume from, or is still running), so
- * its error envelope is put on screen rather than swallowed.
+ * process mid-thought — so it asks first, and because it asks, its refusal is
+ * shown in that dialog like every other confirmed action's. Resume is not
+ * destructive and has no dialog to put anything in; it also fails often and
+ * for reasons worth reading (the daemon answers `409` when the session has no
+ * agent-internal id to resume from, or is still running), so it toasts. See
+ * `components/ui/sonner.tsx` for the rule those two are an instance of.
  */
 
 import { PlayIcon, SkullIcon } from "lucide-react"
@@ -40,10 +42,11 @@ export function SessionActions({
   return (
     <div className="flex items-center gap-2">
       {live ? (
+        // Only opens the confirm; the solid red is on the click inside it.
         <Button
-          variant="destructive"
+          variant="destructive-ghost"
           size="sm"
-          disabled={kill.isPending}
+          pending={kill.isPending}
           onClick={() => setConfirmKill(true)}
         >
           <SkullIcon />
@@ -53,7 +56,7 @@ export function SessionActions({
         <Button
           variant="outline"
           size="sm"
-          disabled={resume.isPending}
+          pending={resume.isPending}
           onClick={() => {
             resume.mutate(session.id, {
               onSuccess: (revived) => {
@@ -78,13 +81,16 @@ export function SessionActions({
           }}
         >
           <PlayIcon />
-          {resume.isPending ? "Resuming…" : "Resume"}
+          Resume
         </Button>
       )}
 
       <ConfirmDialog
         open={confirmKill}
-        onClose={() => setConfirmKill(false)}
+        onClose={() => {
+          setConfirmKill(false)
+          kill.reset()
+        }}
         title="Kill this session?"
         description={
           <>
@@ -94,17 +100,19 @@ export function SessionActions({
           </>
         }
         confirmLabel="Kill session"
-        pendingLabel="Killing…"
         destructive
         pending={kill.isPending}
+        // The kill is confirmed in a dialog, so its refusal is read there
+        // rather than toasted from behind it — and the rolled-back status is
+        // then next to the reason it rolled back.
+        error={kill.error}
+        errorTitle="Could not kill the session"
         onConfirm={() => {
           kill.mutate(session.id, {
             onSuccess: (killed) => {
               setConfirmKill(false)
               toast.success(`Session status: ${sessionStatusLabel(killed.status)}`)
             },
-            onError: (error) =>
-              toast.error("Could not kill", { description: describeError(error) }),
           })
         }}
       />
