@@ -1,5 +1,5 @@
 //! Agent-event endpoints: public listing plus the internal ingestion sink for
-//! hooks/notify/plugins.
+//! hooks/plugins.
 
 use axum::Json;
 use axum::extract::{Query, State};
@@ -84,8 +84,7 @@ fn extract_internal_id(
 ) -> Option<String> {
     use ariadne_core::AgentKind;
     let candidates: &[&[&str]] = match kind {
-        AgentKind::ClaudeCode => &[&["session_id"]],
-        AgentKind::Codex => &[&["thread-id"], &["thread_id"]],
+        AgentKind::ClaudeCode | AgentKind::Codex => &[&["session_id"]],
         AgentKind::Opencode => &[&["info", "id"], &["id"], &["sessionID"], &["session", "id"]],
     };
     for path in candidates {
@@ -106,6 +105,7 @@ fn status_for_event(kind: &str) -> Option<ariadne_core::SessionStatus> {
         // NB: opencode's `session.updated` keeps firing after idle and must
         // not flip the status back to running.
         "session_start"
+        | "user_prompt_submit"
         | "post_tool_use"
         | "pre_tool_use"
         | "session.created"
@@ -114,5 +114,54 @@ fn status_for_event(kind: &str) -> Option<ariadne_core::SessionStatus> {
         "stop" | "turn_complete" | "session.idle" => Some(S::Idle),
         "session_end" | "session.deleted" => Some(S::Exited),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{extract_internal_id, status_for_event};
+
+    use ariadne_core::{AgentKind, SessionStatus};
+    use serde_json::json;
+
+    #[test]
+    fn codex_session_start_yields_the_internal_id() {
+        // Shape of a real Codex 0.147 SessionStart hook payload.
+        let payload = json!({
+            "session_id": "01a00b36-1234-7890-abcd-ef0123456789",
+            "transcript_path": "/tmp/rollout.jsonl",
+            "cwd": "/tmp/worktree",
+            "hook_event_name": "SessionStart",
+            "source": "startup",
+        });
+        assert_eq!(
+            extract_internal_id(AgentKind::Codex, &payload).as_deref(),
+            Some("01a00b36-1234-7890-abcd-ef0123456789")
+        );
+    }
+
+    #[test]
+    fn codex_events_without_an_id_yield_nothing() {
+        for payload in [
+            json!({"hook_event_name": "Stop"}),
+            json!({"session_id": ""}),
+        ] {
+            assert_eq!(extract_internal_id(AgentKind::Codex, &payload), None);
+        }
+    }
+
+    #[test]
+    fn every_codex_hook_event_maps_to_a_status() {
+        use SessionStatus::*;
+        for (event, expected) in [
+            ("session_start", Running),
+            ("user_prompt_submit", Running),
+            ("pre_tool_use", Running),
+            ("post_tool_use", Running),
+            ("stop", Idle),
+            ("session_end", Exited),
+        ] {
+            assert_eq!(status_for_event(event), Some(expected), "{event}");
+        }
     }
 }

@@ -94,9 +94,8 @@ fn codex_spawn_plan() {
             .contains(&"--dangerously-bypass-approvals-and-sandbox".to_string())
     );
     let joined = plan.argv.join(" ");
-    assert!(joined.contains(
-        r#"notify=["/usr/local/bin/ariadne","agent-event","--kind","codex","--argv-json"]"#
-    ));
+    // Events come from the global hooks file, never from spawn flags.
+    assert!(!joined.contains("notify"), "{joined}");
     assert!(joined.contains(r#"mcp_servers.ariadne.command="/usr/local/bin/ariadne""#));
     assert!(joined.contains(r#"ARIADNE_SESSION_ID = "01sessionxxxxxxxxxxxxxxxxx""#));
     // System prompt prepended to the user prompt (no append flag in codex).
@@ -104,10 +103,10 @@ fn codex_spawn_plan() {
     assert!(last.contains("SYSTEM PROMPT") && last.contains("DO THE TASK"));
     assert!(
         plan.internal_session_id.is_none(),
-        "thread id arrives via notify"
+        "the session id arrives with the SessionStart hook"
     );
 
-    // Resume re-passes the bypass flag (codex does not inherit it).
+    // Resume re-passes every config flag (codex does not inherit them).
     let plan = adapter_for(AgentKind::Codex)
         .plan_resume(&ctx(dir.path().into()), "thread-1", "merge now")
         .unwrap();
@@ -115,10 +114,14 @@ fn codex_spawn_plan() {
         &plan.argv[1..3],
         ["resume".to_string(), "thread-1".to_string()]
     );
-    assert!(
-        plan.argv
-            .contains(&"--dangerously-bypass-approvals-and-sandbox".to_string())
-    );
+    let joined = plan.argv.join(" ");
+    assert!(!joined.contains("notify"), "{joined}");
+    assert!(joined.contains("--dangerously-bypass-approvals-and-sandbox"));
+    assert!(joined.contains(r#"mcp_servers.ariadne.command="/usr/local/bin/ariadne""#));
+    assert!(joined.contains(r#"ARIADNE_SESSION_ID = "01sessionxxxxxxxxxxxxxxxxx""#));
+    assert!(plan.argv.contains(&"test-model".to_string()));
+    assert!(plan.argv.contains(&"--extra".to_string()));
+    assert_eq!(plan.argv.last().unwrap(), "merge now");
 }
 
 #[test]

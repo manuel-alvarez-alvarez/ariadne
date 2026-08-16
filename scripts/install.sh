@@ -1,26 +1,30 @@
 #!/usr/bin/env bash
 # Ariadne installer: builds from source, installs the binaries, registers the
-# daemon as a user service (launchd on macOS, systemd --user on Linux) and
-# installs bash/zsh completions.
+# daemon as a user service (launchd on macOS, systemd --user on Linux),
+# installs bash/zsh completions and declares Ariadne's Codex hooks.
 #
 # Idempotent: safe to re-run after upgrades or config changes; every step
 # replaces what a previous run installed. What was installed where is
 # recorded in ~/.ariadne/install.env, which uninstall.sh reads.
 #
 # Usage: scripts/install.sh [--prefix DIR] [--no-service] [--no-completions]
+#                           [--no-codex-hooks]
 #   --prefix DIR       install binaries into DIR (default: ~/.local/bin)
 #   --no-service       skip daemon service registration
 #   --no-completions   skip shell completion installation
+#   --no-codex-hooks   skip the Codex hook setup and its trust prompt
 set -euo pipefail
 
 PREFIX="${PREFIX:-$HOME/.local/bin}"
 WITH_SERVICE=1
 WITH_COMPLETIONS=1
+WITH_CODEX_HOOKS=1
 while [ $# -gt 0 ]; do
     case "$1" in
         --prefix) PREFIX="$2"; shift 2 ;;
         --no-service) WITH_SERVICE=0; shift ;;
         --no-completions) WITH_COMPLETIONS=0; shift ;;
+        --no-codex-hooks) WITH_CODEX_HOOKS=0; shift ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
 done
@@ -178,6 +182,41 @@ EOF
         sleep 1
     done
     "$PREFIX/ariadne" daemon status
+fi
+
+# --- codex hooks -----------------------------------------------------------------------
+# Codex reports session ids and liveness through hooks declared in the global
+# ~/.codex/hooks.json. They only run once the user has trusted them, and Codex
+# asks for that trust interactively, at the start of a session — so the last
+# step of the install is to open one and let the user answer it.
+if [ "$WITH_CODEX_HOOKS" = 1 ]; then
+    say "declaring Ariadne's Codex hooks"
+    "$PREFIX/ariadne" setup codex-hooks
+
+    if ! command -v codex >/dev/null 2>&1; then
+        say "NOTE: codex is not installed — the hooks are declared and will be"
+        say "      picked up once you install codex and trust them on first run."
+    elif [ ! -t 0 ]; then
+        say "NOTE: not a terminal — run 'codex' yourself and accept the hook trust"
+        say "      prompt, or codex sessions will never report to Ariadne."
+    else
+        cat <<'EOF'
+
+Codex will now start so it can ask you to trust those hooks.
+
+  * Answer "Trust all and continue" (or review them first — every entry runs
+    the same `ariadne agent-event --kind codex` command).
+  * Then exit codex right away with /quit or Ctrl-D. Nothing else is needed.
+
+Without this, codex sessions run but never report their id, and Ariadne can
+neither resume nor revive them.
+
+EOF
+        printf 'Press Enter to start codex (Ctrl-C to skip)... '
+        read -r _ || true
+        codex || true
+        say "back from codex"
+    fi
 fi
 
 # --- manifest (read by uninstall.sh) ---------------------------------------------------

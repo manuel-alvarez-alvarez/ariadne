@@ -1,10 +1,14 @@
 //! Codex CLI adapter.
 //!
 //! - Bypass: `--dangerously-bypass-approvals-and-sandbox`
-//! - Events: `notify = [...]` config override calling
-//!   `ariadne agent-event --kind codex --argv-json <json>` (only
-//!   agent-turn-complete exists; the payload carries `thread-id` which the
-//!   ingestion endpoint uses to capture the internal session id)
+//! - Events: hooks declared in the global `~/.codex/hooks.json`, installed by
+//!   `ariadne setup codex-hooks` and trusted once, manually, by the user.
+//!   Every hook pipes its JSON payload into `ariadne agent-event --kind
+//!   codex`. Nothing is passed at spawn: hook trust is keyed on the hooks-file
+//!   path, so a per-worktree file would need a new trust prompt every time.
+//!   The `SessionStart` payload carries `session_id`, which the ingestion
+//!   endpoint captures before the first turn — notify only fired on
+//!   agent-turn-complete, which a session killed mid-turn never reaches.
 //! - System prompt: no append-safe flag — prepended to the initial prompt
 //! - Resume: `codex resume <thread-id>`; flags must be re-passed (they are
 //!   not inherited from the original session)
@@ -21,10 +25,6 @@ impl CodexAdapter {
     fn config_flags(&self, ctx: &SpawnCtx) -> Vec<String> {
         // TOML inline values passed via -c key=value (no shell quoting: these
         // go straight into argv).
-        let notify = format!(
-            "notify=[\"{}\",\"agent-event\",\"--kind\",\"codex\",\"--argv-json\"]",
-            ctx.cli_bin
-        );
         let env_table = super::base_env(ctx)
             .into_iter()
             .map(|(k, v)| format!("{k} = \"{v}\""))
@@ -32,8 +32,6 @@ impl CodexAdapter {
             .join(", ");
         let mut flags = vec![
             "--dangerously-bypass-approvals-and-sandbox".to_string(),
-            "-c".into(),
-            notify,
             "-c".into(),
             format!("mcp_servers.ariadne.command=\"{}\"", ctx.cli_bin),
             "-c".into(),
@@ -69,7 +67,7 @@ impl AgentAdapter for CodexAdapter {
             argv,
             env: base_env(ctx),
             cwd: ctx.cwd.clone(),
-            // thread-id arrives with the first notify event.
+            // The session id arrives with the SessionStart hook event.
             internal_session_id: None,
         })
     }
