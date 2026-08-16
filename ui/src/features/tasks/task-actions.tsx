@@ -42,7 +42,8 @@ export function TaskActions({ task }: { task: TaskDto }) {
         </Button>
       )}
       {showCancel && (
-        <Button variant="destructive" size="sm" onClick={() => setOpen("cancel")}>
+        // Only opens the confirm; the solid red is on the click inside it.
+        <Button variant="destructive-ghost" size="sm" onClick={() => setOpen("cancel")}>
           <BanIcon />
           Cancel
         </Button>
