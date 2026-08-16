@@ -26,10 +26,10 @@ import { Link, useSearchParams } from "react-router-dom"
 
 import type { TaskDto } from "@/api"
 import { CopyableId, CopyableIdMenu } from "@/components/copyable-id"
+import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { Markdown } from "@/components/markdown"
 import { StatusBadge } from "@/components/status-badge"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -49,7 +49,9 @@ import { TaskHistory } from "./task-history"
 import { TaskReviews } from "./task-reviews"
 import { TaskSessions, TaskSessionView } from "./task-sessions"
 
-const TABS = ["conversation", "reviews", "history", "diff", "sessions"] as const
+// Description leads the strip — it is what the task *is* — but the panel still
+// opens on the conversation, which is what the user comes back for.
+const TABS = ["description", "conversation", "reviews", "history", "diff", "sessions"] as const
 type Tab = (typeof TABS)[number]
 
 export function TaskPanel({
@@ -128,25 +130,22 @@ export function TaskPanel({
             <TaskHeader task={task.data} showGoalLink={stackedOnGoal === undefined} />
             <TaskFacts task={task.data} />
 
-            {task.data.description.trim().length > 0 && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-sm">Description</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <Markdown>{task.data.description}</Markdown>
-                </CardContent>
-              </Card>
-            )}
-
             <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
               <TabsList>
+                <TabsTrigger value="description">Description</TabsTrigger>
                 <TabsTrigger value="conversation">Conversation</TabsTrigger>
                 <TabsTrigger value="reviews">Reviews</TabsTrigger>
                 <TabsTrigger value="history">History</TabsTrigger>
                 <TabsTrigger value="diff">Diff</TabsTrigger>
                 <TabsTrigger value="sessions">Sessions</TabsTrigger>
               </TabsList>
+              <TabsContent value="description" className="pt-3">
+                {task.data.description.trim() ? (
+                  <Markdown>{task.data.description}</Markdown>
+                ) : (
+                  <EmptyState emphasis="quiet" title="This task has no description." />
+                )}
+              </TabsContent>
               <TabsContent value="conversation" className="pt-3">
                 <TaskConversation taskId={taskId} />
               </TabsContent>
