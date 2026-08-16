@@ -36,6 +36,8 @@ export function GoalSessions({
   /** Selects a session, which opens it over the whole panel. */
   onSelect: (sessionId: string) => void
 }) {
+  // The selected row marks itself: `SessionsList` reads the same `?session=`
+  // this panel drives, so nothing has to be threaded through the panel.
   return <SessionsList filters={{ goal: goalId }} onSelect={(session) => onSelect(session.id)} />
 }
 
