@@ -23,6 +23,9 @@ hyperlocal = "0.9"
 http = "1"
 http-body-util = "0.1"
 bytes = "1"
+futures-util = { version = "0.3", default-features = false }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["cors"] }
 
 # openapi
 utoipa = { version = "5", features = ["axum_extras"] }

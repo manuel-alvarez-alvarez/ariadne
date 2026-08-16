@@ -109,6 +109,16 @@ ariadne session ls                     # every agent session + internal ids
 Every command takes `--format json`; the daemon exposes its full API as
 OpenAPI at `/api-docs/openapi.json` with Swagger UI at `/docs`.
 
+`GET /v1/events/stream` is a server-sent-event stream of everything the daemon
+changes — goals, tasks (including scheduler-driven transitions), messages,
+reviews, sessions and profiles — each event carrying the full updated DTO, and
+filterable with `?goal=` / `?task=`. There is no replay: on (re)connect,
+refetch the REST state you care about and then follow the stream. A client
+that falls behind is never left silently stale — it gets a final `resync`
+event and the connection closes, which an `EventSource` turns into a
+reconnect. CORS is wide open on the TCP listener so webview and browser
+clients can use it.
+
 ## Configuration
 
 `~/.ariadne/config.toml` (all optional):

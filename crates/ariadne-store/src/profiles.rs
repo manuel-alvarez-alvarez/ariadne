@@ -3,7 +3,7 @@
 use ariadne_core::id::new_id;
 use ariadne_core::{AgentKind, Role};
 
-use crate::{Profile, Result, Store, StoreError, not_found, now};
+use crate::{Change, Profile, Result, Store, StoreError, not_found, now};
 
 #[derive(Debug, Clone)]
 pub struct NewProfile {
@@ -54,7 +54,9 @@ impl Store {
             }
             other => StoreError::Db(other),
         })?;
-        self.get_profile(&id).await
+        let profile = self.get_profile(&id).await?;
+        self.publish(Change::ProfileCreated(profile.clone()));
+        Ok(profile)
     }
 
     pub async fn get_profile(&self, id: &str) -> Result<Profile> {
@@ -130,7 +132,9 @@ impl Store {
             }
             other => StoreError::Db(other),
         })?;
-        self.get_profile(id).await
+        let profile = self.get_profile(id).await?;
+        self.publish(Change::ProfileUpdated(profile.clone()));
+        Ok(profile)
     }
 
     /// Delete a profile; fails with `Conflict` while anything references it.
@@ -154,6 +158,7 @@ impl Store {
             .bind(id)
             .execute(self.w())
             .await?;
+        self.publish(Change::ProfileDeleted(id.to_string()));
         Ok(())
     }
 }

@@ -10,6 +10,7 @@ pub mod messages;
 pub mod profiles;
 pub mod reviews;
 pub mod sessions;
+pub mod stream;
 pub mod tasks;
 
 use serde::{Deserialize, Serialize};

@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use ariadne_core::id::new_id;
 use ariadne_core::{Actor, TaskStatus, check_transition};
 
-use crate::{Result, Store, StoreError, Task, TaskTransition, not_found, now};
+use crate::{Change, Result, Store, StoreError, Task, TaskTransition, not_found, now};
 
 #[derive(Debug, Clone)]
 pub struct NewTask {
@@ -102,7 +102,9 @@ impl Store {
         }
 
         tx.commit().await?;
-        self.get_task(&id).await
+        let task = self.get_task(&id).await?;
+        self.publish(Change::TaskCreated(task.clone()));
+        Ok(task)
     }
 
     /// Replace the dependency set of a task (planner, pre-start only).
@@ -123,18 +125,24 @@ impl Store {
             .await?;
         Self::insert_dependencies(&mut tx, &task.goal_id, task_id, depends_on).await?;
         // A task that was already ready may need to wait again.
-        if task.status() == TaskStatus::Ready && !depends_on.is_empty() {
-            Self::transition_in_tx(
-                &mut tx,
-                &task,
-                TaskStatus::Pending,
-                Actor::Planner,
-                Some("dependencies changed"),
-                None,
+        let transition = if task.status() == TaskStatus::Ready && !depends_on.is_empty() {
+            Some(
+                Self::transition_in_tx(
+                    &mut tx,
+                    &task,
+                    TaskStatus::Pending,
+                    Actor::Planner,
+                    Some("dependencies changed"),
+                    None,
+                )
+                .await?,
             )
-            .await?;
-        }
+        } else {
+            None
+        };
         tx.commit().await?;
+        let task = self.get_task(task_id).await?;
+        self.publish(Change::TaskUpdated { task, transition });
         Ok(())
     }
 
@@ -274,7 +282,12 @@ impl Store {
             }
         }
         tx.commit().await?;
-        self.get_task(id).await
+        let task = self.get_task(id).await?;
+        self.publish(Change::TaskUpdated {
+            task: task.clone(),
+            transition: None,
+        });
+        Ok(task)
     }
 
     /// The one and only way to change a task's status.
@@ -292,9 +305,15 @@ impl Store {
     ) -> Result<Task> {
         let mut tx = self.w().begin().await?;
         let task = Self::get_task_in_tx(&mut tx, id).await?;
-        Self::transition_in_tx(&mut tx, &task, to, actor, reason, merge_commit).await?;
+        let transition =
+            Self::transition_in_tx(&mut tx, &task, to, actor, reason, merge_commit).await?;
         tx.commit().await?;
-        self.get_task(id).await
+        let task = self.get_task(id).await?;
+        self.publish(Change::TaskUpdated {
+            task: task.clone(),
+            transition: Some(transition),
+        });
+        Ok(task)
     }
 
     /// Fetch a task row inside an open write transaction, so status checks see
@@ -312,7 +331,8 @@ impl Store {
 
     /// Validate against the state machine, apply the status change with its
     /// side-column updates, and write the audit row — the shared body of every
-    /// status change, inside the caller's transaction.
+    /// status change, inside the caller's transaction. Returns the audit row
+    /// so callers can attach it to the change notification.
     async fn transition_in_tx(
         tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
         task: &Task,
@@ -320,7 +340,7 @@ impl Store {
         actor: Actor,
         reason: Option<&str>,
         merge_commit: Option<&str>,
-    ) -> Result<()> {
+    ) -> Result<TaskTransition> {
         let from = task.status();
         check_transition(from, to, actor)?;
 
@@ -349,21 +369,30 @@ impl Store {
         .execute(&mut **tx)
         .await?;
 
+        let transition = TaskTransition {
+            id: new_id(),
+            task_id: task.id.clone(),
+            from_status: from.as_str().to_string(),
+            to_status: to.as_str().to_string(),
+            actor: actor.as_str().to_string(),
+            reason: reason.map(str::to_string),
+            created_at: now(),
+        };
         sqlx::query(
             "INSERT INTO task_transitions (id, task_id, from_status, to_status, actor, reason, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
-        .bind(new_id())
-        .bind(&task.id)
-        .bind(from.as_str())
-        .bind(to.as_str())
-        .bind(actor.as_str())
-        .bind(reason)
-        .bind(now())
+        .bind(&transition.id)
+        .bind(&transition.task_id)
+        .bind(&transition.from_status)
+        .bind(&transition.to_status)
+        .bind(&transition.actor)
+        .bind(&transition.reason)
+        .bind(&transition.created_at)
         .execute(&mut **tx)
         .await?;
 
-        Ok(())
+        Ok(transition)
     }
 
     pub async fn list_task_transitions(&self, task_id: &str) -> Result<Vec<TaskTransition>> {
@@ -412,22 +441,36 @@ impl Store {
         task_id: &str,
         worktree_path: Option<&str>,
     ) -> Result<()> {
-        sqlx::query("UPDATE tasks SET worktree_path = ?, updated_at = ? WHERE id = ?")
+        let n = sqlx::query("UPDATE tasks SET worktree_path = ?, updated_at = ? WHERE id = ?")
             .bind(worktree_path)
             .bind(now())
             .bind(task_id)
             .execute(self.w())
-            .await?;
-        Ok(())
+            .await?
+            .rows_affected();
+        self.publish_task_update(task_id, n).await
     }
 
     pub async fn set_task_stalled(&self, task_id: &str, stalled: bool) -> Result<()> {
-        sqlx::query("UPDATE tasks SET stalled = ?, updated_at = ? WHERE id = ?")
+        let n = sqlx::query("UPDATE tasks SET stalled = ?, updated_at = ? WHERE id = ?")
             .bind(stalled as i64)
             .bind(now())
             .bind(task_id)
             .execute(self.w())
-            .await?;
+            .await?
+            .rows_affected();
+        self.publish_task_update(task_id, n).await
+    }
+
+    /// Announce a non-transitional task write, unless it matched no row.
+    async fn publish_task_update(&self, task_id: &str, rows_affected: u64) -> Result<()> {
+        if rows_affected > 0 {
+            let task = self.get_task(task_id).await?;
+            self.publish(Change::TaskUpdated {
+                task,
+                transition: None,
+            });
+        }
         Ok(())
     }
 }

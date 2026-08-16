@@ -1,12 +1,13 @@
 //! Axum application: routes, shared state, OpenAPI document.
 
 mod auth;
-mod convert;
+pub(crate) mod convert;
 mod error;
 mod events;
 mod goals;
 mod profiles;
 mod sessions;
+mod stream;
 mod tasks;
 
 use std::sync::Arc;
@@ -16,12 +17,14 @@ use axum::extract::State;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use tokio::sync::mpsc;
+use tower_http::cors::CorsLayer;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use ariadne_api::{HealthResponse, VersionResponse};
 use ariadne_store::Store;
 
+use crate::bus::EventBus;
 use crate::launcher::Launcher;
 use crate::scheduler::SchedEvent;
 
@@ -33,6 +36,8 @@ pub struct AppState {
     pub launcher: Arc<Launcher>,
     /// Present once the scheduler is running; handlers poke it after writes.
     pub sched_tx: Option<mpsc::UnboundedSender<SchedEvent>>,
+    /// Fan-out of domain events to `/v1/events/stream` subscribers.
+    pub events: EventBus,
 }
 
 impl AppState {
@@ -73,15 +78,16 @@ impl AppState {
         tasks::list_messages, tasks::post_message,
         tasks::list_reviews, tasks::post_review, tasks::diff,
         sessions::list, sessions::get, sessions::kill, sessions::resume, sessions::logs,
-        events::list,
+        events::list, stream::stream,
     ),
+    components(schemas(ariadne_api::stream::DomainEvent, ariadne_api::stream::ResyncDto)),
     tags(
         (name = "system", description = "Daemon health and metadata"),
         (name = "profiles", description = "Agent profiles (role + system prompt + agent CLI)"),
         (name = "goals", description = "Goals and their planning threads"),
         (name = "tasks", description = "Tasks, transitions, conversations, reviews"),
         (name = "sessions", description = "Agent sessions (tmux-hosted)"),
-        (name = "events", description = "Raw agent events from hooks"),
+        (name = "events", description = "Raw agent events from hooks, and the live domain-event stream"),
     )
 )]
 struct ApiDoc;
@@ -135,11 +141,17 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{id}/logs", get(sessions::logs))
         // events
         .route("/v1/events", get(events::list))
+        .route("/v1/events/stream", get(stream::stream))
         .route("/internal/agent-events", post(events::ingest))
         // debug spawn (manual agent launch until the scheduler lands)
         .route("/internal/spawn", post(sessions::debug_spawn))
         // docs (SwaggerUi also serves the spec at /api-docs/openapi.json)
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()))
+        // Wide open on purpose: the trust boundary is the unix socket / the
+        // loopback bind (see auth.rs), not the browser origin. Without this a
+        // webview (`tauri://localhost`, `http://localhost:*`) cannot call the
+        // TCP listener at all.
+        .layer(CorsLayer::permissive())
         .with_state(state)
 }
 

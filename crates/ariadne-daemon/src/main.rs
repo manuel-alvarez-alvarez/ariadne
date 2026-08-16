@@ -44,6 +44,9 @@ async fn main() -> Result<()> {
         .await
         .with_context(|| format!("opening database {}", config.db_path.display()))?;
 
+    // Installed before anything writes, so no state change goes unannounced.
+    let events = ariadne_daemon::bus::start(store.clone());
+
     let plugin = ariadne_daemon::opencode_plugin::install()?;
     info!(plugin = %plugin.display(), "opencode events plugin installed");
 
@@ -65,6 +68,7 @@ async fn main() -> Result<()> {
         started_at: Instant::now(),
         launcher,
         sched_tx: Some(sched_tx),
+        events,
     };
     let app = http::router(state);
 
