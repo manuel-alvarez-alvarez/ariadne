@@ -144,13 +144,19 @@ function SessionRow({
     <TableRow
       className="cursor-pointer"
       data-state={selected ? "selected" : undefined}
-      onClick={onSelect}
+      // Anywhere on the row picks the session, down to the buttons that carry
+      // an action of their own: the copy trigger keeps its menu, and the role
+      // button below selects by itself, so neither needs the row to act for it.
+      // The id *text* is not one of them — it is read here, and clicking it is
+      // still a click on the row.
+      onClick={(event) => {
+        if (!(event.target as Element).closest("button")) onSelect()
+      }}
     >
-      {/* The one thing on the row that has its own action keeps it: these ids
-          are read here on their way into a terminal, and the row is the only
-          place the whole list of them is on screen at once. The click stops
-          here so opening the copy menu does not also pick the session. */}
-      <TableCell onClick={(event) => event.stopPropagation()}>
+      {/* These ids are read here on their way into a terminal, and the row is
+          the only place the whole list of them is on screen at once, so the
+          copy menu is worth the one thing on the row that is not a pick. */}
+      <TableCell>
         <CopyableIdMenu
           value={session.id}
           display={shortId}
@@ -161,17 +167,14 @@ function SessionRow({
       </TableCell>
       <TableCell>
         {/* The row above takes the pointer clicks; this button is the same
-            action for the keyboard, which cannot reach a `<tr onClick>`. It
-            stops its own click so a pick made here is not counted twice.
+            action for the keyboard, which cannot reach a `<tr onClick>` — and
+            it is why the row lets buttons through rather than picking twice.
             Nothing is stretched over the row: `position` on a `<tr>` is
             undefined per spec, and an overlay that resolves against the table
             container instead swallows every other row's clicks. */}
         <button
           type="button"
-          onClick={(event) => {
-            event.stopPropagation()
-            onSelect()
-          }}
+          onClick={onSelect}
           className="rounded-xs text-left outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
         >
           {ROLE_LABELS[session.role]}
