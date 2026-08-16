@@ -50,6 +50,10 @@ export function TaskDiff({ taskId }: { taskId: string }) {
   const diff = useQuery(taskDiffQueryOptions(taskId))
   const [raw, setRaw] = useState(false)
   const [expanded, setExpanded] = useState(false)
+  // Which file sections the reader has folded open or away, by file id: the
+  // viewer is remounted when it moves into the expanded view, and this is what
+  // keeps that move from undoing their navigation.
+  const [openFiles, setOpenFiles] = useState<Record<string, boolean>>({})
   const { wrap, setWrap } = useDiffWrap()
   const parsed = useMemo(() => parseUnifiedDiff(diff.data ?? ""), [diff.data])
 
@@ -91,7 +95,12 @@ export function TaskDiff({ taskId }: { taskId: string }) {
   ) : raw || parsed.files.length === 0 ? (
     <RawDiff text={diff.data ?? ""} wrap={wrap} />
   ) : (
-    <DiffFiles parsed={parsed} wrap={wrap} />
+    <DiffFiles
+      parsed={parsed}
+      wrap={wrap}
+      openFiles={openFiles}
+      onOpenFile={(fileId, open) => setOpenFiles((current) => ({ ...current, [fileId]: open }))}
+    />
   )
 
   if (!expanded) {
@@ -200,24 +209,54 @@ function DiffToolbar({
   )
 }
 
-function DiffFiles({ parsed, wrap }: { parsed: ParsedDiff; wrap: boolean }) {
+function DiffFiles({
+  parsed,
+  wrap,
+  openFiles,
+  onOpenFile,
+}: {
+  parsed: ParsedDiff
+  wrap: boolean
+  openFiles: Record<string, boolean>
+  onOpenFile: (fileId: string, open: boolean) => void
+}) {
   return (
     <div className="space-y-3">
       {parsed.preamble && <RawDiff text={parsed.preamble} wrap={wrap} />}
       {parsed.files.map((file) => (
-        <DiffFileSection key={file.id} file={file} wrap={wrap} />
+        <DiffFileSection
+          key={file.id}
+          file={file}
+          wrap={wrap}
+          openOverride={openFiles[file.id]}
+          onOpen={(open) => onOpenFile(file.id, open)}
+        />
       ))}
     </div>
   )
 }
 
-function DiffFileSection({ file, wrap }: { file: DiffFile; wrap: boolean }) {
+function DiffFileSection({
+  file,
+  wrap,
+  openOverride,
+  onOpen,
+}: {
+  file: DiffFile
+  wrap: boolean
+  /** What the reader chose for this file, or `undefined` for the default. */
+  openOverride: boolean | undefined
+  onOpen: (open: boolean) => void
+}) {
   const lineCount = useMemo(
     () => file.hunks.reduce((total, hunk) => total + hunk.lines.length, 0),
     [file],
   )
   const huge = lineCount > LARGE_FILE_LINES
-  const [open, setOpen] = useState(!huge)
+  // Folded-away by default when it is too big to render, and after that
+  // whatever the reader last said — which the viewer holds on their behalf so
+  // it survives the move between the panel and the expanded view.
+  const open = openOverride ?? !huge
   const [showRaw, setShowRaw] = useState(false)
   const { label, icon: Icon } = CHANGE_META[file.change]
 
@@ -227,7 +266,7 @@ function DiffFileSection({ file, wrap }: { file: DiffFile; wrap: boolean }) {
         <Button
           variant="ghost"
           size="icon-xs"
-          onClick={() => setOpen((current) => !current)}
+          onClick={() => onOpen(!open)}
           aria-expanded={open}
           aria-label={open ? `Collapse ${file.path}` : `Expand ${file.path}`}
         >
