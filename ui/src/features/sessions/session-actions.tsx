@@ -10,7 +10,6 @@
 
 import { PlayIcon, SkullIcon } from "lucide-react"
 import { useState } from "react"
-import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 
 import { ApiError, type SessionDto } from "@/api"
@@ -24,13 +23,23 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { paths } from "@/routes/paths"
 
 import { useKillSession, useResumeSession } from "./queries"
 import { isLiveStatus } from "./session-display"
 
-export function SessionActions({ session }: { session: SessionDto }) {
-  const navigate = useNavigate()
+export function SessionActions({
+  session,
+  onResumed,
+}: {
+  session: SessionDto
+  /**
+   * Handed the session a resume revived this one into, when that is a new
+   * one. Where to go from there is the caller's call — the session screen
+   * navigates to it, a panel selects it — so these buttons stay usable
+   * wherever they are rendered.
+   */
+  onResumed?: (session: SessionDto) => void
+}) {
   const [confirmKill, setConfirmKill] = useState(false)
   const kill = useKillSession()
   const resume = useResumeSession()
@@ -69,7 +78,7 @@ export function SessionActions({ session }: { session: SessionDto }) {
                 toast.success("Resumed as a new session", {
                   description: `${revived.tmux_session} · same agent conversation`,
                 })
-                void navigate(paths.session(revived.id))
+                onResumed?.(revived)
               },
               onError: (error) => toast.error("Could not resume", { description: reason(error) }),
             })
