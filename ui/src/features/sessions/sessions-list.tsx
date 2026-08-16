@@ -23,7 +23,7 @@ import { useQuery } from "@tanstack/react-query"
 import { useSearchParams } from "react-router-dom"
 
 import type { ProfileDto, SessionDto } from "@/api"
-import { CopyableId } from "@/components/copyable-id"
+import { CopyableIdMenu } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -35,6 +35,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { sessionCopyEntries } from "@/lib/copy-entries"
 import { shortId } from "@/lib/ids"
 import { formatAbsolute, formatAge } from "@/lib/time"
 
@@ -142,11 +143,17 @@ function SessionRow({
   return (
     <TableRow className="relative" data-state={selected ? "selected" : undefined}>
       {/* Above the row-wide click target below, so the one thing on the row
-          that has its own action keeps it: these ids are read here and typed
-          into a terminal (`ariadne attach <session-id>`), and the row is the
-          only place the whole list of them is on screen at once. */}
+          that has its own action keeps it: these ids are read here on their way
+          into a terminal, and the row is the only place the whole list of them
+          is on screen at once. */}
       <TableCell className="relative z-10">
-        <CopyableId value={session.id} display={shortId} label="session id" className="text-xs" />
+        <CopyableIdMenu
+          value={session.id}
+          display={shortId}
+          label="session id"
+          entries={sessionCopyEntries(session.id)}
+          className="text-xs"
+        />
       </TableCell>
       <TableCell>
         {/* Stretched over the whole row, so the row is clickable without a
