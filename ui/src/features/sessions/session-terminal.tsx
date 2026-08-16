@@ -89,9 +89,16 @@ function currentTerminalTheme(): ITheme {
 export function SessionTerminal({
   sessionId,
   className,
+  screenClassName,
 }: {
   sessionId: string
   className?: string
+  /**
+   * Classes for the box the emulator draws in — a height above all, which a
+   * panel has less of than a page. Merged over the default, so passing one
+   * wins (see `cn`).
+   */
+  screenClassName?: string
 }) {
   const baseUrl = useBaseUrl()
   const { resolvedTheme } = useTheme()
@@ -201,7 +208,10 @@ export function SessionTerminal({
       <div
         ref={containerRef}
         // xterm measures its parent, so the box has to have a size of its own.
-        className="h-[28rem] min-h-0 overflow-hidden rounded-lg border bg-card p-2"
+        className={cn(
+          "h-[28rem] min-h-0 overflow-hidden rounded-lg border bg-card p-2",
+          screenClassName,
+        )}
       />
     </div>
   )
