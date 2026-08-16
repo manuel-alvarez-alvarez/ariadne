@@ -23,12 +23,22 @@ function SheetClose({ ...props }: SheetPrimitive.Close.Props) {
   return <SheetPrimitive.Close data-slot="sheet-close" {...props} />
 }
 
-function SheetOverlay({ className, ...props }: SheetPrimitive.Backdrop.Props) {
+/**
+ * `dim` is what makes a stack of sheets read as one: the darkening belongs to
+ * the topmost sheet, and the ones under it go clear so the page is never
+ * darkened twice.
+ */
+function SheetOverlay({
+  className,
+  dim = true,
+  ...props
+}: SheetPrimitive.Backdrop.Props & { dim?: boolean }) {
   return (
     <SheetPrimitive.Backdrop
       data-slot="sheet-overlay"
       className={cn(
-        "fixed inset-0 isolate z-50 bg-black/10 duration-100 supports-backdrop-filter:backdrop-blur-xs data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+        "fixed inset-0 isolate z-50 duration-100 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+        dim && "bg-black/10 supports-backdrop-filter:backdrop-blur-xs",
         className,
       )}
       {...props}
@@ -40,13 +50,20 @@ function SheetContent({
   className,
   children,
   showCloseButton = true,
+  overlay,
   ...props
 }: SheetPrimitive.Popup.Props & {
   showCloseButton?: boolean
+  /**
+   * The backdrop, for a sheet that is part of a stack: a nested sheet has none
+   * of its own unless it asks (`forceRender`), and the one it opened over
+   * gives up its darkening (`dim`) so there is only ever one.
+   */
+  overlay?: React.ComponentProps<typeof SheetOverlay>
 }) {
   return (
     <SheetPortal>
-      <SheetOverlay />
+      <SheetOverlay {...overlay} />
       <SheetPrimitive.Popup
         data-slot="sheet-content"
         className={cn(
