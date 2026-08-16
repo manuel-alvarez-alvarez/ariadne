@@ -1,0 +1,171 @@
+/**
+ * Everything the goal screens ask the daemon for.
+ *
+ * Keys follow the convention in `src/api/query-keys.ts` and are built from the
+ * `qk` helpers, so the SSE dispatcher keeps reaching them: it invalidates
+ * `qk.goals.lists()` and `qk.goals.messages(id)` and patches
+ * `qk.goals.detail(id)`, and every key below is either exactly one of those or
+ * nested under it.
+ *
+ * Two lists here are filtered server-side (`?status=`, `?role=planner`) but the
+ * shared filter types carry no `status` / `role` field, so their filter segment
+ * is appended to `qk.<entity>.lists()` rather than produced by
+ * `qk.<entity>.list()`. Same shape, same prefix — see the note posted on the
+ * task thread about widening the shared filter types.
+ *
+ * The mutations invalidate what they touch even though the daemon publishes an
+ * event for each of them: the stream may be down, and an action the user just
+ * took is the last thing that should need a manual refresh.
+ */
+
+import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query"
+
+import {
+  api,
+  type CreateGoalRequest,
+  type GoalDto,
+  type GoalStatus,
+  type MessageDto,
+  type ProfileDto,
+  qk,
+  unwrap,
+} from "@/api"
+
+/** Page size for the goal thread; the daemon caps `limit` at 200. */
+const MESSAGE_PAGE_SIZE = 200
+
+/** Stop walking the thread eventually, however long it grew. */
+const MAX_MESSAGE_PAGES = 20
+
+export interface GoalListFilters {
+  status?: GoalStatus
+}
+
+/** `["goals", "list", {status?}]` — under `qk.goals.lists()`. */
+export function goalListKey(filters: GoalListFilters) {
+  return [...qk.goals.lists(), filters] as const
+}
+
+/** `["profiles", "list", {role: "planner"}]` — under `qk.profiles.lists()`. */
+export function plannerProfileListKey() {
+  return [...qk.profiles.lists(), { role: "planner" }] as const
+}
+
+export function goalsQueryOptions(filters: GoalListFilters = {}) {
+  return queryOptions({
+    queryKey: goalListKey(filters),
+    queryFn: () =>
+      unwrap(api().GET("/v1/goals", { params: { query: { status: filters.status } } })),
+    // The daemon orders by id (creation order); the screen shows newest first.
+    select: (goals: GoalDto[]) => [...goals].sort((a, b) => b.id.localeCompare(a.id)),
+  })
+}
+
+export function goalQueryOptions(goalId: string) {
+  return queryOptions({
+    queryKey: qk.goals.detail(goalId),
+    queryFn: () => unwrap(api().GET("/v1/goals/{id}", { params: { path: { id: goalId } } })),
+  })
+}
+
+export function goalMessagesQueryOptions(goalId: string) {
+  return queryOptions({
+    queryKey: qk.goals.messages(goalId),
+    queryFn: () => fetchGoalThread(goalId),
+  })
+}
+
+/**
+ * The whole goal thread, oldest first.
+ *
+ * `GET /v1/goals/{id}/messages` pages forward from the oldest message and caps
+ * a page at 200, and there is no "give me the last N" — so a long thread has to
+ * be walked to its end or the screen would show only its beginning.
+ */
+async function fetchGoalThread(goalId: string): Promise<MessageDto[]> {
+  const thread: MessageDto[] = []
+  let after: string | undefined
+  for (let page = 0; page < MAX_MESSAGE_PAGES; page += 1) {
+    const batch = await unwrap(
+      api().GET("/v1/goals/{id}/messages", {
+        params: { path: { id: goalId }, query: { after, limit: MESSAGE_PAGE_SIZE } },
+      }),
+    )
+    thread.push(...batch)
+    const last = batch.at(-1)
+    if (batch.length < MESSAGE_PAGE_SIZE || !last) break
+    after = last.id
+  }
+  return thread
+}
+
+/** Planner profiles, for the planner picker on the create form. */
+export function plannerProfilesQueryOptions() {
+  return queryOptions({
+    queryKey: plannerProfileListKey(),
+    queryFn: () => unwrap(api().GET("/v1/profiles", { params: { query: { role: "planner" } } })),
+    select: (profiles: ProfileDto[]) => [...profiles].sort((a, b) => a.name.localeCompare(b.name)),
+  })
+}
+
+export function useCreateGoal() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: CreateGoalRequest) => unwrap(api().POST("/v1/goals", { body })),
+    onSuccess: (goal) => {
+      queryClient.setQueryData(qk.goals.detail(goal.id), goal)
+      void queryClient.invalidateQueries({ queryKey: qk.goals.lists() })
+    },
+  })
+}
+
+export function usePostGoalMessage(goalId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: string) =>
+      unwrap(
+        api().POST("/v1/goals/{id}/messages", {
+          params: { path: { id: goalId } },
+          body: { body },
+        }),
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: qk.goals.messages(goalId) })
+    },
+  })
+}
+
+export function useFinalizeGoalPlan(goalId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (summary: string) =>
+      unwrap(
+        api().POST("/v1/goals/{id}/finalize", {
+          params: { path: { id: goalId } },
+          body: { summary },
+        }),
+      ),
+    onSuccess: (goal) => {
+      queryClient.setQueryData(qk.goals.detail(goalId), goal)
+      void queryClient.invalidateQueries({ queryKey: qk.goals.lists() })
+      // Finalizing records a message in the thread and readies the tasks.
+      void queryClient.invalidateQueries({ queryKey: qk.goals.messages(goalId) })
+      void queryClient.invalidateQueries({ queryKey: qk.tasks.lists() })
+    },
+  })
+}
+
+export function useCancelGoal(goalId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () =>
+      unwrap(api().POST("/v1/goals/{id}/cancel", { params: { path: { id: goalId } } })),
+    onSuccess: (goal) => {
+      queryClient.setQueryData(qk.goals.detail(goalId), goal)
+      void queryClient.invalidateQueries({ queryKey: qk.goals.lists() })
+      // Cancelling tears the goal's sessions and tasks down.
+      void queryClient.invalidateQueries({ queryKey: qk.tasks.lists() })
+      void queryClient.invalidateQueries({ queryKey: qk.sessions.lists() })
+    },
+  })
+}
