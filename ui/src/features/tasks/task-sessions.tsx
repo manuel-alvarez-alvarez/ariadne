@@ -118,12 +118,17 @@ export function TaskSessionView({
 /**
  * A session id mentioned elsewhere in the panel — who posted a message, who
  * left a review — as a way into the view above.
+ *
+ * It replaces, like the rest of the navigation inside a panel: where the user
+ * is within the panel is not a step of its own, and closing the panel has to
+ * close it rather than step back out of the session.
  */
 export function SessionLink({ sessionId }: { sessionId: string }) {
   const to = usePanelSessionTo(sessionId)
   return (
     <Link
       to={to}
+      replace
       title={sessionId}
       className="font-mono text-muted-foreground underline-offset-3 hover:text-foreground hover:underline"
     >
