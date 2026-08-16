@@ -11,17 +11,8 @@ import { useEffect, useState } from "react"
 import { toast } from "sonner"
 
 import { ApiError, type ProfileDto } from "@/api"
+import { ConfirmDialog } from "@/components/confirm-dialog"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
 
 import { useDeleteProfile } from "./queries"
 
@@ -36,7 +27,7 @@ export function DeleteProfileDialog({
 }) {
   const deleteProfile = useDeleteProfile()
   const [inUse, setInUse] = useState<string | null>(null)
-  const [failure, setFailure] = useState<string | null>(null)
+  const [failure, setFailure] = useState<unknown>(null)
 
   // Re-opening on another profile must not show the previous verdict.
   useEffect(() => {
@@ -57,52 +48,36 @@ export function DeleteProfileDialog({
         setInUse(error.message)
         return
       }
-      setFailure(ApiError.is(error) ? error.message : String(error))
+      setFailure(error)
     }
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Delete “{profile?.name}”?</DialogTitle>
-          <DialogDescription>
-            The profile is removed from the daemon. Sessions that already ran as it keep their
-            transcripts.
-          </DialogDescription>
-        </DialogHeader>
-
-        {inUse ? (
-          <Alert variant="destructive">
-            <AlertTitle>This profile is still in use</AlertTitle>
-            <AlertDescription>
-              A profile can only be deleted once nothing references it — a goal's planner, a task's
-              engineer or reviewer, or a session that ran as it. The daemon said:{" "}
-              <span className="text-foreground">{inUse}</span>
-            </AlertDescription>
-          </Alert>
-        ) : null}
-
-        {failure ? (
-          <Alert variant="destructive">
-            <AlertTitle>Could not delete the profile</AlertTitle>
-            <AlertDescription>{failure}</AlertDescription>
-          </Alert>
-        ) : null}
-
-        <DialogFooter>
-          <DialogClose render={<Button type="button" variant="outline" />}>
-            {inUse ? "Close" : "Cancel"}
-          </DialogClose>
-          <Button
-            variant="destructive"
-            onClick={confirm}
-            disabled={deleteProfile.isPending || inUse !== null}
-          >
-            {deleteProfile.isPending ? "Deleting…" : "Delete profile"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <ConfirmDialog
+      open={open}
+      onClose={() => onOpenChange(false)}
+      title={`Delete “${profile?.name}”?`}
+      description="The profile is removed from the daemon. Sessions that already ran as it keep their transcripts."
+      confirmLabel="Delete profile"
+      pendingLabel="Deleting…"
+      destructive
+      pending={deleteProfile.isPending}
+      // Nothing the dialog can do about a reference the daemon still sees.
+      confirmDisabled={inUse !== null}
+      error={failure}
+      errorTitle="Could not delete the profile"
+      onConfirm={() => void confirm()}
+    >
+      {inUse ? (
+        <Alert variant="destructive">
+          <AlertTitle>This profile is still in use</AlertTitle>
+          <AlertDescription>
+            A profile can only be deleted once nothing references it — a goal's planner, a task's
+            engineer or reviewer, or a session that ran as it. The daemon said:{" "}
+            <span className="text-foreground">{inUse}</span>
+          </AlertDescription>
+        </Alert>
+      ) : null}
+    </ConfirmDialog>
   )
 }

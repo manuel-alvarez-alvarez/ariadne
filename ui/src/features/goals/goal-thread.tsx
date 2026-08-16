@@ -6,16 +6,15 @@
  */
 
 import { useQuery } from "@tanstack/react-query"
-import { AlertCircleIcon } from "lucide-react"
 
-import { ApiError, type AuthorRole, type MessageDto } from "@/api"
-import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
+import type { AuthorRole, MessageDto } from "@/api"
+import { EmptyState } from "@/components/empty-state"
+import { ErrorState } from "@/components/error-state"
+import { Markdown } from "@/components/markdown"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
+import { formatAbsolute, formatRelative } from "@/lib/time"
 import { cn } from "@/lib/utils"
-import { formatAbsolute, formatRelative } from "./format"
-import { Markdown } from "./markdown"
 import { goalMessagesQueryOptions } from "./queries"
 
 const ROLE_LABELS: Record<AuthorRole, string> = {
@@ -37,7 +36,6 @@ const ROLE_CLASSES: Record<AuthorRole, string> = {
 
 export function GoalThread({ goalId, className }: { goalId: string; className?: string }) {
   const messages = useQuery(goalMessagesQueryOptions(goalId))
-  const error = ApiError.is(messages.error) ? messages.error : null
 
   return (
     <Card className={className}>
@@ -45,17 +43,13 @@ export function GoalThread({ goalId, className }: { goalId: string; className?: 
         <CardTitle>Planner thread</CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
-        {error ? (
-          <Alert variant="destructive">
-            <AlertCircleIcon />
-            <AlertTitle>Could not load the conversation</AlertTitle>
-            <AlertDescription>{error.message}</AlertDescription>
-            <AlertAction>
-              <Button variant="outline" size="sm" onClick={() => void messages.refetch()}>
-                Retry
-              </Button>
-            </AlertAction>
-          </Alert>
+        {messages.error ? (
+          <ErrorState
+            showIcon
+            title="Could not load the conversation"
+            error={messages.error}
+            onRetry={() => void messages.refetch()}
+          />
         ) : null}
 
         {messages.isPending ? (
@@ -73,11 +67,7 @@ export function GoalThread({ goalId, className }: { goalId: string; className?: 
 
 function MessageList({ messages }: { messages: MessageDto[] }) {
   if (messages.length === 0) {
-    return (
-      <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-        Nothing in the thread yet.
-      </p>
-    )
+    return <EmptyState emphasis="quiet" title="Nothing in the thread yet." />
   }
 
   // The list does not scroll on its own: it grows, and the panel around it

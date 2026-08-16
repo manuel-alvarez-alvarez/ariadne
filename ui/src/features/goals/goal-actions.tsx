@@ -11,22 +11,13 @@ import { CheckCheckIcon, CircleSlashIcon } from "lucide-react"
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
 
-import { ApiError, type GoalDto } from "@/api"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import type { GoalDto } from "@/api"
+import { ConfirmDialog } from "@/components/confirm-dialog"
 import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Textarea } from "@/components/ui/textarea"
-import { isTerminalGoalStatus } from "./goal-status-badge"
 import { useCancelGoal, useFinalizeGoalPlan } from "./queries"
+import { isTerminalGoalStatus } from "./status"
 
 export function GoalActions({ goal }: { goal: GoalDto }) {
   const [finalizeOpen, setFinalizeOpen] = useState(false)
@@ -88,35 +79,31 @@ function FinalizePlanDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Finalize the plan?</DialogTitle>
-          <DialogDescription>
-            The goal moves from planning to active and its tasks start as soon as their dependencies
-            allow. The planner cannot add to the plan afterwards.
-          </DialogDescription>
-        </DialogHeader>
-        <Field>
-          <FieldLabel htmlFor="finalize-summary">Summary</FieldLabel>
-          <Textarea
-            id="finalize-summary"
-            rows={3}
-            value={summary}
-            onChange={(event) => setSummary(event.target.value)}
-            placeholder="Optional — recorded in the goal thread."
-          />
-          <FieldDescription>Posted to the thread as “Plan finalized: …”.</FieldDescription>
-        </Field>
-        <MutationError title="Could not finalize the plan" error={finalize.error} />
-        <DialogFooter>
-          <DialogClose render={<Button type="button" variant="outline" />}>Cancel</DialogClose>
-          <Button onClick={confirm} disabled={finalize.isPending}>
-            {finalize.isPending ? "Finalizing…" : "Finalize plan"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <ConfirmDialog
+      open={open}
+      onClose={() => onOpenChange(false)}
+      className="sm:max-w-lg"
+      title="Finalize the plan?"
+      description="The goal moves from planning to active and its tasks start as soon as their dependencies allow. The planner cannot add to the plan afterwards."
+      confirmLabel="Finalize plan"
+      pendingLabel="Finalizing…"
+      pending={finalize.isPending}
+      error={finalize.error}
+      errorTitle="Could not finalize the plan"
+      onConfirm={() => void confirm()}
+    >
+      <Field>
+        <FieldLabel htmlFor="finalize-summary">Summary</FieldLabel>
+        <Textarea
+          id="finalize-summary"
+          rows={3}
+          value={summary}
+          onChange={(event) => setSummary(event.target.value)}
+          placeholder="Optional — recorded in the goal thread."
+        />
+        <FieldDescription>Posted to the thread as “Plan finalized: …”.</FieldDescription>
+      </Field>
+    </ConfirmDialog>
   )
 }
 
@@ -146,37 +133,27 @@ function CancelGoalDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Cancel this goal?</DialogTitle>
-          <DialogDescription>
-            <span className="font-medium text-foreground">{goal.title}</span> stops here: its
-            running sessions are torn down and its unfinished tasks will not be picked up again.
-            This cannot be undone.
-          </DialogDescription>
-        </DialogHeader>
-        <MutationError title="Could not cancel the goal" error={cancel.error} />
-        <DialogFooter>
-          <DialogClose render={<Button type="button" variant="outline" />}>Keep goal</DialogClose>
-          <Button variant="destructive" onClick={confirm} disabled={cancel.isPending}>
-            {cancel.isPending ? "Cancelling…" : "Cancel goal"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-function MutationError({ title, error }: { title: string; error: unknown }) {
-  if (!ApiError.is(error)) return null
-  return (
-    <Alert variant="destructive">
-      <AlertTitle>{title}</AlertTitle>
-      <AlertDescription>
-        {error.message}
-        <span className="ml-1 font-mono text-xs">({error.code})</span>
-      </AlertDescription>
-    </Alert>
+    <ConfirmDialog
+      open={open}
+      onClose={() => onOpenChange(false)}
+      className="sm:max-w-lg"
+      title="Cancel this goal?"
+      description={
+        <>
+          <span className="font-medium text-foreground">{goal.title}</span> stops here: its running
+          sessions are torn down and its unfinished tasks will not be picked up again. This cannot
+          be undone.
+        </>
+      }
+      confirmLabel="Cancel goal"
+      pendingLabel="Cancelling…"
+      // "Cancel" is the dangerous verb here, so the safe way out is spelled out.
+      dismissLabel="Keep goal"
+      destructive
+      pending={cancel.isPending}
+      error={cancel.error}
+      errorTitle="Could not cancel the goal"
+      onConfirm={() => void confirm()}
+    />
   )
 }

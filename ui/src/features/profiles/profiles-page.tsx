@@ -15,7 +15,8 @@ import { ChevronRightIcon, PencilIcon, PlusIcon, Trash2Icon } from "lucide-react
 import { Fragment, type ReactNode, useState } from "react"
 
 import { ApiError, type ProfileDto, type Role } from "@/api"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { EmptyState } from "@/components/empty-state"
+import { ErrorState } from "@/components/error-state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -28,12 +29,13 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { formatAbsolute } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
 import { DeleteProfileDialog } from "./delete-profile-dialog"
 import { ProfileDetails } from "./profile-details"
 import { ProfileFormDialog } from "./profile-form-dialog"
-import { agentKindLabel, formatTimestamp, modelLabel, ROLE_LABELS, ROLES } from "./profile-labels"
+import { agentKindLabel, modelLabel, ROLE_LABELS, ROLES } from "./profile-labels"
 import { profilesQueryOptions } from "./queries"
 
 /** The role tabs, where "all" means the unfiltered request. */
@@ -104,19 +106,17 @@ export function ProfilesPage() {
       </div>
 
       {profiles.isError ? (
-        <Alert variant="destructive">
-          <AlertTitle>Could not load profiles</AlertTitle>
-          <AlertDescription className="flex flex-col items-start gap-2">
-            <span>
-              {ApiError.is(profiles.error) && profiles.error.isNetworkError
-                ? "The daemon is not answering. Check the URL in settings and that it is listening on TCP."
-                : profiles.error.message}
-            </span>
-            <Button variant="outline" size="sm" onClick={() => void profiles.refetch()}>
-              Try again
-            </Button>
-          </AlertDescription>
-        </Alert>
+        <ErrorState
+          title="Could not load profiles"
+          error={profiles.error}
+          // A daemon that never answered has nothing to say about why.
+          description={
+            ApiError.is(profiles.error) && profiles.error.isNetworkError
+              ? "The daemon is not answering. Check the URL in settings and that it is listening on TCP."
+              : undefined
+          }
+          onRetry={() => void profiles.refetch()}
+        />
       ) : (
         <div className="overflow-hidden rounded-xl border">
           <Table>
@@ -138,7 +138,7 @@ export function ProfilesPage() {
               ) : profiles.data.length === 0 ? (
                 <TableRow className="hover:bg-transparent">
                   <TableCell colSpan={COLUMN_COUNT} className="p-0">
-                    <EmptyState roleFilter={roleFilter} onCreate={openCreate} />
+                    <NoProfiles roleFilter={roleFilter} onCreate={openCreate} />
                   </TableCell>
                 </TableRow>
               ) : (
@@ -209,7 +209,7 @@ function ProfileRow({
           <Unset when={!profile.model}>{modelLabel(profile.model)}</Unset>
         </TableCell>
         <TableCell className="text-muted-foreground">
-          {formatTimestamp(profile.updated_at)}
+          {formatAbsolute(profile.updated_at)}
         </TableCell>
         <TableCell className="text-right">
           <Button
@@ -265,22 +265,24 @@ function LoadingRows() {
   )
 }
 
-function EmptyState({ roleFilter, onCreate }: { roleFilter: RoleFilter; onCreate: () => void }) {
+function NoProfiles({ roleFilter, onCreate }: { roleFilter: RoleFilter; onCreate: () => void }) {
   const filtered = roleFilter !== "all"
   return (
-    <div className="flex flex-col items-center gap-3 px-6 py-12 text-center">
-      <p className="text-sm font-medium">
-        {filtered ? `No ${ROLE_LABELS[roleFilter].toLowerCase()} profiles` : "No profiles yet"}
-      </p>
-      <p className="max-w-sm text-sm text-muted-foreground">
-        {filtered
+    <EmptyState
+      // The table's own frame is the box here.
+      className="border-0 py-12"
+      title={filtered ? `No ${ROLE_LABELS[roleFilter].toLowerCase()} profiles` : "No profiles yet"}
+      description={
+        filtered
           ? "Goals need a planner, and every task needs an engineer and at least one reviewer."
-          : "Profiles are what goals and tasks are assigned to. Create the first one here, or with ariadne profile create."}
-      </p>
-      <Button variant="outline" size="sm" onClick={onCreate}>
-        <PlusIcon />
-        New profile
-      </Button>
-    </div>
+          : "Profiles are what goals and tasks are assigned to. Create the first one here, or with ariadne profile create."
+      }
+      action={
+        <Button variant="outline" size="sm" onClick={onCreate}>
+          <PlusIcon />
+          New profile
+        </Button>
+      }
+    />
   )
 }

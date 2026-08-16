@@ -8,11 +8,12 @@
 import { useQuery } from "@tanstack/react-query"
 
 import type { AuthorRole, MessageDto } from "@/api"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { EmptyState } from "@/components/empty-state"
+import { ErrorState } from "@/components/error-state"
+import { Markdown } from "@/components/markdown"
 import { Skeleton } from "@/components/ui/skeleton"
+import { formatAbsolute, formatRelative } from "@/lib/time"
 import { cn } from "@/lib/utils"
-import { describeError, formatAbsolute, formatRelative } from "./format"
-import { Markdown } from "./markdown"
 import { taskMessagesQueryOptions } from "./queries"
 import { SessionLink } from "./task-sessions"
 
@@ -58,19 +59,16 @@ export function TaskConversation({ taskId }: { taskId: string }) {
 
   if (messages.error) {
     return (
-      <Alert variant="destructive">
-        <AlertTitle>Could not load the conversation</AlertTitle>
-        <AlertDescription>{describeError(messages.error)}</AlertDescription>
-      </Alert>
+      <ErrorState
+        title="Could not load the conversation"
+        error={messages.error}
+        onRetry={() => void messages.refetch()}
+      />
     )
   }
 
   if (messages.data.length === 0) {
-    return (
-      <p className="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
-        Nothing has been said on this task yet.
-      </p>
-    )
+    return <EmptyState emphasis="quiet" title="Nothing has been said on this task yet." />
   }
 
   return (

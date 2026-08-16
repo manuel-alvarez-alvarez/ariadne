@@ -47,20 +47,6 @@ export function profilesQueryOptions() {
   })
 }
 
-export function goalsQueryOptions() {
-  return queryOptions({
-    queryKey: qk.goals.list(),
-    queryFn: () => unwrap(api().GET("/v1/goals")),
-  })
-}
-
-export function tasksQueryOptions(goal?: string) {
-  return queryOptions({
-    queryKey: qk.tasks.list({ goal }),
-    queryFn: () => unwrap(api().GET("/v1/tasks", { params: { query: { goal } } })),
-  })
-}
-
 export function goalQueryOptions(id: string) {
   return queryOptions({
     queryKey: qk.goals.detail(id),

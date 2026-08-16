@@ -11,8 +11,9 @@ import type { ReactNode } from "react"
 import type { ProfileDto } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
 import { Badge } from "@/components/ui/badge"
+import { formatAbsolute } from "@/lib/time"
 
-import { agentKindLabel, formatTimestamp, modelLabel, roleLabel } from "./profile-labels"
+import { agentKindLabel, modelLabel, roleLabel } from "./profile-labels"
 
 export function ProfileDetails({ profile }: { profile: ProfileDto }) {
   return (
@@ -28,8 +29,8 @@ export function ProfileDetails({ profile }: { profile: ProfileDto }) {
         <Detail label="Id">
           <CopyableId value={profile.id} label="profile id" className="text-xs" />
         </Detail>
-        <Detail label="Created">{formatTimestamp(profile.created_at)}</Detail>
-        <Detail label="Updated">{formatTimestamp(profile.updated_at)}</Detail>
+        <Detail label="Created">{formatAbsolute(profile.created_at)}</Detail>
+        <Detail label="Updated">{formatAbsolute(profile.updated_at)}</Detail>
       </dl>
 
       <section className="flex flex-col gap-2">

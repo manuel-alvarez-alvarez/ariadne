@@ -15,7 +15,8 @@
 import { useQuery } from "@tanstack/react-query"
 
 import type { SessionDto } from "@/api"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { EmptyState } from "@/components/empty-state"
+import { ErrorState } from "@/components/error-state"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   Table,
@@ -25,6 +26,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { formatAbsolute, formatAge } from "@/lib/time"
 
 import {
   byId,
@@ -32,14 +34,7 @@ import {
   type SessionListFilters,
   sessionsQueryOptions,
 } from "./queries"
-import { reason } from "./session-actions"
-import {
-  AGENT_KIND_LABELS,
-  formatAge,
-  formatTimestamp,
-  ROLE_LABELS,
-  SessionStatusBadge,
-} from "./session-display"
+import { AGENT_KIND_LABELS, ROLE_LABELS, SessionStatusBadge } from "./session-display"
 import { useNow } from "./use-now"
 
 export function SessionsList({
@@ -48,7 +43,10 @@ export function SessionsList({
   onSelect,
 }: {
   filters: SessionListFilters
-  /** Id of the row to mark as selected, if any. */
+  /**
+   * Id of the row to mark as selected, if any. Intentionally kept: the
+   * navigation work being done in parallel is what passes it.
+   */
   selectedId?: string
   /** Called with the whole session, so callers do not have to look it up again. */
   onSelect: (session: SessionDto) => void
@@ -61,10 +59,11 @@ export function SessionsList({
   return (
     <div className="space-y-4">
       {sessions.isError ? (
-        <Alert variant="destructive">
-          <AlertTitle>Could not load sessions</AlertTitle>
-          <AlertDescription>{reason(sessions.error)}</AlertDescription>
-        </Alert>
+        <ErrorState
+          title="Could not load sessions"
+          error={sessions.error}
+          onRetry={() => void sessions.refetch()}
+        />
       ) : null}
 
       <div className="rounded-lg border">
@@ -85,8 +84,13 @@ export function SessionsList({
             {sessions.isPending ? <LoadingRows /> : null}
             {sessions.data?.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
-                  No sessions match these filters.
+                <TableCell colSpan={8} className="p-0">
+                  {/* Inside the table's own frame, so the empty state drops its box. */}
+                  <EmptyState
+                    emphasis="quiet"
+                    title="No sessions match these filters."
+                    className="border-0"
+                  />
                 </TableCell>
               </TableRow>
             ) : null}
@@ -151,13 +155,13 @@ function SessionRow({
       </TableCell>
       <TableCell
         className="text-right tabular-nums text-muted-foreground"
-        title={formatTimestamp(session.last_activity_at)}
+        title={formatAbsolute(session.last_activity_at)}
       >
         {formatAge(session.last_activity_at, now)}
       </TableCell>
       <TableCell
         className="text-right tabular-nums text-muted-foreground"
-        title={formatTimestamp(session.ended_at)}
+        title={formatAbsolute(session.ended_at)}
       >
         {formatAge(session.ended_at, now)}
       </TableCell>

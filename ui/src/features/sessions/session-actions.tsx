@@ -12,20 +12,13 @@ import { PlayIcon, SkullIcon } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
 
-import { ApiError, type SessionDto } from "@/api"
+import type { SessionDto } from "@/api"
+import { ConfirmDialog } from "@/components/confirm-dialog"
 import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
+import { describeError } from "@/lib/errors"
 
 import { useKillSession, useResumeSession } from "./queries"
-import { isLiveStatus } from "./session-display"
+import { isLiveStatus, sessionStatusLabel } from "./session-display"
 
 export function SessionActions({
   session,
@@ -79,7 +72,8 @@ export function SessionActions({
                 })
                 onResumed?.(revived)
               },
-              onError: (error) => toast.error("Could not resume", { description: reason(error) }),
+              onError: (error) =>
+                toast.error("Could not resume", { description: describeError(error) }),
             })
           }}
         >
@@ -88,46 +82,32 @@ export function SessionActions({
         </Button>
       )}
 
-      <Dialog open={confirmKill} onOpenChange={setConfirmKill}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Kill this session?</DialogTitle>
-            <DialogDescription>
-              The agent's tmux process (<code className="font-mono">{session.tmux_session}</code>)
-              is terminated wherever it got to. Its conversation is kept, so the session can be
-              resumed afterwards.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <DialogClose render={<Button type="button" variant="outline" />}>Cancel</DialogClose>
-            <Button
-              variant="destructive"
-              disabled={kill.isPending}
-              onClick={() => {
-                kill.mutate(session.id, {
-                  onSuccess: (killed) => {
-                    setConfirmKill(false)
-                    toast.success(`Session is now ${killed.status}`)
-                  },
-                  onError: (error) => toast.error("Could not kill", { description: reason(error) }),
-                })
-              }}
-            >
-              {kill.isPending ? "Killing…" : "Kill session"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDialog
+        open={confirmKill}
+        onClose={() => setConfirmKill(false)}
+        title="Kill this session?"
+        description={
+          <>
+            The agent's tmux process (<code className="font-mono">{session.tmux_session}</code>) is
+            terminated wherever it got to. Its conversation is kept, so the session can be resumed
+            afterwards.
+          </>
+        }
+        confirmLabel="Kill session"
+        pendingLabel="Killing…"
+        destructive
+        pending={kill.isPending}
+        onConfirm={() => {
+          kill.mutate(session.id, {
+            onSuccess: (killed) => {
+              setConfirmKill(false)
+              toast.success(`Session status: ${sessionStatusLabel(killed.status)}`)
+            },
+            onError: (error) =>
+              toast.error("Could not kill", { description: describeError(error) }),
+          })
+        }}
+      />
     </div>
   )
-}
-
-/** The daemon's own words, with its error code when it sent one. */
-export function reason(error: unknown): string {
-  if (ApiError.is(error)) {
-    return error.code === "http_error" || error.isNetworkError
-      ? error.message
-      : `${error.message} (${error.code})`
-  }
-  return error instanceof Error ? error.message : String(error)
 }

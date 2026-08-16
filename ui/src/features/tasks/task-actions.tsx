@@ -9,22 +9,12 @@
  */
 
 import { BanIcon, RotateCcwIcon } from "lucide-react"
-import { type ReactNode, useState } from "react"
+import { useState } from "react"
 import { toast } from "sonner"
 
 import type { TaskDto } from "@/api"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { ConfirmDialog } from "@/components/confirm-dialog"
 import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import { describeError } from "./format"
 import { useCancelTask, useRetryTask } from "./queries"
 import { canCancel, canRetry, statusLabel } from "./status"
 
@@ -62,6 +52,12 @@ export function TaskActions({ task }: { task: TaskDto }) {
         open={open === "retry"}
         onClose={close}
         title="Retry this task?"
+        description={
+          <>
+            The task goes back to <strong>ready</strong> and the daemon schedules a fresh engineer
+            session for it. Its branch and worktree are kept.
+          </>
+        }
         confirmLabel="Retry"
         pending={retry.isPending}
         error={retry.error}
@@ -75,16 +71,21 @@ export function TaskActions({ task }: { task: TaskDto }) {
             },
           })
         }
-      >
-        The task goes back to <strong>ready</strong> and the daemon schedules a fresh engineer
-        session for it. Its branch and worktree are kept.
-      </ConfirmDialog>
+      />
 
       <ConfirmDialog
         open={open === "cancel"}
         onClose={close}
         title="Cancel this task?"
+        description={
+          <>
+            <strong>Cancelled</strong> is terminal: no agent will work on{" "}
+            <span className="font-medium">{task.title}</span> again, and nothing moves it back.
+          </>
+        }
         confirmLabel="Cancel task"
+        // "Cancel" is the dangerous verb here, so the safe way out is spelled out.
+        dismissLabel="Keep task"
         destructive
         pending={cancel.isPending}
         error={cancel.error}
@@ -96,65 +97,7 @@ export function TaskActions({ task }: { task: TaskDto }) {
             },
           })
         }
-      >
-        <strong>Cancelled</strong> is terminal: no agent will work on{" "}
-        <span className="font-medium">{task.title}</span> again, and nothing moves it back.
-      </ConfirmDialog>
+      />
     </div>
-  )
-}
-
-function ConfirmDialog({
-  open,
-  onClose,
-  title,
-  children,
-  confirmLabel,
-  destructive = false,
-  pending,
-  error,
-  onConfirm,
-}: {
-  open: boolean
-  onClose: () => void
-  title: string
-  children: ReactNode
-  confirmLabel: string
-  destructive?: boolean
-  pending: boolean
-  error: unknown
-  onConfirm: () => void
-}) {
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        if (!next) onClose()
-      }}
-    >
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>{children}</DialogDescription>
-        </DialogHeader>
-        {error != null && (
-          <Alert variant="destructive">
-            <AlertTitle>The daemon refused</AlertTitle>
-            <AlertDescription>{describeError(error)}</AlertDescription>
-          </Alert>
-        )}
-        <DialogFooter>
-          <DialogClose render={<Button type="button" variant="outline" />}>Back</DialogClose>
-          <Button
-            type="button"
-            variant={destructive ? "destructive" : "default"}
-            disabled={pending}
-            onClick={onConfirm}
-          >
-            {pending ? "Working…" : confirmLabel}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   )
 }
