@@ -63,16 +63,32 @@ const fieldVariants = cva("group/field flex w-full gap-2 data-[invalid=true]:tex
   },
 })
 
+/**
+ * Whether a hand-written `data-invalid` means invalid.
+ *
+ * The flag is spelled differently at every call site — `true`, `""`, the bare
+ * attribute — while the selector above only matches the string `true`, so a
+ * form that spells it any other way silently loses its destructive styling.
+ * Normalizing here means the call sites do not have to agree: anything present
+ * that is not an explicit false counts as invalid.
+ */
+function invalidAttr(value: boolean | string | undefined): "true" | undefined {
+  return value === undefined || value === false || value === "false" ? undefined : "true"
+}
+
 function Field({
   className,
   orientation = "vertical",
+  "data-invalid": invalid,
   ...props
-}: React.ComponentProps<"div"> & VariantProps<typeof fieldVariants>) {
+}: React.ComponentProps<"div"> &
+  VariantProps<typeof fieldVariants> & { "data-invalid"?: boolean | string }) {
   return (
     <div
       role="group"
       data-slot="field"
       data-orientation={orientation}
+      data-invalid={invalidAttr(invalid)}
       className={cn(fieldVariants({ orientation }), className)}
       {...props}
     />
@@ -121,7 +137,7 @@ function FieldDescription({ className, ...props }: React.ComponentProps<"p">) {
     <p
       data-slot="field-description"
       className={cn(
-        "text-left text-sm leading-normal font-normal text-muted-foreground group-has-data-horizontal/field:text-balance [[data-variant=legend]+&]:-mt-1.5",
+        "text-left text-sm leading-normal font-normal text-muted-foreground group-data-[invalid=true]/field:text-destructive group-has-data-horizontal/field:text-balance [[data-variant=legend]+&]:-mt-1.5",
         "last:mt-0 nth-last-2:-mt-1",
         "[&>a]:underline [&>a]:underline-offset-4 [&>a:hover]:text-primary",
         className,
