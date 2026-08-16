@@ -86,7 +86,7 @@ src/
   features/
     goals/         goals list + goal detail (incl. its task board)
     tasks/         task detail
-    sessions/      sessions list + session detail
+    sessions/      session list + session detail, embedded by the panels
     profiles/      profiles screen
 src-tauri/         the Tauri shell (deliberately empty: no commands)
 ```
@@ -190,10 +190,15 @@ places until it is handled.
 
 ### Routes
 
-Each feature owns a `routes.tsx` exporting its `RouteObject[]`, which
-`src/routes/router.tsx` mounts under the shell. Add screens there, not in the
-router. Link with the helpers in `src/routes/paths.ts` rather than hand-written
-paths.
+A feature with screens of its own owns a `routes.tsx` exporting its
+`RouteObject[]`, which `src/routes/router.tsx` mounts under the shell. Add
+screens there, not in the router. Link with the helpers in
+`src/routes/paths.ts` rather than hand-written paths.
+
+Not every feature has routes. Sessions has none: a session is opened from the
+Sessions tab of the goal or the task panel, which the `?tab=`/`?session=`
+search params drive (`panelSessionTo` in `src/routes/paths.ts` builds a link to
+one). `#/sessions` is not a URL the app answers — it falls through to the 404.
 
 A **hash router** is used on purpose: in a packaged build the frontend is served
 straight off Tauri's asset protocol with no history fallback, so a reload on a
@@ -214,7 +219,9 @@ override under `src/components/ui/**` in `biome.json`.
 
 ## Rules for the screen tasks
 
-The four screen tasks (goals, tasks, sessions, profiles) run **in parallel**.
+The four feature tasks (goals, tasks, sessions, profiles) run **in parallel**.
+Sessions is the exception to "screen": it owns no route of its own — its list
+and detail views are embedded by the goal and task panels' Sessions tab.
 Each one owns exactly one directory under `src/features/` and must stay inside
 it:
 
