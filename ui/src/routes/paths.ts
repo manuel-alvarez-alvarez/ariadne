@@ -5,8 +5,9 @@
  *
  * Goals, tasks and sessions have no pages of their own: their details open in
  * side panels driven by search params (`?goal=` on the goals board, `?task=`
- * on any screen, `?tab=sessions&session=` inside either panel), which
- * `src/components/detail-panels.tsx` reads.
+ * on any screen, `?session=` on its own for a session's own panel, and
+ * `?tab=sessions&session=` for a session *inside* a goal's or a task's panel),
+ * which `src/components/detail-panels.tsx` reads.
  */
 
 import { useSearchParams } from "react-router-dom"
@@ -53,6 +54,25 @@ export function useTaskPanelTo(taskId: string): { search: string } {
 }
 
 /**
+ * Link target that opens a session's own panel over the current screen: same
+ * pathname, `?session=` added, every filter the screen owns kept — so the list
+ * it was picked from stays behind it, with the picked row still marked.
+ *
+ * Unlike {@link panelSessionTo}, the session here is not inside anything: a
+ * `?session=` with no `?goal=` and no `?task=` around it *is* the panel (see
+ * `detail-panels.tsx`). The screens this is used from carry none of those
+ * three, and clearing them is what keeps that true wherever it is used.
+ */
+export function sessionPanelTo(current: URLSearchParams, sessionId: string): { search: string } {
+  const next = new URLSearchParams(current)
+  next.set("session", sessionId)
+  next.delete("goal")
+  next.delete("task")
+  next.delete("tab")
+  return { search: `?${next.toString()}` }
+}
+
+/**
  * Link target that shows a session inside the panel that is already open:
  * everything else is kept, `tab` and `session` point the panel at it. `null`
  * is the way back out of the session, onto the list it came from.
@@ -91,12 +111,13 @@ export function usePanelSessionNavigation(): (sessionId: string | null) => void 
 }
 
 /**
- * Link target that opens a session from a list that is not inside any panel —
- * the sessions screen, the attention screen — by opening its *task's* panel on
- * it: `?task=` first, then the panel's own `?tab=sessions&session=`.
+ * Link target that opens a session inside its *task's* panel from outside any
+ * panel — the command palette: `?task=` first, then the panel's own
+ * `?tab=sessions&session=`.
  *
  * The screen underneath keeps its filters, and stays on screen behind the
- * panel, which is what makes the row the panel came from worth highlighting.
+ * panel. Where the session is the thing being opened rather than the task it
+ * ran, {@link sessionPanelTo} gives it a panel of its own instead.
  */
 export function taskSessionPanelTo(
   current: URLSearchParams,
