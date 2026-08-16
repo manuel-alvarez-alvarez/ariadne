@@ -85,7 +85,10 @@ export function TaskDiff({ taskId }: { taskId: string }) {
       </div>
 
       {empty ? (
-        <EmptyState title="The branch exists but has no changes against its base yet." />
+        <EmptyState
+          emphasis="quiet"
+          title="The branch exists but has no changes against its base yet."
+        />
       ) : raw || parsed.files.length === 0 ? (
         <RawDiff text={diff.data ?? ""} />
       ) : (
@@ -191,7 +194,7 @@ function RawDiff({ text, bare = false }: { text: string; bare?: boolean }) {
 function DiffError({ error, onRetry }: { error: unknown; onRetry: () => void }) {
   // 409 is the daemon saying "there is nothing to diff yet", not a failure.
   if (ApiError.is(error) && error.status === 409) {
-    return <EmptyState title={error.message} />
+    return <EmptyState emphasis="quiet" title={error.message} />
   }
   return <ErrorState title="Could not load the diff" error={error} onRetry={onRetry} />
 }

@@ -95,6 +95,7 @@ function Lane({ goal, tasks }: { goal: GoalDto; tasks?: GoalTasks }) {
           {goal.title}
         </Link>
         <StatusBadge
+          box="badge"
           label={GOAL_STATUS_META[goal.status].label}
           tone={GOAL_STATUS_META[goal.status].badge}
         />

@@ -76,7 +76,7 @@ export function SessionStatusBadge({
   const meta = SESSION_STATUS_META[status]
   return (
     <StatusBadge
-      outline
+      box="outlined"
       label={meta.label}
       tone={live ? "text-foreground" : "text-muted-foreground"}
       dot={meta.dot}

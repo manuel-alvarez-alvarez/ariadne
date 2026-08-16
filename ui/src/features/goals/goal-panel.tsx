@@ -72,6 +72,7 @@ export function GoalPanel({ goalId, onClose }: { goalId: string; onClose: () => 
         <>
           <SheetTitle className="sr-only">Goal {goalId}</SheetTitle>
           <ErrorState
+            showIcon
             title={error.status === 404 ? "No such goal" : "Could not load the goal"}
             error={error}
             // A goal that does not exist will not start existing on a retry.
@@ -128,6 +129,7 @@ function GoalView({
         <div className="flex flex-wrap items-center gap-2">
           <SheetTitle>{goal.title}</SheetTitle>
           <StatusBadge
+            box="badge"
             label={GOAL_STATUS_META[goal.status].label}
             tone={GOAL_STATUS_META[goal.status].badge}
           />
