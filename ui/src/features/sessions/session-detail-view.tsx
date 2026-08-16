@@ -126,7 +126,11 @@ export function SessionDetailView({
           <CardTitle>Terminal</CardTitle>
         </CardHeader>
         <CardContent>
-          <SessionTerminal sessionId={session.id} screenClassName={terminalClassName} />
+          <SessionTerminal
+            sessionId={session.id}
+            status={session.status}
+            screenClassName={terminalClassName}
+          />
         </CardContent>
       </Card>
 

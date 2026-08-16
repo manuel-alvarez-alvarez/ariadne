@@ -101,6 +101,46 @@ export function useResumeSession() {
   })
 }
 
+/** Keystrokes typed but not yet handed to a request, per session. */
+const inputQueue = new Map<string, string>()
+/** The in-flight send for a session, while one is running. */
+const inputInFlight = new Map<string, Promise<void>>()
+
+/**
+ * Type into a live session's pane. Deliberately not a mutation: this is called
+ * per keystroke, it changes nothing the cache holds, and a `useMutation`'s
+ * pending state would re-render the terminal on every character.
+ *
+ * One request per session at a time. A POST per keystroke fired in parallel
+ * races — the browser sends them down several connections and the pane
+ * receives `ceho` for `echo` — so anything typed while a request is in flight
+ * rides along in the next one. That also keeps a paste or a fast typist to a
+ * handful of requests instead of one per character.
+ *
+ * There is no retry: a keystroke that arrives late is worse than one that
+ * never arrives. The daemon answers `409` once the session is over or its pane
+ * is gone, and that rejection reaches whoever is waiting on the send.
+ */
+export function sendSessionInput(id: string, data: string): Promise<void> {
+  inputQueue.set(id, (inputQueue.get(id) ?? "") + data)
+  const running = inputInFlight.get(id)
+  if (running) return running
+  const drain = drainSessionInput(id).finally(() => inputInFlight.delete(id))
+  inputInFlight.set(id, drain)
+  return drain
+}
+
+async function drainSessionInput(id: string): Promise<void> {
+  for (;;) {
+    const data = inputQueue.get(id)
+    if (data === undefined) return
+    inputQueue.delete(id)
+    await unwrap(
+      api().POST("/v1/sessions/{id}/input", { params: { path: { id } }, body: { data } }),
+    )
+  }
+}
+
 function cacheSession(queryClient: ReturnType<typeof useQueryClient>, session: SessionDto): void {
   queryClient.setQueryData(qk.sessions.detail(session.id), session)
   void queryClient.invalidateQueries({ queryKey: qk.sessions.lists() })
