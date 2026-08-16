@@ -1,6 +1,10 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
+# The desktop UI ships its own Tauri crate with an independent dependency tree
+# and release profile; it is built by `npm run tauri build` inside `ui/`, never
+# by the workspace.
+exclude = ["ui/src-tauri"]
 
 [workspace.package]
 version = "0.1.0"
