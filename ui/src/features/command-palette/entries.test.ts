@@ -87,14 +87,16 @@ describe("buildPaletteEntries", () => {
     const [entry] = buildPaletteEntries(SOURCE).goals
     expect(entry?.label).toBe("Ship the palette")
     expect(entry?.value).toContain("Ship the palette")
-    expect(entry?.value).toContain(GOAL.id)
+    // The id is searchable, but literally: see the note on `PaletteEntry`.
+    expect(entry?.keywords).toContain(GOAL.id)
+    expect(entry?.value).not.toContain(GOAL.id)
     expect(entry?.target).toEqual({ kind: "goal", goalId: GOAL.id })
   })
 
   it("makes a task findable by its branch, and shows it", () => {
     const [entry] = buildPaletteEntries(SOURCE).tasks
     expect(entry?.detail).toBe(TASK.branch)
-    expect(entry?.keywords).toContain(TASK.branch)
+    expect(entry?.value).toContain(TASK.branch)
     // Its goal's title too: tasks are looked for by the goal they belong to.
     expect(entry?.keywords).toContain(GOAL.title)
     expect(entry?.target).toEqual({ kind: "task", taskId: TASK.id })
@@ -105,7 +107,7 @@ describe("buildPaletteEntries", () => {
     expect(engineer?.label).toBe("Engineer · Add the command palette")
     // A planner session has no task, so it is named after its goal.
     expect(planner?.label).toBe("Planner · Ship the palette")
-    expect(engineer?.value).toContain(SESSION.id)
+    expect(engineer?.keywords).toContain(SESSION.id)
     expect(engineer?.target).toEqual({
       kind: "session",
       sessionId: SESSION.id,
