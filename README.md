@@ -60,6 +60,14 @@ scripts/uninstall.sh           # removes everything, keeps ~/.ariadne data
 scripts/uninstall.sh --purge   # ...and deletes the data too
 ```
 
+Codex is the one agent whose hooks cannot be installed per session: it keys
+hook trust on the hooks-file path, so Ariadne declares them once in the global
+`~/.codex/hooks.json` (`ariadne setup codex-hooks`, non-destructive and
+idempotent). The installer then opens a codex session so you can accept its
+"Hooks need review" prompt — without that trust, codex sessions run but never
+report their id and can be neither resumed nor revived. Skip the whole step
+with `--no-codex-hooks`.
+
 The daemon then runs as a user service with restart-on-failure
 (`launchctl bootout gui/$(id -u)/dev.ariadne.daemon` /
 `systemctl --user stop ariadned` to stop it). Completions are **dynamic**: on
