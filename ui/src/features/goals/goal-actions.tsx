@@ -37,7 +37,8 @@ export function GoalActions({ goal }: { goal: GoalDto }) {
         </Button>
       ) : null}
       {canCancel ? (
-        <Button variant="destructive" onClick={() => setCancelOpen(true)}>
+        // Only opens the confirm; the solid red is on the click inside it.
+        <Button variant="destructive-ghost" onClick={() => setCancelOpen(true)}>
           <CircleSlashIcon />
           Cancel goal
         </Button>
@@ -86,7 +87,6 @@ function FinalizePlanDialog({
       title="Finalize the plan?"
       description="The goal moves from planning to active and its tasks start as soon as their dependencies allow. The planner cannot add to the plan afterwards."
       confirmLabel="Finalize plan"
-      pendingLabel="Finalizing…"
       pending={finalize.isPending}
       error={finalize.error}
       errorTitle="Could not finalize the plan"
@@ -146,7 +146,6 @@ function CancelGoalDialog({
         </>
       }
       confirmLabel="Cancel goal"
-      pendingLabel="Cancelling…"
       // "Cancel" is the dangerous verb here, so the safe way out is spelled out.
       dismissLabel="Keep goal"
       destructive
