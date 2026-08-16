@@ -36,11 +36,11 @@ const RESYNC_TIMEOUT: Duration = Duration::from_secs(3);
 enum Phase {
     /// Following the console log for new output.
     Following,
-    /// The screen the client should be holding has not been captured yet —
-    /// the pane changed shape, or could not be read when the stream opened.
-    /// Nothing goes out meanwhile: every byte the pane writes from here
-    /// belongs to a grid the client does not have, and the bytes already read
-    /// belong to one it is about to lose. `since` bounds the wait.
+    /// The screen the client should be holding has not been captured yet: the
+    /// stream has just opened, or the pane changed shape under it. Nothing
+    /// goes out meanwhile — every byte the pane writes from here belongs to a
+    /// grid the client does not have, and the bytes already read belong to one
+    /// it is about to lose. `since` bounds the wait.
     Resynchronising { since: Instant },
     /// The last output is out; `end` comes next.
     Ending,
@@ -67,23 +67,12 @@ struct Follower {
 enum Pane {
     /// Still running, and drawing on this screen.
     Alive(PaneGeometry),
-    /// No more output is possible.
-    Gone,
-}
-
-/// What a connection has to open with.
-enum Opening {
-    /// A pane, and the screen it is drawing.
-    Screen {
-        geometry: PaneGeometry,
-        snapshot: String,
-    },
-    /// A pane that is there but could not be read. The stream waits for one
-    /// that can be (see [`Phase::Resynchronising`]) rather than saying
-    /// anything about a screen it does not have.
+    /// There, but not saying where: tmux still has the session, and the
+    /// measurement did not come back. Nothing may be concluded from it — least
+    /// of all that the session is over.
     Unreadable,
-    /// No pane: the piped console log is the whole of it.
-    Log(String),
+    /// Confirmed absent, or the session is over. No more output is possible.
+    Gone,
 }
 
 /// What one attempt at a coherent screen came to.
@@ -100,23 +89,21 @@ enum Resync {
 impl Follower {
     /// Where the pane stands: one `tmux` call for both questions a tick has.
     ///
-    /// Measuring the pane *is* the liveness check — `display-message` fails on
-    /// a session that is not there, exactly as `has-session` would — so the
-    /// grid comes free with the answer instead of forking a second process for
-    /// it. The stored status is asked too: tmux names are per (task, role), so
-    /// a live pane under this session's name need not be this session's, and
-    /// the row is what says whether *this* one is still running.
+    /// Measuring the pane doubles as the liveness check — `display-message`
+    /// fails on a session that is not there, exactly as `has-session` would —
+    /// so the grid comes free with the answer instead of forking a second
+    /// process for it. The stored status is asked first, and without forking
+    /// anything: tmux names are per (task, role), so a live pane under this
+    /// session's name need not be this session's, and the row is what says
+    /// whether *this* one is still running.
+    ///
+    /// A measurement that fails is not an answer, though, and must not be
+    /// read as one — `end` stops a client from ever asking again, so it is
+    /// owed a second opinion. That is the one case that pays for the second
+    /// fork: `has-session` says whether the pane is actually gone or merely
+    /// did not answer.
     async fn poll(&mut self) -> Pane {
         self.checked_alive_at = Instant::now();
-        let Ok(geometry) = self
-            .state
-            .launcher
-            .tmux
-            .pane_geometry(&self.tmux_session)
-            .await
-        else {
-            return Pane::Gone;
-        };
         let live = self
             .state
             .store
@@ -126,15 +113,39 @@ impl Follower {
         if !live {
             return Pane::Gone;
         }
-        Pane::Alive(geometry)
+        match self
+            .state
+            .launcher
+            .tmux
+            .pane_geometry(&self.tmux_session)
+            .await
+        {
+            Ok(geometry) => Pane::Alive(geometry),
+            Err(e) => {
+                if self
+                    .state
+                    .launcher
+                    .tmux
+                    .has_session(&self.tmux_session)
+                    .await
+                {
+                    warn!(session = %self.session_id, error = %e, "measuring the pane failed");
+                    Pane::Unreadable
+                } else {
+                    Pane::Gone
+                }
+            }
+        }
     }
 
     fn due_for_liveness_check(&self) -> bool {
         self.checked_alive_at.elapsed() >= LIVENESS
     }
 
-    /// Start the client over on the pane's current screen: a `resize`, then a
-    /// `snapshot` taken in it, queued in that order.
+    /// Put the client on the pane's current screen: a `resize`, then a
+    /// `snapshot` taken in it, queued in that order. This is how a stream
+    /// opens and how it recovers from a resize — the same operation, because
+    /// the guarantee it makes is the same one.
     ///
     /// A resize cannot be spliced into the byte stream. The output waiting to
     /// go out straddles the moment the pane changed shape — some of it drawn
@@ -150,8 +161,10 @@ impl Follower {
     /// the whole point of the exercise is that a screen and the grid it is
     /// described by have to be the same screen's.
     async fn resynchronise(&mut self) -> Resync {
-        let Pane::Alive(before) = self.poll().await else {
-            return Resync::Gone;
+        let before = match self.poll().await {
+            Pane::Alive(geometry) => geometry,
+            Pane::Unreadable => return Resync::Retry,
+            Pane::Gone => return Resync::Gone,
         };
         // Where the log stands *before* the capture, so that whatever the pane
         // writes in between is sent twice rather than not at all. The tail
@@ -173,8 +186,10 @@ impl Follower {
                 return Resync::Retry;
             }
         };
-        let Pane::Alive(after) = self.poll().await else {
-            return Resync::Gone;
+        let after = match self.poll().await {
+            Pane::Alive(geometry) => geometry,
+            Pane::Unreadable => return Resync::Retry,
+            Pane::Gone => return Resync::Gone,
         };
         if after != before {
             // Resized again while it was being read: this capture describes
@@ -196,6 +211,29 @@ impl Follower {
         self.queue
             .push_back(chunk_event("snapshot", &as_screen(capture, after)));
         Resync::Done
+    }
+
+    /// Serve the console log and have done: what a session with no pane left
+    /// amounts to, whether it was already over when the request arrived or
+    /// went while a screen was being fetched for it.
+    ///
+    /// The log is raw terminal bytes wrapped at whatever width they were
+    /// written at, which tmux can no longer be asked for — hence the size
+    /// recorded while the session lived (see `Launcher::record_pane_size`).
+    /// Without it a history-only session would be replayed at the client's
+    /// default and wrap wrongly for its whole length.
+    async fn finish_with_log(&mut self) {
+        if let Some((cols, rows)) = self.state.launcher.last_pane_size(&self.session_id).await {
+            let size = SessionPaneSize { cols, rows };
+            if self.size != Some(size) {
+                self.size = Some(size);
+                self.queue.push_back(resize_event(size));
+            }
+        }
+        self.log.rewind();
+        let log = self.log.drain().await;
+        self.queue.push_back(chunk_event("snapshot", &log));
+        self.phase = Phase::Ending;
     }
 
     /// Has the pane drawn on a grid the client has not been told about?
@@ -228,10 +266,11 @@ impl Follower {
 /// client starts over at the new one. `snapshot` therefore means "replace
 /// everything you have", whenever it arrives. Nothing is sent in between: a
 /// delta drawn at a grid the client does not have is the corruption this is
-/// all here to avoid. If no screen can be captured at the new grid, the
-/// connection is closed *without* an `end` — the session is not over, and a
-/// fresh connection is the shortest way back to a grid and a screen that
-/// agree.
+/// all here to avoid. If no coherent screen can be had — the pane cannot be
+/// read, or keeps changing shape while it is — the connection is closed
+/// *without* an `end`, at the opening as much as later on: the session is not
+/// over, and a fresh connection is the shortest way back to a grid and a
+/// screen that agree. Only a pane confirmed gone ends a stream.
 ///
 /// When the session ends — or if it was already over when the request arrived
 /// — the remaining output is flushed, a final `end` event (`SessionLogEnd`)
@@ -255,7 +294,7 @@ pub async fn logs_stream(
     Path(id): Path<String>,
 ) -> ApiResult<Sse<impl Stream<Item = Result<Event, Infallible>>>> {
     let session = state.store.get_session(&id).await?;
-    let mut log = LogTail::new(
+    let log = LogTail::new(
         state
             .launcher
             .cfg
@@ -263,122 +302,24 @@ pub async fn logs_stream(
             .join(&session.id)
             .join("console.log"),
     );
-    // Mark the console log's end *before* capturing the pane: whatever lands
-    // in between is then sent twice rather than not at all.
-    log.skip_existing().await;
 
-    // Both halves matter: tmux names are per (task, role), so a live pane
-    // under this session's name need not be this session's — the row's own
-    // status is what says whether *this* session is still running, and asking
-    // tmux to measure the pane asks whether there is one at all (see
-    // `Follower::poll`).
-    //
-    // Measured just before the capture: whatever the pane draws in between is
-    // in the console log already, and reaches the client as a delta that moves
-    // the cursor along with it.
-    let geometry = if session.status().is_live() {
-        state
-            .launcher
-            .tmux
-            .pane_geometry(&session.tmux_session)
-            .await
-            .inspect_err(|e| warn!(session = %session.id, error = %e, "measuring the pane failed"))
-            .ok()
-    } else {
-        None
-    };
-
-    let opening = match geometry {
-        Some(geometry) => match state
-            .launcher
-            .tmux
-            .capture_pane(&session.tmux_session, SNAPSHOT_LINES)
-            .await
-        {
-            Ok(pane) => Opening::Screen {
-                geometry,
-                snapshot: as_screen(pane, geometry),
-            },
-            Err(e) => {
-                // Which of the two it is decides everything: a pane that has
-                // gone is a finished session, and one that merely cannot be
-                // read is a stream that has to wait rather than declare the
-                // session over — an `end` stops the client from ever asking
-                // again.
-                let still_there = state
-                    .launcher
-                    .tmux
-                    .pane_geometry(&session.tmux_session)
-                    .await
-                    .is_ok();
-                warn!(session = %session.id, error = %e, still_there, "capturing the pane failed");
-                if still_there {
-                    Opening::Unreadable
-                } else {
-                    log.rewind();
-                    Opening::Log(log.drain().await)
-                }
-            }
-        },
-        // Already dead: the full piped log is all there will ever be.
-        None => {
-            log.rewind();
-            Opening::Log(log.drain().await)
-        }
-    };
-
-    // A live pane is measured; a finished one is served at the last size it
-    // was seen at, which is why every measurement is written down. Its console
-    // log is raw terminal bytes wrapped at that width, so replaying it at a
-    // default would corrupt exactly the sessions that are only ever read as
-    // history.
-    let size = match &opening {
-        Opening::Screen { geometry, .. } => {
-            state
-                .launcher
-                .record_pane_size(&session.id, geometry.cols, geometry.rows)
-                .await;
-            Some(SessionPaneSize {
-                cols: geometry.cols,
-                rows: geometry.rows,
-            })
-        }
-        // Nothing is claimed about a screen there is no screen for: the
-        // `resize` comes with the capture that earns it.
-        Opening::Unreadable => None,
-        Opening::Log(_) => state
-            .launcher
-            .last_pane_size(&session.id)
-            .await
-            .map(|(cols, rows)| SessionPaneSize { cols, rows }),
-    };
-
-    let mut queue = VecDeque::new();
-    if let Some(size) = size {
-        queue.push_back(resize_event(size));
-    }
-    let phase = match opening {
-        Opening::Screen { snapshot, .. } => {
-            queue.push_back(chunk_event("snapshot", &snapshot));
-            Phase::Following
-        }
-        Opening::Unreadable => Phase::Resynchronising {
-            since: Instant::now(),
-        },
-        Opening::Log(snapshot) => {
-            queue.push_back(chunk_event("snapshot", &snapshot));
-            Phase::Ending
-        }
-    };
-
+    // Nothing is captured here. A screen and the grid it is described by have
+    // to be one screen's, which takes measuring the pane on both sides of the
+    // capture — and that is exactly what the resynchronising phase does, for
+    // a pane that resized and for one being seen for the first time alike.
+    // The stream therefore opens owing the client a screen, and its first act
+    // is to go and get one; a session with no pane left falls out of that as
+    // `Resync::Gone` and is served its console log.
     let follower = Follower {
         state,
         session_id: session.id,
         tmux_session: session.tmux_session,
         log,
-        phase,
-        queue,
-        size,
+        phase: Phase::Resynchronising {
+            since: Instant::now(),
+        },
+        queue: VecDeque::new(),
+        size: None,
         checked_alive_at: Instant::now(),
     };
     let events = unfold(follower, |mut f| async move {
@@ -417,7 +358,12 @@ pub async fn logs_stream(
                                 };
                                 continue;
                             }
-                            Pane::Alive(_) => {}
+                            // Nothing learned: a pane that did not answer is
+                            // still drawing at the grid it last answered with
+                            // as far as anyone here knows, and freezing the
+                            // stream over an unanswered question would be a
+                            // worse guess than carrying on.
+                            Pane::Alive(_) | Pane::Unreadable => {}
                         }
                     }
                     if !new.is_empty() {
@@ -430,12 +376,13 @@ pub async fn logs_stream(
                         continue;
                     }
                     Resync::Gone => {
-                        // Whatever is left was drawn at a grid the client
-                        // never got, so it goes no further; the finished
-                        // session's own log is coherent and is what a reload
-                        // serves.
-                        f.phase = Phase::Done;
-                        return Some((Ok(end_event(&f.session_id)), f));
+                        // No pane to take a screen from — it was over before
+                        // the stream opened, or went while one was being
+                        // fetched. Either way the console log is what is left
+                        // of it, and it is coherent at the size it was
+                        // written at.
+                        f.finish_with_log().await;
+                        continue;
                     }
                     Resync::Retry => {
                         if since.elapsed() >= RESYNC_TIMEOUT {
