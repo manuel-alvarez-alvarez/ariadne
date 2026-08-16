@@ -35,20 +35,26 @@ export function GoalSessions({
   onSelect: (sessionId: string | null) => void
 }) {
   if (sessionId) {
-    return <SelectedSession sessionId={sessionId} onSelect={onSelect} />
+    return <SelectedSession goalId={goalId} sessionId={sessionId} onSelect={onSelect} />
   }
 
   return <SessionsList filters={{ goal: goalId }} onSelect={(session) => onSelect(session.id)} />
 }
 
 function SelectedSession({
+  goalId,
   sessionId,
   onSelect,
 }: {
+  goalId: string
   sessionId: string
   onSelect: (sessionId: string | null) => void
 }) {
   const session = useQuery(sessionQueryOptions(sessionId))
+  // `GET /v1/sessions/{id}` is not scoped to a goal, so a link can hand this
+  // tab a session of some *other* goal. It is not one of this goal's, and the
+  // panel would present it as if it were — with kill and resume on it.
+  const foreign = session.data !== undefined && session.data.goal_id !== goalId
 
   return (
     <div className="space-y-4">
@@ -64,11 +70,18 @@ function SelectedSession({
           <Skeleton className="h-64 w-full" />
         </div>
       ) : session.isError ? (
-        // A link can point at a session that was never this goal's, or is gone
-        // altogether; the tab says so and stays usable.
+        // A link can point at a session that is gone altogether; the tab says
+        // so and stays usable.
         <Alert variant="destructive">
           <AlertTitle>Could not load session {sessionId}</AlertTitle>
           <AlertDescription>{reason(session.error)}</AlertDescription>
+        </Alert>
+      ) : foreign ? (
+        <Alert variant="destructive">
+          <AlertTitle>Not a session of this goal</AlertTitle>
+          <AlertDescription>
+            Session {sessionId} belongs to another goal, so it is not shown here.
+          </AlertDescription>
         </Alert>
       ) : (
         <SessionDetailView
