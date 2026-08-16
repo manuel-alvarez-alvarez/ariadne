@@ -26,13 +26,7 @@ import {
 import { paths, taskSessionPanelTo } from "@/routes/paths"
 
 import type { SessionListFilters } from "./queries"
-import {
-  ROLE_LABELS,
-  ROLES,
-  SESSION_STATUS_META,
-  SESSION_STATUSES,
-  sessionStatusLabel,
-} from "./session-display"
+import { ROLE_LABELS, ROLES, SESSION_STATUSES, sessionStatusLabel } from "./session-display"
 import { SessionsList } from "./sessions-list"
 
 /** Sentinel for "no filter" — `Select` needs a value for every item. */
@@ -137,9 +131,9 @@ function FilterSelect({
 }
 
 function asStatus(value: string | null): SessionStatus | undefined {
-  return value !== null && value in SESSION_STATUS_META ? (value as SessionStatus) : undefined
+  return SESSION_STATUSES.find((status) => status === value)
 }
 
 function asRole(value: string | null): Role | undefined {
-  return value !== null && value in ROLE_LABELS ? (value as Role) : undefined
+  return ROLES.find((role) => role === value)
 }
