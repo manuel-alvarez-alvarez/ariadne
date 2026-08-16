@@ -34,9 +34,8 @@ export function SessionActions({
   session: SessionDto
   /**
    * Handed the session a resume revived this one into, when that is a new
-   * one. Where to go from there is the caller's call — the session screen
-   * navigates to it, a panel selects it — so these buttons stay usable
-   * wherever they are rendered.
+   * one. Where to go from there is the caller's call — a panel selects it —
+   * so these buttons stay usable wherever they are rendered.
    */
   onResumed?: (session: SessionDto) => void
 }) {
