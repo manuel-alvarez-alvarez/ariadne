@@ -222,6 +222,22 @@ impl Harness {
         self.stub_marker("measure-fails", fails);
     }
 
+    /// Whether the stub tmux can be run at all. Taking the binary away is how
+    /// a daemon that cannot spawn a process sees the world: every question is
+    /// unanswered, rather than answered "no".
+    fn stub_tmux_reachable(&self, reachable: bool) {
+        let bin = self.dir.path().join("tmux-stub.sh");
+        let parked = self.dir.path().join("tmux-stub.parked");
+        let (from, to) = if reachable {
+            (&parked, &bin)
+        } else {
+            (&bin, &parked)
+        };
+        if from.exists() {
+            std::fs::rename(from, to).unwrap();
+        }
+    }
+
     fn stub_marker(&self, name: &str, set: bool) {
         let marker = self.dir.path().join(name);
         if set {
@@ -742,6 +758,118 @@ async fn output_while_the_resized_pane_cannot_be_captured_waits_for_the_new_scre
     assert!(
         !chunk.contains("DRAWN-AT-120-COLUMNS"),
         "the replacement screen covers what came before it: {chunk:?}"
+    );
+}
+
+/// A pane that stops answering has not promised to stop changing. Output read
+/// after a measurement failed may have been drawn at a grid the client has
+/// never been given — the failure and a resize can be the same moment — so it
+/// is withheld exactly as a detected resize's is, rather than sent at the last
+/// grid anyone happened to confirm.
+#[tokio::test]
+async fn output_is_withheld_once_the_pane_stops_answering() {
+    let h = harness_with_stub_tmux().await;
+    let session = h.session("ariadne-unanswering").await;
+    h.stub_pane("80-column screen\n");
+    h.write_console_log(&session.id, "");
+
+    let mut body = h
+        .router
+        .clone()
+        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
+        .await
+        .unwrap()
+        .into_body();
+    let (name, payload) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "resize");
+    assert_eq!(payload["cols"], 80);
+    let (name, _) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "snapshot");
+
+    // The pane is resized and stops answering in the same breath, so the
+    // daemon has no way to learn about the resize: the failure is all it sees.
+    h.stub_pane_screen("120-column screen\n");
+    h.stub_pane_geometry(120, 40, 0, 39);
+    h.stub_measure_fails(true);
+    // Long enough for the follower to have taken that in.
+    tokio::time::sleep(Duration::from_millis(1_400)).await;
+
+    let mut log = tokio::fs::OpenOptions::new()
+        .append(true)
+        .open(h.console_log(&session.id))
+        .await
+        .unwrap();
+    log.write_all(b"DRAWN-AT-AN-UNKNOWN-GRID\n").await.unwrap();
+    log.flush().await.unwrap();
+
+    let held = sse_message_within(&mut body, Duration::from_millis(700)).await;
+    assert!(
+        held.is_none(),
+        "output whose grid cannot be confirmed must not be sent at the old one: {held:?}"
+    );
+
+    // The pane answers again, and the answer is the grid it had quietly moved
+    // to; the screen replaces what was withheld.
+    h.stub_measure_fails(false);
+    let (name, payload) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "resize");
+    assert_eq!(
+        (payload["cols"].as_u64(), payload["rows"].as_u64()),
+        (Some(120), Some(40))
+    );
+    let (name, payload) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "snapshot");
+    assert_eq!(payload["chunk"], "120-column screen\u{1b}[40;1H");
+}
+
+/// A daemon that cannot run `tmux` at all has learned nothing about the pane.
+/// Neither the failed measurement nor the failed confirmation is an answer, so
+/// the session keeps its status and the stream keeps its silence — the one
+/// thing that must not happen is `end`, which retires the viewer for good.
+#[tokio::test]
+async fn tmux_being_unreachable_does_not_end_a_session() {
+    let h = harness_with_stub_tmux().await;
+    let session = h.session("ariadne-no-tmux").await;
+    h.stub_pane("a screen behind a broken tmux\n");
+    h.write_console_log(&session.id, "console output\n");
+    h.stub_tmux_reachable(false);
+
+    let mut body = h
+        .router
+        .clone()
+        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
+        .await
+        .unwrap()
+        .into_body();
+    for _ in 0..3 {
+        match next_sse(&mut body, Duration::from_millis(500)).await {
+            Sse::Silent => {}
+            Sse::Closed => break,
+            Sse::Message(message) => {
+                panic!("nothing was learned about the pane, yet it sent {message:?}")
+            }
+        }
+    }
+    assert!(
+        h.store
+            .get_session(&session.id)
+            .await
+            .unwrap()
+            .status()
+            .is_live(),
+        "a session is not over because tmux could not be run"
+    );
+
+    // tmux comes back: the same connection produces the screen it owed.
+    h.stub_tmux_reachable(true);
+    let (name, payload) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "resize");
+    assert_eq!(payload["cols"], 80);
+    let (name, payload) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "snapshot");
+    assert_eq!(
+        payload["chunk"],
+        "a screen behind a broken tmux\u{1b}[24;1H"
     );
 }
 
