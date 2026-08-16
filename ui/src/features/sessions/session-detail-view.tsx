@@ -14,8 +14,9 @@ import type { ReactNode } from "react"
 import { Link } from "react-router-dom"
 
 import type { SessionDto } from "@/api"
-import { CopyableId } from "@/components/copyable-id"
+import { CopyableId, CopyableIdMenu } from "@/components/copyable-id"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { sessionCopyEntries } from "@/lib/copy-entries"
 import { formatAbsolute, formatAge } from "@/lib/time"
 import { paths, useTaskPanelTo } from "@/routes/paths"
 
@@ -57,9 +58,10 @@ export function SessionDetailView({
           {ROLE_LABELS[session.role]} session
         </h1>
         <SessionStatusBadge status={session.status} />
-        <CopyableId
+        <CopyableIdMenu
           value={session.id}
           label="session id"
+          entries={sessionCopyEntries(session.id)}
           className="text-xs text-muted-foreground"
         />
         <div className="ml-auto">
@@ -101,18 +103,14 @@ export function SessionDetailView({
               </span>
             </Detail>
             <Detail label="tmux session">
-              <CopyableId
-                value={session.tmux_session}
-                label="tmux session"
-                className="max-w-full truncate text-xs"
-              />
+              <CopyableId value={session.tmux_session} label="tmux session" className="text-xs" />
             </Detail>
             <Detail label="Worktree">
               {session.worktree_path ? (
                 <CopyableId
                   value={session.worktree_path}
                   label="worktree path"
-                  className="max-w-full truncate text-xs"
+                  className="text-xs"
                 />
               ) : (
                 <Dash />
@@ -123,7 +121,7 @@ export function SessionDetailView({
                 <CopyableId
                   value={session.internal_session_id}
                   label="agent session id"
-                  className="max-w-full truncate text-xs"
+                  className="text-xs"
                 />
               ) : (
                 <Dash />
