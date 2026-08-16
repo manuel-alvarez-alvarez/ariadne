@@ -59,7 +59,6 @@ export function DeleteProfileDialog({
       title={`Delete “${profile?.name}”?`}
       description="The profile is removed from the daemon. Sessions that already ran as it keep their transcripts."
       confirmLabel="Delete profile"
-      pendingLabel="Deleting…"
       destructive
       pending={deleteProfile.isPending}
       // Nothing the dialog can do about a reference the daemon still sees.

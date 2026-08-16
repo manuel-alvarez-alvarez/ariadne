@@ -15,6 +15,7 @@ import { toast } from "sonner"
 import type { TaskDto } from "@/api"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { Button } from "@/components/ui/button"
+import { isSettling } from "@/lib/confirm-flow"
 import { useCancelTask, useRetryTask } from "./queries"
 import { canCancel, canRetry, statusLabel } from "./status"
 
@@ -25,7 +26,15 @@ export function TaskActions({ task }: { task: TaskDto }) {
 
   const showCancel = canCancel(task.status)
   const showRetry = canRetry(task.status)
-  if (!showCancel && !showRetry) return null
+  // Cancelling is optimistic, so by the time the request is in flight the task
+  // is already `cancelled` and neither button applies any more. Returning null
+  // here would take the open dialog — its spinner, and the refusal it may be
+  // about to show — down with them.
+  const settling = isSettling(
+    { open: open === "cancel", pending: cancel.isPending, error: cancel.error },
+    { open: open === "retry", pending: retry.isPending, error: retry.error },
+  )
+  if (!showCancel && !showRetry && !settling) return null
 
   function close() {
     setOpen(null)
@@ -42,7 +51,8 @@ export function TaskActions({ task }: { task: TaskDto }) {
         </Button>
       )}
       {showCancel && (
-        <Button variant="destructive" size="sm" onClick={() => setOpen("cancel")}>
+        // Only opens the confirm; the solid red is on the click inside it.
+        <Button variant="destructive-ghost" size="sm" onClick={() => setOpen("cancel")}>
           <BanIcon />
           Cancel
         </Button>
