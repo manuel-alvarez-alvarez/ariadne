@@ -272,7 +272,7 @@ function GoalMetadata({ goal }: { goal: GoalDto }) {
           <ul className="flex flex-col gap-1">
             {goal.repos.map((repo) => (
               <li key={repo.id} className="min-w-0">
-                <CopyableId value={repo.path} label="repository path" className="text-xs" />
+                <CopyableId value={repo.path} label="repository path" wrap className="text-xs" />
                 <span className="font-mono text-xs text-muted-foreground">
                   base: {repo.base_branch}
                 </span>
@@ -310,7 +310,7 @@ function PlannerProfileName({ profileId }: { profileId: string }) {
   return (
     <span className="break-all">
       {profile.data?.name ?? (
-        <CopyableId value={profileId} label="profile id" className="text-xs" />
+        <CopyableId value={profileId} label="profile id" wrap className="text-xs" />
       )}
     </span>
   )
