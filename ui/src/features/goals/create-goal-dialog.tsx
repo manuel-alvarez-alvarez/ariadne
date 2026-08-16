@@ -9,14 +9,14 @@
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useQuery } from "@tanstack/react-query"
-import { AlertCircleIcon, PlusIcon, XIcon } from "lucide-react"
+import { PlusIcon, XIcon } from "lucide-react"
 import { useEffect, useMemo } from "react"
 import { Controller, useFieldArray, useForm } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
 
 import { ApiError, type CreateGoalRequest, type GoalDto } from "@/api"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { ErrorState } from "@/components/error-state"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -306,14 +306,7 @@ export function CreateGoalDialog({
           </div>
 
           {submitError ? (
-            <Alert variant="destructive">
-              <AlertCircleIcon />
-              <AlertTitle>Could not create the goal</AlertTitle>
-              <AlertDescription>
-                {submitError.message}
-                <span className="ml-1 font-mono text-xs">({submitError.code})</span>
-              </AlertDescription>
-            </Alert>
+            <ErrorState title="Could not create the goal" error={submitError} />
           ) : null}
 
           <DialogFooter>

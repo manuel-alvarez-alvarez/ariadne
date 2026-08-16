@@ -10,10 +10,11 @@ import { useQuery } from "@tanstack/react-query"
 import { ArrowRightIcon } from "lucide-react"
 
 import type { TaskStatus, TaskTransitionDto } from "@/api"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { EmptyState } from "@/components/empty-state"
+import { ErrorState } from "@/components/error-state"
 import { Skeleton } from "@/components/ui/skeleton"
+import { formatAbsolute, formatRelative } from "@/lib/time"
 import { cn } from "@/lib/utils"
-import { describeError, formatAbsolute, formatRelative } from "./format"
 import { taskTransitionsQueryOptions } from "./queries"
 import { displayLabel, TASK_STATUS_META } from "./status"
 
@@ -32,19 +33,16 @@ export function TaskHistory({ taskId }: { taskId: string }) {
 
   if (transitions.error) {
     return (
-      <Alert variant="destructive">
-        <AlertTitle>Could not load the history</AlertTitle>
-        <AlertDescription>{describeError(transitions.error)}</AlertDescription>
-      </Alert>
+      <ErrorState
+        title="Could not load the history"
+        error={transitions.error}
+        onRetry={() => void transitions.refetch()}
+      />
     )
   }
 
   if (transitions.data.length === 0) {
-    return (
-      <p className="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
-        The task has not moved yet.
-      </p>
-    )
+    return <EmptyState title="The task has not moved yet." />
   }
 
   return (

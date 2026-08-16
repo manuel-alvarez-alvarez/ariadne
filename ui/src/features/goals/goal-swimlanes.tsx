@@ -11,8 +11,9 @@ import { useQuery } from "@tanstack/react-query"
 import { useMemo } from "react"
 import { Link } from "react-router-dom"
 
-import { ApiError, type GoalDto, type TaskDto, type TaskStatus } from "@/api"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import type { GoalDto, TaskDto, TaskStatus } from "@/api"
+import { ErrorState } from "@/components/error-state"
+import { StatusBadge } from "@/components/status-badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   BOARD_STATUSES,
@@ -22,10 +23,10 @@ import {
   TaskCard,
   taskListQueryOptions,
 } from "@/features/tasks"
+import { formatRelative } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { paths } from "@/routes/paths"
-import { formatRelative } from "./format"
-import { GoalStatusBadge } from "./goal-status-badge"
+import { GOAL_STATUS_META } from "./status"
 
 /** One template for the header row and every lane, so the columns line up. */
 const COLUMNS_GRID = "grid grid-cols-[repeat(5,minmax(13rem,1fr))] gap-3"
@@ -36,12 +37,11 @@ export function GoalSwimlanes({ goals }: { goals: GoalDto[] }) {
 
   if (tasks.error) {
     return (
-      <Alert variant="destructive">
-        <AlertTitle>Could not load the tasks</AlertTitle>
-        <AlertDescription>
-          {ApiError.is(tasks.error) ? tasks.error.message : String(tasks.error)}
-        </AlertDescription>
-      </Alert>
+      <ErrorState
+        title="Could not load the tasks"
+        error={tasks.error}
+        onRetry={() => void tasks.refetch()}
+      />
     )
   }
 
@@ -94,7 +94,10 @@ function Lane({ goal, tasks }: { goal: GoalDto; tasks?: GoalTasks }) {
         >
           {goal.title}
         </Link>
-        <GoalStatusBadge status={goal.status} />
+        <StatusBadge
+          label={GOAL_STATUS_META[goal.status].label}
+          tone={GOAL_STATUS_META[goal.status].badge}
+        />
         <span className="text-xs text-muted-foreground">
           {total} {total === 1 ? "task" : "tasks"}
         </span>

@@ -16,18 +16,13 @@ import { Link } from "react-router-dom"
 import type { SessionDto } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { formatAbsolute, formatAge } from "@/lib/time"
 import { paths, useTaskPanelTo } from "@/routes/paths"
 
 import { goalQueryOptions, profilesQueryOptions, taskQueryOptions } from "./queries"
 import { SessionActions } from "./session-actions"
 import { SessionActivity } from "./session-activity"
-import {
-  AGENT_KIND_LABELS,
-  formatAge,
-  formatTimestamp,
-  ROLE_LABELS,
-  SessionStatusBadge,
-} from "./session-display"
+import { AGENT_KIND_LABELS, ROLE_LABELS, SessionStatusBadge } from "./session-display"
 import { SessionTerminal } from "./session-terminal"
 import { useNow } from "./use-now"
 
@@ -35,7 +30,6 @@ export function SessionDetailView({
   session,
   context,
   onResumed,
-  terminalClassName,
 }: {
   session: SessionDto
   /**
@@ -45,8 +39,6 @@ export function SessionDetailView({
   context?: "goal" | "task"
   /** Where to go once a resume hands the session back; see {@link SessionActions}. */
   onResumed?: (session: SessionDto) => void
-  /** Height of the terminal box, for embeddings with less room than a page. */
-  terminalClassName?: string
 }) {
   const now = useNow()
   const goal = useQuery(goalQueryOptions(session.goal_id))
@@ -153,11 +145,7 @@ export function SessionDetailView({
           <CardTitle>Terminal</CardTitle>
         </CardHeader>
         <CardContent>
-          <SessionTerminal
-            sessionId={session.id}
-            status={session.status}
-            screenClassName={terminalClassName}
-          />
+          <SessionTerminal sessionId={session.id} status={session.status} />
         </CardContent>
       </Card>
 
@@ -186,8 +174,8 @@ function Detail({ label, children }: { label: string; children: ReactNode }) {
 function Ago({ at, now }: { at: string | null | undefined; now: number }) {
   if (!at) return <Dash />
   return (
-    <time dateTime={at} title={formatTimestamp(at)}>
-      {formatAge(at, now)} ago
+    <time dateTime={at} title={formatAbsolute(at)}>
+      {formatAge(at, now)}
     </time>
   )
 }

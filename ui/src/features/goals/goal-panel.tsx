@@ -14,24 +14,23 @@
  */
 
 import { useQuery } from "@tanstack/react-query"
-import { AlertCircleIcon } from "lucide-react"
 import { useSearchParams } from "react-router-dom"
 
 import { ApiError, api, type GoalDto, qk, unwrap } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
-import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
+import { ErrorState } from "@/components/error-state"
+import { Markdown } from "@/components/markdown"
+import { StatusBadge } from "@/components/status-badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { formatAbsolute, formatRelative } from "./format"
+import { formatAbsolute, formatRelative } from "@/lib/time"
 import { GoalActions } from "./goal-actions"
 import { GoalSessions, GoalSessionView } from "./goal-sessions"
-import { GoalStatusBadge } from "./goal-status-badge"
 import { GoalThread } from "./goal-thread"
-import { Markdown } from "./markdown"
 import { goalQueryOptions } from "./queries"
+import { GOAL_STATUS_META } from "./status"
 
 const TABS = ["thread", "sessions"] as const
 type Tab = (typeof TABS)[number]
@@ -72,20 +71,12 @@ export function GoalPanel({ goalId, onClose }: { goalId: string; onClose: () => 
       {error ? (
         <>
           <SheetTitle className="sr-only">Goal {goalId}</SheetTitle>
-          <Alert variant="destructive">
-            <AlertCircleIcon />
-            <AlertTitle>
-              {error.status === 404 ? "No such goal" : "Could not load the goal"}
-            </AlertTitle>
-            <AlertDescription>{error.message}</AlertDescription>
-            {error.status === 404 ? null : (
-              <AlertAction>
-                <Button variant="outline" size="sm" onClick={() => void goal.refetch()}>
-                  Retry
-                </Button>
-              </AlertAction>
-            )}
-          </Alert>
+          <ErrorState
+            title={error.status === 404 ? "No such goal" : "Could not load the goal"}
+            error={error}
+            // A goal that does not exist will not start existing on a retry.
+            onRetry={error.status === 404 ? undefined : () => void goal.refetch()}
+          />
         </>
       ) : null}
 
@@ -136,7 +127,10 @@ function GoalView({
       <SheetHeader>
         <div className="flex flex-wrap items-center gap-2">
           <SheetTitle>{goal.title}</SheetTitle>
-          <GoalStatusBadge status={goal.status} />
+          <StatusBadge
+            label={GOAL_STATUS_META[goal.status].label}
+            tone={GOAL_STATUS_META[goal.status].badge}
+          />
         </div>
         <CopyableId value={goal.id} label="goal id" className="text-xs text-muted-foreground" />
       </SheetHeader>
