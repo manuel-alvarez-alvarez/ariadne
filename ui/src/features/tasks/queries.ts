@@ -89,22 +89,6 @@ export function taskDiffQueryOptions(taskId: string) {
   })
 }
 
-export function usePostTaskMessage(taskId: string) {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (body: string) =>
-      unwrap(
-        api().POST("/v1/tasks/{id}/messages", {
-          params: { path: { id: taskId } },
-          body: { body },
-        }),
-      ),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: qk.tasks.messages(taskId) })
-    },
-  })
-}
-
 export function useCancelTask(taskId: string) {
   return useTaskAction(taskId, () =>
     unwrap(api().POST("/v1/tasks/{id}/cancel", { params: { path: { id: taskId } } })),
