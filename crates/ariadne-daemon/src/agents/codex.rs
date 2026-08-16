@@ -1,14 +1,15 @@
 //! Codex CLI adapter.
 //!
 //! - Bypass: `--dangerously-bypass-approvals-and-sandbox`
-//! - Events: hooks declared in the global `~/.codex/hooks.json`, installed by
-//!   `ariadne setup codex-hooks` and trusted once, manually, by the user.
-//!   Every hook pipes its JSON payload into `ariadne agent-event --kind
-//!   codex`. Nothing is passed at spawn: hook trust is keyed on the hooks-file
-//!   path, so a per-worktree file would need a new trust prompt every time.
-//!   The `SessionStart` payload carries `session_id`, which the ingestion
-//!   endpoint captures before the first turn — notify only fired on
-//!   agent-turn-complete, which a session killed mid-turn never reaches.
+//! - Events: `-c hooks.<Event>=[...]` overrides piping each hook's JSON
+//!   payload into `ariadne agent-event --kind codex`
+//!   ([`ariadne_core::codex_hooks`]). Nothing is written to the user's
+//!   `~/.codex`: the declaration is per session, and the trust the user grants
+//!   once at install time covers it because codex keys command-line hook trust
+//!   on a synthetic path rather than the worktree. The `SessionStart` payload
+//!   carries `session_id`, captured by the ingestion endpoint before the first
+//!   turn — notify only fired on agent-turn-complete, which a session killed
+//!   mid-turn never reaches.
 //! - System prompt: no append-safe flag — prepended to the initial prompt
 //! - Resume: `codex resume <thread-id>`; flags must be re-passed (they are
 //!   not inherited from the original session)
@@ -39,6 +40,9 @@ impl CodexAdapter {
             "-c".into(),
             format!("mcp_servers.ariadne.env={{ {env_table} }}"),
         ];
+        // Byte-identical to what `ariadne setup codex-hooks` had the user
+        // trust; anything else and the session stalls at a trust prompt.
+        flags.extend(ariadne_core::codex_hooks::config_flags(&ctx.cli_bin));
         if let Some(model) = &ctx.model {
             flags.push("-m".into());
             flags.push(model.clone());
