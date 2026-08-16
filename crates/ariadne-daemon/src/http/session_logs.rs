@@ -26,11 +26,24 @@ const LIVENESS: Duration = Duration::from_secs(1);
 const SNAPSHOT_LINES: u32 = 1000;
 /// How often a keep-alive comment is sent on a quiet stream.
 const KEEP_ALIVE_SECS: u64 = 15;
+/// How long a resized pane is given to yield a screen at its new grid before
+/// the connection is dropped for a fresh one. Output is withheld throughout,
+/// so this is also how long a viewer may sit on a frozen terminal.
+const RESYNC_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Where one connection stands.
+#[derive(Clone, Copy)]
 enum Phase {
     /// Following the console log for new output.
     Following,
+    /// The pane changed shape and the screen that replaces the client's has
+    /// not been captured yet. Nothing goes out meanwhile: every byte the pane
+    /// writes from here belongs to a grid the client does not have, and the
+    /// bytes already read belong to one it is about to lose.
+    Resynchronising {
+        geometry: PaneGeometry,
+        since: Instant,
+    },
     /// The last output is out; `end` comes next.
     Ending,
     /// `end` is out; the stream closes.
@@ -97,7 +110,8 @@ impl Follower {
     }
 
     /// Start the client over at `geometry`: a `resize`, then a `snapshot`
-    /// taken in it, queued in that order.
+    /// taken in it, queued in that order. `false` if the screen could not be
+    /// captured, in which case nothing has changed and the caller retries.
     ///
     /// A resize cannot be spliced into the byte stream. The output waiting to
     /// go out straddles the moment the pane changed shape — some of it drawn
@@ -107,14 +121,14 @@ impl Follower {
     /// redrawn by whatever is running in it anyway, the whole screen is
     /// captured again and the pending bytes are dropped along with the size
     /// they were meant for: the snapshot supersedes them, scrollback included.
-    ///
-    /// Nothing is committed if the capture fails — the size stays unreported
-    /// and the next tick tries again.
     async fn resynchronise(&mut self, geometry: PaneGeometry) -> bool {
-        // Mark the log's end first, as a fresh connection does: whatever the
-        // pane writes between here and the capture is then sent twice rather
-        // than not at all.
-        self.log.skip_existing().await;
+        // Where the log stands *before* the capture, so that whatever the pane
+        // writes in between is sent twice rather than not at all. The tail
+        // only moves there once there is a screen to have replaced it: a
+        // capture that fails must leave the follower exactly as it found it,
+        // or the bytes it skipped are lost and the client is left drawing the
+        // new grid's output at the old one.
+        let end = self.log.end_offset().await;
         let capture = match self
             .state
             .launcher
@@ -128,6 +142,7 @@ impl Follower {
                 return false;
             }
         };
+        self.log.skip_to(end);
         let size = SessionPaneSize {
             cols: geometry.cols,
             rows: geometry.rows,
@@ -141,6 +156,15 @@ impl Follower {
         self.queue
             .push_back(chunk_event("snapshot", &as_screen(capture, geometry)));
         true
+    }
+
+    /// Has the pane drawn on a grid the client has not been told about?
+    fn regridded(&self, geometry: PaneGeometry) -> bool {
+        self.size
+            != Some(SessionPaneSize {
+                cols: geometry.cols,
+                rows: geometry.rows,
+            })
     }
 }
 
@@ -162,7 +186,12 @@ impl Follower {
 /// `resize` and a *fresh* `snapshot` rather than continuing with deltas: the
 /// output in flight straddles the change and belongs to neither grid, so the
 /// client starts over at the new one. `snapshot` therefore means "replace
-/// everything you have", whenever it arrives.
+/// everything you have", whenever it arrives. Nothing is sent in between: a
+/// delta drawn at a grid the client does not have is the corruption this is
+/// all here to avoid. If no screen can be captured at the new grid, the
+/// connection is closed *without* an `end` — the session is not over, and a
+/// fresh connection is the shortest way back to a grid and a screen that
+/// agree.
 ///
 /// When the session ends — or if it was already over when the request arrived
 /// — the remaining output is flushed, a final `end` event (`SessionLogEnd`)
@@ -291,58 +320,86 @@ pub async fn logs_stream(
         checked_alive_at: Instant::now(),
     };
     let events = unfold(follower, |mut f| async move {
-        if let Some(event) = f.queue.pop_front() {
-            return Some((Ok(event), f));
-        }
-        match f.phase {
-            Phase::Following => loop {
-                tokio::time::sleep(POLL).await;
-                let mut new = f.log.read_new().await;
-                // Checked even when there is output to send: a pane that
-                // writes on every poll must not keep a finished session's
-                // stream open forever.
-                if f.due_for_liveness_check() {
-                    match f.poll().await {
-                        Pane::Gone => {
-                            // Whatever the session wrote on its way out,
-                            // half-written characters included.
-                            new.push_str(&f.log.drain().await);
-                            if new.is_empty() {
-                                f.phase = Phase::Done;
-                                return Some((Ok(end_event(&f.session_id)), f));
+        loop {
+            if let Some(event) = f.queue.pop_front() {
+                return Some((Ok(event), f));
+            }
+            match f.phase {
+                Phase::Following => {
+                    tokio::time::sleep(POLL).await;
+                    let mut new = f.log.read_new().await;
+                    // Checked even when there is output to send: a pane that
+                    // writes on every poll must not keep a finished session's
+                    // stream open forever.
+                    if f.due_for_liveness_check() {
+                        match f.poll().await {
+                            Pane::Gone => {
+                                // Whatever the session wrote on its way out,
+                                // half-written characters included.
+                                new.push_str(&f.log.drain().await);
+                                if new.is_empty() {
+                                    f.phase = Phase::Done;
+                                    return Some((Ok(end_event(&f.session_id)), f));
+                                }
+                                f.phase = Phase::Ending;
+                                return Some((Ok(chunk_event("delta", &new)), f));
                             }
-                            f.phase = Phase::Ending;
-                            return Some((Ok(chunk_event("delta", &new)), f));
-                        }
-                        // The pane changed shape under us. `new` is exactly
-                        // the output that cannot be placed either side of
-                        // that, so it is dropped for a fresh screen at the
-                        // new grid — see `resynchronise`.
-                        Pane::Alive(geometry)
-                            if f.size
-                                != Some(SessionPaneSize {
-                                    cols: geometry.cols,
-                                    rows: geometry.rows,
-                                }) =>
-                        {
-                            if f.resynchronise(geometry).await
-                                && let Some(event) = f.queue.pop_front()
-                            {
-                                return Some((Ok(event), f));
+                            // The pane changed shape under us. `new` is
+                            // exactly the output that cannot be placed either
+                            // side of that, so it is dropped, and nothing
+                            // more goes out until there is a screen at the
+                            // new grid to replace the client's with.
+                            Pane::Alive(geometry) if f.regridded(geometry) => {
+                                f.phase = Phase::Resynchronising {
+                                    geometry,
+                                    since: Instant::now(),
+                                };
+                                continue;
                             }
+                            Pane::Alive(_) => {}
                         }
-                        Pane::Alive(_) => {}
+                    }
+                    if !new.is_empty() {
+                        return Some((Ok(chunk_event("delta", &new)), f));
                     }
                 }
-                if !new.is_empty() {
-                    return Some((Ok(chunk_event("delta", &new)), f));
+                Phase::Resynchronising { geometry, since } => {
+                    if f.resynchronise(geometry).await {
+                        f.phase = Phase::Following;
+                        continue;
+                    }
+                    // The pane is measured again rather than retried blindly:
+                    // it may have gone, or changed shape a second time.
+                    match f.poll().await {
+                        Pane::Gone => {
+                            // Whatever is left was drawn at a grid the client
+                            // never got, so it goes no further; the finished
+                            // session's own log is coherent and is what a
+                            // reload serves.
+                            f.phase = Phase::Done;
+                            return Some((Ok(end_event(&f.session_id)), f));
+                        }
+                        Pane::Alive(geometry) => {
+                            if since.elapsed() >= RESYNC_TIMEOUT {
+                                // Out of ways to make this connection make
+                                // sense. Closing it without an `end` is not a
+                                // lie about the session and puts the client
+                                // on a fresh one, which starts from a grid
+                                // and a screen that agree.
+                                warn!(session = %f.session_id, "no screen at the pane's new grid; closing the stream to resynchronise");
+                                return None;
+                            }
+                            f.phase = Phase::Resynchronising { geometry, since };
+                        }
+                    }
+                    tokio::time::sleep(POLL).await;
                 }
-            },
-            Phase::Ending => {
-                f.phase = Phase::Done;
-                Some((Ok(end_event(&f.session_id)), f))
+                Phase::Ending => {
+                    f.phase = Phase::Done;
+                    return Some((Ok(end_event(&f.session_id)), f));
+                }
+                Phase::Done => return None,
             }
-            Phase::Done => None,
         }
     });
     Ok(

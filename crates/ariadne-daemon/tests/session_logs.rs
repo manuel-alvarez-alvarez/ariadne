@@ -86,11 +86,12 @@ fn write_tmux_stub(dir: &std::path::Path) -> TmuxManager {
         "#!/bin/sh\n\
          case \"$1\" in\n\
          \x20 has-session) [ -f '{alive}' ] || exit 1 ;;\n\
-         \x20 capture-pane) cat '{pane}' 2>/dev/null ;;\n\
+         \x20 capture-pane) [ -f '{no_capture}' ] && exit 1 ; cat '{pane}' 2>/dev/null ;;\n\
          \x20 display-message) cat '{size}' 2>/dev/null ;;\n\
          esac\n\
          exit 0\n",
         alive = dir.join("tmux-alive").display(),
+        no_capture = dir.join("capture-fails").display(),
         pane = dir.join("pane.txt").display(),
         size = dir.join("pane-size.txt").display(),
     );
@@ -179,6 +180,17 @@ impl Harness {
         )
         .unwrap();
     }
+
+    /// Whether the stub tmux's `capture-pane` fails — a pane that is there
+    /// (`display-message` still answers) but cannot be read.
+    fn stub_capture_fails(&self, fails: bool) {
+        let marker = self.dir.path().join("capture-fails");
+        if fails {
+            std::fs::write(marker, "").unwrap();
+        } else {
+            let _ = std::fs::remove_file(marker);
+        }
+    }
 }
 
 fn get(uri: &str) -> Request<Body> {
@@ -202,6 +214,26 @@ async fn next_sse_message(body: &mut Body) -> String {
     })
     .await
     .expect("timed out waiting for an sse message")
+}
+
+/// The next SSE message, or `None` if none arrives within `within` — for
+/// asserting that a stream is deliberately saying nothing.
+async fn sse_message_within(body: &mut Body, within: Duration) -> Option<String> {
+    tokio::time::timeout(within, async {
+        let mut buf = String::new();
+        while let Some(frame) = body.frame().await {
+            let frame = frame.expect("sse body error");
+            if let Some(chunk) = frame.data_ref() {
+                buf.push_str(&String::from_utf8_lossy(chunk));
+                if buf.contains("\n\n") {
+                    return buf;
+                }
+            }
+        }
+        panic!("sse stream ended: {buf:?}");
+    })
+    .await
+    .ok()
 }
 
 /// `event:` name and decoded `data:` payload of one SSE message.
@@ -584,6 +616,81 @@ async fn output_in_flight_when_the_pane_resizes_is_replaced_rather_than_reordere
     }
 
     writer.abort();
+}
+
+/// A capture can fail — a pane that is still there but cannot be read — and
+/// the resize is known by then. Everything the pane writes from that moment is
+/// drawn at a grid the client has not been given, so none of it may go out
+/// until there is a screen to go with it. Nothing is committed either: the log
+/// tail stays where it was, so the retry that succeeds still covers the bytes
+/// the failed attempt would have skipped.
+#[tokio::test]
+async fn output_while_the_resized_pane_cannot_be_captured_waits_for_the_new_screen() {
+    let h = harness_with_stub_tmux().await;
+    let session = h.session("ariadne-capture-fails").await;
+    h.stub_pane("80-column screen\n");
+    h.write_console_log(&session.id, "");
+
+    let response = h
+        .router
+        .clone()
+        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
+        .await
+        .unwrap();
+    let mut body = response.into_body();
+    let (name, _) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "resize");
+    let (name, _) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "snapshot");
+
+    // The pane is resized and stops being capturable at the same time. No
+    // output yet, so nothing can be in flight and the stream has nothing to
+    // say until it has a screen.
+    h.stub_capture_fails(true);
+    h.stub_pane_geometry(120, 40, 0, 39);
+    tokio::time::sleep(Duration::from_millis(1_200)).await;
+
+    // Now the pane draws — at 120 columns, which the client knows nothing of.
+    let mut log = tokio::fs::OpenOptions::new()
+        .append(true)
+        .open(h.console_log(&session.id))
+        .await
+        .unwrap();
+    log.write_all(b"DRAWN-AT-120-COLUMNS\n").await.unwrap();
+    log.flush().await.unwrap();
+
+    let held = sse_message_within(&mut body, Duration::from_millis(900)).await;
+    assert!(
+        held.is_none(),
+        "output drawn at the new grid must not be sent at the old one: {held:?}"
+    );
+
+    // The pane can be read again: a grid, then the screen that goes with it.
+    h.stub_pane("120-column screen\n");
+    h.stub_capture_fails(false);
+
+    let (name, payload) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "resize", "the recovery reports the grid first");
+    assert_eq!(payload["cols"], 120);
+    let (name, payload) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(
+        name, "snapshot",
+        "and the screen taken at it immediately after"
+    );
+    assert_eq!(payload["chunk"], "120-column screen\u{1b}[40;1H");
+
+    // What the pane wrote while it could not be captured is part of that
+    // screen now, not something still owed to the client.
+    log.write_all(b"AFTER-THE-RECOVERY\n").await.unwrap();
+    log.flush().await.unwrap();
+    let (name, payload) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "delta");
+    let chunk = payload["chunk"].as_str().unwrap();
+    assert!(chunk.contains("AFTER-THE-RECOVERY"), "chunk: {chunk:?}");
+    assert!(
+        !chunk.contains("DRAWN-AT-120-COLUMNS"),
+        "the replacement screen covers what came before it: {chunk:?}"
+    );
 }
 
 /// A session that has ended has no pane left to measure, and its console log
