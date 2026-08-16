@@ -18,6 +18,7 @@ import { AlertCircleIcon } from "lucide-react"
 import { useSearchParams } from "react-router-dom"
 
 import { ApiError, api, type GoalDto, qk, unwrap } from "@/api"
+import { CopyableId } from "@/components/copyable-id"
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -137,7 +138,7 @@ function GoalView({
           <SheetTitle>{goal.title}</SheetTitle>
           <GoalStatusBadge status={goal.status} />
         </div>
-        <p className="font-mono text-xs text-muted-foreground">{goal.id}</p>
+        <CopyableId value={goal.id} label="goal id" className="text-xs text-muted-foreground" />
       </SheetHeader>
 
       <GoalActions goal={goal} />
@@ -191,7 +192,11 @@ function GoalMetadata({ goal }: { goal: GoalDto }) {
           <ul className="flex flex-col gap-1">
             {goal.repos.map((repo) => (
               <li key={repo.id} className="min-w-0">
-                <span className="block font-mono text-xs break-all">{repo.path}</span>
+                <CopyableId
+                  value={repo.path}
+                  label="repository path"
+                  className="block text-xs break-all"
+                />
                 <span className="font-mono text-xs text-muted-foreground">
                   base: {repo.base_branch}
                 </span>
@@ -228,7 +233,9 @@ function PlannerProfileName({ profileId }: { profileId: string }) {
   })
   return (
     <span className="break-all">
-      {profile.data?.name ?? <span className="font-mono text-xs">{profileId}</span>}
+      {profile.data?.name ?? (
+        <CopyableId value={profileId} label="profile id" className="text-xs" />
+      )}
     </span>
   )
 }
