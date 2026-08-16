@@ -9,6 +9,7 @@
 
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useConnection } from "@/hooks/use-connection"
+import { formatDuration } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
 export function ConnectionStatus({ className }: { className?: string }) {
@@ -56,7 +57,7 @@ export function ConnectionStatus({ className }: { className?: string }) {
           <p className="font-mono text-xs">{baseUrl}</p>
           <p>
             API: {status}
-            {uptimeSecs !== null ? ` · up ${formatUptime(uptimeSecs)}` : ""}
+            {uptimeSecs !== null ? ` · up ${formatDuration(uptimeSecs)}` : ""}
           </p>
           <p>Events: {streamStatus}</p>
           {error ? <p className="text-destructive">{error.message}</p> : null}
@@ -64,11 +65,4 @@ export function ConnectionStatus({ className }: { className?: string }) {
       </TooltipContent>
     </Tooltip>
   )
-}
-
-function formatUptime(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`
-  if (seconds < 86_400) return `${Math.floor(seconds / 3600)}h`
-  return `${Math.floor(seconds / 86_400)}d`
 }

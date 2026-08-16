@@ -11,11 +11,12 @@ import { useMemo } from "react"
 
 import type { ReviewDto, ReviewVerdict } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { EmptyState } from "@/components/empty-state"
+import { ErrorState } from "@/components/error-state"
+import { Markdown } from "@/components/markdown"
 import { Skeleton } from "@/components/ui/skeleton"
+import { formatAbsolute, formatRelative } from "@/lib/time"
 import { cn } from "@/lib/utils"
-import { describeError, formatAbsolute, formatRelative } from "./format"
-import { Markdown } from "./markdown"
 import { taskReviewsQueryOptions } from "./queries"
 import { SessionLink } from "./task-sessions"
 
@@ -50,19 +51,16 @@ export function TaskReviews({ taskId }: { taskId: string }) {
 
   if (reviews.error) {
     return (
-      <Alert variant="destructive">
-        <AlertTitle>Could not load the reviews</AlertTitle>
-        <AlertDescription>{describeError(reviews.error)}</AlertDescription>
-      </Alert>
+      <ErrorState
+        title="Could not load the reviews"
+        error={reviews.error}
+        onRetry={() => void reviews.refetch()}
+      />
     )
   }
 
   if (rounds.length === 0) {
-    return (
-      <p className="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
-        No review has been submitted yet.
-      </p>
-    )
+    return <EmptyState title="No review has been submitted yet." />
   }
 
   return (

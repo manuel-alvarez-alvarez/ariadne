@@ -16,17 +16,17 @@ import {
   FilePlusIcon,
   RefreshCwIcon,
 } from "lucide-react"
-import { type ReactNode, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 
 import { ApiError } from "@/api"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { EmptyState } from "@/components/empty-state"
+import { ErrorState } from "@/components/error-state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import { DiffEditor, LARGE_FILE_LINES } from "./diff-editor"
 import { type DiffFile, parseUnifiedDiff } from "./diff-parse"
-import { describeError } from "./format"
 import { taskDiffQueryOptions } from "./queries"
 
 const CHANGE_META: Record<DiffFile["change"], { label: string; icon: typeof FileIcon }> = {
@@ -85,7 +85,7 @@ export function TaskDiff({ taskId }: { taskId: string }) {
       </div>
 
       {empty ? (
-        <EmptyDiff>The branch exists but has no changes against its base yet.</EmptyDiff>
+        <EmptyState title="The branch exists but has no changes against its base yet." />
       ) : raw || parsed.files.length === 0 ? (
         <RawDiff text={diff.data ?? ""} />
       ) : (
@@ -188,28 +188,10 @@ function RawDiff({ text, bare = false }: { text: string; bare?: boolean }) {
   )
 }
 
-function EmptyDiff({ children }: { children: ReactNode }) {
-  return (
-    <div className="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
-      {children}
-    </div>
-  )
-}
-
 function DiffError({ error, onRetry }: { error: unknown; onRetry: () => void }) {
   // 409 is the daemon saying "there is nothing to diff yet", not a failure.
   if (ApiError.is(error) && error.status === 409) {
-    return <EmptyDiff>{error.message}</EmptyDiff>
+    return <EmptyState title={error.message} />
   }
-  return (
-    <Alert variant="destructive">
-      <AlertTitle>Could not load the diff</AlertTitle>
-      <AlertDescription>
-        {describeError(error)}
-        <Button variant="outline" size="xs" className="mt-2 w-fit" onClick={onRetry}>
-          Try again
-        </Button>
-      </AlertDescription>
-    </Alert>
-  )
+  return <ErrorState title="Could not load the diff" error={error} onRetry={onRetry} />
 }

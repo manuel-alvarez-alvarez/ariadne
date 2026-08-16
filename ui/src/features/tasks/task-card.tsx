@@ -10,10 +10,11 @@ import { LayersIcon, TriangleAlertIcon } from "lucide-react"
 import { Link } from "react-router-dom"
 
 import type { TaskDto } from "@/api"
+import { StatusBadge } from "@/components/status-badge"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { formatAbsolute, formatRelative } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { useTaskPanelTo } from "@/routes/paths"
-import { formatAbsolute, formatRelative } from "./format"
 import { primaryStatus, subStatus, TASK_STATUS_META } from "./status"
 
 export function TaskCard({ task, showStatus = false }: { task: TaskDto; showStatus?: boolean }) {
@@ -40,19 +41,8 @@ export function TaskCard({ task, showStatus = false }: { task: TaskDto; showStat
       </p>
 
       <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-        {showStatus && (
-          <span className={cn("rounded-full px-1.5 py-0.5 font-medium", status.badge)}>
-            {status.label}
-          </span>
-        )}
-        {sub && (
-          <span
-            className={cn("rounded-full px-1.5 py-0.5 font-medium", sub.badge)}
-            title={sub.hint}
-          >
-            {sub.label}
-          </span>
-        )}
+        {showStatus && <StatusBadge size="sm" label={status.label} tone={status.badge} />}
+        {sub && <StatusBadge size="sm" label={sub.label} tone={sub.badge} title={sub.hint} />}
         {task.review_round > 0 && (
           <Tooltip>
             <TooltipTrigger render={<span className="font-mono" />}>

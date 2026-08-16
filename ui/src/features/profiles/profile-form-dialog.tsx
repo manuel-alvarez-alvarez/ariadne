@@ -36,6 +36,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
+import { describeError } from "@/lib/errors"
 
 import {
   AGENT_KIND_CHOICES,
@@ -99,7 +100,7 @@ export function ProfileFormDialog({
         setError("name", { message: `A profile named "${values.name.trim()}" already exists.` })
         return
       }
-      setError("root", { message: errorMessage(error) })
+      setError("root", { message: describeError(error) })
     }
   }
 
@@ -312,9 +313,4 @@ export function ProfileFormDialog({
 
 function agentKindChoiceLabel(choice: AgentKindChoice): string {
   return choice === AUTO_AGENT_KIND ? "Auto-resolve" : agentKindLabel(choice)
-}
-
-function errorMessage(error: unknown): string {
-  if (ApiError.is(error)) return error.message
-  return error instanceof Error ? error.message : String(error)
 }
