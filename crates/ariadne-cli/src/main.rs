@@ -65,12 +65,13 @@ enum Command {
         #[command(subcommand)]
         command: SessionCommand,
     },
-    /// Attach to the tmux session of a task's or goal's agent
+    /// Attach to the tmux session of a session, task or goal id
     Attach {
-        /// Task or goal id
+        /// Session, task or goal id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(complete::attach_ids))]
         id: String,
-        /// engineer | reviewer | planner (default: engineer for tasks, planner for goals)
+        /// engineer | reviewer | planner (default: engineer for tasks, planner
+        /// for goals; not valid with a session id)
         #[arg(long, value_parser = commands::parse_role, add = clap_complete::engine::ArgValueCandidates::new(complete::roles))]
         role: Option<ariadne_core::Role>,
     },
@@ -164,7 +165,7 @@ async fn run(cli: Cli) -> Result<()> {
             DaemonCommand::Status => commands::daemon_status(&client).await,
             DaemonCommand::Logs { follow } => commands::daemon_logs(follow),
         },
-        Command::Attach { id, role } => commands::attach::attach(&client, &id, role).await,
+        Command::Attach { id, role } => commands::attach::attach_any(&client, &id, role).await,
         Command::Profile { command } => commands::profile::run(&client, command, cli.format).await,
         Command::Goal { command } => commands::goal::run(&client, command, cli.format).await,
         Command::Task { command } => commands::task::run(&client, command, cli.format).await,

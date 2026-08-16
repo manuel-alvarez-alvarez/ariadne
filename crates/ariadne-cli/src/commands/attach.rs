@@ -1,5 +1,9 @@
 //! Attach/logs helpers: resolve an Ariadne id to a tmux session and exec.
 //!
+//! The id is a session, task or goal id: a session id attaches to that exact
+//! session, a task or goal id to the session of the wanted role (default
+//! engineer for tasks, planner for goals).
+//!
 //! When no tmux is alive for the id, attach revives the most recent matching
 //! session through the daemon (`POST /v1/sessions/{id}/resume`): a fresh tmux
 //! is created resuming the same agent conversation, and we attach to that.
@@ -7,7 +11,7 @@
 use anyhow::{Result, bail};
 
 use ariadne_api::sessions::SessionDto;
-use ariadne_client::Client;
+use ariadne_client::{Client, ClientError};
 use ariadne_core::Role;
 
 /// All sessions (any status) for a query string like `task=<id>` / `goal=<id>`.
@@ -115,6 +119,41 @@ async fn ensure_task_not_finished(client: &Client, id: &str) -> Result<()> {
     Ok(())
 }
 
+/// The session with this id, or `None` when the id is not a session one (the
+/// caller then tries it as a task or goal id).
+async fn session_by_id(client: &Client, id: &str) -> Result<Option<SessionDto>> {
+    match client
+        .get_json::<SessionDto>(&format!("/v1/sessions/{id}"))
+        .await
+    {
+        Ok(session) => Ok(Some(session)),
+        Err(ClientError::Api { status, .. }) if status == http::StatusCode::NOT_FOUND => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Attach to one specific session: its own tmux when alive, else revive it.
+/// The tmux itself decides — the persisted status can be stale in either
+/// direction, and the daemon's resume treats tmux existence as authoritative
+/// too. A worktree that is gone surfaces the daemon's revive error as-is.
+async fn attach_session(client: &Client, session: SessionDto) -> Result<()> {
+    let session = if tmux_alive(&session.tmux_session) {
+        session
+    } else {
+        eprintln!(
+            "no live tmux for {} — reviving it ({})",
+            session.id,
+            session.agent_kind.as_str()
+        );
+        client
+            .post_empty(&format!("/v1/sessions/{}/resume", session.id))
+            .await?
+    };
+    attach_to(&session)
+}
+
+/// Attach to a task or goal id: the live tmux of the wanted role, or the
+/// most recent resumable session of that role revived.
 pub async fn attach(client: &Client, id: &str, role: Option<Role>) -> Result<()> {
     let session = match resolve_tmux(client, id, role).await {
         Ok(session) => session,
@@ -123,6 +162,25 @@ pub async fn attach(client: &Client, id: &str, role: Option<Role>) -> Result<()>
             revive(client, id, role).await?
         }
     };
+    attach_to(&session)
+}
+
+/// `ariadne attach <id>`: session, task or goal id.
+pub async fn attach_any(client: &Client, id: &str, role: Option<Role>) -> Result<()> {
+    if let Some(session) = session_by_id(client, id).await? {
+        if role.is_some() {
+            bail!(
+                "--role does not apply to a session id: {id} is already the {} session \
+                 of that agent (pass the task or goal id to pick a role)",
+                session.role.as_str()
+            );
+        }
+        return attach_session(client, session).await;
+    }
+    attach(client, id, role).await
+}
+
+fn attach_to(session: &SessionDto) -> Result<()> {
     eprintln!(
         "attaching to {} ({} / {})",
         session.tmux_session,
