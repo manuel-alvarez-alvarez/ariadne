@@ -7,12 +7,23 @@
 
 import { describe, expect, it, vi } from "vitest"
 
-import { SNAPSHOT_PREFIX, type TerminalWriter, writeDelta, writeSnapshot } from "./terminal-sink"
+import {
+  SNAPSHOT_PREFIX,
+  type TerminalWriter,
+  writeDelta,
+  writeResize,
+  writeSnapshot,
+} from "./terminal-sink"
 
-/** A terminal that records what it was told, including the reset it must not be told. */
+/**
+ * A terminal that records what it was told, including the calls it must not be
+ * told to make out of band. Its `write` never runs the callback on its own:
+ * that is xterm's job once the parser reaches it, and the point of the test.
+ */
 function fakeTerminal() {
   return {
     write: vi.fn<TerminalWriter["write"]>(),
+    resize: vi.fn<TerminalWriter["resize"]>(),
     reset: vi.fn(),
     clear: vi.fn(),
   }
@@ -46,5 +57,23 @@ describe("writeDelta", () => {
 
     expect(terminal.write.mock.calls).toEqual([["\x1b[32mok\x1b[0m\r\n"]])
     expect(terminal.reset).not.toHaveBeenCalled()
+  })
+})
+
+describe("writeResize", () => {
+  it("resizes in the stream rather than out of band", () => {
+    const terminal = fakeTerminal()
+
+    writeDelta(terminal, "drawn 80 columns wide\r\n")
+    writeResize(terminal, 120, 40)
+
+    // Nothing yet: the chunk above has not been parsed, and laying it out at
+    // 120 columns would wrap it where the pane never did.
+    expect(terminal.resize).not.toHaveBeenCalled()
+
+    const [data, apply] = terminal.write.mock.calls[1] ?? []
+    expect(data).toBe("")
+    apply?.()
+    expect(terminal.resize).toHaveBeenCalledWith(120, 40)
   })
 })
