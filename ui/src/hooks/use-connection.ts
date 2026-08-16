@@ -8,12 +8,9 @@
 
 import { useQuery } from "@tanstack/react-query"
 
-import { type ApiError, api, qk, unwrap } from "@/api"
+import { type ApiError, healthQueryOptions, versionQueryOptions } from "@/api"
 import { useBaseUrl } from "@/stores/settings"
 import { type StreamStatus, useStreamStore } from "@/stores/stream"
-
-/** How often the health probe runs while the window is focused. */
-const HEALTH_POLL_MS = 10_000
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected"
 
@@ -36,22 +33,8 @@ export function useConnection(): Connection {
   const baseUrl = useBaseUrl()
   const streamStatus = useStreamStore((state) => state.status)
 
-  const health = useQuery({
-    queryKey: qk.system.health(),
-    queryFn: () => unwrap(api().GET("/v1/health")),
-    refetchInterval: HEALTH_POLL_MS,
-    retry: false,
-    // A stale "connected" badge is worse than a brief "connecting" one.
-    gcTime: 0,
-  })
-
-  const version = useQuery({
-    queryKey: qk.system.version(),
-    queryFn: () => unwrap(api().GET("/v1/version")),
-    enabled: health.isSuccess,
-    retry: false,
-    staleTime: Number.POSITIVE_INFINITY,
-  })
+  const health = useQuery(healthQueryOptions())
+  const version = useQuery({ ...versionQueryOptions(), enabled: health.isSuccess })
 
   const status: ConnectionStatus = health.isSuccess
     ? "connected"

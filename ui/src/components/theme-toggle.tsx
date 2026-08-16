@@ -33,7 +33,9 @@ export function ThemeToggle() {
           onValueChange={(value) => setTheme(String(value))}
         >
           {THEMES.map(({ value, label, icon: Icon }) => (
-            <DropdownMenuRadioItem key={value} value={value}>
+            // Base UI keeps radio menus open on selection by default; a theme
+            // switch is a one-shot choice, so close it.
+            <DropdownMenuRadioItem key={value} value={value} closeOnClick>
               <Icon />
               {label}
             </DropdownMenuRadioItem>
