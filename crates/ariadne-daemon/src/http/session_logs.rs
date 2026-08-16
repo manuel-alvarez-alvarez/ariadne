@@ -44,8 +44,8 @@ struct Follower {
     tmux_session: String,
     log: LogTail,
     phase: Phase,
-    /// Ready to go out, in order: the opening `resize` and `snapshot`, and a
-    /// `delta` that shares a poll with a pane resize.
+    /// Ready to go out, in order: the `resize` and `snapshot` pair that opens
+    /// the stream, and the one that starts it over after a pane resize.
     queue: VecDeque<Event>,
     /// Last grid reported to this client, so only changes are sent.
     size: Option<SessionPaneSize>,
@@ -54,9 +54,8 @@ struct Follower {
 
 /// What one liveness tick found.
 enum Pane {
-    /// Still running. `resized` carries the grid when it is not the one the
-    /// client was last told about.
-    Alive { resized: Option<SessionPaneSize> },
+    /// Still running, and drawing on this screen.
+    Alive(PaneGeometry),
     /// No more output is possible.
     Gone,
 }
@@ -90,30 +89,67 @@ impl Follower {
         if !live {
             return Pane::Gone;
         }
-        let size = SessionPaneSize {
-            cols: geometry.cols,
-            rows: geometry.rows,
-        };
-        if self.size == Some(size) {
-            return Pane::Alive { resized: None };
-        }
-        self.size = Some(size);
-        Pane::Alive {
-            resized: Some(size),
-        }
+        Pane::Alive(geometry)
     }
 
     fn due_for_liveness_check(&self) -> bool {
         self.checked_alive_at.elapsed() >= LIVENESS
     }
+
+    /// Start the client over at `geometry`: a `resize`, then a `snapshot`
+    /// taken in it, queued in that order.
+    ///
+    /// A resize cannot be spliced into the byte stream. The output waiting to
+    /// go out straddles the moment the pane changed shape — some of it drawn
+    /// at the old grid, the rest at the new one — and nothing in the stream
+    /// says where the boundary is, so no ordering of "these bytes" against
+    /// "this new size" is right for all of them. Since a resized pane is
+    /// redrawn by whatever is running in it anyway, the whole screen is
+    /// captured again and the pending bytes are dropped along with the size
+    /// they were meant for: the snapshot supersedes them, scrollback included.
+    ///
+    /// Nothing is committed if the capture fails — the size stays unreported
+    /// and the next tick tries again.
+    async fn resynchronise(&mut self, geometry: PaneGeometry) -> bool {
+        // Mark the log's end first, as a fresh connection does: whatever the
+        // pane writes between here and the capture is then sent twice rather
+        // than not at all.
+        self.log.skip_existing().await;
+        let capture = match self
+            .state
+            .launcher
+            .tmux
+            .capture_pane(&self.tmux_session, SNAPSHOT_LINES)
+            .await
+        {
+            Ok(capture) => capture,
+            Err(e) => {
+                warn!(session = %self.session_id, error = %e, "capturing the resized pane failed");
+                return false;
+            }
+        };
+        let size = SessionPaneSize {
+            cols: geometry.cols,
+            rows: geometry.rows,
+        };
+        self.size = Some(size);
+        self.state
+            .launcher
+            .record_pane_size(&self.session_id, geometry.cols, geometry.rows)
+            .await;
+        self.queue.push_back(resize_event(size));
+        self.queue
+            .push_back(chunk_event("snapshot", &as_screen(capture, geometry)));
+        true
+    }
 }
 
 /// Follow a session's terminal output.
 ///
-/// A live pane opens with a `resize` event (`SessionPaneSize`) carrying the
-/// grid it draws against: the snapshot is wrapped at that width and every
-/// later repaint is addressed in it, so it comes first and is repeated
-/// whenever the pane is resized under us — by `ariadne attach`, say.
+/// The stream opens with a `resize` event (`SessionPaneSize`) carrying the
+/// grid the output is drawn at: the snapshot is wrapped at that width and
+/// every later repaint is addressed in it. A live pane is measured; a
+/// finished one is reported at the last size it was seen at, if it ever was.
 ///
 /// Then a `snapshot` event carrying the scrollback the `/logs` endpoint would
 /// return — as the pane's screen rather than as text: it ends where the pane's
@@ -122,6 +158,12 @@ impl Follower {
 /// are a `SessionLogChunk`: raw terminal bytes, escape sequences and all, are
 /// JSON-encoded so they cannot break SSE's line framing.
 ///
+/// A pane resized under the stream — by `ariadne attach`, say — sends a
+/// `resize` and a *fresh* `snapshot` rather than continuing with deltas: the
+/// output in flight straddles the change and belongs to neither grid, so the
+/// client starts over at the new one. `snapshot` therefore means "replace
+/// everything you have", whenever it arrives.
+///
 /// When the session ends — or if it was already over when the request arrived
 /// — the remaining output is flushed, a final `end` event (`SessionLogEnd`)
 /// is sent and the connection closes. There is no replay and no
@@ -129,13 +171,14 @@ impl Follower {
 #[utoipa::path(get, path = "/v1/sessions/{id}/logs/stream", tag = "sessions",
     params(("id" = String, Path, description = "session id")),
     responses((status = 200,
-        description = "SSE stream of terminal output (text/event-stream). For a live pane, a \
-                       `resize` event with the grid it draws against (`{\"cols\": 80, \
-                       \"rows\": 24}`, SessionPaneSize), repeated whenever the pane is \
-                       resized. Then one `snapshot` event with the current scrollback and a \
-                       `delta` event per burst of new output — both `{\"chunk\": \"...\"}` \
-                       (SessionLogChunk) — and a final `end` event (SessionLogEnd) when the \
-                       session is over, after which the stream closes.",
+        description = "SSE stream of terminal output (text/event-stream). A `resize` event \
+                       with the grid the output is drawn at (`{\"cols\": 80, \"rows\": 24}`, \
+                       SessionPaneSize), then a `snapshot` event with the current scrollback \
+                       and a `delta` event per burst of new output — both \
+                       `{\"chunk\": \"...\"}` (SessionLogChunk). A pane resized under the \
+                       stream sends a new `resize` followed by a fresh `snapshot`, which \
+                       replaces everything sent so far. A final `end` event (SessionLogEnd) \
+                       closes the stream when the session is over.",
         content_type = "text/event-stream", body = SessionLogChunk),
         (status = 404)))]
 pub async fn logs_stream(
@@ -204,13 +247,28 @@ pub async fn logs_stream(
         log.drain().await
     };
 
-    let size = alive
-        .then_some(geometry)
-        .flatten()
-        .map(|g| SessionPaneSize {
-            cols: g.cols,
-            rows: g.rows,
-        });
+    // A live pane is measured; a finished one is served at the last size it
+    // was seen at, which is why every measurement is written down. Its console
+    // log is raw terminal bytes wrapped at that width, so replaying it at a
+    // default would corrupt exactly the sessions that are only ever read as
+    // history.
+    let size = match alive.then_some(geometry).flatten() {
+        Some(g) => {
+            state
+                .launcher
+                .record_pane_size(&session.id, g.cols, g.rows)
+                .await;
+            Some(SessionPaneSize {
+                cols: g.cols,
+                rows: g.rows,
+            })
+        }
+        None => state
+            .launcher
+            .last_pane_size(&session.id)
+            .await
+            .map(|(cols, rows)| SessionPaneSize { cols, rows }),
+    };
 
     let mut queue = VecDeque::new();
     if let Some(size) = size {
@@ -256,18 +314,24 @@ pub async fn logs_stream(
                             f.phase = Phase::Ending;
                             return Some((Ok(chunk_event("delta", &new)), f));
                         }
-                        // A resize is what the output that follows was drawn
-                        // for, so it goes out ahead of the poll's own output
-                        // rather than behind it.
-                        Pane::Alive {
-                            resized: Some(size),
-                        } => {
-                            if !new.is_empty() {
-                                f.queue.push_back(chunk_event("delta", &new));
+                        // The pane changed shape under us. `new` is exactly
+                        // the output that cannot be placed either side of
+                        // that, so it is dropped for a fresh screen at the
+                        // new grid — see `resynchronise`.
+                        Pane::Alive(geometry)
+                            if f.size
+                                != Some(SessionPaneSize {
+                                    cols: geometry.cols,
+                                    rows: geometry.rows,
+                                }) =>
+                        {
+                            if f.resynchronise(geometry).await
+                                && let Some(event) = f.queue.pop_front()
+                            {
+                                return Some((Ok(event), f));
                             }
-                            return Some((Ok(resize_event(size)), f));
                         }
-                        Pane::Alive { resized: None } => {}
+                        Pane::Alive(_) => {}
                     }
                 }
                 if !new.is_empty() {
