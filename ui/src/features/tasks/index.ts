@@ -1,9 +1,12 @@
 /**
  * What the rest of the app may use from this feature.
  *
- * The board is mounted by the goal detail screen, which the goals feature owns
- * — everything else here is reached through `taskRoutes`.
+ * The goals board's swimlanes are built from the card, the status model and
+ * the task list query exported here; the task side panel is mounted by the
+ * shell's `DetailPanels`.
  */
 
-export { tasksPath } from "./paths"
-export { TaskBoard } from "./task-board"
+export { taskListQueryOptions } from "./queries"
+export { BOARD_STATUSES, OFF_BOARD_STATUSES, primaryStatus, TASK_STATUS_META } from "./status"
+export { TaskCard } from "./task-card"
+export { TaskPanel } from "./task-panel"

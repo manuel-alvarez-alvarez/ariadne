@@ -12,17 +12,19 @@ import { Link } from "react-router-dom"
 import type { TaskDto } from "@/api"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
-import { paths } from "@/routes/paths"
+import { useTaskPanelTo } from "@/routes/paths"
 import { formatAbsolute, formatRelative } from "./format"
-import { TASK_STATUS_META } from "./status"
+import { primaryStatus, subStatus, TASK_STATUS_META } from "./status"
 
 export function TaskCard({ task, showStatus = false }: { task: TaskDto; showStatus?: boolean }) {
-  const status = TASK_STATUS_META[task.status]
+  const status = TASK_STATUS_META[primaryStatus(task.status)]
+  const sub = subStatus(task.status)
   const terminal = task.status === "cancelled"
+  const to = useTaskPanelTo(task.id)
 
   return (
     <Link
-      to={paths.task(task.id)}
+      to={to}
       className={cn(
         "block rounded-lg border bg-card p-2.5 transition-colors hover:border-foreground/20 hover:bg-muted/50",
         task.stalled && "border-amber-500/40",
@@ -41,6 +43,14 @@ export function TaskCard({ task, showStatus = false }: { task: TaskDto; showStat
         {showStatus && (
           <span className={cn("rounded-full px-1.5 py-0.5 font-medium", status.badge)}>
             {status.label}
+          </span>
+        )}
+        {sub && (
+          <span
+            className={cn("rounded-full px-1.5 py-0.5 font-medium", sub.badge)}
+            title={sub.hint}
+          >
+            {sub.label}
           </span>
         )}
         {task.review_round > 0 && (

@@ -1,25 +1,21 @@
 /**
- * One goal: what it is, what it is allowed to do, its board of tasks, and the
- * planner thread.
+ * One goal in a side panel over the goals board: what it is, what it is
+ * allowed to do, and the planner thread. `ariadne goal inspect` plus
+ * `goal messages` — its tasks stay on the board behind the panel.
  *
- * `ariadne goal inspect` plus `ariadne goal messages` and `attach`. The board
- * between them is `src/features/tasks`' `TaskBoard`, mounted here because the
- * goal screen owns the page. Everything reads the query cache, which the SSE
- * dispatcher patches, so a status change made from the CLI or by the daemon
- * lands here on its own.
+ * Everything reads the query cache, which the SSE dispatcher patches, so a
+ * status change made from the CLI or by the daemon lands here on its own.
  */
 
 import { useQuery } from "@tanstack/react-query"
-import { AlertCircleIcon, ChevronLeftIcon } from "lucide-react"
-import { Link, useParams } from "react-router-dom"
+import { AlertCircleIcon } from "lucide-react"
 
 import { ApiError, api, type GoalDto, qk, unwrap } from "@/api"
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
-import { TaskBoard } from "@/features/tasks"
-import { paths } from "@/routes/paths"
 import { formatAbsolute, formatRelative } from "./format"
 import { GoalActions } from "./goal-actions"
 import { GoalStatusBadge } from "./goal-status-badge"
@@ -27,62 +23,59 @@ import { GoalThread } from "./goal-thread"
 import { Markdown } from "./markdown"
 import { goalQueryOptions } from "./queries"
 
-export function GoalDetailPage() {
-  const { goalId = "" } = useParams<{ goalId: string }>()
-  const goal = useQuery({ ...goalQueryOptions(goalId), enabled: goalId !== "" })
+export function GoalPanel({ goalId, onClose }: { goalId: string; onClose: () => void }) {
+  const goal = useQuery(goalQueryOptions(goalId))
   const error = ApiError.is(goal.error) ? goal.error : null
 
   return (
-    <div className="flex flex-col gap-4">
-      {/* `nativeButton={false}`: this one renders as the router's <a>, not a <button>. */}
-      <Button
-        variant="ghost"
-        size="sm"
-        nativeButton={false}
-        className="w-fit"
-        render={<Link to={paths.goals()} />}
-      >
-        <ChevronLeftIcon />
-        Goals
-      </Button>
+    <Sheet open onOpenChange={(open) => open || onClose()}>
+      <SheetContent aria-describedby={undefined}>
+        {error ? (
+          <>
+            <SheetTitle className="sr-only">Goal {goalId}</SheetTitle>
+            <Alert variant="destructive">
+              <AlertCircleIcon />
+              <AlertTitle>
+                {error.status === 404 ? "No such goal" : "Could not load the goal"}
+              </AlertTitle>
+              <AlertDescription>{error.message}</AlertDescription>
+              {error.status === 404 ? null : (
+                <AlertAction>
+                  <Button variant="outline" size="sm" onClick={() => void goal.refetch()}>
+                    Retry
+                  </Button>
+                </AlertAction>
+              )}
+            </Alert>
+          </>
+        ) : null}
 
-      {error ? (
-        <Alert variant="destructive">
-          <AlertCircleIcon />
-          <AlertTitle>
-            {error.status === 404 ? "No such goal" : "Could not load the goal"}
-          </AlertTitle>
-          <AlertDescription>{error.message}</AlertDescription>
-          {error.status === 404 ? null : (
-            <AlertAction>
-              <Button variant="outline" size="sm" onClick={() => void goal.refetch()}>
-                Retry
-              </Button>
-            </AlertAction>
-          )}
-        </Alert>
-      ) : null}
+        {goal.isPending ? (
+          <>
+            <SheetTitle className="sr-only">Loading goal</SheetTitle>
+            <Skeleton className="h-7 w-2/3" />
+            <Skeleton className="h-40 w-full" />
+          </>
+        ) : null}
 
-      {goal.isPending ? <Skeleton className="h-32 w-full" /> : null}
-
-      {goal.data ? <GoalView goal={goal.data} /> : null}
-    </div>
+        {goal.data ? <GoalView goal={goal.data} /> : null}
+      </SheetContent>
+    </Sheet>
   )
 }
 
 function GoalView({ goal }: { goal: GoalDto }) {
   return (
     <>
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="font-heading text-lg font-semibold">{goal.title}</h1>
-            <GoalStatusBadge status={goal.status} />
-          </div>
-          <p className="font-mono text-xs text-muted-foreground">{goal.id}</p>
+      <SheetHeader>
+        <div className="flex flex-wrap items-center gap-2">
+          <SheetTitle>{goal.title}</SheetTitle>
+          <GoalStatusBadge status={goal.status} />
         </div>
-        <GoalActions goal={goal} />
-      </div>
+        <p className="font-mono text-xs text-muted-foreground">{goal.id}</p>
+      </SheetHeader>
+
+      <GoalActions goal={goal} />
 
       {goal.description.trim() ? (
         <Card>
@@ -95,13 +88,9 @@ function GoalView({ goal }: { goal: GoalDto }) {
         </Card>
       ) : null}
 
-      {/* The board is eight columns wide and scrolls; it gets the full width. */}
-      <TaskBoard goalId={goal.id} />
+      <GoalMetadata goal={goal} />
 
-      <div className="grid min-h-0 gap-4 lg:grid-cols-3">
-        <GoalThread goalId={goal.id} className="lg:col-span-2" />
-        <GoalMetadata goal={goal} />
-      </div>
+      <GoalThread goalId={goal.id} />
     </>
   )
 }
@@ -113,9 +102,6 @@ function GoalMetadata({ goal }: { goal: GoalDto }) {
         <CardTitle>Details</CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-3 text-sm">
-        <Detail label="Status">
-          <GoalStatusBadge status={goal.status} />
-        </Detail>
         <Detail label="Planner">
           <PlannerProfileName profileId={goal.planner_profile_id} />
         </Detail>

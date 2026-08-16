@@ -15,7 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import { describeError, formatAbsolute, formatRelative } from "./format"
 import { taskTransitionsQueryOptions } from "./queries"
-import { TASK_STATUS_META } from "./status"
+import { displayLabel, TASK_STATUS_META } from "./status"
 
 export function TaskHistory({ taskId }: { taskId: string }) {
   const transitions = useQuery(taskTransitionsQueryOptions(taskId))
@@ -96,7 +96,7 @@ function meta(status: string) {
 }
 
 function label(status: string): string {
-  return meta(status)?.label ?? status
+  return meta(status) ? displayLabel(status as TaskStatus) : status
 }
 
 function dotFor(status: string): string {
