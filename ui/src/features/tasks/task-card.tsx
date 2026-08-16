@@ -3,20 +3,13 @@
  *
  * What earns space here is what tells you whether a task needs attention:
  * which round of review it is on, whether its agent went idle, and how many
- * other tasks it is waiting for — plus the branch, which is the one string an
- * engineer actually wants off the card and into a terminal. It sits outside
- * the link on purpose: a copy button nested in an anchor is neither valid nor
- * clickable without hijacking the navigation.
- *
- * Everything explanatory is a real `Tooltip`. `title=` attributes were the
- * cheaper way to say the same things, and they are unreachable by keyboard.
+ * other tasks it is waiting for.
  */
 
-import { GitBranchIcon, LayersIcon, TriangleAlertIcon } from "lucide-react"
+import { LayersIcon, TriangleAlertIcon } from "lucide-react"
 import { Link } from "react-router-dom"
 
 import type { TaskDto } from "@/api"
-import { CopyableId } from "@/components/copyable-id"
 import { StatusBadge } from "@/components/status-badge"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { formatAbsolute, formatRelative } from "@/lib/time"
@@ -31,83 +24,66 @@ export function TaskCard({ task, showStatus = false }: { task: TaskDto; showStat
   const to = useTaskPanelTo(task.id)
 
   return (
-    <div
+    <Link
+      to={to}
       className={cn(
-        "rounded-lg border bg-card transition-colors hover:border-foreground/20 hover:bg-muted/50",
+        "block rounded-lg border bg-card p-2.5 transition-colors hover:border-foreground/20 hover:bg-muted/50",
         task.stalled && "border-amber-500/40",
       )}
     >
-      <Link
-        to={to}
-        className="block rounded-lg px-2.5 pt-2.5 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+      <p
+        className={cn(
+          "line-clamp-2 text-sm leading-snug font-medium",
+          terminal && "text-muted-foreground line-through decoration-muted-foreground/40",
+        )}
       >
-        <p
-          className={cn(
-            "line-clamp-2 text-sm leading-snug font-medium",
-            terminal && "text-muted-foreground line-through decoration-muted-foreground/40",
-          )}
-        >
-          {task.title}
-        </p>
+        {task.title}
+      </p>
 
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-          {showStatus && <StatusBadge size="sm" label={status.label} tone={status.badge} />}
-          {sub && (
-            <Tooltip>
-              <TooltipTrigger render={<span className="flex" />}>
-                <StatusBadge size="sm" label={sub.label} tone={sub.badge} />
-              </TooltipTrigger>
-              <TooltipContent>{sub.hint}</TooltipContent>
-            </Tooltip>
-          )}
-          {task.review_round > 0 && (
-            <Tooltip>
-              <TooltipTrigger render={<span className="font-mono" />}>
-                R{task.review_round}
-              </TooltipTrigger>
-              <TooltipContent>Review round {task.review_round}</TooltipContent>
-            </Tooltip>
-          )}
-          {task.depends_on.length > 0 && (
-            <Tooltip>
-              <TooltipTrigger render={<span className="flex items-center gap-1" />}>
-                <LayersIcon className="size-3" />
-                {task.depends_on.length}
-              </TooltipTrigger>
-              <TooltipContent>
-                Waits for {task.depends_on.length} {task.depends_on.length === 1 ? "task" : "tasks"}{" "}
-                to merge
-              </TooltipContent>
-            </Tooltip>
-          )}
-          {task.stalled && (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span className="flex items-center gap-1 font-medium text-amber-600 dark:text-amber-400" />
-                }
-              >
-                <TriangleAlertIcon className="size-3" />
-                stalled
-              </TooltipTrigger>
-              <TooltipContent>The agent went idle without advancing the task.</TooltipContent>
-            </Tooltip>
-          )}
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+        {showStatus && <StatusBadge size="sm" label={status.label} tone={status.badge} />}
+        {sub && <StatusBadge size="sm" label={sub.label} tone={sub.badge} title={sub.hint} />}
+        {task.review_round > 0 && (
           <Tooltip>
-            <TooltipTrigger render={<time className="ml-auto" dateTime={task.updated_at} />}>
-              {formatRelative(task.updated_at)}
+            <TooltipTrigger render={<span className="font-mono" />}>
+              R{task.review_round}
             </TooltipTrigger>
-            <TooltipContent>updated {formatAbsolute(task.updated_at)}</TooltipContent>
+            <TooltipContent>Review round {task.review_round}</TooltipContent>
           </Tooltip>
-        </div>
-      </Link>
-
-      <div className="px-2.5 pt-1.5 pb-2.5">
-        <span className="flex w-fit max-w-full items-center gap-1 rounded-md bg-muted/60 px-1.5 py-0.5 text-xs text-muted-foreground">
-          <GitBranchIcon className="size-3 shrink-0" />
-          <CopyableId value={task.branch} label="branch" className="min-w-0 truncate" />
-        </span>
+        )}
+        {task.depends_on.length > 0 && (
+          <Tooltip>
+            <TooltipTrigger render={<span className="flex items-center gap-1" />}>
+              <LayersIcon className="size-3" />
+              {task.depends_on.length}
+            </TooltipTrigger>
+            <TooltipContent>
+              Waits for {task.depends_on.length} {task.depends_on.length === 1 ? "task" : "tasks"}{" "}
+              to merge
+            </TooltipContent>
+          </Tooltip>
+        )}
+        {task.stalled && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span className="flex items-center gap-1 font-medium text-amber-600 dark:text-amber-400" />
+              }
+            >
+              <TriangleAlertIcon className="size-3" />
+              stalled
+            </TooltipTrigger>
+            <TooltipContent>The agent went idle without advancing the task.</TooltipContent>
+          </Tooltip>
+        )}
+        <time
+          className="ml-auto"
+          dateTime={task.updated_at}
+          title={`${formatAbsolute(task.updated_at)} · ${task.branch}`}
+        >
+          {formatRelative(task.updated_at)}
+        </time>
       </div>
-    </div>
+    </Link>
   )
 }

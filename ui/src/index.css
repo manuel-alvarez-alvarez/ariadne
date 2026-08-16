@@ -14,15 +14,41 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar: var(--sidebar);
-  --color-chart-5: var(--chart-5);
-  --color-chart-4: var(--chart-4);
-  --color-chart-3: var(--chart-3);
-  --color-chart-2: var(--chart-2);
-  --color-chart-1: var(--chart-1);
+
+  /*
+   * The status ramp. Every meaning-bearing colour in the app comes from here,
+   * so a status looks the same wherever it is drawn and dark mode is handled
+   * once instead of at every call site.
+   *
+   * Each step is a triple: the bare token is the solid (dots, left borders),
+   * `-fg` is text that stays readable on the tint, `-soft` is that tint. The
+   * light and dark values are both in `:root` / `.dark` below, which is why no
+   * consumer needs a `dark:` variant.
+   */
+  --color-status-pending: var(--status-pending);
+  --color-status-pending-fg: var(--status-pending-fg);
+  --color-status-pending-soft: var(--status-pending-soft);
+  --color-status-ready: var(--status-ready);
+  --color-status-ready-fg: var(--status-ready-fg);
+  --color-status-ready-soft: var(--status-ready-soft);
+  --color-status-active: var(--status-active);
+  --color-status-active-fg: var(--status-active-fg);
+  --color-status-active-soft: var(--status-active-soft);
+  --color-status-review: var(--status-review);
+  --color-status-review-fg: var(--status-review-fg);
+  --color-status-review-soft: var(--status-review-soft);
+  --color-status-done: var(--status-done);
+  --color-status-done-fg: var(--status-done-fg);
+  --color-status-done-soft: var(--status-done-soft);
+  --color-status-warn: var(--status-warn);
+  --color-status-warn-fg: var(--status-warn-fg);
+  --color-status-warn-soft: var(--status-warn-soft);
+  --color-status-danger: var(--status-danger);
+  --color-status-danger-fg: var(--status-danger-fg);
+  --color-status-danger-soft: var(--status-danger-soft);
+
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
@@ -50,14 +76,22 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/*
+ * The surface is deliberately neutral; one indigo carries every "this is the
+ * thing you act on" signal — the primary button, the focus ring, the selected
+ * nav item — and nothing else. The `active` step of the status ramp shares its
+ * hue on purpose: work in motion is what the accent means.
+ */
 :root {
+  --brand: oklch(0.48 0.13 265);
+
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
+  --primary: var(--brand);
   --primary-foreground: oklch(0.985 0 0);
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
@@ -68,31 +102,53 @@
   --destructive: oklch(0.577 0.245 27.325);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
+  --ring: var(--brand);
   --radius: 0.625rem;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-accent: oklch(0.48 0.13 265 / 0.1);
+  --sidebar-accent-foreground: var(--brand);
   --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --sidebar-ring: var(--brand);
+
+  --status-pending: oklch(0.62 0.02 265);
+  --status-pending-fg: oklch(0.44 0.02 265);
+  --status-pending-soft: oklch(0.62 0.02 265 / 0.14);
+  --status-ready: oklch(0.62 0.11 195);
+  --status-ready-fg: oklch(0.45 0.08 195);
+  --status-ready-soft: oklch(0.62 0.11 195 / 0.16);
+  --status-active: oklch(0.58 0.14 265);
+  --status-active-fg: oklch(0.46 0.14 265);
+  --status-active-soft: oklch(0.58 0.14 265 / 0.14);
+  --status-review: oklch(0.58 0.16 305);
+  --status-review-fg: oklch(0.46 0.16 305);
+  --status-review-soft: oklch(0.58 0.16 305 / 0.14);
+  --status-done: oklch(0.62 0.13 155);
+  --status-done-fg: oklch(0.45 0.11 155);
+  --status-done-soft: oklch(0.62 0.13 155 / 0.16);
+  --status-warn: oklch(0.68 0.16 62);
+  --status-warn-fg: oklch(0.48 0.12 65);
+  --status-warn-soft: oklch(0.68 0.16 62 / 0.2);
+  --status-danger: var(--destructive);
+  --status-danger-fg: oklch(0.47 0.19 27.325);
+  --status-danger-soft: oklch(0.577 0.245 27.325 / 0.14);
 }
 
+/*
+ * Dark keeps the light palette's meaning, not its lightness: the accent and
+ * every status step are lifted so they read against a dark surface, and the
+ * tints are alpha over it rather than the light tint left in place.
+ */
 .dark {
+  --brand: oklch(0.72 0.12 265);
+
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.205 0 0);
   --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
+  --primary: var(--brand);
   --primary-foreground: oklch(0.205 0 0);
   --secondary: oklch(0.269 0 0);
   --secondary-foreground: oklch(0.985 0 0);
@@ -103,20 +159,35 @@
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
+  --ring: var(--brand);
   --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.72 0.12 265 / 0.16);
+  --sidebar-accent-foreground: oklch(0.85 0.08 265);
   --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --sidebar-ring: var(--brand);
+
+  --status-pending: oklch(0.55 0.02 265);
+  --status-pending-fg: oklch(0.78 0.02 265);
+  --status-pending-soft: oklch(0.72 0.02 265 / 0.16);
+  --status-ready: oklch(0.72 0.11 195);
+  --status-ready-fg: oklch(0.84 0.09 195);
+  --status-ready-soft: oklch(0.72 0.11 195 / 0.18);
+  --status-active: oklch(0.7 0.13 265);
+  --status-active-fg: oklch(0.83 0.09 265);
+  --status-active-soft: oklch(0.7 0.13 265 / 0.18);
+  --status-review: oklch(0.68 0.16 305);
+  --status-review-fg: oklch(0.82 0.11 305);
+  --status-review-soft: oklch(0.68 0.16 305 / 0.18);
+  --status-done: oklch(0.7 0.14 155);
+  --status-done-fg: oklch(0.84 0.11 155);
+  --status-done-soft: oklch(0.7 0.14 155 / 0.18);
+  --status-warn: oklch(0.78 0.15 65);
+  --status-warn-fg: oklch(0.86 0.12 70);
+  --status-warn-soft: oklch(0.78 0.15 65 / 0.18);
+  --status-danger: var(--destructive);
+  --status-danger-fg: oklch(0.82 0.11 22.216);
+  --status-danger-soft: oklch(0.704 0.191 22.216 / 0.2);
 }
 
 @layer base {
