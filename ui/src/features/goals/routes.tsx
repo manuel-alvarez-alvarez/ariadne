@@ -8,6 +8,7 @@
 
 import { Navigate, type RouteObject, useParams } from "react-router-dom"
 
+import { pageTitle } from "@/routes/page-title"
 import { paths } from "@/routes/paths"
 import { GoalsListPage } from "./goals-list-page"
 
@@ -17,6 +18,6 @@ function GoalPanelRedirect() {
 }
 
 export const goalRoutes: RouteObject[] = [
-  { path: "goals", element: <GoalsListPage /> },
+  { path: "goals", element: <GoalsListPage />, handle: pageTitle("Goals") },
   { path: "goals/:goalId", element: <GoalPanelRedirect /> },
 ]

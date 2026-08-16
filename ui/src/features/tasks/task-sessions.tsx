@@ -25,14 +25,15 @@ import { ArrowLeftIcon } from "lucide-react"
 import { Link } from "react-router-dom"
 
 import { ErrorState } from "@/components/error-state"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { sessionQueryOptions } from "@/features/sessions/queries"
 import { SessionDetailView } from "@/features/sessions/session-detail-view"
 import { SessionsList } from "@/features/sessions/sessions-list"
+import { shortId } from "@/lib/ids"
 import { usePanelSessionTo } from "@/routes/paths"
-import { shortId } from "./format"
 
 export function TaskSessions({
   taskId,
@@ -42,6 +43,8 @@ export function TaskSessions({
   /** Selects a session, which opens it over the whole panel. */
   onSelect: (sessionId: string) => void
 }) {
+  // The selected row marks itself: `SessionsList` reads the same `?session=`
+  // this panel drives, so nothing has to be threaded through the panel.
   return <SessionsList filters={{ task: taskId }} onSelect={(session) => onSelect(session.id)} />
 }
 
@@ -61,20 +64,20 @@ export function TaskSessionView({
   /** The task's own name, when it is already loaded, for the way back. */
   taskTitle?: string
   sessionId: string
-  /** Selects another session, or goes back to the task with `undefined`. */
-  onSelect: (sessionId: string | undefined) => void
+  /** Selects another session, or goes back to the task with `null`. */
+  onSelect: (sessionId: string | null) => void
 }) {
   const session = useQuery(sessionQueryOptions(sessionId))
+  // `GET /v1/sessions/{id}` is not scoped to a task, so a link can hand this
+  // panel a session of some *other* task (or a goal's planner session, which
+  // is nobody's task). It is not one of this task's, and the panel would
+  // present it as if it were — with kill and resume on it.
+  const foreign = session.data !== undefined && session.data.task_id !== taskId
 
   return (
     <>
       <SheetHeader>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="-ml-2 w-fit"
-          onClick={() => onSelect(undefined)}
-        >
+        <Button variant="ghost" size="sm" className="-ml-2 w-fit" onClick={() => onSelect(null)}>
           <ArrowLeftIcon />
           Back to {taskTitle ?? `task ${shortId(taskId)}`}
         </Button>
@@ -95,6 +98,13 @@ export function TaskSessionView({
           error={session.error}
           onRetry={() => void session.refetch()}
         />
+      ) : foreign ? (
+        <Alert variant="destructive">
+          <AlertTitle>Not a session of this task</AlertTitle>
+          <AlertDescription>
+            Session {shortId(sessionId)} belongs to another task, so it is not shown here.
+          </AlertDescription>
+        </Alert>
       ) : (
         <SessionDetailView
           session={session.data}
@@ -110,12 +120,17 @@ export function TaskSessionView({
 /**
  * A session id mentioned elsewhere in the panel — who posted a message, who
  * left a review — as a way into the view above.
+ *
+ * It replaces, like the rest of the navigation inside a panel: where the user
+ * is within the panel is not a step of its own, and closing the panel has to
+ * close it rather than step back out of the session.
  */
 export function SessionLink({ sessionId }: { sessionId: string }) {
   const to = usePanelSessionTo(sessionId)
   return (
     <Link
       to={to}
+      replace
       title={sessionId}
       className="font-mono text-muted-foreground underline-offset-3 hover:text-foreground hover:underline"
     >
