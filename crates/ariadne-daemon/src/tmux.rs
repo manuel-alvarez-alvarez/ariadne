@@ -132,6 +132,17 @@ impl TmuxManager {
         self.has_session_checked(name).await.unwrap_or(false)
     }
 
+    /// Whether the session might still be there, with "could not ask" folded
+    /// into "yes".
+    ///
+    /// For deciding whether to *create* something — a second agent for a role
+    /// that may already have one — where a wrong "no" duplicates work that is
+    /// already under way, while a wrong "yes" costs a scheduler tick that does
+    /// nothing and asks again in fifteen seconds.
+    pub async fn has_session_or_unknown(&self, name: &str) -> bool {
+        self.has_session_checked(name).await.unwrap_or(true)
+    }
+
     /// Whether tmux has this session, as an answer rather than a guess.
     ///
     /// `Err` means the question never reached tmux, which is not the same as
