@@ -248,6 +248,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sessions/{id}/input": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Type into a session's pane: the write counterpart of the log stream.
+         * @description The bytes go to tmux verbatim, so the agent sees exactly what was typed in
+         *     front of it and the echo comes back through `/logs/stream` like any other
+         *     pane output. Nothing is appended — a submit carries its own `\r`.
+         *
+         *     Both halves of "live" are checked, as in `logs_stream`: the row's status,
+         *     because a finished session must not be typed into, and tmux itself,
+         *     because tmux names are reused and a `send-keys` at a stale name would land
+         *     in a successor's pane.
+         */
+        post: operations["sessions_input"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sessions/{id}/kill": {
         parameters: {
             query?: never;
@@ -274,6 +301,35 @@ export interface paths {
         };
         /** Recent tmux pane output of a session. */
         get: operations["sessions_logs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sessions/{id}/logs/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Follow a session's terminal output.
+         * @description The first message is a `snapshot` event carrying the scrollback the
+         *     `/logs` endpoint would return; every later `delta` event carries only what
+         *     has been written since. Both payloads are a `SessionLogChunk`: raw
+         *     terminal bytes, escape sequences and all, are JSON-encoded so they cannot
+         *     break SSE's line framing.
+         *
+         *     When the session ends — or if it was already over when the request arrived
+         *     — the remaining output is flushed, a final `end` event (`SessionLogEnd`)
+         *     is sent and the connection closes. There is no replay and no
+         *     `Last-Event-ID`: reconnecting starts again from a fresh snapshot.
+         */
+        get: operations["sessions_logs_stream"];
         put?: never;
         post?: never;
         delete?: never;
@@ -363,7 +419,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Diff of the task branch against its base (`git diff base...branch`). */
+        /**
+         * Diff of the task branch against its base (`git diff base...branch`), or,
+         *     once the task is merged, the diff its merge commit brought into the base —
+         *     after the merge the branch is contained in the base, so the three-dot diff
+         *     would be forever empty.
+         */
         get: operations["tasks_diff"];
         put?: never;
         post?: never;
@@ -726,6 +787,34 @@ export interface components {
             task_id?: string | null;
             tmux_session: string;
             worktree_path?: string | null;
+        };
+        /** @description Body of `POST /v1/sessions/{id}/input`. */
+        SessionInputRequest: {
+            /**
+             * @description Keystrokes to type into the pane, exactly as the terminal produced
+             *     them: `\r` for Return, `\x03` for Ctrl-C, `\x1b[A` for Up. Sent
+             *     verbatim — nothing is appended, so a submit has to carry its own `\r`.
+             */
+            data: string;
+        };
+        /**
+         * @description Payload of the `snapshot` and `delta` events of
+         *     `GET /v1/sessions/{id}/logs/stream`.
+         *
+         *     Terminal output is raw bytes — newlines, escape sequences, control
+         *     characters — none of which survive SSE's line-oriented `data:` framing on
+         *     their own, so every chunk travels as JSON.
+         */
+        SessionLogChunk: {
+            /** @description Terminal output as written, decoded lossily from UTF-8. */
+            chunk: string;
+        };
+        /**
+         * @description Payload of the final `end` event of `GET /v1/sessions/{id}/logs/stream`:
+         *     the session is over and no further output is coming.
+         */
+        SessionLogEnd: {
+            session_id: string;
         };
         /** @description Response of `GET /v1/sessions/{id}/logs`. */
         SessionLogsResponse: {
@@ -1334,6 +1423,43 @@ export interface operations {
             };
         };
     };
+    sessions_input: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description session id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SessionInputRequest"];
+            };
+        };
+        responses: {
+            /** @description Input handed to the pane */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     sessions_kill: {
         parameters: {
             query?: never;
@@ -1389,6 +1515,35 @@ export interface operations {
                 content?: never;
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    sessions_logs_stream: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description session id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description SSE stream of terminal output (text/event-stream). One `snapshot` event with the current scrollback, then a `delta` event per burst of new output — both `{"chunk": "..."}` (SessionLogChunk) — and a final `end` event (SessionLogEnd) when the session is over, after which the stream closes. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": components["schemas"]["SessionLogChunk"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

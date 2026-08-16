@@ -2,8 +2,11 @@
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
 
-use ariadne_api::sessions::{SessionDto, SessionListQuery, SessionLogsResponse};
+use ariadne_api::sessions::{
+    SessionDto, SessionInputRequest, SessionListQuery, SessionLogsResponse,
+};
 use ariadne_store::SessionFilter;
 
 use super::AppState;
@@ -74,6 +77,48 @@ pub async fn kill(
         .await
         .map_err(|e| ApiError::conflict(e.to_string()))?;
     Ok(Json(session_dto(state.store.get_session(&id).await?)))
+}
+
+/// Type into a session's pane: the write counterpart of the log stream.
+///
+/// The bytes go to tmux verbatim, so the agent sees exactly what was typed in
+/// front of it and the echo comes back through `/logs/stream` like any other
+/// pane output. Nothing is appended — a submit carries its own `\r`.
+///
+/// Both halves of "live" are checked, as in `logs_stream`: the row's status,
+/// because a finished session must not be typed into, and tmux itself,
+/// because tmux names are reused and a `send-keys` at a stale name would land
+/// in a successor's pane.
+#[utoipa::path(post, path = "/v1/sessions/{id}/input", tag = "sessions",
+    request_body = SessionInputRequest,
+    params(("id" = String, Path, description = "session id")),
+    responses((status = 204, description = "Input handed to the pane"),
+        (status = 404), (status = 409)))]
+pub async fn input(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<SessionInputRequest>,
+) -> ApiResult<StatusCode> {
+    let session = state.store.get_session(&id).await?;
+    if !session.status().is_live() {
+        return Err(ApiError::conflict(format!(
+            "session {id} is {} and cannot take input",
+            session.status
+        )));
+    }
+    if !state.launcher.tmux.has_session(&session.tmux_session).await {
+        return Err(ApiError::conflict(format!(
+            "session {id} has no live pane ({})",
+            session.tmux_session
+        )));
+    }
+    state
+        .launcher
+        .tmux
+        .send_raw(&session.tmux_session, req.data.as_bytes())
+        .await
+        .map_err(|e| ApiError::conflict(e.to_string()))?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Recent tmux pane output of a session.

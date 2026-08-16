@@ -776,6 +776,48 @@
         }
       }
     },
+    "/v1/sessions/{id}/input": {
+      "post": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Type into a session's pane: the write counterpart of the log stream.",
+        "description": "The bytes go to tmux verbatim, so the agent sees exactly what was typed in\nfront of it and the echo comes back through `/logs/stream` like any other\npane output. Nothing is appended — a submit carries its own `\\r`.\n\nBoth halves of \"live\" are checked, as in `logs_stream`: the row's status,\nbecause a finished session must not be typed into, and tmux itself,\nbecause tmux names are reused and a `send-keys` at a stale name would land\nin a successor's pane.",
+        "operationId": "input",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "session id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionInputRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Input handed to the pane"
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/v1/sessions/{id}/kill": {
       "post": {
         "tags": [
@@ -844,6 +886,42 @@
             "description": ""
           },
           "409": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/sessions/{id}/logs/stream": {
+      "get": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Follow a session's terminal output.",
+        "description": "The first message is a `snapshot` event carrying the scrollback the\n`/logs` endpoint would return; every later `delta` event carries only what\nhas been written since. Both payloads are a `SessionLogChunk`: raw\nterminal bytes, escape sequences and all, are JSON-encoded so they cannot\nbreak SSE's line framing.\n\nWhen the session ends — or if it was already over when the request arrived\n— the remaining output is flushed, a final `end` event (`SessionLogEnd`)\nis sent and the connection closes. There is no replay and no\n`Last-Event-ID`: reconnecting starts again from a fresh snapshot.",
+        "operationId": "logs_stream",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "session id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "SSE stream of terminal output (text/event-stream). One `snapshot` event with the current scrollback, then a `delta` event per burst of new output — both `{\"chunk\": \"...\"}` (SessionLogChunk) — and a final `end` event (SessionLogEnd) when the session is over, after which the stream closes.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionLogChunk"
+                }
+              }
+            }
+          },
+          "404": {
             "description": ""
           }
         }
@@ -1062,7 +1140,7 @@
         "tags": [
           "tasks"
         ],
-        "summary": "Diff of the task branch against its base (`git diff base...branch`).",
+        "summary": "Diff of the task branch against its base (`git diff base...branch`), or,\nonce the task is merged, the diff its merge commit brought into the base —\nafter the merge the branch is contained in the base, so the three-dot diff\nwould be forever empty.",
         "operationId": "diff",
         "parameters": [
           {
@@ -2259,6 +2337,44 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "SessionInputRequest": {
+        "type": "object",
+        "description": "Body of `POST /v1/sessions/{id}/input`.",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "string",
+            "description": "Keystrokes to type into the pane, exactly as the terminal produced\nthem: `\\r` for Return, `\\x03` for Ctrl-C, `\\x1b[A` for Up. Sent\nverbatim — nothing is appended, so a submit has to carry its own `\\r`."
+          }
+        }
+      },
+      "SessionLogChunk": {
+        "type": "object",
+        "description": "Payload of the `snapshot` and `delta` events of\n`GET /v1/sessions/{id}/logs/stream`.\n\nTerminal output is raw bytes — newlines, escape sequences, control\ncharacters — none of which survive SSE's line-oriented `data:` framing on\ntheir own, so every chunk travels as JSON.",
+        "required": [
+          "chunk"
+        ],
+        "properties": {
+          "chunk": {
+            "type": "string",
+            "description": "Terminal output as written, decoded lossily from UTF-8."
+          }
+        }
+      },
+      "SessionLogEnd": {
+        "type": "object",
+        "description": "Payload of the final `end` event of `GET /v1/sessions/{id}/logs/stream`:\nthe session is over and no further output is coming.",
+        "required": [
+          "session_id"
+        ],
+        "properties": {
+          "session_id": {
+            "type": "string"
           }
         }
       },
