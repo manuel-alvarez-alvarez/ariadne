@@ -35,27 +35,10 @@ impl LogTail {
     /// Skip whatever the file already holds — for when the caller has just
     /// sent a snapshot covering it.
     pub async fn skip_existing(&mut self) {
-        let end = self.end_offset().await;
-        self.skip_to(end);
-    }
-
-    /// Where the file ends right now.
-    ///
-    /// For a caller that is about to capture the screen: the tail has to be
-    /// marked *before* the capture, so that whatever is written in between is
-    /// sent twice rather than not at all — but a capture can fail, and then
-    /// the tail must not have moved at all. Reading the mark and acting on it
-    /// are separate for that reason (see [`Self::skip_to`]).
-    pub async fn end_offset(&self) -> u64 {
-        tokio::fs::metadata(&self.path)
+        self.offset = tokio::fs::metadata(&self.path)
             .await
             .map(|m| m.len())
-            .unwrap_or(0)
-    }
-
-    /// Drop everything before `offset`, half-read character included.
-    pub fn skip_to(&mut self, offset: u64) {
-        self.offset = offset;
+            .unwrap_or(0);
         self.pending.clear();
     }
 

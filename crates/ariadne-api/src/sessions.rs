@@ -64,18 +64,6 @@ pub struct SessionLogChunk {
     pub chunk: String,
 }
 
-/// Payload of the `resize` event of `GET /v1/sessions/{id}/logs/stream`: the
-/// grid the pane is drawing against, in cells.
-///
-/// A terminal stream only means anything at a size. The agent addresses the
-/// cursor and erases lines against *this* grid, so a viewer that renders the
-/// bytes at any other one has every repaint land on the wrong row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-pub struct SessionPaneSize {
-    pub cols: u16,
-    pub rows: u16,
-}
-
 /// Payload of the final `end` event of `GET /v1/sessions/{id}/logs/stream`:
 /// the session is over and no further output is coming.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

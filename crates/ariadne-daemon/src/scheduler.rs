@@ -124,15 +124,7 @@ impl Scheduler {
         }
     }
 
-    /// Mark sessions whose tmux process died as exited, and note the grid the
-    /// living ones are drawing at.
-    ///
-    /// Measuring a pane answers both: `display-message` fails on a session
-    /// that is not there. The size is written down because it is only
-    /// knowable while the pane exists — a viewer opening the console log of a
-    /// session that has ended has no other way to learn what width its bytes
-    /// were written at (see `Launcher::record_pane_size`). This sweep is the
-    /// only place that sees every session, watched or not.
+    /// Mark sessions whose tmux process died as exited.
     async fn liveness_sweep(&mut self) {
         let Ok(live) = self
             .store
@@ -145,42 +137,12 @@ impl Scheduler {
             return;
         };
         for session in live {
-            match self
-                .launcher
-                .tmux
-                .pane_geometry(&session.tmux_session)
-                .await
-            {
-                Ok(geometry) => {
-                    self.launcher
-                        .record_pane_size(&session.id, geometry.cols, geometry.rows)
-                        .await;
-                }
-                // Confirmed before acting on it, and only an answer counts as
-                // confirmation: marking a session exited ends its work, which
-                // is too much to hang on a line of tmux output that failed to
-                // parse — or on a `has-session` that never ran. Both leave the
-                // session alone for the next sweep to ask again.
-                Err(e) => match self
-                    .launcher
-                    .tmux
-                    .has_session_checked(&session.tmux_session)
-                    .await
-                {
-                    Ok(false) => {
-                        info!(session = %session.id, tmux = %session.tmux_session, "session process gone, marking exited");
-                        let _ = self
-                            .store
-                            .set_session_status(&session.id, SessionStatus::Exited)
-                            .await;
-                    }
-                    Ok(true) => {
-                        warn!(session = %session.id, error = %e, "measuring the pane failed")
-                    }
-                    Err(check) => {
-                        warn!(session = %session.id, error = %e, check = %check, "cannot reach tmux")
-                    }
-                },
+            if !self.launcher.tmux.has_session(&session.tmux_session).await {
+                info!(session = %session.id, tmux = %session.tmux_session, "session process gone, marking exited");
+                let _ = self
+                    .store
+                    .set_session_status(&session.id, SessionStatus::Exited)
+                    .await;
             }
         }
     }
@@ -307,13 +269,6 @@ impl Scheduler {
         }
     }
 
-    /// How many sessions for this role are still running — counting the ones
-    /// tmux would not answer for.
-    ///
-    /// This number decides whether to spawn, so an unanswered question has to
-    /// count as a session: the sweep leaves such rows alone precisely because
-    /// nothing is known about them, and reconciling on the assumption they are
-    /// dead is how a tmux outage turns into two agents on one task.
     async fn live_sessions(
         &self,
         goal_id: &str,
@@ -331,13 +286,7 @@ impl Scheduler {
             .await?;
         let mut count = 0;
         for s in &sessions {
-            if s.role() == role
-                && self
-                    .launcher
-                    .tmux
-                    .has_session_or_unknown(&s.tmux_session)
-                    .await
-            {
+            if s.role() == role && self.launcher.tmux.has_session(&s.tmux_session).await {
                 count += 1;
             }
         }
@@ -437,19 +386,12 @@ impl Scheduler {
                             ..Default::default()
                         })
                         .await?;
-                    // As in `live_sessions`: a pane tmux would not answer for
-                    // counts as one, so an outage cannot put a second reviewer
-                    // on a round that already has one.
                     let mut has_live = false;
                     for s in &live {
                         if s.role() == Role::Reviewer
                             && s.profile_id == profile_id
                             && s.review_round == Some(task.review_round)
-                            && self
-                                .launcher
-                                .tmux
-                                .has_session_or_unknown(&s.tmux_session)
-                                .await
+                            && self.launcher.tmux.has_session(&s.tmux_session).await
                         {
                             has_live = true;
                             break;

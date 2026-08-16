@@ -1,9 +1,8 @@
 /**
  * How a session's log stream is written into the terminal.
  *
- * Two things here are subtle: what "start over" means when a reconnect
- * delivers a fresh snapshot instead of a continuation, and when a resize takes
- * effect. Both come down to the same property of `write()`.
+ * Only one thing here is subtle: what "start over" means when a reconnect
+ * delivers a fresh snapshot instead of a continuation.
  *
  * `Terminal.reset()` looks like the obvious way to drop the previous
  * connection's output first, but it is an **out-of-band** call. `write()` is
@@ -32,9 +31,7 @@ export const SNAPSHOT_PREFIX = `${CANCEL}${RESET_TO_INITIAL_STATE}`
 
 /** The part of xterm's `Terminal` this module needs — and all it may use. */
 export interface TerminalWriter {
-  /** `callback` runs once everything queued up to here has been parsed. */
-  write(data: string, callback?: () => void): void
-  resize(cols: number, rows: number): void
+  write(data: string): void
 }
 
 /**
@@ -49,21 +46,4 @@ export function writeSnapshot(terminal: TerminalWriter, chunk: string): void {
 /** Append output written since the last message. */
 export function writeDelta(terminal: TerminalWriter, chunk: string): void {
   terminal.write(chunk)
-}
-
-/**
- * Draw at the grid the pane draws at, from here on.
- *
- * `resize()` is out of band for the same reason `reset()` is: it applies the
- * moment it is called, ahead of everything `write` has queued and not yet
- * parsed. Output produced *before* the pane was resized would then be laid
- * out at the size it was resized *to* — wrapped at the wrong column, with the
- * repaint that follows correcting a screen it never drew.
- *
- * So the resize travels in the stream too, as the callback of an empty write:
- * it runs once everything queued ahead of it has been parsed, and nothing
- * queued behind it can be parsed before it.
- */
-export function writeResize(terminal: TerminalWriter, cols: number, rows: number): void {
-  terminal.write("", () => terminal.resize(cols, rows))
 }

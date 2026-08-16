@@ -86,7 +86,6 @@ impl AppState {
     components(schemas(
         ariadne_api::stream::DomainEvent, ariadne_api::stream::ResyncDto,
         ariadne_api::sessions::SessionLogChunk, ariadne_api::sessions::SessionLogEnd,
-        ariadne_api::sessions::SessionPaneSize,
     )),
     tags(
         (name = "system", description = "Daemon health and metadata"),

@@ -34,4 +34,12 @@ describe("panelSessionTo", () => {
     const to = panelSessionTo(new URLSearchParams("task=t1&tab=sessions&session=s1"), "s2")
     expect(new URLSearchParams(to.search).get("session")).toBe("s2")
   })
+
+  it("comes back out of the session onto the list it came from", () => {
+    const to = panelSessionTo(new URLSearchParams("task=t1&tab=sessions&session=s1"), null)
+    const params = new URLSearchParams(to.search)
+    expect(params.get("task")).toBe("t1")
+    expect(params.get("tab")).toBe("sessions")
+    expect(params.has("session")).toBe(false)
+  })
 })
