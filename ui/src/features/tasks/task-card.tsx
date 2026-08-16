@@ -105,7 +105,7 @@ export function TaskCard({ task, showStatus = false }: { task: TaskDto; showStat
       <div className="px-2.5 pt-1.5 pb-2.5">
         <span className="flex w-fit max-w-full items-center gap-1 rounded-md bg-muted/60 px-1.5 py-0.5 text-xs text-muted-foreground">
           <GitBranchIcon className="size-3 shrink-0" />
-          <CopyableId value={task.branch} label="branch" className="min-w-0 truncate" />
+          <CopyableId value={task.branch} label="branch" />
         </span>
       </div>
     </div>
