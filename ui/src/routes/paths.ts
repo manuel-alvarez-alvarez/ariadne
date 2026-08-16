@@ -15,18 +15,7 @@ export const paths = {
   goals: () => "/goals",
   /** The goals board with this goal's panel open. */
   goal: (goalId: string) => `/goals?goal=${goalId}`,
-  attention: () => "/attention",
-  sessions: () => "/sessions",
   profiles: () => "/profiles",
-  /**
-   * The goals board with this goal's panel open on one of its sessions.
-   *
-   * The only way to show a planner session, which belongs to no task: the goal
-   * panel opens on the board and nowhere else (see `detail-panels.tsx`), so
-   * this leaves whatever screen the link was on.
-   */
-  goalSession: (goalId: string, sessionId: string) =>
-    `/goals?goal=${goalId}&tab=sessions&session=${sessionId}`,
 } as const
 
 /**
@@ -70,21 +59,4 @@ export function panelSessionTo(current: URLSearchParams, sessionId: string): { s
 export function usePanelSessionTo(sessionId: string): { search: string } {
   const [search] = useSearchParams()
   return panelSessionTo(search, sessionId)
-}
-
-/**
- * Link target that opens a session from a list that is not inside any panel —
- * the sessions screen, the attention screen — by opening its *task's* panel on
- * it: `?task=` first, then the panel's own `?tab=sessions&session=`.
- *
- * The screen underneath keeps its filters, and stays on screen behind the
- * panel, which is what makes the row the panel came from worth highlighting.
- */
-export function taskSessionPanelTo(
-  current: URLSearchParams,
-  taskId: string,
-  sessionId: string,
-): { search: string } {
-  const withTask = new URLSearchParams(taskPanelTo(current, taskId).search)
-  return panelSessionTo(withTask, sessionId)
 }
