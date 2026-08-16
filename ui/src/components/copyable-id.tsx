@@ -54,14 +54,21 @@ type ValueProps = {
   display?: (value: string) => string
   /** What this is, for the button and for screen readers: "task id", "branch". */
   label?: string
-  /** Sizing and colour for the row; the value itself is always mono and truncated. */
+  /**
+   * The value wraps instead of being cut short, and takes a line of its own.
+   * For the values that are read rather than recognised — a repository path in
+   * a narrow column, where an ellipsis would hide the half that identifies it,
+   * and where what follows belongs on the next line.
+   */
+  wrap?: boolean
+  /** Sizing and colour for the row; the value itself is always mono. */
   className?: string
 }
 
 /** A value with a button that copies it, and nothing else to decide. */
-export function CopyableId({ value, display, label = "id", className }: ValueProps) {
+export function CopyableId({ value, display, label = "id", wrap, className }: ValueProps) {
   return (
-    <Value value={value} display={display} className={className}>
+    <Value value={value} display={display} wrap={wrap} className={className}>
       <CopyButton value={value} label={label} />
     </Value>
   )
@@ -72,6 +79,7 @@ export function CopyableIdMenu({
   value,
   display,
   label = "id",
+  wrap,
   entries,
   className,
 }: ValueProps & {
@@ -79,28 +87,40 @@ export function CopyableIdMenu({
   entries: CopyEntry[]
 }) {
   return (
-    <Value value={value} display={display} className={className}>
+    <Value value={value} display={display} wrap={wrap} className={className}>
       <CopyMenu label={label} entries={entries} />
     </Value>
   )
 }
 
 /**
- * The shared row: the value, then its button. The `title` is what keeps a
- * truncated path readable without a click — the ellipsis is the column's doing,
- * not the value's.
+ * The shared row: the value, then its button.
+ *
+ * Truncated, it sits inline — a branch or an id is one thing on a line with
+ * others, and the `title` is what keeps the hidden tail readable without a
+ * click, since the ellipsis is the column's doing rather than the value's.
+ * Wrapped ({@link ValueProps.wrap}), the row is block-level and the whole value
+ * is on screen, so it needs neither: the button stays with the first line.
  */
 function Value({
   value,
   display,
+  wrap,
   className,
   children,
 }: Omit<ValueProps, "label"> & { children: ReactNode }) {
   return (
     <span
-      className={cn("inline-flex min-w-0 max-w-full items-center gap-1 align-middle", className)}
+      className={cn(
+        "min-w-0 max-w-full gap-1",
+        wrap ? "flex items-start" : "inline-flex items-center align-middle",
+        className,
+      )}
     >
-      <span className="truncate font-mono" title={value}>
+      <span
+        className={cn("font-mono", wrap ? "break-all" : "truncate")}
+        title={wrap ? undefined : value}
+      >
         {display ? display(value) : value}
       </span>
       {children}
