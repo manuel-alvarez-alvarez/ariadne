@@ -37,10 +37,11 @@ enum Phase {
     /// Following the console log for new output.
     Following,
     /// The screen the client should be holding has not been captured yet: the
-    /// stream has just opened, or the pane changed shape under it. Nothing
-    /// goes out meanwhile — every byte the pane writes from here belongs to a
-    /// grid the client does not have, and the bytes already read belong to one
-    /// it is about to lose. `since` bounds the wait.
+    /// stream has just opened, the pane changed shape under it, or the pane
+    /// stopped answering and may have done either. Nothing goes out meanwhile
+    /// — every byte the pane writes from here belongs to a grid nobody has
+    /// confirmed, and the bytes already read belong to one the client is about
+    /// to lose. `since` bounds the wait.
     Resynchronising { since: Instant },
     /// The last output is out; `end` comes next.
     Ending,
@@ -97,21 +98,21 @@ impl Follower {
     /// session's name need not be this session's, and the row is what says
     /// whether *this* one is still running.
     ///
-    /// A measurement that fails is not an answer, though, and must not be
-    /// read as one — `end` stops a client from ever asking again, so it is
-    /// owed a second opinion. That is the one case that pays for the second
-    /// fork: `has-session` says whether the pane is actually gone or merely
-    /// did not answer.
+    /// Nothing that merely failed counts as an answer, though. `end` stops a
+    /// client from ever asking again, so only two things earn it: a row that
+    /// says the session is not running, and a `has-session` that ran and said
+    /// no. A store that could not be read, a measurement that did not come
+    /// back, a process that could not be spawned — those are all the same
+    /// thing, which is that nothing was learned.
     async fn poll(&mut self) -> Pane {
         self.checked_alive_at = Instant::now();
-        let live = self
-            .state
-            .store
-            .get_session(&self.session_id)
-            .await
-            .is_ok_and(|s| s.status().is_live());
-        if !live {
-            return Pane::Gone;
+        match self.state.store.get_session(&self.session_id).await {
+            Ok(session) if !session.status().is_live() => return Pane::Gone,
+            Ok(_) => {}
+            Err(e) => {
+                warn!(session = %self.session_id, error = %e, "reading the session row failed");
+                return Pane::Unreadable;
+            }
         }
         match self
             .state
@@ -121,20 +122,25 @@ impl Follower {
             .await
         {
             Ok(geometry) => Pane::Alive(geometry),
-            Err(e) => {
-                if self
-                    .state
-                    .launcher
-                    .tmux
-                    .has_session(&self.tmux_session)
-                    .await
-                {
+            // The one case that pays for a second fork: `has-session` says
+            // whether the pane is actually gone or merely did not answer.
+            Err(e) => match self
+                .state
+                .launcher
+                .tmux
+                .has_session_checked(&self.tmux_session)
+                .await
+            {
+                Ok(false) => Pane::Gone,
+                Ok(true) => {
                     warn!(session = %self.session_id, error = %e, "measuring the pane failed");
                     Pane::Unreadable
-                } else {
-                    Pane::Gone
                 }
-            }
+                Err(check) => {
+                    warn!(session = %self.session_id, error = %e, check = %check, "cannot reach tmux");
+                    Pane::Unreadable
+                }
+            },
         }
     }
 
@@ -202,12 +208,18 @@ impl Follower {
             cols: after.cols,
             rows: after.rows,
         };
-        self.size = Some(size);
         self.state
             .launcher
             .record_pane_size(&self.session_id, after.cols, after.rows)
             .await;
-        self.queue.push_back(resize_event(size));
+        // Only a grid the client does not already have is worth an event; a
+        // pane that merely stopped answering for a moment is the same pane.
+        // The screen is sent either way — it is what the withheld bytes were
+        // dropped for.
+        if self.size != Some(size) {
+            self.size = Some(size);
+            self.queue.push_back(resize_event(size));
+        }
         self.queue
             .push_back(chunk_event("snapshot", &as_screen(capture, after)));
         Resync::Done
@@ -352,18 +364,26 @@ pub async fn logs_stream(
                             // side of that, so it is dropped, and nothing
                             // more goes out until there is a screen at the
                             // new grid to replace the client's with.
+                            // Either the pane changed shape, or it would not
+                            // say. Both mean the same thing here: the grid
+                            // these bytes were drawn at is no longer known, so
+                            // they are dropped and nothing more goes out until
+                            // a screen and its grid have been read together.
+                            // Carrying on would be guessing that the pane that
+                            // stopped answering also stopped changing.
+                            Pane::Unreadable => {
+                                f.phase = Phase::Resynchronising {
+                                    since: Instant::now(),
+                                };
+                                continue;
+                            }
                             Pane::Alive(geometry) if f.regridded(geometry) => {
                                 f.phase = Phase::Resynchronising {
                                     since: Instant::now(),
                                 };
                                 continue;
                             }
-                            // Nothing learned: a pane that did not answer is
-                            // still drawing at the grid it last answered with
-                            // as far as anyone here knows, and freezing the
-                            // stream over an unanswered question would be a
-                            // worse guess than carrying on.
-                            Pane::Alive(_) | Pane::Unreadable => {}
+                            Pane::Alive(_) => {}
                         }
                     }
                     if !new.is_empty() {
