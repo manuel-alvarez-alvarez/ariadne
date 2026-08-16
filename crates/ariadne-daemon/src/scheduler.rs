@@ -307,6 +307,13 @@ impl Scheduler {
         }
     }
 
+    /// How many sessions for this role are still running — counting the ones
+    /// tmux would not answer for.
+    ///
+    /// This number decides whether to spawn, so an unanswered question has to
+    /// count as a session: the sweep leaves such rows alone precisely because
+    /// nothing is known about them, and reconciling on the assumption they are
+    /// dead is how a tmux outage turns into two agents on one task.
     async fn live_sessions(
         &self,
         goal_id: &str,
@@ -324,7 +331,13 @@ impl Scheduler {
             .await?;
         let mut count = 0;
         for s in &sessions {
-            if s.role() == role && self.launcher.tmux.has_session(&s.tmux_session).await {
+            if s.role() == role
+                && self
+                    .launcher
+                    .tmux
+                    .has_session_or_unknown(&s.tmux_session)
+                    .await
+            {
                 count += 1;
             }
         }
@@ -424,12 +437,19 @@ impl Scheduler {
                             ..Default::default()
                         })
                         .await?;
+                    // As in `live_sessions`: a pane tmux would not answer for
+                    // counts as one, so an outage cannot put a second reviewer
+                    // on a round that already has one.
                     let mut has_live = false;
                     for s in &live {
                         if s.role() == Role::Reviewer
                             && s.profile_id == profile_id
                             && s.review_round == Some(task.review_round)
-                            && self.launcher.tmux.has_session(&s.tmux_session).await
+                            && self
+                                .launcher
+                                .tmux
+                                .has_session_or_unknown(&s.tmux_session)
+                                .await
                         {
                             has_live = true;
                             break;
