@@ -86,9 +86,9 @@ export function useKillSession() {
 }
 
 /**
- * Revive an ended session. The daemon answers with the session to attach to,
- * which is a *new* one whenever the original's tmux is gone — so callers have
- * to follow the id in the response rather than assume it is the one they sent.
+ * Revive an ended session. The daemon relaunches the session itself — same id,
+ * same tmux name, same agent conversation — and answers with the refreshed
+ * row, so the response's status is what says whether anything was revived.
  * `409` is the "not resumable" answer (no internal session id, still running,
  * agent cannot resume) and carries the reason in its envelope.
  */

@@ -42,7 +42,7 @@ export function SessionDetailView({
    * dropped, since inside its own panel it would only point at itself.
    */
   context?: "goal" | "task"
-  /** Where to go when a resume hands back a different session; see {@link SessionActions}. */
+  /** Where to go once a resume hands the session back; see {@link SessionActions}. */
   onResumed?: (session: SessionDto) => void
   /** Height of the terminal box, for embeddings with less room than a page. */
   terminalClassName?: string
