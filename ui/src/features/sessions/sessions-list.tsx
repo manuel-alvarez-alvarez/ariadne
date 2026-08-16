@@ -141,28 +141,12 @@ function SessionRow({
   const agent = AGENT_KIND_LABELS[session.agent_kind]
 
   return (
-    <TableRow
-      className="cursor-pointer"
-      data-state={selected ? "selected" : undefined}
-      // Anywhere on the row picks the session, down to the buttons that carry
-      // an action of their own: the copy trigger keeps its menu, and the role
-      // button below selects by itself, so neither needs the row to act for it.
-      // The id *text* is not one of them — it is read here, and clicking it is
-      // still a click on the row.
-      //
-      // The `contains` is what keeps the copy menu whole: React events travel
-      // the component tree rather than the DOM, so a click on an entry of a
-      // menu portalled out of the table arrives here all the same — and it is
-      // a copy, not a pick.
-      onClick={(event) => {
-        const target = event.target as Element
-        if (event.currentTarget.contains(target) && !target.closest("button")) onSelect()
-      }}
-    >
-      {/* These ids are read here on their way into a terminal, and the row is
-          the only place the whole list of them is on screen at once, so the
-          copy menu is worth the one thing on the row that is not a pick. */}
-      <TableCell>
+    <TableRow className="relative" data-state={selected ? "selected" : undefined}>
+      {/* Above the row-wide click target below, so the one thing on the row
+          that has its own action keeps it: these ids are read here on their way
+          into a terminal, and the row is the only place the whole list of them
+          is on screen at once. */}
+      <TableCell className="relative z-10">
         <CopyableIdMenu
           value={session.id}
           display={shortId}
@@ -172,16 +156,12 @@ function SessionRow({
         />
       </TableCell>
       <TableCell>
-        {/* The row above takes the pointer clicks; this button is the same
-            action for the keyboard, which cannot reach a `<tr onClick>` — and
-            it is why the row lets buttons through rather than picking twice.
-            Nothing is stretched over the row: `position` on a `<tr>` is
-            undefined per spec, and an overlay that resolves against the table
-            container instead swallows every other row's clicks. */}
+        {/* Stretched over the whole row, so the row is clickable without a
+            `<tr onClick>` that the keyboard could not reach. */}
         <button
           type="button"
           onClick={onSelect}
-          className="rounded-xs text-left outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
+          className="text-left after:absolute after:inset-0 hover:underline"
         >
           {ROLE_LABELS[session.role]}
         </button>
