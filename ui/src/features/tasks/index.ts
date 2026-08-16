@@ -7,12 +7,6 @@
  */
 
 export { taskListQueryOptions } from "./queries"
-export {
-  BOARD_STATUSES,
-  compareByAttention,
-  OFF_BOARD_STATUSES,
-  primaryStatus,
-  TASK_STATUS_META,
-} from "./status"
+export { BOARD_STATUSES, OFF_BOARD_STATUSES, primaryStatus, TASK_STATUS_META } from "./status"
 export { TaskCard } from "./task-card"
 export { TaskPanel } from "./task-panel"

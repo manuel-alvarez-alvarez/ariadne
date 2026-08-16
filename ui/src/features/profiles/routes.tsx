@@ -5,10 +5,6 @@
 
 import type { RouteObject } from "react-router-dom"
 
-import { pageTitle } from "@/routes/page-title"
-
 import { ProfilesPage } from "./profiles-page"
 
-export const profileRoutes: RouteObject[] = [
-  { path: "profiles", element: <ProfilesPage />, handle: pageTitle("Profiles") },
-]
+export const profileRoutes: RouteObject[] = [{ path: "profiles", element: <ProfilesPage /> }]

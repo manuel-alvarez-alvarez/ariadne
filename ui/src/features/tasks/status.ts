@@ -9,7 +9,7 @@
  * answers with `illegal_transition` is worse than not offering it at all.
  */
 
-import type { TaskDto, TaskStatus } from "@/api"
+import type { TaskStatus } from "@/api"
 
 /** Pipeline columns, in the order a task moves through them. */
 export const BOARD_STATUSES = [
@@ -129,38 +129,6 @@ export const TASK_STATUS_META: Record<TaskStatus, StatusMeta> = {
     badge: "bg-status-danger-soft text-status-danger-fg",
     dot: "bg-status-danger",
   },
-}
-
-/**
- * How loudly each status asks for a person, lowest first.
- *
- * A failure is waiting for a decision and an approved task is waiting to be
- * told to merge — both are stuck on the user. What the agents are still
- * working on comes next, then what has not started, then what is done with.
- */
-const ATTENTION_RANK = {
-  failed: 0,
-  approved: 1,
-  changes_requested: 2,
-  under_review: 3,
-  merging: 4,
-  in_progress: 5,
-  ready: 6,
-  pending: 7,
-  merged: 8,
-  cancelled: 9,
-} as const satisfies Record<TaskStatus, number>
-
-/**
- * Orders a list of tasks by how much they want to be looked at: what needs the
- * user first, most recently touched first within the same status.
- */
-export function compareByAttention(a: TaskDto, b: TaskDto): number {
-  // A stalled agent is the one thing that will not resolve itself, whatever
-  // status the task is parked in.
-  if (a.stalled !== b.stalled) return a.stalled ? -1 : 1
-  const rank = ATTENTION_RANK[a.status] - ATTENTION_RANK[b.status]
-  return rank !== 0 ? rank : Date.parse(b.updated_at) - Date.parse(a.updated_at)
 }
 
 export function statusLabel(status: TaskStatus): string {

@@ -15,18 +15,7 @@ export const paths = {
   goals: () => "/goals",
   /** The goals board with this goal's panel open. */
   goal: (goalId: string) => `/goals?goal=${goalId}`,
-  attention: () => "/attention",
-  sessions: () => "/sessions",
   profiles: () => "/profiles",
-  /**
-   * The goals board with this goal's panel open on one of its sessions.
-   *
-   * The only way to show a planner session, which belongs to no task: the goal
-   * panel opens on the board and nowhere else (see `detail-panels.tsx`), so
-   * this leaves whatever screen the link was on.
-   */
-  goalSession: (goalId: string, sessionId: string) =>
-    `/goals?goal=${goalId}&tab=sessions&session=${sessionId}`,
 } as const
 
 /**
@@ -54,20 +43,15 @@ export function useTaskPanelTo(taskId: string): { search: string } {
 
 /**
  * Link target that shows a session inside the panel that is already open:
- * everything else is kept, `tab` and `session` point the panel at it. `null`
- * is the way back out of the session, onto the list it came from.
+ * everything else is kept, `tab` and `session` point the panel at it.
  *
  * This is how a session id mentioned somewhere in a panel — a message's
  * author, a review's session — becomes a way to watch that agent.
  */
-export function panelSessionTo(
-  current: URLSearchParams,
-  sessionId: string | null,
-): { search: string } {
+export function panelSessionTo(current: URLSearchParams, sessionId: string): { search: string } {
   const next = new URLSearchParams(current)
   next.set("tab", "sessions")
-  if (sessionId === null) next.delete("session")
-  else next.set("session", sessionId)
+  next.set("session", sessionId)
   return { search: `?${next.toString()}` }
 }
 
@@ -75,34 +59,4 @@ export function panelSessionTo(
 export function usePanelSessionTo(sessionId: string): { search: string } {
   const [search] = useSearchParams()
   return panelSessionTo(search, sessionId)
-}
-
-/**
- * Drilling the open panel into a session (and back out of it with `null`) as
- * something to call rather than to link: the sessions list hands back the row
- * that was clicked, not a target.
- *
- * Replaces rather than pushes — where the user is *inside* a panel is not a
- * step of its own, and Back should leave the panel, not walk its tabs.
- */
-export function usePanelSessionNavigation(): (sessionId: string | null) => void {
-  const [search, setSearch] = useSearchParams()
-  return (sessionId) => setSearch(panelSessionTo(search, sessionId).search, { replace: true })
-}
-
-/**
- * Link target that opens a session from a list that is not inside any panel —
- * the sessions screen, the attention screen — by opening its *task's* panel on
- * it: `?task=` first, then the panel's own `?tab=sessions&session=`.
- *
- * The screen underneath keeps its filters, and stays on screen behind the
- * panel, which is what makes the row the panel came from worth highlighting.
- */
-export function taskSessionPanelTo(
-  current: URLSearchParams,
-  taskId: string,
-  sessionId: string,
-): { search: string } {
-  const withTask = new URLSearchParams(taskPanelTo(current, taskId).search)
-  return panelSessionTo(withTask, sessionId)
 }
