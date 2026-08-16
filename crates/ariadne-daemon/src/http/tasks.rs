@@ -415,7 +415,10 @@ pub async fn post_review(
     Ok((StatusCode::CREATED, Json(review_dto(review))))
 }
 
-/// Diff of the task branch against its base (`git diff base...branch`).
+/// Diff of the task branch against its base (`git diff base...branch`), or,
+/// once the task is merged, the diff its merge commit brought into the base —
+/// after the merge the branch is contained in the base, so the three-dot diff
+/// would be forever empty.
 #[utoipa::path(get, path = "/v1/tasks/{id}/diff", tag = "tasks",
     params(("id" = String, Path, description = "task id")),
     responses((status = 200, content_type = "text/plain", body = String), (status = 404), (status = 409)))]
@@ -423,6 +426,18 @@ pub async fn diff(State(state): State<AppState>, Path(id): Path<String>) -> ApiR
     let task = state.store.get_task(&id).await?;
     let repo = state.store.get_goal_repo(&task.repo_id).await?;
     let repo_path = std::path::PathBuf::from(&repo.path);
+
+    if let Some(merge_commit) = &task.merge_commit {
+        // Also the only diff that still exists once the merged branch and
+        // worktree have been cleaned up.
+        return state
+            .launcher
+            .git
+            .diff_against_first_parent(&repo_path, merge_commit)
+            .await
+            .map_err(|e| ApiError::conflict(e.to_string()));
+    }
+
     if !state
         .launcher
         .git
