@@ -101,6 +101,9 @@ pub struct AgentSession {
     pub internal_session_id: Option<String>,
     pub tmux_session: String,
     pub worktree_path: Option<String>,
+    /// Reviewer sessions only: the review round the session is working on.
+    /// One session serves every round, so this moves with the task rather
+    /// than recording the round the row was created in.
     pub review_round: Option<i64>,
     pub status: String,
     pub last_activity_at: Option<String>,
