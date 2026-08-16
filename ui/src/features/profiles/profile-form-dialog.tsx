@@ -301,8 +301,8 @@ export function ProfileFormDialog({
             <DialogClose render={<Button type="button" variant="outline" disabled={saving} />}>
               Cancel
             </DialogClose>
-            <Button type="submit" pending={saving}>
-              {editing ? "Save changes" : "Create profile"}
+            <Button type="submit" disabled={saving}>
+              {saving ? "Saving…" : editing ? "Save changes" : "Create profile"}
             </Button>
           </DialogFooter>
         </form>

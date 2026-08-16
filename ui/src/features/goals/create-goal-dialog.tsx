@@ -311,8 +311,8 @@ export function CreateGoalDialog({
 
           <DialogFooter>
             <DialogClose render={<Button type="button" variant="outline" />}>Cancel</DialogClose>
-            <Button type="submit" pending={createGoal.isPending}>
-              Create goal
+            <Button type="submit" disabled={createGoal.isPending}>
+              {createGoal.isPending ? "Creating…" : "Create goal"}
             </Button>
           </DialogFooter>
         </form>
