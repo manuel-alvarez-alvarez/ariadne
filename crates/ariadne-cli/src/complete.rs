@@ -79,15 +79,15 @@ pub fn goal_ids() -> Vec<CompletionCandidate> {
     goal_candidates()
 }
 
-/// Task and goal ids (top-level `ariadne attach`).
+/// Session, task and goal ids (top-level `ariadne attach`).
 pub fn attach_ids() -> Vec<CompletionCandidate> {
     let mut out = task_candidates();
     out.extend(goal_candidates());
+    out.extend(session_candidates());
     out
 }
 
-/// Session ids (session subcommands).
-pub fn session_ids() -> Vec<CompletionCandidate> {
+fn session_candidates() -> Vec<CompletionCandidate> {
     fetch("/v1/sessions")
         .iter()
         .map(|x| {
@@ -102,6 +102,11 @@ pub fn session_ids() -> Vec<CompletionCandidate> {
             )
         })
         .collect()
+}
+
+/// Session ids (session subcommands).
+pub fn session_ids() -> Vec<CompletionCandidate> {
+    session_candidates()
 }
 
 fn profiles(role: Option<&str>) -> Vec<CompletionCandidate> {
