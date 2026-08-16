@@ -109,6 +109,36 @@ impl Store {
         self.publish_session_update(id).await
     }
 
+    /// Put a finished session back into its pre-spawn state so it can be
+    /// relaunched under its own id: resuming an agent conversation in a fresh
+    /// tmux keeps the one row (same id, same console log) instead of leaving a
+    /// sibling behind per review round. `worktree_path` overwrites the stored
+    /// one when given — the relaunch decides where the agent actually runs.
+    pub async fn restart_session(
+        &self,
+        id: &str,
+        worktree_path: Option<&str>,
+    ) -> Result<AgentSession> {
+        let n = sqlx::query(
+            "UPDATE agent_sessions
+                SET status = 'starting', ended_at = NULL, last_activity_at = ?,
+                    worktree_path = COALESCE(?, worktree_path)
+              WHERE id = ?",
+        )
+        .bind(now())
+        .bind(worktree_path)
+        .bind(id)
+        .execute(self.w())
+        .await?
+        .rows_affected();
+        if n == 0 {
+            return Err(not_found("session", id));
+        }
+        let session = self.get_session(id).await?;
+        self.publish(Change::SessionUpdated(session.clone()));
+        Ok(session)
+    }
+
     /// Record the agent-internal id (claude session uuid / codex thread id /
     /// opencode session id) once known.
     pub async fn set_session_internal_id(&self, id: &str, internal: &str) -> Result<()> {

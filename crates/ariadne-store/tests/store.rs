@@ -1,6 +1,6 @@
 //! Store integration tests against a temp-file SQLite database.
 
-use ariadne_core::{Actor, AgentKind, AuthorRole, ReviewVerdict, Role, TaskStatus};
+use ariadne_core::{Actor, AgentKind, AuthorRole, ReviewVerdict, Role, SessionStatus, TaskStatus};
 use ariadne_store::*;
 
 async fn test_store() -> (Store, tempfile::TempDir) {
@@ -470,6 +470,84 @@ async fn messages_sessions_events_round_trip() {
         .unwrap();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].kind, "post_tool_use");
+}
+
+/// A resumed agent conversation keeps its one session row: restarting puts
+/// the row back where a spawn leaves it, so nothing downstream can tell the
+/// relaunch from a first launch.
+#[tokio::test]
+async fn restarting_a_session_reopens_the_same_row() {
+    let (store, _dir) = test_store().await;
+    let planner = seed_profile(&store, "planner", Role::Planner).await;
+    let (goal, repo) = seed_goal(&store, &planner, None).await;
+    let task = seed_task(&store, &goal, &repo, vec![]).await;
+
+    let session = store
+        .create_session(NewSession {
+            goal_id: goal.id.clone(),
+            task_id: Some(task.id.clone()),
+            role: Role::Engineer,
+            profile_id: task.engineer_profile_id.clone(),
+            agent_kind: AgentKind::ClaudeCode,
+            tmux_session: "ariadne-test-eng".into(),
+            worktree_path: Some("/tmp/wt".into()),
+            review_round: None,
+        })
+        .await
+        .unwrap();
+    store
+        .set_session_internal_id(&session.id, "uuid-1234")
+        .await
+        .unwrap();
+    store
+        .set_session_status(&session.id, SessionStatus::Exited)
+        .await
+        .unwrap();
+    assert!(
+        store
+            .get_session(&session.id)
+            .await
+            .unwrap()
+            .ended_at
+            .is_some()
+    );
+
+    let restarted = store
+        .restart_session(&session.id, Some("/tmp/wt2"))
+        .await
+        .unwrap();
+    assert_eq!(restarted.id, session.id, "the same row is reused");
+    assert_eq!(restarted.status(), SessionStatus::Starting);
+    assert_eq!(restarted.ended_at, None, "it has not ended after all");
+    assert!(restarted.last_activity_at.is_some());
+    assert_eq!(restarted.worktree_path.as_deref(), Some("/tmp/wt2"));
+    assert_eq!(
+        restarted.internal_session_id.as_deref(),
+        Some("uuid-1234"),
+        "the agent conversation carries over"
+    );
+    // One session, not two: the task's list is unchanged in length.
+    assert_eq!(
+        store
+            .list_sessions(SessionFilter {
+                task_id: Some(task.id.clone()),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    // An omitted worktree leaves the stored one alone.
+    let again = store.restart_session(&session.id, None).await.unwrap();
+    assert_eq!(again.worktree_path.as_deref(), Some("/tmp/wt2"));
+
+    assert!(
+        store
+            .restart_session("01ARZ3NDEKTSV4RRFFQ69G5FAV", None)
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]
