@@ -10,8 +10,21 @@ function Tooltip({ ...props }: TooltipPrimitive.Root.Props) {
   return <TooltipPrimitive.Root data-slot="tooltip" {...props} />
 }
 
-function TooltipTrigger({ ...props }: TooltipPrimitive.Trigger.Props) {
-  return <TooltipPrimitive.Trigger data-slot="tooltip-trigger" {...props} />
+/**
+ * Focusable by default, whatever it renders.
+ *
+ * Tooltips in this app are used where a `title=` would have been — what a
+ * status means, the timestamp behind "2h ago" — and half of them are rendered
+ * as a plain `<span>` or `<time>`, which takes no focus. Base UI opens a
+ * tooltip on focus as well as on hover, so the one thing standing between a
+ * keyboard and every hint in the app is this attribute; defaulting it here is
+ * the difference between a rule and a thing each call site remembers.
+ *
+ * A trigger that renders a button or a link is already focusable and unchanged
+ * by it, and a call site that needs otherwise can still pass its own.
+ */
+function TooltipTrigger({ tabIndex = 0, ...props }: TooltipPrimitive.Trigger.Props) {
+  return <TooltipPrimitive.Trigger data-slot="tooltip-trigger" tabIndex={tabIndex} {...props} />
 }
 
 function TooltipContent({

@@ -9,7 +9,10 @@
  * clickable without hijacking the navigation.
  *
  * Everything explanatory is a real `Tooltip`. `title=` attributes were the
- * cheaper way to say the same things, and they are unreachable by keyboard.
+ * cheaper way to say the same things, and they are unreachable by keyboard —
+ * which is only true of the tooltips because every trigger takes focus, spans
+ * and `<time>`s included. That is the primitive's doing, not each card's; see
+ * `components/ui/tooltip.tsx`.
  */
 
 import { GitBranchIcon, LayersIcon, TriangleAlertIcon } from "lucide-react"

@@ -238,6 +238,11 @@ function SessionRow({
         <button
           type="button"
           onClick={onSelect}
+          // The visible word is the role; what Enter does is open the session,
+          // and "Engineer" on its own says none of that. The id is what the
+          // panel it opens is drilled into — see `useFocusReturn`.
+          aria-label={`Open ${ROLE_LABELS[session.role]} session`}
+          data-focus-return={session.id}
           className="rounded-xs text-left outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
         >
           {ROLE_LABELS[session.role]}

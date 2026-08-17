@@ -234,3 +234,28 @@
     @apply font-sans;
   }
 }
+
+/*
+ * Nothing in this app moves to say anything a still frame does not: the pulsing
+ * dot is already a coloured dot next to the word "Live", a sheet sliding in is
+ * already a sheet. So a reduce-motion preference switches the lot off in one
+ * place rather than being remembered at every dot and every panel.
+ *
+ * Collapsed rather than removed, and `animate-out` along with `animate-in`:
+ * Base UI waits for a closing popup's animation to end before unmounting it,
+ * and an animation that never runs never ends. Unlayered, so it outranks the
+ * utilities it is overriding — `!important` inside a layer would not.
+ */
+/* biome-ignore-start lint/complexity/noImportantStyles: overriding every animation utility in the app is what this block is */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+/* biome-ignore-end lint/complexity/noImportantStyles: end of the reduced-motion override */
