@@ -100,7 +100,7 @@ ariadne profile create --name rev-strict --role reviewer --agent codex \
 
 # Every prompt a profile briefs its agents with is editable, and every one of
 # them can go back to the default of its role:
-ariadne profile prompts rev-strict                       # system + its briefings
+ariadne profile prompts rev-strict            # system + briefings, edited or not
 ariadne profile prompt get rev-strict reviewer_briefing > brief.md
 ariadne profile prompt set rev-strict reviewer_briefing --file brief.md
 ariadne profile prompt reset rev-strict --all

@@ -28,7 +28,12 @@ const LS: &[Column] = &[
 ];
 
 /// Columns of `profile prompts`.
-const PROMPTS: &[Column] = &[("kind", UNCAPPED), ("updated", UNCAPPED), ("content", 48)];
+const PROMPTS: &[Column] = &[
+    ("kind", UNCAPPED),
+    ("status", UNCAPPED),
+    ("updated", UNCAPPED),
+    ("content", 48),
+];
 
 /// How the system prompt is spelled on a command line.
 const SYSTEM: &str = "system";
@@ -364,9 +369,14 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
             let profile = get_profile(client, &id).await?;
             let prompts = prompt_set(client, &profile).await?;
             match format {
-                // The whole text: a table shows a prompt is there, json is how
-                // a script reads what it says.
-                Format::Json => print_json(&prompts.iter().map(Prompt::json).collect::<Vec<_>>())?,
+                // The whole text: a table shows a prompt is there and whether
+                // it has been touched, json is how a script reads what it says.
+                Format::Json => print_json(
+                    &prompts
+                        .iter()
+                        .map(|p| p.json(profile.role))
+                        .collect::<Vec<_>>(),
+                )?,
                 Format::Table => print_table(
                     PROMPTS,
                     &prompts
@@ -374,6 +384,7 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
                         .map(|p| {
                             vec![
                                 p.kind.as_str().into(),
+                                p.status(profile.role).into(),
                                 local_time(&p.updated_at),
                                 p.content.clone(),
                             ]
@@ -388,7 +399,7 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
                 let profile = get_profile(client, &id).await?;
                 let prompt = fetch_prompt(client, &profile, owned_by(&profile, kind)?).await?;
                 match format {
-                    Format::Json => print_json(&prompt.json())?,
+                    Format::Json => print_json(&prompt.json(profile.role))?,
                     // Raw and unadorned, trailing newline included or not
                     // exactly as it is stored: `get > file` then `set --file`
                     // has to be a round trip.
@@ -401,7 +412,7 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
                 let content = read_content(file)?;
                 let prompt = write_prompt(client, &profile, kind, content).await?;
                 match format {
-                    Format::Json => print_json(&prompt.json())?,
+                    Format::Json => print_json(&prompt.json(profile.role))?,
                     Format::Table => println!(
                         "updated {} of {} ({})",
                         prompt.kind.as_str(),
@@ -426,10 +437,13 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
                 match format {
                     // One kind was asked for, one object comes back; --all is
                     // the plural request, so it always answers with a list.
-                    Format::Json if all => {
-                        print_json(&done.iter().map(Prompt::json).collect::<Vec<_>>())?
-                    }
-                    Format::Json => print_json(&done[0].json())?,
+                    Format::Json if all => print_json(
+                        &done
+                            .iter()
+                            .map(|p| p.json(profile.role))
+                            .collect::<Vec<_>>(),
+                    )?,
+                    Format::Json => print_json(&done[0].json(profile.role))?,
                     Format::Table => {
                         for prompt in &done {
                             println!(
@@ -466,12 +480,48 @@ impl Prompt {
         }
     }
 
-    fn json(&self) -> serde_json::Value {
+    /// Whether the prompt still says exactly what the default of `role` says —
+    /// the thing `prompt reset` would put back.
+    fn is_default(&self, role: Role) -> bool {
+        default_text(role, self.kind) == Some(self.content.as_str())
+    }
+
+    /// `default` or `customized`, for a table.
+    fn status(&self, role: Role) -> &'static str {
+        match self.is_default(role) {
+            true => "default",
+            false => "customized",
+        }
+    }
+
+    fn json(&self, role: Role) -> serde_json::Value {
         json!({
             "kind": self.kind.as_str(),
             "content": self.content,
+            "is_default": self.is_default(role),
             "updated_at": self.updated_at,
         })
+    }
+}
+
+/// The text a prompt of `role` starts from and goes back to.
+///
+/// It comes from the same constants the daemon seeds and resets with, which
+/// live in `ariadne-store` and are served nowhere: no endpoint hands out a
+/// default, and `updated_at` cannot stand in for one — a reset bumps it, so a
+/// prompt that is word for word the default would read as edited. So the CLI
+/// compares the text itself.
+///
+/// The catch is that the copy is compiled in: an `ariadne` older or newer than
+/// the `ariadned` it is talking to compares against its own idea of the
+/// defaults. The two ship from one workspace at one version, and `ariadne
+/// version` prints both when they do not. If the daemon ever reports the
+/// status itself — `is_default` on `ProfilePromptDto` is where it belongs —
+/// this function and the dependency behind it are what to delete.
+fn default_text(role: Role, kind: PromptArg) -> Option<&'static str> {
+    match kind {
+        PromptArg::System => Some(ariadne_store::defaults::default_system_prompt(role)),
+        PromptArg::Briefing(k) => ariadne_store::defaults::default_prompt(role, k),
     }
 }
 
@@ -579,13 +629,16 @@ fn reset_question(profile: &ProfileDto, kinds: &[PromptArg], all: bool) -> Strin
 
 /// The new text of a prompt: the file that was named, else stdin.
 ///
-/// A terminal on stdin means nobody piped anything in, and reading it would
-/// hang on a person who expected a prompt.
+/// Whatever that holds is what gets sent — byte for byte, trailing newlines
+/// and all, an empty file included. The daemon takes any content (a template
+/// that drops a placeholder, an empty one), so the CLI is a pipe here and not
+/// a censor: the text that goes in is the text `prompt get` prints back.
+///
+/// The one refusal is a terminal on stdin, where nobody piped anything in and
+/// reading it would hang on a person who expected a prompt.
 fn read_content(file: Option<PathBuf>) -> Result<String> {
-    let raw = match file {
-        Some(f) => {
-            std::fs::read_to_string(&f).with_context(|| format!("reading {}", f.display()))?
-        }
+    match file {
+        Some(f) => std::fs::read_to_string(&f).with_context(|| format!("reading {}", f.display())),
         None => {
             if std::io::stdin().is_terminal() {
                 bail!("no new text: pass --file <path>, or pipe the prompt in on stdin");
@@ -594,21 +647,9 @@ fn read_content(file: Option<PathBuf>) -> Result<String> {
             std::io::stdin()
                 .read_to_string(&mut buf)
                 .context("reading the new prompt from stdin")?;
-            buf
+            Ok(buf)
         }
-    };
-    checked_content(raw)
-}
-
-/// A prompt is what an agent is briefed with, so an empty one is a mistake
-/// every time — an empty file, a pipe from a command that printed nothing.
-/// Anything else is passed on byte for byte: trailing newlines and all, the
-/// text that goes in is the text `prompt get` prints back.
-fn checked_content(raw: String) -> Result<String> {
-    if raw.trim().is_empty() {
-        bail!("refusing to set an empty prompt");
     }
-    Ok(raw)
 }
 
 fn read_prompt(prompt: Option<String>, file: Option<std::path::PathBuf>) -> Result<String> {
@@ -744,32 +785,84 @@ mod tests {
         );
     }
 
-    /// An empty file or a pipe from a command that printed nothing would brief
-    /// an agent with nothing at all.
+    /// `prompt get > file` then `prompt set --file file` has to round-trip, so
+    /// nothing is trimmed, wrapped or added on the way in.
     #[test]
-    fn an_empty_prompt_is_refused() {
-        for raw in ["", "   ", "\n\n"] {
-            let err = checked_content(raw.into()).expect_err("empty");
-            assert!(err.to_string().contains("empty prompt"), "{err}");
+    fn a_file_is_read_byte_for_byte() {
+        let raw = "  Brief the agent.\n\nEnd.\n";
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("prompt.md");
+        std::fs::write(&path, raw).expect("write");
+        assert_eq!(read_content(Some(path)).expect("content"), raw);
+    }
+
+    /// The daemon takes any content, so emptying a prompt is the caller's call
+    /// to make and not the CLI's to refuse.
+    #[test]
+    fn an_empty_file_empties_the_prompt() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("empty.md");
+        std::fs::write(&path, "").expect("write");
+        assert_eq!(read_content(Some(path)).expect("content"), "");
+    }
+
+    #[test]
+    fn a_file_that_is_not_there_says_which_one() {
+        let err = read_content(Some("/no/such/prompt.md".into())).expect_err("missing");
+        assert!(err.to_string().contains("/no/such/prompt.md"), "{err}");
+    }
+
+    /// A prompt is "default" only while it is word for word what a reset would
+    /// put back — compared against the constants the daemon seeds from.
+    #[test]
+    fn a_prompt_reads_as_default_until_a_character_of_it_changes() {
+        let mut p = profile(Role::Engineer);
+        p.system_prompt = default_text(p.role, PromptArg::System)
+            .expect("a system default")
+            .to_string();
+        assert_eq!(Prompt::system(&p).status(p.role), "default");
+        p.system_prompt.push(' ');
+        assert_eq!(Prompt::system(&p).status(p.role), "customized");
+    }
+
+    #[test]
+    fn every_briefing_a_role_owns_has_a_default_to_compare_against() {
+        for role in Role::ALL {
+            for kind in owned(role) {
+                let content = default_text(role, kind).expect("a default");
+                let prompt = Prompt {
+                    kind,
+                    content: content.into(),
+                    updated_at: "2026-08-17T09:00:00Z".into(),
+                };
+                assert!(prompt.is_default(role), "{role:?} {kind:?}");
+                assert!(!content.is_empty(), "{role:?} {kind:?}");
+            }
         }
     }
 
-    /// `prompt get > file` then `prompt set --file file` has to round-trip, so
-    /// nothing is trimmed on the way in.
+    /// The prompts of another role are not this profile's to compare with:
+    /// nothing matches, so nothing reads as its default.
     #[test]
-    fn content_is_passed_on_byte_for_byte() {
-        let raw = "  Brief the agent.\n\nEnd.\n";
-        assert_eq!(checked_content(raw.into()).expect("content"), raw);
+    fn a_briefing_of_another_role_has_no_default_here() {
+        assert_eq!(
+            default_text(
+                Role::Reviewer,
+                PromptArg::Briefing(PromptKind::EngineerBriefing)
+            ),
+            None
+        );
     }
 
     #[test]
-    fn json_output_carries_the_kind_the_content_and_the_timestamp() {
+    fn json_output_carries_the_kind_the_content_the_status_and_the_timestamp() {
         let p = profile(Role::Engineer);
         assert_eq!(
-            Prompt::system(&p).json(),
+            Prompt::system(&p).json(p.role),
             json!({
                 "kind": "system",
                 "content": "you are an engineer",
+                "is_default": false,
                 "updated_at": "2026-08-17T09:00:00Z",
             })
         );
@@ -780,10 +873,11 @@ mod tests {
         }
         .into();
         assert_eq!(
-            briefing.json(),
+            briefing.json(p.role),
             json!({
                 "kind": "engineer_briefing",
                 "content": "brief {task}",
+                "is_default": false,
                 "updated_at": "2026-08-17T10:00:00Z",
             })
         );
