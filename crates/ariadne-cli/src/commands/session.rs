@@ -70,6 +70,7 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
             all,
             no_trunc,
         } => {
+            let filtered = goal.is_some() || task.is_some();
             let query = SessionListQuery {
                 goal,
                 task,
@@ -102,10 +103,13 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
                         no_trunc,
                     );
                     if sessions.is_empty() {
-                        note(if all {
-                            "no sessions yet"
-                        } else {
-                            "no live sessions — finished ones are behind --all"
+                        note(match (filtered, all) {
+                            (true, true) => "no sessions match that filter",
+                            (true, false) => {
+                                "no live sessions match that filter — finished ones are behind --all"
+                            }
+                            (false, true) => "no sessions yet",
+                            (false, false) => "no live sessions — finished ones are behind --all",
                         });
                     }
                 }

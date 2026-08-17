@@ -130,6 +130,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             status,
             no_trunc,
         } => {
+            let filtered = goal.is_some() || status.is_some();
             let path = query_path("/v1/tasks", &TaskListQuery { goal, status })?;
             let tasks: Vec<TaskDto> = client.get_json(&path).await?;
             match format {
@@ -153,7 +154,14 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                         no_trunc,
                     );
                     if tasks.is_empty() {
-                        note("no tasks yet — the planner creates them from a goal");
+                        // An empty list under a filter is not an empty
+                        // system, and saying so would send the reader
+                        // looking for tasks that are right there.
+                        note(if filtered {
+                            "no tasks match that filter"
+                        } else {
+                            "no tasks yet — the planner creates them from a goal"
+                        });
                     }
                 }
             }
