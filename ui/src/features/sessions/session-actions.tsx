@@ -20,7 +20,7 @@ import { Button } from "@/components/ui/button"
 import { describeError } from "@/lib/errors"
 
 import { useKillSession, useResumeSession } from "./queries"
-import { isLiveStatus, sessionStatusLabel } from "./session-display"
+import { isLiveStatus } from "./session-display"
 
 export function SessionActions({
   session,
@@ -42,13 +42,10 @@ export function SessionActions({
   return (
     <div className="flex items-center gap-2">
       {live ? (
-        // Only opens the confirm; the solid red is on the click inside it.
-        <Button
-          variant="destructive-ghost"
-          size="sm"
-          pending={kill.isPending}
-          onClick={() => setConfirmKill(true)}
-        >
+        // Only opens the confirm; the solid red — and the spinner, since the
+        // dialog is where the kill is actually running — are on the click
+        // inside it.
+        <Button variant="destructive-ghost" size="sm" onClick={() => setConfirmKill(true)}>
           <SkullIcon />
           Kill
         </Button>
@@ -109,9 +106,13 @@ export function SessionActions({
         errorTitle="Could not kill the session"
         onConfirm={() => {
           kill.mutate(session.id, {
-            onSuccess: (killed) => {
+            onSuccess: () => {
               setConfirmKill(false)
-              toast.success(`Session status: ${sessionStatusLabel(killed.status)}`)
+              // What was done, like every other success toast — not the status
+              // it left behind, which the badge on the row already says.
+              toast.success("Session killed", {
+                description: `${session.tmux_session} · the conversation is kept, so it can be resumed`,
+              })
             },
           })
         }}
