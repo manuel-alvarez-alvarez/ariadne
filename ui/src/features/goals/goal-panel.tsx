@@ -66,9 +66,12 @@ export function GoalPanel({
   // stacked over this one they are its, and this goal shows its own default.
   const sessionId = stackedPanel ? null : search.get("session")
   // Going back from a session hands focus to the row that opened it, which the
-  // dialog cannot do for us — nothing closed. See `useFocusReturn`.
+  // dialog cannot do for us — nothing closed. Only while this panel is the one
+  // on top, though: `sessionId` above also goes null when a task stacks over
+  // it, and that is a sheet opening rather than a session being left. See
+  // `useFocusReturn`.
   const panel = useRef<HTMLDivElement>(null)
-  useFocusReturn(sessionId, panel)
+  useFocusReturn(sessionId, panel, !stackedPanel)
 
   // A selected session replaces the goal view entirely — the panel is that
   // session's now, and the way back is the link it carries. It is checked

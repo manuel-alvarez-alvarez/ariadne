@@ -18,6 +18,13 @@
  * open a panel straight into a session, and going back then lands on a tab that
  * never had that row. The panel itself is the fallback, which is the top of the
  * view the user just came back to and, crucially, still inside the dialog.
+ *
+ * `top` is what keeps a covered panel out of it. A goal panel gives its
+ * `?session=` up the moment a task stacks over it — the goal's own params
+ * belong to whichever sheet is on top (see `goal-panel.tsx`), and following the
+ * Task link out of a goal's session drops `?session=` and adds `?task=` in the
+ * one navigation. That looks exactly like coming back out of the session, and
+ * acting on it would pull focus out of the sheet that just opened.
  */
 
 import { type RefObject, useEffect, useRef } from "react"
@@ -27,20 +34,28 @@ export function useFocusReturn(
   drilledInto: string | null,
   /** The panel, focused when the element that opened the drill-down is gone. */
   panel: RefObject<HTMLElement | null>,
+  /**
+   * False while another panel is stacked over this one: focus is the top
+   * sheet's, and this one's drill-down went away because it was covered rather
+   * than because the user came back out of it.
+   */
+  top = true,
 ) {
   const previous = useRef(drilledInto)
 
   useEffect(() => {
     const left = previous.current
+    // Recorded even when this panel is not the one to act on it, so that
+    // uncovering it later is not read as a return of its own.
     previous.current = drilledInto
     // Only the way back out, and only from somewhere: opening a drill-down
     // moves focus into it by itself, and a panel that was never in one has
     // nothing to return to.
-    if (drilledInto !== null || left === null) return
+    if (!top || drilledInto !== null || left === null) return
 
     const opener = panel.current?.querySelector<HTMLElement>(
       `[data-focus-return="${CSS.escape(left)}"]`,
     )
     ;(opener ?? panel.current)?.focus()
-  }, [drilledInto, panel])
+  }, [drilledInto, panel, top])
 }
