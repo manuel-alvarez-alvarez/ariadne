@@ -543,8 +543,9 @@ impl Scheduler {
             }
             TaskStatus::Merged => {
                 // Post-merge cleanup (idempotent), then wake dependents.
-                // Worktrees are kept unless delete_merged_worktrees is set,
-                // so merged work can be inspected later.
+                // Worktrees and the branch go by default; set
+                // delete_merged_worktrees = false to keep merged work around
+                // for inspection.
                 self.launcher
                     .cleanup_task(
                         &task.id,

@@ -31,8 +31,9 @@ struct FileConfig {
     /// when the worktrees are deleted too: a kept engineer worktree has the
     /// task branch checked out, which pins it.
     delete_merged_branches: Option<bool>,
-    /// Delete task worktrees after merge (default false: keep them under
-    /// worktree_root so merged work can be inspected later).
+    /// Delete task worktrees after merge (default true). Set to false to keep
+    /// them under worktree_root so merged work can be inspected later;
+    /// cancelled tasks always keep theirs, salvageable work included.
     delete_merged_worktrees: Option<bool>,
 }
 
@@ -98,7 +99,7 @@ impl Config {
             log_filter: file.log_filter.unwrap_or_else(|| "info".to_string()),
             cli_bin: file.cli_bin.unwrap_or_else(default_cli_bin),
             delete_merged_branches: file.delete_merged_branches.unwrap_or(true),
-            delete_merged_worktrees: file.delete_merged_worktrees.unwrap_or(false),
+            delete_merged_worktrees: file.delete_merged_worktrees.unwrap_or(true),
             root,
         };
 
