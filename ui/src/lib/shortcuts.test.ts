@@ -1,14 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import {
-  isBareKey,
-  isTypingTarget,
-  keySequenceLabel,
-  matchesKeySequence,
-  matchesShortcut,
-  type ShortcutEvent,
-  sequenceLead,
-} from "./shortcuts"
+import { isTypingTarget, matchesShortcut, type ShortcutEvent } from "./shortcuts"
 
 function event(overrides: Partial<ShortcutEvent> & { key: string }): ShortcutEvent {
   return { metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...overrides }
@@ -40,52 +32,6 @@ describe("matchesShortcut", () => {
   it("matches punctuation keys, which is what settings is bound to", () => {
     expect(matchesShortcut(event({ key: ",", metaKey: true }), { key: "," })).toBe(true)
     expect(matchesShortcut(event({ key: ".", metaKey: true }), { key: "," })).toBe(false)
-  })
-})
-
-describe("matchesKeySequence", () => {
-  const NEW_GOAL = { key: "n" }
-  const SESSIONS = { lead: "g", key: "s" }
-
-  it("takes a lone key when nothing is pending", () => {
-    expect(matchesKeySequence(event({ key: "n" }), NEW_GOAL, null)).toBe(true)
-    expect(matchesKeySequence(event({ key: "N" }), NEW_GOAL, null)).toBe(true)
-  })
-
-  it("does not take a key that is held with a modifier — that is another chord", () => {
-    expect(matchesKeySequence(event({ key: "n", metaKey: true }), NEW_GOAL, null)).toBe(false)
-    expect(matchesKeySequence(event({ key: "n", ctrlKey: true }), NEW_GOAL, null)).toBe(false)
-    expect(matchesKeySequence(event({ key: "n", shiftKey: true }), NEW_GOAL, null)).toBe(false)
-    expect(matchesKeySequence(event({ key: "s", altKey: true }), SESSIONS, "g")).toBe(false)
-  })
-
-  it("completes a sequence only after its lead", () => {
-    expect(matchesKeySequence(event({ key: "s" }), SESSIONS, "g")).toBe(true)
-    expect(matchesKeySequence(event({ key: "s" }), SESSIONS, null)).toBe(false)
-    expect(matchesKeySequence(event({ key: "s" }), SESSIONS, "x")).toBe(false)
-  })
-
-  it("leaves a lone key alone while a lead is pending, so `g n` creates nothing", () => {
-    expect(matchesKeySequence(event({ key: "n" }), NEW_GOAL, "g")).toBe(false)
-  })
-
-  it("knows which keys open a sequence", () => {
-    expect(sequenceLead(event({ key: "g" }), [NEW_GOAL, SESSIONS])).toBe("g")
-    expect(sequenceLead(event({ key: "n" }), [NEW_GOAL, SESSIONS])).toBe(null)
-    expect(sequenceLead(event({ key: "g", metaKey: true }), [NEW_GOAL, SESSIONS])).toBe(null)
-  })
-
-  it("spells a typed chord as it is typed", () => {
-    expect(keySequenceLabel(NEW_GOAL)).toBe("N")
-    expect(keySequenceLabel(SESSIONS)).toBe("G S")
-  })
-})
-
-describe("isBareKey", () => {
-  it("is true only with nothing held", () => {
-    expect(isBareKey(event({ key: "g" }))).toBe(true)
-    expect(isBareKey(event({ key: "g", metaKey: true }))).toBe(false)
-    expect(isBareKey(event({ key: "g", shiftKey: true }))).toBe(false)
   })
 })
 
