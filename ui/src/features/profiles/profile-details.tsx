@@ -8,6 +8,7 @@
  * endpoint (see {@link ProfilePrompts}).
  */
 
+import { useQuery } from "@tanstack/react-query"
 import type { ReactNode } from "react"
 
 import type { ProfileDto } from "@/api"
@@ -18,8 +19,21 @@ import { formatAbsolute } from "@/lib/time"
 
 import { agentKindLabel, modelLabel, roleLabel } from "./profile-labels"
 import { ProfilePrompts } from "./profile-prompts"
+import { modelsQueryOptions } from "./queries"
 
 export function ProfileDetails({ profile }: { profile: ProfileDto }) {
+  // What the pinned model can do, when the catalog knows it. A model the
+  // catalog does not list — free text, or the catalog failing to load — shows
+  // exactly as before, so nothing here waits on the request.
+  const models = useQuery(modelsQueryOptions())
+  const catalogModel = profile.model
+    ? models.data?.find(
+        (model) =>
+          model.id === profile.model &&
+          (!profile.agent_kind || model.agent_kind === profile.agent_kind),
+      )
+    : undefined
+
   return (
     <div className="flex flex-col gap-5 py-2">
       <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3">
@@ -29,6 +43,9 @@ export function ProfileDetails({ profile }: { profile: ProfileDto }) {
         </Detail>
         <Detail label="Model" unset={!profile.model} hint="whatever the agent CLI uses">
           <span className="font-mono">{modelLabel(profile.model)}</span>
+          {catalogModel?.description ? (
+            <span className="ml-1.5 text-xs text-muted-foreground">{catalogModel.description}</span>
+          ) : null}
         </Detail>
         <Detail label="Id">
           <CopyableId value={profile.id} label="profile id" className="text-xs" />

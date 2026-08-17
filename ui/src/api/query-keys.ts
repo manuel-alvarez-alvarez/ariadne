@@ -84,6 +84,12 @@ export const qk = {
     detail: (id: string) => ["profiles", "detail", id] as const,
     prompts: (id: string) => ["profiles", "detail", id, "prompts"] as const,
   },
+  /** The model catalog (`GET /v1/models`), one unfiltered list for all agents. */
+  models: {
+    all: () => ["models"] as const,
+    lists: () => ["models", "list"] as const,
+    list: () => ["models", "list", {}] as const,
+  },
   /** Raw hook-reported agent events (`GET /v1/events`). */
   agentEvents: {
     all: () => ["agent-events"] as const,

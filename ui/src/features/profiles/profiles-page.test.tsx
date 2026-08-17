@@ -19,7 +19,7 @@ import userEvent from "@testing-library/user-event"
 import { MemoryRouter, useNavigate } from "react-router-dom"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-import type { ProfileDto } from "@/api"
+import type { ModelDto, ProfileDto } from "@/api"
 import { paths } from "@/routes/paths"
 
 import { ProfilesPage } from "./profiles-page"
@@ -55,11 +55,24 @@ const REVIEWER: ProfileDto = {
   role: "reviewer",
 }
 
+/** A profile pinned to a model the catalog below knows about. */
+const PINNED: ProfileDto = {
+  ...ENGINEER,
+  id: "01JPROF000000000000000PIN",
+  name: "Pinned",
+  model: "claude-opus-5",
+}
+
+/** The model catalog an expanded row asks for, to caption a known model with. */
+const CATALOG: ModelDto[] = [
+  { id: "claude-opus-5", agent_kind: "claude_code", description: "Opus tier: deep analysis" },
+]
+
 /**
- * The daemon's `GET /v1/profiles`, narrowing by role the way it does — and the
- * prompt list an expanded row asks for, which this screen's tests have nothing
- * to say about (`profile-prompts.test.tsx` does) but which has to answer
- * something other than a profile.
+ * The daemon's `GET /v1/profiles`, narrowing by role the way it does — plus
+ * the model catalog and the prompt list an expanded row asks for. The prompts
+ * are not this screen's tests' business (`profile-prompts.test.tsx`), but they
+ * have to answer something other than a profile.
  */
 function stubDaemon(profiles: ProfileDto[]) {
   daemonFetch.mockImplementation((input: Request | string | URL) => {
@@ -67,11 +80,14 @@ function stubDaemon(profiles: ProfileDto[]) {
       typeof input === "string" ? input : input instanceof URL ? input : input.url,
     )
     const role = url.searchParams.get("role")
-    const body = url.pathname.endsWith("/prompts")
-      ? []
-      : role
-        ? profiles.filter((profile) => profile.role === role)
-        : profiles
+    const body =
+      url.pathname === "/v1/models"
+        ? CATALOG
+        : url.pathname.endsWith("/prompts")
+          ? []
+          : role
+            ? profiles.filter((profile) => profile.role === role)
+            : profiles
     return Promise.resolve(
       new Response(JSON.stringify(body), {
         status: 200,
@@ -109,7 +125,7 @@ beforeEach(() => {
   // jsdom lays nothing out, so it does not implement this.
   Element.prototype.scrollIntoView = vi.fn()
   daemonFetch.mockReset()
-  stubDaemon([ENGINEER, REVIEWER])
+  stubDaemon([ENGINEER, REVIEWER, PINNED])
 })
 
 // Testing Library only unmounts by itself under `globals: true`, which this
@@ -160,5 +176,22 @@ describe("ProfilesPage, on ?expand=", () => {
         "false",
       )
     })
+  })
+})
+
+describe("ProfilesPage, expanded details", () => {
+  it("captions a catalog model with its capability blurb, and an unknown one with nothing", async () => {
+    const user = userEvent.setup()
+    renderScreen()
+
+    // A stored model the catalog lists gets its description next to it.
+    await user.click(await screen.findByRole("button", { name: "Pinned" }))
+    expect(await screen.findByText("Opus tier: deep analysis")).toBeDefined()
+
+    // One the catalog does not — here, no model at all — shows only itself.
+    await user.click(screen.getByRole("button", { name: "Pinned" }))
+    await user.click(screen.getByRole("button", { name: "Builder" }))
+    await screen.findByRole("button", { name: "Builder", expanded: true })
+    expect(screen.queryByText("Opus tier: deep analysis")).toBeNull()
   })
 })

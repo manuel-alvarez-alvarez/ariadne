@@ -51,6 +51,7 @@ export type PromptKind = Schemas["PromptKind"]
 export type UpdateProfilePromptRequest = Schemas["UpdateProfilePromptRequest"]
 export type Role = Schemas["Role"]
 export type AgentKind = Schemas["AgentKind"]
+export type ModelDto = Schemas["ModelDto"]
 
 export type AgentEventDto = Schemas["AgentEventDto"]
 export type DeletedDto = Schemas["DeletedDto"]
