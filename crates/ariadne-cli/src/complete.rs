@@ -275,62 +275,21 @@ fn agent_hint() -> Option<ariadne_core::AgentKind> {
     profile.get("agent_kind")?.as_str()?.parse().ok()
 }
 
-/// Claude Code model catalog (curated, no discovery).
+/// Claude Code model catalog (curated in ariadne-core, no discovery).
 fn claude_models() -> Vec<CompletionCandidate> {
-    [
-        ("claude-fable-5", "Frontier: highest capability; intricate multi-step agentic workflows and full SDLC loops"),
-        ("claude-mythos-5", "Frontier: specialized high-end reasoning within secure configurations"),
-        ("claude-opus-5", "Opus tier: massive contextual analysis, legal boilerplate logic, deep math/science"),
-        ("claude-opus-4-7", "Opus tier: pinned version for multi-file architecture refactoring and complex bugs"),
-        ("claude-sonnet-4-8", "Sonnet tier: production sweet spot; high speed with near-Opus engineering capability"),
-        ("claude-sonnet-4-6", "Sonnet tier: legacy production staple; quick diagnostics, lower task latency"),
-        ("claude-haiku-4-5", "Haiku tier: ultra-fast; inline completions, text touch-ups, shell command generation"),
-    ]
-    .into_iter()
-    .map(|(m, help)| candidate(m, format!("claude_code — {help}")))
-    .collect()
+    curated_models(ariadne_core::AgentKind::ClaudeCode)
 }
 
-/// Codex model catalog (curated, no discovery).
+/// Codex model catalog (curated in ariadne-core, no discovery).
 fn codex_models() -> Vec<CompletionCandidate> {
-    [
-        (
-            "gpt-5.6-sol",
-            "Frontier reasoning: multi-step agentic loops, codebase-wide architecture planning",
-        ),
-        (
-            "gpt-5.5-sol",
-            "Frontier reasoning: deep logic reasoning, long-horizon bug resolution",
-        ),
-        (
-            "gpt-5.3-codex",
-            "Codex developer: default enterprise LTS; optimal for active engineering contexts",
-        ),
-        (
-            "gpt-5.2-codex",
-            "Codex developer: native context compaction; single/multi-file refactoring",
-        ),
-        (
-            "codex-mini-latest",
-            "Low latency: ultra-fast inline edits, quick explanation cards, shell tasks",
-        ),
-        (
-            "o4-mini",
-            "Diagnostic: low-latency diagnostic tracking and fast debugging runs",
-        ),
-        (
-            "o3",
-            "Diagnostic: classic reasoning checkups and quick inline completion blocks",
-        ),
-        ("gpt-5.6-terra", "Balanced: high-volume execution layer"),
-        (
-            "gpt-5.6-luna",
-            "Balanced: cost-effective subagent processing queues",
-        ),
-    ]
-    .into_iter()
-    .map(|(m, help)| candidate(m, format!("codex — {help}")))
-    .collect()
+    curated_models(ariadne_core::AgentKind::Codex)
+}
+
+fn curated_models(kind: ariadne_core::AgentKind) -> Vec<CompletionCandidate> {
+    ariadne_core::models::curated_models(kind)
+        .iter()
+        .map(|m| candidate(m.id, format!("{} — {}", kind.as_str(), m.description)))
+        .collect()
 }
 
 /// OpenCode lists its models natively (`opencode models`, provider/model).
