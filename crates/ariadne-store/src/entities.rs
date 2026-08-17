@@ -4,7 +4,7 @@
 use std::str::FromStr;
 
 use ariadne_core::{
-    AgentKind, AuthorRole, GoalStatus, ReviewVerdict, Role, SessionStatus, TaskStatus,
+    AgentKind, AuthorRole, GoalStatus, PromptKind, ReviewVerdict, Role, SessionStatus, TaskStatus,
 };
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -33,6 +33,22 @@ impl Profile {
     }
     pub fn extra_flags(&self) -> Vec<String> {
         serde_json::from_str(&self.extra_flags).unwrap_or_default()
+    }
+}
+
+/// One editable briefing of a profile, keyed by [`PromptKind`].
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ProfilePrompt {
+    pub profile_id: String,
+    pub kind: String,
+    /// Template text with `{placeholder}` tokens the daemon fills in.
+    pub content: String,
+    pub updated_at: String,
+}
+
+impl ProfilePrompt {
+    pub fn kind(&self) -> PromptKind {
+        PromptKind::from_str(&self.kind).expect("valid prompt kind in db")
     }
 }
 
