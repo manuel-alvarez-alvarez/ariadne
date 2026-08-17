@@ -12,6 +12,7 @@ import { ArrowRightIcon } from "lucide-react"
 import type { TaskStatus, TaskTransitionDto } from "@/api"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
+import { StatusBadge } from "@/components/status-badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { formatAbsolute, formatRelative } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -67,9 +68,7 @@ function TransitionRow({ transition }: { transition: TaskTransitionDto }) {
         <span className="text-muted-foreground">{label(transition.from_status)}</span>
         <ArrowRightIcon className="size-3 text-muted-foreground" />
         <span className="font-medium">{label(transition.to_status)}</span>
-        <span className="rounded-full bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
-          {transition.actor}
-        </span>
+        <StatusBadge size="sm" label={transition.actor} tone="bg-muted text-muted-foreground" />
         <time
           className="ml-auto text-xs text-muted-foreground"
           dateTime={transition.created_at}

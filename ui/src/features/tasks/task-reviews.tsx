@@ -14,9 +14,9 @@ import { CopyableId } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { Markdown } from "@/components/markdown"
+import { StatusBadge } from "@/components/status-badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { formatAbsolute, formatRelative } from "@/lib/time"
-import { cn } from "@/lib/utils"
 import { taskReviewsQueryOptions } from "./queries"
 import { SessionLink } from "./task-sessions"
 
@@ -87,12 +87,7 @@ function ReviewCard({ review }: { review: ReviewDto }) {
   return (
     <article className="rounded-lg border bg-card px-3 py-2">
       <header className="mb-1.5 flex flex-wrap items-center gap-2 text-xs">
-        <span
-          className={cn("flex items-center gap-1 rounded-full px-1.5 py-0.5 font-medium", badge)}
-        >
-          <Icon className="size-3" />
-          {label}
-        </span>
+        <StatusBadge size="sm" label={label} tone={badge} icon={<Icon className="size-3" />} />
         <CopyableId
           value={review.reviewer_profile_id}
           label="profile id"

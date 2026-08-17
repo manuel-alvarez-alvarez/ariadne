@@ -13,6 +13,7 @@
  */
 
 import { cva, type VariantProps } from "class-variance-authority"
+import type { ReactNode } from "react"
 
 import { cn } from "@/lib/utils"
 
@@ -45,6 +46,7 @@ export function StatusBadge({
   label,
   tone,
   dot,
+  icon,
   pulse = false,
   size,
   box,
@@ -57,6 +59,11 @@ export function StatusBadge({
   tone?: string
   /** Dot colour classes; omitted, the badge has no dot. */
   dot?: string
+  /**
+   * A lucide icon leading the label, where the pill draws its meaning rather
+   * than tinting it — the review verdicts. It takes the dot's place.
+   */
+  icon?: ReactNode
   /** Pulses the dot, for a status that is still moving. */
   pulse?: boolean
   /** What the status means, on hover. */
@@ -65,12 +72,13 @@ export function StatusBadge({
 }) {
   return (
     <span className={cn(statusBadgeVariants({ size, box }), tone, className)} title={title}>
-      {dot ? (
-        <span
-          className={cn("size-1.5 shrink-0 rounded-full", dot, pulse && "animate-pulse")}
-          aria-hidden
-        />
-      ) : null}
+      {icon ??
+        (dot ? (
+          <span
+            className={cn("size-1.5 shrink-0 rounded-full", dot, pulse && "animate-pulse")}
+            aria-hidden
+          />
+        ) : null)}
       {label}
     </span>
   )
