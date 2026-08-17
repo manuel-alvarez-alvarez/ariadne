@@ -356,7 +356,12 @@ export function SessionTerminal({
   return (
     <div className={cn("flex min-h-0 flex-col gap-2", className)}>
       <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-        <StreamStatus status={streamStatus} error={error} />
+        {/* Announced: this line changes on its own — the stream dropping and
+            coming back is the daemon's doing, not the user's — and it is the
+            only place on screen that says the log went stale. */}
+        <span role="status" className="min-w-0">
+          <StreamStatus status={streamStatus} error={error} />
+        </span>
         {streamStatus === "ended" ? (
           <Button variant="ghost" size="xs" onClick={() => streamRef.current?.restart()}>
             <RotateCwIcon />
