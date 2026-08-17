@@ -71,6 +71,9 @@ pub async fn kill(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<Json<SessionDto>> {
+    // An id that names no session is a 404, not a conflict: the store is asked
+    // first so its "session not found: <id>" is what comes back.
+    state.store.get_session(&id).await?;
     state
         .launcher
         .kill_session(&id)
