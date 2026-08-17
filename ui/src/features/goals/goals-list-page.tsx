@@ -10,7 +10,7 @@
  */
 
 import { useQuery } from "@tanstack/react-query"
-import { PlusIcon } from "lucide-react"
+import { PlusIcon, TargetIcon } from "lucide-react"
 import { useState } from "react"
 import { useSearchParams } from "react-router-dom"
 
@@ -103,6 +103,7 @@ export function GoalsListPage() {
 
       {goals.data?.length === 0 ? (
         <EmptyState
+          icon={<TargetIcon className="size-5" />}
           title={
             status === ALL
               ? "No goals yet"
@@ -110,8 +111,16 @@ export function GoalsListPage() {
           }
           description={
             status === ALL
-              ? "Create one and the planner will break it into tasks."
-              : "Try another status filter."
+              ? "A goal is what Ariadne works on: describe one and the planner breaks it into tasks."
+              : "Nothing at this status. Try another filter, or start something new."
+          }
+          // The board is the screen the user is here to fill, so its empty
+          // state carries the way to fill it rather than only naming the gap.
+          action={
+            <Button variant="outline" size="sm" onClick={() => setCreateOpen(true)}>
+              <PlusIcon />
+              New goal
+            </Button>
           }
         />
       ) : null}

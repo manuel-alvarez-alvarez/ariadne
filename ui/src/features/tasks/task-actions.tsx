@@ -2,6 +2,11 @@
  * The two things the *user* actor may do to a task: cancel it, and retry it
  * once it has failed.
  *
+ * Both are named with the thing they act on. "Cancel" alone, on a panel that
+ * is itself dismissible, reads as a way out of the panel rather than the end
+ * of the task — and these buttons sit in the same corner of the panel as the
+ * goal's and the session's, which say what they act on for the same reason.
+ *
  * Which of them is offered comes from `status.ts`, which mirrors the daemon's
  * transition table — the daemon is still the authority, and if it disagrees
  * (the task moved between the render and the click) its error envelope is
@@ -47,14 +52,14 @@ export function TaskActions({ task }: { task: TaskDto }) {
       {showRetry && (
         <Button variant="outline" size="sm" onClick={() => setOpen("retry")}>
           <RotateCcwIcon />
-          Retry
+          Retry task
         </Button>
       )}
       {showCancel && (
         // Only opens the confirm; the solid red is on the click inside it.
         <Button variant="destructive-ghost" size="sm" onClick={() => setOpen("cancel")}>
           <BanIcon />
-          Cancel
+          Cancel task
         </Button>
       )}
 
