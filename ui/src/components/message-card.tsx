@@ -47,7 +47,6 @@ const ROLE_TONES: Record<AuthorRole, { badge: string; card: string }> = {
 export function MessageCard({
   message,
   source,
-  className,
 }: {
   message: MessageDto
   /**
@@ -55,11 +54,10 @@ export function MessageCard({
    * session that posted it, the goal thread has nothing to link to.
    */
   source?: ReactNode
-  className?: string
 }) {
   const role = ROLE_TONES[message.author_role]
   return (
-    <article className={cn("rounded-lg border border-l-2 bg-card px-3 py-2", role.card, className)}>
+    <article className={cn("rounded-lg border border-l-2 bg-card px-3 py-2", role.card)}>
       <header className="mb-1.5 flex flex-wrap items-center gap-2 text-xs">
         <StatusBadge size="sm" label={AUTHOR_ROLE_LABELS[message.author_role]} tone={role.badge} />
         {source}
