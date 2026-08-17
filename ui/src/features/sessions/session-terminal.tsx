@@ -477,7 +477,7 @@ function StreamStatus({ status, error }: { status: SessionLogStatus; error: stri
   }
   return (
     <span className="flex items-center gap-1.5">
-      <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-emerald-500" aria-hidden />
+      <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-status-done" aria-hidden />
       Live
     </span>
   )
