@@ -19,7 +19,7 @@ import { useQuery } from "@tanstack/react-query"
 import type { ReactNode } from "react"
 import { useSearchParams } from "react-router-dom"
 
-import { ApiError, api, type GoalDto, qk, unwrap } from "@/api"
+import { ApiError, type GoalDto } from "@/api"
 import { CopyableId, CopyableIdMenu } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
@@ -28,9 +28,9 @@ import { StatusBadge } from "@/components/status-badge"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { ProfileName } from "@/features/profiles/profile-name"
 import { goalCopyEntries } from "@/lib/copy-entries"
 import { formatAbsolute, formatRelative } from "@/lib/time"
-import { cn } from "@/lib/utils"
 import { usePanelSessionNavigation } from "@/routes/paths"
 import { GoalActions } from "./goal-actions"
 import { GoalSessions, GoalSessionView } from "./goal-sessions"
@@ -169,13 +169,18 @@ function GoalView({
   return (
     <>
       <SheetHeader>
-        <div className="flex flex-wrap items-center gap-2">
+        {/* What can be done to the goal sits at the end of the title row, the
+            same slot the task and session panels put their actions in. */}
+        <div className="flex flex-wrap items-center gap-3">
           <SheetTitle>{goal.title}</SheetTitle>
           <StatusBadge
             box="badge"
             label={GOAL_STATUS_META[goal.status].label}
             tone={GOAL_STATUS_META[goal.status].badge}
           />
+          <div className="ml-auto shrink-0">
+            <GoalActions goal={goal} />
+          </div>
         </div>
         <CopyableIdMenu
           value={goal.id}
@@ -184,8 +189,6 @@ function GoalView({
           className="text-xs text-muted-foreground"
         />
       </SheetHeader>
-
-      <GoalActions goal={goal} />
 
       <GoalMetadata goal={goal} />
 
@@ -218,14 +221,19 @@ function GoalView({
 }
 
 /**
- * What the goal is allowed to do, always on show: the same facts grid the task
- * panel opens with, so the two panels read as the one thing seen twice.
+ * What the goal is allowed to do, always on show.
+ *
+ * Three columns where there is room, like the session panel's Details card,
+ * and six facts to fill them: at every width the grid comes out whole, which
+ * the five short facts plus a full-width row of repositories did not — it left
+ * a hole in the middle of the card. The repositories take the last cell and
+ * wrap inside it, which is what {@link CopyableId.wrap} is for.
  */
 function GoalMetadata({ goal }: { goal: GoalDto }) {
   return (
-    <dl className="grid gap-x-6 gap-y-3 rounded-lg border bg-card p-3 text-sm sm:grid-cols-2">
+    <dl className="grid gap-x-6 gap-y-3 rounded-lg border bg-card p-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
       <Detail label="Planner">
-        <PlannerProfileName profileId={goal.planner_profile_id} />
+        <ProfileName profileId={goal.planner_profile_id} />
       </Detail>
       <Detail label="Approvals">
         <span className="tabular-nums">{goal.required_approvals}</span>
@@ -239,9 +247,7 @@ function GoalMetadata({ goal }: { goal: GoalDto }) {
       <Detail label="Updated">
         <span title={formatAbsolute(goal.updated_at)}>{formatRelative(goal.updated_at)}</span>
       </Detail>
-      {/* Last, and across both columns: a path is long, and there can be
-          several of them. */}
-      <Detail label="Repositories" className="sm:col-span-2">
+      <Detail label="Repositories">
         <ul className="flex flex-col gap-1">
           {goal.repos.map((repo) => (
             <li key={repo.id} className="min-w-0">
@@ -257,35 +263,11 @@ function GoalMetadata({ goal }: { goal: GoalDto }) {
   )
 }
 
-function Detail({
-  label,
-  className,
-  children,
-}: {
-  label: string
-  className?: string
-  children: ReactNode
-}) {
+function Detail({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className={cn("min-w-0", className)}>
+    <div className="min-w-0 space-y-0.5">
       <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="mt-0.5 min-w-0">{children}</dd>
+      <dd className="min-w-0">{children}</dd>
     </div>
-  )
-}
-
-/** The goal only carries the profile id; the name is what a person recognises. */
-function PlannerProfileName({ profileId }: { profileId: string }) {
-  const profile = useQuery({
-    queryKey: qk.profiles.detail(profileId),
-    queryFn: () => unwrap(api().GET("/v1/profiles/{id}", { params: { path: { id: profileId } } })),
-    staleTime: 5 * 60_000,
-  })
-  return (
-    <span className="break-all">
-      {profile.data?.name ?? (
-        <CopyableId value={profileId} label="profile id" wrap className="text-xs" />
-      )}
-    </span>
   )
 }
