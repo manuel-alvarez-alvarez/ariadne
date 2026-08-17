@@ -1,6 +1,10 @@
 /**
  * Kill and resume, the two things the UI can do *to* a session.
  *
+ * Both are named with what they act on, like the goal's and the task's: these
+ * sit in the same corner of a panel that is itself dismissible, and a bare
+ * verb there reads as being about the panel.
+ *
  * Kill is destructive and irreversible — it tears down the agent's tmux
  * process mid-thought — so it asks first, and because it asks, its refusal is
  * shown in that dialog like every other confirmed action's. Resume is not
@@ -20,7 +24,7 @@ import { Button } from "@/components/ui/button"
 import { describeError } from "@/lib/errors"
 
 import { useKillSession, useResumeSession } from "./queries"
-import { isLiveStatus, sessionStatusLabel } from "./session-display"
+import { isLiveStatus } from "./session-display"
 
 export function SessionActions({
   session,
@@ -42,15 +46,12 @@ export function SessionActions({
   return (
     <div className="flex items-center gap-2">
       {live ? (
-        // Only opens the confirm; the solid red is on the click inside it.
-        <Button
-          variant="destructive-ghost"
-          size="sm"
-          pending={kill.isPending}
-          onClick={() => setConfirmKill(true)}
-        >
+        // Only opens the confirm; the solid red — and the spinner, since the
+        // dialog is where the kill is actually running — are on the click
+        // inside it.
+        <Button variant="destructive-ghost" size="sm" onClick={() => setConfirmKill(true)}>
           <SkullIcon />
-          Kill
+          Kill session
         </Button>
       ) : (
         <Button
@@ -81,7 +82,7 @@ export function SessionActions({
           }}
         >
           <PlayIcon />
-          Resume
+          Resume session
         </Button>
       )}
 
@@ -109,9 +110,13 @@ export function SessionActions({
         errorTitle="Could not kill the session"
         onConfirm={() => {
           kill.mutate(session.id, {
-            onSuccess: (killed) => {
+            onSuccess: () => {
               setConfirmKill(false)
-              toast.success(`Session status: ${sessionStatusLabel(killed.status)}`)
+              // What was done, like every other success toast — not the status
+              // it left behind, which the badge on the row already says.
+              toast.success("Session killed", {
+                description: `${session.tmux_session} · the conversation is kept, so it can be resumed`,
+              })
             },
           })
         }}
