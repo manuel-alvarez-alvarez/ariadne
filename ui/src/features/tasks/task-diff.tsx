@@ -33,6 +33,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { Skeleton } from "@/components/ui/skeleton"
+import { plural } from "@/lib/plural"
 import { cn } from "@/lib/utils"
 import { DiffEditor, LARGE_FILE_LINES } from "./diff-editor"
 import { type DiffFile, type ParsedDiff, parseUnifiedDiff } from "./diff-parse"
@@ -172,7 +173,7 @@ function DiffToolbar({
   return (
     <div className="flex flex-wrap items-center gap-2">
       <span className="text-sm text-muted-foreground">
-        {empty ? "No changes" : `${files} ${files === 1 ? "file" : "files"} changed`}
+        {empty ? "No changes" : `${plural(files, "file")} changed`}
       </span>
       {!empty && <DiffStat additions={additions} deletions={deletions} />}
       <div className="ml-auto flex items-center gap-1">

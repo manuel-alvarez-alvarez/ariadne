@@ -16,6 +16,7 @@ import { ErrorState } from "@/components/error-state"
 import { Markdown } from "@/components/markdown"
 import { StatusBadge } from "@/components/status-badge"
 import { Skeleton } from "@/components/ui/skeleton"
+import { plural } from "@/lib/plural"
 import { formatAbsolute, formatRelative } from "@/lib/time"
 import { taskReviewsQueryOptions } from "./queries"
 import { SessionLink } from "./task-sessions"
@@ -70,7 +71,7 @@ export function TaskReviews({ taskId }: { taskId: string }) {
           <h3 className="font-heading text-sm font-medium">
             Round {round}
             <span className="ml-2 text-xs font-normal text-muted-foreground">
-              {entries.length} {entries.length === 1 ? "verdict" : "verdicts"}
+              {plural(entries.length, "verdict")}
             </span>
           </h3>
           {entries.map((review) => (

@@ -19,6 +19,7 @@ import type { TaskDto } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
 import { StatusBadge } from "@/components/status-badge"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { plural } from "@/lib/plural"
 import { formatAbsolute, formatRelative } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { useTaskPanelTo } from "@/routes/paths"
@@ -76,8 +77,7 @@ export function TaskCard({ task, showStatus = false }: { task: TaskDto; showStat
                 {task.depends_on.length}
               </TooltipTrigger>
               <TooltipContent>
-                Waits for {task.depends_on.length} {task.depends_on.length === 1 ? "task" : "tasks"}{" "}
-                to merge
+                Waits for {plural(task.depends_on.length, "task")} to merge
               </TooltipContent>
             </Tooltip>
           )}
