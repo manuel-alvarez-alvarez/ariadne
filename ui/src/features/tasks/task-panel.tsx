@@ -139,7 +139,7 @@ export function TaskPanel({
                 {task.data.description.trim() ? (
                   <Markdown>{task.data.description}</Markdown>
                 ) : (
-                  <EmptyState emphasis="quiet" title="This task has no description." />
+                  <EmptyState emphasis="quiet" title="This task has no description" />
                 )}
               </TabsContent>
               <TabsContent value="conversation" className="pt-3">

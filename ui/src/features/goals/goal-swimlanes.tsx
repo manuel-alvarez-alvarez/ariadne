@@ -61,7 +61,7 @@ export function GoalSwimlanes({ goals }: { goals: GoalDto[] }) {
   if (tasks.error) {
     return (
       <ErrorState
-        title="Could not load the tasks"
+        title="Could not load tasks"
         error={tasks.error}
         onRetry={() => void tasks.refetch()}
       />
@@ -166,9 +166,7 @@ function Lane({
 
       {collapsed ? null : total === 0 ? (
         <p className="sticky left-0 w-fit px-3 pt-1 pb-3 text-xs text-muted-foreground">
-          {goal.status === "planning"
-            ? "No tasks yet — the planner is still working."
-            : "No tasks."}
+          {goal.status === "planning" ? "No tasks yet — the planner is still working" : "No tasks"}
         </p>
       ) : (
         <div className={cn(COLUMNS_GRID, "px-3 pt-1 pb-2.5")}>

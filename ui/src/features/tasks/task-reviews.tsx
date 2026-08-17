@@ -53,7 +53,7 @@ export function TaskReviews({ taskId }: { taskId: string }) {
   if (reviews.error) {
     return (
       <ErrorState
-        title="Could not load the reviews"
+        title="Could not load reviews"
         error={reviews.error}
         onRetry={() => void reviews.refetch()}
       />
@@ -61,7 +61,7 @@ export function TaskReviews({ taskId }: { taskId: string }) {
   }
 
   if (rounds.length === 0) {
-    return <EmptyState emphasis="quiet" title="No review has been submitted yet." />
+    return <EmptyState emphasis="quiet" title="No review has been submitted yet" />
   }
 
   return (
