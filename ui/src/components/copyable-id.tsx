@@ -181,7 +181,7 @@ function Value({
 function MiddleTruncated({ value, title }: { value: string; title: string }) {
   const { head, tail } = middleTruncate(value)
   return (
-    <span className="flex min-w-0 font-mono" title={title}>
+    <span className="flex min-w-0 overflow-hidden font-mono" title={title}>
       <span className="truncate">{head}</span>
       <span className="max-w-full shrink-0 truncate">{tail}</span>
     </span>
