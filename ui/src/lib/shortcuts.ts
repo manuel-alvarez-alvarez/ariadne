@@ -11,26 +11,10 @@
  * three platforms, and a chord that silently does nothing because the platform
  * was sniffed wrong is worse than one that answers to both. Only the *hint*
  * printed next to the affordance picks a side.
- *
- * **Two kinds of chord.** The ones held with the modifier ({@link Shortcut}),
- * and the ones *typed* ({@link KeySequence}): a bare `n`, or `g` then a letter
- * for the screens. Typed chords are only safe because of the guard below — a
- * bare key means "go to sessions" exactly where it does not mean the letter s.
  */
 
 /** A chord: one key, with the platform's command modifier held. */
 export interface Shortcut {
-  /** `KeyboardEvent.key`, matched case-insensitively. */
-  key: string
-}
-
-/**
- * A chord that is typed rather than held: a bare key, or two of them in a row —
- * `g` `s`, the way every keyboard-first app spells "go to sessions".
- */
-export interface KeySequence {
-  /** The key that opens the sequence. Absent for a chord that is one key. */
-  lead?: string
   /** `KeyboardEvent.key`, matched case-insensitively. */
   key: string
 }
@@ -57,47 +41,6 @@ export function matchesShortcut(event: ShortcutEvent, shortcut: Shortcut): boole
     !event.shiftKey &&
     event.key.toLowerCase() === shortcut.key.toLowerCase()
   )
-}
-
-/** Whether nothing is held down — what makes a keystroke a *typed* chord. */
-export function isBareKey(event: ShortcutEvent): boolean {
-  return !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey
-}
-
-/**
- * Whether the event completes this sequence, given the lead key waiting for its
- * second half — `null` when none is.
- *
- * A pending lead is part of the match rather than a separate check: with `g`
- * pending, a lone `n` is the tail of a sequence nobody bound, not "new goal".
- */
-export function matchesKeySequence(
-  event: ShortcutEvent,
-  sequence: KeySequence,
-  pending: string | null,
-): boolean {
-  if (!isBareKey(event)) return false
-  if ((sequence.lead ?? null) !== pending) return false
-  return event.key.toLowerCase() === sequence.key.toLowerCase()
-}
-
-/**
- * The lead this event opens — the `g` of `g s` — or `null` when it opens none
- * of these sequences. What the shell holds until the next keystroke.
- */
-export function sequenceLead(
-  event: ShortcutEvent,
-  sequences: readonly KeySequence[],
-): string | null {
-  if (!isBareKey(event)) return null
-  const key = event.key.toLowerCase()
-  return sequences.some((sequence) => sequence.lead?.toLowerCase() === key) ? key : null
-}
-
-/** A typed chord as it should be shown: `N`, or `G S`. */
-export function keySequenceLabel(sequence: KeySequence): string {
-  const key = sequence.key.toUpperCase()
-  return sequence.lead ? `${sequence.lead.toUpperCase()} ${key}` : key
 }
 
 /** The bit of the focused element the guard reads. Keeps the check DOM-free. */

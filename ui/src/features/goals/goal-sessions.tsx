@@ -70,18 +70,9 @@ export function GoalSessionView({
   return (
     <>
       <SheetHeader>
-        {/* `max-w-full` and the truncating label are what keep a long goal
-            title out from under the sheet's close button: a button is
-            `whitespace-nowrap` and `w-fit`, so without them it grows straight
-            through the header's own right padding. */}
-        <Button
-          variant="ghost"
-          size="sm"
-          className="-ml-2 w-fit max-w-full"
-          onClick={() => onSelect(null)}
-        >
+        <Button variant="ghost" size="sm" className="-ml-2 w-fit" onClick={() => onSelect(null)}>
           <ArrowLeftIcon />
-          <span className="truncate">Back to {goalTitle ?? "the goal"}</span>
+          Back to {goalTitle ?? "the goal"}
         </Button>
         {/* The panel is a dialog and needs a name of its own; the view below
             carries the visible heading. */}

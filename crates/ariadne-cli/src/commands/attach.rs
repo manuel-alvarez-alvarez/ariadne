@@ -24,10 +24,6 @@ async fn sessions_for(client: &Client, query: &str) -> Result<Vec<SessionDto>> {
 
 /// Sessions matching the id, plus the role to attach to: task first (default
 /// engineer), then goal (default planner).
-///
-/// With no sessions on either side the id itself decides the wording — a task
-/// without sessions used to be reported as a missing *planner* session, and an
-/// id naming nothing at all got the same message as a real task.
 async fn candidates(
     client: &Client,
     id: &str,
@@ -38,25 +34,7 @@ async fn candidates(
         return Ok((sessions, role.unwrap_or(Role::Engineer)));
     }
     let sessions = sessions_for(client, &format!("goal={id}")).await?;
-    if !sessions.is_empty() {
-        return Ok((sessions, role.unwrap_or(Role::Planner)));
-    }
-    if exists(client, &format!("/v1/tasks/{id}")).await? {
-        Ok((vec![], role.unwrap_or(Role::Engineer)))
-    } else if exists(client, &format!("/v1/goals/{id}")).await? {
-        Ok((vec![], role.unwrap_or(Role::Planner)))
-    } else {
-        bail!("no such task, goal or session: {id}")
-    }
-}
-
-/// Whether a GET on `path` finds anything (404 = no).
-async fn exists(client: &Client, path: &str) -> Result<bool> {
-    match client.get_json::<serde_json::Value>(path).await {
-        Ok(_) => Ok(true),
-        Err(ClientError::Api { status, .. }) if status == http::StatusCode::NOT_FOUND => Ok(false),
-        Err(e) => Err(e.into()),
-    }
+    Ok((sessions, role.unwrap_or(Role::Planner)))
 }
 
 /// True when the tmux session actually exists (the DB may lag: the

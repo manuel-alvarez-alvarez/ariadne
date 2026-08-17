@@ -2,15 +2,13 @@
 
 mod commands;
 mod complete;
-mod error;
 mod output;
 mod query;
 
 use std::path::PathBuf;
-use std::process::ExitCode;
 
 use anyhow::Result;
-use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
+use clap::{Parser, Subcommand};
 
 use ariadne_client::Client;
 
@@ -26,10 +24,8 @@ struct Cli {
     /// Daemon endpoint: unix socket path or http://host:port
     /// (default: $ARIADNE_SOCKET, else the socket of the ariadne home —
     /// $ARIADNE_HOME or ~/.ariadne — as its config.toml names it)
-    // `--host` was the old name and never meant a host; it stays as an
-    // undocumented alias so existing scripts keep working.
-    #[arg(long, alias = "host", global = true, env = ariadne_client::ENDPOINT_ENV)]
-    endpoint: Option<String>,
+    #[arg(long, global = true, env = ariadne_client::ENDPOINT_ENV)]
+    host: Option<String>,
 
     /// Output format
     #[arg(long, global = true, value_enum, default_value = "table")]
@@ -75,9 +71,9 @@ enum Command {
         /// Session, task or goal id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(complete::attach_ids))]
         id: String,
-        /// Which agent of that id to attach to (default: engineer for tasks,
-        /// planner for goals; not valid with a session id)
-        #[arg(long, value_enum)]
+        /// engineer | reviewer | planner (default: engineer for tasks, planner
+        /// for goals; not valid with a session id)
+        #[arg(long, value_parser = commands::parse_role, add = clap_complete::engine::ArgValueCandidates::new(complete::roles))]
         role: Option<ariadne_core::Role>,
     },
     /// One-time host setup for the coding agents
@@ -140,70 +136,18 @@ enum DaemonCommand {
     },
 }
 
-/// Subcommand paths where `--format` has nothing to format: they hand the
-/// terminal to another program, or print a shell script. The flag is global
-/// (so `ariadne --format json task ls` keeps working), which would otherwise
-/// advertise it on every one of them.
-const NO_FORMAT: &[&[&str]] = &[
-    &["completions"],
-    &["attach"],
-    &["setup"],
-    &["daemon", "logs"],
-    &["goal", "attach"],
-    &["task", "attach"],
-];
-
-/// The clap command, with `--format` hidden wherever it does nothing.
-fn command() -> clap::Command {
-    NO_FORMAT
-        .iter()
-        .fold(Cli::command(), |cmd, path| hide_format(cmd, path))
-}
-
-/// Hide `--format` on the subcommand at `path` (`[]` = this command itself).
-///
-/// A global argument is not there to mutate: clap only copies it into the
-/// subcommands as it builds them, and skips the copy where the subcommand
-/// declares that name itself. So this declares it — same flag, same values,
-/// out of the help.
-fn hide_format(cmd: clap::Command, path: &[&str]) -> clap::Command {
-    match path {
-        [] => cmd.arg(
-            clap::Arg::new("format")
-                .long("format")
-                .hide(true)
-                .value_parser(clap::value_parser!(Format))
-                .default_value("table"),
-        ),
-        [name, rest @ ..] => cmd.mut_subcommand(name, |sub| hide_format(sub, rest)),
-    }
-}
-
-/// Failures are reported by [`error::report`] rather than by anyhow's default
-/// `Error: ...` + `Caused by:` block: one line, and exit code 1. Usage errors
-/// never reach here — clap prints and exits 2 itself.
-fn main() -> ExitCode {
+fn main() -> Result<()> {
     // Dynamic shell completion: when invoked by the completion shim
     // (COMPLETE=<shell> in the environment) this answers the request and
     // exits before anything else runs. Candidate functions query the daemon
     // with their own tiny runtime, so this must happen before tokio starts.
-    clap_complete::CompleteEnv::with_factory(command).complete();
+    clap_complete::CompleteEnv::with_factory(|| {
+        use clap::CommandFactory;
+        Cli::command()
+    })
+    .complete();
 
-    let cli = match Cli::from_arg_matches(&command().get_matches()) {
-        Ok(cli) => cli,
-        Err(e) => e.exit(),
-    };
-    let format = cli.format;
-    match block_on(cli) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
-            error::report(&e, format);
-            ExitCode::FAILURE
-        }
-    }
-}
-
-fn block_on(cli: Cli) -> Result<()> {
+    let cli = Cli::parse();
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
@@ -214,18 +158,24 @@ async fn run(cli: Cli) -> Result<()> {
     // Commands talk to an already-running daemon, so an explicit endpoint wins
     // here. `daemon start` is the exception and resolves its own target from
     // the home it spawns the daemon in.
-    let client = Client::resolve(cli.endpoint.as_deref(), None);
+    let client = Client::resolve(cli.host.as_deref(), None);
 
     match cli.command {
-        Command::Version => commands::version(&client, cli.format).await,
+        Command::Version => commands::version(&client).await,
         Command::Completions { shell } => {
-            clap_complete::generate(shell, &mut command(), "ariadne", &mut std::io::stdout());
+            use clap::CommandFactory;
+            clap_complete::generate(
+                shell,
+                &mut Cli::command(),
+                "ariadne",
+                &mut std::io::stdout(),
+            );
             Ok(())
         }
         Command::Daemon { command } => match command {
-            DaemonCommand::Start { home } => commands::daemon_start(home, cli.format).await,
-            DaemonCommand::Stop => commands::daemon_stop(cli.format),
-            DaemonCommand::Status => commands::daemon_status(&client, cli.format).await,
+            DaemonCommand::Start { home } => commands::daemon_start(home).await,
+            DaemonCommand::Stop => commands::daemon_stop(),
+            DaemonCommand::Status => commands::daemon_status(&client).await,
             DaemonCommand::Logs { follow } => commands::daemon_logs(follow),
         },
         Command::Attach { id, role } => commands::attach::attach_any(&client, &id, role).await,
@@ -243,76 +193,5 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Mcp {
             command: McpCommand::Serve,
         } => commands::mcp::serve().await,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// clap's own consistency check over the whole tree, shadowed `--format`
-    /// arguments included.
-    #[test]
-    fn the_command_tree_is_well_formed() {
-        command().debug_assert();
-    }
-
-    #[test]
-    fn format_is_advertised_exactly_where_it_is_honored() {
-        for path in NO_FORMAT {
-            assert!(!advertises_format(path), "--format advertised on {path:?}");
-        }
-        for path in [
-            &["version"][..],
-            &["daemon", "status"],
-            &["task", "ls"],
-            &["task", "diff"],
-            &["session", "inspect"],
-            &["profile", "rm"],
-        ] {
-            assert!(advertises_format(path), "--format missing from {path:?}");
-        }
-    }
-
-    /// `--host` was the documented spelling before `--endpoint`; scripts that
-    /// still use it must land in the same field.
-    #[test]
-    fn the_old_host_flag_still_names_the_endpoint() {
-        for flag in ["--endpoint", "--host"] {
-            let cli = parse(&["ariadne", flag, "/tmp/x.sock", "version"]);
-            assert_eq!(cli.endpoint.as_deref(), Some("/tmp/x.sock"), "{flag}");
-        }
-    }
-
-    /// The flag keeps working where it is no longer advertised — hiding it is
-    /// about help text, not about breaking a command line that has it.
-    #[test]
-    fn a_hidden_format_flag_is_still_parsed() {
-        assert_eq!(
-            parse(&["ariadne", "attach", "--format", "json", "x"]).format,
-            Format::Json
-        );
-        assert_eq!(
-            parse(&["ariadne", "--format", "json", "attach", "x"]).format,
-            Format::Json
-        );
-        assert_eq!(parse(&["ariadne", "attach", "x"]).format, Format::Table);
-    }
-
-    fn parse(argv: &[&str]) -> Cli {
-        Cli::from_arg_matches(&command().get_matches_from(argv)).expect("parse")
-    }
-
-    /// Whether `--format` shows up in that subcommand's help.
-    fn advertises_format(path: &[&str]) -> bool {
-        let mut cmd = command();
-        // Globals only reach the subcommands once the tree is built.
-        cmd.build();
-        let mut sub = &cmd;
-        for name in path {
-            sub = sub.find_subcommand(name).expect("subcommand");
-        }
-        sub.get_arguments()
-            .any(|a| a.get_id() == "format" && !a.is_hide_set())
     }
 }
