@@ -16,7 +16,7 @@
 
 import { useQueries, useQuery } from "@tanstack/react-query"
 import { ChevronRightIcon, GitBranchIcon, GitCommitHorizontalIcon } from "lucide-react"
-import type { ReactNode } from "react"
+import { type ReactNode, useRef } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 
 import type { TaskDto } from "@/api"
@@ -28,8 +28,10 @@ import { StatusBadge } from "@/components/status-badge"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { goalQueryOptions } from "@/features/goals/queries"
 import { ProfileName } from "@/features/profiles/profile-name"
+import { useFocusReturn } from "@/hooks/use-focus-return"
 import { taskCopyEntries } from "@/lib/copy-entries"
 import { shortId } from "@/lib/ids"
 import { formatAbsolute, formatRelative } from "@/lib/time"
@@ -66,6 +68,10 @@ export function TaskPanel({
   const tab = TABS.find((value) => value === search.get("tab")) ?? "conversation"
   const session = search.get("session") ?? undefined
   const selectSession = usePanelSessionNavigation()
+  // Going back from a session hands focus to the row that opened it, which the
+  // dialog cannot do for us — nothing closed. See `useFocusReturn`.
+  const panel = useRef<HTMLDivElement>(null)
+  useFocusReturn(session ?? null, panel)
 
   function setTab(next: Tab) {
     const params = new URLSearchParams(search)
@@ -76,6 +82,7 @@ export function TaskPanel({
   return (
     <Sheet open onOpenChange={(open) => open || onClose()}>
       <SheetContent
+        ref={panel}
         // Stacked, it leaves the goal's sheet showing at its left and takes
         // the one darkening of the stack with it — the sheet underneath gives
         // its own up (see `GoalSheet`), so the screen is dimmed once and the
@@ -227,8 +234,8 @@ function TaskHeader({ task, showGoalLink }: { task: TaskDto; showGoalLink: boole
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-2 text-xs">
-        <StatusBadge label={status.label} tone={status.badge} title={status.hint} />
-        {sub && <StatusBadge label={sub.label} tone={sub.badge} title={sub.hint} />}
+        <StatusBadge label={status.label} tone={status.badge} hint={status.hint} />
+        {sub && <StatusBadge label={sub.label} tone={sub.badge} hint={sub.hint} />}
         {task.stalled && <StalledBadge />}
         <span className="text-muted-foreground">
           review round <span className="font-mono">{task.review_round}</span>
@@ -239,12 +246,15 @@ function TaskHeader({ task, showGoalLink }: { task: TaskDto; showGoalLink: boole
           entries={taskCopyEntries(task.id)}
           className="text-muted-foreground"
         />
-        <span
-          className="ml-auto text-muted-foreground"
-          title={`created ${formatAbsolute(task.created_at)}`}
-        >
-          updated {formatRelative(task.updated_at)}
-        </span>
+        <Tooltip>
+          <TooltipTrigger render={<span className="ml-auto text-muted-foreground" />}>
+            updated {formatRelative(task.updated_at)}
+          </TooltipTrigger>
+          <TooltipContent className="flex-col items-start gap-0.5">
+            <span>updated {formatAbsolute(task.updated_at)}</span>
+            <span className="text-background/70">created {formatAbsolute(task.created_at)}</span>
+          </TooltipContent>
+        </Tooltip>
       </div>
     </SheetHeader>
   )
