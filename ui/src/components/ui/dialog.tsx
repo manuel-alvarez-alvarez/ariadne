@@ -6,17 +6,6 @@ import type * as React from "react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
-/**
- * The darkening behind a dialog or a sheet, the one way for both.
- *
- * The blur carries most of it where it is supported, but it cannot be the
- * whole of it: `backdrop-filter` is the first thing a browser drops, and a
- * tenth of black over an already-dark page is a scrim nobody can see. So dark
- * mode takes a real one — the page has to visibly recede, or a modal reads as
- * part of the screen it is covering.
- */
-export const SCRIM = "bg-black/10 supports-backdrop-filter:backdrop-blur-xs dark:bg-black/40"
-
 function Dialog({ ...props }: DialogPrimitive.Root.Props) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />
 }
@@ -38,8 +27,7 @@ function DialogOverlay({ className, ...props }: DialogPrimitive.Backdrop.Props) 
     <DialogPrimitive.Backdrop
       data-slot="dialog-overlay"
       className={cn(
-        "fixed inset-0 isolate z-50 duration-100 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
-        SCRIM,
+        "fixed inset-0 isolate z-50 bg-black/10 duration-100 supports-backdrop-filter:backdrop-blur-xs data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
         className,
       )}
       {...props}

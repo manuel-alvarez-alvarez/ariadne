@@ -11,7 +11,6 @@ import type { ReactNode } from "react"
 import type { ProfileDto } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
 import { Badge } from "@/components/ui/badge"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { formatAbsolute } from "@/lib/time"
 
 import { agentKindLabel, modelLabel, roleLabel } from "./profile-labels"
@@ -57,19 +56,9 @@ export function ProfileDetails({ profile }: { profile: ProfileDto }) {
         <h4 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
           System prompt
         </h4>
-        {/* The box that scrolls is a named region and takes focus: a prompt
-            long enough to need a scrollbar is one only a pointer could read
-            otherwise. */}
-        <section
-          aria-label="System prompt"
-          // biome-ignore lint/a11y/noNoninteractiveTabindex: a scroll container has to take focus to be scrollable by keyboard
-          tabIndex={0}
-          className="max-h-96 overflow-auto rounded-lg border bg-muted/40 p-3 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
-        >
-          <pre className="font-mono text-xs leading-relaxed whitespace-pre-wrap">
-            {profile.system_prompt}
-          </pre>
-        </section>
+        <pre className="max-h-96 overflow-auto rounded-lg border bg-muted/40 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap">
+          {profile.system_prompt}
+        </pre>
       </section>
     </div>
   )
@@ -88,29 +77,15 @@ function Detail({
   /** What the daemon does instead, shown next to that word. */
   hint?: string
 }) {
-  // The value is truncated, so what the row says in full is only ever readable
-  // in the hint — a `Tooltip` on a focusable `<dd>` rather than a `title=`,
-  // which a keyboard never opens.
-  const value = (
-    <>
-      {unset ? <span className="text-muted-foreground italic">{children}</span> : children}
-      {unset && hint ? (
-        <span className="ml-1.5 text-xs text-muted-foreground">({hint})</span>
-      ) : null}
-    </>
-  )
-
   return (
     <div className="flex min-w-0 flex-col gap-0.5">
       <dt className="text-xs font-medium tracking-wide text-muted-foreground uppercase">{label}</dt>
-      {unset && hint ? (
-        <Tooltip>
-          <TooltipTrigger render={<dd className="truncate text-sm" />}>{value}</TooltipTrigger>
-          <TooltipContent>{hint}</TooltipContent>
-        </Tooltip>
-      ) : (
-        <dd className="truncate text-sm">{value}</dd>
-      )}
+      <dd className="truncate text-sm" title={unset ? hint : undefined}>
+        {unset ? <span className="text-muted-foreground italic">{children}</span> : children}
+        {unset && hint ? (
+          <span className="ml-1.5 text-xs text-muted-foreground">({hint})</span>
+        ) : null}
+      </dd>
     </div>
   )
 }

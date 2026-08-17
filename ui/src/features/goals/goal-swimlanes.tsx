@@ -65,7 +65,7 @@ export function GoalSwimlanes({ goals }: { goals: GoalDto[] }) {
   const tasks = useQuery(taskListQueryOptions({}))
   const byGoal = useMemo(() => groupByGoal(tasks.data ?? []), [tasks.data])
   const { collapsed, toggle } = useCollapsedLanes()
-  const board = useHorizontalOverflow<HTMLElement>()
+  const board = useHorizontalOverflow<HTMLDivElement>()
 
   if (tasks.error) {
     return (
@@ -83,19 +83,7 @@ export function GoalSwimlanes({ goals }: { goals: GoalDto[] }) {
 
   return (
     <div className={BOARD_FRAME}>
-      {/* A named region the keyboard can put focus into: the board scrolls both
-          ways, and a scrollport nothing can focus only scrolls under a pointer
-          — the columns and lanes past its edges would be mouse-only. */}
-      <section
-        ref={board.ref}
-        aria-label="Goals board"
-        // biome-ignore lint/a11y/noNoninteractiveTabindex: a scroll container has to take focus to be scrollable by keyboard
-        tabIndex={0}
-        className={cn(
-          BOARD_BOX,
-          "overflow-auto focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none",
-        )}
-      >
+      <div ref={board.ref} className={cn(BOARD_BOX, "overflow-auto")}>
         <div className="min-w-[72rem]">
           <div className={cn(COLUMNS_GRID, HEADER_ROW)}>
             {BOARD_STATUSES.map((status) => {
@@ -128,7 +116,7 @@ export function GoalSwimlanes({ goals }: { goals: GoalDto[] }) {
             />
           ))}
         </div>
-      </section>
+      </div>
       <ScrollEdge side="start" show={board.overflow.start} />
       <ScrollEdge side="end" show={board.overflow.end} />
     </div>
