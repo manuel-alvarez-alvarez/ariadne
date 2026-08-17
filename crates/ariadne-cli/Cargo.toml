@@ -14,7 +14,6 @@ ariadne-api = { workspace = true }
 ariadne-client = { workspace = true }
 ariadne-core = { workspace = true, features = ["clap"] }
 anyhow = { workspace = true }
-chrono = { workspace = true }
 clap = { workspace = true }
 clap_complete = { workspace = true }
 dirs = { workspace = true }

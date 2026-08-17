@@ -116,7 +116,7 @@ function TaskRow({ item: { task, reason } }: { item: AttentionTask }) {
   return (
     <li>
       <Link to={taskPanelTo(search, task.id)} className={ROW_LINK}>
-        <StatusBadge box="badge" label={meta.label} tone={meta.badge} title={meta.hint} />
+        <StatusBadge box="badge" label={meta.label} tone={meta.badge} hint={meta.hint} />
         <span className="min-w-0 flex-1 truncate font-medium">{task.title}</span>
         {/* The status pill already names the other two reasons; a stall is a
             flag on top of whatever status the task is sitting in. */}
@@ -142,7 +142,7 @@ function SessionRow({ session }: { session: SessionDto }) {
             this screen rather than being the session badge here and the task
             badge one row up. `SessionStatusBadge` stays what the sessions
             feature shows, where a badge has five statuses to tell apart. */}
-        <StatusBadge box="badge" label={meta.label} tone={meta.badge} title="The agent died." />
+        <StatusBadge box="badge" label={meta.label} tone={meta.badge} hint="The agent died." />
         <span className="min-w-0 flex-1 truncate">
           {ROLE_LABELS[session.role]} session
           {session.task_id ? null : <span className="text-muted-foreground"> · planner</span>}
