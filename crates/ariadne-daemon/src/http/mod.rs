@@ -5,6 +5,7 @@ pub(crate) mod convert;
 mod error;
 mod events;
 mod goals;
+mod models;
 mod profiles;
 mod session_logs;
 mod sessions;
@@ -84,6 +85,7 @@ impl AppState {
         sessions::input, sessions::logs,
         session_logs::logs_stream,
         events::list, stream::stream,
+        models::list,
     ),
     components(schemas(
         ariadne_api::stream::DomainEvent, ariadne_api::stream::ResyncDto,
@@ -97,6 +99,7 @@ impl AppState {
         (name = "tasks", description = "Tasks, transitions, conversations, reviews"),
         (name = "sessions", description = "Agent sessions (tmux-hosted)"),
         (name = "events", description = "Raw agent events from hooks, and the live domain-event stream"),
+        (name = "models", description = "Model catalogs per agent CLI"),
     )
 )]
 struct ApiDoc;
@@ -166,6 +169,8 @@ pub fn router(state: AppState) -> Router {
             "/v1/sessions/{id}/logs/stream",
             get(session_logs::logs_stream),
         )
+        // models
+        .route("/v1/models", get(models::list))
         // events
         .route("/v1/events", get(events::list))
         .route("/v1/events/stream", get(stream::stream))
