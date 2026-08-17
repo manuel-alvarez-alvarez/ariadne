@@ -20,6 +20,8 @@ import {
   type CreateProfileRequest,
   type PageFilters,
   type ProfileDto,
+  type ProfilePromptDto,
+  type PromptKind,
   qk,
   type Role,
   type UpdateProfileRequest,
@@ -70,8 +72,73 @@ export function useDeleteProfile() {
   })
 }
 
+/**
+ * `GET /v1/profiles/{id}/prompts` — the briefing prompts of the profile's role,
+ * in the order the daemon sends them.
+ *
+ * Nested under the profile's detail key, so deleting a profile drops its
+ * prompts with it. It is deliberately *not* refetched by `profile_updated`:
+ * that event carries a `ProfileDto`, which the prompts are not part of, and a
+ * refetch while someone is typing into an editor is exactly what should not
+ * happen.
+ */
+export function profilePromptsQueryOptions(id: string) {
+  return queryOptions({
+    queryKey: qk.profiles.prompts(id),
+    queryFn: () => unwrap(api().GET("/v1/profiles/{id}/prompts", { params: { path: { id } } })),
+  })
+}
+
+export function useUpdateProfilePrompt(id: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ kind, content }: { kind: PromptKind; content: string }) =>
+      unwrap(
+        api().PUT("/v1/profiles/{id}/prompts/{kind}", {
+          params: { path: { id, kind } },
+          body: { content },
+        }),
+      ),
+    onSuccess: (prompt) => cachePrompt(queryClient, id, prompt),
+  })
+}
+
+export function useResetProfilePrompt(id: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (kind: PromptKind) =>
+      unwrap(
+        api().POST("/v1/profiles/{id}/prompts/{kind}/reset", { params: { path: { id, kind } } }),
+      ),
+    onSuccess: (prompt) => cachePrompt(queryClient, id, prompt),
+  })
+}
+
+/** `POST /v1/profiles/{id}/system-prompt/reset`, which answers the whole profile. */
+export function useResetSystemPrompt(id: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () =>
+      unwrap(api().POST("/v1/profiles/{id}/system-prompt/reset", { params: { path: { id } } })),
+    onSuccess: (profile) => cacheProfile(queryClient, profile),
+  })
+}
+
 /** What the dispatcher does for a `profile_created` / `profile_updated` event. */
 function cacheProfile(queryClient: QueryClient, profile: ProfileDto): void {
   queryClient.setQueryData(qk.profiles.detail(profile.id), profile)
   void queryClient.invalidateQueries({ queryKey: qk.profiles.lists() })
+}
+
+/**
+ * One prompt back into the list it came from, in place.
+ *
+ * A write answers with that prompt alone, so the list is patched rather than
+ * invalidated: refetching would swap the array under editors that may be
+ * holding unsaved drafts of the *other* prompts.
+ */
+function cachePrompt(queryClient: QueryClient, id: string, prompt: ProfilePromptDto): void {
+  queryClient.setQueryData(qk.profiles.prompts(id), (prompts?: ProfilePromptDto[]) =>
+    prompts?.map((current) => (current.kind === prompt.kind ? prompt : current)),
+  )
 }
