@@ -2,10 +2,12 @@
 
 mod commands;
 mod complete;
+mod error;
 mod output;
 mod query;
 
 use std::path::PathBuf;
+use std::process::ExitCode;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -136,7 +138,10 @@ enum DaemonCommand {
     },
 }
 
-fn main() -> Result<()> {
+/// Failures are reported by [`error::report`] rather than by anyhow's default
+/// `Error: ...` + `Caused by:` block: one line, and exit code 1. Usage errors
+/// never reach here — clap prints and exits 2 itself.
+fn main() -> ExitCode {
     // Dynamic shell completion: when invoked by the completion shim
     // (COMPLETE=<shell> in the environment) this answers the request and
     // exits before anything else runs. Candidate functions query the daemon
@@ -148,6 +153,17 @@ fn main() -> Result<()> {
     .complete();
 
     let cli = Cli::parse();
+    let format = cli.format;
+    match block_on(cli) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            error::report(&e, format);
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn block_on(cli: Cli) -> Result<()> {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
