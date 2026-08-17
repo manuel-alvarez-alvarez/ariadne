@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 
-use ariadne_client::Client;
+use ariadne_client::{Client, endpoint};
 
 /// Shared `--role` value parser (planner | engineer | reviewer).
 pub fn parse_role(s: &str) -> Result<ariadne_core::Role, String> {
@@ -46,7 +46,13 @@ pub async fn daemon_status(client: &Client) -> Result<()> {
 }
 
 /// `ariadne daemon start` — spawn ariadned detached and wait for it to answer.
-pub async fn daemon_start(client: &Client, home: Option<PathBuf>) -> Result<()> {
+///
+/// Builds its own client for `home` rather than taking the caller's: the
+/// daemon it spawns listens on that home's socket, and `--host` /
+/// `ARIADNE_SOCKET` — which are never passed to ariadned — would send both the
+/// already-running check and the readiness poll at a different daemon.
+pub async fn daemon_start(home: Option<PathBuf>) -> Result<()> {
+    let client = Client::for_home(home.clone());
     if client.health().await.is_ok() {
         println!("daemon already running at {}", client.endpoint());
         return Ok(());
@@ -58,7 +64,7 @@ pub async fn daemon_start(client: &Client, home: Option<PathBuf>) -> Result<()> 
         cmd.arg("--home").arg(home);
     }
     // Daemon output goes to a log file, readable via `ariadne daemon logs`.
-    let log_dir = home.clone().unwrap_or_else(ariadne_home);
+    let log_dir = ariadne_home(home.clone());
     std::fs::create_dir_all(&log_dir).ok();
     let log = std::fs::OpenOptions::new()
         .create(true)
@@ -89,7 +95,7 @@ pub async fn daemon_start(client: &Client, home: Option<PathBuf>) -> Result<()> 
 
 /// `ariadne daemon stop` — SIGTERM via pidfile.
 pub fn daemon_stop() -> Result<()> {
-    let pid_file = ariadne_home().join("ariadned.pid");
+    let pid_file = endpoint::pid_file(&ariadne_home(None));
     let pid = std::fs::read_to_string(&pid_file)
         .with_context(|| {
             format!(
@@ -117,7 +123,7 @@ pub fn daemon_stop() -> Result<()> {
 /// `ariadne daemon logs [-f]` — show the daemon log via tail.
 pub fn daemon_logs(follow: bool) -> Result<()> {
     use std::os::unix::process::CommandExt;
-    let log = ariadne_home().join("ariadned.log");
+    let log = ariadne_home(None).join("ariadned.log");
     if !log.is_file() {
         bail!("no daemon log at {}", log.display());
     }
@@ -131,11 +137,8 @@ pub fn daemon_logs(follow: bool) -> Result<()> {
 }
 
 /// Resolve the ariadne home directory the same way the daemon does.
-fn ariadne_home() -> PathBuf {
-    std::env::var_os("ARIADNE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|h| h.join(".ariadne")))
-        .unwrap_or_else(|| PathBuf::from(".ariadne"))
+fn ariadne_home(home_override: Option<PathBuf>) -> PathBuf {
+    endpoint::home(home_override).unwrap_or_else(|| PathBuf::from(".ariadne"))
 }
 
 /// Find the ariadned binary: next to the current executable, else on PATH.
