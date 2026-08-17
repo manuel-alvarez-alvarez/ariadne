@@ -6,23 +6,30 @@
  * panel picks a session without leaving the screen it is floating over, and the
  * screen turns the pick into a link of its own.
  *
- * Five columns, because the table has to fit a 48rem panel as well as a full
- * screen without scrolling sideways: the agent kind rides along with the
+ * Five columns in a panel, because the table has to fit a 48rem one as well as
+ * a full screen without scrolling sideways: the agent kind rides along with the
  * profile, the review round with the role, and the end of the session with its
  * last activity — all three on hover, where they were worth a column each only
- * for the sessions that have them.
+ * for the sessions that have them. The sixth, the context, is the screen's
+ * alone.
  *
  * The filters come from the caller (`{goal}`, `{task}`, whatever the panel
- * has); this component only reads them. The list stays live on its own:
- * `session_created` and `session_updated` invalidate `sessions.lists()` in the
- * event dispatcher, so a session starting, going idle or being killed shows up
- * here without a refresh.
+ * has); this component only reads them — but it reads them for more than the
+ * request. What the list is *scoped* to is what decides the sixth column and
+ * what an empty list is called: inside a goal's or a task's panel the subject
+ * is the panel's own heading, and repeating it on every row (or blaming an
+ * empty tab on filters that tab does not have) says nothing. See
+ * {@link listScope}.
+ *
+ * The list stays live on its own: `session_created` and `session_updated`
+ * invalidate `sessions.lists()` in the event dispatcher, so a session starting,
+ * going idle or being killed shows up here without a refresh.
  */
 
 import { useQuery } from "@tanstack/react-query"
-import { useSearchParams } from "react-router-dom"
+import { Link, useSearchParams } from "react-router-dom"
 
-import type { ProfileDto, SessionDto } from "@/api"
+import type { GoalDto, ProfileDto, SessionDto, TaskDto } from "@/api"
 import { CopyableIdMenu } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
@@ -35,10 +42,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { goalsQueryOptions } from "@/features/goals/queries"
+import { taskListQueryOptions } from "@/features/tasks"
 import { sessionCopyEntries } from "@/lib/copy-entries"
 import { shortId } from "@/lib/ids"
 import { AGENT_KIND_LABELS, ROLE_LABELS } from "@/lib/labels"
 import { formatAbsolute, formatAge } from "@/lib/time"
+import { paths, taskPanelTo } from "@/routes/paths"
 
 import {
   byId,
@@ -49,7 +59,31 @@ import {
 import { SessionStatusBadge } from "./session-display"
 import { useNow } from "./use-now"
 
-const COLUMN_COUNT = 5
+/**
+ * What the list is already inside of.
+ *
+ * A panel tab is scoped to its task or its goal; the sessions screen is scoped
+ * to nothing, and is the only place where two rows can be the same role, the
+ * same profile and the same status and still be about different work — which
+ * is what the context column is for.
+ */
+function listScope(filters: SessionListFilters): "task" | "goal" | "unscoped" {
+  if (filters.task) return "task"
+  if (filters.goal) return "goal"
+  return "unscoped"
+}
+
+/** What an empty list is called where it is empty; never blames absent filters. */
+function emptyTitle(filters: SessionListFilters): string {
+  switch (listScope(filters)) {
+    case "task":
+      return "No sessions yet for this task"
+    case "goal":
+      return "No sessions yet for this goal"
+    default:
+      return filters.status || filters.role ? "No sessions match these filters" : "No sessions yet"
+  }
+}
 
 export function SessionsList({
   filters,
@@ -74,6 +108,16 @@ export function SessionsList({
   const profiles = useQuery(profilesQueryOptions())
   const profilesById = byId(profiles.data)
 
+  // Both are shared keys the rest of the app already holds (the sidebar's
+  // attention count mounts them), so the sixth column usually costs no request
+  // at all — and none whatsoever in a panel, which does not draw it.
+  const showContext = listScope(filters) === "unscoped"
+  const goals = useQuery({ ...goalsQueryOptions(), enabled: showContext })
+  const tasks = useQuery({ ...taskListQueryOptions(), enabled: showContext })
+  const goalsById = byId(goals.data)
+  const tasksById = byId(tasks.data)
+  const columnCount = showContext ? 6 : 5
+
   return (
     <div className="space-y-4">
       {sessions.isError ? (
@@ -89,6 +133,7 @@ export function SessionsList({
           <TableHeader>
             <TableRow>
               <TableHead>Session</TableHead>
+              {showContext ? <TableHead>Context</TableHead> : null}
               <TableHead>Role</TableHead>
               <TableHead>Profile</TableHead>
               <TableHead>Status</TableHead>
@@ -96,16 +141,12 @@ export function SessionsList({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {sessions.isPending ? <LoadingRows /> : null}
+            {sessions.isPending ? <LoadingRows columnCount={columnCount} /> : null}
             {sessions.data?.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={COLUMN_COUNT} className="p-0">
+                <TableCell colSpan={columnCount} className="p-0">
                   {/* Inside the table's own frame, so the empty state drops its box. */}
-                  <EmptyState
-                    emphasis="quiet"
-                    title="No sessions match these filters"
-                    className="border-0"
-                  />
+                  <EmptyState emphasis="quiet" title={emptyTitle(filters)} className="border-0" />
                 </TableCell>
               </TableRow>
             ) : null}
@@ -114,6 +155,9 @@ export function SessionsList({
                 key={session.id}
                 session={session}
                 profile={profilesById.get(session.profile_id)}
+                goal={goalsById.get(session.goal_id)}
+                task={session.task_id ? tasksById.get(session.task_id) : undefined}
+                showContext={showContext}
                 now={now}
                 selected={session.id === selected}
                 onSelect={() => onSelect(session)}
@@ -129,12 +173,20 @@ export function SessionsList({
 function SessionRow({
   session,
   profile,
+  goal,
+  task,
+  showContext,
   now,
   selected,
   onSelect,
 }: {
   session: SessionDto
   profile: ProfileDto | undefined
+  /** The goal this session ran for, when the goals list has it. */
+  goal: GoalDto | undefined
+  /** The task it ran, when there is one and the task list has it. */
+  task: TaskDto | undefined
+  showContext: boolean
   now: number
   selected: boolean
   onSelect: () => void
@@ -145,11 +197,11 @@ function SessionRow({
     <TableRow
       className="cursor-pointer"
       data-state={selected ? "selected" : undefined}
-      // Anywhere on the row picks the session, down to the buttons that carry
-      // an action of their own: the copy trigger keeps its menu, and the role
-      // button below selects by itself, so neither needs the row to act for it.
-      // The id *text* is not one of them — it is read here, and clicking it is
-      // still a click on the row.
+      // Anywhere on the row picks the session, down to the controls that carry
+      // an action of their own: the copy trigger keeps its menu, the role
+      // button below selects by itself, and the context link goes to the work
+      // the session was run for. The id *text* is not one of them — it is read
+      // here, and clicking it is still a click on the row.
       //
       // The `contains` is what keeps the copy menu whole: React events travel
       // the component tree rather than the DOM, so a click on an entry of a
@@ -157,7 +209,7 @@ function SessionRow({
       // a copy, not a pick.
       onClick={(event) => {
         const target = event.target as Element
-        if (event.currentTarget.contains(target) && !target.closest("button")) onSelect()
+        if (event.currentTarget.contains(target) && !target.closest("button, a")) onSelect()
       }}
     >
       {/* These ids are read here on their way into a terminal, and the row is
@@ -172,6 +224,7 @@ function SessionRow({
           className="text-xs"
         />
       </TableCell>
+      {showContext ? <ContextCell session={session} goal={goal} task={task} /> : null}
       <TableCell>
         {/* The row above takes the pointer clicks; this button is the same
             action for the keyboard, which cannot reach a `<tr onClick>` — and
@@ -189,7 +242,7 @@ function SessionRow({
         {session.review_round != null ? (
           <span className="text-muted-foreground" title="Review round">
             {" "}
-            · r{session.review_round}
+            · R{session.review_round}
           </span>
         ) : null}
       </TableCell>
@@ -213,12 +266,59 @@ function SessionRow({
   )
 }
 
-function LoadingRows() {
+/**
+ * What this session was run for: its task, or — for a planner session, which
+ * has none — its goal.
+ *
+ * It is a link rather than plain text because the row itself opens the
+ * *session*, and the question this column answers ("which piece of work is
+ * this?") is usually followed by wanting that piece of work. Both targets are
+ * the panel scheme the rest of the app uses; the row lets anchors through for
+ * exactly this (see the row's `onClick`).
+ */
+function ContextCell({
+  session,
+  goal,
+  task,
+}: {
+  session: SessionDto
+  goal: GoalDto | undefined
+  task: TaskDto | undefined
+}) {
+  const [search] = useSearchParams()
+  // The row's Role column already says which of the two this is, so both read
+  // the same; the tooltip carries the pair in full.
+  const subject = session.task_id
+    ? { label: task?.title ?? shortId(session.task_id), to: taskPanelTo(search, session.task_id) }
+    : { label: goal?.title ?? shortId(session.goal_id), to: paths.goal(session.goal_id) }
+
+  return (
+    // `max-w-*` on the cell with a truncating block inside it is what keeps a
+    // long title from stretching the table: the cell's own `whitespace-nowrap`
+    // would otherwise make the column as wide as the longest goal name.
+    <TableCell
+      className="max-w-56"
+      title={[
+        `Goal: ${goal?.title ?? session.goal_id}`,
+        `Task: ${session.task_id ? (task?.title ?? session.task_id) : "— (planner session)"}`,
+      ].join("\n")}
+    >
+      <Link
+        to={subject.to}
+        className="block truncate rounded-xs underline-offset-3 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
+      >
+        {subject.label}
+      </Link>
+    </TableCell>
+  )
+}
+
+function LoadingRows({ columnCount }: { columnCount: number }) {
   return (
     <>
       {[0, 1, 2].map((row) => (
         <TableRow key={row}>
-          <TableCell colSpan={COLUMN_COUNT}>
+          <TableCell colSpan={columnCount}>
             <Skeleton className="h-5 w-full" />
           </TableCell>
         </TableRow>
