@@ -72,7 +72,7 @@ pub async fn daemon_status(client: &Client, format: Format) -> Result<()> {
 /// `ariadne daemon start` — spawn ariadned detached and wait for it to answer.
 ///
 /// Builds its own client for `home` rather than taking the caller's: the
-/// daemon it spawns listens on that home's socket, and `--host` /
+/// daemon it spawns listens on that home's socket, and `--endpoint` /
 /// `ARIADNE_SOCKET` — which are never passed to ariadned — would send both the
 /// already-running check and the readiness poll at a different daemon.
 pub async fn daemon_start(home: Option<PathBuf>, format: Format) -> Result<()> {
