@@ -1,9 +1,11 @@
 /**
- * Everything a profile holds, laid out for reading — the UI's `profile inspect`.
+ * Everything a profile holds — the UI's `profile inspect`, plus the writes the
+ * table has no room for.
  *
- * The system prompt is the reason this is a panel rather than more columns: it
- * is the long, whitespace-significant field, so it is rendered verbatim in the
- * monospace face it was written in.
+ * The prompts are the reason this is a panel rather than more columns: they are
+ * the long, whitespace-significant fields, and they are edited here rather than
+ * in the profile dialog because the daemon takes each of them on its own
+ * endpoint (see {@link ProfilePrompts}).
  */
 
 import type { ReactNode } from "react"
@@ -15,6 +17,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { formatAbsolute } from "@/lib/time"
 
 import { agentKindLabel, modelLabel, roleLabel } from "./profile-labels"
+import { ProfilePrompts } from "./profile-prompts"
 
 export function ProfileDetails({ profile }: { profile: ProfileDto }) {
   return (
@@ -53,24 +56,7 @@ export function ProfileDetails({ profile }: { profile: ProfileDto }) {
         )}
       </section>
 
-      <section className="flex flex-col gap-2">
-        <h4 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-          System prompt
-        </h4>
-        {/* The box that scrolls is a named region and takes focus: a prompt
-            long enough to need a scrollbar is one only a pointer could read
-            otherwise. */}
-        <section
-          aria-label="System prompt"
-          // biome-ignore lint/a11y/noNoninteractiveTabindex: a scroll container has to take focus to be scrollable by keyboard
-          tabIndex={0}
-          className="max-h-96 overflow-auto rounded-lg border bg-muted/40 p-3 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
-        >
-          <pre className="font-mono text-xs leading-relaxed whitespace-pre-wrap">
-            {profile.system_prompt}
-          </pre>
-        </section>
-      </section>
+      <ProfilePrompts profile={profile} />
     </div>
   )
 }

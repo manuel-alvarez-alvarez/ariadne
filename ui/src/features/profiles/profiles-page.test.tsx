@@ -55,14 +55,23 @@ const REVIEWER: ProfileDto = {
   role: "reviewer",
 }
 
-/** The daemon's `GET /v1/profiles`, narrowing by role the way it does. */
+/**
+ * The daemon's `GET /v1/profiles`, narrowing by role the way it does — and the
+ * prompt list an expanded row asks for, which this screen's tests have nothing
+ * to say about (`profile-prompts.test.tsx` does) but which has to answer
+ * something other than a profile.
+ */
 function stubDaemon(profiles: ProfileDto[]) {
   daemonFetch.mockImplementation((input: Request | string | URL) => {
     const url = new URL(
       typeof input === "string" ? input : input instanceof URL ? input : input.url,
     )
     const role = url.searchParams.get("role")
-    const body = role ? profiles.filter((profile) => profile.role === role) : profiles
+    const body = url.pathname.endsWith("/prompts")
+      ? []
+      : role
+        ? profiles.filter((profile) => profile.role === role)
+        : profiles
     return Promise.resolve(
       new Response(JSON.stringify(body), {
         status: 200,
