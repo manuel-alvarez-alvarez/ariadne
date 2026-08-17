@@ -2,9 +2,9 @@
  * Everything that is stuck, on one screen, grouped by the goal it belongs to.
  *
  * The rows are links into the panel scheme the rest of the app uses — `?task=`
- * over this screen for a task, `?task=&tab=sessions&session=` for a session
- * that belongs to one, the goals board for a planner session — so reading the
- * list and acting on it are the same gesture, and the list stays underneath.
+ * over this screen for a task, `?session=` for a session, whichever goal or
+ * task that one belongs to — so reading the list and acting on it are the same
+ * gesture, and the list stays underneath.
  *
  * Nothing here polls; see `queries.ts`.
  */
@@ -22,7 +22,7 @@ import { ROLE_LABELS, SessionStatusBadge } from "@/features/sessions/session-dis
 import { TASK_STATUS_META } from "@/features/tasks"
 import { shortId } from "@/lib/ids"
 import { formatAbsolute, formatRelative } from "@/lib/time"
-import { paths, taskPanelTo, taskSessionPanelTo } from "@/routes/paths"
+import { paths, sessionPanelTo, taskPanelTo } from "@/routes/paths"
 
 import { type AttentionGroup, type AttentionTask, useAttention } from "./queries"
 
@@ -122,16 +122,13 @@ function TaskRow({ item: { task, reason } }: { item: AttentionTask }) {
 
 function SessionRow({ session }: { session: SessionDto }) {
   const [search] = useSearchParams()
-  // A planner session belongs to no task, and the goal panel only opens on the
-  // board — so that one link leaves this screen, and the rest do not.
-  const to = session.task_id
-    ? taskSessionPanelTo(search, session.task_id, session.id)
-    : paths.goalSession(session.goal_id, session.id)
 
   return (
     <li>
+      {/* A session opens in a panel of its own, over this list — the same one
+          for a planner session, which belongs to no task. */}
       <Link
-        to={to}
+        to={sessionPanelTo(search, session.id)}
         className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm transition-colors hover:bg-muted/50"
       >
         <SessionStatusBadge status={session.status} />
