@@ -50,8 +50,6 @@ pub enum Actor {
     User,
 }
 
-/// Refused transition. The `Display` spelling names the Rust variants and is
-/// for logs; anything a person reads goes through [`TransitionError::human`].
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TransitionError {
     #[error("illegal transition {from:?} -> {to:?}")]
@@ -62,50 +60,6 @@ pub enum TransitionError {
         to: TaskStatus,
         actor: Actor,
     },
-}
-
-impl TransitionError {
-    /// One line a person can act on, in the API's snake_case status
-    /// vocabulary. This is what the daemon puts in the error envelope.
-    pub fn human(&self) -> String {
-        match *self {
-            Self::IllegalTransition { from, to } => explain(from, to, None),
-            Self::Forbidden { from, to, actor } => explain(from, to, Some(actor)),
-        }
-    }
-}
-
-/// Explain a refused `from -> to` (by `actor`, when one was at fault).
-///
-/// The transitions a user can ask for by name — cancel, retry — get their own
-/// wording, because "cannot move a pending task to ready" says nothing about
-/// the `ariadne task retry` that provoked it. Everything else falls back to
-/// naming the move.
-fn explain(from: TaskStatus, to: TaskStatus, actor: Option<Actor>) -> String {
-    use TaskStatus as S;
-    let (f, t) = (from.as_str(), to.as_str());
-    // A no-op is a misunderstanding about where the task already is, not a
-    // state machine violation, and reads best said that way.
-    if from == to {
-        return format!("task is already {f}");
-    }
-    match to {
-        S::Cancelled => match actor {
-            Some(a) => format!("only the user can cancel a task, not the {}", a.as_str()),
-            None => format!("a {f} task can no longer be cancelled"),
-        },
-        S::Ready if from != S::Failed => format!("only failed tasks can be retried (task is {f})"),
-        S::UnderReview if from != S::InProgress => {
-            format!("only an in-progress task can be sent for review (task is {f})")
-        }
-        S::Merged if from != S::Merging => {
-            format!("only a task that was told to merge can be marked merged (task is {f})")
-        }
-        _ => match actor {
-            Some(a) => format!("the {} may not move a task from {f} to {t}", a.as_str()),
-            None => format!("a task cannot move from {f} to {t}"),
-        },
-    }
 }
 
 impl TaskStatus {
@@ -322,65 +276,6 @@ mod tests {
             check_transition(S::Pending, S::Merged, A::Daemon),
             Err(TransitionError::IllegalTransition { .. })
         ));
-    }
-
-    /// The three refusals a user provokes from the CLI/UI by name.
-    #[test]
-    fn human_messages_name_the_command_that_was_refused() {
-        let human = |from, to, actor| check_transition(from, to, actor).unwrap_err().human();
-        // `ariadne task retry <pending>`: the edge exists, but for the daemon.
-        assert_eq!(
-            human(S::Pending, S::Ready, A::User),
-            "only failed tasks can be retried (task is pending)"
-        );
-        // `ariadne task cancel <cancelled>`: a no-op, not a violation.
-        assert_eq!(
-            human(S::Cancelled, S::Cancelled, A::User),
-            "task is already cancelled"
-        );
-        // `ariadne task cancel <merged>`: too late, and it says so.
-        assert_eq!(
-            human(S::Merged, S::Cancelled, A::User),
-            "a merged task can no longer be cancelled"
-        );
-        // An agent reaching for the user's cancel.
-        assert_eq!(
-            human(S::InProgress, S::Cancelled, A::Planner),
-            "only the user can cancel a task, not the planner"
-        );
-        // Agent-side verbs get the same treatment.
-        assert_eq!(
-            human(S::Pending, S::UnderReview, A::Engineer),
-            "only an in-progress task can be sent for review (task is pending)"
-        );
-        assert_eq!(
-            human(S::InProgress, S::Merged, A::Engineer),
-            "only a task that was told to merge can be marked merged (task is in_progress)"
-        );
-        // Anything else still names the move, in wire spelling.
-        assert_eq!(
-            human(S::Merging, S::Merged, A::Reviewer),
-            "the reviewer may not move a task from merging to merged"
-        );
-    }
-
-    /// No refusal may leak a Rust identifier: every status and actor a person
-    /// sees is spelled the way the API spells it.
-    #[test]
-    fn human_messages_never_leak_pascal_case() {
-        for from in S::ALL {
-            for to in S::ALL {
-                for actor in ACTORS {
-                    if let Err(e) = check_transition(from, to, actor) {
-                        let msg = e.human();
-                        assert!(
-                            !msg.chars().any(|c| c.is_ascii_uppercase()),
-                            "{from:?} -> {to:?} by {actor:?} rendered as {msg:?}"
-                        );
-                    }
-                }
-            }
-        }
     }
 
     #[test]

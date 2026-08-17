@@ -4,7 +4,7 @@
 //! for a given environment, so the ordering lives here and nowhere else:
 //! `--home` > `ARIADNE_HOME` > `~/.ariadne` for the home directory, then that
 //! home's `config.toml` `socket_path` > `<home>/ariadne.sock` for the socket.
-//! Explicit endpoint overrides (`--endpoint` / `ARIADNE_SOCKET`) sit in front of
+//! Explicit endpoint overrides (`--host` / `ARIADNE_SOCKET`) sit in front of
 //! all of it — see [`Client::resolve`](crate::Client::resolve).
 
 use std::path::{Path, PathBuf};

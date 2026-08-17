@@ -8,9 +8,9 @@
  * `src/routes/page-title.ts`), so this file knows nothing about which screens
  * exist.
  *
- * It also binds the app's global chords and mounts what they open — the command
- * palette, the settings dialog and the create-goal dialog — because all three
- * have to work from every screen, over any panel.
+ * It also binds the app's global chords and mounts the two things they open —
+ * the command palette and the settings dialog — because both have to work from
+ * every screen, over any panel.
  *
  * Shared file — feature tasks should not need to touch it. Add navigation
  * entries in `app-sidebar.tsx`, routes in your own feature's `routes.tsx`.
@@ -18,7 +18,7 @@
 
 import { SearchIcon, SettingsIcon } from "lucide-react"
 import { useCallback, useState } from "react"
-import { Outlet, useNavigate } from "react-router-dom"
+import { Outlet } from "react-router-dom"
 
 import { AppSidebar } from "@/components/app-sidebar"
 import { ConnectionBanner } from "@/components/connection-banner"
@@ -29,29 +29,18 @@ import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { CommandPalette } from "@/features/command-palette/command-palette"
-import { CreateGoalDialog } from "@/features/goals/create-goal-dialog"
 import { PALETTE_SHORTCUT, useGlobalShortcuts } from "@/hooks/use-global-shortcuts"
 import { shortcutLabel } from "@/lib/shortcuts"
 import { usePageTitle } from "@/routes/page-title"
-import { paths } from "@/routes/paths"
 
 export function AppShell() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
-  const [createGoalOpen, setCreateGoalOpen] = useState(false)
   const pageTitle = usePageTitle()
-  const navigate = useNavigate()
 
   const openPalette = useCallback(() => setPaletteOpen(true), [])
   const openSettings = useCallback(() => setSettingsOpen(true), [])
-  const openCreateGoal = useCallback(() => setCreateGoalOpen(true), [])
-  const goToScreen = useCallback((path: string) => void navigate(path), [navigate])
-  useGlobalShortcuts({
-    onOpenPalette: openPalette,
-    onOpenSettings: openSettings,
-    onNewGoal: openCreateGoal,
-    onNavigate: goToScreen,
-  })
+  useGlobalShortcuts({ onOpenPalette: openPalette, onOpenSettings: openSettings })
 
   return (
     <div className="flex h-svh w-full overflow-hidden bg-background text-foreground">
@@ -103,16 +92,8 @@ export function AppShell() {
         open={paletteOpen}
         onOpenChange={setPaletteOpen}
         onOpenSettings={openSettings}
-        onNewGoal={openCreateGoal}
       />
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
-      {/* The shell's, like settings: "New goal" has to work from the palette,
-          from `N`, and on screens with no create button of their own. */}
-      <CreateGoalDialog
-        open={createGoalOpen}
-        onOpenChange={setCreateGoalOpen}
-        onCreated={(goal) => void navigate(paths.goal(goal.id))}
-      />
     </div>
   )
 }
