@@ -137,9 +137,16 @@ function ActivityRow({ event, now }: { event: AgentEventDto; now: number }) {
         </time>
       </button>
       {open ? (
-        <pre className="mt-1 max-h-64 overflow-auto rounded-md bg-muted p-2 font-mono text-xs">
-          {stringify(event.payload, 2)}
-        </pre>
+        // Focusable and named, so the payload scrolls under the arrow keys and
+        // announces what it is when focus lands in it.
+        <section
+          aria-label={`${event.kind} payload`}
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: a scroll container has to take focus to be scrollable by keyboard
+          tabIndex={0}
+          className="mt-1 max-h-64 overflow-auto rounded-md bg-muted p-2 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+        >
+          <pre className="font-mono text-xs">{stringify(event.payload, 2)}</pre>
+        </section>
       ) : null}
     </li>
   )
