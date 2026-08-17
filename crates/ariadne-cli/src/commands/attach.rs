@@ -119,8 +119,9 @@ pub fn exec_tmux_attach(tmux_session: &str) -> Result<()> {
 
 /// A terminal task whose worktrees were removed has no agents left to attach
 /// to — fail with pointers to the history instead of a raw revive conflict.
-/// (With the default `delete_merged_worktrees = false` policy the worktree is
-/// kept, and reviving the agent to inspect the merged work is allowed.)
+/// That is the normal end of a merged task now (`delete_merged_worktrees`
+/// defaults to true); with the policy off the worktree is kept, and reviving
+/// the agent to inspect the merged work is allowed.
 async fn ensure_task_not_finished(client: &Client, id: &str) -> Result<()> {
     use ariadne_api::tasks::TaskDto;
     use ariadne_core::TaskStatus;

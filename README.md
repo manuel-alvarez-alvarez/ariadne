@@ -183,7 +183,8 @@ worktree_root = "/Users/me/.ariadne/worktrees"
 tcp_listen = "127.0.0.1:7676"     # enables the TCP listener (for web/desktop UIs)
 log_filter = "info,ariadne_daemon=debug"
 cli_bin = "/usr/local/bin/ariadne" # hook/MCP entry point (default: sibling of ariadned)
-delete_merged_worktrees = false    # keep task worktrees after merge for inspection (default)
+delete_merged_worktrees = true     # remove task worktrees after merge (default);
+                                   # false keeps them for inspecting merged work
 delete_merged_branches = true      # only applies when worktrees are deleted too:
                                    # a kept engineer worktree pins the task branch
 ```
