@@ -255,7 +255,12 @@ function TaskFacts({ task }: { task: TaskDto }) {
       <Fact label="Branch">
         <span className="flex items-center gap-1.5">
           <GitBranchIcon className="size-3.5 shrink-0 text-muted-foreground" />
-          <CopyableId value={task.branch} label="branch" className="text-xs" />
+          <CopyableId
+            value={task.branch}
+            label="branch"
+            truncate="middle"
+            className="text-xs"
+          />
         </span>
       </Fact>
       <Fact label="Worktree">
