@@ -22,7 +22,8 @@ use crate::output::Format;
 #[command(name = "ariadne", version, about = "Coding-agent orchestrator CLI")]
 struct Cli {
     /// Daemon endpoint: unix socket path or http://host:port
-    /// (default: $ARIADNE_SOCKET or ~/.ariadne/ariadne.sock)
+    /// (default: $ARIADNE_SOCKET, else the socket of the ariadne home —
+    /// $ARIADNE_HOME or ~/.ariadne — as its config.toml names it)
     #[arg(long, global = true, env = ariadne_client::ENDPOINT_ENV)]
     host: Option<String>,
 
