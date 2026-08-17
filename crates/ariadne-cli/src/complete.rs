@@ -198,6 +198,23 @@ pub fn agent_kinds() -> Vec<CompletionCandidate> {
         .collect()
 }
 
+/// Prompt kinds for `profile prompt get|set|reset`, plus "system".
+///
+/// Every kind of every role: which ones a profile actually owns depends on the
+/// profile named earlier on the line, and the command says so itself when the
+/// two do not match.
+pub fn prompt_kinds() -> Vec<CompletionCandidate> {
+    let mut out = vec![
+        CompletionCandidate::new("system").help(Some("the profile's own system prompt".into())),
+    ];
+    out.extend(
+        ariadne_core::PromptKind::ALL
+            .into_iter()
+            .map(|kind| candidate(kind.as_str(), format!("{} profiles", kind.role().as_str()))),
+    );
+    out
+}
+
 /// Agent kinds plus "auto" for `profile update --agent`.
 pub fn agent_kinds_or_auto() -> Vec<CompletionCandidate> {
     let mut out = agent_kinds();

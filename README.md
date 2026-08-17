@@ -97,6 +97,13 @@ ariadne goal create --title "..." --repo ~/projects/api@release/2.0
 # Custom profiles pin a role to a specific agent/model/prompt:
 ariadne profile create --name rev-strict --role reviewer --agent codex \
   --prompt "You are a demanding reviewer. Reject anything without tests."
+
+# Every prompt a profile briefs its agents with is editable, and every one of
+# them can go back to the default of its role:
+ariadne profile prompts rev-strict            # system + briefings, edited or not
+ariadne profile prompt get rev-strict reviewer_briefing > brief.md
+ariadne profile prompt set rev-strict reviewer_briefing --file brief.md
+ariadne profile prompt reset rev-strict --all
 ariadne goal create --title "..." --repo ~/projects/api \
   --planner Planner --approvals 2
 
@@ -123,6 +130,7 @@ ariadne attach <id>                    # session, task or goal id
 |---|---|
 | `ariadne daemon start\|stop\|status\|logs` | manage `ariadned` |
 | `ariadne profile create\|ls\|inspect\|update\|rm` | agent profiles |
+| `ariadne profile prompts` / `profile prompt get\|set\|reset` | the prompts a profile briefs its agents with |
 | `ariadne goal create\|ls\|inspect\|attach\|messages\|finalize\|cancel` | goals |
 | `ariadne task create\|update\|ls\|inspect\|diff\|attach\|logs\|messages\|msg\|reviews\|history\|cancel\|retry` | tasks |
 | `ariadne session ls\|inspect\|logs\|kill` | agent sessions |
@@ -137,7 +145,8 @@ Table output is for eyes and JSON is for scripts: tables cut long cells to the
 column width with `…` (`--no-trunc` prints them whole) and show timestamps in
 local time, while `--format json` is the daemon's own payload, RFC3339 and all.
 Notes like "no tasks yet" go to stderr, so stdout stays pipeable. Irreversible
-commands — `goal cancel`, `session kill` — ask first when stdin is a terminal;
+commands — `goal cancel`, `session kill`, `profile prompt reset` — ask first
+when stdin is a terminal;
 `-y` answers for you, and a script is never prompted.
 
 A command that fails prints one line on stderr — `error: <what went wrong>`,

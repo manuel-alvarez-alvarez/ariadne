@@ -115,6 +115,7 @@ dependencies = [
  "ariadne-api",
  "ariadne-client",
  "ariadne-core",
+ "ariadne-store",
  "chrono",
  "clap",
  "clap_complete",
@@ -124,6 +125,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_urlencoded",
+ "tempfile",
  "tokio",
 ]
 
