@@ -1,6 +1,10 @@
 /**
  * Kill and resume, the two things the UI can do *to* a session.
  *
+ * Both are named with what they act on, like the goal's and the task's: these
+ * sit in the same corner of a panel that is itself dismissible, and a bare
+ * verb there reads as being about the panel.
+ *
  * Kill is destructive and irreversible — it tears down the agent's tmux
  * process mid-thought — so it asks first, and because it asks, its refusal is
  * shown in that dialog like every other confirmed action's. Resume is not
@@ -47,7 +51,7 @@ export function SessionActions({
         // inside it.
         <Button variant="destructive-ghost" size="sm" onClick={() => setConfirmKill(true)}>
           <SkullIcon />
-          Kill
+          Kill session
         </Button>
       ) : (
         <Button
@@ -78,7 +82,7 @@ export function SessionActions({
           }}
         >
           <PlayIcon />
-          Resume
+          Resume session
         </Button>
       )}
 

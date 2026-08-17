@@ -30,6 +30,7 @@ import {
   TaskCard,
   taskListQueryOptions,
 } from "@/features/tasks"
+import { useHorizontalOverflow } from "@/hooks/use-scroll-overflow"
 import { plural } from "@/lib/plural"
 import { formatAbsolute, formatRelative } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -40,8 +41,15 @@ import { GOAL_STATUS_META } from "./status"
 /** One template for the header row and every lane, so the columns line up. */
 const COLUMNS_GRID = "grid grid-cols-[repeat(5,minmax(13rem,1fr))] gap-3"
 
-/** The board's own scrollport: sticky only works against the box that scrolls. */
-const BOARD_BOX = "min-h-0 flex-1 rounded-lg border"
+/**
+ * The board's own scrollport: sticky only works against the box that scrolls.
+ * It fills {@link BOARD_FRAME}, which is what the edge fades are positioned
+ * against — they have to sit outside the thing that scrolls under them.
+ */
+const BOARD_BOX = "h-full rounded-lg border"
+
+/** The board's slot on the screen: the height it gets, and the fades' anchor. */
+const BOARD_FRAME = "relative min-h-0 flex-1"
 
 /** Opaque, because the lanes scroll underneath it. */
 const HEADER_ROW = "sticky top-0 z-20 border-b bg-muted px-3 py-2"
@@ -57,6 +65,7 @@ export function GoalSwimlanes({ goals }: { goals: GoalDto[] }) {
   const tasks = useQuery(taskListQueryOptions({}))
   const byGoal = useMemo(() => groupByGoal(tasks.data ?? []), [tasks.data])
   const { collapsed, toggle } = useCollapsedLanes()
+  const board = useHorizontalOverflow<HTMLDivElement>()
 
   if (tasks.error) {
     return (
@@ -73,39 +82,87 @@ export function GoalSwimlanes({ goals }: { goals: GoalDto[] }) {
   }
 
   return (
-    <div className={cn(BOARD_BOX, "overflow-auto")}>
-      <div className="min-w-[72rem]">
-        <div className={cn(COLUMNS_GRID, HEADER_ROW)}>
-          {BOARD_STATUSES.map((status) => {
-            const meta = TASK_STATUS_META[status]
-            const count = goals.reduce(
-              (sum, goal) => sum + (byGoal.get(goal.id)?.columns[status].length ?? 0),
-              0,
-            )
-            return (
-              <div key={status} className="flex items-center gap-2">
-                <span className={cn("size-1.5 rounded-full", meta.dot)} />
-                <h2 className="text-xs font-medium">
-                  <Tooltip>
-                    <TooltipTrigger render={<span />}>{meta.label}</TooltipTrigger>
-                    <TooltipContent>{meta.hint}</TooltipContent>
-                  </Tooltip>
-                </h2>
-                <span className="text-xs text-muted-foreground">{count}</span>
-              </div>
-            )
-          })}
+    <div className={BOARD_FRAME}>
+      <div ref={board.ref} className={cn(BOARD_BOX, "overflow-auto")}>
+        <div className="min-w-[72rem]">
+          <div className={cn(COLUMNS_GRID, HEADER_ROW)}>
+            {BOARD_STATUSES.map((status) => {
+              const meta = TASK_STATUS_META[status]
+              const count = goals.reduce(
+                (sum, goal) => sum + (byGoal.get(goal.id)?.columns[status].length ?? 0),
+                0,
+              )
+              return (
+                <div key={status} className="flex items-center gap-2">
+                  <span className={cn("size-1.5 rounded-full", meta.dot)} />
+                  <h2 className="text-xs font-medium">
+                    <Tooltip>
+                      <TooltipTrigger render={<span />}>{meta.label}</TooltipTrigger>
+                      <TooltipContent>{meta.hint}</TooltipContent>
+                    </Tooltip>
+                  </h2>
+                  <span className="text-xs text-muted-foreground">{count}</span>
+                </div>
+              )
+            })}
+          </div>
+          {goals.map((goal) => (
+            <Lane
+              key={goal.id}
+              goal={goal}
+              tasks={byGoal.get(goal.id)}
+              collapsed={collapsed.has(goal.id)}
+              onToggle={() => toggle(goal.id)}
+            />
+          ))}
         </div>
-        {goals.map((goal) => (
-          <Lane
-            key={goal.id}
-            goal={goal}
-            tasks={byGoal.get(goal.id)}
-            collapsed={collapsed.has(goal.id)}
-            onToggle={() => toggle(goal.id)}
-          />
-        ))}
       </div>
+      <ScrollEdge side="start" show={board.overflow.start} />
+      <ScrollEdge side="end" show={board.overflow.end} />
+    </div>
+  )
+}
+
+/**
+ * The board's one hint that it goes on past the window: content fading out
+ * under the edge it is cut at, on whichever side has more of it. Nothing else
+ * says so — the columns end mid-card and macOS keeps its scrollbar hidden
+ * until something moves.
+ *
+ * Two layers, because a fade alone says nothing where there is nothing to fade:
+ * the wash, which is what makes a clipped card or a clipped column label trail
+ * off, and a shade right at the edge, which is visible over an empty cell too.
+ * It is drawn above both sticky headers (`z-20` for the column row, `z-10` for
+ * the lane names, in the same stacking context as this), so the header a title
+ * is cut in half by is exactly where it shows.
+ */
+function ScrollEdge({ side, show }: { side: "start" | "end"; show: boolean }) {
+  const start = side === "start"
+  return (
+    <div
+      aria-hidden
+      className={cn(
+        // Inset by the border it sits inside, and pointer-transparent: this is
+        // a picture of a state, never a target.
+        "pointer-events-none absolute inset-y-px z-30 w-10 transition-opacity duration-150",
+        start ? "left-px rounded-l-lg" : "right-px rounded-r-lg",
+        show ? "opacity-100" : "opacity-0",
+      )}
+    >
+      <div
+        className={cn(
+          "absolute inset-0 from-background to-transparent",
+          start ? "bg-linear-to-r" : "bg-linear-to-l",
+        )}
+      />
+      <div
+        className={cn(
+          // From the foreground colour rather than a fixed black, so it shows
+          // against the page in either theme.
+          "absolute inset-y-0 w-2.5 from-foreground/12 to-transparent",
+          start ? "left-0 bg-linear-to-r" : "right-0 bg-linear-to-l",
+        )}
+      />
     </div>
   )
 }
@@ -147,8 +204,14 @@ function Lane({
           >
             {goal.title}
           </TooltipTrigger>
-          <TooltipContent className="whitespace-pre-line">
-            {repos || "Open the goal"}
+          {/* The title first, because the lane header truncates it and this is
+              the only place the rest of it is readable; the repositories are
+              what the lane is *about*, so they follow it. */}
+          <TooltipContent className="flex-col items-start gap-0.5">
+            <span className="font-medium">{goal.title}</span>
+            <span className="whitespace-pre-line text-background/70">
+              {repos || "Open the goal"}
+            </span>
           </TooltipContent>
         </Tooltip>
         <StatusBadge
@@ -204,27 +267,29 @@ function Lane({
  */
 export function BoardSkeleton() {
   return (
-    <div className={cn(BOARD_BOX, "overflow-hidden")} aria-hidden>
-      <div className="min-w-[72rem]">
-        <div className={cn(COLUMNS_GRID, "border-b bg-muted px-3 py-2")}>
-          {BOARD_STATUSES.map((status) => (
-            // Tinted against the header's own `bg-muted`, which a plain
-            // skeleton would disappear into.
-            <Skeleton key={status} className="h-4 w-24 bg-muted-foreground/20" />
+    <div className={BOARD_FRAME} aria-hidden>
+      <div className={cn(BOARD_BOX, "overflow-hidden")}>
+        <div className="min-w-[72rem]">
+          <div className={cn(COLUMNS_GRID, "border-b bg-muted px-3 py-2")}>
+            {BOARD_STATUSES.map((status) => (
+              // Tinted against the header's own `bg-muted`, which a plain
+              // skeleton would disappear into.
+              <Skeleton key={status} className="h-4 w-24 bg-muted-foreground/20" />
+            ))}
+          </div>
+          {[0, 1, 2].map((lane) => (
+            <div key={lane} className="border-b px-3 pt-2.5 pb-2.5 last:border-b-0">
+              <Skeleton className="h-4 w-48" />
+              <div className={cn(COLUMNS_GRID, "pt-3")}>
+                {BOARD_STATUSES.map((status, column) => (
+                  <div key={status}>
+                    {(lane + column) % 2 === 0 ? <Skeleton className="h-14 w-full" /> : null}
+                  </div>
+                ))}
+              </div>
+            </div>
           ))}
         </div>
-        {[0, 1, 2].map((lane) => (
-          <div key={lane} className="border-b px-3 pt-2.5 pb-2.5 last:border-b-0">
-            <Skeleton className="h-4 w-48" />
-            <div className={cn(COLUMNS_GRID, "pt-3")}>
-              {BOARD_STATUSES.map((status, column) => (
-                <div key={status}>
-                  {(lane + column) % 2 === 0 ? <Skeleton className="h-14 w-full" /> : null}
-                </div>
-              ))}
-            </div>
-          </div>
-        ))}
       </div>
     </div>
   )

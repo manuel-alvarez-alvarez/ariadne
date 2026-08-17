@@ -45,14 +45,14 @@ export function GoalActions({ goal }: { goal: GoalDto }) {
   return (
     <div className="flex items-center gap-2">
       {canFinalize ? (
-        <Button variant="outline" onClick={() => setFinalizeOpen(true)}>
+        <Button variant="outline" size="sm" onClick={() => setFinalizeOpen(true)}>
           <CheckCheckIcon />
           Finalize plan
         </Button>
       ) : null}
       {canCancel ? (
         // Only opens the confirm; the solid red is on the click inside it.
-        <Button variant="destructive-ghost" onClick={() => setCancelOpen(true)}>
+        <Button variant="destructive-ghost" size="sm" onClick={() => setCancelOpen(true)}>
           <CircleSlashIcon />
           Cancel goal
         </Button>

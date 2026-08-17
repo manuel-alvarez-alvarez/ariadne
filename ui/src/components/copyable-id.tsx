@@ -39,6 +39,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { copyText } from "@/lib/clipboard"
 import type { CopyEntry } from "@/lib/copy-entries"
+import { middleTruncate } from "@/lib/truncate"
 import { cn } from "@/lib/utils"
 
 /** How long "Copied" stays up before the tooltip goes back to naming the button. */
@@ -52,6 +53,18 @@ type ValueProps = {
   value: string
   /** Shortens what is shown, e.g. `shortId`; the full value is still copied. */
   display?: (value: string) => string
+  /**
+   * Which end gets the ellipsis when the row is too narrow. `middle` keeps the
+   * value's last segment on screen — for branches, whose ULID prefix is the
+   * half nobody reads (see `@/lib/truncate`).
+   */
+  truncate?: "end" | "middle"
+  /**
+   * `name` is for a value shown as something a person reads rather than as the
+   * token it is — a profile's name standing in for its id — which the mono
+   * face would make look like a value to be typed.
+   */
+  face?: "mono" | "name"
   /** What this is, for the button and for screen readers: "task id", "branch". */
   label?: string
   /**
@@ -61,14 +74,29 @@ type ValueProps = {
    * and where what follows belongs on the next line.
    */
   wrap?: boolean
-  /** Sizing and colour for the row; the value itself is always mono. */
+  /** Sizing and colour for the row; the face of the value is {@link face}. */
   className?: string
 }
 
 /** A value with a button that copies it, and nothing else to decide. */
-export function CopyableId({ value, display, label = "id", wrap, className }: ValueProps) {
+export function CopyableId({
+  value,
+  display,
+  truncate,
+  face,
+  label = "id",
+  wrap,
+  className,
+}: ValueProps) {
   return (
-    <Value value={value} display={display} wrap={wrap} className={className}>
+    <Value
+      value={value}
+      display={display}
+      truncate={truncate}
+      face={face}
+      wrap={wrap}
+      className={className}
+    >
       <CopyButton value={value} label={label} />
     </Value>
   )
@@ -78,6 +106,8 @@ export function CopyableId({ value, display, label = "id", wrap, className }: Va
 export function CopyableIdMenu({
   value,
   display,
+  truncate,
+  face,
   label = "id",
   wrap,
   entries,
@@ -87,7 +117,14 @@ export function CopyableIdMenu({
   entries: CopyEntry[]
 }) {
   return (
-    <Value value={value} display={display} wrap={wrap} className={className}>
+    <Value
+      value={value}
+      display={display}
+      truncate={truncate}
+      face={face}
+      wrap={wrap}
+      className={className}
+    >
       <CopyMenu label={label} entries={entries} />
     </Value>
   )
@@ -105,10 +142,13 @@ export function CopyableIdMenu({
 function Value({
   value,
   display,
+  truncate = "end",
+  face = "mono",
   wrap,
   className,
   children,
 }: Omit<ValueProps, "label"> & { children: ReactNode }) {
+  const shown = display ? display(value) : value
   return (
     <span
       className={cn(
@@ -117,13 +157,33 @@ function Value({
         className,
       )}
     >
-      <span
-        className={cn("font-mono", wrap ? "break-all" : "truncate")}
-        title={wrap ? undefined : value}
-      >
-        {display ? display(value) : value}
-      </span>
+      {!wrap && truncate === "middle" ? (
+        <MiddleTruncated value={shown} title={value} />
+      ) : (
+        <span
+          className={cn(face === "mono" && "font-mono", wrap ? "break-all" : "truncate")}
+          title={wrap ? undefined : value}
+        >
+          {shown}
+        </span>
+      )}
       {children}
+    </span>
+  )
+}
+
+/**
+ * The ellipsis moved into the value: two spans, the head free to shrink and
+ * the tail not, so the browser eats the prefix and the name at the end stays
+ * on screen. The tail may still be cut when even *it* does not fit, which is
+ * the point at which nothing would have.
+ */
+function MiddleTruncated({ value, title }: { value: string; title: string }) {
+  const { head, tail } = middleTruncate(value)
+  return (
+    <span className="flex min-w-0 overflow-hidden font-mono" title={title}>
+      <span className="truncate">{head}</span>
+      <span className="max-w-full shrink-0 truncate">{tail}</span>
     </span>
   )
 }
