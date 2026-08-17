@@ -13,6 +13,15 @@ describe("middleTruncate", () => {
     expect(middleTruncate("/Users/me/.ariadne/worktrees/abc/eng").tail).toBe("/eng")
   })
 
+  it("keeps the end of a slugless branch, whose last segment is the id itself", () => {
+    // What the daemon names a task's branch when the task has no slug: the
+    // segment split would keep `/task-01m0…` and cut the half that identifies
+    // it, so the character split wins.
+    const { head, tail } = middleTruncate("ariadne/task-01m06j3g920ekbp7zbsjbcajyp")
+    expect(tail).toBe("sjbcajyp")
+    expect(head).toBe("ariadne/task-01m06j3g920ekbp7zb")
+  })
+
   it("keeps the last characters when there is no segment to keep", () => {
     expect(middleTruncate("01k2ta9v7m1qz8xr4bd6hnpc3e")).toEqual({
       head: "01k2ta9v7m1qz8xr4b",
