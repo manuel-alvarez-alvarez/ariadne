@@ -169,7 +169,7 @@ export function ModelCombobox({
               onMouseDown={(event) => event.preventDefault()}
               className="w-(--anchor-width) rounded-lg bg-popover text-popover-foreground shadow-md ring-1 ring-foreground/10 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0"
             >
-              <CommandList className="max-h-72">
+              <CommandList label="Models" className="max-h-72">
                 <CommandEmpty>No matching models — free text is passed as-is.</CommandEmpty>
                 {groups.map((group) => (
                   <CommandGroup
