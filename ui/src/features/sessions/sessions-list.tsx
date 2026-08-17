@@ -42,8 +42,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+// Both reached at their `queries` module rather than through the feature's
+// barrel: `@/features/tasks` re-exports the task panel, whose sessions tab is
+// this very component, and the round trip is an import cycle.
 import { goalsQueryOptions } from "@/features/goals/queries"
-import { taskListQueryOptions } from "@/features/tasks"
+import { taskListQueryOptions } from "@/features/tasks/queries"
 import { sessionCopyEntries } from "@/lib/copy-entries"
 import { shortId } from "@/lib/ids"
 import { AGENT_KIND_LABELS, ROLE_LABELS } from "@/lib/labels"
