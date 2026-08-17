@@ -14,9 +14,10 @@ import { CopyableId } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { Markdown } from "@/components/markdown"
+import { StatusBadge } from "@/components/status-badge"
 import { Skeleton } from "@/components/ui/skeleton"
+import { plural } from "@/lib/plural"
 import { formatAbsolute, formatRelative } from "@/lib/time"
-import { cn } from "@/lib/utils"
 import { taskReviewsQueryOptions } from "./queries"
 import { SessionLink } from "./task-sessions"
 
@@ -52,7 +53,7 @@ export function TaskReviews({ taskId }: { taskId: string }) {
   if (reviews.error) {
     return (
       <ErrorState
-        title="Could not load the reviews"
+        title="Could not load reviews"
         error={reviews.error}
         onRetry={() => void reviews.refetch()}
       />
@@ -60,7 +61,7 @@ export function TaskReviews({ taskId }: { taskId: string }) {
   }
 
   if (rounds.length === 0) {
-    return <EmptyState emphasis="quiet" title="No review has been submitted yet." />
+    return <EmptyState emphasis="quiet" title="No review has been submitted yet" />
   }
 
   return (
@@ -70,7 +71,7 @@ export function TaskReviews({ taskId }: { taskId: string }) {
           <h3 className="font-heading text-sm font-medium">
             Round {round}
             <span className="ml-2 text-xs font-normal text-muted-foreground">
-              {entries.length} {entries.length === 1 ? "verdict" : "verdicts"}
+              {plural(entries.length, "verdict")}
             </span>
           </h3>
           {entries.map((review) => (
@@ -87,12 +88,7 @@ function ReviewCard({ review }: { review: ReviewDto }) {
   return (
     <article className="rounded-lg border bg-card px-3 py-2">
       <header className="mb-1.5 flex flex-wrap items-center gap-2 text-xs">
-        <span
-          className={cn("flex items-center gap-1 rounded-full px-1.5 py-0.5 font-medium", badge)}
-        >
-          <Icon className="size-3" />
-          {label}
-        </span>
+        <StatusBadge size="sm" label={label} tone={badge} icon={<Icon className="size-3" />} />
         <CopyableId
           value={review.reviewer_profile_id}
           label="profile id"

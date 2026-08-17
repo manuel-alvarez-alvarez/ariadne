@@ -7,12 +7,13 @@
  * Both get a name here — `auto` and `default`, the same words the CLI uses —
  * rather than rendering as an empty cell.
  *
- * `ROLE_LABELS` and `AGENT_KIND_LABELS` are total records over the generated
- * enums, so a new role or agent CLI in the daemon fails to compile here until
- * it is named.
+ * The names of the roles and the agent CLIs themselves are not this feature's:
+ * they come from {@link import("@/lib/labels")}, which the sessions screens
+ * read too.
  */
 
 import type { AgentKind, Role } from "@/api"
+import { AGENT_KIND_LABELS, ROLE_LABELS } from "@/lib/labels"
 
 /** Roles, in the order the orchestration runs them. */
 export const ROLES = ["planner", "engineer", "reviewer"] as const satisfies readonly Role[]
@@ -23,18 +24,6 @@ export const AGENT_KINDS = [
   "codex",
   "opencode",
 ] as const satisfies readonly AgentKind[]
-
-export const ROLE_LABELS: Record<Role, string> = {
-  planner: "Planner",
-  engineer: "Engineer",
-  reviewer: "Reviewer",
-}
-
-export const AGENT_KIND_LABELS: Record<AgentKind, string> = {
-  claude_code: "Claude Code",
-  codex: "Codex",
-  opencode: "OpenCode",
-}
 
 /** Shown where a profile has no agent kind pinned. */
 export const AUTO_AGENT_LABEL = "auto"

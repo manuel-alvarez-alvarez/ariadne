@@ -15,12 +15,7 @@
  */
 
 import { useQueries, useQuery } from "@tanstack/react-query"
-import {
-  ChevronRightIcon,
-  GitBranchIcon,
-  GitCommitHorizontalIcon,
-  TriangleAlertIcon,
-} from "lucide-react"
+import { ChevronRightIcon, GitBranchIcon, GitCommitHorizontalIcon } from "lucide-react"
 import type { ReactNode } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 
@@ -41,6 +36,7 @@ import { cn } from "@/lib/utils"
 import { paths, usePanelSessionNavigation, useTaskPanelTo } from "@/routes/paths"
 import { shortSha } from "./format"
 import { taskQueryOptions } from "./queries"
+import { StalledBadge } from "./stalled"
 import { primaryStatus, subStatus, TASK_STATUS_META } from "./status"
 import { TaskActions } from "./task-actions"
 import { TaskConversation } from "./task-conversation"
@@ -143,7 +139,7 @@ export function TaskPanel({
                 {task.data.description.trim() ? (
                   <Markdown>{task.data.description}</Markdown>
                 ) : (
-                  <EmptyState emphasis="quiet" title="This task has no description." />
+                  <EmptyState emphasis="quiet" title="This task has no description" />
                 )}
               </TabsContent>
               <TabsContent value="conversation" className="pt-3">
@@ -232,15 +228,7 @@ function TaskHeader({ task, showGoalLink }: { task: TaskDto; showGoalLink: boole
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <StatusBadge label={status.label} tone={status.badge} title={status.hint} />
         {sub && <StatusBadge label={sub.label} tone={sub.badge} title={sub.hint} />}
-        {task.stalled && (
-          <span
-            className="flex items-center gap-1 rounded-full bg-amber-500/12 px-2 py-0.5 font-medium text-amber-700 dark:bg-amber-400/15 dark:text-amber-300"
-            title="The agent went idle without advancing the task."
-          >
-            <TriangleAlertIcon className="size-3" />
-            stalled
-          </span>
-        )}
+        {task.stalled && <StalledBadge />}
         <span className="text-muted-foreground">
           review round <span className="font-mono">{task.review_round}</span>
         </span>

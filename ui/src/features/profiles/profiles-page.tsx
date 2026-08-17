@@ -4,7 +4,9 @@
  *
  * Rows expand into the full profile instead of linking away, because the only
  * field that does not fit a table — the system prompt — is also the one worth
- * reading next to the others.
+ * reading next to the others. A link to one profile is therefore a link to this
+ * screen with `?expand=<id>` on it (`paths.profile`), which is what the command
+ * palette takes a picked profile to.
  *
  * Nothing here polls: the list is a plain query and the SSE dispatcher
  * invalidates it, so a profile created from the CLI shows up on its own.
@@ -12,7 +14,8 @@
 
 import { useQuery } from "@tanstack/react-query"
 import { ChevronRightIcon, PencilIcon, PlusIcon, Trash2Icon } from "lucide-react"
-import { Fragment, type ReactNode, useState } from "react"
+import { Fragment, type ReactNode, useCallback, useEffect, useState } from "react"
+import { useSearchParams } from "react-router-dom"
 
 import { ApiError, type ProfileDto, type Role } from "@/api"
 import { EmptyState } from "@/components/empty-state"
@@ -30,13 +33,16 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { formatAbsolute } from "@/lib/time"
+import { ROLE_LABELS } from "@/lib/labels"
+import { plural } from "@/lib/plural"
+import { formatAbsolute, formatRelative } from "@/lib/time"
 import { cn } from "@/lib/utils"
+import { PROFILE_EXPAND_PARAM } from "@/routes/paths"
 
 import { DeleteProfileDialog } from "./delete-profile-dialog"
 import { ProfileDetails } from "./profile-details"
 import { ProfileFormDialog } from "./profile-form-dialog"
-import { agentKindLabel, modelLabel, ROLE_LABELS, ROLES } from "./profile-labels"
+import { agentKindLabel, modelLabel, ROLES } from "./profile-labels"
 import { profilesQueryOptions } from "./queries"
 
 /** The role tabs, where "all" means the unfiltered request. */
@@ -47,6 +53,8 @@ const COLUMN_COUNT = 6
 export function ProfilesPage() {
   const [roleFilter, setRoleFilter] = useState<RoleFilter>("all")
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  /** The row a link asked for, until it has been scrolled to. */
+  const [scrollToId, setScrollToId] = useState<string | null>(null)
 
   // The dialogs keep their subject after closing so the exit animation still
   // has something to render; only `open` flips on close.
@@ -56,6 +64,41 @@ export function ProfilesPage() {
   const [deleting, setDeleting] = useState<ProfileDto | null>(null)
 
   const profiles = useQuery(profilesQueryOptions(roleFilter === "all" ? undefined : roleFilter))
+
+  const [search, setSearch] = useSearchParams()
+  const requested = search.get(PROFILE_EXPAND_PARAM)
+
+  /**
+   * A profile picked in the command palette arrives as `?expand=<id>`. Honour
+   * it once and take the param back off the URL: from there the expansion is
+   * this screen's own state, so closing the row stays closed and the link is
+   * not re-applied on every render.
+   *
+   * The role tab goes back to "All" first. A link carries an id and no role,
+   * and the tab is this screen's own state that a same-route navigation does
+   * not touch — so a profile picked while the Reviewer tab is up would be
+   * asked for and then filtered out of the list it was asked for in.
+   */
+  useEffect(() => {
+    if (!requested) return
+    setRoleFilter("all")
+    setExpandedId(requested)
+    setScrollToId(requested)
+    const next = new URLSearchParams(search)
+    next.delete(PROFILE_EXPAND_PARAM)
+    setSearch(next, { replace: true })
+  }, [requested, search, setSearch])
+
+  /**
+   * Scrolls the asked-for row into view as it mounts — which is the first
+   * render for a link followed from another screen, and a later one when the
+   * list is still loading.
+   */
+  const scrollToRow = useCallback((row: HTMLTableRowElement | null) => {
+    if (!row) return
+    row.scrollIntoView({ block: "center", behavior: "smooth" })
+    setScrollToId(null)
+  }, [])
 
   function openCreate() {
     setEditing(null)
@@ -97,9 +140,7 @@ export function ProfilesPage() {
           </TabsList>
         </Tabs>
         {profiles.data ? (
-          <p className="text-sm text-muted-foreground">
-            {profiles.data.length} {profiles.data.length === 1 ? "profile" : "profiles"}
-          </p>
+          <p className="text-sm text-muted-foreground">{plural(profiles.data.length, "profile")}</p>
         ) : null}
       </div>
 
@@ -144,6 +185,7 @@ export function ProfilesPage() {
                   <ProfileRow
                     key={profile.id}
                     profile={profile}
+                    ref={profile.id === scrollToId ? scrollToRow : undefined}
                     expanded={expandedId === profile.id}
                     onToggle={() =>
                       setExpandedId((current) => (current === profile.id ? null : profile.id))
@@ -166,12 +208,15 @@ export function ProfilesPage() {
 
 function ProfileRow({
   profile,
+  ref,
   expanded,
   onToggle,
   onEdit,
   onDelete,
 }: {
   profile: ProfileDto
+  /** Set on the row a link asked for, so the screen can scroll to it. */
+  ref?: (row: HTMLTableRowElement | null) => void
   expanded: boolean
   onToggle: () => void
   onEdit: () => void
@@ -181,7 +226,7 @@ function ProfileRow({
 
   return (
     <Fragment>
-      <TableRow className={cn(expanded && "border-b-0")}>
+      <TableRow ref={ref} className={cn(expanded && "border-b-0")}>
         <TableCell className="font-medium">
           <Button
             variant="ghost"
@@ -206,8 +251,12 @@ function ProfileRow({
         <TableCell className="font-mono text-xs">
           <Unset when={!profile.model}>{modelLabel(profile.model)}</Unset>
         </TableCell>
+        {/* The age is what a table is read for; the full stamp is on hover,
+            the same way every other tabular timestamp shows it. */}
         <TableCell className="text-muted-foreground">
-          {formatAbsolute(profile.updated_at)}
+          <time dateTime={profile.updated_at} title={formatAbsolute(profile.updated_at)}>
+            {formatRelative(profile.updated_at)}
+          </time>
         </TableCell>
         <TableCell className="text-right">
           <Button
