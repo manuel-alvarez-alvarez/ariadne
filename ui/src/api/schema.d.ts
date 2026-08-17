@@ -177,6 +177,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Model candidates per agent CLI: curated catalogs for claude_code and
+         *     codex, live discovery (`opencode models`) for opencode. Without `agent`,
+         *     the union for all agents.
+         */
+        get: operations["models_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/profiles": {
         parameters: {
             query?: never;
@@ -802,6 +823,15 @@ export interface components {
             /** @description None = goal-level thread. */
             task_id?: string | null;
         };
+        /** @description One model an agent CLI can run, as served by `GET /v1/models`. */
+        ModelDto: {
+            /** @description The agent CLI this model belongs to. */
+            agent_kind: components["schemas"]["AgentKind"];
+            /** @description One-line capability summary (absent for discovered opencode models). */
+            description?: string | null;
+            /** @example claude-fable-5 */
+            id: string;
+        };
         ProfileDto: {
             agent_kind?: null | components["schemas"]["AgentKind"];
             created_at: string;
@@ -1343,6 +1373,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+        };
+    };
+    models_list: {
+        parameters: {
+            query?: {
+                /** @description Filter by agent CLI. */
+                agent?: null | components["schemas"]["AgentKind"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelDto"][];
                 };
             };
         };
