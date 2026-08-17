@@ -141,13 +141,18 @@ enum DaemonCommand {
 }
 
 /// Subcommand paths where `--format` has nothing to format: they hand the
-/// terminal to another program, or print a shell script. The flag is global
-/// (so `ariadne --format json task ls` keeps working), which would otherwise
-/// advertise it on every one of them.
+/// terminal to another program, print a shell script, or answer a machine on
+/// stdout in a protocol of their own. The flag is global (so `ariadne
+/// --format json task ls` keeps working), which would otherwise advertise it
+/// on every one of them — the hidden internal commands included.
+///
+/// Hiding it on a command hides it on everything under that command.
 const NO_FORMAT: &[&[&str]] = &[
     &["completions"],
     &["attach"],
     &["setup"],
+    &["mcp"],
+    &["agent-event"],
     &["daemon", "logs"],
     &["goal", "attach"],
     &["task", "attach"],
@@ -257,20 +262,84 @@ mod tests {
         command().debug_assert();
     }
 
+    /// Every command a user can actually run, and whether `--format` shapes
+    /// what it prints. Hidden internal commands are in here too: `--format`
+    /// is global, so it reaches them whether or not anyone meant it to.
+    const LEAVES: &[(&str, bool)] = &[
+        ("agent-event", false),
+        ("attach", false),
+        ("completions", false),
+        ("daemon logs", false),
+        ("daemon start", true),
+        ("daemon status", true),
+        ("daemon stop", true),
+        ("goal attach", false),
+        ("goal cancel", true),
+        ("goal create", true),
+        ("goal inspect", true),
+        ("goal ls", true),
+        ("goal messages", true),
+        ("mcp serve", false),
+        ("profile create", true),
+        ("profile inspect", true),
+        ("profile ls", true),
+        ("profile rm", true),
+        ("profile update", true),
+        ("session inspect", true),
+        ("session kill", true),
+        ("session logs", true),
+        ("session ls", true),
+        ("setup codex-hooks", false),
+        ("task attach", false),
+        ("task cancel", true),
+        ("task diff", true),
+        ("task history", true),
+        ("task inspect", true),
+        ("task logs", true),
+        ("task ls", true),
+        ("task messages", true),
+        ("task msg", true),
+        ("task retry", true),
+        ("task reviews", true),
+        ("version", true),
+    ];
+
+    /// The list above is the whole tree, so a command added later is not
+    /// classified by accident: it fails here until someone says whether
+    /// `--format` means anything to it.
+    #[test]
+    fn every_command_in_the_tree_is_classified() {
+        let mut expected: Vec<&str> = LEAVES.iter().map(|(path, _)| *path).collect();
+        expected.sort_unstable();
+        assert_eq!(leaf_paths(), expected);
+    }
+
     #[test]
     fn format_is_advertised_exactly_where_it_is_honored() {
-        for path in NO_FORMAT {
-            assert!(!advertises_format(path), "--format advertised on {path:?}");
+        for (path, honored) in LEAVES {
+            let path: Vec<&str> = path.split(' ').collect();
+            assert_eq!(
+                advertises_format(&path),
+                *honored,
+                "--format is {} on {path:?}",
+                if *honored { "missing" } else { "advertised" }
+            );
         }
-        for path in [
-            &["version"][..],
-            &["daemon", "status"],
-            &["task", "ls"],
-            &["task", "diff"],
-            &["session", "inspect"],
-            &["profile", "rm"],
-        ] {
-            assert!(advertises_format(path), "--format missing from {path:?}");
+    }
+
+    /// A path in [`NO_FORMAT`] that names no command hides nothing —
+    /// `mut_subcommand` shrugs at a name it does not know.
+    #[test]
+    fn every_no_format_path_names_a_real_command() {
+        let mut cmd = command();
+        cmd.build();
+        for path in NO_FORMAT {
+            let mut sub = &cmd;
+            for name in *path {
+                sub = sub
+                    .find_subcommand(name)
+                    .unwrap_or_else(|| panic!("NO_FORMAT names no command: {path:?}"));
+            }
         }
     }
 
@@ -301,6 +370,31 @@ mod tests {
 
     fn parse(argv: &[&str]) -> Cli {
         Cli::from_arg_matches(&command().get_matches_from(argv)).expect("parse")
+    }
+
+    /// Every runnable command in the tree, sorted, as `"task ls"` —
+    /// hidden ones included, clap's generated `help` left out.
+    fn leaf_paths() -> Vec<String> {
+        fn walk(cmd: &clap::Command, prefix: &str, out: &mut Vec<String>) {
+            let mut leaf = true;
+            for sub in cmd.get_subcommands().filter(|s| s.get_name() != "help") {
+                leaf = false;
+                let path = match prefix {
+                    "" => sub.get_name().to_string(),
+                    _ => format!("{prefix} {}", sub.get_name()),
+                };
+                walk(sub, &path, out);
+            }
+            if leaf && !prefix.is_empty() {
+                out.push(prefix.to_string());
+            }
+        }
+        let mut cmd = command();
+        cmd.build();
+        let mut out = Vec::new();
+        walk(&cmd, "", &mut out);
+        out.sort();
+        out
     }
 
     /// Whether `--format` shows up in that subcommand's help.
