@@ -675,6 +675,183 @@
         }
       }
     },
+    "/v1/profiles/{id}/prompts": {
+      "get": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "The profile's briefing prompts, in briefing order.",
+        "operationId": "list_prompts",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "profile id or name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ProfilePromptDto"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/profiles/{id}/prompts/{kind}": {
+      "put": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Replace the text of one prompt. Any content is accepted, including text\nthat drops a `{placeholder}`.",
+        "operationId": "update_prompt",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "profile id or name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "path",
+            "description": "prompt kind, e.g. engineer_briefing",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProfilePromptRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfilePromptDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "unknown kind, or a kind the profile's role does not own"
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/profiles/{id}/prompts/{kind}/reset": {
+      "post": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Put one prompt back to the default of the profile's role.",
+        "operationId": "reset_prompt",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "profile id or name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "path",
+            "description": "prompt kind, e.g. engineer_briefing",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfilePromptDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "unknown kind, or a kind the profile's role does not own"
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/profiles/{id}/system-prompt/reset": {
+      "post": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Put the profile's system prompt back to the default of its role.",
+        "operationId": "reset_system_prompt",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "profile id or name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/v1/sessions": {
       "get": {
         "tags": [
@@ -897,7 +1074,7 @@
           "sessions"
         ],
         "summary": "Follow a session's terminal output.",
-        "description": "The stream opens with a `resize` event (`SessionPaneSize`) carrying the\ngrid the output is drawn at: the snapshot is wrapped at that width and\nevery later repaint is addressed in it. A live pane is measured; a\nfinished one is reported at the last size it was seen at, if it ever was.\n\nThen a `snapshot` event carrying the scrollback the `/logs` endpoint would\nreturn — as the pane's screen rather than as text: it ends where the pane's\ncursor is (see [`as_screen`]), so the repaints that follow land where they\nwere addressed. Then a `delta` event per burst of new output. Both payloads\nare a `SessionLogChunk`: raw terminal bytes, escape sequences and all, are\nJSON-encoded so they cannot break SSE's line framing.\n\nA pane resized under the stream — by `ariadne attach`, say — sends a\n`resize` and a *fresh* `snapshot` rather than continuing with deltas: the\noutput in flight straddles the change and belongs to neither grid, so the\nclient starts over at the new one. `snapshot` therefore means \"replace\neverything you have\", whenever it arrives.\n\nWhen the session ends — or if it was already over when the request arrived\n— the remaining output is flushed, a final `end` event (`SessionLogEnd`)\nis sent and the connection closes. There is no replay and no\n`Last-Event-ID`: reconnecting starts again from a fresh snapshot.",
+        "description": "The stream opens with a `resize` event (`SessionPaneSize`) carrying the\ngrid the output is drawn at: the snapshot is wrapped at that width and\nevery later repaint is addressed in it. A live pane is measured; a\nfinished one is reported at the last size it was seen at, if it ever was.\n\nThen a `snapshot` event carrying the scrollback the `/logs` endpoint would\nreturn — as the pane's screen rather than as text: it ends where the pane's\ncursor is (see [`as_screen`]), so the repaints that follow land where they\nwere addressed. Then a `delta` event per burst of new output. Both payloads\nare a `SessionLogChunk`: raw terminal bytes, escape sequences and all, are\nJSON-encoded so they cannot break SSE's line framing.\n\nA pane resized under the stream — by `ariadne attach`, say — sends a\n`resize` and a *fresh* `snapshot` rather than continuing with deltas: the\noutput in flight straddles the change and belongs to neither grid, so the\nclient starts over at the new one. `snapshot` therefore means \"replace\neverything you have\", whenever it arrives. Nothing is sent in between: a\ndelta drawn at a grid the client does not have is the corruption this is\nall here to avoid. If no coherent screen can be had — the pane cannot be\nread, or keeps changing shape while it is — the connection is closed\n*without* an `end`, at the opening as much as later on: the session is not\nover, and a fresh connection is the shortest way back to a grid and a\nscreen that agree. Only a pane confirmed gone ends a stream.\n\nWhen the session ends — or if it was already over when the request arrived\n— the remaining output is flushed, a final `end` event (`SessionLogEnd`)\nis sent and the connection closes. There is no replay and no\n`Last-Event-ID`: reconnecting starts again from a fresh snapshot.",
         "operationId": "logs_stream",
         "parameters": [
           {
@@ -1955,6 +2132,7 @@
       },
       "FinalizePlanRequest": {
         "type": "object",
+        "description": "Body of `POST /v1/goals/{id}/finalize`: planning ends, execution starts.",
         "required": [
           "summary"
         ],
@@ -2165,6 +2343,39 @@
             "type": "string"
           }
         }
+      },
+      "ProfilePromptDto": {
+        "type": "object",
+        "description": "One of the briefing prompts a profile owns beside its system prompt.",
+        "required": [
+          "kind",
+          "content",
+          "updated_at"
+        ],
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "Template text with `{placeholder}` tokens the daemon fills in."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/PromptKind"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
+      "PromptKind": {
+        "type": "string",
+        "description": "A prompt a profile owns beside its system prompt: the briefing an agent of\nthat role is started or resumed with. Each kind belongs to exactly one role\n(see [`PromptKind::role`]).",
+        "enum": [
+          "planner_briefing",
+          "engineer_briefing",
+          "changes_requested",
+          "merge_instructions",
+          "reviewer_briefing",
+          "reviewer_resume"
+        ]
       },
       "RepoSpec": {
         "type": "object",
@@ -2608,6 +2819,18 @@
           },
           "to": {
             "$ref": "#/components/schemas/TaskStatus"
+          }
+        }
+      },
+      "UpdateProfilePromptRequest": {
+        "type": "object",
+        "description": "Body of `PUT /v1/profiles/{id}/prompts/{kind}`: the whole new text.",
+        "required": [
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "type": "string"
           }
         }
       },
