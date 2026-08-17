@@ -5,6 +5,7 @@
 
 pub mod codex_hooks;
 pub mod id;
+pub mod models;
 pub mod state_machine;
 
 pub use state_machine::{Actor, TaskStatus, TransitionError, check_transition};
