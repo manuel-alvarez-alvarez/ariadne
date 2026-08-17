@@ -3,7 +3,7 @@
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::goals::{GoalDto, GoalRepoDto};
 use ariadne_api::messages::MessageDto;
-use ariadne_api::profiles::ProfileDto;
+use ariadne_api::profiles::{ProfileDto, ProfilePromptDto};
 use ariadne_api::reviews::ReviewDto;
 use ariadne_api::sessions::SessionDto;
 use ariadne_api::tasks::{TaskDto, TaskTransitionDto};
@@ -19,6 +19,14 @@ pub fn profile_dto(p: store::Profile) -> ProfileDto {
         model: p.model,
         system_prompt: p.system_prompt,
         created_at: p.created_at,
+        updated_at: p.updated_at,
+    }
+}
+
+pub fn profile_prompt_dto(p: store::ProfilePrompt) -> ProfilePromptDto {
+    ProfilePromptDto {
+        kind: p.kind(),
+        content: p.content,
         updated_at: p.updated_at,
     }
 }

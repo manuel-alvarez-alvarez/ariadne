@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use axum::extract::State;
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use tokio::sync::mpsc;
 use tower_http::cors::CorsLayer;
@@ -72,6 +72,8 @@ impl AppState {
         health,
         version,
         profiles::create, profiles::list, profiles::get, profiles::update, profiles::delete,
+        profiles::list_prompts, profiles::update_prompt, profiles::reset_prompt,
+        profiles::reset_system_prompt,
         goals::create, goals::list, goals::get, goals::cancel, goals::finalize,
         goals::list_messages, goals::post_message,
         tasks::create, tasks::list, tasks::get, tasks::update,
@@ -111,6 +113,19 @@ pub fn router(state: AppState) -> Router {
             get(profiles::get)
                 .put(profiles::update)
                 .delete(profiles::delete),
+        )
+        .route("/v1/profiles/{id}/prompts", get(profiles::list_prompts))
+        .route(
+            "/v1/profiles/{id}/prompts/{kind}",
+            put(profiles::update_prompt),
+        )
+        .route(
+            "/v1/profiles/{id}/prompts/{kind}/reset",
+            post(profiles::reset_prompt),
+        )
+        .route(
+            "/v1/profiles/{id}/system-prompt/reset",
+            post(profiles::reset_system_prompt),
         )
         // goals
         .route("/v1/goals", post(goals::create).get(goals::list))
