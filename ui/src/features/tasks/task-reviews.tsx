@@ -10,12 +10,12 @@ import { CheckCircle2Icon, MessageSquareWarningIcon } from "lucide-react"
 import { useMemo } from "react"
 
 import type { ReviewDto, ReviewVerdict } from "@/api"
-import { CopyableId } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { Markdown } from "@/components/markdown"
 import { StatusBadge } from "@/components/status-badge"
 import { Skeleton } from "@/components/ui/skeleton"
+import { ProfileName } from "@/features/profiles/profile-name"
 import { plural } from "@/lib/plural"
 import { formatAbsolute, formatRelative } from "@/lib/time"
 import { taskReviewsQueryOptions } from "./queries"
@@ -89,10 +89,11 @@ function ReviewCard({ review }: { review: ReviewDto }) {
     <article className="rounded-lg border bg-card px-3 py-2">
       <header className="mb-1.5 flex flex-wrap items-center gap-2 text-xs">
         <StatusBadge size="sm" label={label} tone={badge} icon={<Icon className="size-3" />} />
-        <CopyableId
-          value={review.reviewer_profile_id}
-          label="profile id"
-          className="text-muted-foreground"
+        {/* Who said it: a round can hold several verdicts, and two ULIDs are
+            the same string to a reader. */}
+        <ProfileName
+          profileId={review.reviewer_profile_id}
+          className="font-medium text-foreground"
         />
         {review.session_id && <SessionLink sessionId={review.session_id} />}
         <time

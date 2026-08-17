@@ -29,6 +29,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { goalQueryOptions } from "@/features/goals/queries"
+import { ProfileName } from "@/features/profiles/profile-name"
 import { taskCopyEntries } from "@/lib/copy-entries"
 import { shortId } from "@/lib/ids"
 import { formatAbsolute, formatRelative } from "@/lib/time"
@@ -255,12 +256,7 @@ function TaskFacts({ task }: { task: TaskDto }) {
       <Fact label="Branch">
         <span className="flex items-center gap-1.5">
           <GitBranchIcon className="size-3.5 shrink-0 text-muted-foreground" />
-          <CopyableId
-            value={task.branch}
-            label="branch"
-            truncate="middle"
-            className="text-xs"
-          />
+          <CopyableId value={task.branch} label="branch" truncate="middle" className="text-xs" />
         </span>
       </Fact>
       <Fact label="Worktree">
@@ -271,17 +267,17 @@ function TaskFacts({ task }: { task: TaskDto }) {
         )}
       </Fact>
       <Fact label="Engineer">
-        <CopyableId value={task.engineer_profile_id} label="profile id" className="text-xs" />
+        <ProfileName profileId={task.engineer_profile_id} className="text-xs" />
       </Fact>
       <Fact label="Reviewers">
         {task.reviewer_profile_ids.length > 0 ? (
-          // Each id is its own click target; the separators are plain text so
-          // the row still reads as the single list it was.
+          // Each profile is its own click target; the separators are plain text
+          // so the row still reads as the single list it was.
           <span className="text-xs">
             {task.reviewer_profile_ids.map((id, index) => (
               <span key={id}>
                 {index > 0 ? ", " : null}
-                <CopyableId value={id} label="profile id" className="text-xs" />
+                <ProfileName profileId={id} className="text-xs" />
               </span>
             ))}
           </span>

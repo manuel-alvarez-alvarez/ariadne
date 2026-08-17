@@ -19,7 +19,7 @@ import { useQuery } from "@tanstack/react-query"
 import type { ReactNode } from "react"
 import { useSearchParams } from "react-router-dom"
 
-import { ApiError, api, type GoalDto, qk, unwrap } from "@/api"
+import { ApiError, type GoalDto } from "@/api"
 import { CopyableId, CopyableIdMenu } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
@@ -28,6 +28,7 @@ import { StatusBadge } from "@/components/status-badge"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { ProfileName } from "@/features/profiles/profile-name"
 import { goalCopyEntries } from "@/lib/copy-entries"
 import { formatAbsolute, formatRelative } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -225,7 +226,7 @@ function GoalMetadata({ goal }: { goal: GoalDto }) {
   return (
     <dl className="grid gap-x-6 gap-y-3 rounded-lg border bg-card p-3 text-sm sm:grid-cols-2">
       <Detail label="Planner">
-        <PlannerProfileName profileId={goal.planner_profile_id} />
+        <ProfileName profileId={goal.planner_profile_id} className="text-sm" />
       </Detail>
       <Detail label="Approvals">
         <span className="tabular-nums">{goal.required_approvals}</span>
@@ -271,21 +272,5 @@ function Detail({
       <dt className="text-xs text-muted-foreground">{label}</dt>
       <dd className="mt-0.5 min-w-0">{children}</dd>
     </div>
-  )
-}
-
-/** The goal only carries the profile id; the name is what a person recognises. */
-function PlannerProfileName({ profileId }: { profileId: string }) {
-  const profile = useQuery({
-    queryKey: qk.profiles.detail(profileId),
-    queryFn: () => unwrap(api().GET("/v1/profiles/{id}", { params: { path: { id: profileId } } })),
-    staleTime: 5 * 60_000,
-  })
-  return (
-    <span className="break-all">
-      {profile.data?.name ?? (
-        <CopyableId value={profileId} label="profile id" wrap className="text-xs" />
-      )}
-    </span>
   )
 }
