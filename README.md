@@ -120,6 +120,12 @@ ariadne attach <id>                    # session, task or goal id
 Every command takes `--format json`; the daemon exposes its full API as
 OpenAPI at `/api-docs/openapi.json` with Swagger UI at `/docs`.
 
+A command that fails prints one line on stderr — `error: <what went wrong>`,
+with a hint in parentheses when there is an obvious next step — and exits 1;
+usage errors exit 2. Under `--format json` the failure comes back as the same
+`{"error": {"code", "message"}}` envelope the daemon uses, so the status and
+code the human line leaves out stay available to scripts.
+
 `GET /v1/events/stream` is a server-sent-event stream of everything the daemon
 changes — goals, tasks (including scheduler-driven transitions), messages,
 reviews, sessions and profiles — each event carrying the full updated DTO, and
