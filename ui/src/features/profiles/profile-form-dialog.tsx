@@ -9,6 +9,7 @@
  */
 
 import { zodResolver } from "@hookform/resolvers/zod"
+import { useQuery } from "@tanstack/react-query"
 import { PlusIcon, XIcon } from "lucide-react"
 import { useEffect } from "react"
 import { Controller, useFieldArray, useForm } from "react-hook-form"
@@ -39,6 +40,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { describeError } from "@/lib/errors"
 import { ROLE_LABELS } from "@/lib/labels"
 
+import { ModelCombobox } from "./model-combobox"
 import {
   AGENT_KIND_CHOICES,
   type AgentKindChoice,
@@ -51,7 +53,7 @@ import {
   toUpdateRequest,
 } from "./profile-form-values"
 import { agentKindLabel, ROLES } from "./profile-labels"
-import { useCreateProfile, useUpdateProfile } from "./queries"
+import { modelsQueryOptions, useCreateProfile, useUpdateProfile } from "./queries"
 
 export function ProfileFormDialog({
   open,
@@ -106,6 +108,11 @@ export function ProfileFormDialog({
   }
 
   const model = watch("model")
+  const agentKind = watch("agentKind")
+
+  // The catalog behind the model combobox. Only asked for while the dialog is
+  // up, and allowed to fail: an undefined catalog leaves the field free-text.
+  const models = useQuery({ ...modelsQueryOptions(), enabled: open })
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -202,15 +209,21 @@ export function ProfileFormDialog({
             </div>
 
             <Field>
-              <FieldLabel htmlFor="profile-model">Model</FieldLabel>
+              {/* No htmlFor: cmdk owns its input's id and names it "Model"
+                  itself, through the hidden label its aria-labelledby points at. */}
+              <FieldLabel>Model</FieldLabel>
               <div className="flex items-center gap-2">
-                <Input
-                  id="profile-model"
-                  placeholder="Provider default"
-                  autoComplete="off"
-                  spellCheck={false}
-                  className="font-mono"
-                  {...register("model")}
+                <Controller
+                  control={control}
+                  name="model"
+                  render={({ field }) => (
+                    <ModelCombobox
+                      value={field.value}
+                      onChange={field.onChange}
+                      agentKind={agentKind}
+                      models={models.data}
+                    />
+                  )}
                 />
                 {model.trim().length > 0 ? (
                   <Button
