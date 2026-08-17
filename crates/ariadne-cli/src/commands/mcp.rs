@@ -489,13 +489,22 @@ impl ServerHandler for AriadneMcp {
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
         let allowed = self.allowed_tools();
+        // SEP-2549 cache hints. Protocol 2026-07-28 requires them on list
+        // results, and Claude Code (>= 2.1.x) rejects the whole tool list
+        // without them — the tools then silently never load. rmcp fills them
+        // for `server/discover` but not here, so mirror its defaults: fresh
+        // for 0ms (never cached stale) and private to this session, which is
+        // also true — the list is role-filtered. Older clients ignore the
+        // extra fields.
         Ok(ListToolsResult::with_all_items(
             self.tool_router
                 .list_all()
                 .into_iter()
                 .filter(|t| allowed.contains(&t.name.as_ref()))
                 .collect(),
-        ))
+        )
+        .with_ttl_ms(0)
+        .with_cache_scope(CacheScope::Private))
     }
 
     async fn call_tool(
