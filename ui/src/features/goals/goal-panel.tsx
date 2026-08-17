@@ -16,7 +16,7 @@
  */
 
 import { useQuery } from "@tanstack/react-query"
-import type { ReactNode } from "react"
+import { type ReactNode, type RefObject, useRef } from "react"
 import { useSearchParams } from "react-router-dom"
 
 import { ApiError, type GoalDto } from "@/api"
@@ -29,6 +29,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ProfileName } from "@/features/profiles/profile-name"
+import { useFocusReturn } from "@/hooks/use-focus-return"
 import { goalCopyEntries } from "@/lib/copy-entries"
 import { formatAbsolute, formatRelative } from "@/lib/time"
 import { usePanelSessionNavigation } from "@/routes/paths"
@@ -64,6 +65,10 @@ export function GoalPanel({
   // `tab` and `session` belong to whichever panel is on top: while a task is
   // stacked over this one they are its, and this goal shows its own default.
   const sessionId = stackedPanel ? null : search.get("session")
+  // Going back from a session hands focus to the row that opened it, which the
+  // dialog cannot do for us — nothing closed. See `useFocusReturn`.
+  const panel = useRef<HTMLDivElement>(null)
+  useFocusReturn(sessionId, panel)
 
   // A selected session replaces the goal view entirely — the panel is that
   // session's now, and the way back is the link it carries. It is checked
@@ -71,7 +76,7 @@ export function GoalPanel({
   // waiting for the goal it hangs off.
   if (sessionId) {
     return (
-      <GoalSheet onClose={onClose} stackedPanel={stackedPanel}>
+      <GoalSheet onClose={onClose} stackedPanel={stackedPanel} panelRef={panel}>
         <GoalSessionView
           goalId={goalId}
           goalTitle={goal.data?.title}
@@ -83,7 +88,7 @@ export function GoalPanel({
   }
 
   return (
-    <GoalSheet onClose={onClose} stackedPanel={stackedPanel}>
+    <GoalSheet onClose={onClose} stackedPanel={stackedPanel} panelRef={panel}>
       {error ? (
         <>
           <SheetTitle className="sr-only">Goal {goalId}</SheetTitle>
@@ -123,10 +128,13 @@ export function GoalPanel({
 function GoalSheet({
   onClose,
   stackedPanel,
+  panelRef,
   children,
 }: {
   onClose: () => void
   stackedPanel?: ReactNode
+  /** The popup itself, for the focus this panel has to hand back by hand. */
+  panelRef?: RefObject<HTMLDivElement | null>
   children: ReactNode
 }) {
   return (
@@ -135,6 +143,7 @@ function GoalSheet({
           on top is narrower, so this one keeps a strip showing at its left —
           the stack is a thing the user can see, and click back onto. */}
       <SheetContent
+        ref={panelRef}
         className="sm:max-w-3xl"
         overlay={{ dim: !stackedPanel }}
         aria-describedby={undefined}
