@@ -3,7 +3,7 @@
 use anyhow::Result;
 use clap::Subcommand;
 
-use ariadne_api::goals::{CreateGoalRequest, GoalDto, RepoSpec};
+use ariadne_api::goals::{CreateGoalRequest, FinalizePlanRequest, GoalDto, RepoSpec};
 use ariadne_api::messages::MessageDto;
 use ariadne_api::tasks::{TaskDto, TaskListQuery};
 use ariadne_client::Client;
@@ -58,6 +58,23 @@ pub enum GoalCommand {
         /// Goal id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
         id: String,
+    },
+    /// Finalize a goal's plan: planning ends and its tasks start running
+    ///
+    /// What the planner's `finalize_plan` does, from the terminal: the goal
+    /// leaves `planning` for `active`, and every task whose dependencies are
+    /// met is handed to an engineer. The goal needs at least one task.
+    Finalize {
+        /// Goal id
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
+        id: String,
+        /// The plan, in a sentence: recorded in the goal thread, which is
+        /// what the agents read as the brief they were finalized on
+        #[arg(short, long, default_value = "approved by the user")]
+        summary: String,
+        /// Do not ask for confirmation
+        #[arg(short, long)]
+        yes: bool,
     },
     /// Cancel a goal and every task under it
     Cancel {
@@ -171,6 +188,20 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                 }
             }
         }
+        GoalCommand::Finalize { id, summary, yes } => {
+            let g: GoalDto = client.get_json(&format!("/v1/goals/{id}")).await?;
+            confirm(&finalize_question(client, &g).await, yes)?;
+            let g: GoalDto = client
+                .post_json(
+                    &format!("/v1/goals/{id}/finalize"),
+                    &FinalizePlanRequest { summary },
+                )
+                .await?;
+            match format {
+                Format::Json => print_json(&g)?,
+                Format::Table => println!("goal {} is now {}", g.id, g.status.as_str()),
+            }
+        }
         GoalCommand::Cancel { id, yes } => {
             let g: GoalDto = client.get_json(&format!("/v1/goals/{id}")).await?;
             confirm(&cancel_question(client, &g).await, yes)?;
@@ -208,19 +239,21 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
     Ok(())
 }
 
+/// What `goal finalize` asks before execution starts: agents are spawned and
+/// start writing code, so the question names how much of it is about to run.
+async fn finalize_question(client: &Client, goal: &GoalDto) -> String {
+    let tasks = goal_tasks(client, &goal.id).await.len();
+    let tail = match tasks {
+        1 => "1 task starts running".into(),
+        n => format!("{n} tasks start running"),
+    };
+    format!("Finalize the plan of goal \"{}\" ({tail})?", goal.title)
+}
+
 /// What `goal cancel` asks before it fans out: cancelling is irreversible and
 /// takes every task that has not finished with it, so the question names both.
 async fn cancel_question(client: &Client, goal: &GoalDto) -> String {
-    let query = TaskListQuery {
-        goal: Some(goal.id.clone()),
-        status: None,
-    };
-    // The count is context for the question, not the answer to it: a daemon
-    // that will not list the tasks still gets asked about the goal.
-    let tasks: Vec<TaskDto> = match query_path("/v1/tasks", &query) {
-        Ok(path) => client.get_json(&path).await.unwrap_or_default(),
-        Err(_) => Vec::new(),
-    };
+    let tasks = goal_tasks(client, &goal.id).await;
     let live = tasks.iter().filter(|t| !t.status.is_terminal()).count();
     let tail = match live {
         0 => "no task is still running".into(),
@@ -228,6 +261,19 @@ async fn cancel_question(client: &Client, goal: &GoalDto) -> String {
         n => format!("{n} live tasks will be cancelled too"),
     };
     format!("Cancel goal \"{}\" ({})?", goal.title, tail)
+}
+
+/// The goal's tasks, as context for a question rather than as its answer: a
+/// daemon that will not list them still gets asked about the goal.
+async fn goal_tasks(client: &Client, goal_id: &str) -> Vec<TaskDto> {
+    let query = TaskListQuery {
+        goal: Some(goal_id.to_string()),
+        status: None,
+    };
+    match query_path("/v1/tasks", &query) {
+        Ok(path) => client.get_json(&path).await.unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
 }
 
 /// A `--repo` argument: a path, optionally carrying the base branch.

@@ -100,6 +100,14 @@ ariadne profile create --name rev-strict --role reviewer --agent codex \
 ariadne goal create --title "..." --repo ~/projects/api \
   --planner Planner --approvals 2
 
+# or write the plan yourself, instead of leaving it to the planner:
+ariadne task create <goal-id> --title "Rate-limit middleware" \
+  --engineer Engineer --reviewer Reviewer
+ariadne task create <goal-id> --title "Wire it into the router" \
+  --depends-on <first-task-id>
+ariadne task update <task-id> --title "..." --reviewer rev-strict
+ariadne goal finalize <goal-id>        # planning ends, the tasks start running
+
 # watch it run
 ariadne task ls --goal <goal-id>
 ariadne task attach <task-id>          # engineer terminal (or --role reviewer)
@@ -115,8 +123,8 @@ ariadne attach <id>                    # session, task or goal id
 |---|---|
 | `ariadne daemon start\|stop\|status\|logs` | manage `ariadned` |
 | `ariadne profile create\|ls\|inspect\|update\|rm` | agent profiles |
-| `ariadne goal create\|ls\|inspect\|attach\|messages\|cancel` | goals |
-| `ariadne task ls\|inspect\|diff\|attach\|logs\|messages\|msg\|reviews\|history\|cancel\|retry` | tasks |
+| `ariadne goal create\|ls\|inspect\|attach\|messages\|finalize\|cancel` | goals |
+| `ariadne task create\|update\|ls\|inspect\|diff\|attach\|logs\|messages\|msg\|reviews\|history\|cancel\|retry` | tasks |
 | `ariadne session ls\|inspect\|logs\|kill` | agent sessions |
 | `ariadne attach <id>` | attach to a session, task or goal id |
 

@@ -14,6 +14,7 @@ use rmcp::model::*;
 use rmcp::service::{RequestContext, RoleServer};
 use rmcp::{ErrorData as McpError, ServiceExt, schemars, tool, tool_router};
 
+use ariadne_api::goals::FinalizePlanRequest;
 use ariadne_api::messages::CreateMessageRequest;
 use ariadne_api::reviews::CreateReviewRequest;
 use ariadne_api::tasks::{CreateTaskRequest, TransitionRequest, UpdateTaskRequest};
@@ -98,9 +99,7 @@ pub struct ListProfilesReq {
     pub role: Option<String>,
 }
 
-/// Also serialized as the request body: the daemon's `FinalizePlanRequest`
-/// wire type is not exported by `ariadne-api`, and this struct matches it.
-#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub struct FinalizePlanReq {
     /// Short summary of the agreed plan.
@@ -366,8 +365,11 @@ impl AriadneMcp {
         &self,
         Parameters(req): Parameters<FinalizePlanReq>,
     ) -> Result<CallToolResult, McpError> {
+        let body = FinalizePlanRequest {
+            summary: req.summary,
+        };
         json_result(
-            self.post(&format!("/v1/goals/{}/finalize", self.goal_id), &req)
+            self.post(&format!("/v1/goals/{}/finalize", self.goal_id), &body)
                 .await?,
         )
     }

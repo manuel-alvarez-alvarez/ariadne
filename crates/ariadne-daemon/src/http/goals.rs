@@ -9,7 +9,7 @@ use serde::Deserialize;
 use utoipa::IntoParams;
 
 use ariadne_api::Page;
-use ariadne_api::goals::{CreateGoalRequest, GoalDto};
+use ariadne_api::goals::{CreateGoalRequest, FinalizePlanRequest, GoalDto};
 use ariadne_api::messages::{CreateMessageRequest, MessageDto};
 use ariadne_core::{GoalStatus, Role};
 use ariadne_store::{NewGoal, NewMessage};
@@ -154,12 +154,6 @@ pub async fn cancel(
     state.notify_scheduler_goal(&goal.id).await;
     let repos = state.store.list_goal_repos(&goal.id).await?;
     Ok(Json(goal_dto(goal, repos)))
-}
-
-#[derive(Debug, serde::Deserialize, utoipa::ToSchema)]
-pub struct FinalizePlanRequest {
-    /// Plan summary, recorded in the goal thread.
-    pub summary: String,
 }
 
 /// Finalize planning: goal moves planning -> active (planner or user).

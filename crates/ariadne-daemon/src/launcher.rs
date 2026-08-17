@@ -186,8 +186,7 @@ impl Launcher {
         // it — a missing dir fails silently in the pipe's shell, and the agent
         // adapter only creates the run dir when it has config files to write
         // there (codex does not).
-        std::fs::create_dir_all(self.run_dir(&session.id))
-            .context("creating session run dir")?;
+        std::fs::create_dir_all(self.run_dir(&session.id)).context("creating session run dir")?;
         self.tmux
             .new_session(&TmuxSpawn {
                 session: session.tmux_session.clone(),

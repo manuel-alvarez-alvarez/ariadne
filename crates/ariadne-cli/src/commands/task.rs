@@ -1,12 +1,15 @@
 //! `ariadne task ...`
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use clap::Subcommand;
 use serde_json::json;
 
+use ariadne_api::goals::{GoalDto, GoalRepoDto};
 use ariadne_api::messages::{CreateMessageRequest, MessageDto};
 use ariadne_api::reviews::ReviewDto;
-use ariadne_api::tasks::{TaskDto, TaskListQuery, TaskTransitionDto};
+use ariadne_api::tasks::{
+    CreateTaskRequest, TaskDto, TaskListQuery, TaskTransitionDto, UpdateTaskRequest,
+};
 use ariadne_client::Client;
 use ariadne_core::TaskStatus;
 
@@ -38,6 +41,63 @@ const REVIEWS: &[Column] = &[
 
 #[derive(Subcommand)]
 pub enum TaskCommand {
+    /// Create a task in a goal
+    ///
+    /// What the planner does through its MCP tools, from the terminal: the
+    /// task starts out `pending` and is picked up once the goal is active and
+    /// the tasks it depends on have merged. Prints the new task id.
+    Create {
+        /// Goal id the task belongs to
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
+        goal: String,
+        /// Short task title (what the engineer is asked to do)
+        #[arg(long)]
+        title: String,
+        /// Task description: the brief the engineer works from
+        #[arg(short = 'd', long, default_value = "")]
+        description: String,
+        /// Engineer profile id or name that owns the task
+        #[arg(long, default_value = "Engineer", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::engineer_profiles))]
+        engineer: String,
+        /// Reviewer profile id or name, in review order; repeatable
+        #[arg(long = "reviewer", default_value = "Reviewer", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::reviewer_profiles))]
+        reviewers: Vec<String>,
+        /// Id of a task that must merge before this one starts; repeatable
+        #[arg(long = "depends-on", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
+        depends_on: Vec<String>,
+        /// Which of the goal's repos the task works in, by id or by the path
+        /// it was added with (only needed when the goal has several)
+        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_repos))]
+        repo: Option<String>,
+    },
+    /// Edit a task that has not started yet
+    ///
+    /// Title, description, reviewers and dependencies, while the task is
+    /// still pending or ready — once an engineer is on it the daemon refuses
+    /// the edit. Every flag left out keeps what the task already has;
+    /// `--reviewer` and `--depends-on` replace the whole list they name.
+    Update {
+        /// Task id
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
+        id: String,
+        /// New title
+        #[arg(long)]
+        title: Option<String>,
+        /// New description
+        #[arg(short = 'd', long)]
+        description: Option<String>,
+        /// Reviewer profile id or name, in review order; repeatable, and
+        /// replaces the task's reviewers rather than adding to them
+        #[arg(long = "reviewer", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::reviewer_profiles))]
+        reviewers: Vec<String>,
+        /// Id of a task that must merge first; repeatable, and replaces the
+        /// task's dependencies rather than adding to them
+        #[arg(long = "depends-on", conflicts_with = "clear_depends_on", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
+        depends_on: Vec<String>,
+        /// Drop every dependency, leaving the task free to start
+        #[arg(long)]
+        clear_depends_on: bool,
+    },
     /// List tasks
     Ls {
         /// Filter by goal id
@@ -125,6 +185,52 @@ pub enum TaskCommand {
 
 pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()> {
     match cmd {
+        TaskCommand::Create {
+            goal,
+            title,
+            description,
+            engineer,
+            reviewers,
+            depends_on,
+            repo,
+        } => {
+            let repo_id = match repo {
+                Some(spec) => Some(resolve_repo(client, &goal, &spec).await?),
+                None => None,
+            };
+            let t: TaskDto = client
+                .post_json(
+                    &format!("/v1/goals/{goal}/tasks"),
+                    &CreateTaskRequest {
+                        title,
+                        description,
+                        repo_id,
+                        engineer_profile: engineer,
+                        reviewer_profiles: reviewers,
+                        depends_on,
+                    },
+                )
+                .await?;
+            match format {
+                Format::Json => print_json(&t)?,
+                Format::Table => println!("{}", t.id),
+            }
+        }
+        TaskCommand::Update {
+            id,
+            title,
+            description,
+            reviewers,
+            depends_on,
+            clear_depends_on,
+        } => {
+            let body = update_request(title, description, reviewers, depends_on, clear_depends_on)?;
+            let t: TaskDto = client.patch_json(&format!("/v1/tasks/{id}"), &body).await?;
+            match format {
+                Format::Json => print_json(&t)?,
+                Format::Table => println!("updated {}", t.id),
+            }
+        }
         TaskCommand::Ls {
             goal,
             status,
@@ -329,4 +435,141 @@ fn print_status(t: &TaskDto, format: Format) -> Result<()> {
         Format::Table => println!("task {} is now {}", t.id, t.status.as_str()),
     }
     Ok(())
+}
+
+/// The PATCH body of `task update`, or the reason there is nothing to send.
+///
+/// A flag that was not given is `None` — the field keeps what the task has.
+/// The two list flags are all-or-nothing by design: they replace the list they
+/// name, and `--clear-depends-on` is how an empty one is spelled, since a
+/// repeatable flag cannot be given zero times on purpose.
+fn update_request(
+    title: Option<String>,
+    description: Option<String>,
+    reviewers: Vec<String>,
+    depends_on: Vec<String>,
+    clear_depends_on: bool,
+) -> Result<UpdateTaskRequest> {
+    let req = UpdateTaskRequest {
+        title,
+        description,
+        reviewer_profiles: (!reviewers.is_empty()).then_some(reviewers),
+        depends_on: match (clear_depends_on, depends_on.is_empty()) {
+            (true, _) => Some(Vec::new()),
+            (false, true) => None,
+            (false, false) => Some(depends_on),
+        },
+    };
+    // An empty PATCH would still reach the daemon and still be refused on a
+    // started task, which reads as a failure the caller never asked for.
+    if req.title.is_none()
+        && req.description.is_none()
+        && req.reviewer_profiles.is_none()
+        && req.depends_on.is_none()
+    {
+        bail!("nothing to update — pass --title, --description, --reviewer or --depends-on");
+    }
+    Ok(req)
+}
+
+/// A `--repo` argument as the repo id the API wants.
+///
+/// The goal's repos answer to their id or to the path they were added with —
+/// the two spellings `goal inspect` prints — because nobody types a ULID they
+/// have not been given.
+async fn resolve_repo(client: &Client, goal_id: &str, spec: &str) -> Result<String> {
+    let g: GoalDto = client.get_json(&format!("/v1/goals/{goal_id}")).await?;
+    match pick_repo(&g.repos, spec) {
+        Some(id) => Ok(id),
+        None => bail!(
+            "goal {goal_id} has no repo \"{spec}\" — it has {}",
+            g.repos
+                .iter()
+                .map(|r| format!("{} ({})", r.path, r.id))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
+}
+
+/// The id of the goal repo a `--repo` argument names, by id or by path.
+fn pick_repo(repos: &[GoalRepoDto], spec: &str) -> Option<String> {
+    repos
+        .iter()
+        .find(|r| r.id == spec || r.path == spec)
+        .map(|r| r.id.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn repos() -> Vec<GoalRepoDto> {
+        vec![
+            GoalRepoDto {
+                id: "01REPOAPI".into(),
+                path: "/home/me/api".into(),
+                base_branch: "main".into(),
+            },
+            GoalRepoDto {
+                id: "01REPOUI".into(),
+                path: "/home/me/ui".into(),
+                base_branch: "main".into(),
+            },
+        ]
+    }
+
+    #[test]
+    fn a_repo_is_named_by_id_or_by_path() {
+        assert_eq!(pick_repo(&repos(), "01REPOUI").as_deref(), Some("01REPOUI"));
+        assert_eq!(
+            pick_repo(&repos(), "/home/me/api").as_deref(),
+            Some("01REPOAPI")
+        );
+        assert_eq!(pick_repo(&repos(), "/home/me/other"), None);
+    }
+
+    /// The lists replace rather than extend, so an absent flag must not send
+    /// an empty list and wipe what the task has.
+    #[test]
+    fn a_flag_that_was_not_given_is_left_alone() {
+        let req = update_request(Some("new".into()), None, vec![], vec![], false).expect("body");
+        assert_eq!(req.title.as_deref(), Some("new"));
+        assert!(req.description.is_none());
+        assert!(req.reviewer_profiles.is_none());
+        assert!(req.depends_on.is_none());
+    }
+
+    #[test]
+    fn the_lists_are_replaced_by_what_was_given() {
+        let req = update_request(
+            None,
+            None,
+            vec!["Reviewer".into(), "rev-strict".into()],
+            vec!["01TASK".into()],
+            false,
+        )
+        .expect("body");
+        assert_eq!(
+            req.reviewer_profiles.as_deref(),
+            Some(["Reviewer".to_string(), "rev-strict".to_string()].as_slice())
+        );
+        assert_eq!(
+            req.depends_on.as_deref(),
+            Some(["01TASK".to_string()].as_slice())
+        );
+    }
+
+    /// The one thing the repeatable flag cannot say on its own.
+    #[test]
+    fn clearing_the_dependencies_sends_an_empty_list() {
+        let req = update_request(None, None, vec![], vec![], true).expect("body");
+        assert_eq!(req.depends_on.as_deref(), Some([].as_slice()));
+    }
+
+    #[test]
+    fn an_update_with_no_flags_is_refused_before_it_is_sent() {
+        let err = update_request(None, None, vec![], vec![], false).expect_err("no-op");
+        assert!(err.to_string().starts_with("nothing to update"), "{err}");
+    }
 }
