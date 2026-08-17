@@ -276,6 +276,7 @@ mod tests {
         ("goal attach", false),
         ("goal cancel", true),
         ("goal create", true),
+        ("goal finalize", true),
         ("goal inspect", true),
         ("goal ls", true),
         ("goal messages", true),
@@ -292,6 +293,7 @@ mod tests {
         ("setup codex-hooks", false),
         ("task attach", false),
         ("task cancel", true),
+        ("task create", true),
         ("task diff", true),
         ("task history", true),
         ("task inspect", true),
@@ -301,6 +303,7 @@ mod tests {
         ("task msg", true),
         ("task retry", true),
         ("task reviews", true),
+        ("task update", true),
         ("version", true),
     ];
 

@@ -35,6 +35,13 @@ pub struct RepoSpec {
     pub base_branch: Option<String>,
 }
 
+/// Body of `POST /v1/goals/{id}/finalize`: planning ends, execution starts.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct FinalizePlanRequest {
+    /// Plan summary, recorded in the goal thread.
+    pub summary: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateGoalRequest {
     pub title: String,
