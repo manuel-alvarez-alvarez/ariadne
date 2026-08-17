@@ -7,6 +7,7 @@ pub mod error;
 pub mod events;
 pub mod goals;
 pub mod messages;
+pub mod models;
 pub mod profiles;
 pub mod reviews;
 pub mod sessions;
