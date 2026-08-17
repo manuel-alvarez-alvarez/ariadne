@@ -17,7 +17,9 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use ariadne_api::error::ErrorBody;
+use ariadne_api::profiles::{ProfileDto, ProfilePromptDto, UpdateProfilePromptRequest};
 use ariadne_api::{HealthResponse, VersionResponse};
+use ariadne_core::PromptKind;
 
 pub mod endpoint;
 
@@ -206,6 +208,51 @@ impl Client {
 
     pub async fn version(&self) -> Result<VersionResponse, ClientError> {
         self.request(Method::GET, "/v1/version", None::<&()>).await
+    }
+
+    /// A profile's briefing prompts, in briefing order. `profile` is an id or
+    /// a unique profile name, as everywhere under `/v1/profiles`.
+    pub async fn list_profile_prompts(
+        &self,
+        profile: &str,
+    ) -> Result<Vec<ProfilePromptDto>, ClientError> {
+        self.get_json(&format!("/v1/profiles/{profile}/prompts"))
+            .await
+    }
+
+    /// Replace the text of one prompt.
+    pub async fn update_profile_prompt(
+        &self,
+        profile: &str,
+        kind: PromptKind,
+        content: impl Into<String>,
+    ) -> Result<ProfilePromptDto, ClientError> {
+        self.put_json(
+            &format!("/v1/profiles/{profile}/prompts/{}", kind.as_str()),
+            &UpdateProfilePromptRequest {
+                content: content.into(),
+            },
+        )
+        .await
+    }
+
+    /// Put one prompt back to the default of the profile's role.
+    pub async fn reset_profile_prompt(
+        &self,
+        profile: &str,
+        kind: PromptKind,
+    ) -> Result<ProfilePromptDto, ClientError> {
+        self.post_empty(&format!(
+            "/v1/profiles/{profile}/prompts/{}/reset",
+            kind.as_str()
+        ))
+        .await
+    }
+
+    /// Put a profile's system prompt back to the default of its role.
+    pub async fn reset_system_prompt(&self, profile: &str) -> Result<ProfileDto, ClientError> {
+        self.post_empty(&format!("/v1/profiles/{profile}/system-prompt/reset"))
+            .await
     }
 
     // ---- generic verbs ---------------------------------------------------

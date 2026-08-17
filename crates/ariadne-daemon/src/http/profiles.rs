@@ -6,12 +6,15 @@ use axum::http::StatusCode;
 use serde::Deserialize;
 use utoipa::IntoParams;
 
-use ariadne_api::profiles::{CreateProfileRequest, ProfileDto, UpdateProfileRequest};
+use ariadne_api::profiles::{
+    CreateProfileRequest, ProfileDto, ProfilePromptDto, UpdateProfilePromptRequest,
+    UpdateProfileRequest,
+};
 use ariadne_core::Role;
-use ariadne_store::{NewProfile, ProfileUpdate};
+use ariadne_store::{NewProfile, ProfileUpdate, parse_prompt_kind};
 
 use super::AppState;
-use super::convert::profile_dto;
+use super::convert::{profile_dto, profile_prompt_dto};
 use super::error::{ApiError, ApiResult};
 
 #[derive(Debug, Default, Deserialize, IntoParams)]
@@ -115,4 +118,78 @@ pub async fn delete(
     let id = state.store.resolve_profile(&id).await?.id;
     state.store.delete_profile(&id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// The profile's briefing prompts, in briefing order.
+#[utoipa::path(get, path = "/v1/profiles/{id}/prompts", tag = "profiles",
+    params(("id" = String, Path, description = "profile id or name")),
+    responses((status = 200, body = [ProfilePromptDto]), (status = 404)))]
+pub async fn list_prompts(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Vec<ProfilePromptDto>>> {
+    let id = state.store.resolve_profile(&id).await?.id;
+    let prompts = state.store.list_profile_prompts(&id).await?;
+    Ok(Json(prompts.into_iter().map(profile_prompt_dto).collect()))
+}
+
+/// Replace the text of one prompt. Any content is accepted, including text
+/// that drops a `{placeholder}`.
+#[utoipa::path(put, path = "/v1/profiles/{id}/prompts/{kind}", tag = "profiles",
+    request_body = UpdateProfilePromptRequest,
+    params(
+        ("id" = String, Path, description = "profile id or name"),
+        ("kind" = String, Path, description = "prompt kind, e.g. engineer_briefing"),
+    ),
+    responses(
+        (status = 200, body = ProfilePromptDto),
+        (status = 400, description = "unknown kind, or a kind the profile's role does not own"),
+        (status = 404)
+    ))]
+pub async fn update_prompt(
+    State(state): State<AppState>,
+    Path((id, kind)): Path<(String, String)>,
+    Json(req): Json<UpdateProfilePromptRequest>,
+) -> ApiResult<Json<ProfilePromptDto>> {
+    let id = state.store.resolve_profile(&id).await?.id;
+    let kind = parse_prompt_kind(&kind)?;
+    let prompt = state
+        .store
+        .update_profile_prompt(&id, kind, &req.content)
+        .await?;
+    Ok(Json(profile_prompt_dto(prompt)))
+}
+
+/// Put one prompt back to the default of the profile's role.
+#[utoipa::path(post, path = "/v1/profiles/{id}/prompts/{kind}/reset", tag = "profiles",
+    params(
+        ("id" = String, Path, description = "profile id or name"),
+        ("kind" = String, Path, description = "prompt kind, e.g. engineer_briefing"),
+    ),
+    responses(
+        (status = 200, body = ProfilePromptDto),
+        (status = 400, description = "unknown kind, or a kind the profile's role does not own"),
+        (status = 404)
+    ))]
+pub async fn reset_prompt(
+    State(state): State<AppState>,
+    Path((id, kind)): Path<(String, String)>,
+) -> ApiResult<Json<ProfilePromptDto>> {
+    let id = state.store.resolve_profile(&id).await?.id;
+    let kind = parse_prompt_kind(&kind)?;
+    let prompt = state.store.reset_profile_prompt(&id, kind).await?;
+    Ok(Json(profile_prompt_dto(prompt)))
+}
+
+/// Put the profile's system prompt back to the default of its role.
+#[utoipa::path(post, path = "/v1/profiles/{id}/system-prompt/reset", tag = "profiles",
+    params(("id" = String, Path, description = "profile id or name")),
+    responses((status = 200, body = ProfileDto), (status = 404)))]
+pub async fn reset_system_prompt(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ProfileDto>> {
+    let id = state.store.resolve_profile(&id).await?.id;
+    let profile = state.store.reset_system_prompt(&id).await?;
+    Ok(Json(profile_dto(profile)))
 }
