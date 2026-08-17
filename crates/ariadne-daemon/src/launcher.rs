@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
 
-use ariadne_core::{Role, SessionStatus, TaskStatus};
+use ariadne_core::{PromptKind, Role, SessionStatus, TaskStatus};
 use ariadne_store::{AgentSession, NewSession, SessionFilter, Store, Task};
 
 use crate::agents::{SpawnCtx, SpawnPlan, adapter_for, detect_first_available, prompts};
@@ -240,8 +240,10 @@ impl Launcher {
             })
             .await?;
 
-        let system = prompts::system_prompt(&profile, Role::Planner);
-        let briefing = prompts::planner_briefing(&goal, &repos);
+        let system = prompts::system_prompt(&profile);
+        let template =
+            prompts::template_for(&self.store, &profile.id, PromptKind::PlannerBriefing).await;
+        let briefing = prompts::planner_briefing(&template, &goal, &repos);
         self.spawn(&session, PathBuf::from(&repo.path), system, briefing)
             .await?;
         self.store
@@ -299,8 +301,10 @@ impl Launcher {
         for dep_id in self.store.list_task_dependencies(&task.id).await? {
             deps.push(self.store.get_task(&dep_id).await?);
         }
-        let system = prompts::system_prompt(&profile, Role::Engineer);
-        let briefing = prompts::engineer_briefing(&task, &goal, &repo, &deps);
+        let system = prompts::system_prompt(&profile);
+        let template =
+            prompts::template_for(&self.store, &profile.id, PromptKind::EngineerBriefing).await;
+        let briefing = prompts::engineer_briefing(&template, &task, &goal, &repo, &deps);
         self.spawn(&session, worktree, system, briefing).await?;
         self.store
             .get_session(&session.id)
@@ -389,8 +393,11 @@ impl Launcher {
             .await?;
 
         let summary = self.engineer_summary(&task.id).await?;
-        let system = prompts::system_prompt(&profile, Role::Reviewer);
-        let briefing = prompts::reviewer_briefing(&task, &goal, &repo, summary.as_deref());
+        let system = prompts::system_prompt(&profile);
+        let template =
+            prompts::template_for(&self.store, &profile.id, PromptKind::ReviewerBriefing).await;
+        let briefing =
+            prompts::reviewer_briefing(&template, &task, &goal, &repo, summary.as_deref());
         self.spawn(&session, worktree, system, briefing).await?;
         self.store
             .get_session(&session.id)
@@ -458,7 +465,7 @@ impl Launcher {
             &session,
             worktree,
             &profile,
-            prompts::system_prompt(&profile, Role::Reviewer),
+            prompts::system_prompt(&profile),
             String::new(),
         );
         let plan = adapter_for(session.agent_kind()).plan_resume(&ctx, &internal, instruction)?;
@@ -517,7 +524,7 @@ impl Launcher {
             &session,
             worktree,
             &profile,
-            prompts::system_prompt(&profile, Role::Engineer),
+            prompts::system_prompt(&profile),
             String::new(),
         );
         let plan = adapter_for(session.agent_kind()).plan_resume(&ctx, &internal, instruction)?;
@@ -580,7 +587,7 @@ impl Launcher {
             &session,
             cwd,
             &profile,
-            prompts::system_prompt(&profile, role),
+            prompts::system_prompt(&profile),
             String::new(),
         );
         let plan = adapter_for(session.agent_kind()).plan_resume(
