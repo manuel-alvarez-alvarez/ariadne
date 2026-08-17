@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
-use ariadne_core::{Actor, GoalStatus, ReviewVerdict, Role, SessionStatus, TaskStatus};
+use ariadne_core::{Actor, GoalStatus, PromptKind, ReviewVerdict, Role, SessionStatus, TaskStatus};
 use ariadne_store::{SessionFilter, Store, Task, TaskFilter};
 
 use crate::agents::prompts;
@@ -467,11 +467,21 @@ impl Scheduler {
                         info!(task = %task.id, reviewer = %profile_id, round = task.review_round, "starting reviewer");
                         // Resumes the reviewer's earlier session when there is
                         // one, spawns a first for it otherwise.
+                        let template = prompts::template_for(
+                            &self.store,
+                            &profile_id,
+                            PromptKind::ReviewerResume,
+                        )
+                        .await;
                         self.launcher
                             .resume_reviewer(
                                 &task.id,
                                 &profile_id,
-                                &prompts::reviewer_resume_briefing(&task, summary.as_deref()),
+                                &prompts::reviewer_resume_briefing(
+                                    &template,
+                                    &task,
+                                    summary.as_deref(),
+                                ),
                             )
                             .await?;
                         self.spawn_failures.remove(&task.id);
@@ -494,8 +504,17 @@ impl Scheduler {
                     })
                     .collect();
                 info!(task = %task.id, "resuming engineer with review feedback");
+                let template = prompts::template_for(
+                    &self.store,
+                    &task.engineer_profile_id,
+                    PromptKind::ChangesRequested,
+                )
+                .await;
                 self.launcher
-                    .resume_engineer(&task.id, &prompts::changes_requested_briefing(&feedback))
+                    .resume_engineer(
+                        &task.id,
+                        &prompts::changes_requested_briefing(&template, &feedback),
+                    )
                     .await?;
                 self.spawn_failures.remove(&task.id);
                 self.store
@@ -505,8 +524,14 @@ impl Scheduler {
             TaskStatus::Approved => {
                 let repo = self.store.get_goal_repo(&task.repo_id).await?;
                 info!(task = %task.id, "resuming engineer with merge instruction");
+                let template = prompts::template_for(
+                    &self.store,
+                    &task.engineer_profile_id,
+                    PromptKind::MergeInstructions,
+                )
+                .await;
                 self.launcher
-                    .resume_engineer(&task.id, &prompts::merge_briefing(&task, &repo))
+                    .resume_engineer(&task.id, &prompts::merge_briefing(&template, &task, &repo))
                     .await?;
                 self.spawn_failures.remove(&task.id);
                 self.store
