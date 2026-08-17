@@ -47,9 +47,12 @@ pub async fn daemon_status(client: &Client) -> Result<()> {
 
 /// `ariadne daemon start` — spawn ariadned detached and wait for it to answer.
 ///
-/// `client` must already be resolved for `home` (see `Client::resolve`), so
-/// the readiness poll hits the socket the spawned daemon listens on.
-pub async fn daemon_start(client: &Client, home: Option<PathBuf>) -> Result<()> {
+/// Builds its own client for `home` rather than taking the caller's: the
+/// daemon it spawns listens on that home's socket, and `--host` /
+/// `ARIADNE_SOCKET` — which are never passed to ariadned — would send both the
+/// already-running check and the readiness poll at a different daemon.
+pub async fn daemon_start(home: Option<PathBuf>) -> Result<()> {
+    let client = Client::for_home(home.clone());
     if client.health().await.is_ok() {
         println!("daemon already running at {}", client.endpoint());
         return Ok(());
