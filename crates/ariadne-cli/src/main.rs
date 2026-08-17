@@ -284,6 +284,10 @@ mod tests {
         ("profile create", true),
         ("profile inspect", true),
         ("profile ls", true),
+        ("profile prompt get", true),
+        ("profile prompt reset", true),
+        ("profile prompt set", true),
+        ("profile prompts", true),
         ("profile rm", true),
         ("profile update", true),
         ("session inspect", true),
@@ -371,8 +375,39 @@ mod tests {
         assert_eq!(parse(&["ariadne", "attach", "x"]).format, Format::Table);
     }
 
+    /// `profile prompt reset` has to be told what to reset: one kind, or
+    /// `--all`, and never both at once.
+    #[test]
+    fn resetting_a_prompt_takes_a_kind_or_all_but_not_both() {
+        let reset = |args: &[&str]| {
+            let mut argv = vec!["ariadne", "profile", "prompt", "reset", "Engineer"];
+            argv.extend_from_slice(args);
+            try_parse(&argv).is_ok()
+        };
+        assert!(!reset(&[]), "neither");
+        assert!(reset(&["system"]), "a kind");
+        assert!(reset(&["--all"]), "--all");
+        assert!(!reset(&["system", "--all"]), "both");
+    }
+
+    /// A kind no role owns is a usage error: no daemon is asked about it.
+    #[test]
+    fn an_unknown_prompt_kind_never_reaches_the_daemon() {
+        let get =
+            |kind: &str| try_parse(&["ariadne", "profile", "prompt", "get", "Engineer", kind]);
+        assert!(get("engineer_briefing").is_ok());
+        assert!(get("system").is_ok());
+        let err = get("briefing").err().expect("unknown kind").to_string();
+        assert!(err.contains("unknown prompt kind: briefing"), "{err}");
+        assert!(err.contains("engineer_briefing"), "{err}");
+    }
+
     fn parse(argv: &[&str]) -> Cli {
         Cli::from_arg_matches(&command().get_matches_from(argv)).expect("parse")
+    }
+
+    fn try_parse(argv: &[&str]) -> Result<Cli, clap::Error> {
+        Cli::from_arg_matches(&command().try_get_matches_from(argv)?)
     }
 
     /// Every runnable command in the tree, sorted, as `"task ls"` —
