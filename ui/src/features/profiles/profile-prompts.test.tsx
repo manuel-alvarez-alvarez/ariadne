@@ -52,6 +52,13 @@ const PLANNER: ProfileDto = {
   role: "planner",
 }
 
+const REVIEWER: ProfileDto = {
+  ...ENGINEER,
+  id: "01JPROF000000000000000REV",
+  name: "Critic",
+  role: "reviewer",
+}
+
 /** What the daemon holds, per role — the kinds it answers `GET .../prompts` with. */
 const STORED: Record<string, ProfilePromptDto[]> = {
   engineer: [
@@ -60,6 +67,10 @@ const STORED: Record<string, ProfilePromptDto[]> = {
     { kind: "merge_instructions", content: "Stored merge instructions.", updated_at: STAMP },
   ],
   planner: [{ kind: "planner_briefing", content: "Stored planner briefing.", updated_at: STAMP }],
+  reviewer: [
+    { kind: "reviewer_briefing", content: "Stored reviewer briefing.", updated_at: STAMP },
+    { kind: "reviewer_resume", content: "Stored reviewer resume.", updated_at: STAMP },
+  ],
 }
 
 /** What a reset answers. Only the stub knows these; the UI never does. */
@@ -69,6 +80,8 @@ const DEFAULT_PROMPTS: Record<string, string> = {
   changes_requested: "Default changes requested for {task}.",
   merge_instructions: "Default merge instructions for {task}.",
   planner_briefing: "Default planner briefing for {goal}.",
+  reviewer_briefing: "Default reviewer briefing for {task}.",
+  reviewer_resume: "Default reviewer resume for {task}.",
 }
 
 interface Recorded {
@@ -158,6 +171,49 @@ describe("ProfilePrompts", () => {
     expect((await editor("Planner briefing")).value).toBe("Stored planner briefing.")
     expect(screen.queryByLabelText("Engineer briefing")).toBeNull()
     expect(screen.queryByLabelText("Merge instructions")).toBeNull()
+  })
+
+  it("shows a reviewer both of its briefings and none of the other roles'", async () => {
+    stubDaemon(REVIEWER)
+    renderPrompts(REVIEWER)
+
+    expect((await editor("System prompt")).value).toBe("Stored system prompt.")
+    expect((await editor("Reviewer briefing")).value).toBe("Stored reviewer briefing.")
+    expect((await editor("Reviewer resume")).value).toBe("Stored reviewer resume.")
+    expect(screen.queryByLabelText("Planner briefing")).toBeNull()
+    expect(screen.queryByLabelText("Engineer briefing")).toBeNull()
+    expect(screen.queryByLabelText("Changes requested")).toBeNull()
+    expect(screen.queryByLabelText("Merge instructions")).toBeNull()
+  })
+
+  it("saves and restores a reviewer's briefings on their own endpoints", async () => {
+    const user = userEvent.setup()
+    stubDaemon(REVIEWER)
+    renderPrompts(REVIEWER)
+    const box = await editor("Reviewer resume")
+
+    await user.clear(box)
+    await user.type(box, "Look again.")
+    await user.click(screen.getByRole("button", { name: "Save Reviewer resume" }))
+
+    await waitFor(() => {
+      expect(
+        lastRequest("PUT", `/v1/profiles/${REVIEWER.id}/prompts/reviewer_resume`),
+      ).toBeDefined()
+    })
+    expect(lastRequest("PUT", `/v1/profiles/${REVIEWER.id}/prompts/reviewer_resume`)?.body).toEqual(
+      {
+        content: "Look again.",
+      },
+    )
+
+    await user.click(screen.getByRole("button", { name: "Restore Reviewer resume to default" }))
+    await screen.findByText("Restore the default reviewer resume?")
+    await user.click(screen.getByRole("button", { name: "Restore default" }))
+
+    await waitFor(() => {
+      expect(box.value).toBe(DEFAULT_PROMPTS.reviewer_resume)
+    })
   })
 
   it("saves one briefing on its own endpoint, broken template and all", async () => {
