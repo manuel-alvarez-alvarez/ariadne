@@ -12,6 +12,9 @@
 
 import { useSearchParams } from "react-router-dom"
 
+/** The param {@link paths.profile} carries, read by the profiles screen. */
+export const PROFILE_EXPAND_PARAM = "expand"
+
 export const paths = {
   goals: () => "/goals",
   /** The goals board with this goal's panel open. */
@@ -19,6 +22,12 @@ export const paths = {
   attention: () => "/attention",
   sessions: () => "/sessions",
   profiles: () => "/profiles",
+  /**
+   * The profiles screen, opened on one profile: a row expands in place instead
+   * of having a page of its own, so the link asks the screen to expand it and
+   * scroll to it (see `features/profiles/profiles-page.tsx`).
+   */
+  profile: (profileId: string) => `/profiles?${PROFILE_EXPAND_PARAM}=${profileId}`,
   /**
    * The goals board with this goal's panel open on one of its sessions.
    *
