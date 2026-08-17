@@ -73,9 +73,15 @@ export function ProfilesPage() {
    * it once and take the param back off the URL: from there the expansion is
    * this screen's own state, so closing the row stays closed and the link is
    * not re-applied on every render.
+   *
+   * The role tab goes back to "All" first. A link carries an id and no role,
+   * and the tab is this screen's own state that a same-route navigation does
+   * not touch — so a profile picked while the Reviewer tab is up would be
+   * asked for and then filtered out of the list it was asked for in.
    */
   useEffect(() => {
     if (!requested) return
+    setRoleFilter("all")
     setExpandedId(requested)
     setScrollToId(requested)
     const next = new URLSearchParams(search)
