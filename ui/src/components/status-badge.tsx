@@ -10,16 +10,11 @@
  * have: the goal and session pills are the bordered badge box (a fixed height,
  * so the border does not grow them), the board's are plain spans that size
  * themselves. Both are kept as they were rather than picked for them here.
- *
- * A pill with a `hint` is a real `Tooltip` on a focusable span, not a `title=`:
- * what a status *means* is the one thing on the pill that is not already
- * written on it, and a title attribute never reaches a keyboard.
  */
 
 import { cva, type VariantProps } from "class-variance-authority"
 import type { ReactNode } from "react"
 
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 
 const statusBadgeVariants = cva(
@@ -55,7 +50,7 @@ export function StatusBadge({
   pulse = false,
   size,
   box,
-  hint,
+  title,
   className,
 }: VariantProps<typeof statusBadgeVariants> & {
   /** What the status is called, already capitalized. */
@@ -71,12 +66,12 @@ export function StatusBadge({
   icon?: ReactNode
   /** Pulses the dot, for a status that is still moving. */
   pulse?: boolean
-  /** What the status means; shown on hover and on focus. */
-  hint?: string
+  /** What the status means, on hover. */
+  title?: string
   className?: string
 }) {
-  const content = (
-    <>
+  return (
+    <span className={cn(statusBadgeVariants({ size, box }), tone, className)} title={title}>
       {icon ??
         (dot ? (
           <span
@@ -85,16 +80,6 @@ export function StatusBadge({
           />
         ) : null)}
       {label}
-    </>
-  )
-  const classes = cn(statusBadgeVariants({ size, box }), tone, className)
-
-  if (!hint) return <span className={classes}>{content}</span>
-
-  return (
-    <Tooltip>
-      <TooltipTrigger render={<span className={classes} />}>{content}</TooltipTrigger>
-      <TooltipContent>{hint}</TooltipContent>
-    </Tooltip>
+    </span>
   )
 }

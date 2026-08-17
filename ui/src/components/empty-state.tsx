@@ -40,12 +40,7 @@ export function EmptyState({
         className,
       )}
     >
-      {/* The icon repeats the title in a picture; a screen reader gets it once. */}
-      {icon ? (
-        <span className="text-muted-foreground" aria-hidden>
-          {icon}
-        </span>
-      ) : null}
+      {icon ? <span className="text-muted-foreground">{icon}</span> : null}
       <p className={cn("text-sm", emphasis === "quiet" ? "text-muted-foreground" : "font-medium")}>
         {title}
       </p>

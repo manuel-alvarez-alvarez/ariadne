@@ -33,7 +33,7 @@ export function StalledBadge() {
       box="badge"
       label={STALLED_META.label}
       tone={STALLED_META.badge}
-      hint={STALLED_META.hint}
+      title={STALLED_META.hint}
     />
   )
 }

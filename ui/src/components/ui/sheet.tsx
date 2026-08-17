@@ -4,7 +4,6 @@ import { Dialog as SheetPrimitive } from "@base-ui/react/dialog"
 import { XIcon } from "lucide-react"
 import type * as React from "react"
 import { Button } from "@/components/ui/button"
-import { SCRIM } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
 
 /**
@@ -39,7 +38,7 @@ function SheetOverlay({
       data-slot="sheet-overlay"
       className={cn(
         "fixed inset-0 isolate z-50 duration-100 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
-        dim && SCRIM,
+        dim && "bg-black/10 supports-backdrop-filter:backdrop-blur-xs",
         className,
       )}
       {...props}
