@@ -22,7 +22,8 @@ use crate::output::Format;
 #[command(name = "ariadne", version, about = "Coding-agent orchestrator CLI")]
 struct Cli {
     /// Daemon endpoint: unix socket path or http://host:port
-    /// (default: $ARIADNE_SOCKET or ~/.ariadne/ariadne.sock)
+    /// (default: $ARIADNE_SOCKET, else the socket of the ariadne home —
+    /// $ARIADNE_HOME or ~/.ariadne — as its config.toml names it)
     #[arg(long, global = true, env = ariadne_client::ENDPOINT_ENV)]
     host: Option<String>,
 
@@ -154,11 +155,10 @@ fn main() -> Result<()> {
 }
 
 async fn run(cli: Cli) -> Result<()> {
-    let client = match &cli.host {
-        Some(h) if h.starts_with("http://") || h.starts_with("https://") => Client::tcp(h.clone()),
-        Some(h) => Client::unix(h),
-        None => Client::from_env(),
-    };
+    // Commands talk to an already-running daemon, so an explicit endpoint wins
+    // here. `daemon start` is the exception and resolves its own target from
+    // the home it spawns the daemon in.
+    let client = Client::resolve(cli.host.as_deref(), None);
 
     match cli.command {
         Command::Version => commands::version(&client).await,
@@ -173,7 +173,7 @@ async fn run(cli: Cli) -> Result<()> {
             Ok(())
         }
         Command::Daemon { command } => match command {
-            DaemonCommand::Start { home } => commands::daemon_start(&client, home).await,
+            DaemonCommand::Start { home } => commands::daemon_start(home).await,
             DaemonCommand::Stop => commands::daemon_stop(),
             DaemonCommand::Status => commands::daemon_status(&client).await,
             DaemonCommand::Logs { follow } => commands::daemon_logs(follow),

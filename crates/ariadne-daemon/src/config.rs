@@ -10,6 +10,8 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
+use ariadne_client::endpoint;
+
 /// Optional overrides read from `<root>/config.toml`.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -66,10 +68,11 @@ fn default_cli_bin() -> String {
 impl Config {
     /// Resolve config: `--home` flag > `ARIADNE_HOME` > `~/.ariadne`,
     /// then apply `config.toml` overrides, then create the directories.
+    ///
+    /// The home and socket ordering comes from `ariadne_client::endpoint`, so
+    /// the CLI and the MCP server address exactly the daemon this starts.
     pub fn load(home_override: Option<PathBuf>) -> Result<Self> {
-        let root = home_override
-            .or_else(|| std::env::var_os("ARIADNE_HOME").map(PathBuf::from))
-            .or_else(|| dirs::home_dir().map(|h| h.join(".ariadne")))
+        let root = endpoint::home(home_override)
             .context("cannot determine home directory; pass --home")?;
 
         let file: FileConfig = {
@@ -86,11 +89,11 @@ impl Config {
         let config = Config {
             socket_path: file
                 .socket_path
-                .unwrap_or_else(|| root.join("ariadne.sock")),
+                .unwrap_or_else(|| endpoint::default_socket_path(&root)),
             db_path: file.db_path.unwrap_or_else(|| root.join("ariadne.db")),
             worktree_root: file.worktree_root.unwrap_or_else(|| root.join("worktrees")),
             run_dir: file.run_dir.unwrap_or_else(|| root.join("run")),
-            pid_file: root.join("ariadned.pid"),
+            pid_file: endpoint::pid_file(&root),
             tcp_listen: file.tcp_listen,
             log_filter: file.log_filter.unwrap_or_else(|| "info".to_string()),
             cli_bin: file.cli_bin.unwrap_or_else(default_cli_bin),
