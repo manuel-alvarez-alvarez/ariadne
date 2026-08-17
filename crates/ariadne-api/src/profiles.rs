@@ -1,6 +1,6 @@
 //! Profile DTOs.
 
-use ariadne_core::{AgentKind, Role};
+use ariadne_core::{AgentKind, PromptKind, Role};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -45,4 +45,19 @@ pub struct UpdateProfileRequest {
     pub model: Option<String>,
     pub system_prompt: Option<String>,
     pub extra_flags: Option<Vec<String>>,
+}
+
+/// One of the briefing prompts a profile owns beside its system prompt.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ProfilePromptDto {
+    pub kind: PromptKind,
+    /// Template text with `{placeholder}` tokens the daemon fills in.
+    pub content: String,
+    pub updated_at: String,
+}
+
+/// Body of `PUT /v1/profiles/{id}/prompts/{kind}`: the whole new text.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct UpdateProfilePromptRequest {
+    pub content: String,
 }
