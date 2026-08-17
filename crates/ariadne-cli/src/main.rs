@@ -154,11 +154,14 @@ fn main() -> Result<()> {
 }
 
 async fn run(cli: Cli) -> Result<()> {
-    let client = match &cli.host {
-        Some(h) if h.starts_with("http://") || h.starts_with("https://") => Client::tcp(h.clone()),
-        Some(h) => Client::unix(h),
-        None => Client::from_env(),
+    // `daemon start --home X` addresses the daemon of X, not the ambient one.
+    let home = match &cli.command {
+        Command::Daemon {
+            command: DaemonCommand::Start { home },
+        } => home.clone(),
+        _ => None,
     };
+    let client = Client::resolve(cli.host.as_deref(), home);
 
     match cli.command {
         Command::Version => commands::version(&client).await,

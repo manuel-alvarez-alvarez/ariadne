@@ -4,8 +4,8 @@
  *
  * The filters live in the URL rather than in state, so a reload keeps them, and
  * so "the reviewers that failed" is a link somebody can be sent. They sit next
- * to the panel params on purpose — picking a session opens it in its task's
- * panel *over* this screen, which is why the row it came from is worth
+ * to the panel params on purpose — picking a session opens it in a panel of its
+ * own *over* this screen, which is why the row it came from is worth
  * highlighting.
  *
  * The table is {@link SessionsList}, the same one both panels' session tabs
@@ -23,7 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { paths, taskSessionPanelTo } from "@/routes/paths"
+import { sessionPanelTo } from "@/routes/paths"
 
 import type { SessionListFilters } from "./queries"
 import { ROLE_LABELS, ROLES, SESSION_STATUSES, sessionStatusLabel } from "./session-display"
@@ -61,16 +61,12 @@ export function SessionsPage() {
   }
 
   /**
-   * A picked session opens where the rest of the app shows sessions: inside its
-   * task's panel. A planner session has no task, and the goal panel only exists
-   * on the board, so that one navigates there.
+   * A picked session opens in its own panel over this screen — the same one for
+   * every row, a planner session included: what was picked here is the session,
+   * not the goal or the task it ran, and the panel carries links to both.
    */
   function open(session: SessionDto) {
-    void navigate(
-      session.task_id
-        ? taskSessionPanelTo(search, session.task_id, session.id)
-        : paths.goalSession(session.goal_id, session.id),
-    )
+    void navigate(sessionPanelTo(search, session.id))
   }
 
   return (
