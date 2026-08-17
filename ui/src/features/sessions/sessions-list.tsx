@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/table"
 import { sessionCopyEntries } from "@/lib/copy-entries"
 import { shortId } from "@/lib/ids"
+import { AGENT_KIND_LABELS, ROLE_LABELS } from "@/lib/labels"
 import { formatAbsolute, formatAge } from "@/lib/time"
 
 import {
@@ -45,7 +46,7 @@ import {
   type SessionListFilters,
   sessionsQueryOptions,
 } from "./queries"
-import { AGENT_KIND_LABELS, ROLE_LABELS, SessionStatusBadge } from "./session-display"
+import { SessionStatusBadge } from "./session-display"
 import { useNow } from "./use-now"
 
 const COLUMN_COUNT = 5

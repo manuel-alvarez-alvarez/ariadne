@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 
-use ariadne_client::{Client, endpoint};
+use ariadne_client::Client;
 
 /// Shared `--role` value parser (planner | engineer | reviewer).
 pub fn parse_role(s: &str) -> Result<ariadne_core::Role, String> {
@@ -27,33 +27,26 @@ pub async fn version(client: &Client) -> Result<()> {
     println!("client:  ariadne {}", env!("CARGO_PKG_VERSION"));
     match client.version().await {
         Ok(v) => println!("daemon:  {} {}", v.name, v.version),
-        // Not a failure of `version` itself, so it stays on stdout — but it is
-        // still a line a person reads, so no "client error (Connect)" in it.
-        Err(e) => println!("daemon:  {}", e.human()),
+        Err(e) => println!("daemon:  unreachable ({e})"),
     }
     Ok(())
 }
 
 /// `ariadne daemon status`
-///
-/// A failure is reported as the client's own error: "daemon not running at X"
-/// on top of "cannot reach the ariadne daemon at X" said the endpoint twice.
 pub async fn daemon_status(client: &Client) -> Result<()> {
-    let h = client.health().await?;
-    println!("status:  {}", h.status);
-    println!("uptime:  {}s", h.uptime_secs);
-    println!("socket:  {}", client.endpoint());
-    Ok(())
+    match client.health().await {
+        Ok(h) => {
+            println!("status:  {}", h.status);
+            println!("uptime:  {}s", h.uptime_secs);
+            println!("socket:  {}", client.endpoint());
+            Ok(())
+        }
+        Err(e) => bail!("daemon not running at {}: {e}", client.endpoint()),
+    }
 }
 
 /// `ariadne daemon start` — spawn ariadned detached and wait for it to answer.
-///
-/// Builds its own client for `home` rather than taking the caller's: the
-/// daemon it spawns listens on that home's socket, and `--host` /
-/// `ARIADNE_SOCKET` — which are never passed to ariadned — would send both the
-/// already-running check and the readiness poll at a different daemon.
-pub async fn daemon_start(home: Option<PathBuf>) -> Result<()> {
-    let client = Client::for_home(home.clone());
+pub async fn daemon_start(client: &Client, home: Option<PathBuf>) -> Result<()> {
     if client.health().await.is_ok() {
         println!("daemon already running at {}", client.endpoint());
         return Ok(());
@@ -65,7 +58,7 @@ pub async fn daemon_start(home: Option<PathBuf>) -> Result<()> {
         cmd.arg("--home").arg(home);
     }
     // Daemon output goes to a log file, readable via `ariadne daemon logs`.
-    let log_dir = ariadne_home(home.clone());
+    let log_dir = home.clone().unwrap_or_else(ariadne_home);
     std::fs::create_dir_all(&log_dir).ok();
     let log = std::fs::OpenOptions::new()
         .create(true)
@@ -96,7 +89,7 @@ pub async fn daemon_start(home: Option<PathBuf>) -> Result<()> {
 
 /// `ariadne daemon stop` — SIGTERM via pidfile.
 pub fn daemon_stop() -> Result<()> {
-    let pid_file = endpoint::pid_file(&ariadne_home(None));
+    let pid_file = ariadne_home().join("ariadned.pid");
     let pid = std::fs::read_to_string(&pid_file)
         .with_context(|| {
             format!(
@@ -124,7 +117,7 @@ pub fn daemon_stop() -> Result<()> {
 /// `ariadne daemon logs [-f]` — show the daemon log via tail.
 pub fn daemon_logs(follow: bool) -> Result<()> {
     use std::os::unix::process::CommandExt;
-    let log = ariadne_home(None).join("ariadned.log");
+    let log = ariadne_home().join("ariadned.log");
     if !log.is_file() {
         bail!("no daemon log at {}", log.display());
     }
@@ -138,8 +131,11 @@ pub fn daemon_logs(follow: bool) -> Result<()> {
 }
 
 /// Resolve the ariadne home directory the same way the daemon does.
-fn ariadne_home(home_override: Option<PathBuf>) -> PathBuf {
-    endpoint::home(home_override).unwrap_or_else(|| PathBuf::from(".ariadne"))
+fn ariadne_home() -> PathBuf {
+    std::env::var_os("ARIADNE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|h| h.join(".ariadne")))
+        .unwrap_or_else(|| PathBuf::from(".ariadne"))
 }
 
 /// Find the ariadned binary: next to the current executable, else on PATH.

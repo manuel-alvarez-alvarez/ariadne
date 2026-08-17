@@ -140,10 +140,8 @@ dependencies = [
  "hyperlocal",
  "serde",
  "serde_json",
- "tempfile",
  "thiserror",
  "tokio",
- "toml",
 ]
 
 [[package]]
@@ -163,7 +161,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ariadne-api",
- "ariadne-client",
  "ariadne-core",
  "ariadne-store",
  "axum",

@@ -1,13 +1,13 @@
 /**
  * How a session is spelled out on screen: the labels and the status badge.
  *
- * The label maps are declared as total records over the generated enums, so a
- * new role, agent kind or status in the daemon fails to compile here until it
- * is given a label. Timestamps come from `@/lib/time`, which every feature
- * shares.
+ * The status labels are declared as a total record over the generated enum, so
+ * a new status in the daemon fails to compile here until it is given one. The
+ * role and agent-kind names are app-wide rather than this feature's and come
+ * from `@/lib/labels`, the way timestamps come from `@/lib/time`.
  */
 
-import type { AgentKind, Role, SessionStatus } from "@/api"
+import type { Role, SessionStatus } from "@/api"
 import { StatusBadge } from "@/components/status-badge"
 
 /**
@@ -33,18 +33,6 @@ export const ROLES: readonly Role[] = ["planner", "engineer", "reviewer"]
  */
 export function isLiveStatus(status: SessionStatus): boolean {
   return status === "starting" || status === "running" || status === "idle"
-}
-
-export const ROLE_LABELS: Record<Role, string> = {
-  planner: "Planner",
-  engineer: "Engineer",
-  reviewer: "Reviewer",
-}
-
-export const AGENT_KIND_LABELS: Record<AgentKind, string> = {
-  claude_code: "Claude Code",
-  codex: "Codex",
-  opencode: "OpenCode",
 }
 
 interface SessionStatusMeta {
