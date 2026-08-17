@@ -117,8 +117,13 @@ impl Launcher {
     }
 
     /// Coding-agent TUIs show a one-time directory-trust dialog for unknown
-    /// folders — and every worktree is a fresh folder. Watch the pane for a
-    /// short window and accept the (pre-selected "yes") dialog with Enter.
+    /// folders — and every worktree is a fresh folder. Watch the pane and
+    /// accept the (pre-selected "yes") dialog with Enter.
+    ///
+    /// The window is generous (two minutes): a slow CLI start renders the
+    /// dialog well after spawn, and a watcher that has already given up leaves
+    /// the agent waiting on it forever. A single failed capture is likewise no
+    /// reason to stop watching — only the session going away is.
     fn auto_accept_trust(&self, tmux_session: String) {
         const PATTERNS: [&str; 4] = [
             "do you trust",
@@ -128,13 +133,13 @@ impl Launcher {
         ];
         let tmux = self.tmux.clone();
         tokio::spawn(async move {
-            for _ in 0..40 {
+            for _ in 0..240 {
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 if !tmux.has_session(&tmux_session).await {
                     return;
                 }
                 let Ok(pane) = tmux.capture_pane(&tmux_session, 50).await else {
-                    return;
+                    continue;
                 };
                 let lower = pane.to_lowercase();
                 if PATTERNS.iter().any(|p| lower.contains(p)) {
