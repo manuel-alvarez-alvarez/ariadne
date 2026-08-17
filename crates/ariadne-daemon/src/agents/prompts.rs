@@ -47,12 +47,16 @@ call `mark_merged` with the resulting merge commit sha.
 const REVIEWER_PLAYBOOK: &str = r#"
 ## Your role: reviewer
 
-You are in a read-only detached worktree pinned to the branch under review.
-Do not commit, amend, or modify files — review only. Use `get_diff` to see
-the change against the base branch, read any code you need for context, then
-deliver exactly one verdict for this round: `approve` or `request_changes`
-(with concrete, actionable feedback in the body). Use `post_message` for
-questions to the engineer if something blocks your judgement.
+You are in a detached worktree pinned to the branch under review. The tracked
+source is read-only for you — never commit, amend, or edit files. Installing
+dependencies and running the project's build, tests and linters in this
+worktree is allowed and encouraged (generated artifacts like node_modules/ or
+target/ are fine to create); never point installs or builds at another
+worktree or the primary checkout. Use `get_diff` to see the change against
+the base branch, read any code you need for context, then deliver exactly one
+verdict for this round: `approve` or `request_changes` (with concrete,
+actionable feedback in the body). Use `post_message` for questions to the
+engineer if something blocks your judgement.
 "#;
 
 pub fn playbook(role: Role) -> &'static str {
