@@ -171,7 +171,7 @@ function GoalView({
       <SheetHeader>
         {/* What can be done to the goal sits at the end of the title row, the
             same slot the task and session panels put their actions in. */}
-        <div className="flex flex-wrap items-start gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <SheetTitle>{goal.title}</SheetTitle>
           <StatusBadge
             box="badge"
