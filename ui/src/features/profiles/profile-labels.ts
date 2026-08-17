@@ -12,7 +12,7 @@
  * read too.
  */
 
-import type { AgentKind, Role } from "@/api"
+import type { AgentKind, PromptKind, Role } from "@/api"
 import { AGENT_KIND_LABELS, ROLE_LABELS } from "@/lib/labels"
 
 /** Roles, in the order the orchestration runs them. */
@@ -40,4 +40,35 @@ export function agentKindLabel(kind: AgentKind | null | undefined): string {
 
 export function modelLabel(model: string | null | undefined): string {
   return model ? model : DEFAULT_MODEL_LABEL
+}
+
+/**
+ * The briefing prompts, named for the screen.
+ *
+ * A total record over the generated enum, so a prompt kind added to the daemon
+ * fails to compile here until it is given a name. Which kinds a profile
+ * actually has is the daemon's answer, not this map's: `GET
+ * /v1/profiles/{id}/prompts` returns exactly the ones its role owns.
+ */
+export const PROMPT_KIND_LABELS: Record<PromptKind, string> = {
+  planner_briefing: "Planner briefing",
+  engineer_briefing: "Engineer briefing",
+  changes_requested: "Changes requested",
+  merge_instructions: "Merge instructions",
+  reviewer_briefing: "Reviewer briefing",
+  reviewer_resume: "Reviewer resume",
+}
+
+/** When each briefing is sent, one line under the editor that holds it. */
+export const PROMPT_KIND_HINTS: Record<PromptKind, string> = {
+  planner_briefing: "Starts the planner on a goal.",
+  engineer_briefing: "Starts the engineer on a task.",
+  changes_requested: "Resumes the engineer with a reviewer's requested changes.",
+  merge_instructions: "Resumes the engineer once the task has enough approvals.",
+  reviewer_briefing: "Starts a reviewer on a task under review.",
+  reviewer_resume: "Resumes a reviewer after the engineer pushed changes.",
+}
+
+export function promptKindLabel(kind: PromptKind): string {
+  return PROMPT_KIND_LABELS[kind]
 }

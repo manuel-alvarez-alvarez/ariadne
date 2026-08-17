@@ -82,6 +82,7 @@ export const qk = {
     list: (filters?: PageFilters) => ["profiles", "list", filters ?? {}] as const,
     details: () => ["profiles", "detail"] as const,
     detail: (id: string) => ["profiles", "detail", id] as const,
+    prompts: (id: string) => ["profiles", "detail", id, "prompts"] as const,
   },
   /** Raw hook-reported agent events (`GET /v1/events`). */
   agentEvents: {
