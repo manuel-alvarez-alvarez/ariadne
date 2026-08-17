@@ -17,7 +17,7 @@ use std::time::Duration;
 use tokio::sync::broadcast::Receiver;
 
 use ariadne_api::stream::DomainEvent;
-use ariadne_core::{Actor, AgentKind, Role, SessionStatus, TaskStatus};
+use ariadne_core::{Actor, AgentKind, PromptKind, Role, SessionStatus, TaskStatus};
 use ariadne_daemon::agents::prompts;
 use ariadne_daemon::bus::{BusEvent, EventBus};
 use ariadne_daemon::config::Config;
@@ -387,12 +387,15 @@ async fn a_reviewer_reuses_its_session_across_review_rounds() {
     let task = h.next_round(&task).await;
     assert_eq!(task.review_round, 2);
 
+    // The briefing is the reviewer profile's own template, rendered — the same
+    // path the scheduler takes.
+    let template = prompts::template_for(&h.store, &reviewer, PromptKind::ReviewerResume).await;
     let second = h
         .launcher
         .resume_reviewer(
             &task.id,
             &reviewer,
-            &prompts::reviewer_resume_briefing(&task, Some("I rewrote the thing.")),
+            &prompts::reviewer_resume_briefing(&template, &task, Some("I rewrote the thing.")),
         )
         .await
         .unwrap();

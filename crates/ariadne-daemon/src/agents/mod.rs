@@ -28,7 +28,7 @@ pub struct SpawnCtx {
     pub socket_path: PathBuf,
     /// Path or name of the `ariadne` CLI binary (hooks + MCP entry point).
     pub cli_bin: String,
-    /// Profile system prompt + role playbook.
+    /// The profile's system prompt, as stored.
     pub system_prompt: String,
     /// Task/goal briefing delivered as the first user prompt.
     pub initial_prompt: String,
