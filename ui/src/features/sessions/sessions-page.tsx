@@ -23,10 +23,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { ROLE_LABELS } from "@/lib/labels"
 import { sessionPanelTo } from "@/routes/paths"
 
 import type { SessionListFilters } from "./queries"
-import { ROLE_LABELS, ROLES, SESSION_STATUSES, sessionStatusLabel } from "./session-display"
+import { ROLES, SESSION_STATUSES, sessionStatusLabel } from "./session-display"
 import { SessionsList } from "./sessions-list"
 
 /** Sentinel for "no filter" — `Select` needs a value for every item. */
