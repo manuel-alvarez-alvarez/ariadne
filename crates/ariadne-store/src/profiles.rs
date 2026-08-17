@@ -138,30 +138,20 @@ impl Store {
     }
 
     /// Delete a profile; fails with `Conflict` while anything references it.
-    ///
-    /// The refusal names what holds the profile — a bare count leaves the user
-    /// with nowhere to look.
     pub async fn delete_profile(&self, id: &str) -> Result<()> {
         self.get_profile(id).await?;
-        let (goals, tasks, reviews, sessions): (i64, i64, i64, i64) = sqlx::query_as(
-            "SELECT (SELECT COUNT(*) FROM goals WHERE planner_profile_id = ?1),
-                    (SELECT COUNT(*) FROM tasks WHERE engineer_profile_id = ?1),
-                    (SELECT COUNT(*) FROM task_reviewers WHERE profile_id = ?1),
-                    (SELECT COUNT(*) FROM agent_sessions WHERE profile_id = ?1)",
+        let referenced: i64 = sqlx::query_scalar(
+            "SELECT (SELECT COUNT(*) FROM goals WHERE planner_profile_id = ?1)
+                  + (SELECT COUNT(*) FROM tasks WHERE engineer_profile_id = ?1)
+                  + (SELECT COUNT(*) FROM task_reviewers WHERE profile_id = ?1)
+                  + (SELECT COUNT(*) FROM agent_sessions WHERE profile_id = ?1)",
         )
         .bind(id)
         .fetch_one(self.r())
         .await?;
-        let holders = [
-            (goals, "goal", "goals"),
-            (tasks, "task", "tasks"),
-            (reviews, "task as a reviewer", "tasks as a reviewer"),
-            (sessions, "agent session", "agent sessions"),
-        ];
-        let referenced = plural_list(&holders);
-        if !referenced.is_empty() {
+        if referenced > 0 {
             return Err(StoreError::Conflict(format!(
-                "profile {id} is still used by {referenced}"
+                "profile {id} is referenced by {referenced} record(s)"
             )));
         }
         sqlx::query("DELETE FROM profiles WHERE id = ?")
@@ -170,29 +160,5 @@ impl Store {
             .await?;
         self.publish(Change::ProfileDeleted(id.to_string()));
         Ok(())
-    }
-}
-
-/// "2 goals, 1 agent session": the non-zero holders, counted and named.
-fn plural_list(holders: &[(i64, &str, &str)]) -> String {
-    holders
-        .iter()
-        .filter(|(n, _, _)| *n > 0)
-        .map(|(n, one, many)| format!("{n} {}", if *n == 1 { one } else { many }))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::plural_list;
-
-    #[test]
-    fn only_the_holders_that_exist_are_named() {
-        assert_eq!(
-            plural_list(&[(2, "goal", "goals"), (0, "task", "tasks"), (1, "x", "xs")]),
-            "2 goals, 1 x"
-        );
-        assert_eq!(plural_list(&[(0, "goal", "goals")]), "");
     }
 }

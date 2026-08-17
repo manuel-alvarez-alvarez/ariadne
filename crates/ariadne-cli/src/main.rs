@@ -2,12 +2,10 @@
 
 mod commands;
 mod complete;
-mod error;
 mod output;
 mod query;
 
 use std::path::PathBuf;
-use std::process::ExitCode;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -24,8 +22,7 @@ use crate::output::Format;
 #[command(name = "ariadne", version, about = "Coding-agent orchestrator CLI")]
 struct Cli {
     /// Daemon endpoint: unix socket path or http://host:port
-    /// (default: $ARIADNE_SOCKET, else the socket of the ariadne home —
-    /// $ARIADNE_HOME or ~/.ariadne — as its config.toml names it)
+    /// (default: $ARIADNE_SOCKET or ~/.ariadne/ariadne.sock)
     #[arg(long, global = true, env = ariadne_client::ENDPOINT_ENV)]
     host: Option<String>,
 
@@ -138,10 +135,7 @@ enum DaemonCommand {
     },
 }
 
-/// Failures are reported by [`error::report`] rather than by anyhow's default
-/// `Error: ...` + `Caused by:` block: one line, and exit code 1. Usage errors
-/// never reach here — clap prints and exits 2 itself.
-fn main() -> ExitCode {
+fn main() -> Result<()> {
     // Dynamic shell completion: when invoked by the completion shim
     // (COMPLETE=<shell> in the environment) this answers the request and
     // exits before anything else runs. Candidate functions query the daemon
@@ -153,17 +147,6 @@ fn main() -> ExitCode {
     .complete();
 
     let cli = Cli::parse();
-    let format = cli.format;
-    match block_on(cli) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
-            error::report(&e, format);
-            ExitCode::FAILURE
-        }
-    }
-}
-
-fn block_on(cli: Cli) -> Result<()> {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
@@ -171,10 +154,11 @@ fn block_on(cli: Cli) -> Result<()> {
 }
 
 async fn run(cli: Cli) -> Result<()> {
-    // Commands talk to an already-running daemon, so an explicit endpoint wins
-    // here. `daemon start` is the exception and resolves its own target from
-    // the home it spawns the daemon in.
-    let client = Client::resolve(cli.host.as_deref(), None);
+    let client = match &cli.host {
+        Some(h) if h.starts_with("http://") || h.starts_with("https://") => Client::tcp(h.clone()),
+        Some(h) => Client::unix(h),
+        None => Client::from_env(),
+    };
 
     match cli.command {
         Command::Version => commands::version(&client).await,
@@ -189,7 +173,7 @@ async fn run(cli: Cli) -> Result<()> {
             Ok(())
         }
         Command::Daemon { command } => match command {
-            DaemonCommand::Start { home } => commands::daemon_start(home).await,
+            DaemonCommand::Start { home } => commands::daemon_start(&client, home).await,
             DaemonCommand::Stop => commands::daemon_stop(),
             DaemonCommand::Status => commands::daemon_status(&client).await,
             DaemonCommand::Logs { follow } => commands::daemon_logs(follow),

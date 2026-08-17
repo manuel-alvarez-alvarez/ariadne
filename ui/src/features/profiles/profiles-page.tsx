@@ -30,13 +30,14 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { ROLE_LABELS } from "@/lib/labels"
 import { formatAbsolute } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
 import { DeleteProfileDialog } from "./delete-profile-dialog"
 import { ProfileDetails } from "./profile-details"
 import { ProfileFormDialog } from "./profile-form-dialog"
-import { agentKindLabel, modelLabel, ROLE_LABELS, ROLES } from "./profile-labels"
+import { agentKindLabel, modelLabel, ROLES } from "./profile-labels"
 import { profilesQueryOptions } from "./queries"
 
 /** The role tabs, where "all" means the unfiltered request. */
