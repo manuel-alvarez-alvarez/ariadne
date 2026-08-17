@@ -113,7 +113,9 @@ export function buildPaletteEntries({
       label: profile.name,
       detail: roleLabel(profile.role),
       keywords: [profile.id, profile.role, profile.agent_kind ?? "", profile.model ?? ""],
-      target: { kind: "page", path: paths.profiles() },
+      // The one entity with no panel of its own: the screen expands its row,
+      // so the pick is carried there rather than dropped at `/profiles`.
+      target: { kind: "page", path: paths.profile(profile.id) },
     })),
   }
 }
