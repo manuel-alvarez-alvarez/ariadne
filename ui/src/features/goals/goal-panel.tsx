@@ -89,7 +89,7 @@ export function GoalPanel({
           <SheetTitle className="sr-only">Goal {goalId}</SheetTitle>
           <ErrorState
             showIcon
-            title={error.status === 404 ? "No such goal" : "Could not load the goal"}
+            title={error.status === 404 ? "No such goal" : "Could not load goal"}
             error={error}
             // A goal that does not exist will not start existing on a retry.
             onRetry={error.status === 404 ? undefined : () => void goal.refetch()}
@@ -200,7 +200,7 @@ function GoalView({
           {goal.description.trim() ? (
             <Markdown>{goal.description}</Markdown>
           ) : (
-            <EmptyState emphasis="quiet" title="This goal has no description." />
+            <EmptyState emphasis="quiet" title="This goal has no description" />
           )}
         </TabsContent>
         <TabsContent value="tasks" className="pt-3">

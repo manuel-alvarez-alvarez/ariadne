@@ -77,7 +77,7 @@ export function SessionActivity({ sessionId }: { sessionId: string }) {
   if (isError) {
     return (
       <ErrorState
-        title="Could not load the agent events"
+        title="Could not load agent events"
         error={error}
         onRetry={() => void refetch()}
       />
@@ -88,7 +88,7 @@ export function SessionActivity({ sessionId }: { sessionId: string }) {
     return (
       <EmptyState
         emphasis="quiet"
-        title="No agent events yet."
+        title="No agent events yet"
         description="Hooks report them as the agent starts, uses tools and finishes turns."
         className="border-0"
       />

@@ -35,7 +35,7 @@ export function TaskHistory({ taskId }: { taskId: string }) {
   if (transitions.error) {
     return (
       <ErrorState
-        title="Could not load the history"
+        title="Could not load history"
         error={transitions.error}
         onRetry={() => void transitions.refetch()}
       />
@@ -43,7 +43,7 @@ export function TaskHistory({ taskId }: { taskId: string }) {
   }
 
   if (transitions.data.length === 0) {
-    return <EmptyState emphasis="quiet" title="The task has not moved yet." />
+    return <EmptyState emphasis="quiet" title="The task has not moved yet" />
   }
 
   return (
