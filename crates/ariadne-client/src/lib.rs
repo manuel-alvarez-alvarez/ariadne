@@ -160,7 +160,7 @@ impl Client {
         }
     }
 
-    /// Resolve the daemon endpoint: an explicit endpoint (`--host`, else
+    /// Resolve the daemon endpoint: an explicit endpoint (`--endpoint`, else
     /// `ARIADNE_SOCKET`) wins, otherwise the socket of the resolved home
     /// (`--home` > `ARIADNE_HOME` > `~/.ariadne`, honouring that home's
     /// `config.toml`).
@@ -412,7 +412,7 @@ mod tests {
         );
     }
 
-    /// `ariadne daemon start` used to poll whatever `--host` / `ARIADNE_SOCKET`
+    /// `ariadne daemon start` used to poll whatever `--endpoint` / `ARIADNE_SOCKET`
     /// named while spawning a daemon on the home's socket — reporting "already
     /// running" for a stranger's daemon, or timing out on its own.
     #[test]
