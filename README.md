@@ -91,6 +91,9 @@ ariadne daemon start           # unix socket at ~/.ariadne/ariadne.sock
 ariadne goal create --title "Add rate limiting" --repo ~/projects/api
 ariadne goal attach <goal-id>
 
+# --repo takes the base branch after '@' (or after ':' when it has no '/'):
+ariadne goal create --title "..." --repo ~/projects/api@release/2.0
+
 # Custom profiles pin a role to a specific agent/model/prompt:
 ariadne profile create --name rev-strict --role reviewer --agent codex \
   --prompt "You are a demanding reviewer. Reject anything without tests."
@@ -117,8 +120,23 @@ ariadne attach <id>                    # session, task or goal id
 | `ariadne session ls\|inspect\|logs\|kill` | agent sessions |
 | `ariadne attach <id>` | attach to a session, task or goal id |
 
-Every command takes `--format json`; the daemon exposes its full API as
-OpenAPI at `/api-docs/openapi.json` with Swagger UI at `/docs`.
+Every command that prints data takes `--format json` (the ones that hand the
+terminal to another program — `attach`, `daemon logs`, `completions`, `setup` —
+do not); the daemon exposes its full API as OpenAPI at
+`/api-docs/openapi.json` with Swagger UI at `/docs`.
+
+Table output is for eyes and JSON is for scripts: tables cut long cells to the
+column width with `…` (`--no-trunc` prints them whole) and show timestamps in
+local time, while `--format json` is the daemon's own payload, RFC3339 and all.
+Notes like "no tasks yet" go to stderr, so stdout stays pipeable. Irreversible
+commands — `goal cancel`, `session kill` — ask first when stdin is a terminal;
+`-y` answers for you, and a script is never prompted.
+
+A command that fails prints one line on stderr — `error: <what went wrong>`,
+with a hint in parentheses when there is an obvious next step — and exits 1;
+usage errors exit 2. Under `--format json` the failure comes back as the same
+`{"error": {"code", "message"}}` envelope the daemon uses, so the status and
+code the human line leaves out stay available to scripts.
 
 `GET /v1/events/stream` is a server-sent-event stream of everything the daemon
 changes — goals, tasks (including scheduler-driven transitions), messages,
@@ -156,8 +174,8 @@ delete_merged_branches = true      # only applies when worktrees are deleted too
 `ARIADNE_HOME` moves the whole home directory: daemon and CLI alike resolve
 the socket from it (`--home` > `ARIADNE_HOME` > `~/.ariadne`, then that home's
 `socket_path` > `<home>/ariadne.sock`), so every command addresses the daemon
-of the home it runs in. `ARIADNE_SOCKET` (or `--host`) overrides that with a
-socket path or `http://host:port`.
+of the home it runs in. `ARIADNE_SOCKET` (or `--endpoint`, whose old spelling
+`--host` still works) overrides that with a socket path or `http://host:port`.
 
 ## Workspace layout
 

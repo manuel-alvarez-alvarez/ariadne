@@ -27,6 +27,11 @@ pub const ENDPOINT_ENV: &str = "ARIADNE_SOCKET";
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Everything that can go wrong talking to the daemon.
+///
+/// `Display` is the diagnostic spelling — transport detail included — and is
+/// what logs and the MCP server surface. Anything a person reads at a terminal
+/// goes through [`ClientError::human`] instead.
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
     #[error("cannot reach the ariadne daemon at {endpoint}: {source}")]
@@ -46,6 +51,49 @@ pub enum ClientError {
     Decode(#[from] serde_json::Error),
     #[error("request timed out after {}s", REQUEST_TIMEOUT.as_secs())]
     Timeout,
+}
+
+impl ClientError {
+    /// One line for a human: no transport plumbing, no repetition of the
+    /// error envelope the daemon already spelled out in prose. The advice, if
+    /// there is any, is [`ClientError::hint`] — callers decide where to put it.
+    pub fn human(&self) -> String {
+        match self {
+            // The hyper source ("client error (Connect)") says nothing a user
+            // can act on; the endpoint does.
+            Self::Unreachable { endpoint, .. } => {
+                format!("cannot reach the ariadne daemon at {endpoint}")
+            }
+            // The daemon's message is already the human sentence; status and
+            // code are the machine-readable half, kept for `--format json`.
+            Self::Api {
+                status, message, ..
+            } if message.trim().is_empty() => {
+                format!("daemon returned {status}")
+            }
+            Self::Api { message, .. } => message.clone(),
+            other => other.to_string(),
+        }
+    }
+
+    /// What to do about it, when there is a single obvious answer.
+    pub fn hint(&self) -> Option<&'static str> {
+        match self {
+            Self::Unreachable { .. } => Some("is it running? try: ariadne daemon start"),
+            _ => None,
+        }
+    }
+
+    /// Stable slug for machine-readable output: the daemon's own code when it
+    /// sent one, else the transport failure that stopped us reaching it.
+    pub fn code(&self) -> &str {
+        match self {
+            Self::Unreachable { .. } => "daemon_unreachable",
+            Self::Api { code, .. } => code,
+            Self::Decode(_) => "invalid_response",
+            Self::Timeout => "timeout",
+        }
+    }
 }
 
 enum Transport {
@@ -112,7 +160,7 @@ impl Client {
         }
     }
 
-    /// Resolve the daemon endpoint: an explicit endpoint (`--host`, else
+    /// Resolve the daemon endpoint: an explicit endpoint (`--endpoint`, else
     /// `ARIADNE_SOCKET`) wins, otherwise the socket of the resolved home
     /// (`--home` > `ARIADNE_HOME` > `~/.ariadne`, honouring that home's
     /// `config.toml`).
@@ -364,7 +412,7 @@ mod tests {
         );
     }
 
-    /// `ariadne daemon start` used to poll whatever `--host` / `ARIADNE_SOCKET`
+    /// `ariadne daemon start` used to poll whatever `--endpoint` / `ARIADNE_SOCKET`
     /// named while spawning a daemon on the home's socket — reporting "already
     /// running" for a stranger's daemon, or timing out on its own.
     #[test]
@@ -383,6 +431,48 @@ mod tests {
         // ...but the daemon being started only ever hears about its home.
         let started = Client::for_home(home);
         assert_eq!(started.endpoint(), "/scratch/custom.sock");
+    }
+
+    /// The transport source is a dead end for a user ("client error
+    /// (Connect)"): the human line names the endpoint and the way out.
+    #[test]
+    fn an_unreachable_daemon_reads_as_one_actionable_line() {
+        let err = ClientError::Unreachable {
+            endpoint: "/tmp/x.sock".into(),
+            source: "client error (Connect)".into(),
+        };
+        assert_eq!(
+            err.human(),
+            "cannot reach the ariadne daemon at /tmp/x.sock"
+        );
+        assert_eq!(err.hint(), Some("is it running? try: ariadne daemon start"));
+        assert_eq!(err.code(), "daemon_unreachable");
+    }
+
+    /// Status, code and message otherwise say the same thing three times.
+    #[test]
+    fn an_api_error_reads_as_the_daemons_message_alone() {
+        let err = ClientError::Api {
+            status: StatusCode::NOT_FOUND,
+            code: "not_found".into(),
+            message: "task not found: badid123".into(),
+            details: None,
+        };
+        assert_eq!(err.human(), "task not found: badid123");
+        assert_eq!(err.hint(), None);
+        assert_eq!(err.code(), "not_found");
+    }
+
+    /// A body with nothing in it still has to say something.
+    #[test]
+    fn an_api_error_without_a_message_falls_back_to_the_status() {
+        let err = ClientError::Api {
+            status: StatusCode::BAD_GATEWAY,
+            code: "unknown_error".into(),
+            message: String::new(),
+            details: None,
+        };
+        assert_eq!(err.human(), "daemon returned 502 Bad Gateway");
     }
 
     #[test]

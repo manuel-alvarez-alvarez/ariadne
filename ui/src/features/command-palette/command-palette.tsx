@@ -31,7 +31,8 @@ import {
   TriangleAlertIcon,
 } from "lucide-react"
 import { useTheme } from "next-themes"
-import { useMemo, useState } from "react"
+import type { ReactNode } from "react"
+import { useMemo } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 
 import {
@@ -44,15 +45,15 @@ import {
   CommandList,
   CommandShortcut,
 } from "@/components/ui/command"
-import { CreateGoalDialog } from "@/features/goals/create-goal-dialog"
 import { goalsQueryOptions } from "@/features/goals/queries"
 import { profilesQueryOptions } from "@/features/profiles/queries"
 import { sessionsQueryOptions } from "@/features/sessions/queries"
 import { taskListQueryOptions } from "@/features/tasks"
-import { SETTINGS_SHORTCUT } from "@/hooks/use-global-shortcuts"
-import { shortcutLabel } from "@/lib/shortcuts"
+import { NEW_GOAL_SHORTCUT, SETTINGS_SHORTCUT, screenShortcut } from "@/hooks/use-global-shortcuts"
+import { keySequenceLabel, shortcutLabel } from "@/lib/shortcuts"
 import { paths } from "@/routes/paths"
 
+import { splitDetail } from "./detail"
 import {
   buildPaletteEntries,
   type PaletteEntries,
@@ -68,17 +69,18 @@ export function CommandPalette({
   open,
   onOpenChange,
   onOpenSettings,
+  onNewGoal,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   /** Settings is the shell's dialog: the palette asks for it rather than owning it. */
   onOpenSettings: () => void
+  /** So is the create-goal dialog, which `N` opens from outside the palette too. */
+  onNewGoal: () => void
 }) {
   const navigate = useNavigate()
   const [search] = useSearchParams()
   const { resolvedTheme, setTheme } = useTheme()
-
-  const [createGoalOpen, setCreateGoalOpen] = useState(false)
 
   const entries = usePaletteEntries(open)
 
@@ -93,51 +95,55 @@ export function CommandPalette({
   }
 
   return (
-    <>
-      <CommandDialog
-        open={open}
-        onOpenChange={onOpenChange}
-        className="sm:max-w-xl"
-        title="Command palette"
-        description="Search goals, tasks, sessions and profiles, or run an action."
-      >
-        {/* The search is cmdk's own state, not React's: cmdk sorts the rows by
-            reordering the DOM, and a re-render on every keystroke — which is
-            what holding the query up here would cause — puts them back in the
-            order they were written in. The palette is unmounted while closed,
-            so that state also starts empty every time. */}
-        <Command loop filter={PALETTE_FILTER}>
-          <CommandInput autoFocus placeholder="Search goals, tasks, sessions, profiles…" />
-          <CommandList>
-            <CommandEmpty>No matches.</CommandEmpty>
+    <CommandDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      className="sm:max-w-xl"
+      title="Command palette"
+      description="Search goals, tasks, sessions and profiles, or run an action."
+    >
+      {/* The search is cmdk's own state, not React's: cmdk sorts the rows by
+          reordering the DOM, and a re-render on every keystroke — which is
+          what holding the query up here would cause — puts them back in the
+          order they were written in. The palette is unmounted while closed,
+          so that state also starts empty every time. */}
+      <Command loop filter={PALETTE_FILTER}>
+        <CommandInput autoFocus placeholder="Search goals, tasks, sessions, profiles…" />
+        <CommandList>
+          <CommandEmpty>No matches.</CommandEmpty>
 
-            <CommandGroup heading="Actions">
-              <CommandItem
-                value="New goal"
-                keywords={["create", "add"]}
-                onSelect={() => run(() => setCreateGoalOpen(true))}
-              >
-                <PlusIcon />
-                New goal
-              </CommandItem>
-              <CommandItem
-                value="Open settings"
-                keywords={["daemon", "url", "preferences"]}
-                onSelect={() => run(onOpenSettings)}
-              >
-                <SettingsIcon />
-                Open settings
-                <CommandShortcut>{shortcutLabel(SETTINGS_SHORTCUT)}</CommandShortcut>
-              </CommandItem>
-              <CommandItem
-                value="Toggle theme"
-                keywords={["dark", "light", "appearance"]}
-                onSelect={() => run(() => setTheme(resolvedTheme === "dark" ? "light" : "dark"))}
-              >
-                {resolvedTheme === "dark" ? <SunIcon /> : <MoonIcon />}
-                Toggle theme
-              </CommandItem>
-              {PAGES.map((page) => (
+          <CommandGroup heading="Actions">
+            <CommandItem
+              value="New goal"
+              keywords={["create", "add"]}
+              onSelect={() => run(onNewGoal)}
+            >
+              <PlusIcon />
+              New goal
+              <CommandShortcut>{keySequenceLabel(NEW_GOAL_SHORTCUT)}</CommandShortcut>
+            </CommandItem>
+            <CommandItem
+              value="Open settings"
+              keywords={["daemon", "url", "preferences"]}
+              onSelect={() => run(onOpenSettings)}
+            >
+              <SettingsIcon />
+              Open settings
+              <CommandShortcut>{shortcutLabel(SETTINGS_SHORTCUT)}</CommandShortcut>
+            </CommandItem>
+            <CommandItem
+              value="Toggle theme"
+              keywords={["dark", "light", "appearance"]}
+              onSelect={() => run(() => setTheme(resolvedTheme === "dark" ? "light" : "dark"))}
+            >
+              {resolvedTheme === "dark" ? <SunIcon /> : <MoonIcon />}
+              Toggle theme
+            </CommandItem>
+            {PAGES.map((page) => {
+              // The palette is where the screen chords are written down: a
+              // `G S` nobody can see is a chord nobody types.
+              const chord = screenShortcut(page.path)
+              return (
                 <CommandItem
                   key={page.path}
                   value={`Go to ${page.label}`}
@@ -145,23 +151,41 @@ export function CommandPalette({
                 >
                   <page.icon />
                   Go to {page.label}
+                  {chord ? <CommandShortcut>{keySequenceLabel(chord)}</CommandShortcut> : null}
                 </CommandItem>
-              ))}
-            </CommandGroup>
+              )
+            })}
+          </CommandGroup>
 
-            <PaletteEntities entries={entries} onPick={go} />
-          </CommandList>
-        </Command>
-      </CommandDialog>
+          <PaletteEntities entries={entries} onPick={go} />
+        </CommandList>
+        <PaletteHints />
+      </Command>
+    </CommandDialog>
+  )
+}
 
-      {/* The palette's own copy: "New goal" has to work on screens that have
-          no create button of their own. */}
-      <CreateGoalDialog
-        open={createGoalOpen}
-        onOpenChange={setCreateGoalOpen}
-        onCreated={(goal) => void navigate(paths.goal(goal.id))}
-      />
-    </>
+/**
+ * What the keyboard can do in here, along the bottom — the convention every
+ * palette follows, and the only place `esc` is written down (the key itself
+ * belongs to Base UI; see `@/hooks/use-global-shortcuts`).
+ */
+function PaletteHints() {
+  return (
+    <div className="flex items-center gap-4 border-t px-3 py-2 text-xs text-muted-foreground">
+      <Hint keys="↑↓">navigate</Hint>
+      <Hint keys="↵">open</Hint>
+      <Hint keys="esc">close</Hint>
+    </div>
+  )
+}
+
+function Hint({ keys, children }: { keys: string; children: ReactNode }) {
+  return (
+    <span className="flex items-center gap-1.5">
+      <kbd className="rounded border bg-muted px-1 font-mono text-[0.7rem] leading-4">{keys}</kbd>
+      {children}
+    </span>
   )
 }
 
@@ -259,15 +283,31 @@ function EntryGroup({
           onSelect={() => onPick(entry)}
         >
           <Icon className="text-muted-foreground" />
-          <span className="truncate">{entry.label}</span>
-          {entry.detail ? (
-            <span className="ml-auto shrink-0 truncate pl-2 font-mono text-xs text-muted-foreground">
-              {entry.detail}
-            </span>
-          ) : null}
+          {/* The row is named by its title, so the title is what gets the
+              room: the detail is capped and truncated around it. */}
+          <span className="min-w-0 flex-1 truncate">{entry.label}</span>
+          {entry.detail ? <EntryDetail text={entry.detail} /> : null}
         </CommandItem>
       ))}
     </CommandGroup>
+  )
+}
+
+/**
+ * The row's secondary text — an id, a branch, a role — held to a third of the
+ * row and truncated in the middle rather than at the end, so a branch keeps the
+ * slug that tells it from the next one (see `./detail`).
+ */
+function EntryDetail({ text }: { text: string }) {
+  const { head, tail } = splitDetail(text)
+  return (
+    <span
+      title={text}
+      className="flex max-w-[33%] min-w-0 justify-end pl-2 font-mono text-xs text-muted-foreground"
+    >
+      <span className="truncate">{head}</span>
+      {tail ? <span className="shrink-0">{tail}</span> : null}
+    </span>
   )
 }
 
