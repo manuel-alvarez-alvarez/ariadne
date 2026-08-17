@@ -9,40 +9,64 @@ pub mod session;
 pub mod setup;
 pub mod task;
 
+use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
+use serde_json::json;
 
+use ariadne_api::profiles::ProfileDto;
 use ariadne_client::{Client, endpoint};
 
-/// Shared `--role` value parser (planner | engineer | reviewer).
-pub fn parse_role(s: &str) -> Result<ariadne_core::Role, String> {
-    s.parse()
-}
+use crate::output::{Format, print_json};
 
 /// `ariadne version` — client version always, daemon version when reachable.
-pub async fn version(client: &Client) -> Result<()> {
-    println!("client:  ariadne {}", env!("CARGO_PKG_VERSION"));
-    match client.version().await {
-        Ok(v) => println!("daemon:  {} {}", v.name, v.version),
-        Err(e) => println!("daemon:  unreachable ({e})"),
+pub async fn version(client: &Client, format: Format) -> Result<()> {
+    let daemon = client.version().await;
+    match format {
+        Format::Json => print_json(&json!({
+            "client": {"name": "ariadne", "version": env!("CARGO_PKG_VERSION")},
+            "daemon": match &daemon {
+                Ok(v) => json!({"name": v.name, "version": v.version}),
+                Err(e) => json!({"error": e.human()}),
+            },
+            "endpoint": client.endpoint(),
+        }))?,
+        Format::Table => {
+            println!("client:  ariadne {}", env!("CARGO_PKG_VERSION"));
+            match daemon {
+                Ok(v) => println!("daemon:  {} {}", v.name, v.version),
+                // Not a failure of `version` itself, so it stays on stdout —
+                // but it is still a line a person reads, so no "client error
+                // (Connect)" in it.
+                Err(e) => println!("daemon:  {}", e.human()),
+            }
+        }
     }
     Ok(())
 }
 
 /// `ariadne daemon status`
-pub async fn daemon_status(client: &Client) -> Result<()> {
-    match client.health().await {
-        Ok(h) => {
+///
+/// A failure is reported as the client's own error: "daemon not running at X"
+/// on top of "cannot reach the ariadne daemon at X" said the endpoint twice.
+pub async fn daemon_status(client: &Client, format: Format) -> Result<()> {
+    let h = client.health().await?;
+    match format {
+        Format::Json => print_json(&json!({
+            "status": h.status,
+            "uptime_secs": h.uptime_secs,
+            "endpoint": client.endpoint(),
+        }))?,
+        Format::Table => {
             println!("status:  {}", h.status);
             println!("uptime:  {}s", h.uptime_secs);
             println!("socket:  {}", client.endpoint());
-            Ok(())
         }
-        Err(e) => bail!("daemon not running at {}: {e}", client.endpoint()),
     }
+    Ok(())
 }
 
 /// `ariadne daemon start` — spawn ariadned detached and wait for it to answer.
@@ -51,10 +75,16 @@ pub async fn daemon_status(client: &Client) -> Result<()> {
 /// daemon it spawns listens on that home's socket, and `--host` /
 /// `ARIADNE_SOCKET` — which are never passed to ariadned — would send both the
 /// already-running check and the readiness poll at a different daemon.
-pub async fn daemon_start(home: Option<PathBuf>) -> Result<()> {
+pub async fn daemon_start(home: Option<PathBuf>, format: Format) -> Result<()> {
     let client = Client::for_home(home.clone());
     if client.health().await.is_ok() {
-        println!("daemon already running at {}", client.endpoint());
+        match format {
+            Format::Json => print_json(&json!({
+                "started": false,
+                "endpoint": client.endpoint(),
+            }))?,
+            Format::Table => println!("daemon already running at {}", client.endpoint()),
+        }
         return Ok(());
     }
 
@@ -82,7 +112,14 @@ pub async fn daemon_start(home: Option<PathBuf>) -> Result<()> {
     for _ in 0..50 {
         tokio::time::sleep(Duration::from_millis(100)).await;
         if client.health().await.is_ok() {
-            println!("ariadned started (pid {})", child.id());
+            match format {
+                Format::Json => print_json(&json!({
+                    "started": true,
+                    "pid": child.id(),
+                    "endpoint": client.endpoint(),
+                }))?,
+                Format::Table => println!("ariadned started (pid {})", child.id()),
+            }
             return Ok(());
         }
     }
@@ -94,7 +131,7 @@ pub async fn daemon_start(home: Option<PathBuf>) -> Result<()> {
 }
 
 /// `ariadne daemon stop` — SIGTERM via pidfile.
-pub fn daemon_stop() -> Result<()> {
+pub fn daemon_stop(format: Format) -> Result<()> {
     let pid_file = endpoint::pid_file(&ariadne_home(None));
     let pid = std::fs::read_to_string(&pid_file)
         .with_context(|| {
@@ -116,7 +153,10 @@ pub fn daemon_stop() -> Result<()> {
             pid_file.display()
         );
     }
-    println!("sent SIGTERM to ariadned (pid {pid})");
+    match format {
+        Format::Json => print_json(&json!({"signalled": "SIGTERM", "pid": pid}))?,
+        Format::Table => println!("sent SIGTERM to ariadned (pid {pid})"),
+    }
     Ok(())
 }
 
@@ -134,6 +174,61 @@ pub fn daemon_logs(follow: bool) -> Result<()> {
     }
     let err = cmd.arg(&log).exec();
     bail!("failed to exec tail: {err}");
+}
+
+/// Ask before something irreversible, and take silence for "no".
+///
+/// `yes` (`-y`) answers for the caller, and so does a stdin that is not a
+/// terminal: a script has nobody to ask, and a prompt written into a pipe
+/// would hang a cron job rather than fail it. Declining is an error, so
+/// `ariadne goal cancel x && deploy` does not run the second half.
+pub fn confirm(question: &str, yes: bool) -> Result<()> {
+    if yes || !std::io::stdin().is_terminal() {
+        return Ok(());
+    }
+    // The prompt is not output: it belongs on stderr with the other notes.
+    eprint!("{question} [y/N] ");
+    std::io::stderr().flush().ok();
+    let mut answer = String::new();
+    std::io::stdin()
+        .read_line(&mut answer)
+        .context("reading your answer")?;
+    match answer.trim().to_ascii_lowercase().as_str() {
+        "y" | "yes" => Ok(()),
+        _ => bail!("aborted"),
+    }
+}
+
+/// Profile ids paired with the names they are known by.
+///
+/// Profiles are name-addressable everywhere else in the CLI, so an inspect
+/// block that prints a bare ULID names nobody.
+pub struct ProfileNames(std::collections::HashMap<String, String>);
+
+impl ProfileNames {
+    /// One list call for the whole block. A name is a courtesy: a daemon that
+    /// will not answer this leaves the ids bare rather than failing the
+    /// inspect that asked for them.
+    pub async fn fetch(client: &Client) -> Self {
+        let profiles: Vec<ProfileDto> = client.get_json("/v1/profiles").await.unwrap_or_default();
+        Self(profiles.into_iter().map(|p| (p.id, p.name)).collect())
+    }
+
+    /// `Name (id)`, or the bare id when no profile answers to it.
+    pub fn label(&self, id: &str) -> String {
+        match self.0.get(id) {
+            Some(name) => format!("{name} ({id})"),
+            None => id.to_string(),
+        }
+    }
+
+    /// A list of ids, labelled, in the order they were given.
+    pub fn labels(&self, ids: &[String]) -> String {
+        ids.iter()
+            .map(|id| self.label(id))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
 }
 
 /// Resolve the ariadne home directory the same way the daemon does.

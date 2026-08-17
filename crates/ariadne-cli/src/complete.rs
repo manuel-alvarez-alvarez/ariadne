@@ -136,15 +136,6 @@ pub fn planner_profiles() -> Vec<CompletionCandidate> {
     profiles(Some("planner"))
 }
 
-/// Roles accepted by `attach --role` and friends (static, but keeps the
-/// value completable).
-pub fn roles() -> Vec<CompletionCandidate> {
-    ["planner", "engineer", "reviewer"]
-        .into_iter()
-        .map(CompletionCandidate::new)
-        .collect()
-}
-
 /// Agent kinds for `profile create --agent`.
 pub fn agent_kinds() -> Vec<CompletionCandidate> {
     ariadne_core::AgentKind::ALL

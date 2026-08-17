@@ -133,7 +133,8 @@ describe("buildPaletteEntries", () => {
     expect(entry?.label).toBe("Reviewer (strict)")
     expect(entry?.detail).toBe("Reviewer")
     expect(entry?.keywords).toContain("codex")
-    expect(entry?.target).toEqual({ kind: "page", path: "/profiles" })
+    // The pick carries its subject: the screen expands that row.
+    expect(entry?.target).toEqual({ kind: "page", path: `/profiles?expand=${PROFILE.id}` })
   })
 })
 
