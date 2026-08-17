@@ -27,7 +27,9 @@ pub async fn version(client: &Client) -> Result<()> {
     println!("client:  ariadne {}", env!("CARGO_PKG_VERSION"));
     match client.version().await {
         Ok(v) => println!("daemon:  {} {}", v.name, v.version),
-        Err(e) => println!("daemon:  unreachable ({e})"),
+        // Not a failure of `version` itself, so it stays on stdout — but it is
+        // still a line a person reads, so no "client error (Connect)" in it.
+        Err(e) => println!("daemon:  {}", e.human()),
     }
     Ok(())
 }
