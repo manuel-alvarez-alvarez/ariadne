@@ -233,7 +233,7 @@ function GoalMetadata({ goal }: { goal: GoalDto }) {
   return (
     <dl className="grid gap-x-6 gap-y-3 rounded-lg border bg-card p-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
       <Detail label="Planner">
-        <ProfileName profileId={goal.planner_profile_id} className="text-sm" />
+        <ProfileName profileId={goal.planner_profile_id} />
       </Detail>
       <Detail label="Approvals">
         <span className="tabular-nums">{goal.required_approvals}</span>
