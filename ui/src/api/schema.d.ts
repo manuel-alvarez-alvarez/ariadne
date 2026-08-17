@@ -214,6 +214,77 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/profiles/{id}/prompts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The profile's briefing prompts, in briefing order. */
+        get: operations["profiles_list_prompts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/profiles/{id}/prompts/{kind}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Replace the text of one prompt. Any content is accepted, including text
+         *     that drops a `{placeholder}`.
+         */
+        put: operations["profiles_update_prompt"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/profiles/{id}/prompts/{kind}/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Put one prompt back to the default of the profile's role. */
+        post: operations["profiles_reset_prompt"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/profiles/{id}/system-prompt/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Put the profile's system prompt back to the default of its role. */
+        post: operations["profiles_reset_system_prompt"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sessions": {
         parameters: {
             query?: never;
@@ -334,7 +405,13 @@ export interface paths {
          *     `resize` and a *fresh* `snapshot` rather than continuing with deltas: the
          *     output in flight straddles the change and belongs to neither grid, so the
          *     client starts over at the new one. `snapshot` therefore means "replace
-         *     everything you have", whenever it arrives.
+         *     everything you have", whenever it arrives. Nothing is sent in between: a
+         *     delta drawn at a grid the client does not have is the corruption this is
+         *     all here to avoid. If no coherent screen can be had — the pane cannot be
+         *     read, or keeps changing shape while it is — the connection is closed
+         *     *without* an `end`, at the opening as much as later on: the session is not
+         *     over, and a fresh connection is the shortest way back to a grid and a
+         *     screen that agree. Only a pane confirmed gone ends a stream.
          *
          *     When the session ends — or if it was already over when the request arrived
          *     — the remaining output is flushed, a final `end` event (`SessionLogEnd`)
@@ -670,6 +747,7 @@ export interface components {
             /** @enum {string} */
             event: "profile_deleted";
         };
+        /** @description Body of `POST /v1/goals/{id}/finalize`: planning ends, execution starts. */
         FinalizePlanRequest: {
             /** @description Plan summary, recorded in the goal thread. */
             summary: string;
@@ -736,6 +814,20 @@ export interface components {
             system_prompt: string;
             updated_at: string;
         };
+        /** @description One of the briefing prompts a profile owns beside its system prompt. */
+        ProfilePromptDto: {
+            /** @description Template text with `{placeholder}` tokens the daemon fills in. */
+            content: string;
+            kind: components["schemas"]["PromptKind"];
+            updated_at: string;
+        };
+        /**
+         * @description A prompt a profile owns beside its system prompt: the briefing an agent of
+         *     that role is started or resumed with. Each kind belongs to exactly one role
+         *     (see [`PromptKind::role`]).
+         * @enum {string}
+         */
+        PromptKind: "planner_briefing" | "engineer_briefing" | "changes_requested" | "merge_instructions" | "reviewer_briefing" | "reviewer_resume";
         RepoSpec: {
             /** @description Base branch tasks merge into; defaults to the repo's current branch. */
             base_branch?: string | null;
@@ -902,6 +994,10 @@ export interface components {
             merge_commit?: string | null;
             reason?: string | null;
             to: components["schemas"]["TaskStatus"];
+        };
+        /** @description Body of `PUT /v1/profiles/{id}/prompts/{kind}`: the whole new text. */
+        UpdateProfilePromptRequest: {
+            content: string;
         };
         /** @description Partial update; absent fields stay unchanged. */
         UpdateProfileRequest: {
@@ -1388,6 +1484,140 @@ export interface operations {
                 content?: never;
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    profiles_list_prompts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description profile id or name */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfilePromptDto"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    profiles_update_prompt: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description profile id or name */
+                id: string;
+                /** @description prompt kind, e.g. engineer_briefing */
+                kind: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateProfilePromptRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfilePromptDto"];
+                };
+            };
+            /** @description unknown kind, or a kind the profile's role does not own */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    profiles_reset_prompt: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description profile id or name */
+                id: string;
+                /** @description prompt kind, e.g. engineer_briefing */
+                kind: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfilePromptDto"];
+                };
+            };
+            /** @description unknown kind, or a kind the profile's role does not own */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    profiles_reset_system_prompt: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description profile id or name */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileDto"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
