@@ -36,9 +36,13 @@ export interface PaletteEntry {
    * fuzzy-matched text answers to almost any query.
    */
   value: string
-  /** The row's own text. */
+  /** What the row is called: its primary text, and what leads it. */
   label: string
-  /** Secondary text on the right of the row: the id, the branch, the role. */
+  /**
+   * Secondary text, to the right of the label and under it in weight: the id,
+   * the branch, the role. Long ones are truncated in the middle (see
+   * `./detail`), so an id or a branch may show without its head.
+   */
   detail?: string
   /** Searchable, literally, without being part of the row's name. */
   keywords: string[]
@@ -80,7 +84,8 @@ export function buildPaletteEntries({
 
     tasks: (tasks ?? []).map((task) => ({
       // The branch is what a task is called outside Ariadne, so it names the
-      // row as much as the title does — and it is what the row shows.
+      // row as much as the title does — searched for like the title, shown
+      // beside it as the secondary text.
       value: `${task.title} ${task.branch}`,
       label: task.title,
       detail: task.branch,
@@ -113,7 +118,9 @@ export function buildPaletteEntries({
       label: profile.name,
       detail: roleLabel(profile.role),
       keywords: [profile.id, profile.role, profile.agent_kind ?? "", profile.model ?? ""],
-      target: { kind: "page", path: paths.profiles() },
+      // The one entity with no panel of its own: the screen expands its row,
+      // so the pick is carried there rather than dropped at `/profiles`.
+      target: { kind: "page", path: paths.profile(profile.id) },
     })),
   }
 }
