@@ -59,6 +59,12 @@ type ValueProps = {
    * half nobody reads (see `@/lib/truncate`).
    */
   truncate?: "end" | "middle"
+  /**
+   * `name` is for a value shown as something a person reads rather than as the
+   * token it is — a profile's name standing in for its id — which the mono
+   * face would make look like a value to be typed.
+   */
+  face?: "mono" | "name"
   /** What this is, for the button and for screen readers: "task id", "branch". */
   label?: string
   /**
@@ -68,7 +74,7 @@ type ValueProps = {
    * and where what follows belongs on the next line.
    */
   wrap?: boolean
-  /** Sizing and colour for the row; the value itself is always mono. */
+  /** Sizing and colour for the row; the face of the value is {@link face}. */
   className?: string
 }
 
@@ -77,12 +83,20 @@ export function CopyableId({
   value,
   display,
   truncate,
+  face,
   label = "id",
   wrap,
   className,
 }: ValueProps) {
   return (
-    <Value value={value} display={display} truncate={truncate} wrap={wrap} className={className}>
+    <Value
+      value={value}
+      display={display}
+      truncate={truncate}
+      face={face}
+      wrap={wrap}
+      className={className}
+    >
       <CopyButton value={value} label={label} />
     </Value>
   )
@@ -93,6 +107,7 @@ export function CopyableIdMenu({
   value,
   display,
   truncate,
+  face,
   label = "id",
   wrap,
   entries,
@@ -102,7 +117,14 @@ export function CopyableIdMenu({
   entries: CopyEntry[]
 }) {
   return (
-    <Value value={value} display={display} truncate={truncate} wrap={wrap} className={className}>
+    <Value
+      value={value}
+      display={display}
+      truncate={truncate}
+      face={face}
+      wrap={wrap}
+      className={className}
+    >
       <CopyMenu label={label} entries={entries} />
     </Value>
   )
@@ -121,6 +143,7 @@ function Value({
   value,
   display,
   truncate = "end",
+  face = "mono",
   wrap,
   className,
   children,
@@ -138,7 +161,7 @@ function Value({
         <MiddleTruncated value={shown} title={value} />
       ) : (
         <span
-          className={cn("font-mono", wrap ? "break-all" : "truncate")}
+          className={cn(face === "mono" && "font-mono", wrap ? "break-all" : "truncate")}
           title={wrap ? undefined : value}
         >
           {shown}
