@@ -17,21 +17,28 @@ const BUDGET: Duration = Duration::from_millis(800);
 /// Fetch a JSON list from the daemon, blocking (no runtime exists yet:
 /// completion is handled before the CLI enters tokio).
 fn fetch(path: &str) -> Vec<serde_json::Value> {
-    let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+    match fetch_value(path) {
+        Some(serde_json::Value::Array(items)) => items,
+        _ => Vec::new(),
+    }
+}
+
+/// One JSON document from the daemon, blocking, or nothing at all: a daemon
+/// that is down or slow leaves the shell with no candidates, never an error.
+fn fetch_value(path: &str) -> Option<serde_json::Value> {
+    let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-    else {
-        return Vec::new();
-    };
+        .ok()?;
     rt.block_on(async {
         let client = Client::from_env();
         match tokio::time::timeout(BUDGET, client.get_json::<serde_json::Value>(path)).await {
-            Ok(Ok(serde_json::Value::Array(items))) => items,
+            Ok(Ok(value)) => Some(value),
             other => {
                 if std::env::var_os("ARIADNE_COMPLETE_DEBUG").is_some() {
                     eprintln!("complete: {path}: {other:?}");
                 }
-                Vec::new()
+                None
             }
         }
     })
@@ -136,13 +143,51 @@ pub fn planner_profiles() -> Vec<CompletionCandidate> {
     profiles(Some("planner"))
 }
 
-/// Roles accepted by `attach --role` and friends (static, but keeps the
-/// value completable).
-pub fn roles() -> Vec<CompletionCandidate> {
-    ["planner", "engineer", "reviewer"]
-        .into_iter()
-        .map(CompletionCandidate::new)
+/// Engineer profile names (`task create --engineer`).
+pub fn engineer_profiles() -> Vec<CompletionCandidate> {
+    profiles(Some("engineer"))
+}
+
+/// Reviewer profile names (`task create|update --reviewer`).
+pub fn reviewer_profiles() -> Vec<CompletionCandidate> {
+    profiles(Some("reviewer"))
+}
+
+/// Repos of the goal being created in (`task create <goal> --repo`).
+///
+/// Only that goal's repos are candidates, so the id has to come off the
+/// command line the same way `--model` reads `--agent` from it.
+pub fn goal_repos() -> Vec<CompletionCandidate> {
+    let Some(goal) = goal_on_the_line() else {
+        return Vec::new();
+    };
+    let Some(goal) = fetch_value(&format!("/v1/goals/{goal}")) else {
+        return Vec::new();
+    };
+    let Some(repos) = goal.get("repos").and_then(|r| r.as_array()) else {
+        return Vec::new();
+    };
+    repos
+        .iter()
+        .map(|r| {
+            candidate(
+                s(r, "id"),
+                format!("{} [{}]", s(r, "path"), s(r, "base_branch")),
+            )
+        })
         .collect()
+}
+
+/// The goal id typed on a `task create` line: its first ULID-shaped word,
+/// which is how ids of every kind are spelled here. Flags and their values
+/// cannot be told apart without the parser, and none of them look like this.
+fn goal_on_the_line() -> Option<String> {
+    let words: Vec<String> = std::env::args().collect();
+    let i = words.iter().position(|w| w == "create")?;
+    words[i + 1..]
+        .iter()
+        .find(|w| w.len() == 26 && w.chars().all(|c| c.is_ascii_alphanumeric()))
+        .cloned()
 }
 
 /// Agent kinds for `profile create --agent`.

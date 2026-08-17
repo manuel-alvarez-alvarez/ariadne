@@ -14,6 +14,11 @@ use serde::{Deserialize, Serialize};
 /// The role an agent plays in the orchestration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(
+    feature = "clap",
+    derive(clap::ValueEnum),
+    value(rename_all = "snake_case")
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
     Planner,
