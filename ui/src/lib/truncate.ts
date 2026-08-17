@@ -22,9 +22,13 @@ const TAIL_CHARS = 8
  */
 export function middleTruncate(value: string): { head: string; tail: string } {
   const cut = value.lastIndexOf("/")
-  // A leading or trailing slash names nothing on its own; those fall through
-  // to the character split below.
-  if (cut > 0 && cut < value.length - 1) {
+  // The last segment is only a name worth keeping whole while it is the
+  // *smaller* part: `ariadne/task-<ulid>/fix-login-flow` ends in a name, while
+  // a branch with no slug at all — `ariadne/task-<ulid>`, which is what the
+  // daemon gives a task without one — ends in the id itself. Keeping that
+  // segment whole would cut its own tail off, which is the half that tells two
+  // tasks apart, so it falls through to the character split below.
+  if (cut > 0 && cut < value.length - 1 && value.length - cut <= cut) {
     return { head: value.slice(0, cut), tail: value.slice(cut) }
   }
   if (value.length <= TAIL_CHARS) return { head: value, tail: "" }
