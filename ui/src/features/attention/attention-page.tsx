@@ -18,9 +18,11 @@ import { ErrorState } from "@/components/error-state"
 import { PageHeader } from "@/components/page-header"
 import { StatusBadge } from "@/components/status-badge"
 import { Skeleton } from "@/components/ui/skeleton"
-import { ROLE_LABELS, SessionStatusBadge } from "@/features/sessions/session-display"
-import { TASK_STATUS_META } from "@/features/tasks"
+import { SessionStatusBadge } from "@/features/sessions/session-display"
+import { StalledBadge, TASK_STATUS_META } from "@/features/tasks"
 import { shortId } from "@/lib/ids"
+import { ROLE_LABELS } from "@/lib/labels"
+import { plural } from "@/lib/plural"
 import { formatAbsolute, formatRelative } from "@/lib/time"
 import { paths, sessionPanelTo, taskPanelTo } from "@/routes/paths"
 
@@ -73,9 +75,7 @@ function GoalGroup({ group }: { group: AttentionGroup }) {
             {group.goal?.title ?? `Goal ${shortId(group.goalId)}`}
           </Link>
         </h2>
-        <span className="text-xs text-muted-foreground">
-          {count} {count === 1 ? "item" : "items"}
-        </span>
+        <span className="text-xs text-muted-foreground">{plural(count, "item")}</span>
       </div>
 
       <ul className="divide-y rounded-lg border">
@@ -104,14 +104,7 @@ function TaskRow({ item: { task, reason } }: { item: AttentionTask }) {
         <span className="min-w-0 flex-1 truncate font-medium">{task.title}</span>
         {/* The status pill already names the other two reasons; a stall is a
             flag on top of whatever status the task is sitting in. */}
-        {reason === "stalled" ? (
-          <StatusBadge
-            box="badge"
-            label="Stalled"
-            tone="bg-status-warn-soft text-status-warn-fg"
-            title="The agent went idle without advancing the task."
-          />
-        ) : null}
+        {reason === "stalled" ? <StalledBadge /> : null}
         <span className="font-mono text-xs text-muted-foreground" title={task.id}>
           {shortId(task.id)}
         </span>

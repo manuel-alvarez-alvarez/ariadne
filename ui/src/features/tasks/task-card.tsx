@@ -19,9 +19,11 @@ import type { TaskDto } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
 import { StatusBadge } from "@/components/status-badge"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { plural } from "@/lib/plural"
 import { formatAbsolute, formatRelative } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { useTaskPanelTo } from "@/routes/paths"
+import { STALLED_META } from "./stalled"
 import { primaryStatus, subStatus, TASK_STATUS_META } from "./status"
 
 export function TaskCard({ task, showStatus = false }: { task: TaskDto; showStatus?: boolean }) {
@@ -34,7 +36,7 @@ export function TaskCard({ task, showStatus = false }: { task: TaskDto; showStat
     <div
       className={cn(
         "rounded-lg border bg-card transition-colors hover:border-foreground/20 hover:bg-muted/50",
-        task.stalled && "border-amber-500/40",
+        task.stalled && STALLED_META.border,
       )}
     >
       <Link
@@ -75,8 +77,7 @@ export function TaskCard({ task, showStatus = false }: { task: TaskDto; showStat
                 {task.depends_on.length}
               </TooltipTrigger>
               <TooltipContent>
-                Waits for {task.depends_on.length} {task.depends_on.length === 1 ? "task" : "tasks"}{" "}
-                to merge
+                Waits for {plural(task.depends_on.length, "task")} to merge
               </TooltipContent>
             </Tooltip>
           )}
@@ -84,13 +85,13 @@ export function TaskCard({ task, showStatus = false }: { task: TaskDto; showStat
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <span className="flex items-center gap-1 font-medium text-amber-600 dark:text-amber-400" />
+                  <span className={cn("flex items-center gap-1 font-medium", STALLED_META.text)} />
                 }
               >
                 <TriangleAlertIcon className="size-3" />
-                stalled
+                {STALLED_META.label}
               </TooltipTrigger>
-              <TooltipContent>The agent went idle without advancing the task.</TooltipContent>
+              <TooltipContent>{STALLED_META.hint}</TooltipContent>
             </Tooltip>
           )}
           <Tooltip>

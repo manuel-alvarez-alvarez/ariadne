@@ -33,6 +33,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { Skeleton } from "@/components/ui/skeleton"
+import { plural } from "@/lib/plural"
 import { cn } from "@/lib/utils"
 import { DiffEditor, LARGE_FILE_LINES } from "./diff-editor"
 import { type DiffFile, type ParsedDiff, parseUnifiedDiff } from "./diff-parse"
@@ -90,7 +91,7 @@ export function TaskDiff({ taskId }: { taskId: string }) {
   const body = empty ? (
     <EmptyState
       emphasis="quiet"
-      title="The branch exists but has no changes against its base yet."
+      title="The branch exists but has no changes against its base yet"
     />
   ) : raw || parsed.files.length === 0 ? (
     <RawDiff text={diff.data ?? ""} wrap={wrap} />
@@ -118,7 +119,7 @@ export function TaskDiff({ taskId }: { taskId: string }) {
           than collapsing behind it, and says where the diff went. */}
       <EmptyState
         emphasis="quiet"
-        title="The diff is open in the expanded view."
+        title="The diff is open in the expanded view"
         action={
           <Button variant="outline" size="sm" onClick={() => setExpanded(false)}>
             <Minimize2Icon />
@@ -172,7 +173,7 @@ function DiffToolbar({
   return (
     <div className="flex flex-wrap items-center gap-2">
       <span className="text-sm text-muted-foreground">
-        {empty ? "No changes" : `${files} ${files === 1 ? "file" : "files"} changed`}
+        {empty ? "No changes" : `${plural(files, "file")} changed`}
       </span>
       {!empty && <DiffStat additions={additions} deletions={deletions} />}
       <div className="ml-auto flex items-center gap-1">
@@ -346,5 +347,5 @@ function DiffError({ error, onRetry }: { error: unknown; onRetry: () => void }) 
   if (ApiError.is(error) && error.status === 409) {
     return <EmptyState emphasis="quiet" title={error.message} />
   }
-  return <ErrorState title="Could not load the diff" error={error} onRetry={onRetry} />
+  return <ErrorState title="Could not load diff" error={error} onRetry={onRetry} />
 }

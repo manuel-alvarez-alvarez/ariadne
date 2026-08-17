@@ -14,8 +14,8 @@
 
 import type { GoalDto, ProfileDto, SessionDto, TaskDto } from "@/api"
 import { roleLabel } from "@/features/profiles/profile-labels"
-import { ROLE_LABELS } from "@/features/sessions/session-display"
 import { shortId } from "@/lib/ids"
+import { ROLE_LABELS } from "@/lib/labels"
 import { paths, taskPanelTo, taskSessionPanelTo } from "@/routes/paths"
 
 /** Where a palette entry goes when it is picked. */

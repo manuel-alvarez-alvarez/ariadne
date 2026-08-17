@@ -30,7 +30,7 @@ export function GoalTasks({ goalId }: { goalId: string }) {
     return (
       <ErrorState
         showIcon
-        title="Could not load the tasks"
+        title="Could not load tasks"
         error={tasks.error}
         onRetry={() => void tasks.refetch()}
       />
@@ -48,7 +48,7 @@ export function GoalTasks({ goalId }: { goalId: string }) {
   }
 
   if (ordered.length === 0) {
-    return <EmptyState emphasis="quiet" title="No tasks yet." />
+    return <EmptyState emphasis="quiet" title="No tasks yet" />
   }
 
   return (

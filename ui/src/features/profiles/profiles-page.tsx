@@ -30,13 +30,15 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { formatAbsolute } from "@/lib/time"
+import { ROLE_LABELS } from "@/lib/labels"
+import { plural } from "@/lib/plural"
+import { formatAbsolute, formatRelative } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
 import { DeleteProfileDialog } from "./delete-profile-dialog"
 import { ProfileDetails } from "./profile-details"
 import { ProfileFormDialog } from "./profile-form-dialog"
-import { agentKindLabel, modelLabel, ROLE_LABELS, ROLES } from "./profile-labels"
+import { agentKindLabel, modelLabel, ROLES } from "./profile-labels"
 import { profilesQueryOptions } from "./queries"
 
 /** The role tabs, where "all" means the unfiltered request. */
@@ -97,9 +99,7 @@ export function ProfilesPage() {
           </TabsList>
         </Tabs>
         {profiles.data ? (
-          <p className="text-sm text-muted-foreground">
-            {profiles.data.length} {profiles.data.length === 1 ? "profile" : "profiles"}
-          </p>
+          <p className="text-sm text-muted-foreground">{plural(profiles.data.length, "profile")}</p>
         ) : null}
       </div>
 
@@ -206,8 +206,12 @@ function ProfileRow({
         <TableCell className="font-mono text-xs">
           <Unset when={!profile.model}>{modelLabel(profile.model)}</Unset>
         </TableCell>
+        {/* The age is what a table is read for; the full stamp is on hover,
+            the same way every other tabular timestamp shows it. */}
         <TableCell className="text-muted-foreground">
-          {formatAbsolute(profile.updated_at)}
+          <time dateTime={profile.updated_at} title={formatAbsolute(profile.updated_at)}>
+            {formatRelative(profile.updated_at)}
+          </time>
         </TableCell>
         <TableCell className="text-right">
           <Button

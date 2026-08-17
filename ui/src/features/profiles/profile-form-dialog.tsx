@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { describeError } from "@/lib/errors"
+import { ROLE_LABELS } from "@/lib/labels"
 
 import {
   AGENT_KIND_CHOICES,
@@ -49,7 +50,7 @@ import {
   toCreateRequest,
   toUpdateRequest,
 } from "./profile-form-values"
-import { agentKindLabel, ROLE_LABELS, ROLES } from "./profile-labels"
+import { agentKindLabel, ROLES } from "./profile-labels"
 import { useCreateProfile, useUpdateProfile } from "./queries"
 
 export function ProfileFormDialog({
