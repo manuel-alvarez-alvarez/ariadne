@@ -62,6 +62,15 @@ export interface Attention {
   isPending: boolean
   /** The first of the three queries that failed, if any. */
   error: unknown
+  /**
+   * Something failed, but the queries that answered still produced groups.
+   *
+   * The three lists are independent — a failed `GET /v1/tasks` says nothing
+   * about the sessions — so the usual case for a screen this size is a list
+   * that rendered with a hole in it rather than one that failed. Reporting
+   * both as the same "could not load" is what made a readable list look empty.
+   */
+  partial: boolean
   refetch: () => void
 }
 
@@ -75,11 +84,14 @@ export function useAttention(): Attention {
     [goals.data, tasks.data, sessions.data],
   )
 
+  const error = goals.error ?? tasks.error ?? sessions.error
+
   return {
     groups,
     count: groups.reduce((total, g) => total + g.tasks.length + g.sessions.length, 0),
     isPending: goals.isPending || tasks.isPending || sessions.isPending,
-    error: goals.error ?? tasks.error ?? sessions.error,
+    error,
+    partial: error !== null && groups.length > 0,
     refetch: () => {
       void goals.refetch()
       void tasks.refetch()
