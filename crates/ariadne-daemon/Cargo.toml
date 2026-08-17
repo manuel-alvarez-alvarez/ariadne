@@ -13,6 +13,9 @@ path = "src/main.rs"
 ariadne-core = { workspace = true }
 ariadne-api = { workspace = true }
 ariadne-store = { workspace = true }
+# For the shared home/socket resolution: the daemon and its clients must not
+# drift on where the socket is.
+ariadne-client = { workspace = true }
 anyhow = { workspace = true }
 axum = { workspace = true }
 chrono = { workspace = true }

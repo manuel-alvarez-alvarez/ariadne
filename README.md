@@ -153,8 +153,11 @@ delete_merged_branches = true      # only applies when worktrees are deleted too
                                    # a kept engineer worktree pins the task branch
 ```
 
-`ARIADNE_HOME` moves the whole home directory; `ARIADNE_SOCKET` points the
-CLI at a socket path or `http://host:port`.
+`ARIADNE_HOME` moves the whole home directory: daemon and CLI alike resolve
+the socket from it (`--home` > `ARIADNE_HOME` > `~/.ariadne`, then that home's
+`socket_path` > `<home>/ariadne.sock`), so every command addresses the daemon
+of the home it runs in. `ARIADNE_SOCKET` (or `--host`) overrides that with a
+socket path or `http://host:port`.
 
 ## Workspace layout
 
