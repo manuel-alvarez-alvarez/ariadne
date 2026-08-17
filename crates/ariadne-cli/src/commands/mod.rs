@@ -33,16 +33,15 @@ pub async fn version(client: &Client) -> Result<()> {
 }
 
 /// `ariadne daemon status`
+///
+/// A failure is reported as the client's own error: "daemon not running at X"
+/// on top of "cannot reach the ariadne daemon at X" said the endpoint twice.
 pub async fn daemon_status(client: &Client) -> Result<()> {
-    match client.health().await {
-        Ok(h) => {
-            println!("status:  {}", h.status);
-            println!("uptime:  {}s", h.uptime_secs);
-            println!("socket:  {}", client.endpoint());
-            Ok(())
-        }
-        Err(e) => bail!("daemon not running at {}: {e}", client.endpoint()),
-    }
+    let h = client.health().await?;
+    println!("status:  {}", h.status);
+    println!("uptime:  {}s", h.uptime_secs);
+    println!("socket:  {}", client.endpoint());
+    Ok(())
 }
 
 /// `ariadne daemon start` — spawn ariadned detached and wait for it to answer.
