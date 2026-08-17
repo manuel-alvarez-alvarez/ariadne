@@ -48,6 +48,88 @@ impl std::str::FromStr for Role {
     }
 }
 
+/// A prompt a profile owns beside its system prompt: the briefing an agent of
+/// that role is started or resumed with. Each kind belongs to exactly one role
+/// (see [`PromptKind::role`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(
+    feature = "clap",
+    derive(clap::ValueEnum),
+    value(rename_all = "snake_case")
+)]
+#[serde(rename_all = "snake_case")]
+pub enum PromptKind {
+    /// Initial briefing of a planner session.
+    PlannerBriefing,
+    /// Initial briefing of an engineer session.
+    EngineerBriefing,
+    /// Engineer resume briefing carrying the reviewers' change requests.
+    ChangesRequested,
+    /// Engineer resume briefing telling an approved task to merge.
+    MergeInstructions,
+    /// Initial briefing of a reviewer session.
+    ReviewerBriefing,
+    /// Reviewer resume briefing for a later round of the same task.
+    ReviewerResume,
+}
+
+impl PromptKind {
+    pub const ALL: [PromptKind; 6] = [
+        PromptKind::PlannerBriefing,
+        PromptKind::EngineerBriefing,
+        PromptKind::ChangesRequested,
+        PromptKind::MergeInstructions,
+        PromptKind::ReviewerBriefing,
+        PromptKind::ReviewerResume,
+    ];
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            PromptKind::PlannerBriefing => "planner_briefing",
+            PromptKind::EngineerBriefing => "engineer_briefing",
+            PromptKind::ChangesRequested => "changes_requested",
+            PromptKind::MergeInstructions => "merge_instructions",
+            PromptKind::ReviewerBriefing => "reviewer_briefing",
+            PromptKind::ReviewerResume => "reviewer_resume",
+        }
+    }
+
+    /// The role whose profiles own this prompt.
+    pub fn role(&self) -> Role {
+        match self {
+            PromptKind::PlannerBriefing => Role::Planner,
+            PromptKind::EngineerBriefing
+            | PromptKind::ChangesRequested
+            | PromptKind::MergeInstructions => Role::Engineer,
+            PromptKind::ReviewerBriefing | PromptKind::ReviewerResume => Role::Reviewer,
+        }
+    }
+
+    /// The prompts a profile of `role` owns, in briefing order.
+    pub fn for_role(role: Role) -> &'static [PromptKind] {
+        match role {
+            Role::Planner => &[PromptKind::PlannerBriefing],
+            Role::Engineer => &[
+                PromptKind::EngineerBriefing,
+                PromptKind::ChangesRequested,
+                PromptKind::MergeInstructions,
+            ],
+            Role::Reviewer => &[PromptKind::ReviewerBriefing, PromptKind::ReviewerResume],
+        }
+    }
+}
+
+impl std::str::FromStr for PromptKind {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        PromptKind::ALL
+            .into_iter()
+            .find(|v| v.as_str() == s)
+            .ok_or_else(|| format!("unknown prompt kind: {s}"))
+    }
+}
+
 /// Which coding-agent CLI a profile runs on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
