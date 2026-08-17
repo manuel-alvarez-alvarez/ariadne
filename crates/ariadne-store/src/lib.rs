@@ -6,11 +6,13 @@
 //! and records the audit row in the same transaction.
 
 mod change;
+pub mod defaults;
 mod entities;
 mod events;
 mod goals;
 mod messages;
 mod profiles;
+mod prompts;
 mod reviews;
 mod sessions;
 mod tasks;
@@ -21,6 +23,7 @@ pub use events::{EventFilter, NewAgentEvent};
 pub use goals::NewGoal;
 pub use messages::NewMessage;
 pub use profiles::{NewProfile, ProfileUpdate};
+pub use prompts::parse_prompt_kind;
 pub use reviews::NewReview;
 pub use sessions::{NewSession, SessionFilter};
 pub use tasks::{NewTask, TaskFilter, TaskUpdate};
@@ -103,11 +106,13 @@ impl Store {
             .await
             .map_err(|e| StoreError::Invalid(format!("migration failed: {e}")))?;
 
-        Ok(Self {
+        let store = Self {
             write,
             read,
             changes: Arc::default(),
-        })
+        };
+        store.seed_builtin_profiles().await?;
+        Ok(store)
     }
 
     /// In-memory store for tests.
@@ -126,11 +131,13 @@ impl Store {
             .run(&write)
             .await
             .map_err(|e| StoreError::Invalid(format!("migration failed: {e}")))?;
-        Ok(Self {
+        let store = Self {
             read: write.clone(),
             write,
             changes: Arc::default(),
-        })
+        };
+        store.seed_builtin_profiles().await?;
+        Ok(store)
     }
 
     /// Subscribe to committed writes (see [`Change`]).

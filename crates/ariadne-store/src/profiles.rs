@@ -28,11 +28,14 @@ pub struct ProfileUpdate {
 }
 
 impl Store {
+    /// Create a profile, seeded with the default prompts of its role: a new
+    /// profile starts from the built-in briefings and is edited from there.
     pub async fn create_profile(&self, new: NewProfile) -> Result<Profile> {
         let id = new_id();
         let ts = now();
         let flags = serde_json::to_string(&new.extra_flags)
             .map_err(|e| StoreError::Invalid(e.to_string()))?;
+        let mut tx = self.w().begin().await?;
         sqlx::query(
             "INSERT INTO profiles (id, name, role, agent_kind, model, system_prompt, extra_flags, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -46,7 +49,7 @@ impl Store {
         .bind(&flags)
         .bind(&ts)
         .bind(&ts)
-        .execute(self.w())
+        .execute(&mut *tx)
         .await
         .map_err(|e| match e {
             sqlx::Error::Database(ref db) if db.is_unique_violation() => {
@@ -54,6 +57,8 @@ impl Store {
             }
             other => StoreError::Db(other),
         })?;
+        Self::insert_default_prompts(&mut tx, &id, new.role, &ts).await?;
+        tx.commit().await?;
         let profile = self.get_profile(&id).await?;
         self.publish(Change::ProfileCreated(profile.clone()));
         Ok(profile)
