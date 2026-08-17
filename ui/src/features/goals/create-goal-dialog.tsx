@@ -306,7 +306,7 @@ export function CreateGoalDialog({
           </div>
 
           {submitError ? (
-            <ErrorState showIcon title="Could not create the goal" error={submitError} />
+            <ErrorState showIcon title="Could not create goal" error={submitError} />
           ) : null}
 
           <DialogFooter>
