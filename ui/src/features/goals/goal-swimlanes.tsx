@@ -30,7 +30,8 @@ import {
   TaskCard,
   taskListQueryOptions,
 } from "@/features/tasks"
-import { formatRelative } from "@/lib/time"
+import { plural } from "@/lib/plural"
+import { formatAbsolute, formatRelative } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { paths } from "@/routes/paths"
 import { useCollapsedLanes } from "./collapsed-lanes"
@@ -156,7 +157,10 @@ function Lane({
           tone={GOAL_STATUS_META[goal.status].badge}
         />
         <span className="whitespace-nowrap text-xs text-muted-foreground">
-          {total} {total === 1 ? "task" : "tasks"} · created {formatRelative(goal.created_at)}
+          {plural(total, "task")} · created{" "}
+          <time dateTime={goal.created_at} title={formatAbsolute(goal.created_at)}>
+            {formatRelative(goal.created_at)}
+          </time>
         </span>
       </header>
 

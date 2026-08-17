@@ -31,7 +31,8 @@ import {
 } from "@/components/ui/table"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ROLE_LABELS } from "@/lib/labels"
-import { formatAbsolute } from "@/lib/time"
+import { plural } from "@/lib/plural"
+import { formatAbsolute, formatRelative } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
 import { DeleteProfileDialog } from "./delete-profile-dialog"
@@ -98,9 +99,7 @@ export function ProfilesPage() {
           </TabsList>
         </Tabs>
         {profiles.data ? (
-          <p className="text-sm text-muted-foreground">
-            {profiles.data.length} {profiles.data.length === 1 ? "profile" : "profiles"}
-          </p>
+          <p className="text-sm text-muted-foreground">{plural(profiles.data.length, "profile")}</p>
         ) : null}
       </div>
 
@@ -207,8 +206,12 @@ function ProfileRow({
         <TableCell className="font-mono text-xs">
           <Unset when={!profile.model}>{modelLabel(profile.model)}</Unset>
         </TableCell>
+        {/* The age is what a table is read for; the full stamp is on hover,
+            the same way every other tabular timestamp shows it. */}
         <TableCell className="text-muted-foreground">
-          {formatAbsolute(profile.updated_at)}
+          <time dateTime={profile.updated_at} title={formatAbsolute(profile.updated_at)}>
+            {formatRelative(profile.updated_at)}
+          </time>
         </TableCell>
         <TableCell className="text-right">
           <Button

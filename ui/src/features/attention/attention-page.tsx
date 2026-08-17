@@ -22,6 +22,7 @@ import { SessionStatusBadge } from "@/features/sessions/session-display"
 import { StalledBadge, TASK_STATUS_META } from "@/features/tasks"
 import { shortId } from "@/lib/ids"
 import { ROLE_LABELS } from "@/lib/labels"
+import { plural } from "@/lib/plural"
 import { formatAbsolute, formatRelative } from "@/lib/time"
 import { paths, sessionPanelTo, taskPanelTo } from "@/routes/paths"
 
@@ -74,9 +75,7 @@ function GoalGroup({ group }: { group: AttentionGroup }) {
             {group.goal?.title ?? `Goal ${shortId(group.goalId)}`}
           </Link>
         </h2>
-        <span className="text-xs text-muted-foreground">
-          {count} {count === 1 ? "item" : "items"}
-        </span>
+        <span className="text-xs text-muted-foreground">{plural(count, "item")}</span>
       </div>
 
       <ul className="divide-y rounded-lg border">
