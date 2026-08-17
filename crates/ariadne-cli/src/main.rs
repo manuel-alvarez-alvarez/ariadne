@@ -155,14 +155,10 @@ fn main() -> Result<()> {
 }
 
 async fn run(cli: Cli) -> Result<()> {
-    // `daemon start --home X` addresses the daemon of X, not the ambient one.
-    let home = match &cli.command {
-        Command::Daemon {
-            command: DaemonCommand::Start { home },
-        } => home.clone(),
-        _ => None,
-    };
-    let client = Client::resolve(cli.host.as_deref(), home);
+    // Commands talk to an already-running daemon, so an explicit endpoint wins
+    // here. `daemon start` is the exception and resolves its own target from
+    // the home it spawns the daemon in.
+    let client = Client::resolve(cli.host.as_deref(), None);
 
     match cli.command {
         Command::Version => commands::version(&client).await,
@@ -177,7 +173,7 @@ async fn run(cli: Cli) -> Result<()> {
             Ok(())
         }
         Command::Daemon { command } => match command {
-            DaemonCommand::Start { home } => commands::daemon_start(&client, home).await,
+            DaemonCommand::Start { home } => commands::daemon_start(home).await,
             DaemonCommand::Stop => commands::daemon_stop(),
             DaemonCommand::Status => commands::daemon_status(&client).await,
             DaemonCommand::Logs { follow } => commands::daemon_logs(follow),

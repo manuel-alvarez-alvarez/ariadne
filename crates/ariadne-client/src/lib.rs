@@ -130,6 +130,13 @@ impl Client {
         Self::resolve(None, None)
     }
 
+    /// Client for the daemon of a home, deliberately deaf to endpoint
+    /// overrides: `ariadned` is only ever told a home, so whoever starts one
+    /// must address the socket that home resolves to and no other.
+    pub fn for_home(home_override: Option<PathBuf>) -> Self {
+        Self::unix(Self::socket_path(home_override))
+    }
+
     fn from_parts(explicit: Option<String>, socket: impl FnOnce() -> PathBuf) -> Self {
         match explicit {
             Some(v) if v.starts_with("http://") || v.starts_with("https://") => Self::tcp(v),
@@ -355,6 +362,27 @@ mod tests {
             Client::socket_path(Some(dir.path().to_path_buf())),
             PathBuf::from("/scratch/custom.sock")
         );
+    }
+
+    /// `ariadne daemon start` used to poll whatever `--host` / `ARIADNE_SOCKET`
+    /// named while spawning a daemon on the home's socket — reporting "already
+    /// running" for a stranger's daemon, or timing out on its own.
+    #[test]
+    fn starting_a_daemon_is_deaf_to_endpoint_overrides() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("config.toml"),
+            "socket_path = \"/scratch/custom.sock\"\n",
+        )
+        .unwrap();
+        let home = Some(dir.path().to_path_buf());
+
+        // Commands addressing a running daemon honour the override...
+        let addressed = Client::resolve(Some("/tmp/other.sock"), home.clone());
+        assert_eq!(addressed.endpoint(), "/tmp/other.sock");
+        // ...but the daemon being started only ever hears about its home.
+        let started = Client::for_home(home);
+        assert_eq!(started.endpoint(), "/scratch/custom.sock");
     }
 
     #[test]
