@@ -7,23 +7,8 @@
  * from `@/lib/labels`, the way timestamps come from `@/lib/time`.
  */
 
-import type { Role, SessionStatus } from "@/api"
+import type { SessionStatus } from "@/api"
 import { StatusBadge } from "@/components/status-badge"
-
-/**
- * Intentionally exported: the session filters of the navigation work being
- * done in parallel read them, even though nothing in this file does.
- */
-export const SESSION_STATUSES: readonly SessionStatus[] = [
-  "starting",
-  "running",
-  "idle",
-  "exited",
-  "failed",
-]
-
-/** Intentionally exported, for the same reason as {@link SESSION_STATUSES}. */
-export const ROLES: readonly Role[] = ["planner", "engineer", "reviewer"]
 
 /**
  * Mirrors `SessionStatus::is_live` in `ariadne-core`: a session with a tmux
@@ -51,10 +36,6 @@ export const SESSION_STATUS_META: Record<SessionStatus, SessionStatusMeta> = {
   idle: { label: "Idle", dot: "bg-status-active" },
   exited: { label: "Exited", dot: "bg-muted-foreground/60" },
   failed: { label: "Failed", dot: "bg-status-danger" },
-}
-
-export function sessionStatusLabel(status: SessionStatus): string {
-  return SESSION_STATUS_META[status].label
 }
 
 export function SessionStatusBadge({

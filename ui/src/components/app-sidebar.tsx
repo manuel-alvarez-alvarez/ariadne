@@ -1,8 +1,11 @@
 /**
- * The app's navigation. Three screens, in the order an orchestrator asks for
- * them: what is being worked on, who is running it, and what they run as.
+ * The app's navigation. Two screens, in the order an orchestrator asks for
+ * them: what is being worked on, and what the agents run as.
+ *
  * What is *stuck* has no entry — it is a strip on the goals board, above the
- * lanes it is about (see `features/goals/attention-strip.tsx`).
+ * lanes it is about (see `features/goals/attention-strip.tsx`). Neither do the
+ * agents themselves: a session is opened from the panel of the goal or the
+ * task it runs, in a panel of its own (see `features/sessions/session-panel.tsx`).
  *
  * The labels are the ones the shell's header shows, which come from each
  * route's own `handle` (see `src/routes/page-title.ts`) — they are written
@@ -10,7 +13,7 @@
  * entry and a route are not the same list: not every route belongs here.
  */
 
-import { CpuIcon, RadioTowerIcon, TargetIcon } from "lucide-react"
+import { CpuIcon, TargetIcon } from "lucide-react"
 import { NavLink } from "react-router-dom"
 
 import { cn } from "@/lib/utils"
@@ -18,7 +21,6 @@ import { paths } from "@/routes/paths"
 
 const NAV_ITEMS = [
   { to: paths.goals(), label: "Goals", icon: TargetIcon },
-  { to: paths.sessions(), label: "Sessions", icon: RadioTowerIcon },
   { to: paths.profiles(), label: "Profiles", icon: CpuIcon },
 ] as const
 

@@ -65,10 +65,10 @@ import { useNow } from "./use-now"
 /**
  * What the list is already inside of.
  *
- * A panel tab is scoped to its task or its goal; the sessions screen is scoped
- * to nothing, and is the only place where two rows can be the same role, the
- * same profile and the same status and still be about different work — which
- * is what the context column is for.
+ * A panel tab is scoped to its task or its goal. A list scoped to nothing is
+ * the only place where two rows can be the same role, the same profile and the
+ * same status and still be about different work — which is what the context
+ * column is for.
  */
 function listScope(filters: SessionListFilters): "task" | "goal" | "unscoped" {
   if (filters.task) return "task"
