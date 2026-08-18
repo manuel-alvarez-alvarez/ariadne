@@ -10,10 +10,16 @@
  * ones are what goes on the wire, a goal cannot be created against none of
  * them, and — the case a fresh install lands in — an empty registry offers the
  * way to fill it rather than an empty box with nothing to click.
+ *
+ * The registry being unbounded, the picker is a searchable combobox rather
+ * than a list of checkboxes, so the same guarantees are asserted through it:
+ * the search narrows what is offered, several picks are made without the popup
+ * closing between them, and each one can be taken back off from the chip it
+ * left behind.
  */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, render, screen, waitFor } from "@testing-library/react"
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter, useLocation } from "react-router-dom"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
@@ -107,15 +113,38 @@ function renderDialog() {
     return <span data-testid="where">{useLocation().pathname}</span>
   }
 
+  const onOpenChange = vi.fn()
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
-  return render(
+  render(
     <MemoryRouter initialEntries={[paths.goals()]}>
       <QueryClientProvider client={queryClient}>
         <Where />
-        <CreateGoalDialog open onOpenChange={() => {}} />
+        <CreateGoalDialog open onOpenChange={onOpenChange} />
       </QueryClientProvider>
     </MemoryRouter>,
   )
+  return { onOpenChange }
+}
+
+/** The field itself, which is what the popup hangs off. */
+async function repositoryBox(): Promise<HTMLElement> {
+  return await screen.findByRole("combobox", { name: "Repositories" })
+}
+
+/** The list of repositories, which lives in a portal outside the dialog. */
+async function options(): Promise<HTMLElement> {
+  return await screen.findByRole("listbox", { name: "Repositories" })
+}
+
+/** Opens the popup and answers the list inside it. */
+async function openList(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
+  await user.click(await repositoryBox())
+  return await options()
+}
+
+/** One repository's row, found the way it reads: by its path. */
+function row(list: HTMLElement, repository: RepositoryDto): HTMLElement {
+  return within(list).getByRole("option", { name: new RegExp(repository.path) })
 }
 
 beforeEach(() => {
@@ -140,24 +169,46 @@ afterEach(() => {
 
 describe("picking the goal's repositories", () => {
   it("offers the registered ones, with the branch and the description beside each", async () => {
+    const user = userEvent.setup()
     renderDialog()
 
-    expect(await screen.findByRole("checkbox", { name: new RegExp(ARIADNE.path) })).toBeDefined()
-    expect(screen.getByRole("checkbox", { name: new RegExp(SANDBOX.path) })).toBeDefined()
-    expect(screen.getByText("main")).toBeDefined()
-    expect(screen.getByText("trunk")).toBeDefined()
-    expect(screen.getByText("The orchestrator itself.")).toBeDefined()
+    const list = await openList(user)
+
+    expect(row(list, ARIADNE)).toBeDefined()
+    expect(row(list, SANDBOX)).toBeDefined()
+    expect(within(list).getByText("main")).toBeDefined()
+    expect(within(list).getByText("trunk")).toBeDefined()
+    expect(within(list).getByText("The orchestrator itself.")).toBeDefined()
     // Select-only: nothing here types a path.
     expect(screen.queryByPlaceholderText("/absolute/path/to/repo")).toBeNull()
   })
 
-  it("submits the ids of what was ticked, and nothing about the paths", async () => {
+  it("narrows the list to what is typed, and picks out of what is left", async () => {
+    const user = userEvent.setup()
+    renderDialog()
+
+    const list = await openList(user)
+    await user.type(screen.getByRole("combobox", { name: "Search repositories" }), "sandbox")
+
+    await waitFor(() => {
+      expect(within(list).queryByRole("option", { name: new RegExp(ARIADNE.path) })).toBeNull()
+    })
+    await user.click(row(list, SANDBOX))
+
+    // The pick lands in the field, and the popup is still up for the next one.
+    expect(screen.getByRole("button", { name: `Remove ${SANDBOX.path}` })).toBeDefined()
+    expect(await options()).toBeDefined()
+  })
+
+  it("submits the ids of what was picked, and nothing about the paths", async () => {
     const user = userEvent.setup()
     renderDialog()
 
     await user.type(screen.getByLabelText("Title"), "Repositories")
-    await user.click(await screen.findByRole("checkbox", { name: new RegExp(ARIADNE.path) }))
-    await user.click(screen.getByRole("checkbox", { name: new RegExp(SANDBOX.path) }))
+    const list = await openList(user)
+    await user.click(row(list, ARIADNE))
+    await user.click(row(list, SANDBOX))
+    await user.keyboard("{Escape}")
     await user.click(screen.getByRole("button", { name: "Create goal" }))
 
     await waitFor(() => {
@@ -167,15 +218,19 @@ describe("picking the goal's repositories", () => {
     expect(lastWrite()?.body?.repository_ids).toEqual([ARIADNE.id, SANDBOX.id])
   })
 
-  it("untickng takes one back off, so the body follows the boxes", async () => {
+  it("takes one back off from its chip, so the body follows the field", async () => {
     const user = userEvent.setup()
     renderDialog()
 
     await user.type(screen.getByLabelText("Title"), "Repositories")
-    const ariadne = await screen.findByRole("checkbox", { name: new RegExp(ARIADNE.path) })
-    await user.click(ariadne)
-    await user.click(screen.getByRole("checkbox", { name: new RegExp(SANDBOX.path) }))
-    await user.click(ariadne)
+    const list = await openList(user)
+    await user.click(row(list, ARIADNE))
+    await user.click(row(list, SANDBOX))
+    await user.keyboard("{Escape}")
+
+    await user.click(screen.getByRole("button", { name: `Remove ${ARIADNE.path}` }))
+    expect(screen.queryByRole("button", { name: `Remove ${ARIADNE.path}` })).toBeNull()
+
     await user.click(screen.getByRole("button", { name: "Create goal" }))
 
     await waitFor(() => {
@@ -184,12 +239,25 @@ describe("picking the goal's repositories", () => {
     expect(lastWrite()?.body?.repository_ids).toEqual([SANDBOX.id])
   })
 
+  it("closes the list on Escape without taking the dialog down with it", async () => {
+    const user = userEvent.setup()
+    const { onOpenChange } = renderDialog()
+
+    await openList(user)
+    await user.keyboard("{Escape}")
+
+    await waitFor(() => {
+      expect(screen.queryByRole("listbox", { name: "Repositories" })).toBeNull()
+    })
+    expect(onOpenChange).not.toHaveBeenCalled()
+  })
+
   it("will not create a goal against none of them", async () => {
     const user = userEvent.setup()
     renderDialog()
 
     await user.type(screen.getByLabelText("Title"), "Repositories")
-    await screen.findByRole("checkbox", { name: new RegExp(ARIADNE.path) })
+    await repositoryBox()
     await user.click(screen.getByRole("button", { name: "Create goal" }))
 
     expect(await screen.findByText("Pick at least one repository.")).toBeDefined()
