@@ -40,7 +40,7 @@ impl Store {
     /// `new.prompts` seeds edited text instead, in the same transaction, so a
     /// customized profile is never half-created.
     pub async fn create_profile(&self, new: NewProfile) -> Result<Profile> {
-        let whose = format!("a {} profile", new.role.as_str());
+        let whose = format!("this {} profile", new.role.as_str());
         let mut prompts = HashMap::with_capacity(new.prompts.len());
         for (kind, content) in new.prompts {
             check_role_kind(kind, new.role, &whose)?;

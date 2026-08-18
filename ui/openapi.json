@@ -952,6 +952,41 @@
         }
       }
     },
+    "/v1/roles/{role}/prompt-defaults": {
+      "get": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "The built-in prompts a profile of `role` is seeded with: read-only, so an\neditor can show a default (and offer to restore one) before anything\nexists to read them from.",
+        "operationId": "prompt_defaults",
+        "parameters": [
+          {
+            "name": "role",
+            "in": "path",
+            "description": "planner, engineer or reviewer",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RolePromptDefaultsDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "unknown role"
+          }
+        }
+      }
+    },
     "/v1/sessions": {
       "get": {
         "tags": [
@@ -1916,6 +1951,13 @@
             "type": "string",
             "example": "rust-engineer"
           },
+          "prompts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NewProfilePrompt"
+            },
+            "description": "Briefing prompts to seed instead of the role defaults. A kind listed\nhere replaces its default; every other kind of the role is seeded as\nusual. Absent or empty = the role defaults, unedited."
+          },
           "role": {
             "$ref": "#/components/schemas/Role"
           },
@@ -2459,6 +2501,23 @@
           }
         }
       },
+      "NewProfilePrompt": {
+        "type": "object",
+        "description": "One prompt override in [`CreateProfileRequest`]: the kind spelled as on the\nprompt routes, and the text to seed instead of the role default.",
+        "required": [
+          "kind",
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "example": "engineer_briefing"
+          }
+        }
+      },
       "ProfileDto": {
         "type": "object",
         "required": [
@@ -2533,6 +2592,23 @@
           },
           "updated_at": {
             "type": "string"
+          }
+        }
+      },
+      "PromptDefaultDto": {
+        "type": "object",
+        "description": "One built-in prompt default. Unlike [`ProfilePromptDto`] it belongs to no\nprofile, so there is nothing to timestamp.",
+        "required": [
+          "kind",
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "Template text with `{placeholder}` tokens the daemon fills in."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/PromptKind"
           }
         }
       },
@@ -2643,6 +2719,30 @@
           "engineer",
           "reviewer"
         ]
+      },
+      "RolePromptDefaultsDto": {
+        "type": "object",
+        "description": "Response of `GET /v1/roles/{role}/prompt-defaults`: what a profile of that\nrole is seeded with, read without creating or touching anything.",
+        "required": [
+          "role",
+          "system_prompt",
+          "prompts"
+        ],
+        "properties": {
+          "prompts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PromptDefaultDto"
+            },
+            "description": "The role's briefing prompts, in briefing order."
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "system_prompt": {
+            "type": "string"
+          }
+        }
       },
       "SessionDto": {
         "type": "object",
