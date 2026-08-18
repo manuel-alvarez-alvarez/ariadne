@@ -68,7 +68,7 @@ pub enum TaskCommand {
         depends_on: Vec<String>,
         /// Which of the goal's repositories the task works in, by id or by
         /// its registered path (only needed when the goal has several)
-        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_repos))]
+        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_repositories))]
         repo: Option<String>,
     },
     /// Edit a task that has not started yet
