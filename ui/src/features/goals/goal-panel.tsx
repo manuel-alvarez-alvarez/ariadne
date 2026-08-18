@@ -31,7 +31,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ProfileName } from "@/features/profiles/profile-name"
-import { CreateTaskDialog } from "@/features/tasks/task-form-dialog"
+import { CreateTaskDialog } from "@/features/tasks/create-task-dialog"
 import { useFocusReturn } from "@/hooks/use-focus-return"
 import { goalCopyEntries } from "@/lib/copy-entries"
 import { formatAbsolute, formatRelative } from "@/lib/time"
@@ -171,10 +171,7 @@ function GoalView({
 }) {
   const [search, setSearch] = useSearchParams()
   const [newTaskOpen, setNewTaskOpen] = useState(false)
-  // Tasks by default, whatever the URL says if it says something else: what a
-  // goal comes down to is its tasks, and they are otherwise on the board this
-  // panel covers.
-  const tab = TABS.find((value) => value === search.get("tab")) ?? "tasks"
+  const tab = TABS.find((value) => value === search.get("tab")) ?? "description"
 
   function setTab(next: Tab) {
     const params = new URLSearchParams(search)

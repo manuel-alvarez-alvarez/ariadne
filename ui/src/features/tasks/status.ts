@@ -5,10 +5,8 @@
  *
  * `canCancel` / `canRetry` mirror the transition table in
  * `crates/ariadne-core/src/state_machine.rs` for `Actor::User`: cancel from any
- * non-terminal status, retry only from `failed`. `canEdit` mirrors the store's
- * `update_task` / `set_task_dependencies` guards the same way. Offering a
- * button the daemon answers with `illegal_transition` (or a `409`) is worse
- * than not offering it at all.
+ * non-terminal status, retry only from `failed`. Offering a button the daemon
+ * answers with `illegal_transition` is worse than not offering it at all.
  */
 
 import type { TaskDto, TaskStatus } from "@/api"
@@ -182,9 +180,4 @@ export function canCancel(status: TaskStatus): boolean {
 /** Retry is the one transition the user actor owns besides cancel: failed -> ready. */
 export function canRetry(status: TaskStatus): boolean {
   return status === "failed"
-}
-
-/** Editing (title, description, reviewers, dependencies) is pre-start only. */
-export function canEdit(status: TaskStatus): boolean {
-  return status === "pending" || status === "ready"
 }

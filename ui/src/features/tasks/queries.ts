@@ -18,7 +18,6 @@ import {
   restoreCache,
   type TaskDto,
   type TaskStatus,
-  type UpdateTaskRequest,
   unwrap,
 } from "@/api"
 
@@ -121,28 +120,6 @@ export function useCreateTask(goalId: string) {
     onSuccess: (task) => {
       queryClient.setQueryData(qk.tasks.detail(task.id), task)
       void queryClient.invalidateQueries({ queryKey: qk.tasks.lists() })
-    },
-  })
-}
-
-/**
- * `PATCH /v1/tasks/{id}` — the edit-task form's submit.
- *
- * Only legal while the task is pending/ready; once it has moved on the daemon
- * answers `409` and the form shows that envelope. On success the answered task
- * replaces the cached one — the `task_updated` event will say the same thing,
- * but the stream may be down. Transitions are invalidated too: adding a
- * dependency to a `ready` task moves it back to `pending`.
- */
-export function useUpdateTask(taskId: string) {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (body: UpdateTaskRequest) =>
-      unwrap(api().PATCH("/v1/tasks/{id}", { params: { path: { id: taskId } }, body })),
-    onSuccess: (task) => {
-      queryClient.setQueryData(qk.tasks.detail(taskId), task)
-      void queryClient.invalidateQueries({ queryKey: qk.tasks.lists() })
-      void queryClient.invalidateQueries({ queryKey: qk.tasks.transitions(taskId) })
     },
   })
 }
