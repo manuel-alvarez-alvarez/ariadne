@@ -1,7 +1,7 @@
 /**
  * `ariadne goal ls` as a board: every goal, newest first, filtered server-side
  * by status — each one a horizontal swimlane of its tasks under shared
- * pipeline columns.
+ * pipeline columns, under a strip of everything that is stuck.
  *
  * Nothing here polls. The lanes come out of the query cache, which the single
  * SSE connection patches and invalidates, so a goal created or cancelled
@@ -24,6 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { AttentionStrip } from "./attention-strip"
 import { CreateGoalDialog } from "./create-goal-dialog"
 import { ALL, readStatusFilter, type StatusFilter, withStatusFilter } from "./filters"
 import { BoardSkeleton, GoalSwimlanes } from "./goal-swimlanes"
@@ -89,6 +90,10 @@ export function GoalsListPage() {
           </Button>
         </div>
       </div>
+
+      {/* Above the lanes and outside the filter: what is stuck stays in sight
+          whatever the board is narrowed to. */}
+      <AttentionStrip />
 
       {goals.error ? (
         <ErrorState

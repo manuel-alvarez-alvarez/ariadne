@@ -1,9 +1,10 @@
 //! `ariadne attention` — everything that needs a human, grouped by goal.
 //!
-//! The CLI's version of the UI's Attention page, composed client-side from
-//! the same three lists (`ui/src/features/attention/queries.ts`): every goal,
+//! The CLI's version of the UI's attention strip, composed client-side from
+//! the same three lists (`ui/src/features/goals/attention.ts`): every goal,
 //! every task, and the failed sessions. The inclusion rules mirror the UI's
-//! exactly, so both surfaces agree on what — and how much — is stuck.
+//! exactly, so both surfaces agree on what — and how much — is stuck. The
+//! grouping by goal is the CLI's own: the strip lists rows flat.
 
 use anyhow::Result;
 use serde::Serialize;
