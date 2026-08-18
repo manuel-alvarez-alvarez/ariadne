@@ -63,7 +63,7 @@ export function AttentionStrip() {
           is above is a real list with holes in it — not a list that failed to
           load. Saying so is the difference between "read this, some of it is
           missing" and letting a short list pass for the whole truth. */}
-      {attention.error ? (
+      {attention.partial ? (
         <p className="border-t px-3 py-2 text-xs text-muted-foreground">
           Some of this list could not be loaded — {describeError(attention.error)}.{" "}
           <button
