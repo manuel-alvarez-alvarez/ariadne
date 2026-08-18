@@ -177,6 +177,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Recent daemon log lines from the in-memory ring buffer, oldest first. */
+        get: operations["logs_snapshot"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/logs/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Follow the daemon log.
+         * @description The stream opens with a `snapshot` event carrying the current ring buffer
+         *     (a `LogSnapshotResponse`, what `GET /v1/logs` would have returned), then
+         *     sends a `delta` event per new line (a `LogLineDto`). Payloads are compact
+         *     JSON, so log content cannot break SSE framing. There is no replay on
+         *     reconnect: every connection starts over from a fresh snapshot, which is
+         *     also the resync path for a follower that fell behind and was dropped.
+         */
+        get: operations["logs_stream"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/models": {
         parameters: {
             query?: never;
@@ -813,6 +855,30 @@ export interface components {
              */
             uptime_secs: number;
         };
+        /** @description One captured daemon log line. */
+        LogLineDto: {
+            /**
+             * @description Log level as tracing prints it.
+             * @example INFO
+             */
+            level: string;
+            /** @description Message followed by the event's fields as ` key=value` pairs. */
+            message: string;
+            /**
+             * @description Module path the event was emitted from.
+             * @example ariadne_daemon::scheduler
+             */
+            target: string;
+            /**
+             * @description When the event was recorded, RFC 3339.
+             * @example 2026-08-18T12:34:56.789012Z
+             */
+            ts: string;
+        };
+        /** @description Response of `GET /v1/logs`: the in-memory ring buffer, oldest first. */
+        LogSnapshotResponse: {
+            lines: components["schemas"]["LogLineDto"][];
+        };
         MessageDto: {
             author_role: components["schemas"]["AuthorRole"];
             author_session_id?: string | null;
@@ -1373,6 +1439,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+        };
+    };
+    logs_snapshot: {
+        parameters: {
+            query?: {
+                /** @description Return only the last N lines. */
+                tail?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LogSnapshotResponse"];
+                };
+            };
+        };
+    };
+    logs_stream: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description SSE stream of daemon log lines (text/event-stream). A `snapshot` event with the current buffer (LogSnapshotResponse), then a `delta` event per new line (LogLineDto). A follower that falls too far behind is disconnected; reconnecting starts over from a fresh snapshot. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": components["schemas"]["LogSnapshotResponse"];
                 };
             };
         };
