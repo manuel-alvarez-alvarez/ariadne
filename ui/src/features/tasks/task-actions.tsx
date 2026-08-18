@@ -1,8 +1,8 @@
 /**
- * The two things the *user* actor may do to a task: cancel it, and retry it
- * once it has failed.
+ * The things the *user* actor may do to a task: edit it while it waits,
+ * cancel it, and retry it once it has failed.
  *
- * Both are named with the thing they act on. "Cancel" alone, on a panel that
+ * All are named with the thing they act on. "Cancel" alone, on a panel that
  * is itself dismissible, reads as a way out of the panel rather than the end
  * of the task — and these buttons sit in the same corner of the panel as the
  * goal's and the session's, which say what they act on for the same reason.
@@ -13,7 +13,7 @@
  * shown as-is rather than reworded.
  */
 
-import { BanIcon, RotateCcwIcon } from "lucide-react"
+import { BanIcon, PencilIcon, RotateCcwIcon } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
 
@@ -22,24 +22,27 @@ import { ConfirmDialog } from "@/components/confirm-dialog"
 import { Button } from "@/components/ui/button"
 import { isSettling } from "@/lib/confirm-flow"
 import { useCancelTask, useRetryTask } from "./queries"
-import { canCancel, canRetry, statusLabel } from "./status"
+import { canCancel, canEdit, canRetry, statusLabel } from "./status"
+import { EditTaskDialog } from "./task-form-dialog"
 
 export function TaskActions({ task }: { task: TaskDto }) {
   const cancel = useCancelTask(task.id)
   const retry = useRetryTask(task.id)
-  const [open, setOpen] = useState<"cancel" | "retry" | null>(null)
+  const [open, setOpen] = useState<"edit" | "cancel" | "retry" | null>(null)
 
+  const showEdit = canEdit(task.status)
   const showCancel = canCancel(task.status)
   const showRetry = canRetry(task.status)
   // Cancelling is optimistic, so by the time the request is in flight the task
   // is already `cancelled` and neither button applies any more. Returning null
   // here would take the open dialog — its spinner, and the refusal it may be
-  // about to show — down with them.
+  // about to show — down with them. The edit form is kept the same way: if the
+  // task starts while it is open, the save must still get to show the 409.
   const settling = isSettling(
     { open: open === "cancel", pending: cancel.isPending, error: cancel.error },
     { open: open === "retry", pending: retry.isPending, error: retry.error },
   )
-  if (!showCancel && !showRetry && !settling) return null
+  if (!showEdit && !showCancel && !showRetry && open !== "edit" && !settling) return null
 
   function close() {
     setOpen(null)
@@ -49,6 +52,12 @@ export function TaskActions({ task }: { task: TaskDto }) {
 
   return (
     <div className="flex items-center gap-2">
+      {showEdit && (
+        <Button variant="outline" size="sm" onClick={() => setOpen("edit")}>
+          <PencilIcon />
+          Edit task
+        </Button>
+      )}
       {showRetry && (
         <Button variant="outline" size="sm" onClick={() => setOpen("retry")}>
           <RotateCcwIcon />
@@ -62,6 +71,16 @@ export function TaskActions({ task }: { task: TaskDto }) {
           Cancel task
         </Button>
       )}
+
+      {/* The form resets itself from the task each time it opens, so it never
+          shows a previous attempt; `close()` has nothing to clear for it. */}
+      <EditTaskDialog
+        task={task}
+        open={open === "edit"}
+        onOpenChange={(next) => {
+          if (!next) setOpen(null)
+        }}
+      />
 
       <ConfirmDialog
         open={open === "retry"}
