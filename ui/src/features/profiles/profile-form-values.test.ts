@@ -19,8 +19,8 @@ import type { ProfileDto } from "@/api"
 import {
   changedPrompts,
   emptyProfileFormValues,
-  profileToFormValues,
   type PromptFormValue,
+  profileToFormValues,
   toCreateRequest,
   toUpdateRequest,
 } from "./profile-form-values"
