@@ -90,7 +90,8 @@ pub enum GoalCommand {
     /// Delete a finished goal and everything under it
     ///
     /// Only a completed or cancelled goal can go: an active one still owns
-    /// tmux sessions and worktrees, which `goal cancel` is what tears down.
+    /// tmux sessions and worktrees, and `goal cancel` is what tears those
+    /// down. What goes takes its tasks and messages with it, for good.
     Rm {
         /// Goal id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
