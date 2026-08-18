@@ -19,8 +19,8 @@ use ariadne_api::stream::{DeletedDto, DomainEvent, TaskUpdatedDto};
 use ariadne_store::{AgentSession, Change, Goal, Result, Store, Task};
 
 use crate::http::convert::{
-    event_dto, goal_dto, message_dto, profile_dto, review_dto, session_dto, task_dto,
-    transition_dto,
+    event_dto, goal_dto, message_dto, profile_dto, repository_dto, review_dto, session_dto,
+    task_dto, transition_dto,
 };
 
 /// Events buffered per subscriber before it is considered too slow.
@@ -38,7 +38,7 @@ pub struct BusEvent {
 
 impl BusEvent {
     /// Does this event pass the `goal`/`task` stream filters? An event with no
-    /// such association (profiles) is filtered out by either filter.
+    /// such association (profiles, repositories) is filtered out by either filter.
     pub fn matches(&self, goal: Option<&str>, task: Option<&str>) -> bool {
         goal.is_none_or(|g| self.goal_id.as_deref() == Some(g))
             && task.is_none_or(|t| self.task_id.as_deref() == Some(t))
@@ -166,6 +166,15 @@ async fn fatten(store: &Store, change: Change) -> Result<BusEvent> {
             unscoped(DomainEvent::ProfileUpdated(profile_dto(profile)))
         }
         Change::ProfileDeleted(id) => unscoped(DomainEvent::ProfileDeleted(DeletedDto { id })),
+        Change::RepositoryCreated(repo) => {
+            unscoped(DomainEvent::RepositoryCreated(repository_dto(repo)))
+        }
+        Change::RepositoryUpdated(repo) => {
+            unscoped(DomainEvent::RepositoryUpdated(repository_dto(repo)))
+        }
+        Change::RepositoryDeleted(id) => {
+            unscoped(DomainEvent::RepositoryDeleted(DeletedDto { id }))
+        }
     };
     Ok(event)
 }
@@ -203,7 +212,8 @@ fn session_event(session: AgentSession, wrap: fn(SessionDto) -> DomainEvent) -> 
     }
 }
 
-/// An event that belongs to no goal or task (profiles are global).
+/// An event that belongs to no goal or task (profiles and repositories are
+/// global).
 fn unscoped(event: DomainEvent) -> BusEvent {
     BusEvent {
         event,

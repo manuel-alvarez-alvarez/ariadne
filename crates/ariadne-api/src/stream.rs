@@ -14,6 +14,7 @@ use crate::events::AgentEventDto;
 use crate::goals::GoalDto;
 use crate::messages::MessageDto;
 use crate::profiles::ProfileDto;
+use crate::repositories::RepositoryDto;
 use crate::reviews::ReviewDto;
 use crate::sessions::SessionDto;
 use crate::tasks::{TaskDto, TaskTransitionDto};
@@ -68,6 +69,9 @@ pub enum DomainEvent {
     ProfileCreated(ProfileDto),
     ProfileUpdated(ProfileDto),
     ProfileDeleted(DeletedDto),
+    RepositoryCreated(RepositoryDto),
+    RepositoryUpdated(RepositoryDto),
+    RepositoryDeleted(DeletedDto),
 }
 
 impl DomainEvent {
@@ -86,6 +90,9 @@ impl DomainEvent {
             Self::ProfileCreated(_) => "profile_created",
             Self::ProfileUpdated(_) => "profile_updated",
             Self::ProfileDeleted(_) => "profile_deleted",
+            Self::RepositoryCreated(_) => "repository_created",
+            Self::RepositoryUpdated(_) => "repository_updated",
+            Self::RepositoryDeleted(_) => "repository_deleted",
         }
     }
 
@@ -105,6 +112,8 @@ impl DomainEvent {
             Self::AgentEvent(e) => json(e),
             Self::ProfileCreated(p) | Self::ProfileUpdated(p) => json(p),
             Self::ProfileDeleted(d) => json(d),
+            Self::RepositoryCreated(r) | Self::RepositoryUpdated(r) => json(r),
+            Self::RepositoryDeleted(d) => json(d),
         }
     }
 }
