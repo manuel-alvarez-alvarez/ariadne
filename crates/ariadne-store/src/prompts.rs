@@ -5,6 +5,7 @@
 //! is editable and every prompt can be put back to the constant it was seeded
 //! from (see [`crate::defaults`]).
 
+use std::collections::HashMap;
 use std::str::FromStr;
 
 use ariadne_core::{PromptKind, Role};
@@ -55,20 +56,23 @@ impl Store {
             .bind(&ts)
             .execute(&mut *tx)
             .await?;
-            Self::insert_default_prompts(&mut tx, builtin.id, builtin.role, &ts).await?;
+            Self::insert_prompts(&mut tx, builtin.id, builtin.role, &ts, &HashMap::new()).await?;
         }
         tx.commit().await?;
         Ok(())
     }
 
-    /// Give a freshly created profile the prompts of its role.
-    pub(crate) async fn insert_default_prompts(
+    /// Give a freshly created profile the prompts of its role, with
+    /// `overrides` replacing the default text of the kinds they name.
+    pub(crate) async fn insert_prompts(
         tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
         profile_id: &str,
         role: Role,
         ts: &str,
+        overrides: &HashMap<PromptKind, String>,
     ) -> Result<()> {
-        for (kind, content) in default_prompts(role) {
+        for (kind, default) in default_prompts(role) {
+            let content = overrides.get(&kind).map_or(default, String::as_str);
             sqlx::query(
                 "INSERT INTO profile_prompts (profile_id, kind, content, updated_at)
                  VALUES (?, ?, ?, ?)",
@@ -187,13 +191,21 @@ impl Store {
 /// The default text of `kind` for this profile, or an error naming the role
 /// that owns the kind instead.
 fn check_kind(profile: &Profile, kind: PromptKind) -> Result<&'static str> {
-    default_prompt(profile.role(), kind).ok_or_else(|| {
+    check_role_kind(
+        kind,
+        profile.role(),
+        &format!("{} ({})", profile.name, profile.role),
+    )
+}
+
+/// The default text of `kind` for a profile of `role`, or an error naming the
+/// role that owns the kind instead. `whose` names the profile in the message.
+pub(crate) fn check_role_kind(kind: PromptKind, role: Role, whose: &str) -> Result<&'static str> {
+    default_prompt(role, kind).ok_or_else(|| {
         StoreError::Invalid(format!(
-            "prompt {} belongs to a {} profile, not to {} ({})",
+            "prompt {} belongs to a {} profile, not to {whose}",
             kind.as_str(),
             kind.role().as_str(),
-            profile.name,
-            profile.role
         ))
     })
 }

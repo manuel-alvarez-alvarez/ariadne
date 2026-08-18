@@ -7,10 +7,11 @@ use serde::Deserialize;
 use utoipa::IntoParams;
 
 use ariadne_api::profiles::{
-    CreateProfileRequest, ProfileDto, ProfilePromptDto, UpdateProfilePromptRequest,
-    UpdateProfileRequest,
+    CreateProfileRequest, ProfileDto, ProfilePromptDto, PromptDefaultDto, RolePromptDefaultsDto,
+    UpdateProfilePromptRequest, UpdateProfileRequest,
 };
 use ariadne_core::Role;
+use ariadne_store::defaults::{default_prompts, default_system_prompt};
 use ariadne_store::{NewProfile, ProfileUpdate, parse_prompt_kind};
 
 use super::AppState;
@@ -34,6 +35,10 @@ pub async fn create(
     State(state): State<AppState>,
     Json(req): Json<CreateProfileRequest>,
 ) -> ApiResult<(StatusCode, Json<ProfileDto>)> {
+    let mut prompts = Vec::with_capacity(req.prompts.len());
+    for prompt in req.prompts {
+        prompts.push((parse_prompt_kind(&prompt.kind)?, prompt.content));
+    }
     let profile = state
         .store
         .create_profile(NewProfile {
@@ -43,9 +48,40 @@ pub async fn create(
             model: req.model,
             system_prompt: req.system_prompt,
             extra_flags: req.extra_flags,
+            prompts,
         })
         .await?;
     Ok((StatusCode::CREATED, Json(profile_dto(profile))))
+}
+
+/// The built-in prompts a profile of `role` is seeded with: read-only, so an
+/// editor can show a default (and offer to restore one) before anything
+/// exists to read them from.
+#[utoipa::path(get, path = "/v1/roles/{role}/prompt-defaults", tag = "profiles",
+    params(("role" = String, Path, description = "planner, engineer or reviewer")),
+    responses(
+        (status = 200, body = RolePromptDefaultsDto),
+        (status = 400, description = "unknown role")
+    ))]
+pub async fn prompt_defaults(Path(role): Path<String>) -> ApiResult<Json<RolePromptDefaultsDto>> {
+    let role = role.parse::<Role>().map_err(|_| {
+        let known = Role::ALL
+            .iter()
+            .map(|r| r.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        ApiError::bad_request(format!("unknown role: {role} (expected one of {known})"))
+    })?;
+    Ok(Json(RolePromptDefaultsDto {
+        role,
+        system_prompt: default_system_prompt(role).to_string(),
+        prompts: default_prompts(role)
+            .map(|(kind, content)| PromptDefaultDto {
+                kind,
+                content: content.to_string(),
+            })
+            .collect(),
+    }))
 }
 
 /// List profiles.

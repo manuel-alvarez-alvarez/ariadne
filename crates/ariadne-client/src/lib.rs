@@ -17,9 +17,11 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use ariadne_api::error::ErrorBody;
-use ariadne_api::profiles::{ProfileDto, ProfilePromptDto, UpdateProfilePromptRequest};
+use ariadne_api::profiles::{
+    ProfileDto, ProfilePromptDto, RolePromptDefaultsDto, UpdateProfilePromptRequest,
+};
 use ariadne_api::{HealthResponse, VersionResponse};
-use ariadne_core::PromptKind;
+use ariadne_core::{PromptKind, Role};
 
 pub mod endpoint;
 
@@ -252,6 +254,17 @@ impl Client {
     /// Put a profile's system prompt back to the default of its role.
     pub async fn reset_system_prompt(&self, profile: &str) -> Result<ProfileDto, ClientError> {
         self.post_empty(&format!("/v1/profiles/{profile}/system-prompt/reset"))
+            .await
+    }
+
+    /// The built-in prompts a profile of `role` is seeded with. Reads nothing
+    /// from the database and writes nothing: it is what a new profile starts
+    /// from, and what "restore default" puts back.
+    pub async fn role_prompt_defaults(
+        &self,
+        role: Role,
+    ) -> Result<RolePromptDefaultsDto, ClientError> {
+        self.get_json(&format!("/v1/roles/{}/prompt-defaults", role.as_str()))
             .await
     }
 
