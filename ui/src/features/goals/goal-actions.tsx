@@ -1,46 +1,60 @@
 /**
- * The two things a user can do to a goal from outside the thread.
+ * The three things a user can do to a goal from outside the thread.
  *
- * Both are confirmed first — finalizing starts every ready task, cancelling
- * tears the goal's sessions and worktrees down — and both surface the daemon's
- * 409 in the dialog rather than closing on a failure ("cannot finalize a plan
- * with no tasks" is the one a user will actually hit).
+ * Each is confirmed first — finalizing starts every ready task, cancelling
+ * tears the goal's sessions and worktrees down, deleting drops the goal and
+ * every trace of it — and each surfaces the daemon's 409 in the dialog rather
+ * than closing on a failure ("cannot finalize a plan with no tasks" is the one
+ * a user will actually hit).
  *
- * Both mutations are held here rather than inside their dialogs. Cancelling is
- * optimistic, so the goal is terminal by the time the request leaves — which
- * takes these buttons off screen with it. The dialog waiting for the daemon
- * has to outlive the trigger that opened it, and `isSettling` is what keeps it
- * (and the mutation observer behind it) mounted until there is nothing left to
- * show.
+ * They divide the lifecycle between them, the way `ariadne goal` does:
+ * finalizing belongs to a planning goal, cancelling to one that has not
+ * stopped, deleting to one that has. Cancelling and deleting are therefore
+ * exact opposites — every goal offers one of them and never both — which is
+ * why this row always has something to show and the three dialogs are always
+ * mounted. A trigger that goes away mid-flow (cancelling is optimistic, so the
+ * goal is terminal by the time the request leaves) leaves its dialog behind to
+ * finish, spinner, refusal and all.
  */
 
-import { CheckCheckIcon, CircleSlashIcon } from "lucide-react"
+import { CheckCheckIcon, CircleSlashIcon, Trash2Icon } from "lucide-react"
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
 
-import type { GoalDto } from "@/api"
+import { ApiError, type GoalDto } from "@/api"
 import { ConfirmDialog } from "@/components/confirm-dialog"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Textarea } from "@/components/ui/textarea"
-import { isSettling } from "@/lib/confirm-flow"
-import { useCancelGoal, useFinalizeGoalPlan } from "./queries"
+import { useCancelGoal, useDeleteGoal, useFinalizeGoalPlan } from "./queries"
 import { isTerminalGoalStatus } from "./status"
 
-export function GoalActions({ goal }: { goal: GoalDto }) {
+export function GoalActions({
+  goal,
+  onDeleted,
+}: {
+  goal: GoalDto
+  /**
+   * The goal has stopped existing, so whatever is showing it has to stop too.
+   * The panel hands its own close in, so deleting leaves the board exactly the
+   * way Escape would (see `routes/panel-history.ts`).
+   */
+  onDeleted?: () => void
+}) {
   const [finalizeOpen, setFinalizeOpen] = useState(false)
   const [cancelOpen, setCancelOpen] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
   const finalize = useFinalizeGoalPlan(goal.id)
   const cancel = useCancelGoal(goal.id)
 
+  const terminal = isTerminalGoalStatus(goal.status)
   const canFinalize = goal.status === "planning"
-  const canCancel = !isTerminalGoalStatus(goal.status)
-  const settling = isSettling(
-    { open: finalizeOpen, pending: finalize.isPending, error: finalize.error },
-    { open: cancelOpen, pending: cancel.isPending, error: cancel.error },
-  )
-
-  if (!canFinalize && !canCancel && !settling) return null
+  const canCancel = !terminal
+  // A running goal still owns tmux sessions and git worktrees that only
+  // cancelling tears down, so the daemon refuses to delete one — and the
+  // button is never offered rather than offered and refused.
+  const canDelete = terminal
 
   return (
     <div className="flex items-center gap-2">
@@ -57,6 +71,12 @@ export function GoalActions({ goal }: { goal: GoalDto }) {
           Cancel goal
         </Button>
       ) : null}
+      {canDelete ? (
+        <Button variant="destructive-ghost" size="sm" onClick={() => setDeleteOpen(true)}>
+          <Trash2Icon />
+          Delete goal
+        </Button>
+      ) : null}
 
       <FinalizePlanDialog open={finalizeOpen} onOpenChange={setFinalizeOpen} finalize={finalize} />
       <CancelGoalDialog
@@ -64,6 +84,12 @@ export function GoalActions({ goal }: { goal: GoalDto }) {
         open={cancelOpen}
         onOpenChange={setCancelOpen}
         cancel={cancel}
+      />
+      <DeleteGoalDialog
+        goal={goal}
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        onDeleted={onDeleted}
       />
     </div>
   )
@@ -174,5 +200,91 @@ function CancelGoalDialog({
       errorTitle="Could not cancel the goal"
       onConfirm={() => void confirm()}
     />
+  )
+}
+
+/**
+ * Deleting is the one action with nothing after it: the goal, its tasks, their
+ * messages and the planner thread go, and the daemon keeps no copy. So the
+ * question names what goes rather than only asking whether to go ahead — the
+ * same thing `ariadne goal rm` asks before it deletes.
+ *
+ * The 409 is an outcome rather than a failure to toast away: the panel showed
+ * a finished goal, and nothing stops it having been put back to work between
+ * that render and this click. The refusal is shown here, the dialog stays open
+ * and the button that caused it stops being clickable — asking again would
+ * only get the same answer.
+ */
+function DeleteGoalDialog({
+  goal,
+  open,
+  onOpenChange,
+  onDeleted,
+}: {
+  goal: GoalDto
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onDeleted?: () => void
+}) {
+  const deleteGoal = useDeleteGoal(goal.id)
+  const [running, setRunning] = useState<string | null>(null)
+  const [failure, setFailure] = useState<unknown>(null)
+
+  // Re-opening must not show the verdict of the last attempt.
+  useEffect(() => {
+    if (open) {
+      setRunning(null)
+      setFailure(null)
+    }
+  }, [open])
+
+  async function confirm() {
+    try {
+      await deleteGoal.mutateAsync()
+      toast.success("Goal deleted", { description: goal.title })
+      onOpenChange(false)
+      onDeleted?.()
+    } catch (error) {
+      if (ApiError.is(error) && error.status === 409) {
+        setRunning(error.message)
+        return
+      }
+      setFailure(error)
+    }
+  }
+
+  return (
+    <ConfirmDialog
+      open={open}
+      onClose={() => onOpenChange(false)}
+      className="sm:max-w-lg"
+      title="Delete this goal?"
+      description={
+        <>
+          <span className="font-medium text-foreground">{goal.title}</span> and everything under it
+          — its tasks, their messages and the whole planner thread — are removed for good. This
+          cannot be undone and none of it can be recovered afterwards.
+        </>
+      }
+      confirmLabel="Delete goal"
+      destructive
+      pending={deleteGoal.isPending}
+      // Nothing the dialog can do about a goal the daemon sees as running.
+      confirmDisabled={running !== null}
+      error={failure}
+      errorTitle="Could not delete the goal"
+      onConfirm={() => void confirm()}
+    >
+      {running ? (
+        <Alert variant="destructive">
+          <AlertTitle>This goal is running again</AlertTitle>
+          <AlertDescription>
+            Only a goal that has stopped can be deleted — cancel it first, which is what tears its
+            sessions and worktrees down. The daemon said:{" "}
+            <span className="text-foreground">{running}</span>
+          </AlertDescription>
+        </Alert>
+      ) : null}
+    </ConfirmDialog>
   )
 }
