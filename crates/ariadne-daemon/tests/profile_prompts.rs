@@ -3,7 +3,8 @@
 //! The contract is that every prompt a profile owns is listable, editable with
 //! any text at all, and restorable to the exact Rust constant it was seeded
 //! from — and that a kind belonging to another role is refused with a sentence,
-//! not a 500.
+//! not a 500. The role defaults are also readable without a profile, and a
+//! profile can be created straight onto edited prompts.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -16,7 +17,7 @@ use serde::de::DeserializeOwned;
 use tower::ServiceExt;
 
 use ariadne_api::error::ErrorBody;
-use ariadne_api::profiles::{ProfileDto, ProfilePromptDto};
+use ariadne_api::profiles::{ProfileDto, ProfilePromptDto, RolePromptDefaultsDto};
 use ariadne_core::{AgentKind, PromptKind, Role};
 use ariadne_daemon::config::Config;
 use ariadne_daemon::gitwt::GitManager;
@@ -70,6 +71,7 @@ impl Harness {
                 model: None,
                 system_prompt: format!("You are {name}."),
                 extra_flags: vec![],
+                prompts: vec![],
             })
             .await
             .unwrap()
@@ -112,6 +114,15 @@ fn post(uri: &str) -> Request<Body> {
 fn put_json(uri: &str, body: serde_json::Value) -> Request<Body> {
     Request::builder()
         .method(Method::PUT)
+        .uri(uri)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+fn post_json(uri: &str, body: serde_json::Value) -> Request<Body> {
+    Request::builder()
+        .method(Method::POST)
         .uri(uri)
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(body.to_string()))
@@ -273,4 +284,181 @@ async fn prompts_are_reachable_by_profile_name() {
 
     let prompts: Vec<ProfilePromptDto> = h.json(get("/v1/profiles/eng/prompts")).await;
     assert_eq!(prompts.len(), PromptKind::for_role(Role::Engineer).len());
+}
+
+/// The read-only defaults endpoint answers for every role with exactly the
+/// constants a profile of that role is seeded from, briefings in briefing
+/// order — and it touches nothing: no profile exists yet when the create
+/// dialog asks.
+#[tokio::test]
+async fn the_role_defaults_are_readable_without_a_profile() {
+    let h = harness().await;
+
+    for role in Role::ALL {
+        let defaults: RolePromptDefaultsDto = h
+            .json(get(&format!("/v1/roles/{}/prompt-defaults", role.as_str())))
+            .await;
+
+        assert_eq!(defaults.role, role);
+        assert_eq!(defaults.system_prompt, default_system_prompt(role));
+        assert_eq!(
+            defaults.prompts.iter().map(|p| p.kind).collect::<Vec<_>>(),
+            PromptKind::for_role(role).to_vec()
+        );
+        for prompt in &defaults.prompts {
+            assert_eq!(prompt.content, default_prompt(role, prompt.kind).unwrap());
+        }
+    }
+}
+
+#[tokio::test]
+async fn an_unknown_role_has_no_defaults_to_read() {
+    let h = harness().await;
+
+    let err = h
+        .error(
+            get("/v1/roles/nope/prompt-defaults"),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+
+    assert_eq!(err.error.code, "invalid_request");
+    assert!(
+        err.error.message.contains("nope") && err.error.message.contains("engineer"),
+        "unhelpful message: {}",
+        err.error.message
+    );
+}
+
+/// The whole point of the field: one call creates a profile already carrying an
+/// edited briefing, with the kinds it did not name left on their defaults.
+#[tokio::test]
+async fn a_profile_can_be_created_on_edited_prompts() {
+    let h = harness().await;
+
+    let (status, body) = h
+        .send(post_json(
+            "/v1/profiles",
+            serde_json::json!({
+                "name": "eng",
+                "role": "engineer",
+                "system_prompt": "You are eng.",
+                "prompts": [
+                    { "kind": "engineer_briefing", "content": "Ship {task_title}, carefully." }
+                ],
+            }),
+        ))
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "{}",
+        String::from_utf8_lossy(&body)
+    );
+    let profile: ProfileDto = serde_json::from_slice(&body).unwrap();
+
+    let prompts: Vec<ProfilePromptDto> = h
+        .json(get(&format!("/v1/profiles/{}/prompts", profile.id)))
+        .await;
+    assert_eq!(
+        prompts.iter().map(|p| p.kind).collect::<Vec<_>>(),
+        PromptKind::for_role(Role::Engineer).to_vec()
+    );
+    for prompt in &prompts {
+        let expected = match prompt.kind {
+            PromptKind::EngineerBriefing => "Ship {task_title}, carefully.",
+            other => default_prompt(Role::Engineer, other).unwrap(),
+        };
+        assert_eq!(prompt.content, expected);
+    }
+}
+
+/// A kind of another role fails the create outright: the profile row must not
+/// survive its rejected prompts.
+#[tokio::test]
+async fn a_create_naming_a_kind_of_another_role_creates_nothing() {
+    let h = harness().await;
+
+    let err = h
+        .error(
+            post_json(
+                "/v1/profiles",
+                serde_json::json!({
+                    "name": "eng",
+                    "role": "engineer",
+                    "system_prompt": "You are eng.",
+                    "prompts": [
+                        { "kind": "engineer_briefing", "content": "fine" },
+                        { "kind": "planner_briefing", "content": "not mine" }
+                    ],
+                }),
+            ),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+
+    assert_eq!(err.error.code, "invalid_request");
+    assert!(
+        err.error.message.contains("planner_briefing"),
+        "unhelpful message: {}",
+        err.error.message
+    );
+    assert!(h.store.get_profile_by_name("eng").await.is_err());
+}
+
+#[tokio::test]
+async fn a_create_naming_an_unknown_kind_creates_nothing() {
+    let h = harness().await;
+
+    let err = h
+        .error(
+            post_json(
+                "/v1/profiles",
+                serde_json::json!({
+                    "name": "eng",
+                    "role": "engineer",
+                    "system_prompt": "You are eng.",
+                    "prompts": [{ "kind": "nope", "content": "..." }],
+                }),
+            ),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+
+    assert_eq!(err.error.code, "invalid_request");
+    assert!(
+        err.error.message.contains("nope"),
+        "unhelpful message: {}",
+        err.error.message
+    );
+    assert!(h.store.get_profile_by_name("eng").await.is_err());
+}
+
+/// Omitting the field is the old behaviour, untouched: the role defaults.
+#[tokio::test]
+async fn a_create_without_prompts_still_seeds_the_role_defaults() {
+    let h = harness().await;
+
+    let (status, body) = h
+        .send(post_json(
+            "/v1/profiles",
+            serde_json::json!({
+                "name": "rev",
+                "role": "reviewer",
+                "system_prompt": "You are rev.",
+            }),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let profile: ProfileDto = serde_json::from_slice(&body).unwrap();
+
+    let prompts: Vec<ProfilePromptDto> = h
+        .json(get(&format!("/v1/profiles/{}/prompts", profile.id)))
+        .await;
+    for prompt in &prompts {
+        assert_eq!(
+            prompt.content,
+            default_prompt(Role::Reviewer, prompt.kind).unwrap()
+        );
+    }
 }
