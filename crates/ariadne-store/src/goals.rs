@@ -115,9 +115,8 @@ impl Store {
     }
 
     /// Hard-delete a goal and (via ON DELETE CASCADE) all its children.
-    /// The normal lifecycle uses cancel; deleting is what drops a finished
-    /// goal for good, so the children go with it and nothing is left to
-    /// refetch — the event carries the id alone.
+    /// Admin/maintenance path — the normal lifecycle uses cancel, and there
+    /// is no domain event for it (nothing exposes it over HTTP).
     pub async fn delete_goal(&self, id: &str) -> Result<()> {
         let n = sqlx::query("DELETE FROM goals WHERE id = ?")
             .bind(id)
@@ -127,7 +126,6 @@ impl Store {
         if n == 0 {
             return Err(not_found("goal", id));
         }
-        self.publish(Change::GoalDeleted(id.to_string()));
         Ok(())
     }
 

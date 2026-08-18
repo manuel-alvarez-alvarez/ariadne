@@ -28,7 +28,6 @@ import type { StreamStatus } from "@/stores/stream"
 const DOMAIN_EVENT_KINDS_PRESENT: Record<DomainEventKind, true> = {
   goal_created: true,
   goal_updated: true,
-  goal_deleted: true,
   task_created: true,
   task_updated: true,
   message_created: true,

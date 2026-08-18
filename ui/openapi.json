@@ -289,35 +289,6 @@
             "description": ""
           }
         }
-      },
-      "delete": {
-        "tags": [
-          "goals"
-        ],
-        "summary": "Delete a finished goal and everything under it.",
-        "operationId": "delete",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "goal id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": ""
-          },
-          "404": {
-            "description": ""
-          },
-          "409": {
-            "description": "the goal is not finished yet; cancel it first"
-          }
-        }
       }
     },
     "/v1/goals/{id}/cancel": {
@@ -2305,26 +2276,6 @@
                 "type": "string",
                 "enum": [
                   "goal_updated"
-                ]
-              }
-            }
-          },
-          {
-            "type": "object",
-            "description": "A terminal goal was deleted, tasks and messages with it.",
-            "required": [
-              "data",
-              "event"
-            ],
-            "properties": {
-              "data": {
-                "$ref": "#/components/schemas/DeletedDto",
-                "description": "A terminal goal was deleted, tasks and messages with it."
-              },
-              "event": {
-                "type": "string",
-                "enum": [
-                  "goal_deleted"
                 ]
               }
             }

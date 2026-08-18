@@ -144,32 +144,6 @@ pub async fn cancel(
     Ok(Json(goal_dto(goal, repos)))
 }
 
-/// Delete a finished goal and everything under it.
-#[utoipa::path(delete, path = "/v1/goals/{id}", tag = "goals",
-    params(("id" = String, Path, description = "goal id")),
-    responses(
-        (status = 204),
-        (status = 404),
-        (status = 409, description = "the goal is not finished yet; cancel it first")
-    ))]
-pub async fn delete(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> ApiResult<StatusCode> {
-    let goal = state.store.get_goal(&id).await?;
-    // Terminal goals only: an active one still owns tmux sessions and git
-    // worktrees that only the cancel path tears down, and a hard delete here
-    // would orphan them.
-    if !goal.status().is_terminal() {
-        return Err(ApiError::conflict(format!(
-            "goal is {}, cancel it before deleting it",
-            goal.status
-        )));
-    }
-    state.store.delete_goal(&id).await?;
-    Ok(StatusCode::NO_CONTENT)
-}
-
 /// Finalize planning: goal moves planning -> active (planner or user).
 #[utoipa::path(post, path = "/v1/goals/{id}/finalize", tag = "goals",
     request_body = FinalizePlanRequest,

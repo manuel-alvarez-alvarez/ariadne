@@ -56,8 +56,6 @@ pub enum DomainEvent {
     GoalCreated(GoalDto),
     /// Covers status changes: finalize, cancel, completion.
     GoalUpdated(GoalDto),
-    /// A terminal goal was deleted, tasks and messages with it.
-    GoalDeleted(DeletedDto),
     TaskCreated(TaskDto),
     /// Covers status transitions, edits, stall flags and worktree changes.
     TaskUpdated(TaskUpdatedDto),
@@ -82,7 +80,6 @@ impl DomainEvent {
         match self {
             Self::GoalCreated(_) => "goal_created",
             Self::GoalUpdated(_) => "goal_updated",
-            Self::GoalDeleted(_) => "goal_deleted",
             Self::TaskCreated(_) => "task_created",
             Self::TaskUpdated(_) => "task_updated",
             Self::MessageCreated(_) => "message_created",
@@ -107,7 +104,6 @@ impl DomainEvent {
         }
         match self {
             Self::GoalCreated(g) | Self::GoalUpdated(g) => json(g),
-            Self::GoalDeleted(d) => json(d),
             Self::TaskCreated(t) => json(t),
             Self::TaskUpdated(t) => json(t),
             Self::MessageCreated(m) => json(m),
