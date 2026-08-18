@@ -2,15 +2,13 @@
 
 /**
  * The board's status filter, end to end: what the URL says, what the menu
- * shows, what the daemon is asked for, and what a second visit to the board
- * opens on.
+ * shows, and what the daemon is asked for.
  *
  * Rendered rather than unit-tested because the part worth pinning is not the
  * parsing (`filters.test.ts` has that) — it is that the selection reaches
- * `GET /v1/goals` as one `?status=` and nothing is narrowed on the client,
- * that a click on a checkbox item lands back in the URL, and that leaving the
- * board and coming back to a bare `/goals` puts the filter back. Only the
- * mounted board shows any of it.
+ * `GET /v1/goals` as one `?status=` and nothing is narrowed on the client, and
+ * that a click on a checkbox item lands back in the URL. Only the mounted
+ * board shows either.
  */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
@@ -21,33 +19,17 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest"
 
 import type { GoalDto } from "@/api"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { useSettingsStore } from "@/stores/settings"
 
 import { GoalsListPage } from "./goals-list-page"
 
 /**
  * Hoisted, and not `vi.stubGlobal`: `openapi-fetch` takes its `fetch` when the
  * client is built, which is when `@/api` is imported — a stub installed after
- * that is a stub the daemon client never sees. The same goes for the store the
- * settings persist to, which jsdom does not provide and `zustand/middleware`
- * takes hold of when `@/stores/settings` is imported.
+ * that is a stub the daemon client never sees.
  */
 const { daemonFetch } = vi.hoisted(() => {
   const daemonFetch = vi.fn()
   globalThis.fetch = daemonFetch as unknown as typeof fetch
-
-  const entries = new Map<string, string>()
-  globalThis.localStorage = {
-    get length() {
-      return entries.size
-    },
-    key: (index: number) => [...entries.keys()][index] ?? null,
-    getItem: (key: string) => entries.get(key) ?? null,
-    setItem: (key: string, value: string) => void entries.set(key, value),
-    removeItem: (key: string) => void entries.delete(key),
-    clear: () => entries.clear(),
-  } as Storage
-
   return { daemonFetch }
 })
 
@@ -128,8 +110,6 @@ beforeEach(() => {
   )
   daemonFetch.mockReset()
   stubDaemon()
-  localStorage.clear()
-  useSettingsStore.setState({ goalStatusFilter: "" })
 })
 
 afterEach(() => {
@@ -213,83 +193,4 @@ it("says what the filter, not the board, came up empty on", async () => {
   renderBoard("/goals?status=active,completed")
 
   expect(await screen.findByText("No goals match this filter")).toBeDefined()
-})
-
-/** Leaving the board for another screen, and coming back to the sidebar's `/goals`. */
-function leaveAndComeBack() {
-  cleanup()
-  daemonFetch.mockClear()
-  return renderBoard("/goals")
-}
-
-it("comes back to the filter the board was left with", async () => {
-  const user = userEvent.setup()
-  renderBoard("/goals")
-  await waitFor(() => expect(goalRequests().length).toBeGreaterThan(0))
-
-  await user.click(trigger())
-  await user.click(await screen.findByRole("menuitemcheckbox", { name: "Active" }))
-  await waitFor(() => expect(goalRequests()).toContain("active"))
-
-  const seen = leaveAndComeBack()
-
-  await waitFor(() => expect(seen.url).toBe("/goals?status=active"))
-  // The board is narrowed again, not just the URL. (The unfiltered request
-  // alongside it is the attention strip's, which reads no filter.)
-  await waitFor(() => expect(goalRequests()).toContain("active"))
-  expect(trigger().textContent).toContain("Active")
-})
-
-it("leaves a cleared filter cleared", async () => {
-  const user = userEvent.setup()
-  renderBoard("/goals?status=active")
-  await waitFor(() => expect(goalRequests()).toContain("active"))
-
-  await user.click(trigger())
-  await user.click(await screen.findByRole("menuitemcheckbox", { name: "All statuses" }))
-  await waitFor(() => expect(goalRequests()).toContain(null))
-
-  const seen = leaveAndComeBack()
-
-  await waitFor(() => expect(goalRequests().length).toBeGreaterThan(0))
-  expect(seen.url).toBe("/goals")
-  expect(goalRequests()).not.toContain("active")
-  expect(trigger().textContent).toContain("All statuses")
-})
-
-it("shows what an explicit ?status= asks for, not what is remembered", async () => {
-  useSettingsStore.setState({ goalStatusFilter: "active" })
-  const seen = renderBoard("/goals?status=planning")
-
-  await waitFor(() => expect(goalRequests()).toContain("planning"))
-  expect(seen.url).toBe("/goals?status=planning")
-  expect(trigger().textContent).toContain("Planning")
-
-  // ...and that is the filter the next visit opens on: the board remembers
-  // what it is showing, however it was asked to show it.
-  const back = leaveAndComeBack()
-  await waitFor(() => expect(back.url).toBe("/goals?status=planning"))
-})
-
-it("restores the filter under a panel the entry opened", async () => {
-  useSettingsStore.setState({ goalStatusFilter: "completed" })
-  const seen = renderBoard("/goals?goal=01JGOAL0000000000000000001")
-
-  await waitFor(() => expect(goalRequests()).toContain("completed"))
-  expect(seen.url).toBe("/goals?goal=01JGOAL0000000000000000001&status=completed")
-})
-
-it("keeps the filter where a restart can find it", async () => {
-  const user = userEvent.setup()
-  renderBoard("/goals")
-  await waitFor(() => expect(goalRequests().length).toBeGreaterThan(0))
-
-  await user.click(trigger())
-  await user.click(await screen.findByRole("menuitemcheckbox", { name: "Active" }))
-
-  await waitFor(() =>
-    expect(JSON.parse(localStorage.getItem("ariadne.settings") ?? "{}")).toMatchObject({
-      state: { goalStatusFilter: "active" },
-    }),
-  )
 })

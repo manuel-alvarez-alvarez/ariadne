@@ -10,11 +10,6 @@
  * comma-separated `?status=active,completed` — the encoding `GET /v1/goals`
  * reads, so the URL the user sees and the request the board makes spell the
  * selection the same way.
- *
- * The URL only lasts as long as the user is on the board, and the sidebar
- * links to bare `/goals`. So the selection is also mirrored into the persisted
- * settings, and put back on a route entry that carries no `?status=` of its
- * own — see `restoreStatusFilter` and `use-status-filter.ts`.
  */
 
 import type { GoalStatus } from "@/api"
@@ -48,23 +43,11 @@ export function normalizeStatusFilter(statuses: readonly string[]): StatusFilter
   return selected.length === GOAL_STATUSES.length ? NO_STATUS_FILTER : selected
 }
 
-/**
- * A selection out of the comma-separated form the param travels in, which is
- * also the form it is remembered in between visits to the board.
- */
-export function parseStatusFilter(value: string): StatusFilter {
-  if (!value) return NO_STATUS_FILTER
-  return normalizeStatusFilter(value.split(",").map((status) => status.trim()))
-}
-
-/** The canonical param value for a selection; empty is no filter. */
-export function serializeStatusFilter(filter: StatusFilter): string {
-  return normalizeStatusFilter(filter).join(",")
-}
-
 /** What the URL asks for; anything the daemon does not define is ignored. */
 export function readStatusFilter(params: URLSearchParams): StatusFilter {
-  return parseStatusFilter(params.get(STATUS_PARAM) ?? "")
+  const value = params.get(STATUS_PARAM)
+  if (!value) return NO_STATUS_FILTER
+  return normalizeStatusFilter(value.split(",").map((status) => status.trim()))
 }
 
 /**
@@ -76,9 +59,9 @@ export function readStatusFilter(params: URLSearchParams): StatusFilter {
  */
 export function withStatusFilter(params: URLSearchParams, filter: StatusFilter): URLSearchParams {
   const next = new URLSearchParams(params)
-  const value = serializeStatusFilter(filter)
-  if (value === "") next.delete(STATUS_PARAM)
-  else next.set(STATUS_PARAM, value)
+  const selected = normalizeStatusFilter(filter)
+  if (selected.length === 0) next.delete(STATUS_PARAM)
+  else next.set(STATUS_PARAM, selected.join(","))
   return next
 }
 
@@ -93,27 +76,4 @@ export function toggleStatusFilter(filter: StatusFilter, status: GoalStatus): St
     ? filter.filter((selected) => selected !== status)
     : [...filter, status]
   return normalizeStatusFilter(next)
-}
-
-/**
- * The params the goals route should be rewritten to when it is entered, or
- * `null` when the URL it was entered with already says everything.
- *
- * The URL stays the source of truth: a `?status=` on it — a deep link, a Back
- * step, a filter the user just set — is the answer, and `remembered` is only
- * consulted when the route was entered with nothing to go on, which is what a
- * sidebar link to bare `/goals` is. Whatever else the URL carries (an open
- * `?goal=` panel) is kept, so restoring a filter never closes a panel.
- *
- * A remembered "all statuses" restores to nothing rather than to a param: a
- * filter the user cleared stays cleared, here as much as on the board.
- */
-export function restoreStatusFilter(
-  params: URLSearchParams,
-  remembered: string,
-): URLSearchParams | null {
-  if (params.has(STATUS_PARAM)) return null
-  const filter = parseStatusFilter(remembered)
-  if (filter.length === 0) return null
-  return withStatusFilter(params, filter)
 }

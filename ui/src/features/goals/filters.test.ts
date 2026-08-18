@@ -3,10 +3,7 @@ import { describe, expect, it } from "vitest"
 import {
   NO_STATUS_FILTER,
   normalizeStatusFilter,
-  parseStatusFilter,
   readStatusFilter,
-  restoreStatusFilter,
-  serializeStatusFilter,
   toggleStatusFilter,
   withStatusFilter,
 } from "./filters"
@@ -107,50 +104,5 @@ describe("toggleStatusFilter", () => {
   it("lands back on no filter when every status ends up selected", () => {
     const allButOne = GOAL_STATUSES.filter((status) => status !== "cancelled")
     expect(toggleStatusFilter(allButOne, "cancelled")).toEqual(NO_STATUS_FILTER)
-  })
-})
-
-describe("serializeStatusFilter", () => {
-  it("spells a selection the way the param does", () => {
-    expect(serializeStatusFilter(["completed", "active"])).toBe("active,completed")
-  })
-
-  it("spells no filter, and every status, as nothing at all", () => {
-    expect(serializeStatusFilter(NO_STATUS_FILTER)).toBe("")
-    expect(serializeStatusFilter(GOAL_STATUSES)).toBe("")
-  })
-
-  it("round-trips a remembered selection", () => {
-    const filter = ["planning", "completed"] as const
-    expect(parseStatusFilter(serializeStatusFilter(filter))).toEqual(filter)
-  })
-})
-
-describe("restoreStatusFilter", () => {
-  it("puts the remembered filter back on a bare entry", () => {
-    const next = restoreStatusFilter(new URLSearchParams(""), "active,completed")
-    expect(next?.get("status")).toBe("active,completed")
-  })
-
-  it("keeps a panel the entry was opened on", () => {
-    const next = restoreStatusFilter(new URLSearchParams("goal=g1"), "active")
-    expect(next?.get("goal")).toBe("g1")
-    expect(next?.get("status")).toBe("active")
-  })
-
-  it("leaves an explicit filter alone, whatever is remembered", () => {
-    expect(restoreStatusFilter(new URLSearchParams("status=planning"), "active")).toBeNull()
-  })
-
-  it("leaves an explicitly empty filter alone", () => {
-    expect(restoreStatusFilter(new URLSearchParams("status="), "active")).toBeNull()
-  })
-
-  it("restores nothing when the filter was cleared", () => {
-    expect(restoreStatusFilter(new URLSearchParams(""), "")).toBeNull()
-  })
-
-  it("restores nothing from a value the daemon no longer defines", () => {
-    expect(restoreStatusFilter(new URLSearchParams(""), "nonsense")).toBeNull()
   })
 })
