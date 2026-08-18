@@ -116,7 +116,9 @@ export function GoalPanel({
         </>
       ) : null}
 
-      {goal.data ? <GoalView goal={goal.data} onSelectSession={selectSession} /> : null}
+      {goal.data ? (
+        <GoalView goal={goal.data} onSelectSession={selectSession} onDeleted={onClose} />
+      ) : null}
     </GoalSheet>
   )
 }
@@ -164,10 +166,13 @@ function GoalSheet({
 function GoalView({
   goal,
   onSelectSession,
+  onDeleted,
 }: {
   goal: GoalDto
   /** Opens a session over the whole panel; owned by {@link GoalPanel}. */
   onSelectSession: (sessionId: string) => void
+  /** Closes the panel once the goal it is showing has been deleted. */
+  onDeleted: () => void
 }) {
   const [search, setSearch] = useSearchParams()
   const [newTaskOpen, setNewTaskOpen] = useState(false)
@@ -204,7 +209,9 @@ function GoalView({
                 New task
               </Button>
             ) : null}
-            <GoalActions goal={goal} />
+            {/* Deleting takes the goal out from under this panel, so the
+                panel's own close is what the action ends on. */}
+            <GoalActions goal={goal} onDeleted={onDeleted} />
           </div>
         </div>
         <CopyableIdMenu
