@@ -185,6 +185,12 @@ impl GoalStatus {
         GoalStatus::Cancelled,
     ];
 
+    /// Nothing more will happen to this goal: no session of its own, no task
+    /// left to move it. What may be deleted, and what cancelling refuses.
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, GoalStatus::Completed | GoalStatus::Cancelled)
+    }
+
     pub fn as_str(&self) -> &'static str {
         match self {
             GoalStatus::Planning => "planning",

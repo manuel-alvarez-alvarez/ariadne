@@ -112,6 +112,13 @@ async fn fatten(store: &Store, change: Change) -> Result<BusEvent> {
     let event = match change {
         Change::GoalCreated(goal) => goal_event(store, goal, DomainEvent::GoalCreated).await?,
         Change::GoalUpdated(goal) => goal_event(store, goal, DomainEvent::GoalUpdated).await?,
+        // Scoped to the goal it removes, so a `goal`-filtered stream learns
+        // that what it follows is gone instead of just falling silent.
+        Change::GoalDeleted(id) => BusEvent {
+            goal_id: Some(id.clone()),
+            task_id: None,
+            event: DomainEvent::GoalDeleted(DeletedDto { id }),
+        },
         Change::TaskCreated(task) => {
             let (dto, keys) = task_dto_of(store, task).await?;
             BusEvent {
