@@ -19,7 +19,7 @@
  * same key.
  */
 
-import type { SessionStatus, TaskStatus } from "./types"
+import type { Role, SessionStatus, TaskStatus } from "./types"
 
 export interface PageFilters {
   after?: string
@@ -83,6 +83,17 @@ export const qk = {
     details: () => ["profiles", "detail"] as const,
     detail: (id: string) => ["profiles", "detail", id] as const,
     prompts: (id: string) => ["profiles", "detail", id, "prompts"] as const,
+  },
+  /**
+   * What a role is, rather than what any profile of it holds: the built-in
+   * prompt defaults (`GET /v1/roles/{role}/prompt-defaults`). Read-only and
+   * compiled into the daemon, so nothing ever invalidates these.
+   */
+  roles: {
+    all: () => ["roles"] as const,
+    details: () => ["roles", "detail"] as const,
+    detail: (role: Role) => ["roles", "detail", role] as const,
+    promptDefaults: (role: Role) => ["roles", "detail", role, "prompt-defaults"] as const,
   },
   /** The model catalog (`GET /v1/models`), one unfiltered list for all agents. */
   models: {
