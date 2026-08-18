@@ -8,6 +8,6 @@
  * one that does not — "repositories" — passes its plural in.
  */
 
-export function plural(count: number, noun: string, plural = `${noun}s`): string {
-  return `${count} ${count === 1 ? noun : plural}`
+export function plural(count: number, noun: string, many = `${noun}s`): string {
+  return `${count} ${count === 1 ? noun : many}`
 }
