@@ -90,6 +90,26 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       void queryClient.invalidateQueries({ queryKey: qk.profiles.lists() })
       break
     }
+    case "repository_created": {
+      queryClient.setQueryData(qk.repositories.detail(event.data.id), event.data)
+      void queryClient.invalidateQueries({ queryKey: qk.repositories.lists() })
+      break
+    }
+    case "repository_updated": {
+      queryClient.setQueryData(qk.repositories.detail(event.data.id), event.data)
+      void queryClient.invalidateQueries({ queryKey: qk.repositories.lists() })
+      // Goals reference repositories live and carry them inline as
+      // `GoalDto.repos`, so an edited path or base branch is stale in every
+      // goal that works in it until the goals are read again. This is the one
+      // case that reaches outside its own entity, and the reason it has to.
+      void queryClient.invalidateQueries({ queryKey: qk.goals.all() })
+      break
+    }
+    case "repository_deleted": {
+      queryClient.removeQueries({ queryKey: qk.repositories.detail(event.data.id) })
+      void queryClient.invalidateQueries({ queryKey: qk.repositories.lists() })
+      break
+    }
     default: {
       // A kind the generated types do not know about: the daemon is newer than
       // these types. Regenerate with `npm run gen:api`.

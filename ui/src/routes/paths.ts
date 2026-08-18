@@ -26,6 +26,7 @@ export const paths = {
    * scroll to it (see `features/profiles/profiles-page.tsx`).
    */
   profile: (profileId: string) => `/profiles?${PROFILE_EXPAND_PARAM}=${profileId}`,
+  repositories: () => "/repositories",
   /**
    * The goals board with this goal's panel open on one of its sessions.
    *

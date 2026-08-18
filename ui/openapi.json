@@ -175,7 +175,8 @@
         "tags": [
           "goals"
         ],
-        "summary": "Create a goal. Validates repos and resolves base branches; the planner\nsession is spawned by the scheduler once agent execution lands.",
+        "summary": "Create a goal on registered repositories; the planner session is spawned\nby the scheduler once agent execution lands.",
+        "description": "The repos are referenced, not copied: whatever `POST /v1/repositories`\nvalidated about a checkout holds for every goal that names it, and an edit\nthere moves this goal too.",
         "operationId": "create",
         "requestBody": {
           "content": {
@@ -200,6 +201,9 @@
           },
           "400": {
             "description": ""
+          },
+          "404": {
+            "description": "no such repository or planner profile"
           }
         }
       }
@@ -942,6 +946,175 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/v1/repositories": {
+      "get": {
+        "tags": [
+          "repositories"
+        ],
+        "summary": "List repositories.",
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RepositoryDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "repositories"
+        ],
+        "summary": "Create a repository.",
+        "operationId": "create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRepositoryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepositoryDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "not an absolute path, not a git work tree, or unknown branch"
+          },
+          "409": {
+            "description": "this path and base branch are already registered"
+          }
+        }
+      }
+    },
+    "/v1/repositories/{id}": {
+      "get": {
+        "tags": [
+          "repositories"
+        ],
+        "summary": "Get a repository.",
+        "operationId": "get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "repository id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepositoryDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "repositories"
+        ],
+        "summary": "Update a repository.",
+        "operationId": "update",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "repository id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateRepositoryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepositoryDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "not an absolute path, not a git work tree, or unknown branch"
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": "this path and base branch are already registered"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "repositories"
+        ],
+        "summary": "Delete a repository.",
+        "operationId": "delete",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "repository id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
           },
           "404": {
             "description": ""
@@ -1864,7 +2037,7 @@
         "type": "object",
         "required": [
           "title",
-          "repos",
+          "repository_ids",
           "planner_profile"
         ],
         "properties": {
@@ -1883,11 +2056,12 @@
             "type": "string",
             "description": "Planner profile id or unique name."
           },
-          "repos": {
+          "repository_ids": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/RepoSpec"
-            }
+              "type": "string"
+            },
+            "description": "Ids of registered repositories (`POST /v1/repositories`); at least one."
           },
           "required_approvals": {
             "type": [
@@ -1963,6 +2137,32 @@
           }
         }
       },
+      "CreateRepositoryRequest": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "base_branch": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Omit for the repo's currently checked-out branch."
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "description": "Absolute path of an existing git work tree.",
+            "example": "/home/me/dev/ariadne"
+          }
+        }
+      },
       "CreateReviewRequest": {
         "type": "object",
         "required": [
@@ -2014,7 +2214,7 @@
               "string",
               "null"
             ],
-            "description": "Repo id within the goal; may be omitted when the goal has exactly one repo."
+            "description": "Id of one of the goal's repositories; may be omitted when the goal\nworks in exactly one."
           },
           "reviewer_profiles": {
             "type": "array",
@@ -2265,6 +2465,60 @@
                 ]
               }
             }
+          },
+          {
+            "type": "object",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/RepositoryDto"
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "repository_created"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/RepositoryDto"
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "repository_updated"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/DeletedDto"
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "repository_deleted"
+                ]
+              }
+            }
           }
         ],
         "description": "One domain event. Serialized as `{\"event\": \"<kind>\", \"data\": <payload>}`;\non the SSE wire the kind becomes the `event:` field and the payload alone\nthe `data:` field."
@@ -2319,8 +2573,9 @@
           "repos": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/GoalRepoDto"
-            }
+              "$ref": "#/components/schemas/RepositoryDto"
+            },
+            "description": "The registered repositories the goal works in, as they stand now: a\ngoal references them, so an edit to one shows up here."
           },
           "required_approvals": {
             "type": "integer",
@@ -2333,25 +2588,6 @@
             "type": "string"
           },
           "updated_at": {
-            "type": "string"
-          }
-        }
-      },
-      "GoalRepoDto": {
-        "type": "object",
-        "required": [
-          "id",
-          "path",
-          "base_branch"
-        ],
-        "properties": {
-          "base_branch": {
-            "type": "string"
-          },
-          "id": {
-            "type": "string"
-          },
-          "path": {
             "type": "string"
           }
         }
@@ -2621,23 +2857,37 @@
           "reviewer_resume"
         ]
       },
-      "RepoSpec": {
+      "RepositoryDto": {
         "type": "object",
         "required": [
-          "path"
+          "id",
+          "path",
+          "base_branch",
+          "created_at",
+          "updated_at"
         ],
         "properties": {
           "base_branch": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "description": {
             "type": [
               "string",
               "null"
-            ],
-            "description": "Base branch tasks merge into; defaults to the repo's current branch."
+            ]
+          },
+          "id": {
+            "type": "string"
           },
           "path": {
             "type": "string",
-            "description": "Absolute path to an existing git repository.",
-            "example": "/home/me/projects/webapp"
+            "description": "Absolute path of the checkout."
+          },
+          "updated_at": {
+            "type": "string"
           }
         }
       },
@@ -2960,7 +3210,8 @@
             ]
           },
           "repo_id": {
-            "type": "string"
+            "type": "string",
+            "description": "Id of the repository the task works in, one of its goal's."
           },
           "review_round": {
             "type": "integer",
@@ -3143,6 +3394,31 @@
           }
         }
       },
+      "UpdateRepositoryRequest": {
+        "type": "object",
+        "description": "Partial update; absent fields stay unchanged.",
+        "properties": {
+          "base_branch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New description, or empty to clear it. Absent = unchanged."
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "UpdateTaskRequest": {
         "type": "object",
         "description": "Partial update; only allowed while the task is pending/ready.",
@@ -3207,6 +3483,10 @@
     {
       "name": "profiles",
       "description": "Agent profiles (role + system prompt + agent CLI)"
+    },
+    {
+      "name": "repositories",
+      "description": "Git repositories registered with the daemon"
     },
     {
       "name": "goals",

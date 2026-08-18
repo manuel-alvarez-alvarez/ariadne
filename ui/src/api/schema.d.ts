@@ -64,8 +64,11 @@ export interface paths {
         get: operations["goals_list"];
         put?: never;
         /**
-         * Create a goal. Validates repos and resolves base branches; the planner
-         *     session is spawned by the scheduler once agent execution lands.
+         * Create a goal on registered repositories; the planner session is spawned
+         *     by the scheduler once agent execution lands.
+         * @description The repos are referenced, not copied: whatever `POST /v1/repositories`
+         *     validated about a checkout holds for every goal that names it, and an edit
+         *     there moves this goal too.
          */
         post: operations["goals_create"];
         delete?: never;
@@ -343,6 +346,43 @@ export interface paths {
         /** Put the profile's system prompt back to the default of its role. */
         post: operations["profiles_reset_system_prompt"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/repositories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List repositories. */
+        get: operations["repositories_list"];
+        put?: never;
+        /** Create a repository. */
+        post: operations["repositories_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/repositories/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a repository. */
+        get: operations["repositories_get"];
+        /** Update a repository. */
+        put: operations["repositories_update"];
+        post?: never;
+        /** Delete a repository. */
+        delete: operations["repositories_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -728,7 +768,8 @@ export interface components {
             max_tasks?: number | null;
             /** @description Planner profile id or unique name. */
             planner_profile: string;
-            repos: components["schemas"]["RepoSpec"][];
+            /** @description Ids of registered repositories (`POST /v1/repositories`); at least one. */
+            repository_ids: string[];
             /**
              * Format: int64
              * @description Approvals required to merge a task (default 1).
@@ -754,6 +795,16 @@ export interface components {
             role: components["schemas"]["Role"];
             system_prompt: string;
         };
+        CreateRepositoryRequest: {
+            /** @description Omit for the repo's currently checked-out branch. */
+            base_branch?: string | null;
+            description?: string | null;
+            /**
+             * @description Absolute path of an existing git work tree.
+             * @example /home/me/dev/ariadne
+             */
+            path: string;
+        };
         CreateReviewRequest: {
             body?: string | null;
             /**
@@ -769,7 +820,10 @@ export interface components {
             description?: string;
             /** @description Engineer profile id or unique name. */
             engineer_profile: string;
-            /** @description Repo id within the goal; may be omitted when the goal has exactly one repo. */
+            /**
+             * @description Id of one of the goal's repositories; may be omitted when the goal
+             *     works in exactly one.
+             */
             repo_id?: string | null;
             /** @description Reviewer profile ids or names, in review order. At least one. */
             reviewer_profiles: string[];
@@ -836,6 +890,18 @@ export interface components {
             data: components["schemas"]["DeletedDto"];
             /** @enum {string} */
             event: "profile_deleted";
+        } | {
+            data: components["schemas"]["RepositoryDto"];
+            /** @enum {string} */
+            event: "repository_created";
+        } | {
+            data: components["schemas"]["RepositoryDto"];
+            /** @enum {string} */
+            event: "repository_updated";
+        } | {
+            data: components["schemas"]["DeletedDto"];
+            /** @enum {string} */
+            event: "repository_deleted";
         };
         /** @description Body of `POST /v1/goals/{id}/finalize`: planning ends, execution starts. */
         FinalizePlanRequest: {
@@ -852,17 +918,16 @@ export interface components {
              */
             max_tasks?: number | null;
             planner_profile_id: string;
-            repos: components["schemas"]["GoalRepoDto"][];
+            /**
+             * @description The registered repositories the goal works in, as they stand now: a
+             *     goal references them, so an edit to one shows up here.
+             */
+            repos: components["schemas"]["RepositoryDto"][];
             /** Format: int64 */
             required_approvals: number;
             status: components["schemas"]["GoalStatus"];
             title: string;
             updated_at: string;
-        };
-        GoalRepoDto: {
-            base_branch: string;
-            id: string;
-            path: string;
         };
         /**
          * @description Goal lifecycle status.
@@ -969,14 +1034,14 @@ export interface components {
          * @enum {string}
          */
         PromptKind: "planner_briefing" | "engineer_briefing" | "changes_requested" | "merge_instructions" | "reviewer_briefing" | "reviewer_resume";
-        RepoSpec: {
-            /** @description Base branch tasks merge into; defaults to the repo's current branch. */
-            base_branch?: string | null;
-            /**
-             * @description Absolute path to an existing git repository.
-             * @example /home/me/projects/webapp
-             */
+        RepositoryDto: {
+            base_branch: string;
+            created_at: string;
+            description?: string | null;
+            id: string;
+            /** @description Absolute path of the checkout. */
             path: string;
+            updated_at: string;
         };
         /**
          * @description Payload of the `resync` control event.
@@ -1107,6 +1172,7 @@ export interface components {
             goal_id: string;
             id: string;
             merge_commit?: string | null;
+            /** @description Id of the repository the task works in, one of its goal's. */
             repo_id: string;
             /** Format: int64 */
             review_round: number;
@@ -1165,6 +1231,13 @@ export interface components {
             model?: string | null;
             name?: string | null;
             system_prompt?: string | null;
+        };
+        /** @description Partial update; absent fields stay unchanged. */
+        UpdateRepositoryRequest: {
+            base_branch?: string | null;
+            /** @description New description, or empty to clear it. Absent = unchanged. */
+            description?: string | null;
+            path?: string | null;
         };
         /** @description Partial update; only allowed while the task is pending/ready. */
         UpdateTaskRequest: {
@@ -1290,6 +1363,13 @@ export interface operations {
                 };
             };
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description no such repository or planner profile */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1835,6 +1915,162 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ProfileDto"];
                 };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    repositories_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositoryDto"][];
+                };
+            };
+        };
+    };
+    repositories_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateRepositoryRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositoryDto"];
+                };
+            };
+            /** @description not an absolute path, not a git work tree, or unknown branch */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description this path and base branch are already registered */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    repositories_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description repository id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositoryDto"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    repositories_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description repository id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateRepositoryRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositoryDto"];
+                };
+            };
+            /** @description not an absolute path, not a git work tree, or unknown branch */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description this path and base branch are already registered */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    repositories_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description repository id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             404: {
                 headers: {

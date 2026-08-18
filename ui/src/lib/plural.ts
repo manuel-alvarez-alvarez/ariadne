@@ -3,11 +3,11 @@
  *
  * Five screens were each spelling this out inline as
  * `{n} {n === 1 ? "task" : "tasks"}`, which is a lot of ternary for a rule
- * that never varies. Only the regular `-s` plural is handled, because every
- * noun this app counts takes it: tasks, items, verdicts, profiles. An
- * irregular one would need a second form passed in, and there is none yet.
+ * that never varies. The regular `-s` plural is the default because almost
+ * every noun this app counts takes it: tasks, items, verdicts, profiles. The
+ * one that does not — "repositories" — passes its plural in.
  */
 
-export function plural(count: number, noun: string): string {
-  return `${count} ${count === 1 ? noun : `${noun}s`}`
+export function plural(count: number, noun: string, many = `${noun}s`): string {
+  return `${count} ${count === 1 ? noun : many}`
 }
