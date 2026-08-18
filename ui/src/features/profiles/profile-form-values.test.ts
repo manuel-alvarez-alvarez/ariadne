@@ -1,11 +1,15 @@
 /**
- * Tests for the one thing in this feature that is easy to get subtly wrong: the
- * daemon's clearing sentinels.
+ * Tests for the two things in this feature that are easy to get subtly wrong.
  *
- * `UpdateProfileRequest` clears the agent kind with the string `"auto"` and the
- * model with `"default"`, while `CreateProfileRequest` takes plain nulls for the
- * same two states. Getting that backwards writes a profile pinned to a model
- * literally named "default", which nothing else in the stack would catch.
+ * The first is the daemon's clearing sentinels. `UpdateProfileRequest` clears
+ * the agent kind with the string `"auto"` and the model with `"default"`, while
+ * `CreateProfileRequest` takes plain nulls for the same two states. Getting that
+ * backwards writes a profile pinned to a model literally named "default", which
+ * nothing else in the stack would catch.
+ *
+ * The second is the prompt diff. A briefing left at its default must not be
+ * sent — on create because the daemon seeds it, on update because a write it
+ * did not need is a write that can fail.
  */
 
 import { describe, expect, it } from "vitest"
@@ -13,11 +17,20 @@ import { describe, expect, it } from "vitest"
 import type { ProfileDto } from "@/api"
 
 import {
+  changedPrompts,
   emptyProfileFormValues,
   profileToFormValues,
+  type PromptFormValue,
   toCreateRequest,
   toUpdateRequest,
 } from "./profile-form-values"
+
+/** What an engineer role seeds, as the defaults endpoint answers it. */
+const DEFAULTS: PromptFormValue[] = [
+  { kind: "engineer_briefing", content: "Start the task." },
+  { kind: "changes_requested", content: "Apply the review." },
+  { kind: "merge_instructions", content: "Merge it." },
+]
 
 const PROFILE: ProfileDto = {
   id: "p1",
@@ -40,7 +53,13 @@ describe("profileToFormValues", () => {
       model: "claude-opus-5",
       systemPrompt: "You are a Rust engineer.",
       extraFlags: [{ value: "--permission-mode=acceptEdits" }],
+      prompts: [],
     })
+  })
+
+  it("takes the briefings from the second argument, which the DTO has no room for", () => {
+    const values = profileToFormValues(PROFILE, DEFAULTS)
+    expect(values.prompts).toEqual(DEFAULTS)
   })
 
   it("shows the unset agent kind and model as their explicit choices", () => {
@@ -60,6 +79,26 @@ describe("toCreateRequest", () => {
       system_prompt: "",
       extra_flags: [],
     })
+  })
+
+  it("leaves the prompts out when every briefing is still its default", () => {
+    const values = { ...profileToFormValues(PROFILE, DEFAULTS) }
+    expect(toCreateRequest(values, DEFAULTS)).not.toHaveProperty("prompts")
+  })
+
+  it("sends only the briefings edited away from their default", () => {
+    const values = profileToFormValues(PROFILE, [
+      { kind: "engineer_briefing", content: "Start the task, carefully." },
+      ...DEFAULTS.slice(1),
+    ])
+    expect(toCreateRequest(values, DEFAULTS).prompts).toEqual([
+      { kind: "engineer_briefing", content: "Start the task, carefully." },
+    ])
+  })
+
+  it("sends nothing when the defaults never arrived, so the daemon seeds them all", () => {
+    const values = { ...profileToFormValues(PROFILE), prompts: [] }
+    expect(toCreateRequest(values, []).prompts).toBeUndefined()
   })
 
   it("passes a pinned agent kind and model through", () => {
@@ -86,6 +125,21 @@ describe("toUpdateRequest", () => {
     const request = toUpdateRequest(profileToFormValues(PROFILE))
     expect(request.agent_kind).toBe("claude_code")
     expect(request.model).toBe("claude-opus-5")
+  })
+})
+
+describe("changedPrompts", () => {
+  it("is empty while nothing has been touched", () => {
+    expect(changedPrompts(DEFAULTS, DEFAULTS)).toEqual([])
+  })
+
+  it("keeps an emptied briefing, which is an edit like any other", () => {
+    const edited = [{ kind: "changes_requested" as const, content: "" }, ...DEFAULTS.slice(2)]
+    expect(changedPrompts(edited, DEFAULTS)).toEqual([{ kind: "changes_requested", content: "" }])
+  })
+
+  it("counts a kind the baseline never had as changed", () => {
+    expect(changedPrompts(DEFAULTS, [])).toEqual(DEFAULTS)
   })
 })
 
