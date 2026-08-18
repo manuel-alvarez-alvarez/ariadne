@@ -1,6 +1,7 @@
 /**
- * Persisted app settings. Currently just the daemon base URL — the address of
- * `tcp_listen` from `~/.ariadne/config.toml`.
+ * Persisted app settings: the daemon base URL — the address of `tcp_listen`
+ * from `~/.ariadne/config.toml` — and the bits of screen state that should
+ * outlive both a navigation and a restart.
  *
  * The store owns the API client's base URL: nothing else should call
  * `setApiBaseUrl`.
@@ -18,6 +19,17 @@ interface SettingsState {
   baseUrl: string
   setBaseUrl: (url: string) => void
   resetBaseUrl: () => void
+  /**
+   * The status filter the goals board was last left with, spelled the way its
+   * `?status=` param spells it: `"active,completed"`, or `""` for all statuses.
+   *
+   * Kept as the param rather than as a parsed selection so the store stays out
+   * of the goals feature: `readStatusFilter` is what makes sense of the value,
+   * and one that has aged out of the daemon's statuses is dropped there like
+   * any other bad `?status=`.
+   */
+  goalStatusFilter: string
+  setGoalStatusFilter: (value: string) => void
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -26,10 +38,15 @@ export const useSettingsStore = create<SettingsState>()(
       baseUrl: DEFAULT_BASE_URL,
       setBaseUrl: (url) => set({ baseUrl: normalizeBaseUrl(url) }),
       resetBaseUrl: () => set({ baseUrl: DEFAULT_BASE_URL }),
+      goalStatusFilter: "",
+      setGoalStatusFilter: (value) => set({ goalStatusFilter: value }),
     }),
     {
       name: SETTINGS_STORAGE_KEY,
-      partialize: (state) => ({ baseUrl: state.baseUrl }),
+      partialize: (state) => ({
+        baseUrl: state.baseUrl,
+        goalStatusFilter: state.goalStatusFilter,
+      }),
       onRehydrateStorage: () => (state) => {
         if (state) setApiBaseUrl(state.baseUrl)
       },
