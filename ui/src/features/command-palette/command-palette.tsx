@@ -28,6 +28,7 @@ import {
   SettingsIcon,
   SunIcon,
   TargetIcon,
+  TriangleAlertIcon,
 } from "lucide-react"
 import { useTheme } from "next-themes"
 import type { ReactNode } from "react"
@@ -191,6 +192,7 @@ function Hint({ keys, children }: { keys: string; children: ReactNode }) {
 /** The screens the palette can jump to, in the sidebar's order. */
 const PAGES = [
   { label: "Goals", path: paths.goals(), icon: TargetIcon },
+  { label: "Attention", path: paths.attention(), icon: TriangleAlertIcon },
   { label: "Sessions", path: paths.sessions(), icon: RadioTowerIcon },
   { label: "Profiles", path: paths.profiles(), icon: CpuIcon },
 ] as const

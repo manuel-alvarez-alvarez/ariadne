@@ -178,8 +178,8 @@ describe("paletteTargetTo", () => {
   })
 
   it("passes a page straight through", () => {
-    expect(paletteTargetTo({ kind: "page", path: "/sessions" }, new URLSearchParams())).toBe(
-      "/sessions",
+    expect(paletteTargetTo({ kind: "page", path: "/attention" }, new URLSearchParams())).toBe(
+      "/attention",
     )
   })
 })

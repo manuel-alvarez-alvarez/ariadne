@@ -19,6 +19,7 @@ export const paths = {
   goals: () => "/goals",
   /** The goals board with this goal's panel open. */
   goal: (goalId: string) => `/goals?goal=${goalId}`,
+  attention: () => "/attention",
   sessions: () => "/sessions",
   profiles: () => "/profiles",
   /**

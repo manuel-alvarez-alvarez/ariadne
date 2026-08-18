@@ -19,9 +19,9 @@ import type { Connection } from "@/hooks/use-connection"
 
 /**
  * Hoisted for the same reason `connection-status.test.tsx` hoists its stub:
- * `openapi-fetch` takes its `fetch` when `@/api` is imported, and the shell
- * pulls it in — never settling keeps whatever it asks for pending, which is
- * all it needs to be.
+ * `openapi-fetch` takes its `fetch` when `@/api` is imported. The shell mounts
+ * the sidebar, whose attention badge does query — never settling keeps it
+ * pending, which is all it needs to be.
  */
 vi.hoisted(() => {
   globalThis.fetch = (() => new Promise(() => {})) as unknown as typeof fetch

@@ -111,8 +111,8 @@ export function SessionsList({
   const profiles = useQuery(profilesQueryOptions())
   const profilesById = byId(profiles.data)
 
-  // Both are shared keys the rest of the app already holds (the goals board's
-  // attention strip mounts them), so the sixth column usually costs no request
+  // Both are shared keys the rest of the app already holds (the sidebar's
+  // attention count mounts them), so the sixth column usually costs no request
   // at all — and none whatsoever in a panel, which does not draw it.
   const showContext = listScope(filters) === "unscoped"
   const goals = useQuery({ ...goalsQueryOptions(), enabled: showContext })

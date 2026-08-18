@@ -18,8 +18,8 @@ import { ApiError } from "@/api"
  *   health probe is already polling for and the connection banner is already
  *   saying — retrying it only delays the same answer.
  *
- * A screen whose queries were warmed by something else (the goals board's
- * attention strip, another tab) would otherwise show its error first and a
+ * A screen whose queries were warmed by something else (the sidebar's
+ * attention count, another tab) would otherwise show its error first and a
  * cold one three backoffs later, which is exactly the drift this removes.
  * Everything else — a 5xx, a dropped response mid-flight — is transient and
  * still gets its two retries.
