@@ -5,9 +5,10 @@
 //! description column (title/status/role). Fail-safe: a dead daemon just
 //! yields no candidates, never an error in the user's shell.
 
+use std::ffi::OsStr;
 use std::time::Duration;
 
-use clap_complete::engine::CompletionCandidate;
+use clap_complete::engine::{CompletionCandidate, PathCompleter, ValueCompleter};
 
 use ariadne_client::Client;
 
@@ -213,6 +214,43 @@ pub fn prompt_kinds() -> Vec<CompletionCandidate> {
             .map(|kind| candidate(kind.as_str(), format!("{} profiles", kind.role().as_str()))),
     );
     out
+}
+
+/// `<kind>=` for `profile create|update --prompt`: only the kind half can be
+/// completed — what follows the `=` is the caller's own prose.
+pub fn prompt_assignment(current: &OsStr) -> Vec<CompletionCandidate> {
+    let current = current.to_string_lossy();
+    match current.contains('=') {
+        true => Vec::new(),
+        false => assignment_kinds(&current),
+    }
+}
+
+/// `<kind>=<path>` for `profile create|update --prompt-file`: the kind, and
+/// then the file it reads from, completed as a path.
+pub fn prompt_file_assignment(current: &OsStr) -> Vec<CompletionCandidate> {
+    let current = current.to_string_lossy();
+    match current.split_once('=') {
+        Some((kind, path)) => PathCompleter::file()
+            .complete(OsStr::new(path))
+            .into_iter()
+            .map(|c| c.add_prefix(format!("{kind}=")))
+            .collect(),
+        None => assignment_kinds(&current),
+    }
+}
+
+/// The `<kind>=` half of an assignment, filtered by what is typed so far:
+/// unlike candidate lists, a completer's answers reach the shell as they are.
+fn assignment_kinds(current: &str) -> Vec<CompletionCandidate> {
+    prompt_kinds()
+        .into_iter()
+        .map(|c| {
+            let value = format!("{}=", c.get_value().to_string_lossy());
+            CompletionCandidate::new(value).help(c.get_help().cloned())
+        })
+        .filter(|c| c.get_value().to_string_lossy().starts_with(current))
+        .collect()
 }
 
 /// Agent kinds plus "auto" for `profile update --agent`.
