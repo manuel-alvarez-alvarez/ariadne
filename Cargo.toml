@@ -59,8 +59,10 @@ ulid = { version = "3", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "6"
-# Sleep inhibition, one small wrapper over the three native power APIs.
+# Sleep inhibition: keepawake wraps the macOS and Windows power APIs, zbus
+# talks to systemd-logind on Linux.
 keepawake = { version = "0.6", default-features = false }
+zbus = "5"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
