@@ -21,10 +21,11 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
 
 ## How it works
 
-1. `ariadne goal create` — you describe a goal, name the project repo(s), how
-   many reviewer approvals a task needs (default 1) and optionally a max task
-   count. The daemon spawns the **planner** in tmux; `ariadne goal attach`
-   drops you into the conversation.
+1. `ariadne goal create` — you describe a goal, pick the registered
+   repositories it works in (`ariadne repo add`), how many reviewer approvals
+   a task needs (default 1) and optionally a max task count. The daemon spawns
+   the **planner** in tmux; `ariadne goal attach` drops you into the
+   conversation.
 2. The planner discusses the breakdown with you, creates tasks through the
    Ariadne MCP tools (assigning an engineer profile and reviewer profiles per
    task, with optional `depends_on` ordering), then calls `finalize_plan`.
@@ -87,12 +88,18 @@ ariadne daemon start           # unix socket at ~/.ariadne/ariadne.sock
 
 # Built-in profiles Planner / Engineer / Reviewer are seeded automatically
 # with no agent kind or model: at spawn time the first installed CLI is used,
-# in order claude_code -> codex -> opencode. So this already works:
+# in order claude_code -> codex -> opencode. A repository is registered once
+# and referenced by every goal that works in it (--branch defaults to the
+# checked-out branch), so this already works:
+ariadne repo add ~/projects/api --description "the public API"
 ariadne goal create --title "Add rate limiting" --repo ~/projects/api
 ariadne goal attach <goal-id>
 
-# --repo takes the base branch after '@' (or after ':' when it has no '/'):
-ariadne goal create --title "..." --repo ~/projects/api@release/2.0
+# The same checkout on another base branch is a repository of its own, and
+# --repo then takes the id `repo ls` prints rather than the path:
+ariadne repo add ~/projects/api --branch release/2.0
+ariadne repo ls
+ariadne goal create --title "..." --repo <repository-id>
 
 # Custom profiles pin a role to a specific agent/model/prompt:
 ariadne profile create --name rev-strict --role reviewer --agent codex \
