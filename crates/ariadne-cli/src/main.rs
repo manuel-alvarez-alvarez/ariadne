@@ -70,15 +70,6 @@ enum Command {
         #[command(subcommand)]
         command: SessionCommand,
     },
-    /// Show everything that needs a human, grouped by goal
-    ///
-    /// The UI's Attention page from the terminal: tasks that failed, came
-    /// back with changes requested or stalled, plus failed agent sessions.
-    Attention {
-        /// Print cells in full instead of cutting them to the column width
-        #[arg(long)]
-        no_trunc: bool,
-    },
     /// Attach to the tmux session of a session, task or goal id
     Attach {
         /// Session, task or goal id
@@ -247,9 +238,6 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Goal { command } => commands::goal::run(&client, command, cli.format).await,
         Command::Task { command } => commands::task::run(&client, command, cli.format).await,
         Command::Session { command } => commands::session::run(&client, command, cli.format).await,
-        Command::Attention { no_trunc } => {
-            commands::attention::run(&client, no_trunc, cli.format).await
-        }
         Command::Setup {
             command: SetupCommand::CodexHooks { cli_bin },
         } => commands::setup::codex_hooks(cli_bin),
@@ -280,7 +268,6 @@ mod tests {
     const LEAVES: &[(&str, bool)] = &[
         ("agent-event", false),
         ("attach", false),
-        ("attention", true),
         ("completions", false),
         ("daemon logs", false),
         ("daemon start", true),
@@ -293,7 +280,6 @@ mod tests {
         ("goal inspect", true),
         ("goal ls", true),
         ("goal messages", true),
-        ("goal msg", true),
         ("mcp serve", false),
         ("profile create", true),
         ("profile inspect", true),
