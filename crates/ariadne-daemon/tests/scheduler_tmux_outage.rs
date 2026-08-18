@@ -114,7 +114,8 @@ async fn reconciliation_with_tmux_unavailable_neither_spawns_nor_fails_the_task(
 
     // More reconciliations than the spawn-retry budget allows for, so a task
     // failed by repeated attempts would have failed by the end of them.
-    let sched = scheduler::start(store.clone(), launcher.clone());
+    // No sleep inhibition: a test has no business touching power management.
+    let sched = scheduler::start(store.clone(), launcher.clone(), false);
     for _ in 0..6 {
         sched
             .send(SchedEvent::TaskChanged(task.id.clone()))

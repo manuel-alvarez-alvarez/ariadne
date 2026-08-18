@@ -10,7 +10,7 @@
  */
 
 import { useQuery } from "@tanstack/react-query"
-import { PlusIcon, TargetIcon } from "lucide-react"
+import { ChevronDownIcon, PlusIcon, TargetIcon } from "lucide-react"
 import { useState } from "react"
 import { useSearchParams } from "react-router-dom"
 
@@ -18,35 +18,63 @@ import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { Button } from "@/components/ui/button"
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { AttentionStrip } from "./attention-strip"
 import { CreateGoalDialog } from "./create-goal-dialog"
-import { ALL, readStatusFilter, type StatusFilter, withStatusFilter } from "./filters"
+import {
+  NO_STATUS_FILTER,
+  readStatusFilter,
+  type StatusFilter,
+  toggleStatusFilter,
+  withStatusFilter,
+} from "./filters"
 import { BoardSkeleton, GoalSwimlanes } from "./goal-swimlanes"
 import { goalsQueryOptions } from "./queries"
 import { GOAL_STATUS_META, GOAL_STATUSES } from "./status"
 
-/** `items` is what makes the trigger show the label rather than the raw value. */
-const STATUS_ITEMS = [
-  { label: "All statuses", value: ALL },
-  ...GOAL_STATUSES.map((status) => ({ label: GOAL_STATUS_META[status].label, value: status })),
-]
+/** What the trigger says: the one status by name, several by count. */
+function summarize(filter: StatusFilter): string {
+  const [only] = filter
+  if (!only) return "All statuses"
+  if (filter.length === 1) return GOAL_STATUS_META[only].label
+  return `${filter.length} statuses`
+}
+
+/** The board came back empty: whether that is a filter or an empty Ariadne. */
+function emptyBoardCopy(filter: StatusFilter): { title: string; description: string } {
+  const [only] = filter
+  if (!only) {
+    return {
+      title: "No goals yet",
+      description:
+        "A goal is what Ariadne works on: describe one and the planner breaks it into tasks.",
+    }
+  }
+  return {
+    title:
+      filter.length === 1
+        ? `No ${GOAL_STATUS_META[only].label.toLowerCase()} goals`
+        : "No goals match this filter",
+    description: `Nothing at ${filter.length === 1 ? "this status" : "these statuses"}. Try another filter, or start something new.`,
+  }
+}
 
 export function GoalsListPage() {
   const [search, setSearch] = useSearchParams()
-  const status = readStatusFilter(search)
+  const statuses = readStatusFilter(search)
   const [createOpen, setCreateOpen] = useState(false)
 
-  const goals = useQuery(goalsQueryOptions(status === ALL ? {} : { status }))
+  const goals = useQuery(goalsQueryOptions({ statuses }))
+  const empty = emptyBoardCopy(statuses)
 
   /** A filter is not a place: it replaces the entry rather than piling up back steps. */
-  function filterBy(value: StatusFilter) {
-    setSearch(withStatusFilter(search, value), { replace: true })
+  function filterBy(next: StatusFilter) {
+    setSearch(withStatusFilter(search, next), { replace: true })
   }
 
   /** The goal just created opens its own panel — no hunting for it on the board. */
@@ -68,22 +96,40 @@ export function GoalsListPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Select
-            value={status}
-            onValueChange={(value) => filterBy((value as StatusFilter) ?? ALL)}
-            items={STATUS_ITEMS}
-          >
-            <SelectTrigger aria-label="Filter by status" className="w-40">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {STATUS_ITEMS.map((item) => (
-                <SelectItem key={item.value} value={item.value}>
-                  {item.label}
-                </SelectItem>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  variant="outline"
+                  aria-label="Filter by status"
+                  className="w-40 justify-between font-normal"
+                />
+              }
+            >
+              {summarize(statuses)}
+              <ChevronDownIcon className="text-muted-foreground" />
+            </DropdownMenuTrigger>
+            {/* Checkbox items stay open on a click, which is what a filter
+                built out of several of them needs. */}
+            <DropdownMenuContent align="end" className="w-40">
+              <DropdownMenuCheckboxItem
+                checked={statuses.length === 0}
+                onCheckedChange={() => filterBy(NO_STATUS_FILTER)}
+              >
+                All statuses
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuSeparator />
+              {GOAL_STATUSES.map((status) => (
+                <DropdownMenuCheckboxItem
+                  key={status}
+                  checked={statuses.includes(status)}
+                  onCheckedChange={() => filterBy(toggleStatusFilter(statuses, status))}
+                >
+                  {GOAL_STATUS_META[status].label}
+                </DropdownMenuCheckboxItem>
               ))}
-            </SelectContent>
-          </Select>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button onClick={() => setCreateOpen(true)}>
             <PlusIcon />
             New goal
@@ -109,16 +155,8 @@ export function GoalsListPage() {
       {goals.data?.length === 0 ? (
         <EmptyState
           icon={<TargetIcon className="size-5" />}
-          title={
-            status === ALL
-              ? "No goals yet"
-              : `No ${GOAL_STATUS_META[status].label.toLowerCase()} goals`
-          }
-          description={
-            status === ALL
-              ? "A goal is what Ariadne works on: describe one and the planner breaks it into tasks."
-              : "Nothing at this status. Try another filter, or start something new."
-          }
+          title={empty.title}
+          description={empty.description}
           // The board is the screen the user is here to fill, so its empty
           // state carries the way to fill it rather than only naming the gap.
           action={

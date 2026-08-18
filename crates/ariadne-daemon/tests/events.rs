@@ -262,7 +262,8 @@ async fn scheduler_transition_emits_task_updated_without_http() {
 
     // No HTTP involved: the scheduler reconciles the task on its own and
     // finds its (empty) dependency set merged.
-    let sched = scheduler::start(h.store.clone(), h.launcher.clone());
+    // No sleep inhibition: a test has no business touching power management.
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
     sched
         .send(SchedEvent::TaskChanged(task.id.clone()))
         .unwrap();
