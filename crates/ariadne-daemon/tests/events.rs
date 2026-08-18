@@ -21,7 +21,6 @@ use ariadne_daemon::config::Config;
 use ariadne_daemon::gitwt::GitManager;
 use ariadne_daemon::http::{self, AppState};
 use ariadne_daemon::launcher::Launcher;
-use ariadne_daemon::logbuf::LogBuffer;
 use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_daemon::tmux::TmuxManager;
 use ariadne_store::{Goal, NewGoal, NewProfile, NewTask, Profile, Store, Task};
@@ -56,7 +55,6 @@ async fn harness() -> Harness {
         launcher: launcher.clone(),
         sched_tx: None,
         events: bus.clone(),
-        logs: LogBuffer::new(),
     };
     Harness {
         router: http::router(state.clone()),

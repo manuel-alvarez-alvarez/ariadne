@@ -5,7 +5,6 @@ pub(crate) mod convert;
 mod error;
 mod events;
 mod goals;
-mod logs;
 mod models;
 mod profiles;
 mod session_logs;
@@ -29,7 +28,6 @@ use ariadne_store::Store;
 
 use crate::bus::EventBus;
 use crate::launcher::Launcher;
-use crate::logbuf::LogBuffer;
 use crate::scheduler::SchedEvent;
 
 /// Shared handler state.
@@ -42,8 +40,6 @@ pub struct AppState {
     pub sched_tx: Option<mpsc::UnboundedSender<SchedEvent>>,
     /// Fan-out of domain events to `/v1/events/stream` subscribers.
     pub events: EventBus,
-    /// Recent daemon log lines, served by `/v1/logs`.
-    pub logs: LogBuffer,
 }
 
 impl AppState {
@@ -90,13 +86,11 @@ impl AppState {
         session_logs::logs_stream,
         events::list, stream::stream,
         models::list,
-        logs::snapshot, logs::stream,
     ),
     components(schemas(
         ariadne_api::stream::DomainEvent, ariadne_api::stream::ResyncDto,
         ariadne_api::sessions::SessionLogChunk, ariadne_api::sessions::SessionLogEnd,
         ariadne_api::sessions::SessionPaneSize,
-        ariadne_api::logs::LogLineDto, ariadne_api::logs::LogSnapshotResponse,
     )),
     tags(
         (name = "system", description = "Daemon health and metadata"),
@@ -106,7 +100,6 @@ impl AppState {
         (name = "sessions", description = "Agent sessions (tmux-hosted)"),
         (name = "events", description = "Raw agent events from hooks, and the live domain-event stream"),
         (name = "models", description = "Model catalogs per agent CLI"),
-        (name = "logs", description = "The daemon's own process log"),
     )
 )]
 struct ApiDoc;
@@ -178,9 +171,6 @@ pub fn router(state: AppState) -> Router {
         )
         // models
         .route("/v1/models", get(models::list))
-        // daemon logs
-        .route("/v1/logs", get(logs::snapshot))
-        .route("/v1/logs/stream", get(logs::stream))
         // events
         .route("/v1/events", get(events::list))
         .route("/v1/events/stream", get(stream::stream))
