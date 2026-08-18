@@ -138,7 +138,7 @@ ariadne attach <id>                    # session, task or goal id
 | `ariadne daemon start\|stop\|status\|logs` | manage `ariadned` |
 | `ariadne profile create\|ls\|inspect\|update\|rm` | agent profiles |
 | `ariadne profile prompts` / `profile prompt get\|set\|reset` | the prompts a profile briefs its agents with |
-| `ariadne goal create\|ls\|inspect\|attach\|messages\|msg\|finalize\|cancel` | goals |
+| `ariadne goal create\|ls\|inspect\|attach\|messages\|msg\|finalize\|cancel\|rm` | goals |
 | `ariadne task create\|update\|ls\|inspect\|diff\|attach\|logs\|messages\|msg\|reviews\|history\|cancel\|retry` | tasks |
 | `ariadne session ls\|inspect\|logs\|kill` | agent sessions |
 | `ariadne attach <id>` | attach to a session, task or goal id |
@@ -152,9 +152,9 @@ Table output is for eyes and JSON is for scripts: tables cut long cells to the
 column width with `…` (`--no-trunc` prints them whole) and show timestamps in
 local time, while `--format json` is the daemon's own payload, RFC3339 and all.
 Notes like "no tasks yet" go to stderr, so stdout stays pipeable. Irreversible
-commands — `goal cancel`, `session kill`, `profile prompt reset` — ask first
-when stdin is a terminal;
-`-y` answers for you, and a script is never prompted.
+commands — `goal cancel`, `goal rm`, `session kill`, `profile prompt reset` — ask
+first when stdin is a terminal; `-y` answers for you, and a script is never
+prompted.
 
 A command that fails prints one line on stderr — `error: <what went wrong>`,
 with a hint in parentheses when there is an obvious next step — and exits 1;
