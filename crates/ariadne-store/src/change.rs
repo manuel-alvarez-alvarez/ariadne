@@ -14,7 +14,6 @@ use crate::{
 pub enum Change {
     GoalCreated(Goal),
     GoalUpdated(Goal),
-    GoalDeleted(String),
     TaskCreated(Task),
     /// Any task write; `transition` is set when it was a status change.
     TaskUpdated {

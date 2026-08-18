@@ -35,16 +35,6 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       void queryClient.invalidateQueries({ queryKey: qk.goals.lists() })
       break
     }
-    case "goal_deleted": {
-      // The goal and everything under it are gone in one write, so its own
-      // caches go with it; tasks and sessions are listed goal-first, so those
-      // lists are refetched rather than pruned entry by entry.
-      queryClient.removeQueries({ queryKey: qk.goals.detail(event.data.id) })
-      void queryClient.invalidateQueries({ queryKey: qk.goals.lists() })
-      void queryClient.invalidateQueries({ queryKey: qk.tasks.all() })
-      void queryClient.invalidateQueries({ queryKey: qk.sessions.all() })
-      break
-    }
     case "task_created": {
       queryClient.setQueryData(qk.tasks.detail(event.data.id), event.data)
       void queryClient.invalidateQueries({ queryKey: qk.tasks.lists() })

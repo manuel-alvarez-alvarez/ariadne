@@ -82,8 +82,7 @@ impl AppState {
         profiles::reset_system_prompt, profiles::prompt_defaults,
         repositories::create, repositories::list, repositories::get,
         repositories::update, repositories::delete,
-        goals::create, goals::list, goals::get, goals::delete,
-        goals::cancel, goals::finalize,
+        goals::create, goals::list, goals::get, goals::cancel, goals::finalize,
         goals::list_messages, goals::post_message,
         tasks::create, tasks::list, tasks::get, tasks::update,
         tasks::transition, tasks::cancel, tasks::retry, tasks::list_transitions,
@@ -160,7 +159,7 @@ pub fn router(state: AppState) -> Router {
         )
         // goals
         .route("/v1/goals", post(goals::create).get(goals::list))
-        .route("/v1/goals/{id}", get(goals::get).delete(goals::delete))
+        .route("/v1/goals/{id}", get(goals::get))
         .route("/v1/goals/{id}/cancel", post(goals::cancel))
         .route("/v1/goals/{id}/finalize", post(goals::finalize))
         .route(

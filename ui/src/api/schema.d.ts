@@ -105,8 +105,7 @@ export interface paths {
         get: operations["goals_get"];
         put?: never;
         post?: never;
-        /** Delete a finished goal and everything under it. */
-        delete: operations["goals_delete"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -849,11 +848,6 @@ export interface components {
             /** @enum {string} */
             event: "goal_updated";
         } | {
-            /** @description A terminal goal was deleted, tasks and messages with it. */
-            data: components["schemas"]["DeletedDto"];
-            /** @enum {string} */
-            event: "goal_deleted";
-        } | {
             data: components["schemas"]["TaskDto"];
             /** @enum {string} */
             event: "task_created";
@@ -1442,39 +1436,6 @@ export interface operations {
                 };
             };
             404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    goals_delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description goal id */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description the goal is not finished yet; cancel it first */
-            409: {
                 headers: {
                     [name: string]: unknown;
                 };
