@@ -85,6 +85,18 @@ export const qk = {
     prompts: (id: string) => ["profiles", "detail", id, "prompts"] as const,
   },
   /**
+   * The registered checkouts goals are created against
+   * (`GET /v1/repositories`). One unfiltered list — the daemon takes no
+   * filters — so `list()` is always keyed by the empty filter object.
+   */
+  repositories: {
+    all: () => ["repositories"] as const,
+    lists: () => ["repositories", "list"] as const,
+    list: (filters?: PageFilters) => ["repositories", "list", filters ?? {}] as const,
+    details: () => ["repositories", "detail"] as const,
+    detail: (id: string) => ["repositories", "detail", id] as const,
+  },
+  /**
    * What a role is, rather than what any profile of it holds: the built-in
    * prompt defaults (`GET /v1/roles/{role}/prompt-defaults`). Read-only and
    * compiled into the daemon, so nothing ever invalidates these.
