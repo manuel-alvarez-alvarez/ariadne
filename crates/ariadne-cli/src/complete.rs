@@ -154,6 +154,19 @@ pub fn reviewer_profiles() -> Vec<CompletionCandidate> {
     profiles(Some("reviewer"))
 }
 
+/// Repository ids (repo subcommands).
+pub fn repo_ids() -> Vec<CompletionCandidate> {
+    fetch("/v1/repositories")
+        .iter()
+        .map(|r| {
+            candidate(
+                s(r, "id"),
+                format!("{} [{}]", s(r, "path"), s(r, "base_branch")),
+            )
+        })
+        .collect()
+}
+
 /// Repos of the goal being created in (`task create <goal> --repo`).
 ///
 /// Only that goal's repos are candidates, so the id has to come off the
