@@ -71,7 +71,8 @@ async fn main() -> Result<()> {
         git: ariadne_daemon::gitwt::GitManager,
     });
 
-    let sched_tx = ariadne_daemon::scheduler::start(store.clone(), launcher.clone());
+    let sched_tx =
+        ariadne_daemon::scheduler::start(store.clone(), launcher.clone(), config.prevent_sleep);
     let state = AppState {
         store,
         started_at: Instant::now(),
