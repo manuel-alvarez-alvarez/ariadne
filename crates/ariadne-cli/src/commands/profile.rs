@@ -279,6 +279,9 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
                         model,
                         system_prompt,
                         extra_flags: flags,
+                        // `profile prompt set` edits the briefings afterwards;
+                        // creation always takes the role defaults.
+                        prompts: vec![],
                     },
                 )
                 .await?;

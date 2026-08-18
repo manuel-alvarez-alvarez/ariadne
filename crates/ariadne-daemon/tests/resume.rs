@@ -263,6 +263,7 @@ impl Harness {
                 model: None,
                 system_prompt: format!("You are {name}."),
                 extra_flags: vec![],
+                prompts: vec![],
             })
             .await
             .unwrap()

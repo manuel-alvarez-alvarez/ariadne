@@ -1,8 +1,11 @@
 //! Profile repository.
 
-use ariadne_core::id::new_id;
-use ariadne_core::{AgentKind, Role};
+use std::collections::HashMap;
 
+use ariadne_core::id::new_id;
+use ariadne_core::{AgentKind, PromptKind, Role};
+
+use crate::prompts::check_role_kind;
 use crate::{Change, Profile, Result, Store, StoreError, not_found, now};
 
 #[derive(Debug, Clone)]
@@ -14,6 +17,10 @@ pub struct NewProfile {
     pub model: Option<String>,
     pub system_prompt: String,
     pub extra_flags: Vec<String>,
+    /// Briefing prompts seeded instead of the role defaults, by kind. A kind
+    /// the role does not own rejects the whole creation; a kind listed twice
+    /// keeps the last entry.
+    pub prompts: Vec<(PromptKind, String)>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -30,7 +37,15 @@ pub struct ProfileUpdate {
 impl Store {
     /// Create a profile, seeded with the default prompts of its role: a new
     /// profile starts from the built-in briefings and is edited from there.
+    /// `new.prompts` seeds edited text instead, in the same transaction, so a
+    /// customized profile is never half-created.
     pub async fn create_profile(&self, new: NewProfile) -> Result<Profile> {
+        let whose = format!("this {} profile", new.role.as_str());
+        let mut prompts = HashMap::with_capacity(new.prompts.len());
+        for (kind, content) in new.prompts {
+            check_role_kind(kind, new.role, &whose)?;
+            prompts.insert(kind, content);
+        }
         let id = new_id();
         let ts = now();
         let flags = serde_json::to_string(&new.extra_flags)
@@ -57,7 +72,7 @@ impl Store {
             }
             other => StoreError::Db(other),
         })?;
-        Self::insert_default_prompts(&mut tx, &id, new.role, &ts).await?;
+        Self::insert_prompts(&mut tx, &id, new.role, &ts, &prompts).await?;
         tx.commit().await?;
         let profile = self.get_profile(&id).await?;
         self.publish(Change::ProfileCreated(profile.clone()));

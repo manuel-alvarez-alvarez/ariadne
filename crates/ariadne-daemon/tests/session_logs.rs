@@ -132,6 +132,7 @@ impl Harness {
                 model: None,
                 system_prompt: "You plan.".into(),
                 extra_flags: vec![],
+                prompts: vec![],
             })
             .await
             .unwrap();
