@@ -7,7 +7,7 @@ use anyhow::{Context, Result, bail};
 use clap::Subcommand;
 
 use ariadne_api::profiles::{
-    CreateProfileRequest, ProfileDto, ProfilePromptDto, UpdateProfileRequest,
+    CreateProfileRequest, NewProfilePrompt, ProfileDto, ProfilePromptDto, UpdateProfileRequest,
 };
 use ariadne_client::Client;
 use ariadne_core::{AgentKind, PromptKind, Role};
@@ -41,6 +41,17 @@ const SYSTEM: &str = "system";
 #[derive(Subcommand)]
 pub enum ProfileCommand {
     /// Create a profile
+    ///
+    /// Prompts are set by kind: `--prompt <kind>=<text>` for text on the
+    /// command line, `--prompt-file <kind>=<path>` to read one from a file.
+    /// Both are repeatable and take each kind once. `<kind>` is `system` for
+    /// the profile's own system prompt, or one of the briefings its role owns
+    /// (planner: planner_briefing; engineer: engineer_briefing,
+    /// changes_requested, merge_instructions; reviewer: reviewer_briefing,
+    /// reviewer_resume). Whatever is not given starts as the role default.
+    ///
+    /// `ariadne profile prompt` is the other half of the story: it prints,
+    /// pipes and resets the prompts of a profile that already exists.
     Create {
         /// Profile name, unique: what every other command calls it by
         #[arg(long)]
@@ -54,12 +65,12 @@ pub enum ProfileCommand {
         /// Model the agent CLI runs (default: the agent's own default)
         #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
         model: Option<String>,
-        /// Inline system prompt
-        #[arg(long, conflicts_with = "prompt_file")]
-        prompt: Option<String>,
-        /// Read the system prompt from a file
-        #[arg(long)]
-        prompt_file: Option<std::path::PathBuf>,
+        /// Set one prompt from the command line: <kind>=<text>, repeatable
+        #[arg(long = "prompt", value_name = "KIND=TEXT", value_parser = parse_prompt_text, add = clap_complete::engine::ArgValueCompleter::new(crate::complete::prompt_assignment))]
+        prompts: Vec<PromptAssignment>,
+        /// Set one prompt from a file: <kind>=<path>, repeatable
+        #[arg(long = "prompt-file", value_name = "KIND=PATH", value_parser = parse_prompt_file, add = clap_complete::engine::ArgValueCompleter::new(crate::complete::prompt_file_assignment))]
+        prompt_files: Vec<PromptAssignment>,
         /// Extra argv flag appended when spawning (repeatable)
         #[arg(long = "flag")]
         flags: Vec<String>,
@@ -80,6 +91,17 @@ pub enum ProfileCommand {
         id: String,
     },
     /// Update a profile
+    ///
+    /// Prompts are replaced by kind, with the same `--prompt <kind>=<text>`
+    /// and `--prompt-file <kind>=<path>` flags `profile create` takes:
+    /// `system` for the profile's own system prompt, or one of the briefings
+    /// its role owns (planner: planner_briefing; engineer: engineer_briefing,
+    /// changes_requested, merge_instructions; reviewer: reviewer_briefing,
+    /// reviewer_resume). Both are repeatable and take each kind once; a
+    /// prompt nobody names is left exactly as it is.
+    ///
+    /// `ariadne profile prompt` is the other half of the story: it prints,
+    /// pipes and resets the prompts a profile already has.
     Update {
         /// Profile id or name
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::profile_names))]
@@ -94,12 +116,12 @@ pub enum ProfileCommand {
         /// Model name, or "default" to clear back to the agent's default
         #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
         model: Option<String>,
-        /// Replace the system prompt with this text
-        #[arg(long, conflicts_with = "prompt_file")]
-        prompt: Option<String>,
-        /// Replace the system prompt with the contents of this file
-        #[arg(long)]
-        prompt_file: Option<std::path::PathBuf>,
+        /// Replace one prompt with this text: <kind>=<text>, repeatable
+        #[arg(long = "prompt", value_name = "KIND=TEXT", value_parser = parse_prompt_text, add = clap_complete::engine::ArgValueCompleter::new(crate::complete::prompt_assignment))]
+        prompts: Vec<PromptAssignment>,
+        /// Replace one prompt with a file's contents: <kind>=<path>, repeatable
+        #[arg(long = "prompt-file", value_name = "KIND=PATH", value_parser = parse_prompt_file, add = clap_complete::engine::ArgValueCompleter::new(crate::complete::prompt_file_assignment))]
+        prompt_files: Vec<PromptAssignment>,
         /// Extra argv flag appended when spawning; repeatable, and replaces
         /// the profile's flags rather than adding to them
         #[arg(long = "flag", conflicts_with = "clear_flags")]
@@ -126,7 +148,8 @@ pub enum ProfileCommand {
         #[arg(long)]
         no_trunc: bool,
     },
-    /// Show, replace or reset one prompt
+    /// Show, pipe out or reset one prompt (set them with create|update
+    /// --prompt)
     Prompt {
         #[command(subcommand)]
         command: PromptCommand,
@@ -192,7 +215,7 @@ pub enum PromptArg {
 }
 
 impl PromptArg {
-    fn as_str(&self) -> &'static str {
+    pub(crate) fn as_str(&self) -> &'static str {
         match self {
             PromptArg::System => SYSTEM,
             PromptArg::Briefing(kind) => kind.as_str(),
@@ -213,12 +236,54 @@ fn parse_prompt_arg(s: &str) -> Result<PromptArg, String> {
         return Ok(PromptArg::System);
     }
     s.parse().map(PromptArg::Briefing).map_err(|_| {
-        let all = PromptKind::ALL.iter().map(|k| PromptArg::Briefing(*k));
         format!(
             "unknown prompt kind: {s} (expected one of {})",
-            spelled(std::iter::once(PromptArg::System).chain(all))
+            spelled(every_kind())
         )
     })
+}
+
+/// One `<kind>=<value>` flag: which prompt it is for, and the text it carries
+/// — or, from `--prompt-file`, the path that text is read from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PromptAssignment {
+    pub(crate) kind: PromptArg,
+    pub(crate) value: String,
+}
+
+/// `--prompt <kind>=<text>`.
+fn parse_prompt_text(s: &str) -> Result<PromptAssignment, String> {
+    parse_assignment(s, "<text>")
+}
+
+/// `--prompt-file <kind>=<path>`. The file is read later, by
+/// [`read_prompts`]: a path is a path whether or not it exists yet, and
+/// nothing is read until the whole line is known to be good.
+fn parse_prompt_file(s: &str) -> Result<PromptAssignment, String> {
+    parse_assignment(s, "<path>")
+}
+
+/// A `<kind>=<value>` flag, split at the first `=` and its kind checked
+/// against every kind there is. Whether the profile's own role owns it is
+/// [`Owner::owns`]'s call — that one needs a role, and clap has none.
+fn parse_assignment(s: &str, value: &str) -> Result<PromptAssignment, String> {
+    let (kind, text) = s.split_once('=').ok_or_else(|| {
+        format!(
+            "missing <kind>=: write {SYSTEM}={value} to set the system prompt — the kinds are: {}",
+            spelled(every_kind())
+        )
+    })?;
+    Ok(PromptAssignment {
+        kind: parse_prompt_arg(kind)?,
+        value: text.to_string(),
+    })
+}
+
+/// Every prompt kind there is, of every role, `system` first: what an error
+/// lists when no profile has said which role it is about.
+fn every_kind() -> impl Iterator<Item = PromptArg> {
+    std::iter::once(PromptArg::System)
+        .chain(PromptKind::ALL.iter().map(|k| PromptArg::Briefing(*k)))
 }
 
 /// Every prompt a profile of `role` owns: its system prompt first — the one an
@@ -233,23 +298,52 @@ fn owned(role: Role) -> Vec<PromptArg> {
         .collect()
 }
 
-/// `arg` if this profile owns that prompt, otherwise an error naming the ones
-/// it does own: prompt kinds belong to exactly one role, and a reviewer profile
-/// asked for `engineer_briefing` has nothing to show.
-fn owned_by(profile: &ProfileDto, arg: PromptArg) -> Result<PromptArg> {
-    match arg {
-        PromptArg::System => Ok(arg),
-        PromptArg::Briefing(kind) if kind.role() == profile.role => Ok(arg),
-        PromptArg::Briefing(kind) => bail!(
-            "{} ({}) is a {} profile and has no {} prompt ({} owns it) — its prompts are: {}",
-            profile.name,
-            profile.id,
-            profile.role.as_str(),
-            kind.as_str(),
-            kind.role().as_str(),
-            spelled(owned(profile.role).into_iter())
-        ),
+/// Whose prompts a `<kind>` is about: a profile that already exists, or the
+/// role of one `profile create` is about to make. Both know which kinds they
+/// own; only one of them has a name to be pointed at in an error.
+pub(crate) enum Owner<'a> {
+    Role(Role),
+    Profile(&'a ProfileDto),
+}
+
+impl Owner<'_> {
+    fn role(&self) -> Role {
+        match self {
+            Owner::Role(role) => *role,
+            Owner::Profile(p) => p.role,
+        }
     }
+
+    /// `arg` if these prompts include it, otherwise an error naming the ones
+    /// they do: prompt kinds belong to exactly one role, and a reviewer
+    /// profile asked for `engineer_briefing` has nothing to show.
+    fn owns(&self, arg: PromptArg) -> Result<PromptArg> {
+        let PromptArg::Briefing(kind) = arg else {
+            // Whatever the role, it runs on a system prompt.
+            return Ok(arg);
+        };
+        if kind.role() == self.role() {
+            return Ok(arg);
+        }
+        let (owner, kind) = (kind.role().as_str(), kind.as_str());
+        let prompts = spelled(owned(self.role()).into_iter());
+        match self {
+            Owner::Role(role) => bail!(
+                "{} profiles have no {kind} prompt ({owner} owns it) — their prompts are: {prompts}",
+                role.as_str()
+            ),
+            Owner::Profile(p) => bail!(
+                "{} ({}) is a {} profile and has no {kind} prompt ({owner} owns it) — its prompts are: {prompts}",
+                p.name,
+                p.id,
+                p.role.as_str()
+            ),
+        }
+    }
+}
+
+fn owned_by(profile: &ProfileDto, arg: PromptArg) -> Result<PromptArg> {
+    Owner::Profile(profile).owns(arg)
 }
 
 /// Prompt kinds as a command line spells them, comma-separated.
@@ -264,11 +358,18 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
             role,
             agent,
             model,
-            prompt,
-            prompt_file,
+            prompts,
+            prompt_files,
             flags,
         } => {
-            let system_prompt = read_prompt(prompt, prompt_file)?;
+            let given = read_prompts(prompts, prompt_files)?;
+            let (system_prompt, briefings) = split_system(owned_prompts(Owner::Role(role), given)?);
+            let system_prompt = match system_prompt {
+                Some(text) => text,
+                // Nothing said about it: the role default, as the daemon
+                // spells it — word for word what a reset would put back.
+                None => client.role_prompt_defaults(role).await?.system_prompt,
+            };
             let profile: ProfileDto = client
                 .post_json(
                     "/v1/profiles",
@@ -279,9 +380,16 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
                         model,
                         system_prompt,
                         extra_flags: flags,
-                        // `profile prompt set` edits the briefings afterwards;
-                        // creation always takes the role defaults.
-                        prompts: vec![],
+                        // Seeded with the profile, in this one call: a
+                        // briefing given here is never written twice, and a
+                        // kind nobody named keeps its role default.
+                        prompts: briefings
+                            .into_iter()
+                            .map(|(kind, content)| NewProfilePrompt {
+                                kind: kind.as_str().into(),
+                                content,
+                            })
+                            .collect(),
                     },
                 )
                 .await?;
@@ -342,15 +450,25 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
             name,
             agent,
             model,
-            prompt,
-            prompt_file,
+            prompts,
+            prompt_files,
             flags,
             clear_flags,
         } => {
-            let system_prompt = match (prompt, prompt_file) {
-                (None, None) => None,
-                (p, f) => Some(read_prompt(p, f)?),
+            // Everything that can be settled without the daemon is settled
+            // first, so a line that repeats a kind or names an unreadable
+            // file sends nothing. Which prompts exist does depend on the
+            // role, so that one check costs a GET — still before any write.
+            let given = read_prompts(prompts, prompt_files)?;
+            let given = match given.is_empty() {
+                true => given,
+                false => {
+                    let profile = get_profile(client, &id).await?;
+                    owned_prompts(Owner::Profile(&profile), given)?
+                }
             };
+            let (system_prompt, briefings) = split_system(given);
+            let system = system_prompt.is_some();
             let p: ProfileDto = client
                 .put_json(
                     &format!("/v1/profiles/{id}"),
@@ -364,9 +482,15 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
                     },
                 )
                 .await?;
+            let written = write_briefings(client, &p, briefings, system).await?;
             match format {
                 Format::Json => print_json(&p)?,
-                Format::Table => println!("{}", p.id),
+                Format::Table => {
+                    println!("{}", p.id);
+                    if !written.is_empty() {
+                        note(&format!("set {}", written.join(", ")));
+                    }
+                }
             }
         }
         ProfileCommand::Rm { id, yes } => {
@@ -692,14 +816,105 @@ fn read_content(file: Option<PathBuf>) -> Result<String> {
     }
 }
 
-fn read_prompt(prompt: Option<String>, file: Option<std::path::PathBuf>) -> Result<String> {
-    match (prompt, file) {
-        (Some(p), _) => Ok(p),
-        (None, Some(f)) => {
-            std::fs::read_to_string(&f).with_context(|| format!("reading {}", f.display()))
+/// The prompt flags of one command line, merged and read: `--prompt` and
+/// `--prompt-file` are one list, each kind may be given once by either of
+/// them, and the files are read here.
+///
+/// Nothing in this needs to know the role, so `create` and `update` both run
+/// it before they ask the daemon anything: a line that repeats a kind or
+/// names a file that will not read costs no request at all. What is left for
+/// [`owned_prompts`] is the one check that does need a role.
+pub(crate) fn read_prompts(
+    texts: Vec<PromptAssignment>,
+    files: Vec<PromptAssignment>,
+) -> Result<Vec<(PromptArg, String)>> {
+    let given = texts
+        .into_iter()
+        .map(|a| (a, false))
+        .chain(files.into_iter().map(|a| (a, true)));
+    let mut out: Vec<(PromptArg, String)> = Vec::new();
+    for (assignment, from_file) in given {
+        let kind = assignment.kind;
+        if out.iter().any(|(k, _)| *k == kind) {
+            bail!(
+                "{} is set twice — --prompt and --prompt-file take each kind once",
+                kind.as_str()
+            );
         }
-        (None, None) => anyhow::bail!("provide --prompt or --prompt-file"),
+        let content = match from_file {
+            true => std::fs::read_to_string(&assignment.value)
+                .with_context(|| format!("reading {}", assignment.value))?,
+            false => assignment.value,
+        };
+        out.push((kind, content));
     }
+    Ok(out)
+}
+
+/// What [`read_prompts`] collected, checked against the prompts `owner` has
+/// and put in the order it owns them — so what gets written, and what gets
+/// reported, does not depend on the order the flags were typed in.
+pub(crate) fn owned_prompts(
+    owner: Owner<'_>,
+    given: Vec<(PromptArg, String)>,
+) -> Result<Vec<(PromptArg, String)>> {
+    let mut out = Vec::with_capacity(given.len());
+    for (kind, content) in given {
+        out.push((owner.owns(kind)?, content));
+    }
+    let order = owned(owner.role());
+    out.sort_by_key(|(kind, _)| order.iter().position(|k| k == kind).unwrap_or(usize::MAX));
+    Ok(out)
+}
+
+/// A collected list split the way the API takes it: the system prompt, which
+/// travels with the profile itself, apart from the briefings, which do not.
+fn split_system(given: Vec<(PromptArg, String)>) -> (Option<String>, Vec<(PromptKind, String)>) {
+    let mut system = None;
+    let mut briefings = Vec::new();
+    for (kind, content) in given {
+        match kind {
+            PromptArg::System => system = Some(content),
+            PromptArg::Briefing(k) => briefings.push((k, content)),
+        }
+    }
+    (system, briefings)
+}
+
+/// The briefings of a `profile update`, one PUT each, after the profile
+/// itself has been patched. Answers with everything that was written, the
+/// system prompt included when the patch carried one.
+///
+/// A write that fails stops the rest: the profile is already part-way
+/// changed, so the error says which prompt failed and which ones stand,
+/// with the daemon's own sentence for why.
+async fn write_briefings(
+    client: &Client,
+    profile: &ProfileDto,
+    briefings: Vec<(PromptKind, String)>,
+    system: bool,
+) -> Result<Vec<&'static str>> {
+    let mut written: Vec<&'static str> = system.then_some(SYSTEM).into_iter().collect();
+    for (kind, content) in briefings {
+        if let Err(e) = client
+            .update_profile_prompt(&profile.id, kind, content)
+            .await
+        {
+            bail!(
+                "writing the {} prompt of {} ({}) failed{}: {}",
+                kind.as_str(),
+                profile.name,
+                profile.id,
+                match written.is_empty() {
+                    true => String::new(),
+                    false => format!(" (already written: {})", written.join(", ")),
+                },
+                e.human()
+            );
+        }
+        written.push(kind.as_str());
+    }
+    Ok(written)
 }
 
 #[cfg(test)]
@@ -722,6 +937,14 @@ mod tests {
 
     fn kinds(role: Role) -> Vec<&'static str> {
         owned(role).iter().map(|a| a.as_str()).collect()
+    }
+
+    /// A `--prompt`/`--prompt-file` flag as clap would have parsed it.
+    fn assignment(kind: &str, value: &str) -> PromptAssignment {
+        PromptAssignment {
+            kind: parse_prompt_arg(kind).expect("a kind"),
+            value: value.to_string(),
+        }
     }
 
     #[test]
@@ -823,6 +1046,200 @@ mod tests {
             q,
             "Reset all 4 prompts of Engineer (01PROFILE) to the engineer defaults?"
         );
+    }
+
+    /// The flags are one list: text and files together, each kind once, in
+    /// the order the profile owns them rather than the order they were typed.
+    #[test]
+    fn the_prompt_flags_are_collected_in_the_order_the_profile_owns_them() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("merge.md");
+        std::fs::write(&path, "merge it\n").expect("write");
+        let collected = owned_prompts(
+            Owner::Role(Role::Engineer),
+            read_prompts(
+                vec![
+                    assignment("engineer_briefing", "brief"),
+                    assignment("system", "you are"),
+                ],
+                vec![assignment(
+                    "merge_instructions",
+                    &path.display().to_string(),
+                )],
+            )
+            .expect("read"),
+        )
+        .expect("collected");
+        assert_eq!(
+            collected,
+            [
+                (PromptArg::System, "you are".to_string()),
+                (
+                    PromptArg::Briefing(PromptKind::EngineerBriefing),
+                    "brief".to_string()
+                ),
+                (
+                    PromptArg::Briefing(PromptKind::MergeInstructions),
+                    "merge it\n".to_string()
+                ),
+            ]
+        );
+    }
+
+    /// Two values for one prompt is nobody's intention, whichever flags spell
+    /// it — and it is caught before a single request goes out.
+    #[test]
+    fn a_kind_given_twice_is_refused() {
+        let twice = |texts: Vec<PromptAssignment>, files: Vec<PromptAssignment>| {
+            read_prompts(texts, files)
+                .expect_err("duplicate")
+                .to_string()
+        };
+        for err in [
+            twice(
+                vec![assignment("system", "a"), assignment("system", "b")],
+                vec![],
+            ),
+            twice(
+                vec![assignment("system", "a")],
+                vec![assignment("system", "/tmp/x.md")],
+            ),
+        ] {
+            assert!(err.starts_with("system is set twice"), "{err}");
+            assert!(err.contains("--prompt-file"), "{err}");
+        }
+    }
+
+    /// A daemon that counts what reaches it and answers everything with an
+    /// empty 500: enough to tell a command that sent a request from one that
+    /// decided it had nothing to ask.
+    async fn counting_daemon() -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use tokio::io::AsyncWriteExt;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let endpoint = format!("http://{}", listener.local_addr().expect("addr"));
+        let seen = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = seen.clone();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let _ = socket
+                    .write_all(b"HTTP/1.1 500 Internal Server Error\r\ncontent-length: 0\r\n\r\n")
+                    .await;
+            }
+        });
+        (endpoint, seen)
+    }
+
+    fn update(prompts: Vec<PromptAssignment>, files: Vec<PromptAssignment>) -> ProfileCommand {
+        ProfileCommand::Update {
+            id: "Engineer".into(),
+            name: None,
+            agent: None,
+            model: None,
+            prompts,
+            prompt_files: files,
+            flags: Vec::new(),
+            clear_flags: false,
+        }
+    }
+
+    /// The whole point of checking the flags before the profile is fetched:
+    /// a line that cannot be right sends nothing at all, not even the GET
+    /// that would tell which prompts the profile has.
+    #[tokio::test]
+    async fn a_duplicate_kind_on_an_update_sends_no_request() {
+        let (endpoint, seen) = counting_daemon().await;
+        let client = Client::resolve(Some(&endpoint), None);
+        let err = run(
+            &client,
+            update(
+                vec![assignment("system", "a")],
+                vec![assignment("system", "/tmp/x.md")],
+            ),
+            Format::Table,
+        )
+        .await
+        .expect_err("duplicate")
+        .to_string();
+        assert!(err.starts_with("system is set twice"), "{err}");
+        assert_eq!(seen.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+        // And the counter is not blind: the same update without the clash
+        // does reach the daemon.
+        let _ = run(
+            &client,
+            update(vec![assignment("system", "a")], vec![]),
+            Format::Table,
+        )
+        .await;
+        assert!(seen.load(std::sync::atomic::Ordering::SeqCst) > 0);
+    }
+
+    /// A file only matters once the rest of the line is good: the kind is
+    /// wrong here, so nothing is read and nothing is sent.
+    #[test]
+    fn a_kind_of_another_role_stops_a_create_line() {
+        let err = owned_prompts(
+            Owner::Role(Role::Engineer),
+            read_prompts(vec![assignment("planner_briefing", "plan")], vec![]).expect("read"),
+        )
+        .expect_err("wrong role")
+        .to_string();
+        assert!(
+            err.starts_with("engineer profiles have no planner_briefing prompt"),
+            "{err}"
+        );
+        assert!(err.contains("(planner owns it)"), "{err}");
+        assert!(
+            err.contains(
+                "their prompts are: system, engineer_briefing, changes_requested, merge_instructions"
+            ),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_prompt_file_that_is_not_there_says_which_one() {
+        let err = read_prompts(
+            vec![],
+            vec![assignment("engineer_briefing", "/no/such/brief.md")],
+        )
+        .expect_err("missing")
+        .to_string();
+        assert!(err.contains("/no/such/brief.md"), "{err}");
+    }
+
+    /// The system prompt rides along with the profile; the briefings do not.
+    #[test]
+    fn the_system_prompt_is_split_off_from_the_briefings() {
+        let (system, briefings) = split_system(vec![
+            (PromptArg::System, "you are".into()),
+            (
+                PromptArg::Briefing(PromptKind::EngineerBriefing),
+                "brief".into(),
+            ),
+        ]);
+        assert_eq!(system.as_deref(), Some("you are"));
+        assert_eq!(
+            briefings,
+            [(PromptKind::EngineerBriefing, "brief".to_string())]
+        );
+    }
+
+    #[test]
+    fn a_line_with_no_prompt_flags_sets_no_prompts() {
+        let (system, briefings) = split_system(
+            owned_prompts(
+                Owner::Role(Role::Planner),
+                read_prompts(vec![], vec![]).expect("none"),
+            )
+            .expect("none"),
+        );
+        assert_eq!(system, None);
+        assert!(briefings.is_empty());
     }
 
     /// `prompt get > file` then `prompt set --file file` has to round-trip, so
