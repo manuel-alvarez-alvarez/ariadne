@@ -2,6 +2,7 @@
 
 use anyhow::{Result, bail};
 use clap::Subcommand;
+use serde_json::json;
 
 use ariadne_api::goals::{CreateGoalRequest, FinalizePlanRequest, GoalDto};
 use ariadne_api::messages::{CreateMessageRequest, MessageDto};
@@ -79,6 +80,19 @@ pub enum GoalCommand {
     },
     /// Cancel a goal and every task under it
     Cancel {
+        /// Goal id
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
+        id: String,
+        /// Do not ask for confirmation
+        #[arg(short, long)]
+        yes: bool,
+    },
+    /// Delete a finished goal and everything under it
+    ///
+    /// Only a completed or cancelled goal can go: an active one still owns
+    /// tmux sessions and worktrees, and `goal cancel` is what tears those
+    /// down. What goes takes its tasks and messages with it, for good.
+    Rm {
         /// Goal id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
         id: String,
@@ -220,6 +234,28 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                 Format::Table => println!("goal {} is now {}", g.id, g.status.as_str()),
             }
         }
+        GoalCommand::Rm { id, yes } => {
+            let g: GoalDto = client.get_json(&format!("/v1/goals/{id}")).await?;
+            // The daemon decides this too (and answers 409 if the goal moves
+            // between these two calls); asking here is what turns the refusal
+            // into the command that unblocks it.
+            if !g.status.is_terminal() {
+                bail!(
+                    "goal {id} is {} — cancel it first: ariadne goal cancel {id}",
+                    g.status.as_str()
+                );
+            }
+            confirm(&rm_question(client, &g).await, yes)?;
+            client
+                .send_no_content::<()>(http::Method::DELETE, &format!("/v1/goals/{id}"), None)
+                .await?;
+            match format {
+                // Nothing is left to print: what the caller asked about, and
+                // that it happened.
+                Format::Json => print_json(&json!({"goal": id, "deleted": true}))?,
+                Format::Table => println!("deleted {id}"),
+            }
+        }
         GoalCommand::Attach { id } => {
             crate::commands::attach::attach(client, &id, None).await?;
         }
@@ -282,6 +318,23 @@ async fn cancel_question(client: &Client, goal: &GoalDto) -> String {
         n => format!("{n} live tasks will be cancelled too"),
     };
     format!("Cancel goal \"{}\" ({})?", goal.title, tail)
+}
+
+/// What `goal rm` asks before it deletes: the goal's tasks, messages and
+/// review history go with it and none of it comes back, so the question names
+/// how much history is about to be dropped.
+async fn rm_question(client: &Client, goal: &GoalDto) -> String {
+    let tasks = goal_tasks(client, &goal.id).await.len();
+    let tail = match tasks {
+        0 => "no tasks".into(),
+        1 => "1 task".into(),
+        n => format!("{n} tasks"),
+    };
+    format!(
+        "Delete goal \"{}\" ({}) for good, with {tail} and their messages?",
+        goal.title,
+        goal.status.as_str()
+    )
 }
 
 /// The goal's tasks, as context for a question rather than as its answer: a
