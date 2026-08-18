@@ -33,11 +33,14 @@ utoipa = { workspace = true }
 utoipa-swagger-ui = { workspace = true }
 uuid = { workspace = true }
 
-# Native sleep inhibition (IOKit / logind / SetThreadExecutionState). Declared
-# per target because the crate refuses to compile where it has no backend; see
-# `src/sleep.rs` for the stub that takes over there.
-[target.'cfg(any(target_os = "macos", target_os = "linux", windows))'.dependencies]
+# Sleep inhibition (see `src/sleep.rs`), per target because neither dependency
+# means anything anywhere else — platforms with no backend get the stub.
+# IOKit assertion / SetThreadExecutionState:
+[target.'cfg(any(target_os = "macos", windows))'.dependencies]
 keepawake = { workspace = true }
+# systemd-logind's Inhibit, which is just a D-Bus call:
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = { workspace = true }
 
 [dev-dependencies]
 http-body-util = { workspace = true }

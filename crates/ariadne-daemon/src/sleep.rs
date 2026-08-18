@@ -6,11 +6,12 @@
 //! flips this inhibitor on the edges of "any agent working" and the platform
 //! keeps the machine up.
 //!
-//! The native backends come from [`keepawake`], which wraps exactly the three
-//! APIs we would otherwise hand-roll: `IOPMAssertionCreateWithName` on macOS,
-//! logind's `Inhibit` on Linux and `SetThreadExecutionState` on Windows. The
-//! workspace forbids `unsafe_code`, so the FFI has to live in a dependency
-//! anyway.
+//! macOS and Windows go through [`keepawake`], which wraps the two calls we
+//! would otherwise hand-roll — `IOPMAssertionCreateWithName` and
+//! `SetThreadExecutionState`; the workspace forbids `unsafe_code`, so that FFI
+//! has to live in a dependency anyway. Linux needs no FFI at all: logind's
+//! `Inhibit` is one D-Bus call, made here directly so the daemon takes the
+//! single `sleep:idle` lock the mechanism is meant to be used with.
 
 use tracing::{debug, info, warn};
 
@@ -112,8 +113,9 @@ fn platform_backend() -> Box<dyn Backend> {
     Box::new(UnsupportedBackend)
 }
 
-/// Platforms `keepawake` has no backend for: refusing to acquire makes the
-/// inhibitor a no-op and gets the "sleep may happen" warning logged once.
+/// Platforms with no inhibition mechanism we know of: refusing to acquire
+/// makes the inhibitor a no-op and gets the "sleep may happen" warning logged
+/// once.
 #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 struct UnsupportedBackend;
 
@@ -125,10 +127,75 @@ impl Backend for UnsupportedBackend {
     fn release(&mut self) {}
 }
 
+/// macOS and Windows: one `keepawake` handle, released when it drops.
+#[cfg(any(target_os = "macos", windows))]
+mod platform {
+    /// What holding the inhibition amounts to on this platform.
+    pub(super) type Held = keepawake::KeepAwake;
+
+    pub(super) fn create() -> anyhow::Result<Held> {
+        Ok(keepawake::Builder::default()
+            // macOS: an `IOPMAssertionCreateWithName` assertion of type
+            // PreventUserIdleSystemSleep, named with our reason. Windows:
+            // `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)`.
+            // Deliberately nothing else: the display may sleep, and an
+            // explicit sleep request stays the user's to make.
+            .idle(true)
+            .reason(super::REASON)
+            .create()?)
+    }
+}
+
+/// Linux: one systemd-logind inhibitor lock, held as the fd logind handed us
+/// and released by closing it.
+#[cfg(target_os = "linux")]
+mod platform {
+    use zbus::blocking::Connection;
+    use zbus::zvariant::OwnedFd;
+
+    /// The slice of `org.freedesktop.login1.Manager` we need.
+    #[zbus::proxy(
+        interface = "org.freedesktop.login1.Manager",
+        default_service = "org.freedesktop.login1",
+        default_path = "/org/freedesktop/login1"
+    )]
+    trait Manager {
+        fn inhibit(&self, what: &str, who: &str, why: &str, mode: &str) -> zbus::Result<OwnedFd>;
+    }
+
+    /// The lock lives exactly as long as the fd: logind releases it the
+    /// moment the last copy is closed, which dropping this does. The
+    /// connection rides along so the lock does not depend on a bus
+    /// connection nobody owns any more.
+    pub(super) struct Held {
+        _lock: OwnedFd,
+        _conn: Connection,
+    }
+
+    pub(super) fn create() -> anyhow::Result<Held> {
+        // A machine with no logind (or no D-Bus at all) fails here, which the
+        // caller turns into one warning and a no-op inhibitor.
+        let conn = Connection::system()?;
+        let manager = ManagerProxyBlocking::new(&conn)?;
+        // One lock for both: "sleep" alone would not stop the idle timer, and
+        // "idle" alone would not stop a suspend the system decides on. Mode
+        // "block" refuses the sleep outright rather than asking for a delay.
+        // "ariadned" is the `who`, which is what `systemd-inhibit --list`
+        // shows next to the reason.
+        let lock = manager.inhibit("sleep:idle", "ariadned", super::REASON, "block")?;
+        Ok(Held {
+            _lock: lock,
+            _conn: conn,
+        })
+    }
+}
+
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 mod native {
-    use super::{Backend, REASON};
     use std::sync::mpsc;
+
+    use super::Backend;
+    use super::platform::{Held, create};
 
     /// The inhibition is held on a dedicated thread of its own.
     ///
@@ -153,29 +220,13 @@ mod native {
         Release(mpsc::Sender<()>),
     }
 
-    fn create() -> keepawake::Result<keepawake::KeepAwake> {
-        keepawake::Builder::default()
-            // macOS: PreventUserIdleSystemSleep. Linux: logind "idle".
-            // Windows: ES_SYSTEM_REQUIRED.
-            .idle(true)
-            // Only logind splits idle-sleep from explicit sleep, and it wants
-            // both blocked ("sleep:idle"). Asking for it elsewhere would take
-            // assertions the daemon has no business holding: PreventSystemSleep
-            // on macOS, away mode on Windows.
-            .sleep(cfg!(target_os = "linux"))
-            .reason(REASON)
-            .app_name("ariadned")
-            .app_reverse_domain("dev.ariadne.ariadned")
-            .create()
-    }
-
     fn run(rx: mpsc::Receiver<Cmd>) {
-        let mut held: Option<keepawake::KeepAwake> = None;
+        let mut held: Option<Held> = None;
         while let Ok(cmd) = rx.recv() {
             match cmd {
                 Cmd::Acquire(reply) => {
-                    let result = create().map(|awake| held = Some(awake));
-                    let _ = reply.send(result.map_err(|e| e.to_string()));
+                    let result = create().map(|inhibition| held = Some(inhibition));
+                    let _ = reply.send(result.map_err(|e| format!("{e:#}")));
                 }
                 Cmd::Release(reply) => {
                     held = None;
