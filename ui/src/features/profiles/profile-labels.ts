@@ -59,6 +59,21 @@ export const PROMPT_KIND_LABELS: Record<PromptKind, string> = {
   reviewer_resume: "Reviewer resume",
 }
 
+/**
+ * Every briefing kind, in the order above.
+ *
+ * The labels map is what proves this list total; this one exists because a zod
+ * enum needs a tuple, not a record's keys.
+ */
+export const PROMPT_KINDS = [
+  "planner_briefing",
+  "engineer_briefing",
+  "changes_requested",
+  "merge_instructions",
+  "reviewer_briefing",
+  "reviewer_resume",
+] as const satisfies readonly PromptKind[]
+
 /** When each briefing is sent, one line under the editor that holds it. */
 export const PROMPT_KIND_HINTS: Record<PromptKind, string> = {
   planner_briefing: "Starts the planner on a goal.",
