@@ -1,8 +1,7 @@
 //! Store integration tests against a temp-file SQLite database.
 
 use ariadne_core::{
-    Actor, AgentKind, AuthorRole, GoalStatus, PromptKind, ReviewVerdict, Role, SessionStatus,
-    TaskStatus,
+    Actor, AgentKind, AuthorRole, PromptKind, ReviewVerdict, Role, SessionStatus, TaskStatus,
 };
 use ariadne_store::defaults::{default_prompt, default_system_prompt};
 use ariadne_store::*;
@@ -562,50 +561,6 @@ async fn restarting_a_session_reopens_the_same_row() {
             .restart_session("01ARZ3NDEKTSV4RRFFQ69G5FAV", None, None)
             .await
             .is_err()
-    );
-}
-
-#[tokio::test]
-async fn list_goals_filters_by_any_of_the_given_statuses() {
-    let (store, _dir) = test_store().await;
-    let planner = seed_profile(&store, "planner", Role::Planner).await;
-    let (planning, _) = seed_goal(&store, &planner, None).await;
-    let (active, _) = seed_goal(&store, &planner, None).await;
-    let (cancelled, _) = seed_goal(&store, &planner, None).await;
-    store
-        .set_goal_status(&active.id, GoalStatus::Active)
-        .await
-        .unwrap();
-    store
-        .set_goal_status(&cancelled.id, GoalStatus::Cancelled)
-        .await
-        .unwrap();
-
-    let ids = |goals: Vec<Goal>| goals.into_iter().map(|g| g.id).collect::<Vec<_>>();
-
-    // No statuses is no filter at all.
-    assert_eq!(ids(store.list_goals(&[]).await.unwrap()).len(), 3);
-    assert_eq!(
-        ids(store.list_goals(&[GoalStatus::Active]).await.unwrap()),
-        vec![active.id.clone()]
-    );
-    // Several statuses match a goal in any of them, still ordered by id.
-    let mut expected = vec![active.id.clone(), cancelled.id.clone()];
-    expected.sort();
-    assert_eq!(
-        ids(store
-            .list_goals(&[GoalStatus::Active, GoalStatus::Cancelled])
-            .await
-            .unwrap()),
-        expected
-    );
-    assert_eq!(
-        ids(store.list_goals(&[GoalStatus::Completed]).await.unwrap()),
-        Vec::<String>::new()
-    );
-    assert_eq!(
-        ids(store.list_goals(&[GoalStatus::Planning]).await.unwrap()),
-        vec![planning.id]
     );
 }
 

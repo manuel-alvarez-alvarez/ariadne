@@ -22,23 +22,8 @@ use crate::gitutil;
 
 #[derive(Debug, Default, Deserialize, IntoParams)]
 pub struct GoalListQuery {
-    /// Filter by status: one status, or several comma-separated
-    /// (`status=active,completed`), matching goals in any of them.
-    #[param(value_type = Option<String>, example = "active,completed")]
-    pub status: Option<String>,
-}
-
-impl GoalListQuery {
-    /// The requested statuses; empty means "every goal". An unknown value is
-    /// a 400, the same as a single unparseable status was.
-    fn statuses(&self) -> Result<Vec<GoalStatus>, ApiError> {
-        let Some(raw) = &self.status else {
-            return Ok(Vec::new());
-        };
-        raw.split(',')
-            .map(|s| s.parse::<GoalStatus>().map_err(ApiError::bad_request))
-            .collect()
-    }
+    /// Filter by status.
+    pub status: Option<GoalStatus>,
 }
 
 /// Create a goal. Validates repos and resolves base branches; the planner
@@ -124,7 +109,7 @@ pub async fn list(
     State(state): State<AppState>,
     Query(q): Query<GoalListQuery>,
 ) -> ApiResult<Json<Vec<GoalDto>>> {
-    let goals = state.store.list_goals(&q.statuses()?).await?;
+    let goals = state.store.list_goals(q.status).await?;
     let mut out = Vec::with_capacity(goals.len());
     for goal in goals {
         let repos = state.store.list_goal_repos(&goal.id).await?;
@@ -276,47 +261,4 @@ pub async fn post_message(
         })
         .await?;
     Ok((StatusCode::CREATED, Json(message_dto(msg))))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::GoalListQuery;
-
-    use ariadne_core::GoalStatus;
-    use axum::http::StatusCode;
-
-    fn query(status: Option<&str>) -> GoalListQuery {
-        GoalListQuery {
-            status: status.map(str::to_string),
-        }
-    }
-
-    #[test]
-    fn no_status_param_means_every_goal() {
-        assert_eq!(query(None).statuses().unwrap(), vec![]);
-    }
-
-    #[test]
-    fn a_single_status_still_parses() {
-        assert_eq!(
-            query(Some("active")).statuses().unwrap(),
-            vec![GoalStatus::Active]
-        );
-    }
-
-    #[test]
-    fn a_comma_separated_list_parses_in_order() {
-        assert_eq!(
-            query(Some("active,completed")).statuses().unwrap(),
-            vec![GoalStatus::Active, GoalStatus::Completed]
-        );
-    }
-
-    #[test]
-    fn an_unknown_status_is_a_bad_request() {
-        for raw in ["nope", "active,nope", ""] {
-            let err = query(Some(raw)).statuses().unwrap_err();
-            assert_eq!(err.status, StatusCode::BAD_REQUEST);
-        }
-    }
 }
