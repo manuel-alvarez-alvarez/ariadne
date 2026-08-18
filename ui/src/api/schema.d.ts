@@ -1245,8 +1245,12 @@ export interface operations {
     goals_list: {
         parameters: {
             query?: {
-                /** @description Filter by status. */
-                status?: null | components["schemas"]["GoalStatus"];
+                /**
+                 * @description Filter by status: one status, or several comma-separated
+                 *     (`status=active,completed`), matching goals in any of them.
+                 * @example active,completed
+                 */
+                status?: string | null;
             };
             header?: never;
             path?: never;
