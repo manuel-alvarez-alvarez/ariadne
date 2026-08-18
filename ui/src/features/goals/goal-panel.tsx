@@ -16,7 +16,8 @@
  */
 
 import { useQuery } from "@tanstack/react-query"
-import { type ReactNode, type RefObject, useRef } from "react"
+import { PlusIcon } from "lucide-react"
+import { type ReactNode, type RefObject, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 
 import { ApiError, type GoalDto } from "@/api"
@@ -25,20 +26,22 @@ import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { Markdown } from "@/components/markdown"
 import { StatusBadge } from "@/components/status-badge"
+import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ProfileName } from "@/features/profiles/profile-name"
+import { CreateTaskDialog } from "@/features/tasks/task-form-dialog"
 import { useFocusReturn } from "@/hooks/use-focus-return"
 import { goalCopyEntries } from "@/lib/copy-entries"
 import { formatAbsolute, formatRelative } from "@/lib/time"
-import { usePanelSessionNavigation } from "@/routes/paths"
+import { taskPanelTo, usePanelSessionNavigation } from "@/routes/paths"
 import { GoalActions } from "./goal-actions"
 import { GoalSessions, GoalSessionView } from "./goal-sessions"
 import { GoalTasks } from "./goal-tasks"
 import { GoalThread } from "./goal-thread"
 import { goalQueryOptions } from "./queries"
-import { GOAL_STATUS_META } from "./status"
+import { GOAL_STATUS_META, isTerminalGoalStatus } from "./status"
 
 // Description leads the strip — it is what the goal *is* — but the panel still
 // opens on the tasks, which are what a goal comes down to.
@@ -167,16 +170,20 @@ function GoalView({
   onSelectSession: (sessionId: string) => void
 }) {
   const [search, setSearch] = useSearchParams()
-  // Tasks by default, whatever the URL says if it says something else: what a
-  // goal comes down to is its tasks, and they are otherwise on the board this
-  // panel covers.
-  const tab = TABS.find((value) => value === search.get("tab")) ?? "tasks"
+  const [newTaskOpen, setNewTaskOpen] = useState(false)
+  const tab = TABS.find((value) => value === search.get("tab")) ?? "description"
 
   function setTab(next: Tab) {
     const params = new URLSearchParams(search)
     params.set("tab", next)
     setSearch(params, { replace: true })
   }
+
+  // The daemon takes a task in any goal state, but only a live goal does
+  // anything with one: while planning it joins the plan, while active the
+  // scheduler picks it up once its dependencies merge. On a terminal goal it
+  // would only ever sit in pending, so the button goes away with the goal.
+  const canCreateTask = !isTerminalGoalStatus(goal.status)
 
   return (
     <>
@@ -190,7 +197,13 @@ function GoalView({
             label={GOAL_STATUS_META[goal.status].label}
             tone={GOAL_STATUS_META[goal.status].badge}
           />
-          <div className="ml-auto shrink-0">
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            {canCreateTask ? (
+              <Button variant="outline" size="sm" onClick={() => setNewTaskOpen(true)}>
+                <PlusIcon />
+                New task
+              </Button>
+            ) : null}
             <GoalActions goal={goal} />
           </div>
         </div>
@@ -219,7 +232,10 @@ function GoalView({
           )}
         </TabsContent>
         <TabsContent value="tasks" className="pt-3">
-          <GoalTasks goalId={goal.id} />
+          <GoalTasks
+            goalId={goal.id}
+            onNewTask={canCreateTask ? () => setNewTaskOpen(true) : undefined}
+          />
         </TabsContent>
         <TabsContent value="thread" className="pt-3">
           <GoalThread goalId={goal.id} />
@@ -228,6 +244,16 @@ function GoalView({
           <GoalSessions goalId={goal.id} onSelect={onSelectSession} />
         </TabsContent>
       </Tabs>
+
+      <CreateTaskDialog
+        goal={goal}
+        open={newTaskOpen}
+        onOpenChange={setNewTaskOpen}
+        // Opening the new task's panel is the same gesture as opening it from
+        // a lane: `?task=` stacks it over this goal (see `detail-panels.tsx`),
+        // pushed so Back lands here.
+        onCreated={(task) => setSearch(taskPanelTo(search, task.id).search)}
+      />
     </>
   )
 }

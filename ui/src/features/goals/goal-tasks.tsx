@@ -13,14 +13,23 @@
  */
 
 import { useQuery } from "@tanstack/react-query"
+import { PlusIcon } from "lucide-react"
 import { useMemo } from "react"
 
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
+import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { compareByAttention, TaskCard, taskListQueryOptions } from "@/features/tasks"
 
-export function GoalTasks({ goalId }: { goalId: string }) {
+export function GoalTasks({
+  goalId,
+  onNewTask,
+}: {
+  goalId: string
+  /** Opens the create-task dialog; absent when the goal no longer takes one. */
+  onNewTask?: () => void
+}) {
   const tasks = useQuery(taskListQueryOptions({ goal: goalId }))
   // What needs a person comes first: the panel is a small window, and the task
   // that is stuck should not be the one below the fold.
@@ -48,7 +57,20 @@ export function GoalTasks({ goalId }: { goalId: string }) {
   }
 
   if (ordered.length === 0) {
-    return <EmptyState emphasis="quiet" title="No tasks yet" />
+    return (
+      <EmptyState
+        emphasis="quiet"
+        title="No tasks yet"
+        action={
+          onNewTask ? (
+            <Button variant="outline" size="sm" onClick={onNewTask}>
+              <PlusIcon />
+              New task
+            </Button>
+          ) : undefined
+        }
+      />
+    )
   }
 
   return (

@@ -12,11 +12,13 @@ import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query
 import {
   api,
   type CacheSnapshot,
+  type CreateTaskRequest,
   optimisticStatus,
   qk,
   restoreCache,
   type TaskDto,
   type TaskStatus,
+  type UpdateTaskRequest,
   unwrap,
 } from "@/api"
 
@@ -95,6 +97,53 @@ export function taskDiffQueryOptions(taskId: string) {
         }),
       )) ?? "",
     staleTime: 0,
+  })
+}
+
+/**
+ * `POST /v1/goals/{goal_id}/tasks` — the create-task form's submit.
+ *
+ * The daemon owns the validation (profile roles, repo membership, dep cycles,
+ * `max_tasks`), so a failure surfaces as the `ApiError` the form renders. On
+ * success the new task is cached and the lists refetched — the `task_created`
+ * event will say the same thing, but the stream may be down.
+ */
+export function useCreateTask(goalId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: CreateTaskRequest) =>
+      unwrap(
+        api().POST("/v1/goals/{goal_id}/tasks", {
+          params: { path: { goal_id: goalId } },
+          body,
+        }),
+      ),
+    onSuccess: (task) => {
+      queryClient.setQueryData(qk.tasks.detail(task.id), task)
+      void queryClient.invalidateQueries({ queryKey: qk.tasks.lists() })
+    },
+  })
+}
+
+/**
+ * `PATCH /v1/tasks/{id}` — the edit-task form's submit.
+ *
+ * Only legal while the task is pending/ready; once it has moved on the daemon
+ * answers `409` and the form shows that envelope. On success the answered task
+ * replaces the cached one — the `task_updated` event will say the same thing,
+ * but the stream may be down. Transitions are invalidated too: adding a
+ * dependency to a `ready` task moves it back to `pending`.
+ */
+export function useUpdateTask(taskId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: UpdateTaskRequest) =>
+      unwrap(api().PATCH("/v1/tasks/{id}", { params: { path: { id: taskId } }, body })),
+    onSuccess: (task) => {
+      queryClient.setQueryData(qk.tasks.detail(taskId), task)
+      void queryClient.invalidateQueries({ queryKey: qk.tasks.lists() })
+      void queryClient.invalidateQueries({ queryKey: qk.tasks.transitions(taskId) })
+    },
   })
 }
 
