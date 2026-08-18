@@ -4,7 +4,7 @@ use anyhow::Result;
 use clap::Subcommand;
 
 use ariadne_api::goals::{CreateGoalRequest, FinalizePlanRequest, GoalDto, RepoSpec};
-use ariadne_api::messages::{CreateMessageRequest, MessageDto};
+use ariadne_api::messages::MessageDto;
 use ariadne_api::tasks::{TaskDto, TaskListQuery};
 use ariadne_client::Client;
 
@@ -90,14 +90,6 @@ pub enum GoalCommand {
         /// Goal id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
         id: String,
-    },
-    /// Post a message into the goal-level conversation
-    Msg {
-        /// Goal id
-        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
-        id: String,
-        /// Message body
-        body: String,
     },
     /// Attach to the goal's planner tmux session
     Attach {
@@ -241,18 +233,6 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                         note("no messages yet");
                     }
                 }
-            }
-        }
-        GoalCommand::Msg { id, body } => {
-            let m: MessageDto = client
-                .post_json(
-                    &format!("/v1/goals/{id}/messages"),
-                    &CreateMessageRequest { body },
-                )
-                .await?;
-            match format {
-                Format::Json => print_json(&m)?,
-                Format::Table => println!("posted {}", m.id),
             }
         }
     }
