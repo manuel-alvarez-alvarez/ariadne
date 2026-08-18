@@ -77,6 +77,13 @@ class FakeEventSource {
   }
 }
 
+/** The stream the drawer opened; throws (failing the test) if none was. */
+function openedSource(): FakeEventSource {
+  const source = FakeEventSource.instances[0]
+  if (!source) throw new Error("no EventSource was opened")
+  return source
+}
+
 beforeEach(() => {
   FakeEventSource.instances = []
   vi.stubGlobal("EventSource", FakeEventSource)
@@ -112,7 +119,7 @@ it("opens from the footer, tails the stream, and lets go of it on close", async 
   await user.click(footerButton)
   expect(await screen.findByRole("heading", { name: "Daemon logs" })).toBeTruthy()
   expect(FakeEventSource.instances).toHaveLength(1)
-  const source = FakeEventSource.instances[0]
+  const source = openedSource()
   expect(source.url).toBe("http://127.0.0.1:7676/v1/logs/stream")
 
   source.emit("snapshot", {
@@ -146,7 +153,7 @@ it("says when it has nothing to show yet", async () => {
   const footerButton = mountShell()
 
   await user.click(footerButton)
-  const source = FakeEventSource.instances[0]
+  const source = openedSource()
   source.onopen?.()
   source.emit("snapshot", { lines: [] })
 
@@ -158,7 +165,7 @@ it("says out loud when the stream drops", async () => {
   const footerButton = mountShell()
 
   await user.click(footerButton)
-  const source = FakeEventSource.instances[0]
+  const source = openedSource()
   source.onopen?.()
   source.onerror?.()
 

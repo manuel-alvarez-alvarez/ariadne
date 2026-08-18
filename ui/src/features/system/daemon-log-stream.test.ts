@@ -152,7 +152,10 @@ describe("DaemonLogStream payloads", () => {
     latest().emit("snapshot", { lines: [line("one")] })
     latest().emit("delta", line("two"))
 
-    const [[first], [second]] = spies.onLines.mock.calls
+    const calls = spies.onLines.mock.calls
+    expect(calls).toHaveLength(2)
+    const first = calls[0]?.[0]
+    const second = calls[1]?.[0]
     expect(first).not.toBe(second)
     expect(first).toEqual([line("one")])
   })
