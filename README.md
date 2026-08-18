@@ -187,6 +187,9 @@ delete_merged_worktrees = true     # remove task worktrees after merge (default)
                                    # false keeps them for inspecting merged work
 delete_merged_branches = true      # only applies when worktrees are deleted too:
                                    # a kept engineer worktree pins the task branch
+prevent_sleep = true               # hold a system sleep inhibition while any agent
+                                   # session is live, so the box does not idle-sleep
+                                   # out from under a working agent (default)
 ```
 
 `ARIADNE_HOME` moves the whole home directory: daemon and CLI alike resolve

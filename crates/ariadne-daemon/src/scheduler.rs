@@ -15,6 +15,7 @@ use ariadne_store::{SessionFilter, Store, Task, TaskFilter};
 
 use crate::agents::prompts;
 use crate::launcher::Launcher;
+use crate::sleep::SleepInhibitor;
 
 /// Events that wake the scheduler for a scoped reconciliation.
 #[derive(Debug, Clone)]
@@ -44,16 +45,27 @@ pub struct Scheduler {
     spawn_failures: HashMap<String, u32>,
     /// Tasks nudged in their current (status, round); cleared on transition.
     nudged: HashMap<String, (String, i64)>,
+    /// Held while any session is live, so the machine does not idle-sleep
+    /// out from under a working agent.
+    sleep: SleepInhibitor,
+    /// Whether taking that inhibition is wanted at all (`prevent_sleep`).
+    prevent_sleep: bool,
 }
 
 /// Start the scheduler; returns the event sender for the HTTP layer.
-pub fn start(store: Store, launcher: Arc<Launcher>) -> mpsc::UnboundedSender<SchedEvent> {
+pub fn start(
+    store: Store,
+    launcher: Arc<Launcher>,
+    prevent_sleep: bool,
+) -> mpsc::UnboundedSender<SchedEvent> {
     let (tx, mut rx) = mpsc::unbounded_channel();
     let mut scheduler = Scheduler {
         store,
         launcher,
         spawn_failures: HashMap::new(),
         nudged: HashMap::new(),
+        sleep: SleepInhibitor::new(),
+        prevent_sleep,
     };
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(TICK_SECS));
@@ -75,7 +87,12 @@ pub fn start(store: Store, launcher: Arc<Launcher>) -> mpsc::UnboundedSender<Sch
 
 impl Scheduler {
     async fn reconcile_all(&mut self) {
-        self.liveness_sweep().await;
+        // The sweep is the one place that sees every session, so its count
+        // decides whether the machine stays awake. `None` means the store did
+        // not answer: leave the inhibition as it is rather than guess.
+        if let Some(live) = self.liveness_sweep().await {
+            self.sleep.set_active(self.prevent_sleep && live > 0);
+        }
         let goals = match self.store.list_goals(&[]).await {
             Ok(goals) => goals,
             Err(e) => {
@@ -133,7 +150,10 @@ impl Scheduler {
     /// session that has ended has no other way to learn what width its bytes
     /// were written at (see `Launcher::record_pane_size`). This sweep is the
     /// only place that sees every session, watched or not.
-    async fn liveness_sweep(&mut self) {
+    ///
+    /// Returns how many sessions came out of it still alive, or `None` if the
+    /// store could not be listed.
+    async fn liveness_sweep(&mut self) -> Option<usize> {
         let Ok(live) = self
             .store
             .list_sessions(SessionFilter {
@@ -142,8 +162,9 @@ impl Scheduler {
             })
             .await
         else {
-            return;
+            return None;
         };
+        let mut alive = 0;
         for session in live {
             match self
                 .launcher
@@ -152,6 +173,7 @@ impl Scheduler {
                 .await
             {
                 Ok(geometry) => {
+                    alive += 1;
                     self.launcher
                         .record_pane_size(&session.id, geometry.cols, geometry.rows)
                         .await;
@@ -175,14 +197,19 @@ impl Scheduler {
                             .await;
                     }
                     Ok(true) => {
+                        alive += 1;
                         warn!(session = %session.id, error = %e, "measuring the pane failed")
                     }
+                    // Unknown, so counted as alive: an unreachable tmux is no
+                    // reason to let the machine sleep on a working agent.
                     Err(check) => {
+                        alive += 1;
                         warn!(session = %session.id, error = %e, check = %check, "cannot reach tmux")
                     }
                 },
             }
         }
+        Some(alive)
     }
 
     async fn reconcile_session(&mut self, session_id: &str) {

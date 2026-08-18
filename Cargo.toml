@@ -59,6 +59,8 @@ ulid = { version = "3", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "6"
+# Sleep inhibition, one small wrapper over the three native power APIs.
+keepawake = { version = "0.6", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

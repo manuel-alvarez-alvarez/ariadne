@@ -33,6 +33,12 @@ utoipa = { workspace = true }
 utoipa-swagger-ui = { workspace = true }
 uuid = { workspace = true }
 
+# Native sleep inhibition (IOKit / logind / SetThreadExecutionState). Declared
+# per target because the crate refuses to compile where it has no backend; see
+# `src/sleep.rs` for the stub that takes over there.
+[target.'cfg(any(target_os = "macos", target_os = "linux", windows))'.dependencies]
+keepawake = { workspace = true }
+
 [dev-dependencies]
 http-body-util = { workspace = true }
 tempfile = "3"
