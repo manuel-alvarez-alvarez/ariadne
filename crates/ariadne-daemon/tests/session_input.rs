@@ -19,6 +19,7 @@ use ariadne_daemon::config::Config;
 use ariadne_daemon::gitwt::GitManager;
 use ariadne_daemon::http::{self, AppState};
 use ariadne_daemon::launcher::Launcher;
+use ariadne_daemon::logbuf::LogBuffer;
 use ariadne_daemon::tmux::TmuxManager;
 use ariadne_store::{AgentSession, NewGoal, NewProfile, NewSession, Store};
 
@@ -48,6 +49,7 @@ async fn harness() -> Harness {
         launcher,
         sched_tx: None,
         events: bus,
+        logs: LogBuffer::new(),
     };
     Harness {
         router: http::router(state),
