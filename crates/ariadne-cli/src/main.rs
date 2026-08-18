@@ -502,13 +502,9 @@ mod tests {
             "--prompt-file",
             "engineer_briefing=/tmp/b.md",
         ]);
-        let err = commands::profile::collect_prompts(
-            commands::profile::Owner::Role(ariadne_core::Role::Engineer),
-            texts,
-            files,
-        )
-        .expect_err("duplicate")
-        .to_string();
+        let err = commands::profile::read_prompts(texts, files)
+            .expect_err("duplicate")
+            .to_string();
         assert!(err.starts_with("engineer_briefing is set twice"), "{err}");
     }
 
