@@ -41,10 +41,7 @@ export function MessageComposer({
   className?: string
 }) {
   const [draft, setDraft] = useState("")
-  // The end of the message list in flow, for scrolling a sent message into
-  // view. The sticky form itself cannot be the target: its rect is wherever
-  // it is stuck, which is always in view already.
-  const anchor = useRef<HTMLDivElement>(null)
+  const form = useRef<HTMLFormElement>(null)
   const body = draft.trim()
 
   async function send() {
@@ -58,49 +55,64 @@ export function MessageComposer({
     // Clear exactly what was sent: typing that happened mid-flight survives.
     setDraft((current) => (current.trim() === body ? "" : current))
     // The mutation has already appended the message to the cached thread;
-    // give React a frame to lay it out, then bring the list's end into view.
+    // give React a frame to lay it out, then bring the thread's end — the
+    // sent message, with this box under it — into view. The scroll has to go
+    // to the panel, not this form: stuck, the form's own rect is always in
+    // view already, so `scrollIntoView` on it would move nothing.
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        anchor.current?.scrollIntoView({ block: "end", behavior: "smooth" })
+        const panel = scrollParent(form.current)
+        panel?.scrollTo({ top: panel.scrollHeight, behavior: "smooth" })
       })
     })
   }
 
   return (
-    <>
-      <div ref={anchor} aria-hidden />
-      <form
-        className={cn("sticky bottom-0 flex flex-col gap-2 bg-background pt-1 pb-1", className)}
-        onSubmit={(event) => {
-          event.preventDefault()
-          void send()
+    <form
+      ref={form}
+      className={cn("sticky bottom-0 flex flex-col gap-2 bg-background py-1", className)}
+      onSubmit={(event) => {
+        event.preventDefault()
+        void send()
+      }}
+    >
+      <Textarea
+        value={draft}
+        aria-label={label}
+        placeholder={placeholder}
+        onChange={(event) => {
+          setDraft(event.target.value)
+          // A failure from the last attempt is stale once the text changes.
+          if (post.isError) post.reset()
         }}
-      >
-        <Textarea
-          value={draft}
-          aria-label={label}
-          placeholder={placeholder}
-          onChange={(event) => {
-            setDraft(event.target.value)
-            // A failure from the last attempt is stale once the text changes.
-            if (post.isError) post.reset()
-          }}
-          onKeyDown={(event) => {
-            if (matchesShortcut(event, SEND)) {
-              event.preventDefault()
-              void send()
-            }
-          }}
-        />
-        {post.isError ? <ErrorState title="Could not send the message" error={post.error} /> : null}
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-xs text-muted-foreground">{shortcutLabel(SEND)} to send</span>
-          <Button type="submit" size="sm" disabled={!body} pending={post.isPending}>
-            <SendIcon />
-            Send
-          </Button>
-        </div>
-      </form>
-    </>
+        onKeyDown={(event) => {
+          if (matchesShortcut(event, SEND)) {
+            event.preventDefault()
+            void send()
+          }
+        }}
+      />
+      {post.isError ? <ErrorState title="Could not send the message" error={post.error} /> : null}
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs text-muted-foreground">{shortcutLabel(SEND)} to send</span>
+        <Button type="submit" size="sm" disabled={!body} pending={post.isPending}>
+          <SendIcon />
+          Send
+        </Button>
+      </div>
+    </form>
   )
+}
+
+/**
+ * The scroll container the box is stuck to — the side panel's popup, or
+ * whatever holds the thread elsewhere. `document.scrollingElement` when
+ * nothing on the way up scrolls and the page itself is the container.
+ */
+function scrollParent(el: HTMLElement | null): Element | null {
+  for (let node = el?.parentElement; node; node = node.parentElement) {
+    const { overflowY } = getComputedStyle(node)
+    if (overflowY === "auto" || overflowY === "scroll") return node
+  }
+  return document.scrollingElement
 }
