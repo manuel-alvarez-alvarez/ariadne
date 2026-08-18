@@ -7,9 +7,8 @@
  * stream down means the screens still load yet stop updating themselves, which
  * is worth saying out loud.
  *
- * It renders as a real button because the daemon-logs drawer will hang off the
- * click; until that lands the click does nothing, but the affordance — hover,
- * focus ring, chevron — is already the shape it will keep.
+ * It renders as a real button because the daemon-logs drawer hangs off the
+ * click — `onOpenLogs`, wired by the shell to the drawer it mounts.
  */
 
 import { ChevronUpIcon } from "lucide-react"
@@ -19,7 +18,14 @@ import { useConnection } from "@/hooks/use-connection"
 import { formatDuration } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
-export function ConnectionStatus({ className }: { className?: string }) {
+export function ConnectionStatus({
+  className,
+  onOpenLogs,
+}: {
+  className?: string
+  /** What the click opens: the shell's daemon-logs drawer. */
+  onOpenLogs?: () => void
+}) {
   const { status, streamStatus, baseUrl, version, uptimeSecs, error } = useConnection()
 
   const live = status === "connected" && streamStatus === "open"
@@ -48,7 +54,7 @@ export function ConnectionStatus({ className }: { className?: string }) {
     <Tooltip>
       <TooltipTrigger
         aria-label="Daemon status — open logs"
-        render={<button type="button" />}
+        render={<button type="button" onClick={onOpenLogs} />}
         className={cn(
           "flex min-w-0 items-center gap-2 rounded-md px-2 py-0.5 text-xs text-muted-foreground outline-none transition-colors",
           "hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50",

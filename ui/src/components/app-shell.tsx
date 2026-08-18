@@ -3,7 +3,8 @@
  * header naming the screen and carrying the search, theme and settings
  * controls, the connection banner under it when the daemon is not answering,
  * the routed screen in the middle, and a slim footer carrying the daemon
- * connection status.
+ * connection status — whose click opens the daemon-logs drawer, mounted here
+ * for the same reason the dialogs are.
  *
  * The header's title comes from the route's own `handle` (see
  * `src/routes/page-title.ts`), so this file knows nothing about which screens
@@ -31,6 +32,7 @@ import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { CommandPalette } from "@/features/command-palette/command-palette"
 import { CreateGoalDialog } from "@/features/goals/create-goal-dialog"
+import { DaemonLogsDrawer } from "@/features/system/daemon-logs-drawer"
 import { PALETTE_SHORTCUT, useGlobalShortcuts } from "@/hooks/use-global-shortcuts"
 import { shortcutLabel } from "@/lib/shortcuts"
 import { usePageTitle } from "@/routes/page-title"
@@ -40,6 +42,7 @@ export function AppShell() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [createGoalOpen, setCreateGoalOpen] = useState(false)
+  const [logsOpen, setLogsOpen] = useState(false)
   const pageTitle = usePageTitle()
   const navigate = useNavigate()
 
@@ -95,7 +98,7 @@ export function AppShell() {
           <Outlet />
         </main>
         <footer className="flex h-7 shrink-0 items-center border-t bg-muted/40 px-1">
-          <ConnectionStatus />
+          <ConnectionStatus onOpenLogs={() => setLogsOpen(true)} />
         </footer>
       </div>
 
@@ -107,6 +110,7 @@ export function AppShell() {
         onNewGoal={openCreateGoal}
       />
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <DaemonLogsDrawer open={logsOpen} onOpenChange={setLogsOpen} />
       {/* The shell's, like settings: "New goal" has to work from the palette,
           from `N`, and on screens with no create button of their own. */}
       <CreateGoalDialog
