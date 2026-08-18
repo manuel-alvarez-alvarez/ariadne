@@ -24,7 +24,6 @@ import { ApiError, type CreateGoalRequest, type GoalDto } from "@/api"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
   DialogClose,
@@ -34,7 +33,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Field, FieldDescription, FieldError, FieldLabel, FieldTitle } from "@/components/ui/field"
+import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import {
   Select,
@@ -49,6 +48,7 @@ import { repositoriesQueryOptions } from "@/features/repositories/queries"
 import { paths } from "@/routes/paths"
 
 import { plannerProfilesQueryOptions, useCreateGoal } from "./queries"
+import { RepositoryCombobox } from "./repository-combobox"
 
 /** Optional positive integer, kept as the string the input holds. */
 function optionalCount(label: string) {
@@ -187,14 +187,11 @@ export function CreateGoalDialog({
             control={form.control}
             name="repository_ids"
             render={({ field }) => (
-              <Field
-                aria-label="Repositories"
-                data-invalid={form.formState.errors.repository_ids ? "" : undefined}
-              >
-                {/* A heading rather than a label: what follows is a list of
-                    checkboxes, not one control to point a `for` at. Each row
-                    carries its own label instead. */}
-                <FieldTitle>Repositories</FieldTitle>
+              <Field data-invalid={form.formState.errors.repository_ids ? "" : undefined}>
+                {/* One control to point a `for` at, now that the row of
+                    checkboxes is a single combobox: the label names the
+                    trigger, and the picked set is spelled out in it. */}
+                <FieldLabel htmlFor="goal-repositories">Repositories</FieldLabel>
                 {repositories.isPending ? (
                   <LoadingRepositories />
                 ) : repositories.isError ? (
@@ -206,48 +203,13 @@ export function CreateGoalDialog({
                 ) : repositories.data.length === 0 ? (
                   <NoRepositories onLeave={() => onOpenChange(false)} />
                 ) : (
-                  <div className="flex max-h-56 w-full flex-col gap-0.5 overflow-y-auto rounded-lg border p-1">
-                    {repositories.data.map((repository) => {
-                      // Base UI's checkbox puts this on the hidden input it
-                      // renders beside the box, which is what the row's label
-                      // points at — clicking anywhere in the row toggles it,
-                      // and the row's own text is what names it.
-                      const inputId = `goal-repository-${repository.id}`
-                      return (
-                        <label
-                          key={repository.id}
-                          htmlFor={inputId}
-                          className="flex cursor-pointer items-start gap-2.5 rounded-md px-2 py-1.5 hover:bg-accent/60"
-                        >
-                          <Checkbox
-                            id={inputId}
-                            className="mt-0.5"
-                            checked={field.value.includes(repository.id)}
-                            onCheckedChange={(checked) =>
-                              field.onChange(
-                                checked
-                                  ? [...field.value, repository.id]
-                                  : field.value.filter((id) => id !== repository.id),
-                              )
-                            }
-                          />
-                          <span className="min-w-0 flex-1 font-normal">
-                            <span className="flex flex-wrap items-baseline gap-x-2">
-                              <span className="font-mono text-xs">{repository.path}</span>
-                              <span className="font-mono text-xs text-muted-foreground">
-                                {repository.base_branch}
-                              </span>
-                            </span>
-                            {repository.description ? (
-                              <span className="block text-xs text-muted-foreground">
-                                {repository.description}
-                              </span>
-                            ) : null}
-                          </span>
-                        </label>
-                      )
-                    })}
-                  </div>
+                  <RepositoryCombobox
+                    id="goal-repositories"
+                    repositories={repositories.data}
+                    value={field.value}
+                    onChange={field.onChange}
+                    invalid={form.formState.errors.repository_ids ? true : undefined}
+                  />
                 )}
                 <FieldDescription>
                   The checkouts the planner splits this goal across. Task worktrees are branched off
