@@ -4,6 +4,7 @@ use ariadne_api::events::AgentEventDto;
 use ariadne_api::goals::{GoalDto, GoalRepoDto};
 use ariadne_api::messages::MessageDto;
 use ariadne_api::profiles::{ProfileDto, ProfilePromptDto};
+use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::reviews::ReviewDto;
 use ariadne_api::sessions::SessionDto;
 use ariadne_api::tasks::{TaskDto, TaskTransitionDto};
@@ -28,6 +29,17 @@ pub fn profile_prompt_dto(p: store::ProfilePrompt) -> ProfilePromptDto {
         kind: p.kind(),
         content: p.content,
         updated_at: p.updated_at,
+    }
+}
+
+pub fn repository_dto(r: store::Repository) -> RepositoryDto {
+    RepositoryDto {
+        id: r.id,
+        path: r.path,
+        base_branch: r.base_branch,
+        description: r.description,
+        created_at: r.created_at,
+        updated_at: r.updated_at,
     }
 }
 

@@ -8,6 +8,7 @@ mod goals;
 mod logs;
 mod models;
 mod profiles;
+mod repositories;
 mod session_logs;
 mod sessions;
 mod stream;
@@ -79,6 +80,8 @@ impl AppState {
         profiles::create, profiles::list, profiles::get, profiles::update, profiles::delete,
         profiles::list_prompts, profiles::update_prompt, profiles::reset_prompt,
         profiles::reset_system_prompt, profiles::prompt_defaults,
+        repositories::create, repositories::list, repositories::get,
+        repositories::update, repositories::delete,
         goals::create, goals::list, goals::get, goals::cancel, goals::finalize,
         goals::list_messages, goals::post_message,
         tasks::create, tasks::list, tasks::get, tasks::update,
@@ -101,6 +104,7 @@ impl AppState {
     tags(
         (name = "system", description = "Daemon health and metadata"),
         (name = "profiles", description = "Agent profiles (role + system prompt + agent CLI)"),
+        (name = "repositories", description = "Git repositories registered with the daemon"),
         (name = "goals", description = "Goals and their planning threads"),
         (name = "tasks", description = "Tasks, transitions, conversations, reviews"),
         (name = "sessions", description = "Agent sessions (tmux-hosted)"),
@@ -141,6 +145,17 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/v1/roles/{role}/prompt-defaults",
             get(profiles::prompt_defaults),
+        )
+        // repositories
+        .route(
+            "/v1/repositories",
+            post(repositories::create).get(repositories::list),
+        )
+        .route(
+            "/v1/repositories/{id}",
+            get(repositories::get)
+                .put(repositories::update)
+                .delete(repositories::delete),
         )
         // goals
         .route("/v1/goals", post(goals::create).get(goals::list))
