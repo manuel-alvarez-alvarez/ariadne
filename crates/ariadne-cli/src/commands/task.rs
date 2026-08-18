@@ -13,7 +13,7 @@ use ariadne_api::tasks::{
 use ariadne_client::Client;
 use ariadne_core::TaskStatus;
 
-use super::ProfileNames;
+use super::{ProfileNames, confirm};
 use crate::output::{
     Column, Format, UNCAPPED, local_time, note, print_json, print_kv, print_table,
 };
@@ -150,6 +150,9 @@ pub enum TaskCommand {
         /// Task id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
         id: String,
+        /// Do not ask for confirmation
+        #[arg(short, long)]
+        yes: bool,
     },
     /// Retry a failed task
     Retry {
@@ -394,7 +397,9 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                 }
             }
         }
-        TaskCommand::Cancel { id } => {
+        TaskCommand::Cancel { id, yes } => {
+            let t: TaskDto = client.get_json(&format!("/v1/tasks/{id}")).await?;
+            confirm(&cancel_question(&t), yes)?;
             let t: TaskDto = client.post_empty(&format!("/v1/tasks/{id}/cancel")).await?;
             print_status(&t, format)?;
         }
@@ -426,6 +431,13 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
         }
     }
     Ok(())
+}
+
+/// What `task cancel` asks before the work is thrown away: cancelling is
+/// irreversible and the id alone does not say which work that is, so the
+/// question names the task and where it got to.
+fn cancel_question(t: &TaskDto) -> String {
+    format!("Cancel task \"{}\" ({})?", t.title, t.status.as_str())
 }
 
 /// What a mutation prints: the task it produced, or a sentence about it.
@@ -571,5 +583,33 @@ mod tests {
     fn an_update_with_no_flags_is_refused_before_it_is_sent() {
         let err = update_request(None, None, vec![], vec![], false).expect_err("no-op");
         assert!(err.to_string().starts_with("nothing to update"), "{err}");
+    }
+
+    /// The question is the last thing between the caller and a cancelled
+    /// task, so it says which task by title, not by the id already typed.
+    #[test]
+    fn the_cancel_question_names_the_task_and_its_status() {
+        let t = TaskDto {
+            id: "01TASK".into(),
+            goal_id: "01GOAL".into(),
+            repo_id: "01REPO".into(),
+            title: "Add the frobnicator".into(),
+            description: String::new(),
+            status: TaskStatus::InProgress,
+            engineer_profile_id: "01ENG".into(),
+            reviewer_profile_ids: vec![],
+            depends_on: vec![],
+            branch: "ariadne/task-01TASK".into(),
+            worktree_path: None,
+            review_round: 0,
+            stalled: false,
+            merge_commit: None,
+            created_at: "2026-08-17T08:00:00Z".into(),
+            updated_at: "2026-08-17T08:00:00Z".into(),
+        };
+        assert_eq!(
+            cancel_question(&t),
+            "Cancel task \"Add the frobnicator\" (in_progress)?"
+        );
     }
 }

@@ -308,6 +308,7 @@ mod tests {
         ("session kill", true),
         ("session logs", true),
         ("session ls", true),
+        ("session resume", true),
         ("setup codex-hooks", false),
         ("task attach", false),
         ("task cancel", true),
