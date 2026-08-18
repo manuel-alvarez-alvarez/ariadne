@@ -189,6 +189,7 @@ dependencies = [
  "utoipa",
  "utoipa-swagger-ui",
  "uuid",
+ "zbus",
 ]
 
 [[package]]
