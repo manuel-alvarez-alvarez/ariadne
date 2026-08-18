@@ -48,8 +48,8 @@ import { TaskHistory } from "./task-history"
 import { TaskReviews } from "./task-reviews"
 import { TaskSessions, TaskSessionView } from "./task-sessions"
 
-// Description leads the strip — it is what the task *is* — but the panel still
-// opens on the conversation, which is what the user comes back for.
+// Description leads the strip and is where the panel opens: it is what the
+// task *is*, and the first thing to read on a task just landed on.
 const TABS = ["description", "conversation", "reviews", "history", "diff", "sessions"] as const
 type Tab = (typeof TABS)[number]
 
@@ -65,7 +65,7 @@ export function TaskPanel({
 }) {
   const [search, setSearch] = useSearchParams()
   const task = useQuery(taskQueryOptions(taskId))
-  const tab = TABS.find((value) => value === search.get("tab")) ?? "conversation"
+  const tab = TABS.find((value) => value === search.get("tab")) ?? "description"
   const session = search.get("session") ?? undefined
   const selectSession = usePanelSessionNavigation()
   // Going back from a session hands focus to the row that opened it, which the
