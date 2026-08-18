@@ -8,8 +8,9 @@ import { SCRIM } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
 
 /**
- * A side panel: the dialog primitive, but pinned to the right edge and
- * full-height, for detail views that open over the screen they came from.
+ * A side panel: the dialog primitive, but pinned to one edge of the viewport —
+ * the right edge and full-height for detail views that open over the screen
+ * they came from, or the bottom edge and full-width for a drawer.
  */
 
 function Sheet({ ...props }: SheetPrimitive.Root.Props) {
@@ -47,14 +48,24 @@ function SheetOverlay({
   )
 }
 
+const SHEET_SIDES = {
+  right:
+    "inset-y-0 right-0 border-l sm:max-w-xl data-open:slide-in-from-right data-closed:slide-out-to-right",
+  bottom:
+    "inset-x-0 bottom-0 max-h-[80svh] border-t data-open:slide-in-from-bottom data-closed:slide-out-to-bottom",
+}
+
 function SheetContent({
   className,
   children,
   showCloseButton = true,
+  side = "right",
   overlay,
   ...props
 }: SheetPrimitive.Popup.Props & {
   showCloseButton?: boolean
+  /** Which edge the sheet is pinned to. */
+  side?: keyof typeof SHEET_SIDES
   /**
    * The backdrop, for a sheet that is part of a stack: a nested sheet has none
    * of its own unless it asks (`forceRender`), and the one it opened over
@@ -74,7 +85,8 @@ function SheetContent({
           // The trailing `after` spacer is the bottom padding: WebKit does not
           // render a scroll container's own padding-bottom past overflowing
           // content, but a flex item at the end is honoured everywhere.
-          "fixed inset-y-0 right-0 z-50 flex w-full flex-col gap-4 overflow-y-auto border-l bg-background p-4 text-sm text-foreground shadow-lg duration-150 outline-none *:shrink-0 after:block after:h-2 after:shrink-0 sm:max-w-xl data-open:animate-in data-open:slide-in-from-right data-closed:animate-out data-closed:slide-out-to-right",
+          "fixed z-50 flex w-full flex-col gap-4 overflow-y-auto bg-background p-4 text-sm text-foreground shadow-lg duration-150 outline-none *:shrink-0 after:block after:h-2 after:shrink-0 data-open:animate-in data-closed:animate-out",
+          SHEET_SIDES[side],
           className,
         )}
         {...props}
