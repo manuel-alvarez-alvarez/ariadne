@@ -62,8 +62,8 @@ export function SettingsDialog({
           <DialogHeader>
             <DialogTitle>Settings</DialogTitle>
             <DialogDescription>
-              Ariadne talks to the daemon over HTTP only, so it needs the address the daemon listens
-              on.
+              Ariadne Desktop talks to the daemon over HTTP only, so it needs the address the daemon
+              listens on.
             </DialogDescription>
           </DialogHeader>
           <div className="py-4">

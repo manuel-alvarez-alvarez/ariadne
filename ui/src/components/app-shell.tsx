@@ -63,7 +63,9 @@ export function AppShell() {
           {/* `border-b` inside the same h-12 box as the header's, so the two
               lines meet at the sidebar edge instead of sitting 1px apart. */}
           <div className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
-            <span className="font-heading text-sm font-semibold tracking-tight">Ariadne</span>
+            <span className="font-heading text-sm font-semibold tracking-tight">
+              Ariadne Desktop
+            </span>
           </div>
           <AppSidebar />
         </aside>
