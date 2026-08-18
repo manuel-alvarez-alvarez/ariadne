@@ -1,0 +1,20 @@
+<!--
+  Ariadne's thread.
+
+  One continuous line enters the labyrinth through the notch at the top left,
+  winds inward through two square circuits and stops at the heart of the maze:
+  the daemon guiding coding agents from the entrance to the goal. Drawn on a
+  single grid — corridor pitch equals the thread's own width plus one gap — so
+  the spiral also traces a lowercase "a" for Ariadne.
+
+  This file is the master. Regenerate the raster set with:
+      inkscape icon.svg -o icon-1024.png -w 1024 -h 1024
+      npm run tauri icon icon-1024.png        # from ui/
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title">
+  <title id="title">Ariadne</title>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#264698"/>
+  <path d="M 368 224 L 732 224 A 68 68 0 0 1 800 292 L 800 732 A 68 68 0 0 1 732 800 L 292 800 A 68 68 0 0 1 224 732 L 224 436 A 68 68 0 0 1 292 368 L 588 368 A 68 68 0 0 1 656 436 L 656 588 A 68 68 0 0 1 588 656 L 436 656 A 68 68 0 0 1 368 588 L 368 580 A 68 68 0 0 1 436 512 L 512 512"
+        fill="none" stroke="#f7faff" stroke-width="70"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
