@@ -193,8 +193,9 @@ impl Store {
     }
 }
 
-/// "2 goals, 1 agent session": the non-zero holders, counted and named.
-fn plural_list(holders: &[(i64, &str, &str)]) -> String {
+/// "2 goals, 1 agent session": the non-zero holders, counted and named. Also
+/// what a repository's delete refusal is built from.
+pub(crate) fn plural_list(holders: &[(i64, &str, &str)]) -> String {
     holders
         .iter()
         .filter(|(n, _, _)| *n > 0)

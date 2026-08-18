@@ -84,14 +84,6 @@ impl Goal {
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
-pub struct GoalRepo {
-    pub id: String,
-    pub goal_id: String,
-    pub path: String,
-    pub base_branch: String,
-}
-
-#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Task {
     pub id: String,
     pub goal_id: String,

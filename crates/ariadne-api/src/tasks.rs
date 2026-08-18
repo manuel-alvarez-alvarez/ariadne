@@ -8,6 +8,7 @@ use utoipa::{IntoParams, ToSchema};
 pub struct TaskDto {
     pub id: String,
     pub goal_id: String,
+    /// Id of the repository the task works in, one of its goal's.
     pub repo_id: String,
     pub title: String,
     pub description: String,
@@ -32,7 +33,8 @@ pub struct CreateTaskRequest {
     pub title: String,
     #[serde(default)]
     pub description: String,
-    /// Repo id within the goal; may be omitted when the goal has exactly one repo.
+    /// Id of one of the goal's repositories; may be omitted when the goal
+    /// works in exactly one.
     pub repo_id: Option<String>,
     /// Engineer profile id or unique name.
     pub engineer_profile: String,

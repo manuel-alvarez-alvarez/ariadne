@@ -67,7 +67,7 @@ pub async fn create(
     }
 
     let goal = state.store.get_goal(&goal_id).await?;
-    let repos = state.store.list_goal_repos(&goal.id).await?;
+    let repos = state.store.list_goal_repositories(&goal.id).await?;
     let repo_id = match &req.repo_id {
         Some(id) => {
             if !repos.iter().any(|r| &r.id == id) {
@@ -210,7 +210,7 @@ pub(crate) async fn apply_transition(
     // ancestor of the base branch in the repo.
     if req.to == TaskStatus::Merged {
         let task = state.store.get_task(task_id).await?;
-        let repo = state.store.get_goal_repo(&task.repo_id).await?;
+        let repo = state.store.get_repository(&task.repo_id).await?;
         let repo_path = std::path::PathBuf::from(&repo.path);
         let merged = state
             .launcher
@@ -424,7 +424,7 @@ pub async fn post_review(
     responses((status = 200, content_type = "text/plain", body = String), (status = 404), (status = 409)))]
 pub async fn diff(State(state): State<AppState>, Path(id): Path<String>) -> ApiResult<String> {
     let task = state.store.get_task(&id).await?;
-    let repo = state.store.get_goal_repo(&task.repo_id).await?;
+    let repo = state.store.get_repository(&task.repo_id).await?;
     let repo_path = std::path::PathBuf::from(&repo.path);
 
     if let Some(merge_commit) = &task.merge_commit {

@@ -13,7 +13,7 @@
 
 use ariadne_core::PromptKind;
 use ariadne_store::defaults::default_prompt;
-use ariadne_store::{Goal, GoalRepo, Profile, Store, Task};
+use ariadne_store::{Goal, Profile, Repository, Store, Task};
 
 /// The profile's own text for `kind`, falling back to the built-in default
 /// when there is no row to read (deleted by hand, or a profile that predates
@@ -79,10 +79,19 @@ pub fn system_prompt(profile: &Profile) -> String {
 }
 
 /// Initial prompt for a planner session.
-pub fn planner_briefing(template: &str, goal: &Goal, repos: &[GoalRepo]) -> String {
+///
+/// A repository's description is what its owner wrote it down as, so it goes
+/// into the briefing right after the checkout it describes.
+pub fn planner_briefing(template: &str, goal: &Goal, repos: &[Repository]) -> String {
     let repo_lines = repos
         .iter()
-        .map(|r| format!("- {} (base branch: {})", r.path, r.base_branch))
+        .map(|r| {
+            let line = format!("- {} (base branch: {})", r.path, r.base_branch);
+            match r.description.as_deref().map(str::trim) {
+                Some(d) if !d.is_empty() => format!("{line} — {d}"),
+                _ => line,
+            }
+        })
         .collect::<Vec<_>>()
         .join("\n");
     let max = goal
@@ -106,7 +115,7 @@ pub fn engineer_briefing(
     template: &str,
     task: &Task,
     goal: &Goal,
-    repo: &GoalRepo,
+    repo: &Repository,
     deps: &[Task],
 ) -> String {
     let dep_lines = if deps.is_empty() {
@@ -140,7 +149,7 @@ pub fn reviewer_briefing(
     template: &str,
     task: &Task,
     goal: &Goal,
-    repo: &GoalRepo,
+    repo: &Repository,
     summary: Option<&str>,
 ) -> String {
     let round = task.review_round.to_string();
@@ -188,7 +197,7 @@ pub fn changes_requested_briefing(template: &str, feedback: &[(String, String)])
 }
 
 /// Resume prompt instructing the engineer to merge.
-pub fn merge_briefing(template: &str, task: &Task, repo: &GoalRepo) -> String {
+pub fn merge_briefing(template: &str, task: &Task, repo: &Repository) -> String {
     render(
         template,
         &[
@@ -220,12 +229,14 @@ mod tests {
         }
     }
 
-    fn repo() -> GoalRepo {
-        GoalRepo {
+    fn repo() -> Repository {
+        Repository {
             id: "01repoxxxxxxxxxxxxxxxxxxxx".into(),
-            goal_id: "01goalxxxxxxxxxxxxxxxxxxxx".into(),
             path: "/repos/ariadne".into(),
             base_branch: "main".into(),
+            description: None,
+            created_at: "2026-01-01T00:00:00Z".into(),
+            updated_at: "2026-01-01T00:00:00Z".into(),
         }
     }
 
@@ -462,6 +473,40 @@ mod tests {
                 &repo
             ),
             expected
+        );
+    }
+
+    /// A repository is registered with a description; the planner is told it,
+    /// since it is the one line saying what the checkout is for. A repository
+    /// without one reads exactly as it did before descriptions existed.
+    #[test]
+    fn the_planner_is_told_what_each_repository_is() {
+        let described = Repository {
+            path: "/repos/ui".into(),
+            description: Some("the web client".into()),
+            ..repo()
+        };
+        let blank = Repository {
+            path: "/repos/api".into(),
+            description: Some("   ".into()),
+            ..repo()
+        };
+        let briefing = planner_briefing(
+            default(Role::Planner, PromptKind::PlannerBriefing),
+            &goal(),
+            &[described, blank, repo()],
+        );
+        assert!(
+            briefing.contains("- /repos/ui (base branch: main) — the web client"),
+            "{briefing}"
+        );
+        assert!(
+            briefing.contains("- /repos/api (base branch: main)\n"),
+            "a blank description adds nothing: {briefing}"
+        );
+        assert!(
+            briefing.contains("- /repos/ariadne (base branch: main)"),
+            "{briefing}"
         );
     }
 

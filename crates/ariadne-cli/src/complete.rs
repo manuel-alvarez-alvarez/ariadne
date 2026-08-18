@@ -154,24 +154,16 @@ pub fn reviewer_profiles() -> Vec<CompletionCandidate> {
     profiles(Some("reviewer"))
 }
 
-/// Repository ids (repo subcommands).
+/// Registered repository ids (repo subcommands, `goal create --repo`).
 pub fn repo_ids() -> Vec<CompletionCandidate> {
-    fetch("/v1/repositories")
-        .iter()
-        .map(|r| {
-            candidate(
-                s(r, "id"),
-                format!("{} [{}]", s(r, "path"), s(r, "base_branch")),
-            )
-        })
-        .collect()
+    fetch("/v1/repositories").iter().map(repository).collect()
 }
 
-/// Repos of the goal being created in (`task create <goal> --repo`).
+/// Repositories of the goal being created in (`task create <goal> --repo`).
 ///
-/// Only that goal's repos are candidates, so the id has to come off the
+/// Only that goal's repositories are candidates, so the id has to come off the
 /// command line the same way `--model` reads `--agent` from it.
-pub fn goal_repos() -> Vec<CompletionCandidate> {
+pub fn goal_repositories() -> Vec<CompletionCandidate> {
     let Some(goal) = goal_on_the_line() else {
         return Vec::new();
     };
@@ -181,15 +173,18 @@ pub fn goal_repos() -> Vec<CompletionCandidate> {
     let Some(repos) = goal.get("repos").and_then(|r| r.as_array()) else {
         return Vec::new();
     };
-    repos
-        .iter()
-        .map(|r| {
-            candidate(
-                s(r, "id"),
-                format!("{} [{}]", s(r, "path"), s(r, "base_branch")),
-            )
-        })
-        .collect()
+    repos.iter().map(repository).collect()
+}
+
+/// One repository as a candidate: the id, described by the checkout it stands
+/// for and — when it has one — what it was registered as.
+fn repository(r: &serde_json::Value) -> CompletionCandidate {
+    let head = format!("{} [{}]", s(r, "path"), s(r, "base_branch"));
+    let help = match r.get("description").and_then(|d| d.as_str()) {
+        Some(d) if !d.trim().is_empty() => format!("{head} — {d}"),
+        _ => head,
+    };
+    candidate(s(r, "id"), help)
 }
 
 /// The goal id typed on a `task create` line: its first ULID-shaped word,
