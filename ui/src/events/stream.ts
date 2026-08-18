@@ -38,6 +38,9 @@ const DOMAIN_EVENT_KINDS_PRESENT: Record<DomainEventKind, true> = {
   profile_created: true,
   profile_updated: true,
   profile_deleted: true,
+  repository_created: true,
+  repository_updated: true,
+  repository_deleted: true,
 }
 
 export const DOMAIN_EVENT_KINDS = Object.keys(DOMAIN_EVENT_KINDS_PRESENT) as DomainEventKind[]
