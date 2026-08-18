@@ -1,0 +1,164 @@
+/**
+ * Everything that is stuck, in one flat list above the board.
+ *
+ * The board answers "what is being worked on"; this answers "what is waiting
+ * for me", which is the question that gets asked first. It sits between the
+ * header and the lanes rather than on a screen of its own, so the answer is
+ * already there when the board opens — and it is one list rather than a list
+ * per goal: five goals with one stuck task each is five rows, not five
+ * headings. Each row names its goal instead, since nothing above it does.
+ *
+ * The rows are links into the panel scheme the rest of the app uses — `?task=`
+ * for a task, `?session=` for a session — so reading the list and acting on it
+ * are the same gesture, and the board stays underneath.
+ *
+ * Nothing here polls, and nothing here reads the board's status filter; see
+ * `attention.ts`.
+ */
+
+import { Link, useSearchParams } from "react-router-dom"
+
+import type { GoalDto } from "@/api"
+import { StatusBadge } from "@/components/status-badge"
+import { StalledBadge, TASK_STATUS_META } from "@/features/tasks"
+import { describeError } from "@/lib/errors"
+import { shortId } from "@/lib/ids"
+import { ROLE_LABELS } from "@/lib/labels"
+import { plural } from "@/lib/plural"
+import { formatAbsolute, formatRelative } from "@/lib/time"
+import { sessionPanelTo, taskPanelTo } from "@/routes/paths"
+
+import type { AttentionSessionItem, AttentionTaskItem } from "./attention"
+import { useAttention } from "./attention"
+
+export function AttentionStrip() {
+  const attention = useAttention()
+
+  // Nothing stuck is the normal state of a healthy board, and the board is
+  // what the screen is for: the strip is absent rather than reassuring.
+  if (attention.items.length === 0) return null
+
+  return (
+    <section aria-label="Needs attention" className="shrink-0 rounded-lg border">
+      <header className="flex items-baseline gap-2 border-b px-3 py-2">
+        <h2 className="font-heading text-sm font-semibold">Needs attention</h2>
+        <span className="text-xs text-muted-foreground">
+          {plural(attention.items.length, "item")}
+        </span>
+      </header>
+
+      {/* Tall enough to read a handful of rows at a glance, capped so a bad
+          morning does not push the board off the screen. */}
+      <ul className="max-h-52 divide-y overflow-y-auto">
+        {attention.items.map((item) =>
+          item.kind === "task" ? (
+            <TaskRow key={item.id} item={item} />
+          ) : (
+            <SessionRow key={item.id} item={item} />
+          ),
+        )}
+      </ul>
+
+      {/* One of the three queries can fail while the others answered, and what
+          is above is a real list with holes in it — not a list that failed to
+          load. Saying so is the difference between "read this, some of it is
+          missing" and letting a short list pass for the whole truth. */}
+      {attention.partial ? (
+        <p className="border-t px-3 py-2 text-xs text-muted-foreground">
+          Some of this list could not be loaded — {describeError(attention.error)}.{" "}
+          <button
+            type="button"
+            onClick={attention.refetch}
+            className="underline underline-offset-3 hover:text-foreground"
+          >
+            Retry
+          </button>
+        </p>
+      ) : null}
+    </section>
+  )
+}
+
+/** The two row kinds sit under one another, so they carry the same tails. */
+const ROW_LINK =
+  "flex flex-wrap items-center gap-2 px-3 py-2 text-sm transition-colors hover:bg-muted/50"
+
+function TaskRow({ item: { task, reason, goalId, goal } }: { item: AttentionTaskItem }) {
+  const [search] = useSearchParams()
+  const meta = TASK_STATUS_META[task.status]
+
+  return (
+    <li>
+      <Link to={taskPanelTo(search, task.id)} className={ROW_LINK}>
+        <StatusBadge box="badge" label={meta.label} tone={meta.badge} hint={meta.hint} />
+        <span className="min-w-0 flex-1 truncate font-medium">{task.title}</span>
+        {/* The status pill already names the other two reasons; a stall is a
+            flag on top of whatever status the task is sitting in. */}
+        {reason === "stalled" ? <StalledBadge /> : null}
+        <GoalRef goalId={goalId} goal={goal} />
+        <Age at={task.updated_at} />
+        <RowId id={task.id} />
+      </Link>
+    </li>
+  )
+}
+
+function SessionRow({ item: { session, goalId, goal, at } }: { item: AttentionSessionItem }) {
+  const [search] = useSearchParams()
+  const meta = TASK_STATUS_META.failed
+
+  return (
+    <li>
+      {/* A session opens in a panel of its own, over the board — the same one
+          for a planner session, which belongs to no task. */}
+      <Link to={sessionPanelTo(search, session.id)} className={ROW_LINK}>
+        {/* This list holds failed sessions only, and the failed task above it
+            is already a tinted badge — so "Failed" is spelled the one way in
+            this strip rather than being the session badge here and the task
+            badge one row up. `SessionStatusBadge` stays what the sessions
+            feature shows, where a badge has five statuses to tell apart. */}
+        <StatusBadge box="badge" label={meta.label} tone={meta.badge} hint="The agent died." />
+        <span className="min-w-0 flex-1 truncate">
+          {ROLE_LABELS[session.role]} session
+          {session.task_id ? null : <span className="text-muted-foreground"> · planner</span>}
+        </span>
+        <GoalRef goalId={goalId} goal={goal} />
+        <Age at={at} />
+        <RowId id={session.id} />
+      </Link>
+    </li>
+  )
+}
+
+/**
+ * Which goal this row belongs to — the one thing the old grouped screen said
+ * that a flat list otherwise loses.
+ *
+ * Plain text rather than a link to the goal: the row is already a link, and
+ * the panel it opens carries the goal anyway.
+ */
+function GoalRef({ goalId, goal }: { goalId: string; goal: GoalDto | undefined }) {
+  const title = goal?.title ?? `Goal ${shortId(goalId)}`
+  return (
+    <span className="max-w-40 shrink-0 truncate text-xs text-muted-foreground" title={title}>
+      {title}
+    </span>
+  )
+}
+
+/** When this row last moved, the one way for both kinds. */
+function Age({ at }: { at: string }) {
+  return (
+    <time dateTime={at} className="text-xs text-muted-foreground" title={formatAbsolute(at)}>
+      {formatRelative(at)}
+    </time>
+  )
+}
+
+function RowId({ id }: { id: string }) {
+  return (
+    <span className="font-mono text-xs text-muted-foreground" title={id}>
+      {shortId(id)}
+    </span>
+  )
+}
