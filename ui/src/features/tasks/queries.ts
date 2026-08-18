@@ -12,6 +12,7 @@ import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query
 import {
   api,
   type CacheSnapshot,
+  type CreateTaskRequest,
   optimisticStatus,
   qk,
   restoreCache,
@@ -95,6 +96,31 @@ export function taskDiffQueryOptions(taskId: string) {
         }),
       )) ?? "",
     staleTime: 0,
+  })
+}
+
+/**
+ * `POST /v1/goals/{goal_id}/tasks` — the create-task form's submit.
+ *
+ * The daemon owns the validation (profile roles, repo membership, dep cycles,
+ * `max_tasks`), so a failure surfaces as the `ApiError` the form renders. On
+ * success the new task is cached and the lists refetched — the `task_created`
+ * event will say the same thing, but the stream may be down.
+ */
+export function useCreateTask(goalId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: CreateTaskRequest) =>
+      unwrap(
+        api().POST("/v1/goals/{goal_id}/tasks", {
+          params: { path: { goal_id: goalId } },
+          body,
+        }),
+      ),
+    onSuccess: (task) => {
+      queryClient.setQueryData(qk.tasks.detail(task.id), task)
+      void queryClient.invalidateQueries({ queryKey: qk.tasks.lists() })
+    },
   })
 }
 
