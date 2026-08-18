@@ -19,7 +19,6 @@ export const paths = {
   goals: () => "/goals",
   /** The goals board with this goal's panel open. */
   goal: (goalId: string) => `/goals?goal=${goalId}`,
-  sessions: () => "/sessions",
   profiles: () => "/profiles",
   /**
    * The profiles screen, opened on one profile: a row expands in place instead
