@@ -257,7 +257,7 @@ fn parse_prompt_text(s: &str) -> Result<PromptAssignment, String> {
 }
 
 /// `--prompt-file <kind>=<path>`. The file is read later, by
-/// [`collect_prompts`]: a path is a path whether or not it exists yet, and
+/// [`read_prompts`]: a path is a path whether or not it exists yet, and
 /// nothing is read until the whole line is known to be good.
 fn parse_prompt_file(s: &str) -> Result<PromptAssignment, String> {
     parse_assignment(s, "<path>")
@@ -362,8 +362,8 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
             prompt_files,
             flags,
         } => {
-            let (system_prompt, briefings) =
-                split_system(collect_prompts(Owner::Role(role), prompts, prompt_files)?);
+            let given = read_prompts(prompts, prompt_files)?;
+            let (system_prompt, briefings) = split_system(owned_prompts(Owner::Role(role), given)?);
             let system_prompt = match system_prompt {
                 Some(text) => text,
                 // Nothing said about it: the role default, as the daemon
@@ -455,14 +455,16 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
             flags,
             clear_flags,
         } => {
-            // Which prompts exist depends on the role, so a line that sets
-            // one reads the profile first: the whole line is checked before
-            // anything is written, and a kind of another role costs a GET.
-            let given = match prompts.is_empty() && prompt_files.is_empty() {
-                true => Vec::new(),
+            // Everything that can be settled without the daemon is settled
+            // first, so a line that repeats a kind or names an unreadable
+            // file sends nothing. Which prompts exist does depend on the
+            // role, so that one check costs a GET — still before any write.
+            let given = read_prompts(prompts, prompt_files)?;
+            let given = match given.is_empty() {
+                true => given,
                 false => {
                     let profile = get_profile(client, &id).await?;
-                    collect_prompts(Owner::Profile(&profile), prompts, prompt_files)?
+                    owned_prompts(Owner::Profile(&profile), given)?
                 }
             };
             let (system_prompt, briefings) = split_system(given);
@@ -814,15 +816,15 @@ fn read_content(file: Option<PathBuf>) -> Result<String> {
     }
 }
 
-/// Every prompt a `create`/`update` line sets, in [`owned`] order and with
-/// the files already read.
+/// The prompt flags of one command line, merged and read: `--prompt` and
+/// `--prompt-file` are one list, each kind may be given once by either of
+/// them, and the files are read here.
 ///
-/// `--prompt` and `--prompt-file` are one list here: each kind may be given
-/// once, by either flag. Everything is checked before this returns — a kind
-/// the owner does not have, a kind twice, a file that will not read — so a
-/// line that is wrong anywhere writes nothing anywhere.
-pub(crate) fn collect_prompts(
-    owner: Owner<'_>,
+/// Nothing in this needs to know the role, so `create` and `update` both run
+/// it before they ask the daemon anything: a line that repeats a kind or
+/// names a file that will not read costs no request at all. What is left for
+/// [`owned_prompts`] is the one check that does need a role.
+pub(crate) fn read_prompts(
     texts: Vec<PromptAssignment>,
     files: Vec<PromptAssignment>,
 ) -> Result<Vec<(PromptArg, String)>> {
@@ -832,7 +834,7 @@ pub(crate) fn collect_prompts(
         .chain(files.into_iter().map(|a| (a, true)));
     let mut out: Vec<(PromptArg, String)> = Vec::new();
     for (assignment, from_file) in given {
-        let kind = owner.owns(assignment.kind)?;
+        let kind = assignment.kind;
         if out.iter().any(|(k, _)| *k == kind) {
             bail!(
                 "{} is set twice — --prompt and --prompt-file take each kind once",
@@ -846,8 +848,20 @@ pub(crate) fn collect_prompts(
         };
         out.push((kind, content));
     }
-    // In the order the profile owns them, so what gets written — and what
-    // gets reported — does not depend on the order the flags were typed in.
+    Ok(out)
+}
+
+/// What [`read_prompts`] collected, checked against the prompts `owner` has
+/// and put in the order it owns them — so what gets written, and what gets
+/// reported, does not depend on the order the flags were typed in.
+pub(crate) fn owned_prompts(
+    owner: Owner<'_>,
+    given: Vec<(PromptArg, String)>,
+) -> Result<Vec<(PromptArg, String)>> {
+    let mut out = Vec::with_capacity(given.len());
+    for (kind, content) in given {
+        out.push((owner.owns(kind)?, content));
+    }
     let order = owned(owner.role());
     out.sort_by_key(|(kind, _)| order.iter().position(|k| k == kind).unwrap_or(usize::MAX));
     Ok(out)
@@ -1041,16 +1055,19 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("merge.md");
         std::fs::write(&path, "merge it\n").expect("write");
-        let collected = collect_prompts(
+        let collected = owned_prompts(
             Owner::Role(Role::Engineer),
-            vec![
-                assignment("engineer_briefing", "brief"),
-                assignment("system", "you are"),
-            ],
-            vec![assignment(
-                "merge_instructions",
-                &path.display().to_string(),
-            )],
+            read_prompts(
+                vec![
+                    assignment("engineer_briefing", "brief"),
+                    assignment("system", "you are"),
+                ],
+                vec![assignment(
+                    "merge_instructions",
+                    &path.display().to_string(),
+                )],
+            )
+            .expect("read"),
         )
         .expect("collected");
         assert_eq!(
@@ -1074,7 +1091,7 @@ mod tests {
     #[test]
     fn a_kind_given_twice_is_refused() {
         let twice = |texts: Vec<PromptAssignment>, files: Vec<PromptAssignment>| {
-            collect_prompts(Owner::Role(Role::Engineer), texts, files)
+            read_prompts(texts, files)
                 .expect_err("duplicate")
                 .to_string()
         };
@@ -1093,14 +1110,81 @@ mod tests {
         }
     }
 
+    /// A daemon that counts what reaches it and answers everything with an
+    /// empty 500: enough to tell a command that sent a request from one that
+    /// decided it had nothing to ask.
+    async fn counting_daemon() -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use tokio::io::AsyncWriteExt;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let endpoint = format!("http://{}", listener.local_addr().expect("addr"));
+        let seen = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = seen.clone();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let _ = socket
+                    .write_all(b"HTTP/1.1 500 Internal Server Error\r\ncontent-length: 0\r\n\r\n")
+                    .await;
+            }
+        });
+        (endpoint, seen)
+    }
+
+    fn update(prompts: Vec<PromptAssignment>, files: Vec<PromptAssignment>) -> ProfileCommand {
+        ProfileCommand::Update {
+            id: "Engineer".into(),
+            name: None,
+            agent: None,
+            model: None,
+            prompts,
+            prompt_files: files,
+            flags: Vec::new(),
+            clear_flags: false,
+        }
+    }
+
+    /// The whole point of checking the flags before the profile is fetched:
+    /// a line that cannot be right sends nothing at all, not even the GET
+    /// that would tell which prompts the profile has.
+    #[tokio::test]
+    async fn a_duplicate_kind_on_an_update_sends_no_request() {
+        let (endpoint, seen) = counting_daemon().await;
+        let client = Client::resolve(Some(&endpoint), None);
+        let err = run(
+            &client,
+            update(
+                vec![assignment("system", "a")],
+                vec![assignment("system", "/tmp/x.md")],
+            ),
+            Format::Table,
+        )
+        .await
+        .expect_err("duplicate")
+        .to_string();
+        assert!(err.starts_with("system is set twice"), "{err}");
+        assert_eq!(seen.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+        // And the counter is not blind: the same update without the clash
+        // does reach the daemon.
+        let _ = run(
+            &client,
+            update(vec![assignment("system", "a")], vec![]),
+            Format::Table,
+        )
+        .await;
+        assert!(seen.load(std::sync::atomic::Ordering::SeqCst) > 0);
+    }
+
     /// A file only matters once the rest of the line is good: the kind is
     /// wrong here, so nothing is read and nothing is sent.
     #[test]
     fn a_kind_of_another_role_stops_a_create_line() {
-        let err = collect_prompts(
+        let err = owned_prompts(
             Owner::Role(Role::Engineer),
-            vec![assignment("planner_briefing", "plan")],
-            vec![],
+            read_prompts(vec![assignment("planner_briefing", "plan")], vec![]).expect("read"),
         )
         .expect_err("wrong role")
         .to_string();
@@ -1119,8 +1203,7 @@ mod tests {
 
     #[test]
     fn a_prompt_file_that_is_not_there_says_which_one() {
-        let err = collect_prompts(
-            Owner::Profile(&profile(Role::Engineer)),
+        let err = read_prompts(
             vec![],
             vec![assignment("engineer_briefing", "/no/such/brief.md")],
         )
@@ -1149,7 +1232,11 @@ mod tests {
     #[test]
     fn a_line_with_no_prompt_flags_sets_no_prompts() {
         let (system, briefings) = split_system(
-            collect_prompts(Owner::Role(Role::Planner), vec![], vec![]).expect("none"),
+            owned_prompts(
+                Owner::Role(Role::Planner),
+                read_prompts(vec![], vec![]).expect("none"),
+            )
+            .expect("none"),
         );
         assert_eq!(system, None);
         assert!(briefings.is_empty());
