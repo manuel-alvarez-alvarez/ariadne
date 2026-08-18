@@ -206,3 +206,26 @@ export function useCancelGoal(goalId: string) {
     },
   })
 }
+
+/**
+ * `DELETE /v1/goals/{id}` — the goal, its tasks and its messages, in one write
+ * that nothing undoes.
+ *
+ * Nothing here is optimistic, unlike cancelling: the daemon refuses a goal that
+ * is not terminal with a 409, and a goal taken off the board before that answer
+ * arrived would have to be put back. The cache work afterwards is what the
+ * dispatcher does for `goal_deleted` — this goal's own entries go, and the
+ * lists that name it goal-first are refetched.
+ */
+export function useDeleteGoal(goalId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => unwrap(api().DELETE("/v1/goals/{id}", { params: { path: { id: goalId } } })),
+    onSuccess: () => {
+      queryClient.removeQueries({ queryKey: qk.goals.detail(goalId) })
+      void queryClient.invalidateQueries({ queryKey: qk.goals.lists() })
+      void queryClient.invalidateQueries({ queryKey: qk.tasks.all() })
+      void queryClient.invalidateQueries({ queryKey: qk.sessions.all() })
+    },
+  })
+}
