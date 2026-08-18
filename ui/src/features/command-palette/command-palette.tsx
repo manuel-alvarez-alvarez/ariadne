@@ -6,7 +6,7 @@
  * panel on the goal already open, a session opens inside its task's panel.
  *
  * It adds no requests of its own: the four lists it searches are the same
- * cache entries the goals board, the sessions screen and the profiles screen
+ * cache entries the goals board, the session panels and the profiles screen
  * read, so a palette opened after them shows their data instantly and only
  * refreshes it. They are `enabled` on open, so a session that never opens the
  * palette never fetches them either.
@@ -191,7 +191,6 @@ function Hint({ keys, children }: { keys: string; children: ReactNode }) {
 /** The screens the palette can jump to, in the sidebar's order. */
 const PAGES = [
   { label: "Goals", path: paths.goals(), icon: TargetIcon },
-  { label: "Sessions", path: paths.sessions(), icon: RadioTowerIcon },
   { label: "Profiles", path: paths.profiles(), icon: CpuIcon },
 ] as const
 
