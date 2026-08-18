@@ -3,7 +3,7 @@
 use ariadne_core::GoalStatus;
 use ariadne_core::id::new_id;
 
-use crate::{Change, Goal, GoalRepo, Result, Store, StoreError, not_found, now};
+use crate::{Change, Goal, Repository, Result, Store, StoreError, not_found, now};
 
 #[derive(Debug, Clone)]
 pub struct NewGoal {
@@ -12,19 +12,29 @@ pub struct NewGoal {
     pub planner_profile_id: String,
     pub max_tasks: Option<i64>,
     pub required_approvals: i64,
-    /// (path, base_branch) pairs; paths must already be validated by the caller.
-    pub repos: Vec<(String, String)>,
+    /// Ids of registered repositories the goal works in; each must exist.
+    /// The goal reads them live, so editing one moves the goal with it.
+    pub repository_ids: Vec<String>,
 }
 
 impl Store {
     pub async fn create_goal(&self, new: NewGoal) -> Result<Goal> {
-        if new.repos.is_empty() {
+        if new.repository_ids.is_empty() {
             return Err(StoreError::Invalid("a goal needs at least one repo".into()));
         }
         if new.required_approvals < 1 {
             return Err(StoreError::Invalid(
                 "required_approvals must be >= 1".into(),
             ));
+        }
+        // Validated before the goal row is written, so an unknown id leaves
+        // nothing behind. The same repository named twice is one reference.
+        let mut repository_ids: Vec<String> = Vec::with_capacity(new.repository_ids.len());
+        for id in &new.repository_ids {
+            self.get_repository(id).await?;
+            if !repository_ids.contains(id) {
+                repository_ids.push(id.clone());
+            }
         }
         let id = new_id();
         let ts = now();
@@ -44,16 +54,12 @@ impl Store {
         .bind(&ts)
         .execute(&mut *tx)
         .await?;
-        for (path, base_branch) in &new.repos {
-            sqlx::query(
-                "INSERT INTO goal_repos (id, goal_id, path, base_branch) VALUES (?, ?, ?, ?)",
-            )
-            .bind(new_id())
-            .bind(&id)
-            .bind(path)
-            .bind(base_branch)
-            .execute(&mut *tx)
-            .await?;
+        for repository_id in &repository_ids {
+            sqlx::query("INSERT INTO goal_repositories (goal_id, repository_id) VALUES (?, ?)")
+                .bind(&id)
+                .bind(repository_id)
+                .execute(&mut *tx)
+                .await?;
         }
         tx.commit().await?;
         let goal = self.get_goal(&id).await?;
@@ -123,20 +129,18 @@ impl Store {
         Ok(())
     }
 
-    pub async fn list_goal_repos(&self, goal_id: &str) -> Result<Vec<GoalRepo>> {
-        Ok(
-            sqlx::query_as::<_, GoalRepo>("SELECT * FROM goal_repos WHERE goal_id = ? ORDER BY id")
-                .bind(goal_id)
-                .fetch_all(self.r())
-                .await?,
+    /// The repositories a goal works in, as they stand right now: the goal
+    /// holds references, not copies, so this is always the current path and
+    /// base branch. Ordered like [`Store::list_repositories`].
+    pub async fn list_goal_repositories(&self, goal_id: &str) -> Result<Vec<Repository>> {
+        Ok(sqlx::query_as::<_, Repository>(
+            "SELECT r.* FROM goal_repositories gr
+               JOIN repositories r ON r.id = gr.repository_id
+              WHERE gr.goal_id = ?
+              ORDER BY r.path, r.base_branch",
         )
-    }
-
-    pub async fn get_goal_repo(&self, repo_id: &str) -> Result<GoalRepo> {
-        sqlx::query_as::<_, GoalRepo>("SELECT * FROM goal_repos WHERE id = ?")
-            .bind(repo_id)
-            .fetch_optional(self.r())
-            .await?
-            .ok_or_else(|| not_found("goal repo", repo_id))
+        .bind(goal_id)
+        .fetch_all(self.r())
+        .await?)
     }
 }

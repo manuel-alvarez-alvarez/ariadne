@@ -4,8 +4,9 @@ use anyhow::{Result, bail};
 use clap::Subcommand;
 use serde_json::json;
 
-use ariadne_api::goals::{GoalDto, GoalRepoDto};
+use ariadne_api::goals::GoalDto;
 use ariadne_api::messages::{CreateMessageRequest, MessageDto};
+use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::reviews::ReviewDto;
 use ariadne_api::tasks::{
     CreateTaskRequest, TaskDto, TaskListQuery, TaskTransitionDto, UpdateTaskRequest,
@@ -65,8 +66,8 @@ pub enum TaskCommand {
         /// Id of a task that must merge before this one starts; repeatable
         #[arg(long = "depends-on", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
         depends_on: Vec<String>,
-        /// Which of the goal's repos the task works in, by id or by the path
-        /// it was added with (only needed when the goal has several)
+        /// Which of the goal's repositories the task works in, by id or by
+        /// its registered path (only needed when the goal has several)
         #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_repos))]
         repo: Option<String>,
     },
@@ -486,7 +487,7 @@ fn update_request(
 
 /// A `--repo` argument as the repo id the API wants.
 ///
-/// The goal's repos answer to their id or to the path they were added with —
+/// The goal's repositories answer to their id or to their registered path —
 /// the two spellings `goal inspect` prints — because nobody types a ULID they
 /// have not been given.
 async fn resolve_repo(client: &Client, goal_id: &str, spec: &str) -> Result<String> {
@@ -504,8 +505,8 @@ async fn resolve_repo(client: &Client, goal_id: &str, spec: &str) -> Result<Stri
     }
 }
 
-/// The id of the goal repo a `--repo` argument names, by id or by path.
-fn pick_repo(repos: &[GoalRepoDto], spec: &str) -> Option<String> {
+/// The id of the goal repository a `--repo` argument names, by id or by path.
+fn pick_repo(repos: &[RepositoryDto], spec: &str) -> Option<String> {
     repos
         .iter()
         .find(|r| r.id == spec || r.path == spec)
@@ -516,18 +517,18 @@ fn pick_repo(repos: &[GoalRepoDto], spec: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    fn repos() -> Vec<GoalRepoDto> {
+    fn repos() -> Vec<RepositoryDto> {
+        let repo = |id: &str, path: &str| RepositoryDto {
+            id: id.into(),
+            path: path.into(),
+            base_branch: "main".into(),
+            description: None,
+            created_at: "2026-01-01T00:00:00Z".into(),
+            updated_at: "2026-01-01T00:00:00Z".into(),
+        };
         vec![
-            GoalRepoDto {
-                id: "01REPOAPI".into(),
-                path: "/home/me/api".into(),
-                base_branch: "main".into(),
-            },
-            GoalRepoDto {
-                id: "01REPOUI".into(),
-                path: "/home/me/ui".into(),
-                base_branch: "main".into(),
-            },
+            repo("01REPOAPI", "/home/me/api"),
+            repo("01REPOUI", "/home/me/ui"),
         ]
     }
 
