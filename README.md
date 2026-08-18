@@ -216,7 +216,7 @@ crates/
   ariadne-daemon   ariadned: axum API, scheduler, tmux/git managers, agent adapters
   ariadne-cli      ariadne: CLI, MCP server (`mcp serve`), hook sink (`agent-event`)
 assets/opencode-plugin/  event-forwarding plugin installed for OpenCode
-ui/              desktop UI (Tauri 2 + React): a REST/SSE client of the daemon's
+ui/              Ariadne Desktop (Tauri 2 + React): a REST/SSE client of the daemon's
                  TCP listener, outside the cargo workspace — see ui/README.md
 ```
 
