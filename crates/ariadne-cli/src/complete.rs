@@ -227,17 +227,9 @@ pub fn agent_kinds_or_auto() -> Vec<CompletionCandidate> {
 /// Model candidates for `--model`, scoped to the agent in play: an explicit
 /// `--agent` earlier on the line wins; otherwise, when updating an existing
 /// profile, its stored agent kind; otherwise the union of all agents.
-///
-/// The catalog comes from the daemon (`GET /v1/models`, the list the UI
-/// offers, opencode discovery included) when it answers within the budget;
-/// a daemon that is down or slow leaves the compiled-in curated lists.
 pub fn models() -> Vec<CompletionCandidate> {
     use ariadne_core::AgentKind;
-    let hint = agent_hint();
-    if let Some(from_daemon) = daemon_models(hint) {
-        return from_daemon;
-    }
-    match hint {
+    match agent_hint() {
         Some(AgentKind::ClaudeCode) => claude_models(),
         Some(AgentKind::Codex) => codex_models(),
         Some(AgentKind::Opencode) => opencode_models(),
@@ -248,33 +240,6 @@ pub fn models() -> Vec<CompletionCandidate> {
             out
         }
     }
-}
-
-/// The daemon's model catalog, or nothing at all when it will not answer —
-/// telling "no daemon" from "a daemon with no models" so only the former
-/// falls back to the curated lists.
-fn daemon_models(kind: Option<ariadne_core::AgentKind>) -> Option<Vec<CompletionCandidate>> {
-    let path = match kind {
-        Some(k) => format!("/v1/models?agent={}", k.as_str()),
-        None => "/v1/models".to_string(),
-    };
-    let models = match fetch_value(&path)? {
-        serde_json::Value::Array(models) => models,
-        _ => return None,
-    };
-    Some(
-        models
-            .iter()
-            .map(|m| {
-                let agent = s(m, "agent_kind");
-                let help = match m.get("description").and_then(|d| d.as_str()) {
-                    Some(d) => format!("{agent} — {d}"),
-                    None => agent.to_string(),
-                };
-                candidate(s(m, "id"), help)
-            })
-            .collect(),
-    )
 }
 
 /// The completion request carries the full command line (after `--`):

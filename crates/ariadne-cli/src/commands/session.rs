@@ -51,12 +51,6 @@ pub enum SessionCommand {
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::session_ids))]
         id: String,
     },
-    /// Revive an ended session: new tmux, same agent conversation
-    Resume {
-        /// Session id
-        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::session_ids))]
-        id: String,
-    },
     /// Kill a session's tmux process
     Kill {
         /// Session id
@@ -164,33 +158,6 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
             match format {
                 Format::Json => print_json(&logs)?,
                 Format::Table => print!("{}", logs.logs),
-            }
-        }
-        SessionCommand::Resume { id } => {
-            // The daemon answers with this same session either way: relaunched
-            // when it really resumed it, or untouched when its pane turned out
-            // to be alive already. What the row said before the call is what
-            // tells a relaunch from a session that never needed one.
-            let before: SessionDto = client.get_json(&format!("/v1/sessions/{id}")).await?;
-            let s: SessionDto = client
-                .post_empty(&format!("/v1/sessions/{id}/resume"))
-                .await?;
-            let resumed = !before.status.is_live() && s.status.is_live();
-            match format {
-                Format::Json => print_json(&serde_json::json!({
-                    "resumed": resumed,
-                    "session": s,
-                }))?,
-                Format::Table => {
-                    if resumed {
-                        println!("session {} resumed ({})", s.id, s.tmux_session);
-                    } else {
-                        println!(
-                            "session {} already has a running agent ({}); nothing to resume",
-                            s.id, s.tmux_session
-                        );
-                    }
-                }
             }
         }
         SessionCommand::Kill { id, yes } => {
