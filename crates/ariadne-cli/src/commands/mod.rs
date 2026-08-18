@@ -2,6 +2,7 @@
 
 pub mod agent_event;
 pub mod attach;
+pub mod attention;
 pub mod goal;
 pub mod mcp;
 pub mod profile;
