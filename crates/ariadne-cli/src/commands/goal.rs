@@ -1,10 +1,11 @@
 //! `ariadne goal ...`
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use clap::Subcommand;
 
-use ariadne_api::goals::{CreateGoalRequest, FinalizePlanRequest, GoalDto, RepoSpec};
+use ariadne_api::goals::{CreateGoalRequest, FinalizePlanRequest, GoalDto};
 use ariadne_api::messages::{CreateMessageRequest, MessageDto};
+use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::tasks::{TaskDto, TaskListQuery};
 use ariadne_client::Client;
 
@@ -33,9 +34,9 @@ pub enum GoalCommand {
         /// Goal description (what should be achieved)
         #[arg(short = 'd', long, default_value = "")]
         description: String,
-        /// Repo path, optionally with the base branch as path@branch
-        /// (path:branch also works when the branch has no '/'); repeatable
-        #[arg(long = "repo", required = true)]
+        /// Registered repository, by id or by the path it was added with
+        /// (`ariadne repo add`); repeatable
+        #[arg(long = "repo", required = true, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::repo_ids))]
         repos: Vec<String>,
         /// Planner profile id or name (default: the built-in Planner profile)
         #[arg(long, default_value = "Planner", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::planner_profiles))]
@@ -123,7 +124,7 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                     &CreateGoalRequest {
                         title,
                         description,
-                        repos: repos.iter().map(|s| parse_repo(s)).collect(),
+                        repository_ids: resolve_repositories(client, &repos).await?,
                         planner_profile: planner,
                         max_tasks,
                         required_approvals: approvals,
@@ -296,30 +297,38 @@ async fn goal_tasks(client: &Client, goal_id: &str) -> Vec<TaskDto> {
     }
 }
 
-/// A `--repo` argument: a path, optionally carrying the base branch.
-///
-/// `path@branch` is the spelling that always works. `path:branch` came first
-/// and stays for the branches it can express — a branch with a `/` in it is
-/// indistinguishable from a path there, so `:` only splits when the suffix
-/// has none.
-fn parse_repo(spec: &str) -> RepoSpec {
-    let split = spec
-        .rsplit_once('@')
-        .filter(|(path, branch)| !path.is_empty() && !branch.is_empty())
-        .or_else(|| {
-            spec.rsplit_once(':').filter(|(path, branch)| {
-                !path.is_empty() && !branch.is_empty() && !branch.contains('/')
-            })
-        });
-    match split {
-        Some((path, branch)) => RepoSpec {
-            path: path.to_string(),
-            base_branch: Some(branch.to_string()),
-        },
-        None => RepoSpec {
-            path: spec.to_string(),
-            base_branch: None,
-        },
+/// The ids the `--repo` arguments name, looked up among the registered
+/// repositories: a goal references repositories now, so nothing here can
+/// register one on the fly.
+async fn resolve_repositories(client: &Client, specs: &[String]) -> Result<Vec<String>> {
+    let registered: Vec<RepositoryDto> = client.get_json("/v1/repositories").await?;
+    specs
+        .iter()
+        .map(|spec| pick_repository(&registered, spec))
+        .collect()
+}
+
+/// The repository a `--repo` argument names: by id, or by the absolute path it
+/// was registered with. The same checkout can be registered once per base
+/// branch, so a path that names several says so instead of picking one.
+fn pick_repository(repos: &[RepositoryDto], spec: &str) -> Result<String> {
+    if let Some(repo) = repos.iter().find(|r| r.id == spec) {
+        return Ok(repo.id.clone());
+    }
+    let by_path: Vec<&RepositoryDto> = repos.iter().filter(|r| r.path == spec).collect();
+    match by_path.as_slice() {
+        [repo] => Ok(repo.id.clone()),
+        [] => {
+            bail!("unknown repository \"{spec}\" — register it first with: ariadne repo add {spec}")
+        }
+        several => bail!(
+            "{spec} is registered on several base branches ({}) — name the one you mean by id",
+            several
+                .iter()
+                .map(|r| format!("{} = {}", r.base_branch, r.id))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
     }
 }
 
@@ -327,59 +336,50 @@ fn parse_repo(spec: &str) -> RepoSpec {
 mod tests {
     use super::*;
 
-    fn parsed(spec: &str) -> (String, Option<String>) {
-        let r = parse_repo(spec);
-        (r.path, r.base_branch)
+    fn repo(id: &str, path: &str, base_branch: &str) -> RepositoryDto {
+        RepositoryDto {
+            id: id.into(),
+            path: path.into(),
+            base_branch: base_branch.into(),
+            description: None,
+            created_at: "2026-01-01T00:00:00Z".into(),
+            updated_at: "2026-01-01T00:00:00Z".into(),
+        }
+    }
+
+    fn repos() -> Vec<RepositoryDto> {
+        vec![
+            repo("01REPOAPI", "/home/me/api", "main"),
+            repo("01REPOUI", "/home/me/ui", "main"),
+            repo("01REPOUINEXT", "/home/me/ui", "next"),
+        ]
     }
 
     #[test]
-    fn a_bare_path_has_no_branch() {
-        assert_eq!(parsed("/home/me/api"), ("/home/me/api".into(), None));
-    }
-
-    #[test]
-    fn a_colon_still_names_a_branch() {
+    fn a_repository_is_named_by_id_or_by_path() {
+        assert_eq!(pick_repository(&repos(), "01REPOAPI").unwrap(), "01REPOAPI");
         assert_eq!(
-            parsed("/home/me/api:main"),
-            ("/home/me/api".into(), Some("main".into()))
+            pick_repository(&repos(), "/home/me/api").unwrap(),
+            "01REPOAPI"
         );
     }
 
-    /// The reason `@` exists: `:` cannot tell this branch from a path.
+    /// Nothing is registered on the fly any more, so the refusal says where
+    /// registering happens.
     #[test]
-    fn an_at_sign_names_a_branch_with_a_slash_in_it() {
-        assert_eq!(
-            parsed("/home/me/api@feature/x"),
-            ("/home/me/api".into(), Some("feature/x".into()))
-        );
-        assert_eq!(
-            parsed("/home/me/api:feature/x"),
-            ("/home/me/api:feature/x".into(), None)
+    fn an_unknown_repository_points_at_repo_add() {
+        let err = pick_repository(&repos(), "/home/me/other").unwrap_err();
+        assert!(
+            err.to_string().contains("ariadne repo add /home/me/other"),
+            "{err}"
         );
     }
 
-    /// A path that itself contains a colon keeps it, as before.
+    /// One checkout, two base branches: the path alone does not say which.
     #[test]
-    fn a_colon_inside_a_path_is_not_a_branch_separator() {
-        assert_eq!(
-            parsed("/home/me/a:b/api"),
-            ("/home/me/a:b/api".into(), None)
-        );
-    }
-
-    /// `@` wins: with both, the colon is part of the path.
-    #[test]
-    fn an_at_sign_beats_a_colon() {
-        assert_eq!(
-            parsed("/home/me/a:b@release/1.2"),
-            ("/home/me/a:b".into(), Some("release/1.2".into()))
-        );
-    }
-
-    /// A trailing separator names no branch; the path is what was typed.
-    #[test]
-    fn a_dangling_separator_is_part_of_the_path() {
-        assert_eq!(parsed("/home/me/api@"), ("/home/me/api@".into(), None));
-        assert_eq!(parsed("/home/me/api:"), ("/home/me/api:".into(), None));
+    fn a_path_on_several_base_branches_is_ambiguous() {
+        let err = pick_repository(&repos(), "/home/me/ui").unwrap_err();
+        assert!(err.to_string().contains("01REPOUINEXT"), "{err}");
+        assert!(err.to_string().contains("by id"), "{err}");
     }
 }

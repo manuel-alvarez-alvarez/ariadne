@@ -4,12 +4,7 @@ use ariadne_core::GoalStatus;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct GoalRepoDto {
-    pub id: String,
-    pub path: String,
-    pub base_branch: String,
-}
+use crate::repositories::RepositoryDto;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct GoalDto {
@@ -21,18 +16,11 @@ pub struct GoalDto {
     pub max_tasks: Option<i64>,
     pub required_approvals: i64,
     pub planner_profile_id: String,
-    pub repos: Vec<GoalRepoDto>,
+    /// The registered repositories the goal works in, as they stand now: a
+    /// goal references them, so an edit to one shows up here.
+    pub repos: Vec<RepositoryDto>,
     pub created_at: String,
     pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct RepoSpec {
-    /// Absolute path to an existing git repository.
-    #[schema(example = "/home/me/projects/webapp")]
-    pub path: String,
-    /// Base branch tasks merge into; defaults to the repo's current branch.
-    pub base_branch: Option<String>,
 }
 
 /// Body of `POST /v1/goals/{id}/finalize`: planning ends, execution starts.
@@ -47,7 +35,8 @@ pub struct CreateGoalRequest {
     pub title: String,
     #[serde(default)]
     pub description: String,
-    pub repos: Vec<RepoSpec>,
+    /// Ids of registered repositories (`POST /v1/repositories`); at least one.
+    pub repository_ids: Vec<String>,
     /// Planner profile id or unique name.
     pub planner_profile: String,
     /// Max tasks the planner may create (default: unbounded).

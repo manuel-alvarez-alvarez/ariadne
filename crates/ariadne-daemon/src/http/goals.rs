@@ -1,7 +1,5 @@
 //! Goal endpoints (incl. the goal-level message thread).
 
-use std::path::PathBuf;
-
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -18,7 +16,6 @@ use super::AppState;
 use super::auth::call_ctx;
 use super::convert::{goal_dto, message_dto};
 use super::error::{ApiError, ApiResult};
-use crate::gitutil;
 
 #[derive(Debug, Default, Deserialize, IntoParams)]
 pub struct GoalListQuery {
@@ -41,16 +38,24 @@ impl GoalListQuery {
     }
 }
 
-/// Create a goal. Validates repos and resolves base branches; the planner
-/// session is spawned by the scheduler once agent execution lands.
+/// Create a goal on registered repositories; the planner session is spawned
+/// by the scheduler once agent execution lands.
+///
+/// The repos are referenced, not copied: whatever `POST /v1/repositories`
+/// validated about a checkout holds for every goal that names it, and an edit
+/// there moves this goal too.
 #[utoipa::path(post, path = "/v1/goals", tag = "goals",
     request_body = CreateGoalRequest,
-    responses((status = 201, body = GoalDto), (status = 400)))]
+    responses(
+        (status = 201, body = GoalDto),
+        (status = 400),
+        (status = 404, description = "no such repository or planner profile")
+    ))]
 pub async fn create(
     State(state): State<AppState>,
     Json(req): Json<CreateGoalRequest>,
 ) -> ApiResult<(StatusCode, Json<GoalDto>)> {
-    if req.repos.is_empty() {
+    if req.repository_ids.is_empty() {
         return Err(ApiError::bad_request("a goal needs at least one repo"));
     }
 
@@ -61,42 +66,10 @@ pub async fn create(
             planner.name, planner.role
         )));
     }
-
-    let mut repos = Vec::with_capacity(req.repos.len());
-    for spec in &req.repos {
-        let path = PathBuf::from(&spec.path);
-        if !path.is_absolute() {
-            return Err(ApiError::bad_request(format!(
-                "repo path must be absolute: {}",
-                spec.path
-            )));
-        }
-        gitutil::validate_repo(&path)
-            .await
-            .map_err(|e| ApiError::bad_request(e.to_string()))?;
-        let base_branch = match &spec.base_branch {
-            Some(b) => {
-                if !gitutil::branch_exists(&path, b)
-                    .await
-                    .map_err(|e| ApiError::bad_request(e.to_string()))?
-                {
-                    return Err(ApiError::bad_request(format!(
-                        "branch {b} does not exist in {}",
-                        spec.path
-                    )));
-                }
-                b.clone()
-            }
-            None => gitutil::current_branch(&path)
-                .await
-                .map_err(|e| ApiError::bad_request(e.to_string()))?,
-        };
-        // A branch name alone is not enough: a freshly `git init`ed repo has
-        // an unborn branch that worktrees cannot be created from.
-        gitutil::ensure_branch_has_commits(&path, &base_branch)
-            .await
-            .map_err(|e| ApiError::bad_request(e.to_string()))?;
-        repos.push((spec.path.clone(), base_branch));
+    // Resolved here as well as in the store, so an unknown id is a 404 about
+    // the repository rather than a goal that half-exists.
+    for id in &req.repository_ids {
+        state.store.get_repository(id).await?;
     }
 
     let goal = state
@@ -107,12 +80,12 @@ pub async fn create(
             planner_profile_id: planner.id,
             max_tasks: req.max_tasks,
             required_approvals: req.required_approvals.unwrap_or(1),
-            repos,
+            repository_ids: req.repository_ids,
         })
         .await?;
     // The scheduler spawns the planner session for goals in planning.
     state.notify_scheduler_goal(&goal.id).await;
-    let repos = state.store.list_goal_repos(&goal.id).await?;
+    let repos = state.store.list_goal_repositories(&goal.id).await?;
     Ok((StatusCode::CREATED, Json(goal_dto(goal, repos))))
 }
 
@@ -127,7 +100,7 @@ pub async fn list(
     let goals = state.store.list_goals(&q.statuses()?).await?;
     let mut out = Vec::with_capacity(goals.len());
     for goal in goals {
-        let repos = state.store.list_goal_repos(&goal.id).await?;
+        let repos = state.store.list_goal_repositories(&goal.id).await?;
         out.push(goal_dto(goal, repos));
     }
     Ok(Json(out))
@@ -142,7 +115,7 @@ pub async fn get(
     Path(id): Path<String>,
 ) -> ApiResult<Json<GoalDto>> {
     let goal = state.store.get_goal(&id).await?;
-    let repos = state.store.list_goal_repos(&goal.id).await?;
+    let repos = state.store.list_goal_repositories(&goal.id).await?;
     Ok(Json(goal_dto(goal, repos)))
 }
 
@@ -167,7 +140,7 @@ pub async fn cancel(
         .await?;
     // The scheduler tears down sessions/worktrees of cancelled goals.
     state.notify_scheduler_goal(&goal.id).await;
-    let repos = state.store.list_goal_repos(&goal.id).await?;
+    let repos = state.store.list_goal_repositories(&goal.id).await?;
     Ok(Json(goal_dto(goal, repos)))
 }
 
@@ -231,7 +204,7 @@ pub async fn finalize(
     {
         state.notify_scheduler(&task.id).await;
     }
-    let repos = state.store.list_goal_repos(&goal.id).await?;
+    let repos = state.store.list_goal_repositories(&goal.id).await?;
     Ok(Json(goal_dto(goal, repos)))
 }
 

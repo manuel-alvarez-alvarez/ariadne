@@ -184,7 +184,7 @@ async fn goal_event(
     goal: Goal,
     wrap: fn(GoalDto) -> DomainEvent,
 ) -> Result<BusEvent> {
-    let repos = store.list_goal_repos(&goal.id).await?;
+    let repos = store.list_goal_repositories(&goal.id).await?;
     let goal_id = goal.id.clone();
     Ok(BusEvent {
         event: wrap(goal_dto(goal, repos)),

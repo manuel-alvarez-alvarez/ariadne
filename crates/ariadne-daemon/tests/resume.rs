@@ -25,7 +25,8 @@ use ariadne_daemon::gitwt::GitManager;
 use ariadne_daemon::launcher::Launcher;
 use ariadne_daemon::tmux::{TmuxManager, session_name};
 use ariadne_store::{
-    AgentSession, NewGoal, NewProfile, NewSession, NewTask, SessionFilter, Store, Task,
+    AgentSession, NewGoal, NewProfile, NewRepository, NewSession, NewTask, SessionFilter, Store,
+    Task,
 };
 
 /// How long a test waits for an event before giving up.
@@ -95,6 +96,17 @@ impl Harness {
         let planner = self.profile("planner", Role::Planner).await;
         let engineer = self.profile("engineer", Role::Engineer).await;
         let reviewer = self.profile("reviewer", Role::Reviewer).await;
+        // Not a git repo: a fresh spawn cannot get off the ground here, which
+        // is what the fallback test leans on.
+        let repo = self
+            .store
+            .create_repository(NewRepository {
+                path: self.dir.path().join("repo").display().to_string(),
+                base_branch: "main".into(),
+                description: None,
+            })
+            .await
+            .unwrap();
         let goal = self
             .store
             .create_goal(NewGoal {
@@ -103,21 +115,10 @@ impl Harness {
                 planner_profile_id: planner,
                 max_tasks: None,
                 required_approvals: 1,
-                // Not a git repo: a fresh spawn cannot get off the ground
-                // here, which is what the fallback test leans on.
-                repos: vec![(
-                    self.dir.path().join("repo").display().to_string(),
-                    "main".into(),
-                )],
+                repository_ids: vec![repo.id.clone()],
             })
             .await
             .unwrap();
-        let repo = self
-            .store
-            .list_goal_repos(&goal.id)
-            .await
-            .unwrap()
-            .remove(0);
         let task = self
             .store
             .create_task(NewTask {
@@ -183,6 +184,15 @@ impl Harness {
             "git init -q -b main && echo v1 > file.txt && git add . && \
              git -c user.email=t@t -c user.name=t commit -qm init",
         );
+        let repo = self
+            .store
+            .create_repository(NewRepository {
+                path: repo_path.display().to_string(),
+                base_branch: "main".into(),
+                description: None,
+            })
+            .await
+            .unwrap();
         let goal = self
             .store
             .create_goal(NewGoal {
@@ -191,16 +201,10 @@ impl Harness {
                 planner_profile_id: planner,
                 max_tasks: None,
                 required_approvals: 1,
-                repos: vec![(repo_path.display().to_string(), "main".into())],
+                repository_ids: vec![repo.id.clone()],
             })
             .await
             .unwrap();
-        let repo = self
-            .store
-            .list_goal_repos(&goal.id)
-            .await
-            .unwrap()
-            .remove(0);
         let task = self
             .store
             .create_task(NewTask {
@@ -231,7 +235,8 @@ impl Harness {
     /// The reviewer bounces the task back and the engineer pushes another
     /// commit: the task returns to review one round on, one commit ahead.
     async fn next_round(&self, task: &Task) -> Task {
-        let repo_path = PathBuf::from(&self.store.get_goal_repo(&task.repo_id).await.unwrap().path);
+        let repo_path =
+            PathBuf::from(&self.store.get_repository(&task.repo_id).await.unwrap().path);
         sh(
             &repo_path,
             &format!(

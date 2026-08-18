@@ -71,7 +71,7 @@ pub struct CreateTaskReq {
     pub reviewer_profiles: Vec<String>,
     /// Ids of tasks that must merge before this one starts.
     pub depends_on: Option<Vec<String>>,
-    /// Repo id; only needed when the goal has several repos.
+    /// Repository id; only needed when the goal works in several.
     pub repo_id: Option<String>,
 }
 

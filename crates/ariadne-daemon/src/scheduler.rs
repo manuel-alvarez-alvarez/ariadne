@@ -549,7 +549,7 @@ impl Scheduler {
                     .await?;
             }
             TaskStatus::Approved => {
-                let repo = self.store.get_goal_repo(&task.repo_id).await?;
+                let repo = self.store.get_repository(&task.repo_id).await?;
                 info!(task = %task.id, "resuming engineer with merge instruction");
                 let template = prompts::template_for(
                     &self.store,

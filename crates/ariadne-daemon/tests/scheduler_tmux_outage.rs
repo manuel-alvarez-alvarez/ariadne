@@ -18,7 +18,9 @@ use ariadne_daemon::gitwt::GitManager;
 use ariadne_daemon::launcher::Launcher;
 use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_daemon::tmux::{TmuxManager, session_name};
-use ariadne_store::{NewGoal, NewProfile, NewSession, NewTask, SessionFilter, Store};
+use ariadne_store::{
+    NewGoal, NewProfile, NewRepository, NewSession, NewTask, SessionFilter, Store,
+};
 
 /// A `tmux` binary that is not there: every question comes back unanswered
 /// rather than answered "no", which is what a machine briefly out of process
@@ -63,6 +65,14 @@ async fn reconciliation_with_tmux_unavailable_neither_spawns_nor_fails_the_task(
     let engineer = profile("engineer", Role::Engineer).await;
     let reviewer = profile("reviewer", Role::Reviewer).await;
 
+    let repo = store
+        .create_repository(NewRepository {
+            path: dir.path().join("repo").display().to_string(),
+            base_branch: "main".into(),
+            description: None,
+        })
+        .await
+        .unwrap();
     let goal = store
         .create_goal(NewGoal {
             title: "Ship the UI".into(),
@@ -70,7 +80,7 @@ async fn reconciliation_with_tmux_unavailable_neither_spawns_nor_fails_the_task(
             planner_profile_id: planner,
             max_tasks: None,
             required_approvals: 1,
-            repos: vec![(dir.path().join("repo").display().to_string(), "main".into())],
+            repository_ids: vec![repo.id.clone()],
         })
         .await
         .unwrap();
@@ -79,7 +89,6 @@ async fn reconciliation_with_tmux_unavailable_neither_spawns_nor_fails_the_task(
         .set_goal_status(&goal.id, GoalStatus::Active)
         .await
         .unwrap();
-    let repo = store.list_goal_repos(&goal.id).await.unwrap().remove(0);
     let task = store
         .create_task(NewTask {
             goal_id: goal.id.clone(),
