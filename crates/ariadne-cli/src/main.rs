@@ -280,6 +280,7 @@ mod tests {
         ("goal inspect", true),
         ("goal ls", true),
         ("goal messages", true),
+        ("goal msg", true),
         ("mcp serve", false),
         ("profile create", true),
         ("profile inspect", true),
