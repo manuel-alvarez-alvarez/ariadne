@@ -20,10 +20,10 @@ import { MessageComposer } from "./message-composer"
 // `globals` is off, so nothing unmounts a screen between tests but this.
 afterEach(cleanup)
 
-// jsdom has no `scrollIntoView`; the box calls it on the sent message's
-// anchor, and here it only has to exist.
+// jsdom does not lay out or scroll; the box scrolls its panel after a send,
+// and here the call only has to exist.
 beforeEach(() => {
-  Element.prototype.scrollIntoView = vi.fn()
+  Element.prototype.scrollTo = vi.fn()
 })
 
 const SENT: MessageDto = {
