@@ -476,6 +476,40 @@ mod tests {
         );
     }
 
+    /// A repository is registered with a description; the planner is told it,
+    /// since it is the one line saying what the checkout is for. A repository
+    /// without one reads exactly as it did before descriptions existed.
+    #[test]
+    fn the_planner_is_told_what_each_repository_is() {
+        let described = Repository {
+            path: "/repos/ui".into(),
+            description: Some("the web client".into()),
+            ..repo()
+        };
+        let blank = Repository {
+            path: "/repos/api".into(),
+            description: Some("   ".into()),
+            ..repo()
+        };
+        let briefing = planner_briefing(
+            default(Role::Planner, PromptKind::PlannerBriefing),
+            &goal(),
+            &[described, blank, repo()],
+        );
+        assert!(
+            briefing.contains("- /repos/ui (base branch: main) — the web client"),
+            "{briefing}"
+        );
+        assert!(
+            briefing.contains("- /repos/api (base branch: main)\n"),
+            "a blank description adds nothing: {briefing}"
+        );
+        assert!(
+            briefing.contains("- /repos/ariadne (base branch: main)"),
+            "{briefing}"
+        );
+    }
+
     /// A dependency with no worktree still briefs: the fallbacks the daemon
     /// used to inline are part of the values now.
     #[test]

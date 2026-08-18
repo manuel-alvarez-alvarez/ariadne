@@ -187,7 +187,7 @@ async fn repository_crud_and_unique_path_branch() {
         Err(StoreError::Conflict(_))
     ));
 
-    // Nothing references a repository yet, so delete has no guard.
+    // Nothing holds this one, so it goes.
     store.delete_repository(&edited.id).await.unwrap();
     assert!(matches!(
         store.get_repository(&edited.id).await,
@@ -197,6 +197,124 @@ async fn repository_crud_and_unique_path_branch() {
         store.delete_repository(&edited.id).await,
         Err(StoreError::NotFound { .. })
     ));
+}
+
+/// A goal holds references, not copies: what it lists is whatever the
+/// repositories say right now, and so is what its tasks resolve.
+#[tokio::test]
+async fn a_goal_reads_its_repositories_live() {
+    let (store, _dir) = test_store().await;
+    let planner = seed_profile(&store, "planner", Role::Planner).await;
+    let api = seed_repository(&store).await;
+    let ui = seed_repository(&store).await;
+
+    let goal = store
+        .create_goal(NewGoal {
+            title: "Two repos".into(),
+            description: "desc".into(),
+            planner_profile_id: planner.id.clone(),
+            max_tasks: None,
+            required_approvals: 1,
+            // The same repository named twice is one reference.
+            repository_ids: vec![api.id.clone(), ui.id.clone(), api.id.clone()],
+        })
+        .await
+        .unwrap();
+    let repos = store.list_goal_repositories(&goal.id).await.unwrap();
+    assert_eq!(repos.len(), 2);
+    let task = seed_task(&store, &goal, &api, vec![]).await;
+
+    // Editing the repository moves the goal and the task with it.
+    store
+        .update_repository(
+            &api.id,
+            RepositoryUpdate {
+                base_branch: Some("trunk".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let listed = store.list_goal_repositories(&goal.id).await.unwrap();
+    assert_eq!(
+        listed
+            .iter()
+            .find(|r| r.id == api.id)
+            .map(|r| r.base_branch.as_str()),
+        Some("trunk")
+    );
+    let of_task = store.get_repository(&task.repo_id).await.unwrap();
+    assert_eq!(of_task.base_branch, "trunk");
+}
+
+#[tokio::test]
+async fn a_goal_needs_repositories_that_exist() {
+    let (store, _dir) = test_store().await;
+    let planner = seed_profile(&store, "planner", Role::Planner).await;
+    let repo = seed_repository(&store).await;
+    let new_goal = |repository_ids: Vec<String>| NewGoal {
+        title: "Goal".into(),
+        description: "desc".into(),
+        planner_profile_id: planner.id.clone(),
+        max_tasks: None,
+        required_approvals: 1,
+        repository_ids,
+    };
+
+    assert!(matches!(
+        store.create_goal(new_goal(vec![])).await,
+        Err(StoreError::Invalid(_))
+    ));
+    assert!(matches!(
+        store.create_goal(new_goal(vec!["nosuchrepo".into()])).await,
+        Err(StoreError::NotFound {
+            entity: "repository",
+            ..
+        })
+    ));
+    // The unknown id refused the whole creation: no half-written goal.
+    assert!(store.list_goals(&[]).await.unwrap().is_empty());
+
+    // A task can only work in a repository its goal references.
+    let goal = store.create_goal(new_goal(vec![repo.id])).await.unwrap();
+    let unrelated = seed_repository(&store).await;
+    let eng = seed_profile(&store, "eng", Role::Engineer).await;
+    let rev = seed_profile(&store, "rev", Role::Reviewer).await;
+    assert!(matches!(
+        store
+            .create_task(NewTask {
+                goal_id: goal.id.clone(),
+                repo_id: unrelated.id,
+                title: "task".into(),
+                description: "do things".into(),
+                engineer_profile_id: eng.id,
+                reviewer_profile_ids: vec![rev.id],
+                depends_on: vec![],
+            })
+            .await,
+        Err(StoreError::Invalid(_))
+    ));
+}
+
+/// Deleting a repository out from under a goal would leave it pointing at
+/// nothing, so the refusal names who is holding it.
+#[tokio::test]
+async fn a_repository_a_goal_holds_cannot_be_deleted() {
+    let (store, _dir) = test_store().await;
+    let planner = seed_profile(&store, "planner", Role::Planner).await;
+    let (goal, repo) = seed_goal(&store, &planner, None).await;
+    seed_task(&store, &goal, &repo, vec![]).await;
+
+    let err = store.delete_repository(&repo.id).await.unwrap_err();
+    let StoreError::Conflict(message) = err else {
+        panic!("expected a conflict, got {err:?}");
+    };
+    assert!(message.contains("1 goal"), "{message}");
+    assert!(message.contains("1 task"), "{message}");
+
+    // Nothing holds it once the goal (and with it the task) is gone.
+    store.delete_goal(&goal.id).await.unwrap();
+    store.delete_repository(&repo.id).await.unwrap();
 }
 
 #[tokio::test]
@@ -958,4 +1076,152 @@ async fn deleting_a_profile_takes_its_prompts_with_it() {
         store.list_profile_prompts(&profile.id).await,
         Err(StoreError::NotFound { .. })
     ));
+}
+
+/// A database written before repositories existed: its goals keep the repos
+/// they had, its tasks resolve the same checkout and base branch, and the
+/// children of the rebuilt `tasks` table survive the rebuild.
+///
+/// The old shape is produced by running the migrations up to (not including)
+/// the one under test, which is the only way to get a real pre-migration
+/// database rather than a hand-written imitation of one.
+#[tokio::test]
+async fn a_pre_repositories_database_migrates_its_goals_and_tasks() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("legacy.db");
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let pool = sqlx::SqlitePool::connect_with(options).await.unwrap();
+
+    let mut migrator = sqlx::migrate::Migrator::new(std::path::Path::new("./migrations"))
+        .await
+        .unwrap();
+    migrator.migrations = migrator
+        .migrations
+        .iter()
+        .filter(|m| m.version < 3)
+        .cloned()
+        .collect::<Vec<_>>()
+        .into();
+    migrator.run(&pool).await.unwrap();
+
+    for (id, name, role) in [
+        ("legacyplanner", "Legacy planner", "planner"),
+        ("legacyengineer", "Legacy engineer", "engineer"),
+    ] {
+        sqlx::query(
+            "INSERT INTO profiles (id, name, role, system_prompt, created_at, updated_at)
+             VALUES (?, ?, ?, 'sys', 't', 't')",
+        )
+        .bind(id)
+        .bind(name)
+        .bind(role)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO goals (id, title, description, planner_profile_id, created_at, updated_at)
+         VALUES ('legacygoal', 'Legacy goal', 'desc', 'legacyplanner', 't', 't')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    for (id, path) in [
+        ("legacyapi", "/tmp/legacy-api"),
+        ("legacyui", "/tmp/legacy-ui"),
+    ] {
+        sqlx::query("INSERT INTO goal_repos (id, goal_id, path, base_branch) VALUES (?, ?, ?, ?)")
+            .bind(id)
+            .bind("legacygoal")
+            .bind(path)
+            .bind("main")
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    // One of them is already registered globally: the migration must reuse
+    // that row rather than register the checkout a second time.
+    sqlx::query(
+        "INSERT INTO repositories (id, path, base_branch, description, created_at, updated_at)
+         VALUES ('registeredui', '/tmp/legacy-ui', 'main', 'the ui', 't', 't')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO tasks (id, goal_id, repo_id, title, description, engineer_profile_id,
+                            branch, created_at, updated_at)
+         VALUES ('legacytask', 'legacygoal', 'legacyui', 'Legacy task', 'd', 'legacyengineer',
+                 'ariadne/task-legacytask', 't', 't')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    // Children of `tasks`: dropping the table with foreign keys on would
+    // cascade these away.
+    sqlx::query("INSERT INTO task_reviewers (task_id, profile_id, position) VALUES (?, ?, 0)")
+        .bind("legacytask")
+        .bind("legacyengineer")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO messages (id, goal_id, task_id, author_role, body, created_at)
+         VALUES ('legacymsg', 'legacygoal', 'legacytask', 'engineer', 'hi', 't')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    pool.close().await;
+
+    // Opening the store runs the migration under test.
+    let store = Store::open(&path).await.unwrap();
+
+    let repos = store.list_goal_repositories("legacygoal").await.unwrap();
+    assert_eq!(
+        repos
+            .iter()
+            .map(|r| (r.path.as_str(), r.base_branch.as_str()))
+            .collect::<Vec<_>>(),
+        vec![("/tmp/legacy-api", "main"), ("/tmp/legacy-ui", "main")]
+    );
+
+    let task = store.get_task("legacytask").await.unwrap();
+    let repo = store.get_repository(&task.repo_id).await.unwrap();
+    assert_eq!(repo.id, "registeredui", "the registered row was reused");
+    assert_eq!(repo.path, "/tmp/legacy-ui");
+    assert_eq!(repo.base_branch, "main");
+    assert_eq!(repo.description.as_deref(), Some("the ui"));
+
+    // The rebuild kept what hung off the task.
+    assert_eq!(
+        store.list_task_reviewers("legacytask").await.unwrap(),
+        vec!["legacyengineer".to_string()]
+    );
+    assert_eq!(
+        store
+            .list_task_messages("legacytask", None, 10)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+
+    // And the goal still holds them, so the repositories cannot be deleted.
+    assert!(matches!(
+        store.delete_repository("registeredui").await,
+        Err(StoreError::Conflict(_))
+    ));
+
+    // Foreign keys are back on after the rebuild: deleting the goal still
+    // cascades, which is the whole reason the migration turned them off.
+    store.delete_goal("legacygoal").await.unwrap();
+    assert!(matches!(
+        store.get_task("legacytask").await,
+        Err(StoreError::NotFound { .. })
+    ));
+    store.delete_repository("registeredui").await.unwrap();
 }
