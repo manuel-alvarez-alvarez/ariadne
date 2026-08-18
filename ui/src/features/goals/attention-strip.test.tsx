@@ -72,16 +72,27 @@ const SESSION: SessionDto = {
   ended_at: "2026-01-01T02:00:00Z",
 }
 
-/** The three lists the strip reads, each answering its own path. */
+/**
+ * The three lists the strip reads, each answering its own path. `fails` is the
+ * one that does not answer — the three are independent, and a strip that has
+ * rows from the other two is a list with a hole in it, not a failure.
+ */
 function stubDaemon({
   goals = [GOAL],
   tasks = [] as TaskDto[],
   sessions = [] as SessionDto[],
+  fails,
+}: {
+  goals?: GoalDto[]
+  tasks?: TaskDto[]
+  sessions?: SessionDto[]
+  fails?: "/v1/goals" | "/v1/tasks" | "/v1/sessions"
 } = {}) {
   daemonFetch.mockImplementation((input: Request | string | URL) => {
     const url = new URL(
       typeof input === "string" ? input : input instanceof URL ? input : input.url,
     )
+    if (url.pathname === fails) return Promise.resolve(new Response("boom", { status: 500 }))
     const body =
       url.pathname === "/v1/goals" ? goals : url.pathname === "/v1/tasks" ? tasks : sessions
     return Promise.resolve(
@@ -157,4 +168,14 @@ it("opens each row's panel over the board, keeping the board's filter", async ()
   const hrefs = links.map((link) => link.getAttribute("href"))
   expect(hrefs).toContain(`/goals?status=active&session=${SESSION.id}`)
   expect(hrefs).toContain(`/goals?status=active&task=${TASK.id}`)
+})
+
+it("keeps the rows that did load when one of the three lists failed", async () => {
+  stubDaemon({ tasks: [{ ...TASK, status: "failed" }], fails: "/v1/sessions" })
+  renderStrip()
+
+  const rows = await screen.findAllByRole("listitem")
+  expect(rows).toHaveLength(1)
+  expect(rows[0]?.textContent).toContain("Wire the strip")
+  expect(screen.getByText(/could not be loaded/)).not.toBeNull()
 })
