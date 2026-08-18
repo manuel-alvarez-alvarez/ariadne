@@ -16,6 +16,7 @@ use ariadne_client::Client;
 
 use crate::commands::goal::GoalCommand;
 use crate::commands::profile::ProfileCommand;
+use crate::commands::repo::RepoCommand;
 use crate::commands::session::SessionCommand;
 use crate::commands::task::TaskCommand;
 use crate::output::Format;
@@ -54,6 +55,11 @@ enum Command {
     Profile {
         #[command(subcommand)]
         command: ProfileCommand,
+    },
+    /// Manage repositories
+    Repo {
+        #[command(subcommand)]
+        command: RepoCommand,
     },
     /// Manage goals
     Goal {
@@ -244,6 +250,7 @@ async fn run(cli: Cli) -> Result<()> {
         },
         Command::Attach { id, role } => commands::attach::attach_any(&client, &id, role).await,
         Command::Profile { command } => commands::profile::run(&client, command, cli.format).await,
+        Command::Repo { command } => commands::repo::run(&client, command, cli.format).await,
         Command::Goal { command } => commands::goal::run(&client, command, cli.format).await,
         Command::Task { command } => commands::task::run(&client, command, cli.format).await,
         Command::Session { command } => commands::session::run(&client, command, cli.format).await,
@@ -304,6 +311,11 @@ mod tests {
         ("profile prompts", true),
         ("profile rm", true),
         ("profile update", true),
+        ("repo add", true),
+        ("repo edit", true),
+        ("repo inspect", true),
+        ("repo ls", true),
+        ("repo rm", true),
         ("session inspect", true),
         ("session kill", true),
         ("session logs", true),
