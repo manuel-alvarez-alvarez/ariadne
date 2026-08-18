@@ -293,6 +293,12 @@ function GoalMetadata({ goal }: { goal: GoalDto }) {
               <span className="font-mono text-xs text-muted-foreground">
                 base: {repo.base_branch}
               </span>
+              {/* What the repo is for, when whoever registered it said so.
+                  The goal reads these live, so it is the registration's own
+                  description rather than a copy taken at creation. */}
+              {repo.description ? (
+                <span className="block text-xs text-muted-foreground">{repo.description}</span>
+              ) : null}
             </li>
           ))}
         </ul>
