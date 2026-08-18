@@ -17,7 +17,7 @@ use ariadne_daemon::config::Config;
 use ariadne_daemon::gitwt::GitManager;
 use ariadne_daemon::launcher::Launcher;
 use ariadne_daemon::tmux::TmuxManager;
-use ariadne_store::{NewGoal, NewProfile, NewTask, Store, Task};
+use ariadne_store::{NewGoal, NewProfile, NewRepository, NewTask, Store, Task};
 
 struct Harness {
     store: Store,
@@ -85,6 +85,15 @@ impl Harness {
             "git init -q -b main && echo v1 > file.txt && git add . && \
              git -c user.email=t@t -c user.name=t commit -qm init",
         );
+        let repo = self
+            .store
+            .create_repository(NewRepository {
+                path: repo_path.display().to_string(),
+                base_branch: "main".into(),
+                description: None,
+            })
+            .await
+            .unwrap();
         let goal = self
             .store
             .create_goal(NewGoal {
@@ -93,16 +102,10 @@ impl Harness {
                 planner_profile_id: planner,
                 max_tasks: None,
                 required_approvals: 1,
-                repos: vec![(repo_path.display().to_string(), "main".into())],
+                repository_ids: vec![repo.id.clone()],
             })
             .await
             .unwrap();
-        let repo = self
-            .store
-            .list_goal_repos(&goal.id)
-            .await
-            .unwrap()
-            .remove(0);
         let task = self
             .store
             .create_task(NewTask {

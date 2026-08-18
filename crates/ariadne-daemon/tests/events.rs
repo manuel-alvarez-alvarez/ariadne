@@ -24,7 +24,7 @@ use ariadne_daemon::launcher::Launcher;
 use ariadne_daemon::logbuf::LogBuffer;
 use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_daemon::tmux::TmuxManager;
-use ariadne_store::{Goal, NewGoal, NewProfile, NewTask, Profile, Store, Task};
+use ariadne_store::{Goal, NewGoal, NewProfile, NewRepository, NewTask, Profile, Store, Task};
 
 /// How long a test waits for an event before giving up.
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -93,6 +93,17 @@ impl Harness {
         let planner = self.profile("planner", Role::Planner).await;
         let engineer = self.profile("engineer", Role::Engineer).await;
         let reviewer = self.profile("reviewer", Role::Reviewer).await;
+        // Not a git repo: the scheduler fails right after the transition we
+        // assert on, which is all this needs.
+        let repo = self
+            .store
+            .create_repository(NewRepository {
+                path: self.dir.path().join("repo").display().to_string(),
+                base_branch: "main".into(),
+                description: None,
+            })
+            .await
+            .unwrap();
         let goal = self
             .store
             .create_goal(NewGoal {
@@ -101,21 +112,10 @@ impl Harness {
                 planner_profile_id: planner.id,
                 max_tasks: None,
                 required_approvals: 1,
-                // Not a git repo: the scheduler fails right after the
-                // transition we assert on, which is all this needs.
-                repos: vec![(
-                    self.dir.path().join("repo").display().to_string(),
-                    "main".into(),
-                )],
+                repository_ids: vec![repo.id.clone()],
             })
             .await
             .unwrap();
-        let repo = self
-            .store
-            .list_goal_repos(&goal.id)
-            .await
-            .unwrap()
-            .remove(0);
         let task = self
             .store
             .create_task(NewTask {

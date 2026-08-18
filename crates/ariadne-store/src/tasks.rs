@@ -42,8 +42,13 @@ impl Store {
             ));
         }
         let goal = self.get_goal(&new.goal_id).await?;
-        let repo = self.get_goal_repo(&new.repo_id).await?;
-        if repo.goal_id != goal.id {
+        let repo = self.get_repository(&new.repo_id).await?;
+        if !self
+            .list_goal_repositories(&goal.id)
+            .await?
+            .iter()
+            .any(|r| r.id == repo.id)
+        {
             return Err(StoreError::Invalid(format!(
                 "repo {} does not belong to goal {}",
                 repo.id, goal.id

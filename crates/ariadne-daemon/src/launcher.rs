@@ -225,7 +225,7 @@ impl Launcher {
     /// Spawn the planner for a goal (cwd = first repo).
     pub async fn spawn_planner(&self, goal_id: &str) -> Result<AgentSession> {
         let goal = self.store.get_goal(goal_id).await?;
-        let repos = self.store.list_goal_repos(goal_id).await?;
+        let repos = self.store.list_goal_repositories(goal_id).await?;
         let repo = repos.first().context("goal has no repos")?;
         let profile = self.store.get_profile(&goal.planner_profile_id).await?;
         self.assert_no_live_session(goal_id, None, Role::Planner, None)
@@ -261,7 +261,7 @@ impl Launcher {
     pub async fn spawn_engineer(&self, task_id: &str) -> Result<AgentSession> {
         let task = self.store.get_task(task_id).await?;
         let goal = self.store.get_goal(&task.goal_id).await?;
-        let repo = self.store.get_goal_repo(&task.repo_id).await?;
+        let repo = self.store.get_repository(&task.repo_id).await?;
         let profile = self.store.get_profile(&task.engineer_profile_id).await?;
         self.assert_no_live_session(&goal.id, Some(task_id), Role::Engineer, None)
             .await?;
@@ -330,7 +330,7 @@ impl Launcher {
             // New round: refresh to the current branch tip.
             self.git.checkout_detached(&worktree, &task.branch).await?;
         } else {
-            let repo = self.store.get_goal_repo(&task.repo_id).await?;
+            let repo = self.store.get_repository(&task.repo_id).await?;
             std::fs::create_dir_all(worktree.parent().unwrap())?;
             self.git
                 .add_detached_worktree(&PathBuf::from(&repo.path), &worktree, &task.branch)
@@ -360,7 +360,7 @@ impl Launcher {
     pub async fn spawn_reviewer(&self, task_id: &str, profile_id: &str) -> Result<AgentSession> {
         let task = self.store.get_task(task_id).await?;
         let goal = self.store.get_goal(&task.goal_id).await?;
-        let repo = self.store.get_goal_repo(&task.repo_id).await?;
+        let repo = self.store.get_repository(&task.repo_id).await?;
         let profile = self.store.get_profile(profile_id).await?;
         if !self
             .store
@@ -566,7 +566,7 @@ impl Launcher {
 
         let cwd = match role {
             Role::Planner => {
-                let repos = self.store.list_goal_repos(&previous.goal_id).await?;
+                let repos = self.store.list_goal_repositories(&previous.goal_id).await?;
                 PathBuf::from(&repos.first().context("goal has no repos")?.path)
             }
             Role::Engineer | Role::Reviewer => PathBuf::from(
@@ -635,7 +635,7 @@ impl Launcher {
         delete_branch: bool,
     ) -> Result<()> {
         let task = self.store.get_task(task_id).await?;
-        let repo = self.store.get_goal_repo(&task.repo_id).await?;
+        let repo = self.store.get_repository(&task.repo_id).await?;
         let repo_path = PathBuf::from(&repo.path);
 
         for session in self

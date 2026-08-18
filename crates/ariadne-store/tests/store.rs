@@ -28,7 +28,21 @@ async fn seed_profile(store: &Store, name: &str, role: Role) -> Profile {
         .unwrap()
 }
 
-async fn seed_goal(store: &Store, planner: &Profile, max_tasks: Option<i64>) -> (Goal, GoalRepo) {
+/// A registered repository, on a path of its own so goals can be seeded side
+/// by side (one registration per path and base branch).
+async fn seed_repository(store: &Store) -> Repository {
+    store
+        .create_repository(NewRepository {
+            path: format!("/tmp/repo-{}", ariadne_core::id::new_id()),
+            base_branch: "main".into(),
+            description: None,
+        })
+        .await
+        .unwrap()
+}
+
+async fn seed_goal(store: &Store, planner: &Profile, max_tasks: Option<i64>) -> (Goal, Repository) {
+    let repo = seed_repository(store).await;
     let goal = store
         .create_goal(NewGoal {
             title: "Test goal".into(),
@@ -36,15 +50,14 @@ async fn seed_goal(store: &Store, planner: &Profile, max_tasks: Option<i64>) -> 
             planner_profile_id: planner.id.clone(),
             max_tasks,
             required_approvals: 1,
-            repos: vec![("/tmp/repo".into(), "main".into())],
+            repository_ids: vec![repo.id.clone()],
         })
         .await
         .unwrap();
-    let repo = store.list_goal_repos(&goal.id).await.unwrap().remove(0);
     (goal, repo)
 }
 
-async fn seed_task(store: &Store, goal: &Goal, repo: &GoalRepo, deps: Vec<String>) -> Task {
+async fn seed_task(store: &Store, goal: &Goal, repo: &Repository, deps: Vec<String>) -> Task {
     let eng = seed_profile(
         store,
         &format!("eng-{}", ariadne_core::id::new_id()),

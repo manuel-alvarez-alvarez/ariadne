@@ -1,7 +1,7 @@
 //! Store entity -> API DTO conversions.
 
 use ariadne_api::events::AgentEventDto;
-use ariadne_api::goals::{GoalDto, GoalRepoDto};
+use ariadne_api::goals::GoalDto;
 use ariadne_api::messages::MessageDto;
 use ariadne_api::profiles::{ProfileDto, ProfilePromptDto};
 use ariadne_api::repositories::RepositoryDto;
@@ -43,7 +43,7 @@ pub fn repository_dto(r: store::Repository) -> RepositoryDto {
     }
 }
 
-pub fn goal_dto(g: store::Goal, repos: Vec<store::GoalRepo>) -> GoalDto {
+pub fn goal_dto(g: store::Goal, repos: Vec<store::Repository>) -> GoalDto {
     GoalDto {
         status: g.status(),
         id: g.id,
@@ -52,14 +52,7 @@ pub fn goal_dto(g: store::Goal, repos: Vec<store::GoalRepo>) -> GoalDto {
         max_tasks: g.max_tasks,
         required_approvals: g.required_approvals,
         planner_profile_id: g.planner_profile_id,
-        repos: repos
-            .into_iter()
-            .map(|r| GoalRepoDto {
-                id: r.id,
-                path: r.path,
-                base_branch: r.base_branch,
-            })
-            .collect(),
+        repos: repos.into_iter().map(repository_dto).collect(),
         created_at: g.created_at,
         updated_at: g.updated_at,
     }

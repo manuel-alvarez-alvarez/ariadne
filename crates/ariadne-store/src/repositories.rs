@@ -2,6 +2,7 @@
 
 use ariadne_core::id::new_id;
 
+use crate::profiles::plural_list;
 use crate::{Change, Repository, Result, Store, StoreError, not_found, now};
 
 #[derive(Debug, Clone)]
@@ -87,10 +88,26 @@ impl Store {
         Ok(repository)
     }
 
-    /// Delete a repository. Nothing references one yet, so there is no in-use
-    /// check to make: goals still carry their own `goal_repos` rows.
+    /// Delete a repository; fails with `Conflict` while a goal or a task
+    /// still references it.
+    ///
+    /// As with profiles, the refusal names what holds the repository — a bare
+    /// count leaves the user with nowhere to look.
     pub async fn delete_repository(&self, id: &str) -> Result<()> {
         self.get_repository(id).await?;
+        let (goals, tasks): (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT COUNT(*) FROM goal_repositories WHERE repository_id = ?1),
+                    (SELECT COUNT(*) FROM tasks WHERE repo_id = ?1)",
+        )
+        .bind(id)
+        .fetch_one(self.r())
+        .await?;
+        let referenced = plural_list(&[(goals, "goal", "goals"), (tasks, "task", "tasks")]);
+        if !referenced.is_empty() {
+            return Err(StoreError::Conflict(format!(
+                "repository {id} is still used by {referenced}"
+            )));
+        }
         sqlx::query("DELETE FROM repositories WHERE id = ?")
             .bind(id)
             .execute(self.w())
