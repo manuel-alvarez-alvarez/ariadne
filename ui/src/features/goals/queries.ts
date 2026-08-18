@@ -41,12 +41,15 @@ const MESSAGE_PAGE_SIZE = 200
 const MAX_MESSAGE_PAGES = 20
 
 export interface GoalListFilters {
-  status?: GoalStatus
+  /** Statuses to match, any of them; empty or absent is every status. */
+  statuses?: readonly GoalStatus[]
 }
 
-/** `["goals", "list", {status?}]` — under `qk.goals.lists()`. */
-export function goalListKey(filters: GoalListFilters) {
-  return [...qk.goals.lists(), filters] as const
+/** `["goals", "list", {statuses?}]` — under `qk.goals.lists()`. */
+export function goalListKey({ statuses }: GoalListFilters) {
+  // An empty selection is no filter at all, so it keys the same as `{}`: the
+  // unfiltered board and the callers that pass nothing share one cache entry.
+  return [...qk.goals.lists(), statuses?.length ? { statuses: [...statuses] } : {}] as const
 }
 
 /** `["profiles", "list", {role: "planner"}]` — under `qk.profiles.lists()`. */
@@ -55,10 +58,12 @@ export function plannerProfileListKey() {
 }
 
 export function goalsQueryOptions(filters: GoalListFilters = {}) {
+  // `GET /v1/goals` takes the selection as one comma-separated `status`, and
+  // matches a goal in any of them.
+  const status = filters.statuses?.length ? filters.statuses.join(",") : undefined
   return queryOptions({
     queryKey: goalListKey(filters),
-    queryFn: () =>
-      unwrap(api().GET("/v1/goals", { params: { query: { status: filters.status } } })),
+    queryFn: () => unwrap(api().GET("/v1/goals", { params: { query: { status } } })),
     // The daemon orders by id (creation order); the screen shows newest first.
     select: (goals: GoalDto[]) => [...goals].sort((a, b) => b.id.localeCompare(a.id)),
   })
