@@ -108,6 +108,85 @@ async fn profile_crud_and_delete_guard() {
 }
 
 #[tokio::test]
+async fn repository_crud_and_unique_path_branch() {
+    let (store, _dir) = test_store().await;
+    let repo = store
+        .create_repository(NewRepository {
+            path: "/tmp/repo".into(),
+            base_branch: "main".into(),
+            description: Some("the one repo".into()),
+        })
+        .await
+        .unwrap();
+    assert_eq!(repo.path, "/tmp/repo");
+    assert_eq!(repo.description.as_deref(), Some("the one repo"));
+
+    // The same checkout on another branch is a different repository.
+    let other = store
+        .create_repository(NewRepository {
+            path: "/tmp/repo".into(),
+            base_branch: "next".into(),
+            description: None,
+        })
+        .await
+        .unwrap();
+    assert!(other.description.is_none());
+    assert_eq!(store.list_repositories().await.unwrap().len(), 2);
+
+    // (path, base_branch) is unique.
+    let dup = store
+        .create_repository(NewRepository {
+            path: "/tmp/repo".into(),
+            base_branch: "main".into(),
+            description: None,
+        })
+        .await;
+    assert!(matches!(dup, Err(StoreError::Conflict(_))));
+
+    // Partial update: the branch moves, the description is cleared, the path
+    // stays exactly as it was.
+    let edited = store
+        .update_repository(
+            &repo.id,
+            RepositoryUpdate {
+                base_branch: Some("trunk".into()),
+                description: Some(None),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(edited.path, "/tmp/repo");
+    assert_eq!(edited.base_branch, "trunk");
+    assert!(edited.description.is_none());
+
+    // An update onto a taken (path, base_branch) conflicts like a create.
+    assert!(matches!(
+        store
+            .update_repository(
+                &edited.id,
+                RepositoryUpdate {
+                    base_branch: Some("next".into()),
+                    ..Default::default()
+                },
+            )
+            .await,
+        Err(StoreError::Conflict(_))
+    ));
+
+    // Nothing references a repository yet, so delete has no guard.
+    store.delete_repository(&edited.id).await.unwrap();
+    assert!(matches!(
+        store.get_repository(&edited.id).await,
+        Err(StoreError::NotFound { .. })
+    ));
+    assert!(matches!(
+        store.delete_repository(&edited.id).await,
+        Err(StoreError::NotFound { .. })
+    ));
+}
+
+#[tokio::test]
 async fn task_happy_path_to_merged() {
     let (store, _dir) = test_store().await;
     let planner = seed_profile(&store, "planner", Role::Planner).await;

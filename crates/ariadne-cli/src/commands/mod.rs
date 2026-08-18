@@ -6,6 +6,7 @@ pub mod attention;
 pub mod goal;
 pub mod mcp;
 pub mod profile;
+pub mod repo;
 pub mod session;
 pub mod setup;
 pub mod task;
