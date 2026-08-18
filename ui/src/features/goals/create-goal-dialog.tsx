@@ -210,7 +210,8 @@ export function CreateGoalDialog({
                     {repositories.data.map((repository) => {
                       // Base UI's checkbox puts this on the hidden input it
                       // renders beside the box, which is what the row's label
-                      // points at; the box itself is named by `aria-label`.
+                      // points at — clicking anywhere in the row toggles it,
+                      // and the row's own text is what names it.
                       const inputId = `goal-repository-${repository.id}`
                       return (
                         <label
@@ -221,7 +222,6 @@ export function CreateGoalDialog({
                           <Checkbox
                             id={inputId}
                             className="mt-0.5"
-                            aria-label={repository.path}
                             checked={field.value.includes(repository.id)}
                             onCheckedChange={(checked) =>
                               field.onChange(
