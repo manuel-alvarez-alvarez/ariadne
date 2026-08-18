@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 
 import type { TaskDto, TaskStatus } from "@/api"
-import { compareByAttention } from "./status"
+import { canEdit, compareByAttention } from "./status"
 
 function task(id: string, status: TaskStatus, extra: Partial<TaskDto> = {}): TaskDto {
   return {
@@ -57,5 +57,24 @@ describe("compareByAttention", () => {
     ].sort(compareByAttention)
 
     expect(ordered.map((t) => t.id)).toEqual(["new", "old"])
+  })
+})
+
+describe("canEdit", () => {
+  it("allows editing only before an engineer has started", () => {
+    const editable: TaskStatus[] = ["pending", "ready"]
+    const frozen: TaskStatus[] = [
+      "in_progress",
+      "under_review",
+      "changes_requested",
+      "approved",
+      "merging",
+      "merged",
+      "cancelled",
+      "failed",
+    ]
+
+    for (const status of editable) expect(canEdit(status)).toBe(true)
+    for (const status of frozen) expect(canEdit(status)).toBe(false)
   })
 })
