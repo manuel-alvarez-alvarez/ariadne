@@ -348,6 +348,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/roles/{role}/prompt-defaults": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The built-in prompts a profile of `role` is seeded with: read-only, so an
+         *     editor can show a default (and offer to restore one) before anything
+         *     exists to read them from.
+         */
+        get: operations["profiles_prompt_defaults"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sessions": {
         parameters: {
             query?: never;
@@ -724,6 +745,12 @@ export interface components {
             model?: string | null;
             /** @example rust-engineer */
             name: string;
+            /**
+             * @description Briefing prompts to seed instead of the role defaults. A kind listed
+             *     here replaces its default; every other kind of the role is seeded as
+             *     usual. Absent or empty = the role defaults, unedited.
+             */
+            prompts?: components["schemas"]["NewProfilePrompt"][];
             role: components["schemas"]["Role"];
             system_prompt: string;
         };
@@ -898,6 +925,15 @@ export interface components {
             /** @example claude-fable-5 */
             id: string;
         };
+        /**
+         * @description One prompt override in [`CreateProfileRequest`]: the kind spelled as on the
+         *     prompt routes, and the text to seed instead of the role default.
+         */
+        NewProfilePrompt: {
+            content: string;
+            /** @example engineer_briefing */
+            kind: string;
+        };
         ProfileDto: {
             agent_kind?: null | components["schemas"]["AgentKind"];
             created_at: string;
@@ -916,6 +952,15 @@ export interface components {
             content: string;
             kind: components["schemas"]["PromptKind"];
             updated_at: string;
+        };
+        /**
+         * @description One built-in prompt default. Unlike [`ProfilePromptDto`] it belongs to no
+         *     profile, so there is nothing to timestamp.
+         */
+        PromptDefaultDto: {
+            /** @description Template text with `{placeholder}` tokens the daemon fills in. */
+            content: string;
+            kind: components["schemas"]["PromptKind"];
         };
         /**
          * @description A prompt a profile owns beside its system prompt: the briefing an agent of
@@ -969,6 +1014,16 @@ export interface components {
          * @enum {string}
          */
         Role: "planner" | "engineer" | "reviewer";
+        /**
+         * @description Response of `GET /v1/roles/{role}/prompt-defaults`: what a profile of that
+         *     role is seeded with, read without creating or touching anything.
+         */
+        RolePromptDefaultsDto: {
+            /** @description The role's briefing prompts, in briefing order. */
+            prompts: components["schemas"]["PromptDefaultDto"][];
+            role: components["schemas"]["Role"];
+            system_prompt: string;
+        };
         SessionDto: {
             agent_kind: components["schemas"]["AgentKind"];
             created_at: string;
@@ -1778,6 +1833,35 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    profiles_prompt_defaults: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description planner, engineer or reviewer */
+                role: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RolePromptDefaultsDto"];
+                };
+            };
+            /** @description unknown role */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };
