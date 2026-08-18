@@ -26,11 +26,16 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { AttentionStrip } from "./attention-strip"
 import { CreateGoalDialog } from "./create-goal-dialog"
-import { NO_STATUS_FILTER, type StatusFilter, toggleStatusFilter } from "./filters"
+import {
+  NO_STATUS_FILTER,
+  readStatusFilter,
+  type StatusFilter,
+  toggleStatusFilter,
+  withStatusFilter,
+} from "./filters"
 import { BoardSkeleton, GoalSwimlanes } from "./goal-swimlanes"
 import { goalsQueryOptions } from "./queries"
 import { GOAL_STATUS_META, GOAL_STATUSES } from "./status"
-import { useStatusFilter } from "./use-status-filter"
 
 /** What the trigger says: the one status by name, several by count. */
 function summarize(filter: StatusFilter): string {
@@ -61,11 +66,16 @@ function emptyBoardCopy(filter: StatusFilter): { title: string; description: str
 
 export function GoalsListPage() {
   const [search, setSearch] = useSearchParams()
-  const { statuses, filterBy } = useStatusFilter()
+  const statuses = readStatusFilter(search)
   const [createOpen, setCreateOpen] = useState(false)
 
   const goals = useQuery(goalsQueryOptions({ statuses }))
   const empty = emptyBoardCopy(statuses)
+
+  /** A filter is not a place: it replaces the entry rather than piling up back steps. */
+  function filterBy(next: StatusFilter) {
+    setSearch(withStatusFilter(search, next), { replace: true })
+  }
 
   /** The goal just created opens its own panel — no hunting for it on the board. */
   function openGoal(goalId: string) {
