@@ -32,10 +32,12 @@ settings dialog (the gear in the header). It is persisted to `localStorage`
 under `ariadne.settings`; the theme lives under `ariadne.theme`. Changing the
 URL clears the query cache and reconnects the event stream.
 
-The badge in the sidebar footer is the connection state: green when both
-`/v1/health` and the event stream are live, amber when REST works but the stream
-is down (screens load but stop updating themselves), red when the daemon is
-unreachable. Hover it for the URL, daemon version and uptime.
+The sticky footer at the bottom of the window carries the connection state:
+green when both `/v1/health` and the event stream are live, amber when REST
+works but the stream is down (screens load but stop updating themselves), red
+when the daemon is unreachable. Hover it for the URL, daemon version and
+uptime; it is a button, and a coming task attaches the daemon-logs drawer to
+the click.
 
 ### Scripts
 

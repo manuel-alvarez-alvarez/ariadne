@@ -2,7 +2,8 @@
  * The frame every screen renders inside: sidebar navigation on the left, a
  * header naming the screen and carrying the search, theme and settings
  * controls, the connection banner under it when the daemon is not answering,
- * and the routed screen in the middle.
+ * the routed screen in the middle, and a slim footer carrying the daemon
+ * connection status.
  *
  * The header's title comes from the route's own `handle` (see
  * `src/routes/page-title.ts`), so this file knows nothing about which screens
@@ -61,9 +62,6 @@ export function AppShell() {
         </div>
         <Separator />
         <AppSidebar />
-        <div className="mt-auto p-2">
-          <ConnectionStatus className="w-full" />
-        </div>
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -96,6 +94,9 @@ export function AppShell() {
         <main className="min-h-0 flex-1 overflow-auto p-6">
           <Outlet />
         </main>
+        <footer className="flex h-7 shrink-0 items-center border-t bg-muted/40 px-1">
+          <ConnectionStatus />
+        </footer>
       </div>
 
       <DetailPanels />

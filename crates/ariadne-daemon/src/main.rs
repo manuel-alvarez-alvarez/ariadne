@@ -12,8 +12,6 @@ use clap::Parser;
 use tokio::net::{TcpListener, UnixListener, UnixStream};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
 
 use ariadne_daemon::config::Config;
 use ariadne_daemon::http::{self, AppState};
@@ -38,14 +36,7 @@ async fn main() -> Result<()> {
     // RUST_LOG wins over config so ad-hoc debugging stays easy.
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(config.log_filter.clone()));
-    // Everything that passes the filter goes to stdout as before, and into
-    // the in-memory buffer behind `/v1/logs`.
-    let logs = ariadne_daemon::logbuf::LogBuffer::new();
-    tracing_subscriber::registry()
-        .with(filter)
-        .with(tracing_subscriber::fmt::layer())
-        .with(logs.layer())
-        .init();
+    tracing_subscriber::fmt().with_env_filter(filter).init();
 
     info!(root = %config.root.display(), "starting ariadned {}", env!("CARGO_PKG_VERSION"));
 
@@ -78,7 +69,6 @@ async fn main() -> Result<()> {
         launcher,
         sched_tx: Some(sched_tx),
         events,
-        logs,
     };
     let app = http::router(state);
 
