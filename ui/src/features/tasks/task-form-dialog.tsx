@@ -1,26 +1,39 @@
 /**
- * `ariadne task create`, as a form in the goal panel.
+ * The task form: `ariadne task create` in the goal panel, and `ariadne task
+ * update` in the task panel, as one dialog with two modes.
  *
  * The daemon does the real validation — profile roles, repo membership, dep
- * cycles, `max_tasks` — so the client only catches what it can know on its own
- * (empty title, no reviewer, a reviewer picked twice) and shows the daemon's
- * error envelope verbatim for everything else, with the dialog staying open.
+ * cycles, `max_tasks`, and for edits the pending/ready guard — so the client
+ * only catches what it can know on its own (empty title, no reviewer, a
+ * reviewer picked twice) and shows the daemon's error envelope verbatim for
+ * everything else, with the dialog staying open. That covers the stale edit:
+ * a task that started while the form was open answers `409` right here.
  *
  * Reviewers are an ordered list, not a set: the daemon spawns them in the
  * order given, so the field is rows that keep their order rather than a
  * multi-select. Dependencies get the same rows for the same look, though
- * their order carries no meaning.
+ * their order carries no meaning. On edit both replace the task's lists.
+ *
+ * The engineer profile and the repo can only be chosen at creation — `PATCH
+ * /v1/tasks/{id}` does not carry them — so edit mode leaves both fields out;
+ * the task panel's facts card keeps showing what they are.
  */
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useQuery } from "@tanstack/react-query"
 import { PlusIcon, XIcon } from "lucide-react"
-import { useEffect, useMemo } from "react"
+import { useEffect, useMemo, useRef } from "react"
 import { Controller, useFieldArray, useForm } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
 
-import { ApiError, type CreateTaskRequest, type GoalDto, type TaskDto } from "@/api"
+import {
+  ApiError,
+  type CreateTaskRequest,
+  type GoalDto,
+  type TaskDto,
+  type UpdateTaskRequest,
+} from "@/api"
 import { ErrorState } from "@/components/error-state"
 import { Button } from "@/components/ui/button"
 import {
@@ -43,17 +56,21 @@ import {
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { profilesQueryOptions } from "@/features/profiles/queries"
-import { taskListQueryOptions, useCreateTask } from "./queries"
+import { taskListQueryOptions, useCreateTask, useUpdateTask } from "./queries"
 
 /**
- * The repo is the one field whose being required depends on the goal: with a
- * single repo the daemon infers it and the field is not even shown.
+ * One schema for both modes. The repo is required only when the goal has more
+ * than one (with a single repo the daemon infers it and the field is not even
+ * shown), and the engineer only on create — edit mode neither shows nor sends
+ * either field.
  */
-function makeFormSchema(requireRepo: boolean) {
+function makeFormSchema(opts: { requireEngineer: boolean; requireRepo: boolean }) {
   return z.object({
     title: z.string().trim().min(1, "Give the task a title."),
     description: z.string(),
-    engineer_profile: z.string().min(1, "Choose an engineer profile."),
+    engineer_profile: opts.requireEngineer
+      ? z.string().min(1, "Choose an engineer profile.")
+      : z.string(),
     reviewers: z
       .array(z.object({ profile: z.string().min(1, "Choose a reviewer profile.") }))
       .min(1, "A task needs at least one reviewer.")
@@ -71,15 +88,15 @@ function makeFormSchema(requireRepo: boolean) {
           seen.add(row.profile)
         })
       }),
-    repo_id: requireRepo ? z.string().min(1, "Choose a repository.") : z.string(),
+    repo_id: opts.requireRepo ? z.string().min(1, "Choose a repository.") : z.string(),
     // Blank rows are dropped on submit, like the profile form's flags.
     depends_on: z.array(z.object({ task: z.string() })),
   })
 }
 
-type CreateTaskForm = z.infer<ReturnType<typeof makeFormSchema>>
+type TaskFormValues = z.infer<ReturnType<typeof makeFormSchema>>
 
-const DEFAULT_VALUES: CreateTaskForm = {
+const CREATE_DEFAULTS: TaskFormValues = {
   title: "",
   description: "",
   engineer_profile: "",
@@ -99,30 +116,88 @@ export function CreateTaskDialog({
   onOpenChange: (open: boolean) => void
   onCreated?: (task: TaskDto) => void
 }) {
-  const engineers = useQuery({ ...profilesQueryOptions("engineer"), enabled: open })
+  return (
+    <TaskFormDialog goal={goal} open={open} onOpenChange={onOpenChange} onCreated={onCreated} />
+  )
+}
+
+export function EditTaskDialog({
+  task,
+  open,
+  onOpenChange,
+}: {
+  task: TaskDto
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  return <TaskFormDialog editing={task} open={open} onOpenChange={onOpenChange} />
+}
+
+function TaskFormDialog({
+  goal,
+  editing,
+  open,
+  onOpenChange,
+  onCreated,
+}: {
+  /** Create mode: the goal the task goes into. */
+  goal?: GoalDto
+  /** Edit mode: the pending/ready task whose fields the form starts from. */
+  editing?: TaskDto
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onCreated?: (task: TaskDto) => void
+}) {
+  const goalId = goal?.id ?? editing?.goal_id ?? ""
+  const engineers = useQuery({ ...profilesQueryOptions("engineer"), enabled: open && !editing })
   const reviewers = useQuery({ ...profilesQueryOptions("reviewer"), enabled: open })
   // The dependency choices are the goal's own tasks — the same query the Tasks
   // tab behind this dialog holds, so it is usually already cached.
-  const goalTasks = useQuery({ ...taskListQueryOptions({ goal: goal.id }), enabled: open })
-  const createTask = useCreateTask(goal.id)
+  const goalTasks = useQuery({ ...taskListQueryOptions({ goal: goalId }), enabled: open })
+  const createTask = useCreateTask(goalId)
+  const updateTask = useUpdateTask(editing?.id ?? "")
+  const submit = editing ? updateTask : createTask
 
-  const multiRepo = goal.repos.length > 1
-  const formSchema = useMemo(() => makeFormSchema(multiRepo), [multiRepo])
+  const multiRepo = (goal?.repos.length ?? 0) > 1
+  const formSchema = useMemo(
+    () => makeFormSchema({ requireEngineer: !editing, requireRepo: multiRepo }),
+    [editing, multiRepo],
+  )
 
-  const form = useForm<CreateTaskForm>({
+  const defaultValues = useMemo<TaskFormValues>(
+    () =>
+      editing
+        ? {
+            title: editing.title,
+            description: editing.description,
+            engineer_profile: editing.engineer_profile_id,
+            reviewers: editing.reviewer_profile_ids.map((profile) => ({ profile })),
+            repo_id: "",
+            depends_on: editing.depends_on.map((task) => ({ task })),
+          }
+        : CREATE_DEFAULTS,
+    [editing],
+  )
+
+  const form = useForm<TaskFormValues>({
     resolver: zodResolver(formSchema),
-    defaultValues: DEFAULT_VALUES,
+    defaultValues,
   })
   const reviewerRows = useFieldArray({ control: form.control, name: "reviewers" })
   const dependsRows = useFieldArray({ control: form.control, name: "depends_on" })
 
-  // Re-opening starts from a clean form, never from the previous attempt.
+  // Re-opening starts from a clean form — the task as it stands, or blank —
+  // never from the previous attempt. The defaults go through a ref so only
+  // opening resets: a `task_updated` off the stream mid-edit must not wipe
+  // what the user has typed.
+  const defaultValuesRef = useRef(defaultValues)
+  defaultValuesRef.current = defaultValues
   useEffect(() => {
     if (open) {
-      form.reset(DEFAULT_VALUES)
-      createTask.reset()
+      form.reset(defaultValuesRef.current)
+      submit.reset()
     }
-  }, [open, form.reset, createTask.reset])
+  }, [open, form.reset, submit.reset])
 
   const engineerOptions = useMemo(
     () => [...(engineers.data ?? [])].sort((a, b) => a.name.localeCompare(b.name)),
@@ -141,58 +216,77 @@ export function CreateTaskDialog({
     [reviewerOptions],
   )
   const repoItems = useMemo(
-    () => goal.repos.map((repo) => ({ label: repo.path, value: repo.id })),
-    [goal.repos],
+    () => (goal?.repos ?? []).map((repo) => ({ label: repo.path, value: repo.id })),
+    [goal?.repos],
+  )
+  // A task cannot depend on itself, so editing drops it from its own choices.
+  const dependencyChoices = useMemo(
+    () => (goalTasks.data ?? []).filter((task) => task.id !== editing?.id),
+    [goalTasks.data, editing?.id],
   )
   const taskItems = useMemo(
-    () => (goalTasks.data ?? []).map((task) => ({ label: task.title, value: task.id })),
-    [goalTasks.data],
+    () => dependencyChoices.map((task) => ({ label: task.title, value: task.id })),
+    [dependencyChoices],
   )
 
   // The daemon ships built-in "Engineer" and "Reviewer" profiles; preselect
   // them (or the only choice there is) so the common case is one click, the
-  // same way the goal form preselects its planner.
+  // same way the goal form preselects its planner. Create only: an edited
+  // task already has both.
   const selectedEngineer = form.watch("engineer_profile")
   useEffect(() => {
-    if (!open || !engineerOptions.length || selectedEngineer) return
+    if (!open || editing || !engineerOptions.length || selectedEngineer) return
     const preferred =
       engineerOptions.find((profile) => profile.name === "Engineer") ?? engineerOptions[0]
     if (preferred) form.setValue("engineer_profile", preferred.id)
-  }, [open, engineerOptions, selectedEngineer, form.setValue])
+  }, [open, editing, engineerOptions, selectedEngineer, form.setValue])
 
   const firstReviewer = form.watch("reviewers.0.profile")
   useEffect(() => {
-    if (!open || !reviewerOptions.length || firstReviewer !== "") return
+    if (!open || editing || !reviewerOptions.length || firstReviewer !== "") return
     const preferred =
       reviewerOptions.find((profile) => profile.name === "Reviewer") ?? reviewerOptions[0]
     if (preferred) form.setValue("reviewers.0.profile", preferred.id)
-  }, [open, reviewerOptions, firstReviewer, form.setValue])
+  }, [open, editing, reviewerOptions, firstReviewer, form.setValue])
 
-  const submitError = ApiError.is(createTask.error) ? createTask.error : null
+  const submitError = ApiError.is(submit.error) ? submit.error : null
 
-  // "goal already has 3 of max 3 tasks" must not still be on screen once the
-  // form has changed, so the first edit after a failure drops the alert.
+  // "goal already has 3 of max 3 tasks" (or "task is in_progress") must not
+  // still be on screen once the form has changed, so the first edit after a
+  // failure drops the alert.
   useEffect(() => {
     if (!submitError) return
-    const subscription = form.watch(() => createTask.reset())
+    const subscription = form.watch(() => submit.reset())
     return () => subscription.unsubscribe()
-  }, [submitError, form.watch, createTask.reset])
+  }, [submitError, form.watch, submit.reset])
 
-  async function onSubmit(values: CreateTaskForm) {
+  async function onSubmit(values: TaskFormValues) {
     const dependsOn = [...new Set(values.depends_on.map((row) => row.task).filter(Boolean))]
-    const body: CreateTaskRequest = {
-      title: values.title.trim(),
-      description: values.description,
-      engineer_profile: values.engineer_profile,
-      reviewer_profiles: values.reviewers.map((row) => row.profile),
-      repo_id: multiRepo ? values.repo_id : null,
-      depends_on: dependsOn,
-    }
     try {
-      const task = await createTask.mutateAsync(body)
-      toast.success("Task created", { description: task.title })
-      onOpenChange(false)
-      onCreated?.(task)
+      if (editing) {
+        const body: UpdateTaskRequest = {
+          title: values.title.trim(),
+          description: values.description,
+          reviewer_profiles: values.reviewers.map((row) => row.profile),
+          depends_on: dependsOn,
+        }
+        const task = await updateTask.mutateAsync(body)
+        toast.success("Task updated", { description: task.title })
+        onOpenChange(false)
+      } else {
+        const body: CreateTaskRequest = {
+          title: values.title.trim(),
+          description: values.description,
+          engineer_profile: values.engineer_profile,
+          reviewer_profiles: values.reviewers.map((row) => row.profile),
+          repo_id: multiRepo ? values.repo_id : null,
+          depends_on: dependsOn,
+        }
+        const task = await createTask.mutateAsync(body)
+        toast.success("Task created", { description: task.title })
+        onOpenChange(false)
+        onCreated?.(task)
+      }
     } catch {
       // Rendered inline below: the daemon's message is the useful part.
     }
@@ -203,10 +297,19 @@ export function CreateTaskDialog({
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
         <form onSubmit={form.handleSubmit(onSubmit)} className="grid gap-4">
           <DialogHeader>
-            <DialogTitle>New task</DialogTitle>
+            <DialogTitle>{editing ? "Edit task" : "New task"}</DialogTitle>
             <DialogDescription>
-              A unit of work an engineer takes from branch to merge, reviewed by the reviewers in
-              the order given.
+              {editing ? (
+                <>
+                  Editable while the task is still waiting; reviewers and dependencies replace the
+                  current lists. The engineer profile and the repository are fixed at creation.
+                </>
+              ) : (
+                <>
+                  A unit of work an engineer takes from branch to merge, reviewed by the reviewers
+                  in the order given.
+                </>
+              )}
             </DialogDescription>
           </DialogHeader>
 
@@ -232,34 +335,36 @@ export function CreateTaskDialog({
             <FieldDescription>Markdown. This is the engineer's brief.</FieldDescription>
           </Field>
 
-          <Field data-invalid={form.formState.errors.engineer_profile ? "" : undefined}>
-            <FieldLabel htmlFor="task-engineer">Engineer profile</FieldLabel>
-            <Controller
-              control={form.control}
-              name="engineer_profile"
-              render={({ field }) => (
-                <Select
-                  value={field.value || null}
-                  onValueChange={(value) => field.onChange(value ?? "")}
-                  disabled={!engineerOptions.length}
-                  // Without this the trigger would show the raw profile id.
-                  items={engineerItems}
-                >
-                  <SelectTrigger id="task-engineer" className="w-full">
-                    <SelectValue placeholder={profilePlaceholder(engineers, "engineer")} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {engineerOptions.map((profile) => (
-                      <SelectItem key={profile.id} value={profile.id}>
-                        {profile.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            />
-            <FieldError>{form.formState.errors.engineer_profile?.message}</FieldError>
-          </Field>
+          {!editing ? (
+            <Field data-invalid={form.formState.errors.engineer_profile ? "" : undefined}>
+              <FieldLabel htmlFor="task-engineer">Engineer profile</FieldLabel>
+              <Controller
+                control={form.control}
+                name="engineer_profile"
+                render={({ field }) => (
+                  <Select
+                    value={field.value || null}
+                    onValueChange={(value) => field.onChange(value ?? "")}
+                    disabled={!engineerOptions.length}
+                    // Without this the trigger would show the raw profile id.
+                    items={engineerItems}
+                  >
+                    <SelectTrigger id="task-engineer" className="w-full">
+                      <SelectValue placeholder={profilePlaceholder(engineers, "engineer")} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {engineerOptions.map((profile) => (
+                        <SelectItem key={profile.id} value={profile.id}>
+                          {profile.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+              <FieldError>{form.formState.errors.engineer_profile?.message}</FieldError>
+            </Field>
+          ) : null}
 
           <Field>
             <FieldLabel>Reviewer profiles</FieldLabel>
@@ -347,7 +452,7 @@ export function CreateTaskDialog({
                       <SelectValue placeholder="Select a repository" />
                     </SelectTrigger>
                     <SelectContent>
-                      {goal.repos.map((repo) => (
+                      {(goal?.repos ?? []).map((repo) => (
                         <SelectItem key={repo.id} value={repo.id}>
                           <span className="font-mono text-xs">{repo.path}</span>
                         </SelectItem>
@@ -384,7 +489,7 @@ export function CreateTaskDialog({
                               <SelectValue placeholder="Select a task" />
                             </SelectTrigger>
                             <SelectContent>
-                              {(goalTasks.data ?? []).map((task) => (
+                              {dependencyChoices.map((task) => (
                                 <SelectItem key={task.id} value={task.id}>
                                   <span className="flex min-w-0 items-baseline gap-2">
                                     <span className="truncate">{task.title}</span>
@@ -429,13 +534,17 @@ export function CreateTaskDialog({
           ) : null}
 
           {submitError ? (
-            <ErrorState showIcon title="Could not create task" error={submitError} />
+            <ErrorState
+              showIcon
+              title={editing ? "Could not save task" : "Could not create task"}
+              error={submitError}
+            />
           ) : null}
 
           <DialogFooter>
             <DialogClose render={<Button type="button" variant="outline" />}>Cancel</DialogClose>
-            <Button type="submit" pending={createTask.isPending}>
-              Create task
+            <Button type="submit" pending={submit.isPending}>
+              {editing ? "Save changes" : "Create task"}
             </Button>
           </DialogFooter>
         </form>
