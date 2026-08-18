@@ -20,6 +20,13 @@
  * stays display-only rather than swallowing keystrokes. Nothing is echoed
  * locally: what appears on screen is what tmux sent back through the log
  * stream, exactly as it would in a real attach.
+ *
+ * A panel is a small window onto all of that, so the terminal can be lifted
+ * into a near-fullscreen dialog, the way `task-diff.tsx` lifts the diff. Only
+ * the frame changes: the grid stays the pane's there too, and what the room
+ * buys is a bigger font — which is why the height budget and the font ceiling
+ * are per-frame (see {@link screenHeightBudget}) rather than the panel's
+ * constants everywhere.
  */
 
 import { FitAddon } from "@xterm/addon-fit"
@@ -28,6 +35,8 @@ import "@xterm/xterm/css/xterm.css"
 import {
   ArrowDownToLineIcon,
   KeyboardIcon,
+  Maximize2Icon,
+  Minimize2Icon,
   PlugZapIcon,
   RotateCwIcon,
   SquareIcon,
@@ -37,7 +46,9 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 
 import type { SessionStatus } from "@/api"
+import { EmptyState } from "@/components/empty-state"
 import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { Skeleton } from "@/components/ui/skeleton"
 import { describeError } from "@/lib/errors"
 import { cn } from "@/lib/utils"
@@ -71,6 +82,13 @@ const DEFAULT_PANE_SIZE: PaneSize = { cols: 80, rows: 24 }
  */
 const MIN_FONT_SIZE = 8
 const MAX_FONT_SIZE = 15
+/**
+ * The ceiling in the expanded frame, where the pane is the whole screen and
+ * not one card among others. It is high enough that the room — the dialog's
+ * height, or its width for a wide pane — is what stops the font on any usual
+ * grid, rather than the ceiling standing in for the panel's.
+ */
+const EXPANDED_MAX_FONT_SIZE = 24
 /** Where scaling starts, and what a pane is drawn at when it fits as it is. */
 const BASE_FONT_SIZE = 12
 const LINE_HEIGHT = 1.2
@@ -156,6 +174,100 @@ export function SessionTerminal({
   /** Classes for the frame the emulator draws in. Merged over the default. */
   screenClassName?: string
 }) {
+  const [expanded, setExpanded] = useState(false)
+  /**
+   * Whether the emulator holds the keyboard. Read while handling Escape, and
+   * only then, so it is a ref: a re-render per focus change would buy nothing
+   * and cost the terminal a repaint.
+   */
+  const focused = useRef(false)
+
+  const view = (
+    <TerminalView
+      sessionId={sessionId}
+      status={status}
+      className={className}
+      screenClassName={screenClassName}
+      expanded={expanded}
+      onExpandedChange={setExpanded}
+      onFocusChange={(next) => {
+        focused.current = next
+      }}
+    />
+  )
+
+  // Moving between the two frames remounts the emulator, and with it the log
+  // stream. That is not a loss: every connection opens with a full snapshot,
+  // so the pane is redrawn as it is now rather than as it was when the panel
+  // first attached.
+  if (!expanded) return view
+
+  return (
+    <>
+      {/* The panel keeps its place in the card rather than collapsing behind
+          the dialog, and says where the terminal went. */}
+      <EmptyState
+        emphasis="quiet"
+        title="The terminal is open in the expanded view"
+        action={
+          <Button variant="outline" size="sm" onClick={() => setExpanded(false)}>
+            <Minimize2Icon />
+            Back to the panel
+          </Button>
+        }
+      />
+      <Dialog
+        open
+        onOpenChange={(open, details) => {
+          // Escape is a keystroke the agent's TUI wants — it is `\x1b` on the
+          // way to the pane — so a focused terminal keeps it and the dialog is
+          // left to its own collapse control. The panel behind is a dialog of
+          // its own, and Base UI already holds a nested Escape back from it,
+          // so nothing else closes on the same press either.
+          if (details.reason === "escape-key" && focused.current) {
+            details.cancel()
+            return
+          }
+          if (!open) setExpanded(false)
+        }}
+      >
+        {/* Sized like the expanded diff, and a single stretched row so the
+            status line stays above a screen that takes the rest. */}
+        <DialogContent
+          showCloseButton={false}
+          className="h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] grid-rows-[minmax(0,1fr)] sm:max-w-[calc(100vw-2rem)]"
+        >
+          <DialogTitle className="sr-only">Terminal of the session</DialogTitle>
+          {view}
+        </DialogContent>
+      </Dialog>
+    </>
+  )
+}
+
+/**
+ * The terminal itself — the status line, and the frame the emulator draws in
+ * — as it renders in one of the two places it can be: the panel it belongs to,
+ * or the dialog it was expanded into.
+ */
+function TerminalView({
+  sessionId,
+  status,
+  className,
+  screenClassName,
+  expanded,
+  onExpandedChange,
+  onFocusChange,
+}: {
+  sessionId: string
+  status: SessionStatus
+  className?: string
+  screenClassName?: string
+  /** Whether this is the expanded view rather than the panel's. */
+  expanded: boolean
+  onExpandedChange: (expanded: boolean) => void
+  onFocusChange: (focused: boolean) => void
+}) {
   const live = isLiveStatus(status)
   const baseUrl = useBaseUrl()
   const { resolvedTheme } = useTheme()
@@ -170,6 +282,12 @@ export function SessionTerminal({
   const [attached, setAttached] = useState(false)
   /** Whether the viewport is on the newest output rather than up in the history. */
   const [following, setFollowing] = useState(true)
+  // Held in a ref so the emulator's own listeners can reach the current
+  // callback without the emulator being torn down and rebuilt for it.
+  const focusChangeRef = useRef(onFocusChange)
+  useEffect(() => {
+    focusChangeRef.current = onFocusChange
+  }, [onFocusChange])
 
   /**
    * Fit the pane's grid into the frame by scaling the font — the one dimension
@@ -181,12 +299,18 @@ export function SessionTerminal({
    * size alone. The ratio to the grid we want is the factor the font is off
    * by, and a pass or two settles it — the size is quantised, so the first
    * answer is rarely exact.
+   *
+   * What the grid may take, and how large the font may get doing it, are the
+   * frame's to say: the panel caps both so the terminal stays one card among
+   * others, and the expanded frame has a dialog's height to fill.
    */
   const scaleToFit = useCallback(() => {
     const terminal = terminalRef.current
     const fit = fitRef.current
     const container = containerRef.current
     if (!terminal || !fit || !container) return
+    const budget = screenHeightBudget(expanded ? frameRef.current : null, container)
+    const ceiling = expanded ? EXPANDED_MAX_FONT_SIZE : MAX_FONT_SIZE
     for (let pass = 0; pass < 4; pass++) {
       const proposed = fit.proposeDimensions()
       if (!proposed || !Number.isFinite(proposed.cols)) return
@@ -196,13 +320,13 @@ export function SessionTerminal({
       // may take before it is worth showing smaller.
       const scale = Math.min(
         proposed.cols / terminal.cols,
-        height > 0 ? MAX_SCREEN_HEIGHT / height : Number.POSITIVE_INFINITY,
+        height > 0 ? budget / height : Number.POSITIVE_INFINITY,
       )
-      const next = clamp(quantise(current * scale), MIN_FONT_SIZE, MAX_FONT_SIZE)
+      const next = clamp(quantise(current * scale), MIN_FONT_SIZE, ceiling)
       if (next === current) return
       terminal.options.fontSize = next
     }
-  }, [])
+  }, [expanded])
 
   // The emulator itself: created once, and kept across daemon-URL changes so a
   // reconnect does not flash an empty box.
@@ -259,8 +383,21 @@ export function SessionTerminal({
     const focusTerminal = () => terminal.focus()
     container.addEventListener("click", focusTerminal)
 
+    // Whether the keyboard is the pane's decides who gets Escape in the
+    // expanded view — the agent's TUI, or the dialog. It is watched on the
+    // container rather than on xterm's textarea because that is the element
+    // this effect owns, and `focusin`/`focusout` bubble to it from wherever
+    // inside the emulator focus actually lands.
+    const focusIn = () => focusChangeRef.current(true)
+    const focusOut = () => focusChangeRef.current(false)
+    container.addEventListener("focusin", focusIn)
+    container.addEventListener("focusout", focusOut)
+
     return () => {
       container.removeEventListener("click", focusTerminal)
+      container.removeEventListener("focusin", focusIn)
+      container.removeEventListener("focusout", focusOut)
+      focusChangeRef.current(false)
       scrolled.dispose()
       resized.dispose()
       terminalRef.current = null
@@ -269,23 +406,29 @@ export function SessionTerminal({
     }
   }, [scaleToFit])
 
-  // The frame's width is the only input to the font size, so resizing the
-  // window, the panel or the sheet it sits in re-scales the same grid.
+  // Resizing the window, the panel or the sheet it sits in re-scales the same
+  // grid to what the frame now is.
   useEffect(() => {
     const frame = frameRef.current
     if (!frame) return
     scaleToFit()
     let width = frame.clientWidth
+    let height = frame.clientHeight
     const observer = new ResizeObserver(() => {
-      // The frame's height follows the terminal's, which follows the font, so
-      // reacting to height would be a loop: only a new width is a new fit.
-      if (frame.clientWidth === width) return
+      // In the panel the frame's height follows the terminal's, which follows
+      // the font, so reacting to it would be a loop: only a new width is a new
+      // fit there. The expanded frame is given its height by the dialog and
+      // keeps it whatever the font does, so a window that only got taller is a
+      // new fit too.
+      const resized = frame.clientWidth !== width || (expanded && frame.clientHeight !== height)
+      if (!resized) return
       width = frame.clientWidth
+      height = frame.clientHeight
       scaleToFit()
     })
     observer.observe(frame)
     return () => observer.disconnect()
-  }, [scaleToFit])
+  }, [expanded, scaleToFit])
 
   useEffect(() => {
     const terminal = terminalRef.current
@@ -354,7 +497,7 @@ export function SessionTerminal({
   }, [baseUrl, sessionId])
 
   return (
-    <div className={cn("flex min-h-0 flex-col gap-2", className)}>
+    <div className={cn("flex min-h-0 flex-col gap-2", expanded && "h-full", className)}>
       <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
         {/* Announced: this line changes on its own — the stream dropping and
             coming back is the daemon's doing, not the user's — and it is the
@@ -362,17 +505,31 @@ export function SessionTerminal({
         <span role="status" className="min-w-0">
           <StreamStatus status={streamStatus} error={error} />
         </span>
-        {streamStatus === "ended" ? (
-          <Button variant="ghost" size="xs" onClick={() => streamRef.current?.restart()}>
-            <RotateCwIcon />
-            Reload
+        <div className="flex shrink-0 items-center gap-1">
+          {streamStatus === "ended" ? (
+            <Button variant="ghost" size="xs" onClick={() => streamRef.current?.restart()}>
+              <RotateCwIcon />
+              Reload
+            </Button>
+          ) : live ? (
+            <span className="flex items-center gap-1.5">
+              <KeyboardIcon className="size-3" />
+              Click to type into the agent's terminal
+            </span>
+          ) : null}
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            onClick={() => onExpandedChange(!expanded)}
+            aria-pressed={expanded}
+            aria-label={
+              expanded ? "Collapse the terminal back into the panel" : "Expand the terminal"
+            }
+            title={expanded ? "Collapse the terminal back into the panel" : "Expand the terminal"}
+          >
+            {expanded ? <Minimize2Icon /> : <Maximize2Icon />}
           </Button>
-        ) : live ? (
-          <span className="flex items-center gap-1.5">
-            <KeyboardIcon className="size-3" />
-            Click to type into the agent's terminal
-          </span>
-        ) : null}
+        </div>
       </div>
       {/*
         The frame is what makes the pane read as its own scrolling region:
@@ -383,6 +540,9 @@ export function SessionTerminal({
         ref={frameRef}
         className={cn(
           "relative overflow-hidden rounded-lg border bg-card shadow-xs",
+          // All that is left of the dialog, and the height `scaleToFit`
+          // measures the grid against there.
+          expanded && "min-h-0 flex-1",
           screenClassName,
         )}
       >
@@ -486,6 +646,23 @@ function StreamStatus({ status, error }: { status: SessionLogStatus; error: stri
       Live
     </span>
   )
+}
+
+/**
+ * How tall the grid may get in this frame before the font shrinks to fit it in.
+ *
+ * In the panel that is a fixed {@link MAX_SCREEN_HEIGHT}: the frame grows with
+ * the terminal there, so nothing but a cap says when the pane has taken enough
+ * of the card. A frame that was given its height — the expanded dialog's —
+ * measures instead, and the answer is what is left of it once the padding the
+ * emulator draws inside is out of the way.
+ */
+function screenHeightBudget(frame: HTMLElement | null, container: HTMLElement): number {
+  if (!frame) return MAX_SCREEN_HEIGHT
+  const style = getComputedStyle(container)
+  const padding =
+    (Number.parseFloat(style.paddingTop) || 0) + (Number.parseFloat(style.paddingBottom) || 0)
+  return Math.max(0, frame.clientHeight - padding)
 }
 
 function clamp(value: number, min: number, max: number): number {
