@@ -29,7 +29,6 @@ import { DetailPanels } from "@/components/detail-panels"
 import { SettingsDialog } from "@/components/settings-dialog"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
-import { Separator } from "@/components/ui/separator"
 import { CommandPalette } from "@/features/command-palette/command-palette"
 import { CreateGoalDialog } from "@/features/goals/create-goal-dialog"
 import { DaemonLogsDrawer } from "@/features/system/daemon-logs-drawer"
@@ -58,49 +57,54 @@ export function AppShell() {
   })
 
   return (
-    <div className="flex h-svh w-full overflow-hidden bg-background text-foreground">
-      <aside className="flex w-56 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground">
-        <div className="flex h-12 items-center gap-2 px-4">
-          <span className="font-heading text-sm font-semibold tracking-tight">Ariadne</span>
-        </div>
-        <Separator />
-        <AppSidebar />
-      </aside>
-
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-12 shrink-0 items-center gap-1 border-b px-3">
-          {/* The screen's own `h1` leads its content; this is where the user
-           *is*, so it reads as chrome rather than as a second heading. */}
-          <span className="truncate text-sm font-medium">{pageTitle}</span>
-          <div className="ml-auto flex items-center gap-1">
-            {/* The palette's affordance: a chord nobody can see is a chord
-                nobody uses, so the header carries it with its hint. */}
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-2 text-muted-foreground font-normal"
-              onClick={openPalette}
-            >
-              <SearchIcon />
-              Search
-              <kbd className="rounded border bg-muted px-1 font-mono text-[0.7rem] leading-4">
-                {shortcutLabel(PALETTE_SHORTCUT)}
-              </kbd>
-            </Button>
-            <ThemeToggle />
-            <Button variant="ghost" size="icon" aria-label="Settings" onClick={openSettings}>
-              <SettingsIcon />
-            </Button>
+    <div className="flex h-svh w-full flex-col overflow-hidden bg-background text-foreground">
+      <div className="flex min-h-0 flex-1">
+        <aside className="flex w-56 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground">
+          {/* `border-b` inside the same h-12 box as the header's, so the two
+              lines meet at the sidebar edge instead of sitting 1px apart. */}
+          <div className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
+            <span className="font-heading text-sm font-semibold tracking-tight">Ariadne</span>
           </div>
-        </header>
-        <ConnectionBanner onOpenSettings={openSettings} />
-        <main className="min-h-0 flex-1 overflow-auto p-6">
-          <Outlet />
-        </main>
-        <footer className="flex h-7 shrink-0 items-center border-t bg-muted/40 px-1">
-          <ConnectionStatus onOpenLogs={() => setLogsOpen(true)} />
-        </footer>
+          <AppSidebar />
+        </aside>
+
+        <div className="flex min-w-0 flex-1 flex-col">
+          <header className="flex h-12 shrink-0 items-center gap-1 border-b px-3">
+            {/* The screen's own `h1` leads its content; this is where the user
+             *is*, so it reads as chrome rather than as a second heading. */}
+            <span className="truncate text-sm font-medium">{pageTitle}</span>
+            <div className="ml-auto flex items-center gap-1">
+              {/* The palette's affordance: a chord nobody can see is a chord
+                  nobody uses, so the header carries it with its hint. */}
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2 text-muted-foreground font-normal"
+                onClick={openPalette}
+              >
+                <SearchIcon />
+                Search
+                <kbd className="rounded border bg-muted px-1 font-mono text-[0.7rem] leading-4">
+                  {shortcutLabel(PALETTE_SHORTCUT)}
+                </kbd>
+              </Button>
+              <ThemeToggle />
+              <Button variant="ghost" size="icon" aria-label="Settings" onClick={openSettings}>
+                <SettingsIcon />
+              </Button>
+            </div>
+          </header>
+          <ConnectionBanner onOpenSettings={openSettings} />
+          <main className="min-h-0 flex-1 overflow-auto p-6">
+            <Outlet />
+          </main>
+        </div>
       </div>
+
+      {/* Below the sidebar row, so the status bar runs the full window width. */}
+      <footer className="flex h-7 shrink-0 items-center border-t bg-muted/40 px-1">
+        <ConnectionStatus onOpenLogs={() => setLogsOpen(true)} />
+      </footer>
 
       <DetailPanels />
       <CommandPalette
