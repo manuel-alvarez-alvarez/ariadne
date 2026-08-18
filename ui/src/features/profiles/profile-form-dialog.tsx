@@ -49,7 +49,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+  FieldTitle,
+} from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import {
   Select,
@@ -453,7 +460,9 @@ export function ProfileFormDialog({
             </Field>
 
             <Field>
-              <FieldLabel>Prompts</FieldLabel>
+              {/* A heading rather than a label: what follows is a stack of
+                  sections, not one control to point a `for` at. */}
+              <FieldTitle>Prompts</FieldTitle>
               <FieldDescription>
                 What a {roleLabel(role).toLowerCase()} is spawned with. Saved with the rest of the
                 form — nothing here is written until then.
