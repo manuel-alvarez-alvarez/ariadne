@@ -100,22 +100,12 @@ pub enum ProfileCommand {
         /// Replace the system prompt with the contents of this file
         #[arg(long)]
         prompt_file: Option<std::path::PathBuf>,
-        /// Extra argv flag appended when spawning; repeatable, and replaces
-        /// the profile's flags rather than adding to them
-        #[arg(long = "flag", conflicts_with = "clear_flags")]
-        flags: Vec<String>,
-        /// Drop every extra flag
-        #[arg(long)]
-        clear_flags: bool,
     },
     /// Delete a profile
     Rm {
         /// Profile id or name
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::profile_names))]
         id: String,
-        /// Do not ask for confirmation
-        #[arg(short, long)]
-        yes: bool,
     },
     /// List a profile's prompts (contents in --format json)
     Prompts {
@@ -341,8 +331,6 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
             model,
             prompt,
             prompt_file,
-            flags,
-            clear_flags,
         } => {
             let system_prompt = match (prompt, prompt_file) {
                 (None, None) => None,
@@ -357,7 +345,7 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
                         agent_kind: agent.map(|a| a.replace('-', "_")),
                         model,
                         system_prompt,
-                        extra_flags: flags_update(flags, clear_flags),
+                        extra_flags: None,
                     },
                 )
                 .await?;
@@ -366,9 +354,7 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
                 Format::Table => println!("{}", p.id),
             }
         }
-        ProfileCommand::Rm { id, yes } => {
-            let p = get_profile(client, &id).await?;
-            confirm(&rm_question(&p), yes)?;
+        ProfileCommand::Rm { id } => {
             client
                 .send_no_content::<()>(http::Method::DELETE, &format!("/v1/profiles/{id}"), None)
                 .await?;
@@ -623,29 +609,6 @@ async fn reset_prompt(client: &Client, profile: &ProfileDto, kind: PromptArg) ->
         )),
         PromptArg::Briefing(k) => Ok(client.reset_profile_prompt(&profile.id, k).await?.into()),
     }
-}
-
-/// The `extra_flags` half of a PUT body: the flags replace the whole list —
-/// as `task update --reviewer` does — and `--clear-flags` is how an empty one
-/// is spelled, since a repeatable flag cannot be given zero times on purpose.
-/// Neither flag leaves the field out, keeping what the profile has.
-fn flags_update(flags: Vec<String>, clear_flags: bool) -> Option<Vec<String>> {
-    match (clear_flags, flags.is_empty()) {
-        (true, _) => Some(Vec::new()),
-        (false, true) => None,
-        (false, false) => Some(flags),
-    }
-}
-
-/// What `profile rm` asks before it deletes: the id alone does not say which
-/// agent setup is about to go, so the question names the profile and its role.
-fn rm_question(p: &ProfileDto) -> String {
-    format!(
-        "Delete the {} profile \"{}\" ({})?",
-        p.role.as_str(),
-        p.name,
-        p.id
-    )
 }
 
 /// What `prompt reset` asks before it overwrites: whatever the prompt says now
@@ -924,36 +887,5 @@ mod tests {
     #[test]
     fn yes_skips_the_confirmation() {
         assert!(confirm("Reset?", true).is_ok());
-    }
-
-    /// The flags replace rather than extend, so an absent `--flag` must not
-    /// send an empty list and wipe what the profile has.
-    #[test]
-    fn flags_that_were_not_given_are_left_alone() {
-        assert_eq!(flags_update(vec![], false), None);
-    }
-
-    #[test]
-    fn the_flags_are_replaced_by_what_was_given() {
-        assert_eq!(
-            flags_update(vec!["--verbose".into(), "--flag=1".into()], false),
-            Some(vec!["--verbose".to_string(), "--flag=1".to_string()])
-        );
-    }
-
-    /// The one thing the repeatable flag cannot say on its own.
-    #[test]
-    fn clearing_the_flags_sends_an_empty_list() {
-        assert_eq!(flags_update(vec![], true), Some(Vec::new()));
-    }
-
-    /// The question is the last thing between the caller and a deleted
-    /// profile, so it says which one by name and role, not by the id typed.
-    #[test]
-    fn the_rm_question_names_the_profile_and_its_role() {
-        assert_eq!(
-            rm_question(&profile(Role::Engineer)),
-            "Delete the engineer profile \"Engineer\" (01PROFILE)?"
-        );
     }
 }

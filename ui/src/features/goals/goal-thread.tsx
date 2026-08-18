@@ -1,8 +1,13 @@
 /**
- * The goal-level conversation, read-only: what the planner, the agents and
- * the daemon said about this goal. New messages arrive over the event stream
- * (`message_created` invalidates this exact key), so the thread appends
- * itself without polling.
+ * The goal-level conversation: what the planner, the agents and the daemon
+ * said about this goal, with a compose box under it for the user's side. New
+ * messages arrive over the event stream (`message_created` invalidates this
+ * exact key), so the thread appends itself without polling; a sent one is
+ * appended by its own mutation and does not wait for the event.
+ *
+ * The compose box is there whatever the goal's status: the daemon takes a
+ * post on a terminal goal too (`http/goals.rs post_message` checks only that
+ * the goal exists), where it waits in the thread like any message would.
  *
  * Each message is the shared {@link MessageCard}, the same one the task thread
  * draws; what is this surface's own is the card the thread sits in.
@@ -14,12 +19,14 @@ import type { MessageDto } from "@/api"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { MessageCard } from "@/components/message-card"
+import { MessageComposer } from "@/components/message-composer"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
-import { goalMessagesQueryOptions } from "./queries"
+import { goalMessagesQueryOptions, usePostGoalMessage } from "./queries"
 
 export function GoalThread({ goalId, className }: { goalId: string; className?: string }) {
   const messages = useQuery(goalMessagesQueryOptions(goalId))
+  const post = usePostGoalMessage(goalId)
 
   return (
     <Card className={className}>
@@ -44,6 +51,14 @@ export function GoalThread({ goalId, className }: { goalId: string; className?: 
         ) : null}
 
         {messages.data ? <MessageList messages={messages.data} /> : null}
+
+        <MessageComposer
+          post={post}
+          label="Message the planner thread"
+          placeholder="Write to the planner thread…"
+          // The box lives inside the card, so it is the card it has to cover.
+          className="bg-card"
+        />
       </CardContent>
     </Card>
   )
