@@ -53,6 +53,9 @@ export type Role = Schemas["Role"]
 export type AgentKind = Schemas["AgentKind"]
 export type ModelDto = Schemas["ModelDto"]
 
+export type LogLineDto = Schemas["LogLineDto"]
+export type LogSnapshotResponse = Schemas["LogSnapshotResponse"]
+
 export type AgentEventDto = Schemas["AgentEventDto"]
 export type DeletedDto = Schemas["DeletedDto"]
 export type ResyncDto = Schemas["ResyncDto"]
