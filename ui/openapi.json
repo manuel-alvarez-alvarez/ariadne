@@ -144,15 +144,18 @@
           {
             "name": "status",
             "in": "query",
-            "description": "Filter by status: one status, or several comma-separated\n(`status=active,completed`), matching goals in any of them.",
+            "description": "Filter by status.",
             "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/components/schemas/GoalStatus"
+                }
               ]
-            },
-            "example": "active,completed"
+            }
           }
         ],
         "responses": {

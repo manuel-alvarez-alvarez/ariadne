@@ -60,24 +60,6 @@ export function modelsQueryOptions() {
   })
 }
 
-/**
- * `GET /v1/roles/{role}/prompt-defaults` — the built-in system prompt and
- * briefings a profile of that role is seeded with.
- *
- * Read-only and compiled into the daemon: it cannot change while the app is
- * open, so it is cached for the session and never invalidated. The form dialog
- * uses it twice — to prefill the editors of a profile being created, and to
- * answer "restore default" in either mode without writing anything.
- */
-export function rolePromptDefaultsQueryOptions(role: Role) {
-  return queryOptions({
-    queryKey: qk.roles.promptDefaults(role),
-    queryFn: () =>
-      unwrap(api().GET("/v1/roles/{role}/prompt-defaults", { params: { path: { role } } })),
-    staleTime: Number.POSITIVE_INFINITY,
-  })
-}
-
 export function useCreateProfile() {
   const queryClient = useQueryClient()
   return useMutation({

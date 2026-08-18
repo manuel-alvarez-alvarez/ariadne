@@ -12,24 +12,13 @@
  *
  * `role` is deliberately missing from the update body: the daemon has no way to
  * change a profile's role after creation.
- *
- * The briefing prompts are the other asymmetry. Create takes them inline, so
- * only the ones edited away from the role default go into the body; update has
- * no room for them at all — each changed kind is its own `PUT`, which is why
- * {@link changedPrompts} is separate from either request builder.
  */
 
 import { z } from "zod"
 
-import type {
-  CreateProfileRequest,
-  ProfileDto,
-  PromptKind,
-  Role,
-  UpdateProfileRequest,
-} from "@/api"
+import type { CreateProfileRequest, ProfileDto, Role, UpdateProfileRequest } from "@/api"
 
-import { AGENT_KINDS, PROMPT_KINDS, ROLES } from "./profile-labels"
+import { AGENT_KINDS, ROLES } from "./profile-labels"
 
 /**
  * The agent-kind choice standing for "no kind pinned". It is spelled like the
@@ -46,24 +35,9 @@ export const AGENT_KIND_CHOICES = [AUTO_AGENT_KIND, ...AGENT_KINDS] as const
 export type AgentKindChoice = (typeof AGENT_KIND_CHOICES)[number]
 
 /**
- * One briefing prompt while it is being edited: the daemon's kind and the text.
- *
- * Which kinds a form holds is never decided here — the create dialog takes them
- * from the role defaults and the edit dialog from the profile's own prompts, in
- * the order the daemon sends them.
- */
-export interface PromptFormValue {
-  kind: PromptKind
-  content: string
-}
-
-/**
  * Extra flags are held as objects because `useFieldArray` keys rows by
  * identity: an array of bare strings loses the row a value belongs to as soon
  * as one is removed.
- *
- * The briefings are an array for the same reason, and because their order is
- * the daemon's.
  */
 export const profileFormSchema = z.object({
   name: z
@@ -76,8 +50,6 @@ export const profileFormSchema = z.object({
     .string()
     .refine((value) => value.trim().length > 0, { message: "A system prompt is required." }),
   extraFlags: z.array(z.object({ value: z.string() })),
-  // A briefing may legitimately be emptied, so there is nothing to validate.
-  prompts: z.array(z.object({ kind: z.enum(PROMPT_KINDS), content: z.string() })),
 })
 
 export type ProfileFormValues = z.infer<typeof profileFormSchema>
@@ -91,20 +63,11 @@ export function emptyProfileFormValues(role: Role = "engineer"): ProfileFormValu
     model: "",
     systemPrompt: "",
     extraFlags: [],
-    prompts: [],
   }
 }
 
-/**
- * An existing profile as form values, for the edit dialog.
- *
- * Its briefings arrive from their own endpoint, later than the profile itself,
- * so they are a second argument rather than a field of the DTO.
- */
-export function profileToFormValues(
-  profile: ProfileDto,
-  prompts: readonly PromptFormValue[] = [],
-): ProfileFormValues {
+/** An existing profile as form values, for the edit dialog. */
+export function profileToFormValues(profile: ProfileDto): ProfileFormValues {
   return {
     name: profile.name,
     role: profile.role,
@@ -112,41 +75,11 @@ export function profileToFormValues(
     model: profile.model ?? "",
     systemPrompt: profile.system_prompt,
     extraFlags: profile.extra_flags.map((value) => ({ value })),
-    prompts: prompts.map((prompt) => ({ kind: prompt.kind, content: prompt.content })),
   }
 }
 
-/**
- * The prompts whose text is not what `baseline` holds.
- *
- * Both dialogs save through this: on create the baseline is the role's
- * defaults, so only edited briefings are sent and the rest are seeded by the
- * daemon; on edit it is what the daemon last answered, so an untouched briefing
- * is never written.
- */
-export function changedPrompts(
-  prompts: readonly PromptFormValue[],
-  baseline: readonly PromptFormValue[],
-): PromptFormValue[] {
-  const before = new Map(baseline.map((prompt) => [prompt.kind, prompt.content]))
-  return prompts
-    .filter((prompt) => before.get(prompt.kind) !== prompt.content)
-    .map((prompt) => ({ kind: prompt.kind, content: prompt.content }))
-}
-
-/**
- * The create body, with only the briefings the user actually edited.
- *
- * `defaults` is what the role would seed on its own: a kind left at its default
- * is left out of the body entirely, which is what the daemon reads as "seed
- * this one yourself".
- */
-export function toCreateRequest(
-  values: ProfileFormValues,
-  defaults: readonly PromptFormValue[] = [],
-): CreateProfileRequest {
+export function toCreateRequest(values: ProfileFormValues): CreateProfileRequest {
   const model = values.model.trim()
-  const prompts = changedPrompts(values.prompts, defaults)
   return {
     name: values.name.trim(),
     role: values.role,
@@ -155,7 +88,6 @@ export function toCreateRequest(
     model: model.length > 0 ? model : null,
     system_prompt: values.systemPrompt,
     extra_flags: cleanFlags(values.extraFlags),
-    ...(prompts.length > 0 ? { prompts } : {}),
   }
 }
 

@@ -417,6 +417,142 @@ mod tests {
         assert!(err.contains("engineer_briefing"), "{err}");
     }
 
+    /// The prompt flags name the kind they set, so one line can seed the
+    /// system prompt and a briefing at once, from text and from a file.
+    #[test]
+    fn a_prompt_flag_names_the_kind_it_sets() {
+        let (texts, files) = create_flags(&[
+            "--prompt",
+            "system=You are...",
+            "--prompt",
+            "changes_requested=Fix it",
+            "--prompt-file",
+            "engineer_briefing=/tmp/b.md",
+        ]);
+        assert_eq!(
+            pairs(texts),
+            ["system=You are...", "changes_requested=Fix it"]
+        );
+        assert_eq!(pairs(files), ["engineer_briefing=/tmp/b.md"]);
+    }
+
+    /// `profile update` takes the same flags as `profile create`.
+    #[test]
+    fn an_update_sets_prompts_by_kind_too() {
+        let Command::Profile {
+            command:
+                ProfileCommand::Update {
+                    prompts,
+                    prompt_files,
+                    ..
+                },
+        } = parse(&[
+            "ariadne",
+            "profile",
+            "update",
+            "Engineer",
+            "--prompt",
+            "system=You are...",
+            "--prompt-file",
+            "merge_instructions=/tmp/m.md",
+        ])
+        .command
+        else {
+            panic!("profile update");
+        };
+        assert_eq!(pairs(prompts), ["system=You are..."]);
+        assert_eq!(pairs(prompt_files), ["merge_instructions=/tmp/m.md"]);
+    }
+
+    /// The old bare `--prompt <text>` is gone: a value with no kind is a
+    /// usage error, and the message says how to spell what was meant.
+    #[test]
+    fn a_prompt_without_a_kind_is_a_usage_error() {
+        let err = try_create(&["--prompt", "You are..."])
+            .expect_err("no kind")
+            .to_string();
+        assert!(err.contains("missing <kind>="), "{err}");
+        assert!(err.contains("write system=<text>"), "{err}");
+        assert!(err.contains("engineer_briefing"), "{err}");
+        let err = try_create(&["--prompt-file", "/tmp/b.md"])
+            .expect_err("no kind")
+            .to_string();
+        assert!(err.contains("write system=<path>"), "{err}");
+    }
+
+    /// A kind no role owns never reaches the daemon, on either flag.
+    #[test]
+    fn an_unknown_kind_on_a_prompt_flag_never_reaches_the_daemon() {
+        for flag in ["--prompt", "--prompt-file"] {
+            let err = try_create(&[flag, "briefing=x"])
+                .expect_err("unknown kind")
+                .to_string();
+            assert!(err.contains("unknown prompt kind: briefing"), "{err}");
+            assert!(err.contains("system"), "{err}");
+        }
+    }
+
+    /// One kind, one value: a second one for the same prompt is refused
+    /// before anything is sent, whichever flag carries it.
+    #[test]
+    fn the_same_kind_twice_is_refused_before_any_request() {
+        let (texts, files) = create_flags(&[
+            "--prompt",
+            "engineer_briefing=one",
+            "--prompt-file",
+            "engineer_briefing=/tmp/b.md",
+        ]);
+        let err = commands::profile::collect_prompts(
+            commands::profile::Owner::Role(ariadne_core::Role::Engineer),
+            texts,
+            files,
+        )
+        .expect_err("duplicate")
+        .to_string();
+        assert!(err.starts_with("engineer_briefing is set twice"), "{err}");
+    }
+
+    /// The prompt flags of a `profile create` line, as clap parsed them.
+    fn create_flags(
+        args: &[&str],
+    ) -> (
+        Vec<commands::profile::PromptAssignment>,
+        Vec<commands::profile::PromptAssignment>,
+    ) {
+        let Command::Profile {
+            command:
+                ProfileCommand::Create {
+                    prompts,
+                    prompt_files,
+                    ..
+                },
+        } = parse(&create_argv(args)).command
+        else {
+            panic!("profile create");
+        };
+        (prompts, prompt_files)
+    }
+
+    fn try_create(args: &[&str]) -> Result<(), clap::Error> {
+        try_parse(&create_argv(args)).map(|_| ())
+    }
+
+    /// A `profile create` line with everything it needs, plus `args`.
+    fn create_argv<'a>(args: &[&'a str]) -> Vec<&'a str> {
+        let mut argv = vec![
+            "ariadne", "profile", "create", "--name", "X", "--role", "engineer",
+        ];
+        argv.extend_from_slice(args);
+        argv
+    }
+
+    /// Prompt flags back as `<kind>=<value>`, the way they were typed.
+    fn pairs(args: Vec<commands::profile::PromptAssignment>) -> Vec<String> {
+        args.into_iter()
+            .map(|a| format!("{}={}", a.kind.as_str(), a.value))
+            .collect()
+    }
+
     fn parse(argv: &[&str]) -> Cli {
         Cli::from_arg_matches(&command().get_matches_from(argv)).expect("parse")
     }

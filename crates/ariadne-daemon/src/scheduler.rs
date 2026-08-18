@@ -76,7 +76,7 @@ pub fn start(store: Store, launcher: Arc<Launcher>) -> mpsc::UnboundedSender<Sch
 impl Scheduler {
     async fn reconcile_all(&mut self) {
         self.liveness_sweep().await;
-        let goals = match self.store.list_goals(&[]).await {
+        let goals = match self.store.list_goals(None).await {
             Ok(goals) => goals,
             Err(e) => {
                 warn!(error = %e, "reconcile: listing goals failed");
