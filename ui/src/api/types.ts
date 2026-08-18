@@ -17,11 +17,13 @@ export type HealthResponse = Schemas["HealthResponse"]
 export type VersionResponse = Schemas["VersionResponse"]
 
 export type GoalDto = Schemas["GoalDto"]
-export type GoalRepoDto = Schemas["GoalRepoDto"]
 export type GoalStatus = Schemas["GoalStatus"]
 export type CreateGoalRequest = Schemas["CreateGoalRequest"]
-export type RepoSpec = Schemas["RepoSpec"]
 export type FinalizePlanRequest = Schemas["FinalizePlanRequest"]
+
+export type RepositoryDto = Schemas["RepositoryDto"]
+export type CreateRepositoryRequest = Schemas["CreateRepositoryRequest"]
+export type UpdateRepositoryRequest = Schemas["UpdateRepositoryRequest"]
 
 export type TaskDto = Schemas["TaskDto"]
 export type TaskStatus = Schemas["TaskStatus"]
