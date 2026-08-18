@@ -97,7 +97,7 @@ describe("closing a panel", () => {
   })
 
   it("steps back out of a session opened over a list", () => {
-    // The sessions screen, filtered, with a row picked from it.
+    // A filtered list, with a row picked from it.
     const history = new History("status=failed")
     history.push("status=failed&session=s1")
 
