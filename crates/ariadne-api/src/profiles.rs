@@ -31,6 +31,20 @@ pub struct CreateProfileRequest {
     pub system_prompt: String,
     #[serde(default)]
     pub extra_flags: Vec<String>,
+    /// Briefing prompts to seed instead of the role defaults. A kind listed
+    /// here replaces its default; every other kind of the role is seeded as
+    /// usual. Absent or empty = the role defaults, unedited.
+    #[serde(default)]
+    pub prompts: Vec<NewProfilePrompt>,
+}
+
+/// One prompt override in [`CreateProfileRequest`]: the kind spelled as on the
+/// prompt routes, and the text to seed instead of the role default.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct NewProfilePrompt {
+    #[schema(example = "engineer_briefing")]
+    pub kind: String,
+    pub content: String,
 }
 
 /// Partial update; absent fields stay unchanged.
@@ -59,5 +73,24 @@ pub struct ProfilePromptDto {
 /// Body of `PUT /v1/profiles/{id}/prompts/{kind}`: the whole new text.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct UpdateProfilePromptRequest {
+    pub content: String,
+}
+
+/// Response of `GET /v1/roles/{role}/prompt-defaults`: what a profile of that
+/// role is seeded with, read without creating or touching anything.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RolePromptDefaultsDto {
+    pub role: Role,
+    pub system_prompt: String,
+    /// The role's briefing prompts, in briefing order.
+    pub prompts: Vec<PromptDefaultDto>,
+}
+
+/// One built-in prompt default. Unlike [`ProfilePromptDto`] it belongs to no
+/// profile, so there is nothing to timestamp.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PromptDefaultDto {
+    pub kind: PromptKind,
+    /// Template text with `{placeholder}` tokens the daemon fills in.
     pub content: String,
 }

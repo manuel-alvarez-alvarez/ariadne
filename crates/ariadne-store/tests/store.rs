@@ -21,6 +21,7 @@ async fn seed_profile(store: &Store, name: &str, role: Role) -> Profile {
             model: None,
             system_prompt: format!("You are {name}."),
             extra_flags: vec![],
+            prompts: vec![],
         })
         .await
         .unwrap()
@@ -84,6 +85,7 @@ async fn profile_crud_and_delete_guard() {
             model: None,
             system_prompt: "x".into(),
             extra_flags: vec![],
+            prompts: vec![],
         })
         .await;
     assert!(matches!(dup, Err(StoreError::Conflict(_))));
