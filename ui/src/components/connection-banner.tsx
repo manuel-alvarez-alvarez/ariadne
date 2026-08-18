@@ -2,7 +2,7 @@
  * The app-level "you are not looking at a live daemon" banner, under the
  * header.
  *
- * The sidebar's {@link import("./connection-status").ConnectionStatus} dot is
+ * The footer's {@link import("./connection-status").ConnectionStatus} dot is
  * the ambient indicator and stays; this is the one that interrupts, because a
  * daemon that went away turns every screen into a wall of error alerts that all
  * say the same thing and none of which say what to do about it. So it says it
