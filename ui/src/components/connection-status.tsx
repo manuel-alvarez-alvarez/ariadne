@@ -1,11 +1,18 @@
 /**
- * Global "is this window looking at a live daemon?" indicator.
+ * Global "is this window looking at a live daemon?" indicator, lived in by the
+ * shell's footer.
  *
- * Two independent links are folded into one badge: the REST probe
+ * Two independent links are folded into one readout: the REST probe
  * (`/v1/health` + `/v1/version`) and the domain-event stream. REST up but
  * stream down means the screens still load yet stop updating themselves, which
  * is worth saying out loud.
+ *
+ * It renders as a real button because the daemon-logs drawer will hang off the
+ * click; until that lands the click does nothing, but the affordance — hover,
+ * focus ring, chevron — is already the shape it will keep.
  */
+
+import { ChevronUpIcon } from "lucide-react"
 
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useConnection } from "@/hooks/use-connection"
@@ -40,22 +47,22 @@ export function ConnectionStatus({ className }: { className?: string }) {
   return (
     <Tooltip>
       <TooltipTrigger
-        render={
-          <div
-            className={cn(
-              "flex items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground",
-              className,
-            )}
-          />
-        }
+        aria-label="Daemon status — open logs"
+        render={<button type="button" />}
+        className={cn(
+          "flex min-w-0 items-center gap-2 rounded-md px-2 py-0.5 text-xs text-muted-foreground outline-none transition-colors",
+          "hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50",
+          className,
+        )}
       >
         <span
           className={cn("size-2 shrink-0 rounded-full", tone, live && "animate-pulse")}
           aria-hidden
         />
         <span className="truncate">{label}</span>
+        <ChevronUpIcon className="size-3 shrink-0 opacity-60" aria-hidden />
       </TooltipTrigger>
-      <TooltipContent side="bottom" align="end">
+      <TooltipContent side="top" align="start">
         <div className="space-y-1">
           <p className="font-mono text-xs">{baseUrl}</p>
           <p>
