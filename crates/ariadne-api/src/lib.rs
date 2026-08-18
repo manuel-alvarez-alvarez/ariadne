@@ -10,6 +10,7 @@ pub mod logs;
 pub mod messages;
 pub mod models;
 pub mod profiles;
+pub mod repositories;
 pub mod reviews;
 pub mod sessions;
 pub mod stream;
