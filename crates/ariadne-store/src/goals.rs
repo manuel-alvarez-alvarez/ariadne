@@ -69,21 +69,27 @@ impl Store {
             .ok_or_else(|| not_found("goal", id))
     }
 
-    pub async fn list_goals(&self, status: Option<GoalStatus>) -> Result<Vec<Goal>> {
-        let rows = match status {
-            Some(s) => {
-                sqlx::query_as::<_, Goal>("SELECT * FROM goals WHERE status = ? ORDER BY id")
-                    .bind(s.as_str())
-                    .fetch_all(self.r())
-                    .await?
+    /// List goals, narrowed to `statuses` (a goal matches any one of them).
+    /// An empty slice means no status filter at all.
+    pub async fn list_goals(&self, statuses: &[GoalStatus]) -> Result<Vec<Goal>> {
+        let mut sql = String::from("SELECT * FROM goals");
+        if !statuses.is_empty() {
+            sql.push_str(" WHERE status IN (");
+            for i in 0..statuses.len() {
+                if i > 0 {
+                    sql.push_str(", ");
+                }
+                sql.push('?');
             }
-            None => {
-                sqlx::query_as::<_, Goal>("SELECT * FROM goals ORDER BY id")
-                    .fetch_all(self.r())
-                    .await?
-            }
-        };
-        Ok(rows)
+            sql.push(')');
+        }
+        sql.push_str(" ORDER BY id");
+        // Safe: only fixed clause fragments are appended; values are bound.
+        let mut q = sqlx::query_as::<_, Goal>(sqlx::AssertSqlSafe(sql));
+        for status in statuses {
+            q = q.bind(status.as_str());
+        }
+        Ok(q.fetch_all(self.r()).await?)
     }
 
     pub async fn set_goal_status(&self, id: &str, status: GoalStatus) -> Result<Goal> {
