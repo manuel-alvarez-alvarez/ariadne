@@ -164,7 +164,10 @@ fn group(goals: Vec<GoalDto>, tasks: Vec<TaskDto>, sessions: Vec<SessionDto>) ->
     }
 
     Attention {
-        count: groups.iter().map(|g| g.tasks.len() + g.sessions.len()).sum(),
+        count: groups
+            .iter()
+            .map(|g| g.tasks.len() + g.sessions.len())
+            .sum(),
         goals: groups,
     }
 }
@@ -388,10 +391,7 @@ mod tests {
             sessions: Vec::new(),
         };
         assert_eq!(heading(&with), "CLI vs App (…Q69G5FAV)");
-        let without = Group {
-            goal: None,
-            ..with
-        };
+        let without = Group { goal: None, ..with };
         assert_eq!(heading(&without), "Goal …Q69G5FAV");
     }
 
