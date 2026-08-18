@@ -12,4 +12,5 @@ pub mod logbuf;
 pub mod logtail;
 pub mod opencode_plugin;
 pub mod scheduler;
+pub mod sleep;
 pub mod tmux;

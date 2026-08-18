@@ -35,6 +35,8 @@ struct FileConfig {
     /// them under worktree_root so merged work can be inspected later;
     /// cancelled tasks always keep theirs, salvageable work included.
     delete_merged_worktrees: Option<bool>,
+    /// Keep the machine awake while agent sessions are live (default true).
+    prevent_sleep: Option<bool>,
 }
 
 /// Fully resolved daemon configuration.
@@ -51,6 +53,7 @@ pub struct Config {
     pub cli_bin: String,
     pub delete_merged_branches: bool,
     pub delete_merged_worktrees: bool,
+    pub prevent_sleep: bool,
 }
 
 /// Default `ariadne` CLI: sibling of the running ariadned, else PATH lookup.
@@ -100,6 +103,7 @@ impl Config {
             cli_bin: file.cli_bin.unwrap_or_else(default_cli_bin),
             delete_merged_branches: file.delete_merged_branches.unwrap_or(true),
             delete_merged_worktrees: file.delete_merged_worktrees.unwrap_or(true),
+            prevent_sleep: file.prevent_sleep.unwrap_or(true),
             root,
         };
 
