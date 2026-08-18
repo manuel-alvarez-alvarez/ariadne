@@ -13,6 +13,7 @@ import {
   api,
   type CacheSnapshot,
   type CreateTaskRequest,
+  type MessageDto,
   optimisticStatus,
   qk,
   restoreCache,
@@ -143,6 +144,38 @@ export function useUpdateTask(taskId: string) {
       queryClient.setQueryData(qk.tasks.detail(taskId), task)
       void queryClient.invalidateQueries({ queryKey: qk.tasks.lists() })
       void queryClient.invalidateQueries({ queryKey: qk.tasks.transitions(taskId) })
+    },
+  })
+}
+
+/**
+ * `POST /v1/tasks/{id}/messages` — the conversation tab's compose box, the
+ * web's `ariadne task msg`.
+ *
+ * The daemon answers with the created message, which is appended straight to
+ * the cached thread: it is the newest by construction (ids are ordered and it
+ * was just minted), so the send shows up without waiting for the
+ * `message_created` event to invalidate. The invalidation still runs for the
+ * messages an offline stream may have missed; the append is deduped by id, so
+ * event and refetch land on the same thread.
+ */
+export function usePostTaskMessage(taskId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: string) =>
+      unwrap(
+        api().POST("/v1/tasks/{id}/messages", {
+          params: { path: { id: taskId } },
+          body: { body },
+        }),
+      ),
+    onSuccess: (message) => {
+      queryClient.setQueryData<MessageDto[]>(qk.tasks.messages(taskId), (thread) =>
+        thread && !thread.some((existing) => existing.id === message.id)
+          ? [...thread, message]
+          : thread,
+      )
+      void queryClient.invalidateQueries({ queryKey: qk.tasks.messages(taskId) })
     },
   })
 }
