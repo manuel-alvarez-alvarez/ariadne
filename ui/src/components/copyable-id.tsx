@@ -7,9 +7,7 @@
  * click has to be enough, and the *full* value is what gets copied even where
  * the display is shortened ({@link CopyableId.display}) or the column truncates
  * it. The text itself is no longer the button: it stays selectable, and a value
- * one may want to read is not also a target one may hit by accident. Where the
- * value is also a thing with a screen ({@link ValueProps.to}) the text is a
- * link to it, and the button beside it still only copies.
+ * one may want to read is not also a target one may hit by accident.
  *
  * Two shapes, because ids come in two kinds:
  *
@@ -29,7 +27,6 @@
 
 import { CheckIcon, CopyIcon } from "lucide-react"
 import { type ReactNode, useEffect, useRef, useState } from "react"
-import { Link } from "react-router-dom"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -71,13 +68,6 @@ type ValueProps = {
   /** What this is, for the button and for screen readers: "task id", "branch". */
   label?: string
   /**
-   * Where the value itself leads, when it is also a thing with a screen — a
-   * repository path, which the Repositories screen registers. Only the text
-   * becomes the link: the copy button beside it stays a button, since one
-   * click has to keep meaning "give me this for my terminal".
-   */
-  to?: string
-  /**
    * The value wraps instead of being cut short, and takes a line of its own.
    * For the values that are read rather than recognised — a repository path in
    * a narrow column, where an ellipsis would hide the half that identifies it,
@@ -96,7 +86,6 @@ export function CopyableId({
   face,
   label = "id",
   wrap,
-  to,
   className,
 }: ValueProps) {
   return (
@@ -106,7 +95,6 @@ export function CopyableId({
       truncate={truncate}
       face={face}
       wrap={wrap}
-      to={to}
       className={className}
     >
       <CopyButton value={value} label={label} />
@@ -157,22 +145,10 @@ function Value({
   truncate = "end",
   face = "mono",
   wrap,
-  to,
   className,
   children,
 }: Omit<ValueProps, "label"> & { children: ReactNode }) {
   const shown = display ? display(value) : value
-  const text =
-    !wrap && truncate === "middle" ? (
-      <MiddleTruncated value={shown} title={value} />
-    ) : (
-      <span
-        className={cn(face === "mono" && "font-mono", wrap ? "break-all" : "truncate")}
-        title={wrap ? undefined : value}
-      >
-        {shown}
-      </span>
-    )
   return (
     <span
       className={cn(
@@ -181,18 +157,15 @@ function Value({
         className,
       )}
     >
-      {/* The link takes the value's own box rather than adding one of its
-          own, so the truncation and the wrapping above still work out of the
-          row's width. */}
-      {to ? (
-        <Link
-          to={to}
-          className="flex min-w-0 rounded-xs underline-offset-3 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
-        >
-          {text}
-        </Link>
+      {!wrap && truncate === "middle" ? (
+        <MiddleTruncated value={shown} title={value} />
       ) : (
-        text
+        <span
+          className={cn(face === "mono" && "font-mono", wrap ? "break-all" : "truncate")}
+          title={wrap ? undefined : value}
+        >
+          {shown}
+        </span>
       )}
       {children}
     </span>

@@ -40,8 +40,8 @@ export const SETTINGS_SHORTCUT: Shortcut = { key: "," }
 export const NEW_GOAL_SHORTCUT: KeySequence = { key: "n" }
 
 /**
- * `G` then a letter — every screen the sidebar lists, in its order, keyed by
- * its initial (`g`oals, `s`essions, `p`rofiles, `a`gents, `r`epositories).
+ * `G` then a letter — the three screens, in the sidebar's order, keyed by
+ * their initial (`g`oals, `s`essions, `p`rofiles).
  *
  * Keyed by path so the palette can label its "Go to …" rows from the same list
  * the shell binds, rather than spelling the chords twice.
@@ -50,8 +50,6 @@ export const SCREEN_SHORTCUTS: readonly { path: string; chord: KeySequence }[] =
   { path: paths.goals(), chord: { lead: "g", key: "g" } },
   { path: paths.sessions(), chord: { lead: "g", key: "s" } },
   { path: paths.profiles(), chord: { lead: "g", key: "p" } },
-  { path: paths.agents(), chord: { lead: "g", key: "a" } },
-  { path: paths.repositories(), chord: { lead: "g", key: "r" } },
 ]
 
 /** The chord of a screen the palette lists, if it has one. */
