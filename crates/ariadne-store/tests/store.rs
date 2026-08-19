@@ -1671,3 +1671,378 @@ async fn a_pre_repositories_database_migrates_its_goals_and_tasks() {
     ));
     store.delete_repository("registeredui").await.unwrap();
 }
+
+/// A profile with an agent and model of its own, for the pinning tests.
+async fn seed_pinned_profile(
+    store: &Store,
+    name: &str,
+    role: Role,
+    agent_kind: Option<AgentKind>,
+    model: Option<&str>,
+) -> Profile {
+    store
+        .create_profile(NewProfile {
+            name: name.into(),
+            role,
+            agent_kind,
+            model: model.map(str::to_string),
+            system_prompt: format!("You are {name}."),
+            prompts: vec![],
+        })
+        .await
+        .unwrap()
+}
+
+/// Creation snapshots the agent and model off the profiles; editing a profile
+/// afterwards moves nothing that already exists. The goal, the task and every
+/// reviewer slot pin separately, from the profile each of them names.
+#[tokio::test]
+async fn creation_pins_the_agent_and_model_of_every_profile() {
+    let (store, _dir) = test_store().await;
+    let planner = seed_pinned_profile(
+        &store,
+        "planner-pin",
+        Role::Planner,
+        Some(AgentKind::ClaudeCode),
+        Some("opus"),
+    )
+    .await;
+    let engineer = seed_pinned_profile(
+        &store,
+        "engineer-pin",
+        Role::Engineer,
+        Some(AgentKind::Codex),
+        Some("gpt-5"),
+    )
+    .await;
+    let reviewer = seed_pinned_profile(
+        &store,
+        "reviewer-pin",
+        Role::Reviewer,
+        Some(AgentKind::Opencode),
+        Some("sonnet"),
+    )
+    .await;
+
+    let (goal, repo) = seed_goal(&store, &planner, None).await;
+    let task = store
+        .create_task(NewTask {
+            goal_id: goal.id.clone(),
+            repo_id: repo.id.clone(),
+            title: "task".into(),
+            description: "do things".into(),
+            engineer_profile_id: engineer.id.clone(),
+            reviewer_profile_ids: vec![reviewer.id.clone()],
+            depends_on: vec![],
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(goal.agent_kind(), Some(AgentKind::ClaudeCode));
+    assert_eq!(goal.model.as_deref(), Some("opus"));
+    assert_eq!(task.agent_kind(), Some(AgentKind::Codex));
+    assert_eq!(task.model.as_deref(), Some("gpt-5"));
+    let pins = store.list_task_reviewer_pins(&task.id).await.unwrap();
+    assert_eq!(pins.len(), 1);
+    assert_eq!(pins[0].profile_id, reviewer.id);
+    assert_eq!(pins[0].position, 0);
+    assert_eq!(pins[0].agent_kind(), Some(AgentKind::Opencode));
+    assert_eq!(pins[0].model.as_deref(), Some("sonnet"));
+
+    // Every profile is moved to a different agent and a different model.
+    for profile in [&planner, &engineer, &reviewer] {
+        store
+            .update_profile(
+                &profile.id,
+                ProfileUpdate {
+                    agent_kind: Some(Some(AgentKind::ClaudeCode)),
+                    model: Some(Some("haiku".into())),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        store
+            .get_profile(&engineer.id)
+            .await
+            .unwrap()
+            .model
+            .as_deref(),
+        Some("haiku"),
+        "the edit did land on the profile"
+    );
+
+    // And nothing already created followed it.
+    let goal = store.get_goal(&goal.id).await.unwrap();
+    assert_eq!(goal.agent_kind(), Some(AgentKind::ClaudeCode));
+    assert_eq!(goal.model.as_deref(), Some("opus"));
+    let task = store.get_task(&task.id).await.unwrap();
+    assert_eq!(task.agent_kind(), Some(AgentKind::Codex));
+    assert_eq!(task.model.as_deref(), Some("gpt-5"));
+    let pins = store.list_task_reviewer_pins(&task.id).await.unwrap();
+    assert_eq!(pins[0].agent_kind(), Some(AgentKind::Opencode));
+    assert_eq!(pins[0].model.as_deref(), Some("sonnet"));
+}
+
+/// Auto and CLI-default are pin values like any other: a task created off an
+/// unpinned profile stays auto even after the profile picks an agent, rather
+/// than reading as "not pinned yet" and resolving live.
+#[tokio::test]
+async fn auto_and_default_are_pinned_as_such() {
+    let (store, _dir) = test_store().await;
+    let planner = seed_pinned_profile(&store, "planner-auto", Role::Planner, None, None).await;
+    let engineer = seed_pinned_profile(&store, "engineer-auto", Role::Engineer, None, None).await;
+    let reviewer = seed_pinned_profile(&store, "reviewer-auto", Role::Reviewer, None, None).await;
+
+    let (goal, repo) = seed_goal(&store, &planner, None).await;
+    let task = store
+        .create_task(NewTask {
+            goal_id: goal.id.clone(),
+            repo_id: repo.id.clone(),
+            title: "task".into(),
+            description: "do things".into(),
+            engineer_profile_id: engineer.id.clone(),
+            reviewer_profile_ids: vec![reviewer.id.clone()],
+            depends_on: vec![],
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(goal.agent_kind(), None);
+    assert_eq!(goal.model, None);
+    assert_eq!(task.agent_kind(), None);
+    assert_eq!(task.model, None);
+
+    for profile in [&planner, &engineer, &reviewer] {
+        store
+            .update_profile(
+                &profile.id,
+                ProfileUpdate {
+                    agent_kind: Some(Some(AgentKind::Codex)),
+                    model: Some(Some("gpt-5".into())),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+    }
+
+    let goal = store.get_goal(&goal.id).await.unwrap();
+    assert_eq!(goal.agent_kind(), None, "still auto");
+    assert_eq!(goal.model, None, "still the CLI default");
+    let task = store.get_task(&task.id).await.unwrap();
+    assert_eq!(task.agent_kind(), None, "still auto");
+    assert_eq!(task.model, None, "still the CLI default");
+    let pins = store.list_task_reviewer_pins(&task.id).await.unwrap();
+    assert_eq!(pins[0].agent_kind(), None);
+    assert_eq!(pins[0].model, None);
+}
+
+/// Reassigning reviewers writes new slots, so each one pins the profile as it
+/// stands at that moment — not what it was when the task was created.
+#[tokio::test]
+async fn reassigned_reviewers_pin_the_profile_they_are_assigned_from() {
+    let (store, _dir) = test_store().await;
+    let planner = seed_pinned_profile(&store, "planner-re", Role::Planner, None, None).await;
+    let engineer = seed_pinned_profile(&store, "engineer-re", Role::Engineer, None, None).await;
+    let first = seed_pinned_profile(
+        &store,
+        "reviewer-re-1",
+        Role::Reviewer,
+        Some(AgentKind::ClaudeCode),
+        Some("opus"),
+    )
+    .await;
+    let second = seed_pinned_profile(
+        &store,
+        "reviewer-re-2",
+        Role::Reviewer,
+        Some(AgentKind::Codex),
+        Some("gpt-5"),
+    )
+    .await;
+
+    let (goal, repo) = seed_goal(&store, &planner, None).await;
+    let task = store
+        .create_task(NewTask {
+            goal_id: goal.id.clone(),
+            repo_id: repo.id.clone(),
+            title: "task".into(),
+            description: "do things".into(),
+            engineer_profile_id: engineer.id.clone(),
+            reviewer_profile_ids: vec![first.id.clone()],
+            depends_on: vec![],
+        })
+        .await
+        .unwrap();
+
+    store
+        .update_profile(
+            &second.id,
+            ProfileUpdate {
+                model: Some(Some("gpt-5-codex".into())),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    store
+        .update_task(
+            &task.id,
+            TaskUpdate {
+                reviewer_profile_ids: Some(vec![second.id.clone(), first.id.clone()]),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    let pins = store.list_task_reviewer_pins(&task.id).await.unwrap();
+    assert_eq!(
+        pins.iter()
+            .map(|p| p.profile_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![second.id.as_str(), first.id.as_str()]
+    );
+    assert_eq!(pins[0].agent_kind(), Some(AgentKind::Codex));
+    assert_eq!(
+        pins[0].model.as_deref(),
+        Some("gpt-5-codex"),
+        "as it is now"
+    );
+    assert_eq!(pins[1].agent_kind(), Some(AgentKind::ClaudeCode));
+    assert_eq!(pins[1].model.as_deref(), Some("opus"));
+}
+
+/// A database written before agents and models were pinned: every goal, task
+/// and reviewer slot comes up pinned to what it resolves to today, so the
+/// upgrade itself changes nothing and only the next profile edit is felt.
+#[tokio::test]
+async fn a_pre_pinning_database_backfills_from_the_profiles_it_references() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("legacy.db");
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let pool = sqlx::SqlitePool::connect_with(options).await.unwrap();
+
+    let mut migrator = sqlx::migrate::Migrator::new(std::path::Path::new("./migrations"))
+        .await
+        .unwrap();
+    migrator.migrations = migrator
+        .migrations
+        .iter()
+        .filter(|m| m.version < 7)
+        .cloned()
+        .collect::<Vec<_>>()
+        .into();
+    migrator.run(&pool).await.unwrap();
+
+    for (id, name, role, agent_kind, model) in [
+        (
+            "legacyplanner",
+            "Legacy planner",
+            "planner",
+            Some("claude_code"),
+            Some("opus"),
+        ),
+        (
+            "legacyengineer",
+            "Legacy engineer",
+            "engineer",
+            Some("codex"),
+            Some("gpt-5"),
+        ),
+        // Auto and CLI-default, which must back-fill as NULL rather than as
+        // some resolved-now value.
+        ("legacyreviewer", "Legacy reviewer", "reviewer", None, None),
+    ] {
+        sqlx::query(
+            "INSERT INTO profiles (id, name, role, agent_kind, model, system_prompt,
+                                   created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, 'sys', 't', 't')",
+        )
+        .bind(id)
+        .bind(name)
+        .bind(role)
+        .bind(agent_kind)
+        .bind(model)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO repositories (id, path, base_branch, created_at, updated_at)
+         VALUES ('legacyrepo', '/tmp/legacy-pin', 'main', 't', 't')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO goals (id, title, description, planner_profile_id, created_at, updated_at)
+         VALUES ('legacygoal', 'Legacy goal', 'desc', 'legacyplanner', 't', 't')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO goal_repositories (goal_id, repository_id) VALUES (?, ?)")
+        .bind("legacygoal")
+        .bind("legacyrepo")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO tasks (id, goal_id, repo_id, title, description, engineer_profile_id,
+                            branch, created_at, updated_at)
+         VALUES ('legacytask', 'legacygoal', 'legacyrepo', 'Legacy task', 'd', 'legacyengineer',
+                 'ariadne/task-legacytask', 't', 't')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO task_reviewers (task_id, profile_id, position) VALUES (?, ?, 0)")
+        .bind("legacytask")
+        .bind("legacyreviewer")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+
+    // Opening the store runs the migration under test.
+    let store = Store::open(&path).await.unwrap();
+
+    let goal = store.get_goal("legacygoal").await.unwrap();
+    assert_eq!(goal.agent_kind(), Some(AgentKind::ClaudeCode));
+    assert_eq!(goal.model.as_deref(), Some("opus"));
+    let task = store.get_task("legacytask").await.unwrap();
+    assert_eq!(task.agent_kind(), Some(AgentKind::Codex));
+    assert_eq!(task.model.as_deref(), Some("gpt-5"));
+    let pins = store.list_task_reviewer_pins("legacytask").await.unwrap();
+    assert_eq!(pins.len(), 1);
+    assert_eq!(
+        pins[0].agent_kind(),
+        None,
+        "an auto profile backfills to auto"
+    );
+    assert_eq!(pins[0].model, None);
+
+    // The backfilled rows are pins like any other: the profiles can move on
+    // without them.
+    store
+        .update_profile(
+            "legacyengineer",
+            ProfileUpdate {
+                agent_kind: Some(Some(AgentKind::Opencode)),
+                model: Some(None),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let task = store.get_task("legacytask").await.unwrap();
+    assert_eq!(task.agent_kind(), Some(AgentKind::Codex));
+    assert_eq!(task.model.as_deref(), Some("gpt-5"));
+}

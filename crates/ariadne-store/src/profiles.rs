@@ -76,6 +76,20 @@ impl Store {
         Ok(profile)
     }
 
+    /// Read a profile through an open write transaction, for callers that
+    /// copy values off it into rows they are writing: the read pool could
+    /// hand back a version older than the one the transaction is holding.
+    pub(crate) async fn get_profile_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        id: &str,
+    ) -> Result<Profile> {
+        sqlx::query_as::<_, Profile>("SELECT * FROM profiles WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&mut **tx)
+            .await?
+            .ok_or_else(|| not_found("profile", id))
+    }
+
     pub async fn get_profile(&self, id: &str) -> Result<Profile> {
         sqlx::query_as::<_, Profile>("SELECT * FROM profiles WHERE id = ?")
             .bind(id)

@@ -96,6 +96,13 @@ pub struct Goal {
     pub max_tasks: Option<i64>,
     pub required_approvals: i64,
     pub planner_profile_id: String,
+    /// Agent CLI the planner of this goal runs on, snapshotted from the
+    /// profile when the goal was created. None = auto. Editing the profile
+    /// afterwards leaves it alone.
+    pub agent_kind: Option<String>,
+    /// Model the planner of this goal runs on, snapshotted like `agent_kind`.
+    /// None = the agent CLI's own default.
+    pub model: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -103,6 +110,11 @@ pub struct Goal {
 impl Goal {
     pub fn status(&self) -> GoalStatus {
         GoalStatus::from_str(&self.status).expect("valid goal status in db")
+    }
+    pub fn agent_kind(&self) -> Option<AgentKind> {
+        self.agent_kind
+            .as_deref()
+            .map(|s| AgentKind::from_str(s).expect("valid agent kind in db"))
     }
 }
 
@@ -115,6 +127,13 @@ pub struct Task {
     pub description: String,
     pub status: String,
     pub engineer_profile_id: String,
+    /// Agent CLI the engineer of this task runs on, snapshotted from the
+    /// profile when the task was created. None = auto. Editing the profile
+    /// afterwards leaves it alone.
+    pub agent_kind: Option<String>,
+    /// Model the engineer of this task runs on, snapshotted like
+    /// `agent_kind`. None = the agent CLI's own default.
+    pub model: Option<String>,
     pub branch: String,
     pub worktree_path: Option<String>,
     pub review_round: i64,
@@ -130,6 +149,35 @@ impl Task {
     }
     pub fn is_stalled(&self) -> bool {
         self.stalled != 0
+    }
+    pub fn agent_kind(&self) -> Option<AgentKind> {
+        self.agent_kind
+            .as_deref()
+            .map(|s| AgentKind::from_str(s).expect("valid agent kind in db"))
+    }
+}
+
+/// One reviewer slot of a task: which profile reviews it, in which order, and
+/// what that reviewer was pinned to when the slot was created.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct TaskReviewer {
+    pub task_id: String,
+    pub profile_id: String,
+    /// Planner-assigned order, 0-based.
+    pub position: i64,
+    /// Agent CLI this reviewer runs on, snapshotted from the profile when the
+    /// slot was created. None = auto.
+    pub agent_kind: Option<String>,
+    /// Model this reviewer runs on, snapshotted like `agent_kind`.
+    /// None = the agent CLI's own default.
+    pub model: Option<String>,
+}
+
+impl TaskReviewer {
+    pub fn agent_kind(&self) -> Option<AgentKind> {
+        self.agent_kind
+            .as_deref()
+            .map(|s| AgentKind::from_str(s).expect("valid agent kind in db"))
     }
 }
 
