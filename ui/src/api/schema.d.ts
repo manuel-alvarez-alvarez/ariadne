@@ -1217,6 +1217,8 @@ export interface components {
             /** @description Agent-internal id: claude session uuid / codex thread id / opencode session id. */
             internal_session_id?: string | null;
             last_activity_at?: string | null;
+            /** @description Model requested at launch; null = the agent CLI's default. */
+            model?: string | null;
             profile_id: string;
             /** Format: int64 */
             review_round?: number | null;
