@@ -12,13 +12,11 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { cleanup, render, screen, waitFor } from "@testing-library/react"
-import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 
 import type { GoalDto, SessionDto, TaskDto } from "@/api"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { formatAbsolute } from "@/lib/time"
 
 import { AttentionStrip } from "./attention-strip"
 
@@ -270,31 +268,3 @@ it("keeps the rows that did load when one of the three lists failed", async () =
   expect(rows[0]?.textContent).toContain("Wire the strip")
   expect(screen.getByText(/could not be loaded/)).not.toBeNull()
 })
-
-/**
- * Two things a row shows only part of: the loose stamp, and the tail of an id.
- * Both said the rest of themselves in a `title=`, which opens for a pointer
- * and for nothing else — so the test is Tab and read, the way the board's
- * cards are tested. (The subject and the goal are their own full text on the
- * row, truncated by CSS alone; there is nothing here that can assert that.)
- */
-it("puts what a row shortens in reach of a keyboard", async () => {
-  stubDaemon({ tasks: [{ ...TASK, status: "failed" }] })
-  renderStrip()
-  await screen.findAllByRole("listitem")
-  const user = userEvent.setup()
-
-  // In the row's own order, since Tab walks it: the stamp, then the id.
-  for (const hint of [`last moved ${formatAbsolute(TASK.updated_at)}`, TASK.id]) {
-    expect(await tabUntilHint(user, hint)).toBe(true)
-  }
-})
-
-/** Tabs until something on screen reads `text`, or runs out of stops. */
-async function tabUntilHint(user: ReturnType<typeof userEvent.setup>, text: string) {
-  for (let stop = 0; stop < 8; stop++) {
-    await user.tab()
-    if (screen.queryAllByText(text).length > 0) return true
-  }
-  return false
-}

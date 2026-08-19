@@ -17,8 +17,8 @@ import type { ReactNode } from "react"
 import type { AuthorRole, MessageDto } from "@/api"
 import { Markdown } from "@/components/markdown"
 import { StatusBadge } from "@/components/status-badge"
-import { When } from "@/components/when"
 import { AUTHOR_ROLE_LABELS } from "@/lib/labels"
+import { formatAbsolute, formatRelative } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
 const ROLE_TONES: Record<AuthorRole, { badge: string; card: string }> = {
@@ -62,7 +62,13 @@ export function MessageCard({
       <header className="mb-1.5 flex flex-wrap items-center gap-2 text-xs">
         <StatusBadge size="sm" label={AUTHOR_ROLE_LABELS[message.author_role]} tone={role.badge} />
         {source}
-        <When at={message.created_at} className="ml-auto text-muted-foreground" />
+        <time
+          className="ml-auto text-muted-foreground"
+          dateTime={message.created_at}
+          title={formatAbsolute(message.created_at)}
+        >
+          {formatRelative(message.created_at)}
+        </time>
       </header>
       <Markdown>{message.body}</Markdown>
     </article>

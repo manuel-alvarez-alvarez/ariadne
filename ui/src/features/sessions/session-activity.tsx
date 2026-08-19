@@ -21,8 +21,10 @@ import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
-import { When } from "@/components/when"
+import { formatAbsolute, formatAge } from "@/lib/time"
 import { cn } from "@/lib/utils"
+
+import { useNow } from "./use-now"
 
 /** Page size; the daemon caps `limit` at 200. */
 const PAGE = 200
@@ -39,6 +41,7 @@ interface Tail {
 }
 
 export function SessionActivity({ sessionId }: { sessionId: string }) {
+  const now = useNow()
   // Survives refetches, reset when the screen moves to another session.
   const tail = useRef<Tail>({ sessionId, cursor: undefined, events: [] })
 
@@ -95,13 +98,13 @@ export function SessionActivity({ sessionId }: { sessionId: string }) {
   return (
     <ol className="divide-y">
       {[...data].reverse().map((event) => (
-        <ActivityRow key={event.id} event={event} />
+        <ActivityRow key={event.id} event={event} now={now} />
       ))}
     </ol>
   )
 }
 
-function ActivityRow({ event }: { event: AgentEventDto }) {
+function ActivityRow({ event, now }: { event: AgentEventDto; now: number }) {
   const [open, setOpen] = useState(false)
   const summary = summarize(event.payload)
 
@@ -125,12 +128,13 @@ function ActivityRow({ event }: { event: AgentEventDto }) {
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
           {summary}
         </span>
-        <When
-          at={event.created_at}
-          format="age"
-          label="reported"
+        <time
           className="shrink-0 text-xs text-muted-foreground tabular-nums"
-        />
+          dateTime={event.created_at}
+          title={formatAbsolute(event.created_at)}
+        >
+          {formatAge(event.created_at, now)}
+        </time>
       </button>
       {open ? (
         // Focusable and named, so the payload scrolls under the arrow keys and

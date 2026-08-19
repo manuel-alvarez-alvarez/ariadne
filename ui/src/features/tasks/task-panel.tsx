@@ -28,12 +28,13 @@ import { StatusBadge } from "@/components/status-badge"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { When, WhenDetail } from "@/components/when"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { goalQueryOptions } from "@/features/goals/queries"
 import { ProfileSummary } from "@/features/profiles/profile-summary"
 import { useFocusReturn } from "@/hooks/use-focus-return"
 import { taskCopyEntries } from "@/lib/copy-entries"
 import { shortId } from "@/lib/ids"
+import { formatAbsolute, formatRelative } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { paths, usePanelSessionNavigation, useTaskPanelTo } from "@/routes/paths"
 import { shortSha } from "./format"
@@ -245,14 +246,15 @@ function TaskHeader({ task, showGoalLink }: { task: TaskDto; showGoalLink: boole
           entries={taskCopyEntries(task.id)}
           className="text-muted-foreground"
         />
-        <span className="ml-auto text-muted-foreground">
-          updated{" "}
-          <When
-            at={task.updated_at}
-            label="updated"
-            detail={<WhenDetail label="created" at={task.created_at} />}
-          />
-        </span>
+        <Tooltip>
+          <TooltipTrigger render={<span className="ml-auto text-muted-foreground" />}>
+            updated {formatRelative(task.updated_at)}
+          </TooltipTrigger>
+          <TooltipContent className="flex-col items-start gap-0.5">
+            <span>updated {formatAbsolute(task.updated_at)}</span>
+            <span className="text-background/70">created {formatAbsolute(task.created_at)}</span>
+          </TooltipContent>
+        </Tooltip>
       </div>
     </SheetHeader>
   )
