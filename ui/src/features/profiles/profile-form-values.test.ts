@@ -39,7 +39,6 @@ const PROFILE: ProfileDto = {
   agent_kind: "claude_code",
   model: "claude-opus-5",
   system_prompt: "You are a Rust engineer.",
-  extra_flags: ["--permission-mode=acceptEdits"],
   created_at: "2026-08-16T09:00:00.000Z",
   updated_at: "2026-08-16T09:30:00.000Z",
 }
@@ -52,7 +51,6 @@ describe("profileToFormValues", () => {
       agentKind: "claude_code",
       model: "claude-opus-5",
       systemPrompt: "You are a Rust engineer.",
-      extraFlags: [{ value: "--permission-mode=acceptEdits" }],
       prompts: [],
     })
   })
@@ -77,7 +75,6 @@ describe("toCreateRequest", () => {
       agent_kind: null,
       model: null,
       system_prompt: "",
-      extra_flags: [],
     })
   })
 
@@ -140,17 +137,6 @@ describe("changedPrompts", () => {
 
   it("counts a kind the baseline never had as changed", () => {
     expect(changedPrompts(DEFAULTS, [])).toEqual(DEFAULTS)
-  })
-})
-
-describe("extra flags", () => {
-  it("trims rows and drops the blank ones", () => {
-    const values = {
-      ...profileToFormValues(PROFILE),
-      extraFlags: [{ value: "  --verbose  " }, { value: "   " }, { value: "--flag=1" }],
-    }
-    expect(toCreateRequest(values).extra_flags).toEqual(["--verbose", "--flag=1"])
-    expect(toUpdateRequest(values).extra_flags).toEqual(["--verbose", "--flag=1"])
   })
 })
 
