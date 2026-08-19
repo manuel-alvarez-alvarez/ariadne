@@ -1,22 +1,25 @@
 #!/usr/bin/env bash
 # Ariadne installer: builds from source, installs the binaries, registers the
 # daemon as a user service (launchd on macOS, systemd --user on Linux),
-# installs bash/zsh completions and has the user trust Ariadne's Codex hooks.
+# installs bash/zsh completions, builds and installs the "Ariadne Desktop"
+# app when its toolchain is present, and has the user trust Ariadne's Codex
+# hooks.
 #
 # Idempotent: safe to re-run after upgrades or config changes; every step
 # replaces what a previous run installed. What was installed where is
 # recorded in ~/.ariadne/install.env, which uninstall.sh reads.
 #
-# Output is a numbered step list; noisy subcommands (cargo, launchctl,
+# Output is a numbered step list; noisy subcommands (cargo, npm, launchctl,
 # systemctl) go to ~/.ariadne/install.log and are only shown when a step fails.
 #
 # Usage: scripts/install.sh [--prefix DIR] [--no-service] [--no-completions]
-#                           [--no-codex-hooks] [--verbose] [--quiet]
+#                           [--no-codex-hooks] [--no-ui] [--verbose] [--quiet]
 #                           [--dry-run] [--yes] [--help]
 #   --prefix DIR       install binaries into DIR (default: ~/.local/bin)
 #   --no-service       skip daemon service registration
 #   --no-completions   skip shell completion installation
 #   --no-codex-hooks   skip the Codex hook trust prompt
+#   --no-ui            skip building and installing the Ariadne Desktop app
 #   --verbose          stream subcommand output instead of capturing it
 #   --quiet            print errors and the final summary only
 #   --dry-run          print the steps that would run, change nothing
@@ -38,6 +41,7 @@ Usage: scripts/install.sh [options]
   --no-service       skip daemon service registration (launchd / systemd --user)
   --no-completions   skip shell completion installation
   --no-codex-hooks   skip the Codex hook trust prompt
+  --no-ui            skip building and installing the "Ariadne Desktop" app
   --verbose          stream subcommand output instead of capturing it
   --quiet            print errors and the final summary only
   --dry-run          print the steps that would run, change nothing
@@ -52,6 +56,7 @@ PREFIX="${PREFIX:-$HOME/.local/bin}"
 WITH_SERVICE=1
 WITH_COMPLETIONS=1
 WITH_CODEX_HOOKS=1
+WITH_UI=1
 while [ $# -gt 0 ]; do
     if ui_common_flag "$1"; then shift; continue; fi
     case "$1" in
@@ -59,6 +64,7 @@ while [ $# -gt 0 ]; do
         --no-service) WITH_SERVICE=0; shift ;;
         --no-completions) WITH_COMPLETIONS=0; shift ;;
         --no-codex-hooks) WITH_CODEX_HOOKS=0; shift ;;
+        --no-ui) WITH_UI=0; shift ;;
         --help|-h) usage; exit 0 ;;
         *) echo "unknown option: $1" >&2; echo >&2; usage >&2; exit 2 ;;
     esac
@@ -77,6 +83,9 @@ DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}"
 BASH_DIR="$DATA_DIR/bash-completion/completions"
 ZSH_DIR="$DATA_DIR/zsh/site-functions"
 ZSHRC="${ZDOTDIR:-$HOME}/.zshrc"
+APP_NAME="Ariadne Desktop"
+APP_SRC_DIR="$REPO_DIR/ui"
+APP_TARGET_DIR="$APP_SRC_DIR/src-tauri/target/release"
 
 # Only a label for the step title and the summary; an OS with no service of
 # ours still gets everything before that step, and fails inside it.
@@ -98,11 +107,17 @@ strip_block() {
     mv "$file.ariadne-tmp" "$file"
 }
 
+# npm, run from ui/: the Tauri CLI resolves src-tauri/ relative to the cwd.
+app_npm() {
+    ( cd "$APP_SRC_DIR" && run_logged npm "$@" )
+}
+
 # --- the plan ------------------------------------------------------------------
 # One plan_add per step, in execution order; the step count adapts to the flags.
 plan_add "Building release binaries"
 plan_add "Stopping any running daemon"
 plan_add "Installing binaries $UI_ARROW $(ui_tilde "$PREFIX")"
+[ "$WITH_UI" = 1 ] && plan_add "Building and installing $APP_NAME"
 [ "$WITH_COMPLETIONS" = 1 ] && plan_add "Registering shell completions"
 if [ "$WITH_SERVICE" = 1 ]; then
     plan_add "Registering the daemon service ($SERVICE_DESC)"
@@ -159,6 +174,72 @@ if [ -n "$OLD_PREFIX" ] && [ "$OLD_PREFIX" != "$PREFIX" ]; then
     step_ok "previous prefix $(ui_tilde "$OLD_PREFIX") cleaned"
 else
     step_ok
+fi
+
+# --- desktop app --------------------------------------------------------------------
+# Optional and best-effort: the Tauri app in ui/ needs a Node toolchain, and a
+# machine without one still deserves a complete install. The Tauri CLI itself
+# comes from ui/'s devDependencies, so npm is the only thing we ask for.
+APP_PATH=""
+APP_STATE="not installed (--no-ui)"
+if [ "$WITH_UI" = 1 ]; then
+    step_begin
+    if ! command -v npm > /dev/null 2>&1; then
+        APP_STATE="skipped - npm not found"
+        step_skip "npm not found - skipping $APP_NAME; install Node and re-run"
+    elif [ ! -f "$APP_SRC_DIR/package.json" ]; then
+        APP_STATE="skipped - no ui/ in this checkout"
+        step_skip "no $(ui_tilde "$APP_SRC_DIR/package.json") - skipping $APP_NAME"
+    else
+        # ci is reproducible but demands a lockfile in sync with package.json;
+        # a stale one is no reason to fail the whole install.
+        if [ -f "$APP_SRC_DIR/package-lock.json" ]; then
+            app_npm ci || app_npm install \
+                || ui_die "npm install in ui/ failed (--no-ui skips the app)"
+        else
+            app_npm install \
+                || ui_die "npm install in ui/ failed (--no-ui skips the app)"
+        fi
+        app_npm run tauri build \
+            || ui_die "npm run tauri build failed (--no-ui skips the app)"
+
+        case "$OS" in
+            Darwin)
+                APP_BUNDLE="$APP_TARGET_DIR/bundle/macos/$APP_NAME.app"
+                [ -d "$APP_BUNDLE" ] || ui_die "the build produced no $APP_NAME.app"
+                # /Applications is writable by admin users; anyone else gets
+                # the per-user one, which Finder and Spotlight treat the same.
+                APP_INSTALL_DIR="/Applications"
+                [ -w "$APP_INSTALL_DIR" ] || APP_INSTALL_DIR="$HOME/Applications"
+                mkdir -p "$APP_INSTALL_DIR"
+                APP_PATH="$APP_INSTALL_DIR/$APP_NAME.app"
+                rm -rf "$APP_PATH"
+                cp -R "$APP_BUNDLE" "$APP_PATH"
+                ;;
+            Linux)
+                # The AppImage when its tooling produced one, the plain binary
+                # otherwise - which Tauri names after productName these days.
+                APP_BUNDLE=""
+                for _candidate in "$APP_TARGET_DIR/bundle/appimage/"*.AppImage \
+                                  "$APP_TARGET_DIR/$APP_NAME" \
+                                  "$APP_TARGET_DIR/ariadne-ui"; do
+                    if [ -f "$_candidate" ]; then
+                        APP_BUNDLE="$_candidate"
+                        break
+                    fi
+                done
+                [ -n "$APP_BUNDLE" ] || ui_die "the build produced no AppImage and no binary"
+                mkdir -p "$PREFIX"
+                APP_PATH="$PREFIX/ariadne-desktop"
+                install -m 755 "$APP_BUNDLE" "$APP_PATH"
+                ;;
+            *)
+                ui_die "unsupported OS for the desktop app: $OS (use --no-ui)"
+                ;;
+        esac
+        APP_STATE="$(ui_tilde "$APP_PATH")"
+        step_ok "$(ui_tilde "$APP_PATH")"
+    fi
 fi
 
 # --- completions ------------------------------------------------------------------
@@ -307,6 +388,8 @@ ARIADNE_ZSH_COMPLETION="$ZSH_DIR/_ariadne"
 ARIADNE_PLIST="$PLIST_PATH"
 ARIADNE_UNIT="$UNIT_PATH"
 EOF
+# Absent when the app was skipped; uninstall.sh then has nothing to remove.
+[ -n "$APP_PATH" ] && printf 'ARIADNE_APP="%s"\n' "$APP_PATH" >> "$MANIFEST"
 step_ok
 
 # --- summary ----------------------------------------------------------------------------
@@ -322,6 +405,7 @@ if [ "$WITH_COMPLETIONS" = 1 ]; then
 else
     ui_field "completions" "not installed (--no-completions)"
 fi
+ui_field "desktop app" "$APP_STATE"
 [ "$WITH_CODEX_HOOKS" = 1 ] && ui_field "codex hooks" "$CODEX_STATE"
 ui_field "manifest" "$(ui_tilde "$MANIFEST")"
 ui_field "log" "$(ui_tilde "$LOG_FILE")"

@@ -3,8 +3,8 @@
 #
 # Both scripts are a list of numbered steps: the plan is built first (so the
 # step count adapts to the flags), then each step runs and reports ✓ / ↷ / ✗.
-# Noisy subcommands (cargo, launchctl, systemctl) are captured to a log file
-# and only shown when something fails.
+# Noisy subcommands (cargo, npm, launchctl, systemctl) are captured to a log
+# file and only shown when something fails.
 #
 # Adding a step is two lines: a `plan_add "title"` where the plan is built and
 # a `step_begin` / `step_ok` pair where the work happens, in the same order.
