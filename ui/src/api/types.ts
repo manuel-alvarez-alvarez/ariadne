@@ -58,6 +58,9 @@ export type Role = Schemas["Role"]
 export type AgentKind = Schemas["AgentKind"]
 export type ModelDto = Schemas["ModelDto"]
 
+export type AgentConfigDto = Schemas["AgentConfigDto"]
+export type UpdateAgentConfigRequest = Schemas["UpdateAgentConfigRequest"]
+
 export type LogLineDto = Schemas["LogLineDto"]
 export type LogSnapshotResponse = Schemas["LogSnapshotResponse"]
 

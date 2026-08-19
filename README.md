@@ -177,6 +177,7 @@ ariadne attach <id>                    # session, task or goal id
 | `ariadne doctor` | check the whole installation and say what to fix |
 | `ariadne profile create\|ls\|inspect\|update\|rm` | agent profiles |
 | `ariadne profile prompts` / `profile prompt get\|set\|reset` | the prompts a profile briefs its agents with |
+| `ariadne agent list\|update` | the flags each coding-agent CLI is launched with |
 | `ariadne goal create\|ls\|inspect\|attach\|messages\|msg\|finalize\|cancel\|rm` | goals |
 | `ariadne task create\|update\|ls\|inspect\|diff\|attach\|logs\|messages\|msg\|reviews\|history\|cancel\|retry` | tasks |
 | `ariadne session ls\|inspect\|logs\|kill` | agent sessions |

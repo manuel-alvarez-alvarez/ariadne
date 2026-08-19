@@ -45,7 +45,6 @@ const PROFILE: ProfileDto = {
   agent_kind: "claude_code",
   model: "claude-opus-5",
   system_prompt: "Stored system prompt.",
-  extra_flags: [],
   created_at: STAMP,
   updated_at: STAMP,
 }
