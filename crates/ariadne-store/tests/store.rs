@@ -1062,8 +1062,8 @@ async fn a_fresh_database_is_seeded_with_the_built_in_profiles_and_their_prompts
             "{name} ships the role default system prompt"
         );
         assert!(
-            p.system_prompt.contains("## Ariadne orchestration"),
-            "{name}'s system prompt folds in the shared playbook"
+            p.system_prompt.contains("`ariadne` MCP tools"),
+            "{name}'s system prompt says how to reach the orchestrator"
         );
         // Exactly the role's prompt kinds, each at its default.
         let prompts = store.list_profile_prompts(&p.id).await.unwrap();
