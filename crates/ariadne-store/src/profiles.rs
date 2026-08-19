@@ -16,7 +16,6 @@ pub struct NewProfile {
     pub agent_kind: Option<AgentKind>,
     pub model: Option<String>,
     pub system_prompt: String,
-    pub extra_flags: Vec<String>,
     /// Briefing prompts seeded instead of the role defaults, by kind. A kind
     /// the role does not own rejects the whole creation; a kind listed twice
     /// keeps the last entry.
@@ -31,7 +30,6 @@ pub struct ProfileUpdate {
     /// Some(None) clears back to the agent default.
     pub model: Option<Option<String>>,
     pub system_prompt: Option<String>,
-    pub extra_flags: Option<Vec<String>>,
 }
 
 impl Store {
@@ -48,12 +46,10 @@ impl Store {
         }
         let id = new_id();
         let ts = now();
-        let flags = serde_json::to_string(&new.extra_flags)
-            .map_err(|e| StoreError::Invalid(e.to_string()))?;
         let mut tx = self.w().begin().await?;
         sqlx::query(
-            "INSERT INTO profiles (id, name, role, agent_kind, model, system_prompt, extra_flags, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO profiles (id, name, role, agent_kind, model, system_prompt, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&new.name)
@@ -61,7 +57,6 @@ impl Store {
         .bind(new.agent_kind.map(|k| k.as_str()))
         .bind(&new.model)
         .bind(&new.system_prompt)
-        .bind(&flags)
         .bind(&ts)
         .bind(&ts)
         .execute(&mut *tx)
@@ -129,19 +124,14 @@ impl Store {
         };
         let model = update.model.unwrap_or(current.model);
         let system_prompt = update.system_prompt.unwrap_or(current.system_prompt);
-        let extra_flags = match update.extra_flags {
-            Some(f) => serde_json::to_string(&f).map_err(|e| StoreError::Invalid(e.to_string()))?,
-            None => current.extra_flags,
-        };
         sqlx::query(
-            "UPDATE profiles SET name = ?, agent_kind = ?, model = ?, system_prompt = ?, extra_flags = ?, updated_at = ?
+            "UPDATE profiles SET name = ?, agent_kind = ?, model = ?, system_prompt = ?, updated_at = ?
              WHERE id = ?",
         )
         .bind(&name)
         .bind(&agent_kind)
         .bind(&model)
         .bind(&system_prompt)
-        .bind(&extra_flags)
         .bind(now())
         .bind(id)
         .execute(self.w())
