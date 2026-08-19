@@ -156,6 +156,7 @@ impl Harness {
                 role: Role::Engineer,
                 profile_id: engineer,
                 agent_kind: AgentKind::ClaudeCode,
+                model: None,
                 tmux_session: session_name(&goal.id, Some(&task.id), "engineer", None),
                 worktree_path: Some(worktree.display().to_string()),
                 review_round: None,

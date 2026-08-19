@@ -120,6 +120,7 @@ impl Harness {
                 role: Role::Planner,
                 profile_id: planner.id,
                 agent_kind: AgentKind::ClaudeCode,
+                model: None,
                 tmux_session: tmux_name.into(),
                 worktree_path: None,
                 review_round: None,
