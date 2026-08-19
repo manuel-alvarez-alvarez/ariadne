@@ -259,10 +259,7 @@ EOF
                 || ui_die "systemctl --user restart ariadned.service failed"
             ;;
         *)
-            # No log tail to show: nothing ran, the OS is simply not one of ours.
-            step_fail
-            ui_error "unsupported OS for service setup: $OS (use --no-service and run ariadned yourself)"
-            exit 1
+            ui_die "unsupported OS for service setup: $OS (use --no-service and run ariadned yourself)"
             ;;
     esac
     step_ok
