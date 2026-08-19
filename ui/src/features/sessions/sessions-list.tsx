@@ -9,9 +9,9 @@
  * Five columns in a panel, because the table has to fit a 48rem one as well as
  * a full screen without scrolling sideways: the agent kind and the model ride
  * along with the profile, the review round with the role, and the end of the
- * session with its last activity — the last two in the hint behind the cell,
- * where they were worth a column each only for the sessions that have them.
- * The sixth, the context, is the screen's alone.
+ * session with its last activity — the last two on hover, where they were
+ * worth a column each only for the sessions that have them. The sixth, the
+ * context, is the screen's alone.
  *
  * The filters come from the caller (`{goal}`, `{task}`, whatever the panel
  * has); this component only reads them — but it reads them for more than the
@@ -42,8 +42,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { When, WhenDetail } from "@/components/when"
 // Both reached at their `queries` module rather than through the feature's
 // barrel: `@/features/tasks` re-exports the task panel, whose sessions tab is
 // this very component, and the round trip is an import cycle.
@@ -53,10 +51,12 @@ import { taskListQueryOptions } from "@/features/tasks/queries"
 import { sessionCopyEntries } from "@/lib/copy-entries"
 import { shortId } from "@/lib/ids"
 import { ROLE_LABELS } from "@/lib/labels"
+import { formatAbsolute, formatAge } from "@/lib/time"
 import { paths, taskPanelTo } from "@/routes/paths"
 
 import { byId, type SessionListFilters, sessionsQueryOptions } from "./queries"
 import { SessionAttentionBadge, SessionStatusBadge } from "./session-display"
+import { useNow } from "./use-now"
 
 /**
  * What the list is already inside of.
@@ -104,6 +104,7 @@ export function SessionsList({
 }) {
   const [search] = useSearchParams()
   const selected = selectedId ?? search.get("session") ?? undefined
+  const now = useNow()
   const sessions = useQuery(sessionsQueryOptions(filters))
 
   // Both are shared keys the rest of the app already holds (the goals board's
@@ -155,6 +156,7 @@ export function SessionsList({
                 goal={goalsById.get(session.goal_id)}
                 task={session.task_id ? tasksById.get(session.task_id) : undefined}
                 showContext={showContext}
+                now={now}
                 selected={session.id === selected}
                 onSelect={() => onSelect(session)}
               />
@@ -171,6 +173,7 @@ function SessionRow({
   goal,
   task,
   showContext,
+  now,
   selected,
   onSelect,
 }: {
@@ -180,6 +183,7 @@ function SessionRow({
   /** The task it ran, when there is one and the task list has it. */
   task: TaskDto | undefined
   showContext: boolean
+  now: number
   selected: boolean
   onSelect: () => void
 }) {
@@ -235,13 +239,10 @@ function SessionRow({
           {ROLE_LABELS[session.role]}
         </button>
         {session.review_round != null ? (
-          <Tooltip>
-            <TooltipTrigger render={<span className="text-muted-foreground" />}>
-              {" "}
-              · R{session.review_round}
-            </TooltipTrigger>
-            <TooltipContent>Review round {session.review_round}</TooltipContent>
-          </Tooltip>
+          <span className="text-muted-foreground" title="Review round">
+            {" "}
+            · R{session.review_round}
+          </span>
         ) : null}
       </TableCell>
       {/* The agent kind and the model ride along with the name: which CLI and
@@ -262,22 +263,15 @@ function SessionRow({
           ) : null}
         </div>
       </TableCell>
-      {/* The compact age is the column's text — the heading says what it is
-          the age of, and "N minutes ago" down a column is a column of repeated
-          words. Everything else about the session's clock is the hint behind
-          it, which is where the two columns this table has no room for live. */}
-      <TableCell className="text-right tabular-nums text-muted-foreground">
-        <When
-          at={session.last_activity_at}
-          format="age"
-          label="last activity"
-          detail={
-            <>
-              <WhenDetail label="started" at={session.created_at} />
-              <WhenDetail label="ended" at={session.ended_at} />
-            </>
-          }
-        />
+      <TableCell
+        className="text-right tabular-nums text-muted-foreground"
+        title={[
+          `Last activity: ${formatAbsolute(session.last_activity_at)}`,
+          `Started: ${formatAbsolute(session.created_at)}`,
+          `Ended: ${formatAbsolute(session.ended_at)}`,
+        ].join("\n")}
+      >
+        {formatAge(session.last_activity_at, now)}
       </TableCell>
     </TableRow>
   )
@@ -313,27 +307,19 @@ function ContextCell({
     // `max-w-*` on the cell with a truncating block inside it is what keeps a
     // long title from stretching the table: the cell's own `whitespace-nowrap`
     // would otherwise make the column as wide as the longest goal name.
-    <TableCell className="max-w-56">
-      <Tooltip>
-        {/* The link is the trigger: it already takes focus, so the pair is in
-            reach of a keyboard without a stop of its own. */}
-        <TooltipTrigger
-          render={
-            <Link
-              to={subject.to}
-              className="block truncate rounded-xs underline-offset-3 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
-            />
-          }
-        >
-          {subject.label}
-        </TooltipTrigger>
-        <TooltipContent className="flex-col items-start gap-0.5">
-          <span>Goal: {goal?.title ?? session.goal_id}</span>
-          <span>
-            Task: {session.task_id ? (task?.title ?? session.task_id) : "— (planner session)"}
-          </span>
-        </TooltipContent>
-      </Tooltip>
+    <TableCell
+      className="max-w-56"
+      title={[
+        `Goal: ${goal?.title ?? session.goal_id}`,
+        `Task: ${session.task_id ? (task?.title ?? session.task_id) : "— (planner session)"}`,
+      ].join("\n")}
+    >
+      <Link
+        to={subject.to}
+        className="block truncate rounded-xs underline-offset-3 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
+      >
+        {subject.label}
+      </Link>
     </TableCell>
   )
 }

@@ -14,7 +14,7 @@ import type { ReactNode } from "react"
 import type { ProfileDto } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { When } from "@/components/when"
+import { formatAbsolute } from "@/lib/time"
 
 import { agentKindLabel, modelLabel, roleLabel } from "./profile-labels"
 import { ProfilePrompts } from "./profile-prompts"
@@ -49,12 +49,8 @@ export function ProfileDetails({ profile }: { profile: ProfileDto }) {
         <Detail label="Id">
           <CopyableId value={profile.id} label="profile id" className="text-xs" />
         </Detail>
-        <Detail label="Created">
-          <When at={profile.created_at} label="created" />
-        </Detail>
-        <Detail label="Updated">
-          <When at={profile.updated_at} label="updated" />
-        </Detail>
+        <Detail label="Created">{formatAbsolute(profile.created_at)}</Detail>
+        <Detail label="Updated">{formatAbsolute(profile.updated_at)}</Detail>
       </dl>
 
       <ProfilePrompts profile={profile} />

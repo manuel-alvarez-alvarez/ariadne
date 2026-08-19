@@ -5,10 +5,6 @@
  * quiet stops producing events, and its "last activity" would otherwise sit at
  * whatever it said when the row last rendered. One shared interval drives all
  * of them rather than one timer per row.
- *
- * It lives here rather than under a feature because every screen has a
- * timestamp on it: the board's cards, the attention strip, the tables and the
- * panels all read the same tick through {@link import("@/components/when").When}.
  */
 
 import { useSyncExternalStore } from "react"
@@ -41,11 +37,7 @@ function getSnapshot(): number {
   // The interval only runs while something is subscribed, so a screen mounting
   // after a long idle stretch would otherwise read an ancient clock. Two calls
   // within a tick still return the same value, which is what React requires.
-  //
-  // Stale in either direction: a clock that was stepped backwards — an NTP
-  // correction, a machine woken with the wrong time — is as wrong as one left
-  // behind, and the interval would take a whole tick to notice.
-  if (Math.abs(Date.now() - now) >= TICK_MS) now = Date.now()
+  if (Date.now() - now >= TICK_MS) now = Date.now()
   return now
 }
 

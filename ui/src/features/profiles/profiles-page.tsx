@@ -41,9 +41,9 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { When } from "@/components/when"
 import { ROLE_LABELS } from "@/lib/labels"
 import { plural } from "@/lib/plural"
+import { formatAbsolute, formatRelative } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { PROFILE_EXPAND_PARAM } from "@/routes/paths"
 
@@ -292,10 +292,12 @@ function ProfileRow({
         <TableCell className="font-mono text-xs">
           <Unset when={!profile.model}>{modelLabel(profile.model)}</Unset>
         </TableCell>
-        {/* The age is what a table is read for; the full stamp is the hint
-            behind it, the same way every other timestamp in the app shows it. */}
+        {/* The age is what a table is read for; the full stamp is on hover,
+            the same way every other tabular timestamp shows it. */}
         <TableCell className="text-muted-foreground">
-          <When at={profile.updated_at} label="updated" />
+          <time dateTime={profile.updated_at} title={formatAbsolute(profile.updated_at)}>
+            {formatRelative(profile.updated_at)}
+          </time>
         </TableCell>
         <TableCell className="text-right">
           <Button
