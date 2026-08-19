@@ -10,6 +10,7 @@ pub mod profile;
 pub mod repo;
 pub mod session;
 pub mod setup;
+pub mod spawn;
 pub mod task;
 
 use std::io::{IsTerminal, Write};
