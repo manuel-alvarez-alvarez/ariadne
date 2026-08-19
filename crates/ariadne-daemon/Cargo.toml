@@ -44,6 +44,9 @@ zbus = { workspace = true }
 
 [dev-dependencies]
 http-body-util = { workspace = true }
+# Tests that need a clock the store does not offer: `last_activity_at` is
+# only ever stamped "now", and an idle threshold is fifteen minutes away.
+sqlx = { workspace = true }
 tempfile = "3"
 tower = { workspace = true }
 
