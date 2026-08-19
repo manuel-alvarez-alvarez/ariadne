@@ -827,15 +827,6 @@ export interface components {
          */
         AgentKind: "claude_code" | "codex" | "opencode";
         /**
-         * @description Why a live agent session needs the user's attention.
-         *
-         *     Orthogonal to [`SessionStatus`]: a session waiting on a permission prompt
-         *     is still `running` as far as its lifecycle goes, it just cannot make
-         *     progress until someone looks at it.
-         * @enum {string}
-         */
-        AttentionReason: "waiting_permission" | "waiting_input" | "agent_error" | "disconnected" | "stalled";
-        /**
          * @description Author of a conversation message.
          * @enum {string}
          */
@@ -1219,9 +1210,6 @@ export interface components {
         };
         SessionDto: {
             agent_kind: components["schemas"]["AgentKind"];
-            attention_reason?: null | components["schemas"]["AttentionReason"];
-            /** @description When the current `attention_reason` was first raised. */
-            attention_since?: string | null;
             created_at: string;
             ended_at?: string | null;
             goal_id: string;
@@ -2357,8 +2345,6 @@ export interface operations {
                 task?: string | null;
                 /** @description Filter by status. */
                 status?: null | components["schemas"]["SessionStatus"];
-                /** @description Only sessions currently flagged as needing attention. */
-                attention?: boolean | null;
             };
             header?: never;
             path?: never;

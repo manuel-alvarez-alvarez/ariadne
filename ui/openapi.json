@@ -1324,18 +1324,6 @@
                 }
               ]
             }
-          },
-          {
-            "name": "attention",
-            "in": "query",
-            "description": "Only sessions currently flagged as needing attention.",
-            "required": false,
-            "schema": {
-              "type": [
-                "boolean",
-                "null"
-              ]
-            }
           }
         ],
         "responses": {
@@ -2180,17 +2168,6 @@
           "claude_code",
           "codex",
           "opencode"
-        ]
-      },
-      "AttentionReason": {
-        "type": "string",
-        "description": "Why a live agent session needs the user's attention.\n\nOrthogonal to [`SessionStatus`]: a session waiting on a permission prompt\nis still `running` as far as its lifecycle goes, it just cannot make\nprogress until someone looks at it.",
-        "enum": [
-          "waiting_permission",
-          "waiting_input",
-          "agent_error",
-          "disconnected",
-          "stalled"
         ]
       },
       "AuthorRole": {
@@ -3296,24 +3273,6 @@
         "properties": {
           "agent_kind": {
             "$ref": "#/components/schemas/AgentKind"
-          },
-          "attention_reason": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/AttentionReason",
-                "description": "Why this session needs the user's attention, if it does. Orthogonal to\n`status`: an agent blocked on a permission prompt is still running."
-              }
-            ]
-          },
-          "attention_since": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "When the current `attention_reason` was first raised."
           },
           "created_at": {
             "type": "string"

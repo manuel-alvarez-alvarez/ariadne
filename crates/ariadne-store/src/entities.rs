@@ -4,8 +4,7 @@
 use std::str::FromStr;
 
 use ariadne_core::{
-    AgentKind, AttentionReason, AuthorRole, GoalStatus, PromptKind, ReviewVerdict, Role,
-    SessionStatus, TaskStatus,
+    AgentKind, AuthorRole, GoalStatus, PromptKind, ReviewVerdict, Role, SessionStatus, TaskStatus,
 };
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -141,6 +140,11 @@ pub struct AgentSession {
     pub role: String,
     pub profile_id: String,
     pub agent_kind: String,
+    /// Model this session was launched with, as handed to the agent CLI.
+    /// None = no model was asked for, i.e. the CLI's own default. Snapshotted
+    /// at launch rather than read off the profile, so editing a profile does
+    /// not rewrite what a running session is actually using.
+    pub model: Option<String>,
     pub internal_session_id: Option<String>,
     pub tmux_session: String,
     pub worktree_path: Option<String>,
@@ -149,11 +153,6 @@ pub struct AgentSession {
     /// than recording the round the row was created in.
     pub review_round: Option<i64>,
     pub status: String,
-    /// Why this session needs the user's attention, if it does. Orthogonal to
-    /// `status`: an agent blocked on a permission prompt is still running.
-    pub attention_reason: Option<String>,
-    /// When the current `attention_reason` was first raised.
-    pub attention_since: Option<String>,
     pub last_activity_at: Option<String>,
     pub created_at: String,
     pub ended_at: Option<String>,
@@ -168,11 +167,6 @@ impl AgentSession {
     }
     pub fn status(&self) -> SessionStatus {
         SessionStatus::from_str(&self.status).expect("valid session status in db")
-    }
-    pub fn attention_reason(&self) -> Option<AttentionReason> {
-        self.attention_reason
-            .as_deref()
-            .map(|r| AttentionReason::from_str(r).expect("valid attention reason in db"))
     }
 }
 
