@@ -153,11 +153,13 @@ it("mixes tasks and stuck sessions into one list, each naming its goal", async (
   for (const row of rows) expect(row.textContent).toContain(GOAL.title)
 })
 
-it("shows a live session that is waiting on the user, and why", async () => {
+it("shows a live session that is waiting on the user, why, and on what", async () => {
   stubDaemon({
+    tasks: [TASK],
     sessions: [
       {
         ...SESSION,
+        task_id: TASK.id,
         status: "running",
         ended_at: undefined,
         attention_reason: "waiting_permission",
@@ -172,6 +174,7 @@ it("shows a live session that is waiting on the user, and why", async () => {
   const rows = await screen.findAllByRole("listitem")
   expect(rows).toHaveLength(1)
   expect(rows[0]?.textContent).toContain("Waiting for permission")
+  expect(rows[0]?.textContent).toContain("Engineer session · Wire the strip")
 })
 
 it("flags a stalled task without a status of its own to show it", async () => {
