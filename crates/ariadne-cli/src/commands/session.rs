@@ -81,6 +81,7 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
                 goal,
                 task,
                 status: None,
+                attention: None,
             };
             let mut sessions: Vec<SessionDto> = client
                 .get_json(&query_path("/v1/sessions", &query)?)

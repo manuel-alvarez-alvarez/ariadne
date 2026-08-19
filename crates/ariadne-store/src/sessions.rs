@@ -1,7 +1,7 @@
 //! Agent-session repository.
 
 use ariadne_core::id::new_id;
-use ariadne_core::{AgentKind, Role, SessionStatus};
+use ariadne_core::{AgentKind, AttentionReason, Role, SessionStatus};
 
 use crate::{AgentSession, Change, Result, Store, not_found, now};
 
@@ -26,6 +26,8 @@ pub struct SessionFilter {
     pub status: Option<SessionStatus>,
     /// Only sessions in a live status (starting/running/idle).
     pub live_only: bool,
+    /// Only sessions currently flagged as needing attention.
+    pub attention_only: bool,
 }
 
 impl Store {
@@ -77,6 +79,9 @@ impl Store {
         if filter.live_only {
             sql.push_str(" AND status IN ('starting', 'running', 'idle')");
         }
+        if filter.attention_only {
+            sql.push_str(" AND attention_reason IS NOT NULL");
+        }
         sql.push_str(" ORDER BY id");
         // Safe: only fixed clause fragments are appended; values are bound.
         let mut q = sqlx::query_as::<_, AgentSession>(sqlx::AssertSqlSafe(sql));
@@ -108,6 +113,50 @@ impl Store {
         .rows_affected();
         if n == 0 {
             return Err(not_found("session", id));
+        }
+        self.publish_session_update(id).await
+    }
+
+    /// Flag a session as needing the user's attention.
+    ///
+    /// Re-raising the reason already stored is a no-op, `attention_since`
+    /// included: a detector that keeps seeing the same permission prompt must
+    /// not keep resetting how long the agent has been stuck on it.
+    pub async fn set_session_attention(&self, id: &str, reason: AttentionReason) -> Result<()> {
+        let n = sqlx::query(
+            "UPDATE agent_sessions
+                SET attention_reason = ?, attention_since = ?
+              WHERE id = ? AND (attention_reason IS NULL OR attention_reason <> ?)",
+        )
+        .bind(reason.as_str())
+        .bind(now())
+        .bind(id)
+        .bind(reason.as_str())
+        .execute(self.w())
+        .await?
+        .rows_affected();
+        if n == 0 {
+            // Either the session is gone or it already carries this reason.
+            self.get_session(id).await?;
+            return Ok(());
+        }
+        self.publish_session_update(id).await
+    }
+
+    /// Drop any attention flag from a session (the agent moved on).
+    pub async fn clear_session_attention(&self, id: &str) -> Result<()> {
+        let n = sqlx::query(
+            "UPDATE agent_sessions
+                SET attention_reason = NULL, attention_since = NULL
+              WHERE id = ? AND attention_reason IS NOT NULL",
+        )
+        .bind(id)
+        .execute(self.w())
+        .await?
+        .rows_affected();
+        if n == 0 {
+            self.get_session(id).await?;
+            return Ok(());
         }
         self.publish_session_update(id).await
     }
