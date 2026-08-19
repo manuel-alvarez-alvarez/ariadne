@@ -986,6 +986,78 @@ async fn session_attention_is_raised_kept_and_cleared() {
     );
 }
 
+/// A prompt is a dialog on the agent's terminal, so it cannot outlive the
+/// session it was raised on: retiring one takes `waiting_permission` /
+/// `waiting_input` down with it, and leaves every reason a session ends
+/// *carrying* exactly where it is.
+#[tokio::test]
+async fn retiring_a_session_drops_the_prompt_it_can_no_longer_answer() {
+    let (store, _dir) = test_store().await;
+    let planner = seed_profile(&store, "planner", Role::Planner).await;
+    let (goal, repo) = seed_goal(&store, &planner, None).await;
+    let task = seed_task(&store, &goal, &repo, vec![]).await;
+    let new_session = || NewSession {
+        goal_id: goal.id.clone(),
+        task_id: Some(task.id.clone()),
+        role: Role::Engineer,
+        profile_id: task.engineer_profile_id.clone(),
+        agent_kind: AgentKind::ClaudeCode,
+        model: None,
+        tmux_session: "ariadne-test-eng".into(),
+        worktree_path: Some("/tmp/wt".into()),
+        review_round: None,
+    };
+
+    let session = store.create_session(new_session()).await.unwrap();
+    store
+        .set_session_attention(&session.id, AttentionReason::WaitingPermission)
+        .await
+        .unwrap();
+
+    // A status the session is still live in leaves the dialog alone: going
+    // idle is exactly what an agent waiting on an answer looks like.
+    store
+        .set_session_status(&session.id, SessionStatus::Idle)
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .get_session(&session.id)
+            .await
+            .unwrap()
+            .attention_reason(),
+        Some(AttentionReason::WaitingPermission)
+    );
+
+    store
+        .set_session_status(&session.id, SessionStatus::Exited)
+        .await
+        .unwrap();
+    let ended = store.get_session(&session.id).await.unwrap();
+    assert_eq!(ended.attention_reason(), None);
+    assert_eq!(ended.attention_since, None);
+    assert!(
+        ended.ended_at.is_some(),
+        "and it is retired as it always was"
+    );
+
+    // What a session ended reporting is not a dialog: it stays up, and stays
+    // up through a further status write.
+    let failed = store.create_session(new_session()).await.unwrap();
+    store
+        .set_session_attention(&failed.id, AttentionReason::AgentError)
+        .await
+        .unwrap();
+    let raised_at = store.get_session(&failed.id).await.unwrap().attention_since;
+    store
+        .set_session_status(&failed.id, SessionStatus::Failed)
+        .await
+        .unwrap();
+    let ended = store.get_session(&failed.id).await.unwrap();
+    assert_eq!(ended.attention_reason(), Some(AttentionReason::AgentError));
+    assert_eq!(ended.attention_since, raised_at);
+}
+
 #[tokio::test]
 async fn list_goals_filters_by_any_of_the_given_statuses() {
     let (store, _dir) = test_store().await;
