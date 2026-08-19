@@ -143,6 +143,11 @@ fn attention_for_event(
         // OpenCode reports a failed turn (API error, aborted tool run) here;
         // the session itself stays alive, so only attention is raised.
         "session.error" => Some(A::AgentError),
+        // Codex's PermissionRequest hook fires as it is about to ask the user
+        // to approve a command. It runs before the answer is known, so it
+        // marks the wait, not its outcome: whichever way the user answers,
+        // the tool call that follows reports `post_tool_use` and clears this.
+        "permission_request" => Some(A::WaitingPermission),
         // Claude Code's Notification hook: the only place a permission
         // prompt or a pending question surfaces (the session just looks
         // idle otherwise).
@@ -225,6 +230,65 @@ mod tests {
         ] {
             assert_eq!(status_for_event(event), Some(expected), "{event}");
         }
+    }
+
+    /// Nothing may be declared and then dropped on the floor: every event
+    /// Ariadne asks codex for has to move either the status or the attention,
+    /// or the flag pair is paying a trust prompt for nothing.
+    #[test]
+    fn every_declared_codex_event_is_acted_on() {
+        for event in ariadne_core::codex_hooks::EVENTS {
+            let kind = ariadne_core::codex_hooks::event_kind(event);
+            assert!(
+                status_for_event(&kind).is_some()
+                    || attention_for_event(&kind, &permission_request()).is_some(),
+                "{event} is declared but ingested as a no-op"
+            );
+        }
+    }
+
+    /// A PermissionRequest payload as codex 0.147 sends it: the hook runs
+    /// while the approval dialog is going up, so it carries the call it is
+    /// about and no answer.
+    fn permission_request() -> serde_json::Value {
+        json!({
+            "session_id": "01a00b36-1234-7890-abcd-ef0123456789",
+            "transcript_path": "/Users/me/.codex/sessions/rollout.jsonl",
+            "cwd": "/tmp/worktree",
+            "hook_event_name": "PermissionRequest",
+            "permission_mode": "default",
+            "tool_name": "shell",
+            "turn_id": "01a00b36-4444-7890-abcd-ef0123456789",
+        })
+    }
+
+    /// The whole point of declaring the hook: a codex session sitting on an
+    /// approval dialog is otherwise indistinguishable from one thinking.
+    #[test]
+    fn a_permission_request_means_the_agent_is_blocked_on_the_user() {
+        assert_eq!(
+            attention_for_event("permission_request", &permission_request()),
+            Some(AttentionReason::WaitingPermission)
+        );
+    }
+
+    /// ...and it must not read as liveness. `PreToolUse` fires just before
+    /// it for the same call, so a `Running` mapping here would clear the
+    /// attention the event itself raised.
+    #[test]
+    fn a_permission_request_implies_no_status_change() {
+        assert_eq!(status_for_event("permission_request"), None);
+    }
+
+    /// Approved or denied, the tool call that follows reports as usual and
+    /// takes the flag back down — attention marks the wait, not the verdict.
+    #[test]
+    fn the_tool_call_after_an_approval_clears_the_wait() {
+        assert_eq!(
+            status_for_event("post_tool_use"),
+            Some(SessionStatus::Running)
+        );
+        assert_eq!(attention_for_event("post_tool_use", &json!({})), None);
     }
 
     #[test]
