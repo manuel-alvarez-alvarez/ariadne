@@ -93,8 +93,8 @@ function TaskRow({ item: { task, reason, goalId, goal } }: { item: AttentionTask
       <Link to={taskPanelTo(search, task.id)} className={ROW_LINK}>
         <StatusBadge box="badge" label={meta.label} tone={meta.badge} hint={meta.hint} />
         <span className="min-w-0 flex-1 truncate font-medium">{task.title}</span>
-        {/* The status pill already names a failed task; a stall is a flag on
-            top of whatever status the task is sitting in. */}
+        {/* The status pill already names the other two reasons; a stall is a
+            flag on top of whatever status the task is sitting in. */}
         {reason === "stalled" ? <StalledBadge /> : null}
         <GoalRef goalId={goalId} goal={goal} />
         <Age at={task.updated_at} />

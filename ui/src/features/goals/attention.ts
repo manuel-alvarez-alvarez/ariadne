@@ -23,16 +23,10 @@ import { taskListQueryOptions } from "@/features/tasks"
 import { goalsQueryOptions } from "./queries"
 
 /** Why a task is on the list, strongest first. */
-export type AttentionReason = "failed" | "stalled"
+export type AttentionReason = "failed" | "changes_requested" | "stalled"
 
 /**
  * Whether this task wants the user, and what for.
- *
- * A task in `changes_requested` is deliberately not one of them: the reviewer
- * has spoken and the daemon resumes the engineer itself, so what that task
- * waits on is an agent, not a person. A resume that does not happen shows up
- * as the session's own `disconnected` or `stalled` flag, which is where the
- * daemon decides a human is wanted.
  *
  * `stalled` is checked last because it is a flag *on top of* a status: the
  * daemon sets it when an agent went idle without advancing the task and clears
@@ -40,6 +34,7 @@ export type AttentionReason = "failed" | "stalled"
  */
 export function taskAttentionReason(task: TaskDto): AttentionReason | null {
   if (task.status === "failed") return "failed"
+  if (task.status === "changes_requested") return "changes_requested"
   return task.stalled ? "stalled" : null
 }
 
@@ -63,7 +58,7 @@ export interface AttentionTaskItem extends AttentionRow {
 export interface AttentionSessionItem extends AttentionRow {
   kind: "session"
   session: SessionDto
-  /** Why the session is here — the `attention_reason` the daemon raised. */
+  /** Why the session is here — its `attention_reason`, or `failed`. */
   reason: SessionAttention
   /**
    * The task it was run for, when it has one and the task list carries it —
@@ -97,11 +92,11 @@ export function useAttention(): Attention {
   const goals = useQuery(goalsQueryOptions())
   const tasks = useQuery(taskListQueryOptions())
   // Unfiltered, and narrowed by `sessionAttention` below rather than by the
-  // daemon: the key is the one the sessions screen already holds, so the extra
-  // rows usually cost no extra request, where `GET /v1/sessions?attention=true`
-  // would be a second list of its own. Filtering here is also what keeps the
-  // rule — "the daemon raised a reason for it" — in one place for both this
-  // strip and `ariadne attention`.
+  // daemon: the rule is "flagged for attention *or* dead", and `GET
+  // /v1/sessions` ANDs `attention` with `status`, so no single request spells
+  // it. Filtering here is also what keeps the rule in one place for both this
+  // strip and `ariadne attention`. The key is the one the sessions screen
+  // already holds, so the extra rows usually cost no extra request.
   const sessions = useQuery(sessionsQueryOptions())
 
   const items = useMemo(

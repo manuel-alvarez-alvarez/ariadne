@@ -66,11 +66,12 @@ export function SessionStatusBadge({
 }
 
 /**
- * Why a session is waiting on a person: the `attention_reason` the daemon
- * raised for it, and nothing else. Named rather than used bare because the
- * attention strip has task reasons of its own under the same word.
+ * Why a session is waiting on a person: the daemon's `attention_reason`, or
+ * the bare fact that the agent died — which raises no reason of its own but
+ * has always been on the attention list, and is spelled here so both halves
+ * of that list read the same way.
  */
-export type SessionAttention = AttentionReason
+export type SessionAttention = AttentionReason | "failed"
 
 interface SessionAttentionMeta {
   label: string
@@ -82,9 +83,9 @@ interface SessionAttentionMeta {
 
 /**
  * The warm half of the ramp throughout — every one of these is something gone
- * wrong or something waiting — with the one that ended the agent's work
- * (`agent_error`) and the one that lost it (`disconnected`) on the danger
- * step, and the three it can still be talked out of on the warn step.
+ * wrong or something waiting — with the two that ended the agent's work
+ * (`agent_error`, `failed`) and the one that lost it (`disconnected`) on the
+ * danger step, and the three it can still be talked out of on the warn step.
  *
  * `crates/ariadne-cli/src/commands/attention.rs` spells the same reasons for
  * the terminal; the wording there is these labels, lowercased.
@@ -115,19 +116,23 @@ export const SESSION_ATTENTION_META: Record<SessionAttention, SessionAttentionMe
     hint: "No activity for too long.",
     badge: "bg-status-warn-soft text-status-warn-fg",
   },
+  failed: {
+    label: "Failed",
+    hint: "The agent died.",
+    badge: "bg-status-danger-soft text-status-danger-fg",
+  },
 }
 
 /**
  * Why a session wants the user, and nothing when it does not.
  *
- * The stored reason is the whole rule. A dead session raises no reason of its
- * own on purpose: the daemon flags the agent it still owes work to as
- * `disconnected` and leaves the rest alone, so a reviewer that exited after
- * voting is finished, not stuck, and reading `status` here would put it back
- * on the list the daemon kept it off. Kept identical in `attention.rs`.
+ * The reason wins over the status: a session that died *after* reporting an
+ * error is on the list for the error, which is the half of "failed" that says
+ * something. Kept identical in `attention.rs`.
  */
 export function sessionAttention(session: SessionDto): SessionAttention | null {
-  return session.attention_reason ?? null
+  if (session.attention_reason) return session.attention_reason
+  return session.status === "failed" ? "failed" : null
 }
 
 /**
