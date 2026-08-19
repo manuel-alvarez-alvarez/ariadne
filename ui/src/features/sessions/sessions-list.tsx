@@ -80,7 +80,9 @@ function emptyTitle(filters: SessionListFilters): string {
     case "goal":
       return "No sessions yet for this goal"
     default:
-      return filters.status || filters.role ? "No sessions match these filters" : "No sessions yet"
+      return filters.status || filters.role || filters.live
+        ? "No sessions match these filters"
+        : "No sessions yet"
   }
 }
 

@@ -165,7 +165,8 @@ ariadne task ls --goal <goal-id>
 ariadne task attach <task-id>          # engineer terminal (or --role reviewer)
 ariadne task diff <task-id>            # current branch diff
 ariadne task msg <task-id> "hold on, use the middleware crate instead"
-ariadne session ls                     # every agent session + internal ids
+ariadne session ls                     # live agents + the work each one is on
+ariadne session ls --status failed     # or any one status, --all not needed
 ariadne attention                      # what is waiting for you, across every goal
 ariadne attach <id>                    # session, task or goal id
 ```
