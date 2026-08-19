@@ -15,7 +15,9 @@ use tokio::sync::broadcast::Receiver;
 use tower::ServiceExt;
 
 use ariadne_api::stream::{DeletedDto, DomainEvent};
-use ariadne_core::{AgentKind, AttentionReason, GoalStatus, Role, SessionStatus, TaskStatus};
+use ariadne_core::{
+    Actor, AgentKind, AttentionReason, GoalStatus, ReviewVerdict, Role, SessionStatus, TaskStatus,
+};
 use ariadne_daemon::bus::{BusEvent, EventBus};
 use ariadne_daemon::config::Config;
 use ariadne_daemon::gitwt::GitManager;
@@ -81,6 +83,46 @@ impl Harness {
             })
             .await
             .unwrap()
+    }
+
+    /// A live session of `role`, as the launcher would have created it.
+    async fn session(
+        &self,
+        goal: &Goal,
+        task: Option<&Task>,
+        role: Role,
+        profile_id: &str,
+    ) -> ariadne_store::AgentSession {
+        self.store
+            .create_session(ariadne_store::NewSession {
+                goal_id: goal.id.clone(),
+                task_id: task.map(|t| t.id.clone()),
+                role,
+                profile_id: profile_id.to_string(),
+                agent_kind: AgentKind::ClaudeCode,
+                model: None,
+                tmux_session: format!("ariadne-test-{}", role.as_str()),
+                worktree_path: Some(PathBuf::from("/tmp/wt").display().to_string()),
+                review_round: task.map(|t| t.review_round),
+            })
+            .await
+            .unwrap()
+    }
+
+    /// Hand a task to its engineer, which is the state a live engineer
+    /// session is actually in.
+    ///
+    /// Attention belongs to an agent somebody is waiting on, and nobody is
+    /// waiting on the engineer of a task that has not been started: the
+    /// ingestion withholds the flag there, so the tests that assert on one
+    /// start the work first.
+    async fn hand_to_engineer(&self, task: &Task) {
+        for status in [TaskStatus::Ready, TaskStatus::InProgress] {
+            self.store
+                .transition_task(&task.id, status, Actor::Daemon, None, None)
+                .await
+                .unwrap();
+        }
     }
 
     /// An active goal with one pending, dependency-free task.
@@ -508,6 +550,7 @@ async fn launcher_session_writes_emit_session_events() {
 async fn ingested_events_raise_and_clear_session_attention() {
     let h = harness().await;
     let (goal, task) = h.active_goal_with_task().await;
+    h.hand_to_engineer(&task).await;
     let session = h
         .store
         .create_session(ariadne_store::NewSession {
@@ -610,6 +653,7 @@ async fn ingested_events_raise_and_clear_session_attention() {
 async fn an_opencode_permission_ask_flags_the_session_as_blocked() {
     let h = harness().await;
     let (goal, task) = h.active_goal_with_task().await;
+    h.hand_to_engineer(&task).await;
     let session = h
         .store
         .create_session(ariadne_store::NewSession {
@@ -767,6 +811,7 @@ async fn an_opencode_permission_ask_flags_the_session_as_blocked() {
 async fn a_claude_notification_flags_the_session_as_blocked() {
     let h = harness().await;
     let (goal, task) = h.active_goal_with_task().await;
+    h.hand_to_engineer(&task).await;
     let session = h
         .store
         .create_session(ariadne_store::NewSession {
@@ -878,5 +923,164 @@ async fn a_claude_notification_flags_the_session_as_blocked() {
     assert_eq!(
         events.iter().filter(|e| e.kind == "notification").count(),
         3
+    );
+}
+
+/// A Claude `Notification` payload for a permission prompt: what a session
+/// blocked on a dialog reports, whoever it belongs to.
+fn permission_prompt() -> serde_json::Value {
+    serde_json::json!({
+        "session_id": "5f3b1c8e-1234-4a2b-9d0e-0123456789ab",
+        "cwd": "/tmp/wt",
+        "hook_event_name": "Notification",
+        "message": "Claude needs your permission to use Bash",
+        "notification_type": "permission_prompt",
+    })
+}
+
+/// Attention says a human must act, so it is only raised on an agent somebody
+/// is still waiting on. A reviewer that has cast its verdict is finished, and
+/// a dialog it puts up afterwards is nobody's to answer — the event is still
+/// recorded, and the status still follows it.
+#[tokio::test]
+async fn a_reviewer_that_already_voted_raises_no_attention() {
+    let h = harness().await;
+    let (goal, task) = h.active_goal_with_task().await;
+    h.hand_to_engineer(&task).await;
+    h.store
+        .transition_task(
+            &task.id,
+            TaskStatus::UnderReview,
+            Actor::Engineer,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    // Entering review opens the round the verdict belongs to.
+    let task = h.store.get_task(&task.id).await.unwrap();
+    let reviewer = h.store.list_task_reviewers(&task.id).await.unwrap()[0].clone();
+    let session = h
+        .session(&goal, Some(&task), Role::Reviewer, &reviewer)
+        .await;
+
+    let post = async |kind: &str, payload: serde_json::Value| {
+        let request = post_json(
+            "/internal/agent-events",
+            serde_json::json!({
+                "session_id": session.id,
+                "agent_kind": "claude_code",
+                "kind": kind,
+                "payload": payload,
+            }),
+        );
+        let response = h.router.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED, "{kind}");
+    };
+
+    // The round is still waiting on this reviewer: the prompt is raised.
+    post("notification", permission_prompt()).await;
+    assert_eq!(
+        h.store
+            .get_session(&session.id)
+            .await
+            .unwrap()
+            .attention_reason(),
+        Some(AttentionReason::WaitingPermission)
+    );
+    // Back at work, so the flag comes down of its own accord...
+    post("pre_tool_use", serde_json::json!({"tool_name": "Bash"})).await;
+
+    // ...and once the verdict is in, the same prompt raises nothing.
+    h.store
+        .create_review(ariadne_store::NewReview {
+            task_id: task.id.clone(),
+            round: task.review_round,
+            reviewer_profile_id: reviewer.clone(),
+            session_id: Some(session.id.clone()),
+            verdict: ReviewVerdict::Approve,
+            body: None,
+        })
+        .await
+        .unwrap();
+    post("notification", permission_prompt()).await;
+    let quiet = h.store.get_session(&session.id).await.unwrap();
+    assert_eq!(
+        quiet.attention_reason(),
+        None,
+        "a reviewer that has voted is not an agent anybody is waiting on"
+    );
+    assert_eq!(
+        quiet.status(),
+        SessionStatus::Running,
+        "withholding the flag changes nothing else about the ingestion"
+    );
+    let events = h
+        .store
+        .list_events(ariadne_store::EventFilter {
+            session_id: Some(session.id.clone()),
+            task_id: None,
+            limit: 50,
+            after: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        events.iter().filter(|e| e.kind == "notification").count(),
+        2,
+        "the event itself is recorded either way"
+    );
+}
+
+/// Same for a planner once its goal has left planning: the plan is finalized,
+/// so whatever its session asks for is not work anybody is waiting on.
+#[tokio::test]
+async fn a_planner_past_planning_raises_no_attention() {
+    let h = harness().await;
+    // `active_goal_with_task` finalizes the plan: the goal is already active.
+    let (goal, _task) = h.active_goal_with_task().await;
+    let session = h
+        .session(&goal, None, Role::Planner, &goal.planner_profile_id)
+        .await;
+
+    let post = async || {
+        let request = post_json(
+            "/internal/agent-events",
+            serde_json::json!({
+                "session_id": session.id,
+                "agent_kind": "claude_code",
+                "kind": "notification",
+                "payload": permission_prompt(),
+            }),
+        );
+        let response = h.router.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+    };
+
+    post().await;
+    assert_eq!(
+        h.store
+            .get_session(&session.id)
+            .await
+            .unwrap()
+            .attention_reason(),
+        None,
+        "the goal is past planning, so its planner is owed nothing"
+    );
+
+    // And the goal status is what makes the difference: back in planning, the
+    // very same prompt is the user's to answer.
+    h.store
+        .set_goal_status(&goal.id, GoalStatus::Planning)
+        .await
+        .unwrap();
+    post().await;
+    assert_eq!(
+        h.store
+            .get_session(&session.id)
+            .await
+            .unwrap()
+            .attention_reason(),
+        Some(AttentionReason::WaitingPermission)
     );
 }

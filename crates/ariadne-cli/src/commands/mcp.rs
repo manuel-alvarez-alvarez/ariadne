@@ -233,7 +233,7 @@ impl AriadneMcp {
 
 #[tool_router]
 impl AriadneMcp {
-    #[tool(description = "Read a task: status, branch, engineer, reviewers, dependencies.")]
+    #[tool(description = "Get a task (defaults to your own) with status, branch, reviewers, deps.")]
     async fn get_task(
         &self,
         Parameters(req): Parameters<TaskIdOpt>,
@@ -242,15 +242,13 @@ impl AriadneMcp {
         json_result(self.get(&format!("/v1/tasks/{task}")).await?)
     }
 
-    #[tool(
-        description = "Read the goal this session belongs to: title, repositories, task limit, approvals required per task."
-    )]
+    #[tool(description = "Get the goal this session belongs to (title, repos, settings).")]
     async fn get_goal(&self, Parameters(_): Parameters<Empty>) -> Result<CallToolResult, McpError> {
         json_result(self.get(&format!("/v1/goals/{}", self.goal_id)).await?)
     }
 
     #[tool(
-        description = "Read a task's conversation, for what the other agents and the user said. Without task_id, a planner reads the goal thread."
+        description = "List conversation messages of a task (defaults to your own; planner without task_id reads the goal thread)."
     )]
     async fn list_messages(
         &self,
@@ -264,7 +262,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Write into a task's conversation: the way to reach the other agents and the user. Without task_id, a planner posts to the goal thread."
+        description = "Post a message into a task conversation (or the goal thread for the planner)."
     )]
     async fn post_message(
         &self,
@@ -282,9 +280,7 @@ impl AriadneMcp {
 
     // ---- planner ----
 
-    #[tool(
-        description = "Create one task in the goal, owned by one engineer profile and gated by at least one reviewer profile."
-    )]
+    #[tool(description = "Create a task in the goal, assigning the engineer and the reviewers.")]
     async fn create_task(
         &self,
         Parameters(req): Parameters<CreateTaskReq>,
@@ -303,7 +299,7 @@ impl AriadneMcp {
         )
     }
 
-    #[tool(description = "List the goal's tasks with their statuses.")]
+    #[tool(description = "List all tasks of the goal with their statuses.")]
     async fn list_tasks(
         &self,
         Parameters(_): Parameters<Empty>,
@@ -314,9 +310,7 @@ impl AriadneMcp {
         )
     }
 
-    #[tool(
-        description = "Edit a task's title, description or reviewers. Only accepted while the task has not started."
-    )]
+    #[tool(description = "Edit a task's title/description/reviewers (only before it starts).")]
     async fn update_task(
         &self,
         Parameters(req): Parameters<UpdateTaskReq>,
@@ -335,9 +329,7 @@ impl AriadneMcp {
         json_result(value)
     }
 
-    #[tool(
-        description = "Replace a task's dependency list. Only accepted while the task has not started."
-    )]
+    #[tool(description = "Replace the dependency list of a task (only before it starts).")]
     async fn set_dependencies(
         &self,
         Parameters(req): Parameters<SetDependenciesReq>,
@@ -354,7 +346,7 @@ impl AriadneMcp {
         json_result(value)
     }
 
-    #[tool(description = "List the agent profiles a task can be assigned to.")]
+    #[tool(description = "List available agent profiles (optionally filtered by role).")]
     async fn list_profiles(
         &self,
         Parameters(req): Parameters<ListProfilesReq>,
@@ -367,7 +359,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Finalize the plan: the goal becomes active and its tasks start executing immediately. Call it only once the user agrees the plan is complete, with no question left open."
+        description = "Finalize the plan: the goal becomes active and tasks start executing. Call once the user agrees."
     )]
     async fn finalize_plan(
         &self,
@@ -384,9 +376,7 @@ impl AriadneMcp {
 
     // ---- engineer ----
 
-    #[tool(
-        description = "Submit your task for review: the summary is what the reviewers read first. Call it when the work is complete and verified, and again after each round of requested changes."
-    )]
+    #[tool(description = "Submit your task for review with a summary of what you built.")]
     async fn request_review(
         &self,
         Parameters(req): Parameters<RequestReviewReq>,
@@ -413,7 +403,7 @@ impl AriadneMcp {
         json_result(value)
     }
 
-    #[tool(description = "Read the verdicts and feedback on your task, every round of them.")]
+    #[tool(description = "Read the reviews of your task (all rounds).")]
     async fn get_reviews(
         &self,
         Parameters(_): Parameters<Empty>,
@@ -423,7 +413,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Report the merge you have already made. The daemon checks the branch really is merged into its base before accepting the sha, so report it truthfully."
+        description = "Report the completed merge. The daemon verifies the branch is actually merged before accepting."
     )]
     async fn mark_merged(
         &self,
@@ -445,7 +435,7 @@ impl AriadneMcp {
 
     // ---- reviewer ----
 
-    #[tool(description = "Read the diff of the branch under review against its base branch.")]
+    #[tool(description = "Get the diff of the task branch against its base branch.")]
     async fn get_diff(&self, Parameters(_): Parameters<Empty>) -> Result<CallToolResult, McpError> {
         let task = self.own_task(None)?;
         // Plain-text endpoint: no JSON decoding.
@@ -457,7 +447,7 @@ impl AriadneMcp {
         Ok(CallToolResult::success(vec![ContentBlock::text(diff)]))
     }
 
-    #[tool(description = "Approve the change under review, as this round's single verdict.")]
+    #[tool(description = "Approve the change under review for the current round.")]
     async fn approve(
         &self,
         Parameters(req): Parameters<VerdictReq>,
@@ -466,7 +456,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Request changes on the change under review, as this round's single verdict: name the files and functions that must change."
+        description = "Request changes on the change under review; be concrete about what must change."
     )]
     async fn request_changes(
         &self,
@@ -481,20 +471,13 @@ impl ServerHandler for AriadneMcp {
     fn get_info(&self) -> ServerInfo {
         let mut info = ServerInfo::default();
         info.instructions = Some(format!(
-            "Ariadne orchestrator tools for this {} session: session {}, goal {}{}. \
-             The tools listed here are the ones your role may call, and every \
-             call acts as this session.",
+            "Ariadne orchestrator tools for this {} session (session {}).",
             match self.role {
                 McpRole::Planner => "planner",
                 McpRole::Engineer => "engineer",
                 McpRole::Reviewer => "reviewer",
             },
-            self.session_id,
-            self.goal_id,
-            match &self.task_id {
-                Some(task) => format!(", task {task}"),
-                None => String::new(),
-            }
+            self.session_id
         ));
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
         info

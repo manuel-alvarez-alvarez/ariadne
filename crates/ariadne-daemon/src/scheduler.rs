@@ -16,6 +16,7 @@ use ariadne_core::{
 use ariadne_store::{AgentSession, SessionFilter, Store, Task, TaskFilter};
 
 use crate::agents::prompts;
+use crate::attention;
 use crate::launcher::Launcher;
 use crate::sleep::SleepInhibitor;
 
@@ -97,6 +98,7 @@ impl Scheduler {
         if let Some(live) = self.liveness_sweep().await {
             self.sleep.set_active(self.prevent_sleep && live > 0);
         }
+        self.stale_attention_sweep().await;
         let goals = match self.store.list_goals(&[]).await {
             Ok(goals) => goals,
             Err(e) => {
@@ -205,7 +207,7 @@ impl Scheduler {
                         // raised for the user. The flag outlives the session
                         // row's `exited` status on purpose — it stays up until
                         // the agent is resumed or replaced.
-                        if self.work_is_active(&session).await {
+                        if attention::work_is_active(&self.store, &session).await {
                             warn!(session = %session.id, role = %session.role, "agent disconnected with work still active");
                             let _ = self
                                 .store
@@ -229,57 +231,31 @@ impl Scheduler {
         Some(alive)
     }
 
-    /// Whether the work this session was started for is still going.
+    /// Take down attention nobody can act on any more.
     ///
-    /// A pane disappearing is only worth the user's attention when the work is
-    /// waiting on *that* agent, which is a question about its role and not
-    /// only about the status: an engineer's pane going away while its task
-    /// sits under review costs nobody anything — the reviewers are the ones
-    /// working, and the engineer is woken by id when they answer — and a
-    /// reviewer that has already voted is done however long the round runs on.
-    async fn work_is_active(&self, session: &AgentSession) -> bool {
-        match session.role() {
-            // The goal being planned is the planner's whole job.
-            Role::Planner => matches!(
-                self.store
-                    .get_goal(&session.goal_id)
-                    .await
-                    .map(|g| g.status()),
-                Ok(GoalStatus::Planning)
-            ),
-            // Every status the engineer is working in or about to be woken
-            // for; `pending` has no engineer yet, and `under_review` is not
-            // its turn.
-            Role::Engineer => match self.task_of(session).await {
-                Some(task) => matches!(
-                    task.status(),
-                    TaskStatus::Ready
-                        | TaskStatus::InProgress
-                        | TaskStatus::ChangesRequested
-                        | TaskStatus::Approved
-                        | TaskStatus::Merging
-                ),
-                None => false,
-            },
-            // A reviewer is only owed to a round it has not voted in.
-            Role::Reviewer => match self.task_of(session).await {
-                Some(task) if task.status() == TaskStatus::UnderReview => self
-                    .store
-                    .list_reviews(&task.id, Some(task.review_round))
-                    .await
-                    .is_ok_and(|reviews| {
-                        !reviews
-                            .iter()
-                            .any(|r| r.reviewer_profile_id == session.profile_id)
-                    }),
-                _ => false,
-            },
+    /// A flag raised by an agent event is only ever taken down by another
+    /// one, and a session sitting on a dialog emits nothing: an engineer
+    /// blocked on a permission prompt whose task then goes under review would
+    /// keep asking for the user for ever. Whatever put a flag up, it comes
+    /// down once the work it was about stopped being this session's — the
+    /// same question the sweep above asks before raising one.
+    async fn stale_attention_sweep(&self) {
+        let Ok(flagged) = self
+            .store
+            .list_sessions(SessionFilter {
+                attention_only: true,
+                ..Default::default()
+            })
+            .await
+        else {
+            return;
+        };
+        for session in flagged {
+            if !attention::work_is_active(&self.store, &session).await {
+                info!(session = %session.id, role = %session.role, "work moved on, dropping attention");
+                let _ = self.store.clear_session_attention(&session.id).await;
+            }
         }
-    }
-
-    async fn task_of(&self, session: &AgentSession) -> Option<Task> {
-        let task_id = session.task_id.as_deref()?;
-        self.store.get_task(task_id).await.ok()
     }
 
     async fn reconcile_session(&mut self, session_id: &str) {
@@ -315,7 +291,7 @@ impl Scheduler {
                     self.check_session_stall(
                         &planner,
                         (goal.status.clone(), 0),
-                        "Keep planning this goal: create the tasks it still needs with `create_task`, or call `finalize_plan` once the user agrees the plan is complete.",
+                        "Reminder: this goal is still in planning. Continue breaking it into tasks with create_task, or call finalize_plan if the plan is complete.",
                     )
                     .await?;
                 }
@@ -581,7 +557,7 @@ impl Scheduler {
                         self.check_session_stall(
                             &reviewer,
                             (task.status.clone(), task.review_round),
-                            "Finish reviewing this round and submit your verdict with `approve` or `request_changes`.",
+                            "Reminder: this task is still waiting on your review. Finish reviewing and call approve or request_changes.",
                         )
                         .await?;
                     } else {
@@ -746,7 +722,7 @@ impl Scheduler {
             info!(task = %task.id, "no live engineer session, resuming");
             if let Err(e) = self
                 .launcher
-                .resume_engineer(&task.id, "Your previous session ended: continue this task on the same branch in your worktree, and call `request_review` when the work is complete and verified.")
+                .resume_engineer(&task.id, "Your previous session ended unexpectedly. Continue the task from where it left off.")
                 .await
             {
                 // The task still wants an engineer and could not get one:
@@ -758,10 +734,10 @@ impl Scheduler {
         };
         let nudge = match task.status() {
             TaskStatus::Merging => {
-                "Your task is approved: merge it as the merge instructions say, then call `mark_merged` with the merge commit sha."
+                "Reminder: your task is approved and waiting to be merged. Follow the merge instructions and call mark_merged."
             }
             _ => {
-                "Keep working on this task, and call `request_review` with a summary once the work is complete and verified."
+                "Reminder: your task is still in progress. Continue working on it, or call request_review if it is complete."
             }
         };
         let stalled = self

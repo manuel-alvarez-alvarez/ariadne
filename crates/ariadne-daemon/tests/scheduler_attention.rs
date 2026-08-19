@@ -724,3 +724,99 @@ async fn resuming_a_session_clears_its_attention() {
     );
     assert_eq!(resumed.attention_since, None);
 }
+
+/// A flag raised by an agent event is only ever taken down by another one,
+/// and a session sitting on a dialog reports nothing: the sweep is what lets
+/// go of an engineer that was blocked on a permission prompt when its task
+/// moved on to its reviewers.
+#[tokio::test]
+async fn a_blocked_engineer_is_let_go_once_its_task_goes_under_review() {
+    let h = cannot_spawn_harness().await;
+    let (goal, task, engineer, _reviewer) = h.active_goal_with_task().await;
+    h.advance(&task, TaskStatus::InProgress).await;
+    let session = h
+        .session(&goal, Some(&task), Role::Engineer, &engineer)
+        .await;
+    h.pane_exists(&session);
+    h.store
+        .set_session_attention(&session.id, AttentionReason::WaitingPermission)
+        .await
+        .unwrap();
+
+    // Whatever the prompt was about, the engineer got past it and sent the
+    // task for review; nothing more will ever be reported on that session.
+    h.store
+        .transition_task(
+            &task.id,
+            TaskStatus::UnderReview,
+            Actor::Engineer,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    // The sweep runs on the tick, and the first tick is immediate.
+    let _sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    eventually("the stale flag to be dropped", async || {
+        h.attention(&session).await.is_none()
+    })
+    .await;
+}
+
+/// And only then: an agent the work is still waiting on keeps its flag, down
+/// to the moment it went up — how long it has been stuck is the half of it
+/// the user acts on.
+#[tokio::test]
+async fn attention_survives_the_sweep_while_the_work_is_still_owed() {
+    let h = cannot_spawn_harness().await;
+    let (goal, task, engineer, reviewer) = h.active_goal_with_task().await;
+    h.advance(&task, TaskStatus::InProgress).await;
+    let session = h
+        .session(&goal, Some(&task), Role::Engineer, &engineer)
+        .await;
+    h.pane_exists(&session);
+    h.store
+        .set_session_attention(&session.id, AttentionReason::WaitingPermission)
+        .await
+        .unwrap();
+    let raised_at = h
+        .store
+        .get_session(&session.id)
+        .await
+        .unwrap()
+        .attention_since;
+
+    // A second engineer, blocked in exactly the same way but on a task that
+    // has gone to its reviewers: its flag coming down is what says the sweep
+    // the first one went through is over.
+    let handed_over = h
+        .extra_task(&goal, &engineer, &reviewer, "under review")
+        .await;
+    h.advance(&handed_over, TaskStatus::UnderReview).await;
+    let control = h
+        .session(&goal, Some(&handed_over), Role::Engineer, &engineer)
+        .await;
+    h.pane_exists(&control);
+    h.store
+        .set_session_attention(&control.id, AttentionReason::WaitingPermission)
+        .await
+        .unwrap();
+
+    let _sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    eventually("the finished engineer to be let go", async || {
+        h.attention(&control).await.is_none()
+    })
+    .await;
+
+    let kept = h.store.get_session(&session.id).await.unwrap();
+    assert_eq!(
+        kept.attention_reason(),
+        Some(AttentionReason::WaitingPermission),
+        "the work is still this agent's, so what it is waiting on stands"
+    );
+    assert_eq!(
+        kept.attention_since, raised_at,
+        "and how long it has been waiting is not reset under it"
+    );
+}
