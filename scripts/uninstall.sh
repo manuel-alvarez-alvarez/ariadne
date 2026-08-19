@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Ariadne uninstaller: removes the daemon service, binaries and shell
-# completions installed by scripts/install.sh (locations read from
-# ~/.ariadne/install.env). Data (~/.ariadne: database, worktrees, logs) is
+# Ariadne uninstaller: removes the daemon service, binaries, shell completions
+# and the "Ariadne Desktop" app installed by scripts/install.sh (locations
+# read from ~/.ariadne/install.env). Data (~/.ariadne: database, worktrees, logs) is
 # kept unless --purge is given.
 #
 # Idempotent: safe to run when partially or not installed.
@@ -71,6 +71,9 @@ ARIADNE_BASH_COMPLETION="$DATA_DIR/bash-completion/completions/ariadne"
 ARIADNE_ZSH_COMPLETION="$DATA_DIR/zsh/site-functions/_ariadne"
 ARIADNE_PLIST="$HOME/Library/LaunchAgents/$PLIST_LABEL.plist"
 ARIADNE_UNIT="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/ariadned.service"
+# Only ever set by the manifest: an install that skipped the desktop app - and
+# any manifest written before it existed - leaves nothing to remove.
+ARIADNE_APP=""
 MANIFEST_FOUND=0
 if [ -f "$MANIFEST" ]; then
     MANIFEST_FOUND=1
@@ -96,6 +99,7 @@ strip_block() {
 # One plan_add per step, in execution order; the step count adapts to the flags.
 plan_add "Stopping and removing the daemon service ($SERVICE_DESC)"
 plan_add "Removing binaries from $(ui_tilde "$ARIADNE_PREFIX")"
+[ -n "$ARIADNE_APP" ] && plan_add "Removing $(ui_tilde "$ARIADNE_APP")"
 plan_add "Removing shell completions"
 plan_add "Removing the install manifest"
 [ "$PURGE" = 1 ] && plan_add "Deleting $(ui_tilde "$ARIADNE_HOME") (database, worktrees, run dirs, logs)"
@@ -145,6 +149,19 @@ else
     step_skip "nothing to remove"
 fi
 
+# --- desktop app ------------------------------------------------------------------
+APP_REMOVED=0
+if [ -n "$ARIADNE_APP" ]; then
+    step_begin
+    if [ -e "$ARIADNE_APP" ]; then
+        rm -rf "$ARIADNE_APP"
+        APP_REMOVED=1
+        step_ok
+    else
+        step_skip "nothing to remove"
+    fi
+fi
+
 # --- completions ------------------------------------------------------------------
 step_begin
 rm -f "$ARIADNE_BASH_COMPLETION" "$ARIADNE_ZSH_COMPLETION"
@@ -176,6 +193,7 @@ if [ "$BINARIES_FOUND" = 1 ]; then
 else
     ui_field "binaries" "none found in $(ui_tilde "$ARIADNE_PREFIX")"
 fi
+[ "$APP_REMOVED" = 1 ] && ui_field "desktop app" "removed ($(ui_tilde "$ARIADNE_APP"))"
 ui_field "completions" "removed (rc blocks stripped, new shells only)"
 if [ "$PURGE" = 1 ]; then
     ui_field "data" "$(ui_tilde "$ARIADNE_HOME") deleted"
