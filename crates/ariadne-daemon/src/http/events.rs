@@ -101,7 +101,9 @@ fn extract_internal_id(
     use ariadne_core::AgentKind;
     let candidates: &[&[&str]] = match kind {
         AgentKind::ClaudeCode | AgentKind::Codex => &[&["session_id"]],
-        AgentKind::Opencode => &[&["info", "id"], &["id"], &["sessionID"], &["session", "id"]],
+        // `sessionID` comes before the bare `id`: opencode's approval events
+        // carry both, and there `id` is the permission's, not the session's.
+        AgentKind::Opencode => &[&["info", "id"], &["sessionID"], &["session", "id"], &["id"]],
     };
     for path in candidates {
         let value = path.iter().try_fold(payload, |v, k| v.get(k));
@@ -126,7 +128,14 @@ fn status_for_event(kind: &str) -> Option<ariadne_core::SessionStatus> {
         | "pre_tool_use"
         | "session.created"
         | "tool.execute.after"
-        | "tool.execute.before" => Some(S::Running),
+        | "tool.execute.before"
+        // An answered approval hands control back to the agent, whichever way
+        // it went: allowed it runs the call, rejected it gets the refusal as
+        // the tool result and carries on. This is also what takes the
+        // attention flag back down — see the clear in `ingest`.
+        | "permission.replied"
+        | "question.replied"
+        | "question.rejected" => Some(S::Running),
         "stop" | "turn_complete" | "session.idle" => Some(S::Idle),
         "session_end" | "session.deleted" => Some(S::Exited),
         _ => None,
@@ -143,6 +152,23 @@ fn attention_for_event(
         // OpenCode reports a failed turn (API error, aborted tool run) here;
         // the session itself stays alive, so only attention is raised.
         "session.error" => Some(A::AgentError),
+        // Codex's PermissionRequest hook fires as it puts the approval dialog
+        // up, after `pre_tool_use` for the same call. It runs before the
+        // answer is known, so it marks the wait and not its outcome:
+        // approved, `post_tool_use` follows and clears this; denied, nothing
+        // follows until the user says what to do instead — which is still a
+        // session waiting on them.
+        "permission_request" => Some(A::WaitingPermission),
+        // OpenCode puts its approval dialog on the event bus: `permission.asked`
+        // while it is up, `permission.replied` when the user answers. Nothing
+        // else distinguishes the wait — the session keeps emitting
+        // `session.updated` throughout, exactly as it does while working.
+        // `permission.updated` is the same ask under the name the generated
+        // SDK types still use; the 1.18.15 runtime only emits `.asked`.
+        "permission.asked" | "permission.updated" => Some(A::WaitingPermission),
+        // Same shape for the `question` tool, which asks the user directly
+        // instead of going through the approval layer.
+        "question.asked" => Some(A::WaitingInput),
         // Claude Code's Notification hook: the only place a permission
         // prompt or a pending question surfaces (the session just looks
         // idle otherwise).
@@ -224,6 +250,177 @@ mod tests {
             ("session_end", Exited),
         ] {
             assert_eq!(status_for_event(event), Some(expected), "{event}");
+        }
+    }
+
+    /// Nothing may be declared and then dropped on the floor: every event
+    /// Ariadne asks codex for has to move either the status or the attention,
+    /// or the flag pair is paying a trust prompt for nothing.
+    #[test]
+    fn every_declared_codex_event_is_acted_on() {
+        for event in ariadne_core::codex_hooks::EVENTS {
+            let kind = ariadne_core::codex_hooks::event_kind(event);
+            assert!(
+                status_for_event(&kind).is_some()
+                    || attention_for_event(&kind, &permission_request()).is_some(),
+                "{event} is declared but ingested as a no-op"
+            );
+        }
+    }
+
+    /// A PermissionRequest payload captured from codex 0.147 sitting on an
+    /// approval dialog: the hook runs while the dialog is up, so it carries
+    /// the call it is about and no answer.
+    fn permission_request() -> serde_json::Value {
+        json!({
+            "cwd": "/tmp/worktree",
+            "hook_event_name": "PermissionRequest",
+            "model": "gpt-5.6-sol",
+            "permission_mode": "default",
+            "session_id": "01a01a24-e62e-71c1-ba23-96c62f6acee1",
+            "tool_input": {"command": "touch /tmp/probe"},
+            "tool_name": "Bash",
+            "transcript_path": "/tmp/codex/rollout.jsonl",
+            "turn_id": "01a01a25-610d-7d50-927b-695c137814e7",
+        })
+    }
+
+    /// The whole point of declaring the hook: a codex session sitting on an
+    /// approval dialog is otherwise indistinguishable from one thinking.
+    #[test]
+    fn a_permission_request_means_the_agent_is_blocked_on_the_user() {
+        assert_eq!(
+            attention_for_event("permission_request", &permission_request()),
+            Some(AttentionReason::WaitingPermission)
+        );
+    }
+
+    /// ...and it must not read as liveness. `PreToolUse` fires just before
+    /// it for the same call, so a `Running` mapping here would clear the
+    /// attention the event itself raised.
+    #[test]
+    fn a_permission_request_implies_no_status_change() {
+        assert_eq!(status_for_event("permission_request"), None);
+    }
+
+    /// What takes the flag back down. Approved, codex runs the call and
+    /// reports `post_tool_use`; denied, no tool event follows at all and the
+    /// wait stands until the user's next prompt — which is the truth of it,
+    /// a denied command is a session still waiting to be told what to do.
+    #[test]
+    fn the_events_after_an_approval_clear_the_wait() {
+        for event in ["post_tool_use", "user_prompt_submit"] {
+            assert_eq!(
+                status_for_event(event),
+                Some(SessionStatus::Running),
+                "{event}"
+            );
+            assert_eq!(attention_for_event(event, &json!({})), None, "{event}");
+        }
+    }
+
+    /// A `permission.asked` payload captured off the plugin's own `event`
+    /// hook, running under opencode 1.18.15 with `permission.bash = "ask"`.
+    fn permission_asked() -> serde_json::Value {
+        json!({
+            "id": "per_01a3575b4001aOsIrUVWB44A4e",
+            "sessionID": "ses_fe5cb9641ffeQPvwaIKtSsLAqP",
+            "permission": "bash",
+            "patterns": ["echo hello-from-bash"],
+            "metadata": {"command": "echo hello-from-bash"},
+            "always": ["echo *"],
+            "tool": {
+                "messageID": "msg_01a346a620011crwCE4oJgZDqr",
+                "callID": "call_vt3e3umm",
+            },
+        })
+    }
+
+    /// The reply that followed it in the same run.
+    fn permission_replied() -> serde_json::Value {
+        json!({
+            "sessionID": "ses_fe5cb9641ffeQPvwaIKtSsLAqP",
+            "requestID": "per_01a3575b4001aOsIrUVWB44A4e",
+            "reply": "reject",
+        })
+    }
+
+    /// The whole point of forwarding them: an opencode session sitting on an
+    /// approval dialog emits nothing else that a working one does not.
+    #[test]
+    fn a_permission_ask_means_the_agent_is_blocked_on_the_user() {
+        assert_eq!(
+            attention_for_event("permission.asked", &permission_asked()),
+            Some(AttentionReason::WaitingPermission)
+        );
+        // The name the generated SDK types give the same ask.
+        assert_eq!(
+            attention_for_event("permission.updated", &permission_asked()),
+            Some(AttentionReason::WaitingPermission)
+        );
+        // A question is a wait for an answer, not for an approval.
+        assert_eq!(
+            attention_for_event("question.asked", &json!({"sessionID": "ses_x"})),
+            Some(AttentionReason::WaitingInput)
+        );
+    }
+
+    /// ...and none of them may read as liveness: a `Running` mapping would
+    /// clear the very attention the event raises.
+    #[test]
+    fn an_ask_implies_no_status_change() {
+        for kind in ["permission.asked", "permission.updated", "question.asked"] {
+            assert_eq!(status_for_event(kind), None, "{kind}");
+        }
+    }
+
+    /// What takes the flag back down. Either way the user answered, so the
+    /// agent has control again — allowed it runs the call, rejected it gets
+    /// the refusal as the tool result and keeps going.
+    #[test]
+    fn an_answered_ask_resumes_the_session() {
+        for (kind, payload) in [
+            ("permission.replied", permission_replied()),
+            ("question.replied", json!({"sessionID": "ses_x"})),
+            ("question.rejected", json!({"sessionID": "ses_x"})),
+        ] {
+            assert_eq!(
+                status_for_event(kind),
+                Some(SessionStatus::Running),
+                "{kind}"
+            );
+            assert_eq!(attention_for_event(kind, &payload), None, "{kind}");
+        }
+    }
+
+    /// An approval event carries two ids and the wrong one is first: `id` is
+    /// the permission's. Reading it as the session's would pin the whole
+    /// session to `per_…` and break every resume after it.
+    #[test]
+    fn an_approval_event_yields_the_session_id_and_not_the_permission_id() {
+        assert_eq!(
+            extract_internal_id(AgentKind::Opencode, &permission_asked()).as_deref(),
+            Some("ses_fe5cb9641ffeQPvwaIKtSsLAqP")
+        );
+        assert_eq!(
+            extract_internal_id(AgentKind::Opencode, &permission_replied()).as_deref(),
+            Some("ses_fe5cb9641ffeQPvwaIKtSsLAqP")
+        );
+    }
+
+    /// The mirror of the codex check: every event the plugin is told to
+    /// forward has to earn the round trip.
+    #[test]
+    fn every_forwarded_opencode_event_is_acted_on() {
+        for kind in crate::opencode_plugin::declared_events() {
+            let acted_on = status_for_event(&kind).is_some()
+                || attention_for_event(&kind, &permission_asked()).is_some()
+                // Forwarded for its payload alone: `info.id` is where the
+                // internal session id comes from, and `session.updated`
+                // deliberately maps to no status (it keeps firing after
+                // idle, so `Running` would lie).
+                || kind == "session.updated";
+            assert!(acted_on, "{kind} is forwarded but ingested as a no-op");
         }
     }
 

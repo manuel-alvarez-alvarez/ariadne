@@ -602,6 +602,163 @@ async fn ingested_events_raise_and_clear_session_attention() {
     assert_eq!(ended.status(), SessionStatus::Exited);
 }
 
+/// OpenCode's approval dialog reaches Ariadne as `permission.asked` on the
+/// plugin's event stream — the payloads below are what opencode 1.18.15
+/// actually sent during a run with `permission.bash = "ask"`. The session
+/// looks no different while the dialog is up, so this is the only signal.
+#[tokio::test]
+async fn an_opencode_permission_ask_flags_the_session_as_blocked() {
+    let h = harness().await;
+    let (goal, task) = h.active_goal_with_task().await;
+    let session = h
+        .store
+        .create_session(ariadne_store::NewSession {
+            goal_id: goal.id.clone(),
+            task_id: Some(task.id.clone()),
+            role: Role::Engineer,
+            profile_id: task.engineer_profile_id.clone(),
+            agent_kind: AgentKind::Opencode,
+            model: None,
+            tmux_session: "ariadne-test".into(),
+            worktree_path: Some(PathBuf::from("/tmp/wt").display().to_string()),
+            review_round: None,
+        })
+        .await
+        .unwrap();
+
+    let post = async |kind: &str, payload: serde_json::Value| {
+        let request = post_json(
+            "/internal/agent-events",
+            serde_json::json!({
+                "session_id": session.id,
+                "agent_kind": "opencode",
+                "kind": kind,
+                "payload": payload,
+            }),
+        );
+        let response = h.router.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED, "{kind}");
+    };
+
+    // Working, so the internal id is already known and the flag is down.
+    post(
+        "session.created",
+        serde_json::json!({
+            "sessionID": "ses_fe5cb9641ffeQPvwaIKtSsLAqP",
+            "info": {"id": "ses_fe5cb9641ffeQPvwaIKtSsLAqP", "version": "1.18.15"},
+        }),
+    )
+    .await;
+    let running = h.store.get_session(&session.id).await.unwrap();
+    assert_eq!(running.status(), SessionStatus::Running);
+    assert_eq!(
+        running.internal_session_id.as_deref(),
+        Some("ses_fe5cb9641ffeQPvwaIKtSsLAqP")
+    );
+
+    // The dialog goes up: flagged, and the status is left where it was.
+    post(
+        "permission.asked",
+        serde_json::json!({
+            "id": "per_01a3575b4001aOsIrUVWB44A4e",
+            "sessionID": "ses_fe5cb9641ffeQPvwaIKtSsLAqP",
+            "permission": "bash",
+            "patterns": ["echo hello-from-bash"],
+            "metadata": {"command": "echo hello-from-bash"},
+            "always": ["echo *"],
+            "tool": {"messageID": "msg_01a346a620011crwCE4oJgZDqr", "callID": "call_vt3e3umm"},
+        }),
+    )
+    .await;
+    let flagged = h.store.get_session(&session.id).await.unwrap();
+    assert_eq!(
+        flagged.attention_reason(),
+        Some(AttentionReason::WaitingPermission)
+    );
+    assert_eq!(flagged.status(), SessionStatus::Running);
+    // The permission's own id must not be mistaken for the session's.
+    assert_eq!(
+        flagged.internal_session_id.as_deref(),
+        Some("ses_fe5cb9641ffeQPvwaIKtSsLAqP")
+    );
+
+    // `session.updated` keeps firing while the dialog waits: it must not
+    // look like the agent went back to work.
+    post(
+        "session.updated",
+        serde_json::json!({"info": {"id": "ses_fe5cb9641ffeQPvwaIKtSsLAqP"}}),
+    )
+    .await;
+    assert_eq!(
+        h.store
+            .get_session(&session.id)
+            .await
+            .unwrap()
+            .attention_reason(),
+        Some(AttentionReason::WaitingPermission)
+    );
+
+    // The user answered — rejected, here, which still hands control back.
+    post(
+        "permission.replied",
+        serde_json::json!({
+            "sessionID": "ses_fe5cb9641ffeQPvwaIKtSsLAqP",
+            "requestID": "per_01a3575b4001aOsIrUVWB44A4e",
+            "reply": "reject",
+        }),
+    )
+    .await;
+    let cleared = h.store.get_session(&session.id).await.unwrap();
+    assert_eq!(cleared.attention_reason(), None);
+    assert_eq!(cleared.status(), SessionStatus::Running);
+
+    // A question is the other family: a wait for an answer, cleared by one.
+    post(
+        "question.asked",
+        serde_json::json!({
+            "id": "ask_01a3575b4001aOsIrUVWB44A4f",
+            "sessionID": "ses_fe5cb9641ffeQPvwaIKtSsLAqP",
+        }),
+    )
+    .await;
+    assert_eq!(
+        h.store
+            .get_session(&session.id)
+            .await
+            .unwrap()
+            .attention_reason(),
+        Some(AttentionReason::WaitingInput)
+    );
+    post(
+        "question.replied",
+        serde_json::json!({
+            "sessionID": "ses_fe5cb9641ffeQPvwaIKtSsLAqP",
+            "requestID": "ask_01a3575b4001aOsIrUVWB44A4f",
+            "answers": [],
+        }),
+    )
+    .await;
+    assert_eq!(
+        h.store
+            .get_session(&session.id)
+            .await
+            .unwrap()
+            .attention_reason(),
+        None
+    );
+
+    // An error while a dialog is up must not be traded for the wait, and
+    // neither may clear the other: the flag stands until real work resumes.
+    post("permission.asked", serde_json::json!({"id": "per_2"})).await;
+    post("session.error", serde_json::json!({})).await;
+    let errored = h.store.get_session(&session.id).await.unwrap();
+    assert_eq!(
+        errored.attention_reason(),
+        Some(AttentionReason::AgentError)
+    );
+    assert_eq!(errored.status(), SessionStatus::Running);
+}
+
 /// Claude Code's `Notification` hook is the only signal that an
 /// idle-looking session is actually blocked on the user: it must raise the
 /// right attention reason, survive the `touch_session` of its own ingestion,
