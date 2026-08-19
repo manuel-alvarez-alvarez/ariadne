@@ -84,9 +84,13 @@ pub async fn ingest(
     // this agent. A reviewer's approval dialog after it has voted, or a
     // planner's after the goal left planning, is nobody's to answer — the
     // event is recorded and the status still follows it, only the flag is
-    // withheld.
+    // withheld. A prompt is asked the same about the session itself: a
+    // dialog belongs to a pane, so a late `permission.asked` from a session
+    // already recorded as ended raises nothing (and does not overwrite the
+    // reason it ended with).
     if let Some(reason) = attention_for_event(&req.kind, &req.payload) {
-        if crate::attention::work_is_active(&state.store, &session).await {
+        let answerable = !reason.is_prompt() || session.status().is_live();
+        if answerable && crate::attention::work_is_active(&state.store, &session).await {
             state
                 .store
                 .set_session_attention(&session.id, reason)
