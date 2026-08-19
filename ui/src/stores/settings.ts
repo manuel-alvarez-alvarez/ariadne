@@ -30,6 +30,19 @@ interface SettingsState {
    */
   goalStatusFilter: string
   setGoalStatusFilter: (value: string) => void
+  /**
+   * The two filters the sessions screen was last left with, each spelled the
+   * way its own param spells it: `"failed"` or `"live"` for the status,
+   * `"engineer"` for the role, and `""` for no filter at all.
+   *
+   * Raw params again, for the same reason `goalStatusFilter` is one: the store
+   * has no business knowing what a session status or a role is, and a value
+   * that has aged out of the daemon's vocabulary is dropped where it is read.
+   */
+  sessionStatusFilter: string
+  setSessionStatusFilter: (value: string) => void
+  sessionRoleFilter: string
+  setSessionRoleFilter: (value: string) => void
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -40,12 +53,18 @@ export const useSettingsStore = create<SettingsState>()(
       resetBaseUrl: () => set({ baseUrl: DEFAULT_BASE_URL }),
       goalStatusFilter: "",
       setGoalStatusFilter: (value) => set({ goalStatusFilter: value }),
+      sessionStatusFilter: "",
+      setSessionStatusFilter: (value) => set({ sessionStatusFilter: value }),
+      sessionRoleFilter: "",
+      setSessionRoleFilter: (value) => set({ sessionRoleFilter: value }),
     }),
     {
       name: SETTINGS_STORAGE_KEY,
       partialize: (state) => ({
         baseUrl: state.baseUrl,
         goalStatusFilter: state.goalStatusFilter,
+        sessionStatusFilter: state.sessionStatusFilter,
+        sessionRoleFilter: state.sessionRoleFilter,
       }),
       onRehydrateStorage: () => (state) => {
         if (state) setApiBaseUrl(state.baseUrl)
