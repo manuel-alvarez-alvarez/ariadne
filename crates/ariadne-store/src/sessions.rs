@@ -265,23 +265,6 @@ impl Store {
         self.publish_session_update(id).await
     }
 
-    /// Record the model a launch is using. Called on every launch, fresh or
-    /// resumed: a session resumed after its profile was edited runs with the
-    /// model in effect now, and the row is meant to say so. `None` = no model
-    /// was asked for, i.e. the agent CLI's default.
-    pub async fn set_session_model(&self, id: &str, model: Option<&str>) -> Result<()> {
-        let n = sqlx::query("UPDATE agent_sessions SET model = ? WHERE id = ?")
-            .bind(model)
-            .bind(id)
-            .execute(self.w())
-            .await?
-            .rows_affected();
-        if n == 0 {
-            return Err(not_found("session", id));
-        }
-        self.publish_session_update(id).await
-    }
-
     pub async fn touch_session(&self, id: &str) -> Result<()> {
         let n = sqlx::query("UPDATE agent_sessions SET last_activity_at = ? WHERE id = ?")
             .bind(now())
