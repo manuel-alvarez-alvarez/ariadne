@@ -11,6 +11,11 @@
  * than leave the view holding a dead one; that is the trade the tabs take, and
  * it is only correct as long as the reconnect actually happens.
  *
+ * Which tab that is comes from `?tab=`, so a link can point at what an agent
+ * reported and a reload comes back on it. The param is shared with the panels
+ * this view is drilled into, which is why a value that is not one of these two
+ * has to read as the terminal rather than as nothing.
+ *
  * And the model: it is null on the wire for a session launched without one,
  * which means the agent CLI chose — a fact about the session, not a blank.
  *
@@ -21,7 +26,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { cleanup, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { MemoryRouter } from "react-router-dom"
+import { MemoryRouter, useLocation } from "react-router-dom"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 
 import type { GoalDto, ProfileDto, SessionDto, TaskDto } from "@/api"
@@ -173,17 +178,27 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-function renderView(session: SessionDto = SESSION) {
+function renderView(session: SessionDto = SESSION, entry = "/goals?goal=g1") {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
   render(
-    <MemoryRouter initialEntries={["/goals?goal=g1"]}>
+    <MemoryRouter initialEntries={[entry]}>
       <QueryClientProvider client={queryClient}>
         <TooltipProvider delay={0}>
+          <CurrentSearch />
           <SessionDetailView session={session} />
         </TooltipProvider>
       </QueryClientProvider>
     </MemoryRouter>,
   )
+}
+
+/** The search string the view has left behind, for the tab it keeps there. */
+function CurrentSearch() {
+  return <output data-testid="search">{useLocation().search}</output>
+}
+
+function currentSearch(): URLSearchParams {
+  return new URLSearchParams(screen.getByTestId("search").textContent ?? "")
 }
 
 /** The value of a summary row, by the label above it. */
@@ -216,6 +231,28 @@ it("opens on the terminal, with the activity feed a tab away", async () => {
   // snapshot, so the terminal is as functional as it was before the detour.
   expect(connections).toHaveLength(2)
   expect(connections[1]?.closed).toBe(false)
+})
+
+it("takes its tab from the URL, and puts a switch back into it", async () => {
+  const user = userEvent.setup()
+  renderView(SESSION, "/sessions?session=s1&tab=activity")
+
+  // The link opened on the feed, so the emulator was never mounted at all.
+  await screen.findByText("No agent events yet")
+  expect(connections).toHaveLength(0)
+
+  await user.click(screen.getByRole("tab", { name: "Terminal" }))
+
+  await waitFor(() => expect(currentSearch().get("tab")).toBe("terminal"))
+  expect(connections).toHaveLength(1)
+})
+
+it("falls back to the terminal for a tab that is not one of its own", () => {
+  // `?tab=sessions` is what a goal's or a task's panel leaves on the URL while
+  // it is drilled into a session — this strip is not the one it names.
+  renderView(SESSION, "/goals?goal=g1&tab=sessions&session=s1")
+
+  expect(screen.getByRole("tab", { name: "Terminal" }).getAttribute("data-active")).not.toBeNull()
 })
 
 it("shows the model the session was launched with", async () => {
