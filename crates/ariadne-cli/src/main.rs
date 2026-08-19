@@ -44,6 +44,11 @@ struct Cli {
 enum Command {
     /// Show client and daemon version
     Version,
+    /// Check the installation: agents, tools, config, daemon and service
+    ///
+    /// Reports what this shell sees and what the daemon sees — they differ
+    /// more often than one would like — and exits 1 when anything failed.
+    Doctor,
     /// Generate shell completions (bash, zsh, fish, ...) to stdout
     Completions { shell: clap_complete::Shell },
     /// Manage the ariadned daemon
@@ -215,7 +220,7 @@ fn main() -> ExitCode {
     };
     let format = cli.format;
     match block_on(cli) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(code) => code,
         Err(e) => {
             error::report(&e, format);
             ExitCode::FAILURE
@@ -223,20 +228,26 @@ fn main() -> ExitCode {
     }
 }
 
-fn block_on(cli: Cli) -> Result<()> {
+fn block_on(cli: Cli) -> Result<ExitCode> {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
         .block_on(run(cli))
 }
 
-async fn run(cli: Cli) -> Result<()> {
+async fn run(cli: Cli) -> Result<ExitCode> {
     // Commands talk to an already-running daemon, so an explicit endpoint wins
     // here. `daemon start` is the exception and resolves its own target from
     // the home it spawns the daemon in.
     let client = Client::resolve(cli.endpoint.as_deref(), None);
 
-    match cli.command {
+    // `doctor` is the one command whose verdict is an exit code rather than a
+    // failure: a report that found something is a report, not an error.
+    if let Command::Doctor = cli.command {
+        return commands::doctor::run(&client, cli.format).await;
+    }
+
+    let outcome = match cli.command {
         Command::Version => commands::version(&client, cli.format).await,
         Command::Completions { shell } => {
             clap_complete::generate(shell, &mut command(), "ariadne", &mut std::io::stdout());
@@ -267,7 +278,10 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Mcp {
             command: McpCommand::Serve,
         } => commands::mcp::serve().await,
-    }
+        // Handled above: it is the only command with an exit code of its own.
+        Command::Doctor => unreachable!(),
+    };
+    outcome.map(|()| ExitCode::SUCCESS)
 }
 
 #[cfg(test)]
@@ -293,6 +307,7 @@ mod tests {
         ("daemon start", true),
         ("daemon status", true),
         ("daemon stop", true),
+        ("doctor", true),
         ("goal attach", false),
         ("goal cancel", true),
         ("goal create", true),

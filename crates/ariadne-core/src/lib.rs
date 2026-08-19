@@ -152,6 +152,16 @@ impl AgentKind {
         }
     }
 
+    /// The executable this agent CLI is launched as, and the name anything
+    /// looking for it on a `PATH` searches for.
+    pub fn binary(&self) -> &'static str {
+        match self {
+            AgentKind::ClaudeCode => "claude",
+            AgentKind::Codex => "codex",
+            AgentKind::Opencode => "opencode",
+        }
+    }
+
     /// The argv flags Ariadne launches this agent CLI with out of the box:
     /// the permission bypass each one spells its own way, so an agent working
     /// unattended in a throwaway worktree is not left waiting at a prompt.

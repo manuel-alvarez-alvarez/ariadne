@@ -17,6 +17,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use ariadne_api::agents::{AgentConfigDto, UpdateAgentConfigRequest};
+use ariadne_api::doctor::DaemonReportDto;
 use ariadne_api::error::ErrorBody;
 use ariadne_api::profiles::{
     ProfileDto, ProfilePromptDto, RolePromptDefaultsDto, UpdateProfilePromptRequest,
@@ -211,6 +212,14 @@ impl Client {
 
     pub async fn version(&self) -> Result<VersionResponse, ClientError> {
         self.request(Method::GET, "/v1/version", None::<&()>).await
+    }
+
+    /// What the daemon's own environment looks like: the binaries on its
+    /// PATH, and the state of the directories it works in. The daemon spawns
+    /// the sessions, so this — not the caller's shell — is what decides
+    /// whether an agent can be launched.
+    pub async fn daemon_report(&self) -> Result<DaemonReportDto, ClientError> {
+        self.get_json("/v1/doctor").await
     }
 
     /// How each agent CLI is launched: its flags as they stand, and the

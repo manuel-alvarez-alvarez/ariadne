@@ -3,6 +3,7 @@
 mod agents;
 mod auth;
 pub(crate) mod convert;
+mod doctor;
 mod error;
 mod events;
 mod goals;
@@ -78,6 +79,7 @@ impl AppState {
     paths(
         health,
         version,
+        doctor::report,
         agents::list, agents::update,
         profiles::create, profiles::list, profiles::get, profiles::update, profiles::delete,
         profiles::list_prompts, profiles::update_prompt, profiles::reset_prompt,
@@ -124,6 +126,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/v1/health", get(health))
         .route("/v1/version", get(version))
+        .route("/v1/doctor", get(doctor::report))
         // agents
         .route("/v1/agents", get(agents::list))
         .route("/v1/agents/{kind}", put(agents::update))
