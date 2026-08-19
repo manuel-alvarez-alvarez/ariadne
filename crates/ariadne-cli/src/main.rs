@@ -111,16 +111,6 @@ enum Command {
         #[command(subcommand)]
         command: McpCommand,
     },
-    /// Become the agent a daemon-written spawn plan describes (tmux runs this)
-    ///
-    /// The plan carries the argv, the environment and the working directory,
-    /// none of which would fit in a tmux command line — see
-    /// `ariadne_core::spawn_plan`.
-    #[command(hide = true, name = "_spawn")]
-    Spawn {
-        /// Path to the JSON spawn plan in the session's run dir
-        plan: PathBuf,
-    },
     /// Report an agent hook event to the daemon (called by hooks, fail-safe)
     #[command(hide = true, name = "agent-event")]
     AgentEvent {
@@ -183,7 +173,6 @@ const NO_FORMAT: &[&[&str]] = &[
     &["setup"],
     &["mcp"],
     &["agent-event"],
-    &["_spawn"],
     &["daemon", "logs"],
     &["goal", "attach"],
     &["task", "attach"],
@@ -230,17 +219,6 @@ fn main() -> ExitCode {
         Err(e) => e.exit(),
     };
     let format = cli.format;
-
-    // `_spawn` does not talk to the daemon: it *becomes* the agent. It is
-    // handled before the runtime starts because what tmux is watching is this
-    // process, and it has to reach its `exec` as itself — no worker threads
-    // and no tokio between the pane and the agent.
-    if let Command::Spawn { plan } = &cli.command {
-        let Err(e) = commands::spawn::exec_plan(plan);
-        error::report(&e, format);
-        return ExitCode::FAILURE;
-    }
-
     match block_on(cli) {
         Ok(code) => code,
         Err(e) => {
@@ -302,8 +280,6 @@ async fn run(cli: Cli) -> Result<ExitCode> {
         } => commands::mcp::serve().await,
         // Handled above: it is the only command with an exit code of its own.
         Command::Doctor => unreachable!(),
-        // Handled in `main`, before the runtime it must not run inside.
-        Command::Spawn { .. } => unreachable!(),
     };
     outcome.map(|()| ExitCode::SUCCESS)
 }
@@ -323,7 +299,6 @@ mod tests {
     /// what it prints. Hidden internal commands are in here too: `--format`
     /// is global, so it reaches them whether or not anyone meant it to.
     const LEAVES: &[(&str, bool)] = &[
-        ("_spawn", false),
         ("agent-event", false),
         ("attach", false),
         ("attention", true),
@@ -416,27 +391,6 @@ mod tests {
                     .unwrap_or_else(|| panic!("NO_FORMAT names no command: {path:?}"));
             }
         }
-    }
-
-    /// `_spawn` is tmux's end of a launch, not a command anyone types: it
-    /// takes the plan path and stays out of the help.
-    #[test]
-    fn the_spawn_command_takes_a_plan_path_and_is_hidden() {
-        let Command::Spawn { plan } = parse(&["ariadne", "_spawn", "/run/s/spawn.json"]).command
-        else {
-            panic!("_spawn");
-        };
-        assert_eq!(plan, PathBuf::from("/run/s/spawn.json"));
-        assert!(
-            try_parse(&["ariadne", "_spawn"]).is_err(),
-            "a launch with no plan is a usage error"
-        );
-        let mut cmd = command();
-        cmd.build();
-        assert!(
-            cmd.find_subcommand("_spawn").expect("_spawn").is_hide_set(),
-            "_spawn is advertised in the help"
-        );
     }
 
     /// `--host` was the documented spelling before `--endpoint`; scripts that

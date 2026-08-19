@@ -4,6 +4,65 @@
  */
 
 export interface paths {
+    "/v1/agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every agent kind's flags, current and default. */
+        get: operations["agents_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{kind}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Replace an agent kind's flags.
+         * @description The list is replaced whole, and an empty one is a legitimate answer.
+         *     Restoring the defaults is this same call with the `default_flags` the GET
+         *     hands out — nothing else to learn, and nothing that can drift from them.
+         */
+        put: operations["agents_update"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/doctor": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What the daemon sees: its PATH, the binaries on it, and the state of the
+         *     directories it works in.
+         */
+        get: operations["system_report"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/events": {
         parameters: {
             query?: never;
@@ -740,6 +799,18 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description How one agent CLI is launched, shared by every profile that runs on it. */
+        AgentConfigDto: {
+            agent_kind: components["schemas"]["AgentKind"];
+            /**
+             * @description What Ariadne ships for this agent kind: what `extra_flags` was seeded
+             *     with, and what restoring the defaults writes back — a client resets by
+             *     sending these back as `extra_flags`.
+             */
+            default_flags: string[];
+            /** @description Argv flags appended on every spawn and resume of this agent CLI. */
+            extra_flags: string[];
+        };
         AgentEventDto: {
             agent_kind?: string | null;
             created_at: string;
@@ -760,6 +831,22 @@ export interface components {
          * @enum {string}
          */
         AuthorRole: "planner" | "engineer" | "reviewer" | "user" | "system";
+        /** @description A binary as the daemon can — or cannot — find it. */
+        BinaryDto: {
+            agent_kind?: null | components["schemas"]["AgentKind"];
+            /**
+             * @description Executable name as it is looked up on PATH ("claude", "tmux").
+             * @example claude
+             */
+            name: string;
+            /** @description Absolute path, when it was found. */
+            path?: string | null;
+            /**
+             * @description First line of its version output, when it answered in time. A binary
+             *     that is found but does not answer keeps its path and no version.
+             */
+            version?: string | null;
+        };
         CreateGoalRequest: {
             description?: string;
             /**
@@ -783,7 +870,6 @@ export interface components {
         };
         CreateProfileRequest: {
             agent_kind?: null | components["schemas"]["AgentKind"];
-            extra_flags?: string[];
             model?: string | null;
             /** @example rust-engineer */
             name: string;
@@ -829,6 +915,22 @@ export interface components {
             /** @description Reviewer profile ids or names, in review order. At least one. */
             reviewer_profiles: string[];
             title: string;
+        };
+        /** @description The daemon's own environment, as `ariadne doctor` renders it. */
+        DaemonReportDto: {
+            /** @description One entry per [`AgentKind`], in `AgentKind::ALL` order. */
+            agents: components["schemas"]["BinaryDto"][];
+            db: components["schemas"]["PathStateDto"];
+            /** @description Home directory the daemon resolved, and the socket it listens on. */
+            home: string;
+            /** @description The daemon's `PATH`, the one every agent, tmux and git lookup uses. */
+            path?: string | null;
+            socket_path: string;
+            /** @description The other binaries a session needs: tmux and git. */
+            tools: components["schemas"]["BinaryDto"][];
+            /** @example 0.1.0 */
+            version: string;
+            worktree_root: components["schemas"]["PathStateDto"];
         };
         /** @description Payload of the deletion events: the id of the gone entity. */
         DeletedDto: {
@@ -1005,11 +1107,22 @@ export interface components {
             /** @example engineer_briefing */
             kind: string;
         };
+        /** @description A file or directory the daemon depends on. */
+        PathStateDto: {
+            exists: boolean;
+            path: string;
+            /**
+             * @description Whether the daemon may write it, asked of the kernel (`access(2)`)
+             *     rather than inferred from the permission bits, which say nothing
+             *     about the user the daemon happens to run as. For a path that does not
+             *     exist yet this is its directory's answer: whether it could be created.
+             *     Nothing is written to find out.
+             */
+            writable: boolean;
+        };
         ProfileDto: {
             agent_kind?: null | components["schemas"]["AgentKind"];
             created_at: string;
-            /** @description Extra argv flags appended when spawning the agent CLI. */
-            extra_flags: string[];
             id: string;
             model?: string | null;
             name: string;
@@ -1218,6 +1331,10 @@ export interface components {
             reason?: string | null;
             to: components["schemas"]["TaskStatus"];
         };
+        /** @description Body of `PUT /v1/agents/{kind}`: the whole new flag list, empty included. */
+        UpdateAgentConfigRequest: {
+            extra_flags: string[];
+        };
         /** @description Body of `PUT /v1/profiles/{id}/prompts/{kind}`: the whole new text. */
         UpdateProfilePromptRequest: {
             content: string;
@@ -1229,7 +1346,6 @@ export interface components {
              *     CLI at spawn time). Absent = unchanged.
              */
             agent_kind?: string | null;
-            extra_flags?: string[] | null;
             /**
              * @description New model, or "default" (or empty) to clear it back to the agent's
              *     default. Absent = unchanged.
@@ -1268,6 +1384,78 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    agents_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentConfigDto"][];
+                };
+            };
+        };
+    };
+    agents_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description claude_code, codex or opencode */
+                kind: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateAgentConfigRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentConfigDto"];
+                };
+            };
+            /** @description unknown agent kind */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    system_report: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The daemon's own environment */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DaemonReportDto"];
+                };
+            };
+        };
+    };
     events_list: {
         parameters: {
             query?: {
