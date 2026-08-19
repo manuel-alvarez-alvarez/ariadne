@@ -21,7 +21,7 @@ mod tests {
 
     use ariadne_api::sessions::SessionListQuery;
     use ariadne_api::tasks::TaskListQuery;
-    use ariadne_core::TaskStatus;
+    use ariadne_core::{SessionStatus, TaskStatus};
 
     #[test]
     fn task_list_query_empty_has_no_separators() {
@@ -81,5 +81,19 @@ mod tests {
     fn session_list_query_empty_has_no_separators() {
         let path = query_path("/v1/sessions", &SessionListQuery::default()).unwrap();
         assert_eq!(path, "/v1/sessions");
+    }
+
+    /// `session ls --status failed` is answered by the daemon, not filtered
+    /// once the whole list is here.
+    #[test]
+    fn session_list_query_status_uses_wire_spelling() {
+        let query = SessionListQuery {
+            status: Some(SessionStatus::Failed),
+            ..SessionListQuery::default()
+        };
+        assert_eq!(
+            query_path("/v1/sessions", &query).unwrap(),
+            "/v1/sessions?status=failed"
+        );
     }
 }

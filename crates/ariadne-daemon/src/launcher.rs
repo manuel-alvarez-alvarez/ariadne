@@ -313,7 +313,50 @@ impl Launcher {
             .spawn_ctx(session, cwd, &profile, system_prompt, initial_prompt)
             .await?;
         let plan = adapter_for(session.agent_kind()).plan_spawn(&ctx)?;
-        self.launch(session, plan).await
+        self.launch(session, plan).await?;
+        self.clear_superseded_attention(session).await;
+        Ok(())
+    }
+
+    /// Drop the attention carried by the sessions this fresh one replaces.
+    ///
+    /// A session that ended needing the user keeps saying so until something
+    /// is done about it, and starting its replacement is that something — but
+    /// only once the replacement is actually up: a spawn that dies on the way
+    /// leaves the old row flagged, which is what the flag is for. Resumes take
+    /// the other road (`restart_session` clears the row it relaunches); this
+    /// is for the fresh spawn that supersedes a row instead of reviving it.
+    ///
+    /// "Replaces" is the identity a spawn is refused for: the role on this
+    /// goal and task, and for a reviewer the profile too, since a task's
+    /// reviewers are siblings that only their profile tells apart.
+    async fn clear_superseded_attention(&self, session: &AgentSession) {
+        let Ok(siblings) = self
+            .store
+            .list_sessions(SessionFilter {
+                goal_id: Some(session.goal_id.clone()),
+                task_id: session.task_id.clone(),
+                ..Default::default()
+            })
+            .await
+        else {
+            return;
+        };
+        for previous in siblings {
+            if previous.id != session.id
+                && previous.task_id == session.task_id
+                && previous.role() == session.role()
+                && (previous.role() != Role::Reviewer || previous.profile_id == session.profile_id)
+                && previous.attention_reason().is_some()
+            {
+                tracing::info!(
+                    session = %previous.id,
+                    replacement = %session.id,
+                    "superseded by a fresh session, clearing its attention"
+                );
+                let _ = self.store.clear_session_attention(&previous.id).await;
+            }
+        }
     }
 
     /// Spawn the planner for a goal (cwd = first repo).

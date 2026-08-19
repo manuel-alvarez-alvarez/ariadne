@@ -177,7 +177,9 @@ ariadne task ls --goal <goal-id>
 ariadne task attach <task-id>          # engineer terminal (or --role reviewer)
 ariadne task diff <task-id>            # current branch diff
 ariadne task msg <task-id> "hold on, use the middleware crate instead"
-ariadne session ls                     # every agent session + internal ids
+ariadne session ls                     # live agents + the work each one is on
+ariadne session ls --status failed     # or any one status, --all not needed
+ariadne attention                      # what is waiting for you, across every goal
 ariadne attach <id>                    # session, task or goal id
 ```
 
@@ -193,7 +195,27 @@ ariadne attach <id>                    # session, task or goal id
 | `ariadne goal create\|ls\|inspect\|attach\|messages\|msg\|finalize\|cancel\|rm` | goals |
 | `ariadne task create\|update\|ls\|inspect\|diff\|attach\|logs\|messages\|msg\|reviews\|history\|cancel\|retry` | tasks |
 | `ariadne session ls\|inspect\|logs\|kill` | agent sessions |
+| `ariadne attention` | everything that needs a human, grouped by goal |
 | `ariadne attach <id>` | attach to a session, task or goal id |
+
+`ariadne attention` answers the question the day starts with: what is waiting
+for me? It is the web UI's "Needs attention" strip in the terminal, and it
+lists, per goal, the tasks that failed, came back with changes requested or
+stalled, and the agent sessions that want you. A session is listed with the
+reason the daemon raised for it:
+
+| Reason | What it means |
+|---|---|
+| `waiting for permission` | blocked on a permission or approval prompt |
+| `waiting for input` | it asked a question and is idle until it is answered |
+| `agent error` | the agent reported an error |
+| `disconnected` | its terminal is gone while its work is still active |
+| `stalled` | no activity for too long |
+| `failed` | the agent died without saying why |
+
+The same reason rides along with the session in `ariadne session ls` and
+`ariadne session inspect`, and on its badge in the UI. Both surfaces apply the
+same rules, so they always show the same list.
 
 `ariadne doctor` is the one to run when something is not working: it reports
 the CLI and daemon versions, the home and its `config.toml`, the service
