@@ -796,20 +796,26 @@ fn daemon_env_checks(daemon: Option<&DaemonReportDto>, available: &Availability)
         });
     }
 
+    // `writable: None` is "could not be told without writing something",
+    // which a report does not do — it is not a finding, so it reads as ok.
     checks.push(match (daemon.db.exists, daemon.db.writable) {
-        (true, true) => Check::ok("database", daemon.db.path.clone()),
         (false, _) => Check::warn("database", format!("{} does not exist yet", daemon.db.path)),
-        (true, false) => Check::fail("database", format!("{} is not writable", daemon.db.path))
-            .hint("the daemon cannot record anything it does"),
+        (true, Some(false)) => {
+            Check::fail("database", format!("{} is not writable", daemon.db.path))
+                .hint("the daemon cannot record anything it does")
+        }
+        (true, _) => Check::ok("database", daemon.db.path.clone()),
     });
 
     let root = &daemon.worktree_root;
     checks.push(match (root.exists, root.writable) {
-        (true, true) => Check::ok("worktree root", root.path.clone()),
         (false, _) => Check::fail("worktree root", format!("{} does not exist", root.path))
             .hint("task worktrees are created there; check worktree_root in config.toml"),
-        (true, false) => Check::fail("worktree root", format!("{} is not writable", root.path))
-            .hint("the daemon cannot create task worktrees"),
+        (true, Some(false)) => {
+            Check::fail("worktree root", format!("{} is not writable", root.path))
+                .hint("the daemon cannot create task worktrees")
+        }
+        (true, _) => Check::ok("worktree root", root.path.clone()),
     });
     checks
 }
