@@ -109,7 +109,9 @@ skip it during install with `--no-codex-hooks` (or `--yes`).
 
 The daemon then runs as a user service with restart-on-failure
 (`launchctl bootout gui/$(id -u)/dev.ariadne.daemon` /
-`systemctl --user stop ariadned` to stop it). Completions are **dynamic**: on
+`systemctl --user stop ariadned` to stop it). The install ends with a checkup —
+`ariadne doctor`, below — whose findings are reported and never fail the
+install. Completions are **dynamic**: on
 TAB the shell asks the daemon, so task/goal/session ids and profile names
 complete with live values (annotated with status and title). Other shells:
 `source <(COMPLETE=fish ariadne)` for dynamic, or `ariadne completions
@@ -172,12 +174,23 @@ ariadne attach <id>                    # session, task or goal id
 | Command | Purpose |
 |---|---|
 | `ariadne daemon start\|stop\|status\|logs` | manage `ariadned` |
+| `ariadne doctor` | check the whole installation and say what to fix |
 | `ariadne profile create\|ls\|inspect\|update\|rm` | agent profiles |
 | `ariadne profile prompts` / `profile prompt get\|set\|reset` | the prompts a profile briefs its agents with |
 | `ariadne goal create\|ls\|inspect\|attach\|messages\|msg\|finalize\|cancel\|rm` | goals |
 | `ariadne task create\|update\|ls\|inspect\|diff\|attach\|logs\|messages\|msg\|reviews\|history\|cancel\|retry` | tasks |
 | `ariadne session ls\|inspect\|logs\|kill` | agent sessions |
 | `ariadne attach <id>` | attach to a session, task or goal id |
+
+`ariadne doctor` is the one to run when something is not working: it reports
+the CLI and daemon versions, the home and its `config.toml`, the service
+registration, tmux and git, each coding-agent CLI with its version and flags,
+and every profile whose agent cannot actually be launched. It reports twice
+over — what your shell sees and what the daemon sees — because a daemon
+started by launchd or systemd carries the PATH its service file was written
+with, so an agent installed afterwards can be on your PATH and invisible to
+the process that spawns sessions. It changes nothing, and exits 1 when
+anything is at failure level (warnings alone exit 0).
 
 Every command that prints data takes `--format json` (the ones that hand the
 terminal to another program — `attach`, `daemon logs`, `completions`, `setup` —
