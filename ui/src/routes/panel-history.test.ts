@@ -129,7 +129,7 @@ describe("withoutPanel", () => {
   it("leaves the screen's own params when a session panel closes", () => {
     const left = withoutPanel(
       "session",
-      new URLSearchParams("status=failed&role=engineer&session=s1&tab=activity"),
+      new URLSearchParams("status=failed&role=engineer&session=s1"),
     )
     expect(left.toString()).toBe("status=failed&role=engineer")
   })

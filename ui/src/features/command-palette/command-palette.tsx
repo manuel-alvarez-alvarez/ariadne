@@ -22,6 +22,7 @@ import { defaultFilter, useCommandState } from "cmdk"
 import {
   BotIcon,
   CpuIcon,
+  FolderGit2Icon,
   ListChecksIcon,
   MoonIcon,
   PlusIcon,
@@ -189,12 +190,17 @@ function Hint({ keys, children }: { keys: string; children: ReactNode }) {
   )
 }
 
-/** The screens the palette can jump to, in the sidebar's order. */
+/**
+ * The screens the palette can jump to: every entry the sidebar has, with its
+ * icon and its label, in its order — the palette is the sidebar for people who
+ * do not reach for it (see `@/components/app-sidebar`).
+ */
 const PAGES = [
   { label: "Goals", path: paths.goals(), icon: TargetIcon },
   { label: "Sessions", path: paths.sessions(), icon: RadioTowerIcon },
   { label: "Profiles", path: paths.profiles(), icon: CpuIcon },
   { label: "Agents", path: paths.agents(), icon: BotIcon },
+  { label: "Repositories", path: paths.repositories(), icon: FolderGit2Icon },
 ] as const
 
 /** The entity groups, in the order they are listed when nothing separates them. */
