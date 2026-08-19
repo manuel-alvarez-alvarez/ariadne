@@ -239,15 +239,6 @@ impl Scheduler {
     /// keep asking for the user for ever. Whatever put a flag up, it comes
     /// down once the work it was about stopped being this session's — the
     /// same question the sweep above asks before raising one.
-    ///
-    /// Two ways for that to be true, and a dead agent is the second: a prompt
-    /// is a dialog on a pane, so a session that has ended cannot be waiting
-    /// on an answer whatever its row still says. Retiring a session clears
-    /// the flag as it goes (`set_session_status`); this is what heals the
-    /// rows that were already stale when the daemon started, and it is not
-    /// the same question as the one above — an exited planner of a goal still
-    /// being planned is very much owed, which is what the sweep before this
-    /// one raises as `disconnected`.
     async fn stale_attention_sweep(&self) {
         let Ok(flagged) = self
             .store
@@ -260,17 +251,10 @@ impl Scheduler {
             return;
         };
         for session in flagged {
-            let why = if !session.status().is_live()
-                && session.attention_reason().is_some_and(|r| r.is_prompt())
-            {
-                "the session ended on a prompt nobody can answer"
-            } else if !attention::work_is_active(&self.store, &session).await {
-                "the work moved on"
-            } else {
-                continue;
-            };
-            info!(session = %session.id, role = %session.role, why, "dropping attention");
-            let _ = self.store.clear_session_attention(&session.id).await;
+            if !attention::work_is_active(&self.store, &session).await {
+                info!(session = %session.id, role = %session.role, "work moved on, dropping attention");
+                let _ = self.store.clear_session_attention(&session.id).await;
+            }
         }
     }
 

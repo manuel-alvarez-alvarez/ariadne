@@ -1,11 +1,10 @@
 //! Integration tests for the per-profile prompt endpoints.
 //!
 //! The contract is that every prompt a profile owns is listable, editable with
-//! any text whose `{placeholder}`s its kind can fill in, and restorable to the
-//! exact Rust constant it was seeded from — and that a kind belonging to
-//! another role, or a placeholder nothing would substitute, is refused with a
-//! sentence, not a 500. The role defaults are also readable without a profile,
-//! and a profile can be created straight onto edited prompts.
+//! any text at all, and restorable to the exact Rust constant it was seeded
+//! from — and that a kind belonging to another role is refused with a sentence,
+//! not a 500. The role defaults are also readable without a profile, and a
+//! profile can be created straight onto edited prompts.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -165,103 +164,34 @@ async fn a_planner_lists_only_its_own_prompt() {
     assert_eq!(prompts[0].kind, PromptKind::PlannerBriefing);
 }
 
-/// Dropping placeholders, keeping literal braces, saying almost nothing: what
-/// a briefing says is the editor's business, not the API's.
+/// Any text is accepted: breaking a `{placeholder}` is the editor's business,
+/// not the API's.
 #[tokio::test]
 async fn a_prompt_update_takes_any_content_and_a_reset_restores_the_default() {
     let h = harness().await;
     let reviewer = h.profile("rev", Role::Reviewer).await;
     let uri = format!("/v1/profiles/{}/prompts/reviewer_briefing", reviewer.id);
-    let content = "Review {task_title} and answer {\"verdict\": \"approve\"}.";
 
     let updated: ProfilePromptDto = h
-        .json(put_json(&uri, serde_json::json!({ "content": content })))
+        .json(put_json(
+            &uri,
+            serde_json::json!({ "content": "Review {nothing_that_exists}." }),
+        ))
         .await;
     assert_eq!(updated.kind, PromptKind::ReviewerBriefing);
-    assert_eq!(updated.content, content);
+    assert_eq!(updated.content, "Review {nothing_that_exists}.");
 
     // The edit is what a later read sees.
     let prompts: Vec<ProfilePromptDto> = h
         .json(get(&format!("/v1/profiles/{}/prompts", reviewer.id)))
         .await;
-    assert_eq!(prompts[0].content, content);
+    assert_eq!(prompts[0].content, "Review {nothing_that_exists}.");
 
     let reset: ProfilePromptDto = h.json(post(&format!("{uri}/reset"))).await;
     assert_eq!(
         reset.content,
         default_prompt(Role::Reviewer, PromptKind::ReviewerBriefing).unwrap()
     );
-}
-
-/// A `{token}` the kind has no value for is a 400 naming it and the ones it
-/// could have used — the typo is caught here rather than shipped to an agent
-/// as literal text.
-#[tokio::test]
-async fn a_placeholder_the_kind_cannot_fill_in_is_a_400_naming_it() {
-    let h = harness().await;
-    let engineer = h.profile("eng", Role::Engineer).await;
-    let uri = format!("/v1/profiles/{}/prompts/engineer_briefing", engineer.id);
-
-    let err = h
-        .error(
-            put_json(
-                &uri,
-                serde_json::json!({ "content": "# {task_titel}\n\n{task_description}" }),
-            ),
-            StatusCode::BAD_REQUEST,
-        )
-        .await;
-
-    assert_eq!(err.error.code, "invalid_request");
-    assert!(
-        err.error.message.contains("{task_titel}")
-            && err.error.message.contains("{task_title}")
-            && err.error.message.contains("{dependencies}"),
-        "unhelpful message: {}",
-        err.error.message
-    );
-
-    // The stored prompt is untouched.
-    let prompts: Vec<ProfilePromptDto> = h
-        .json(get(&format!("/v1/profiles/{}/prompts", engineer.id)))
-        .await;
-    assert_eq!(
-        prompts[0].content,
-        default_prompt(Role::Engineer, PromptKind::EngineerBriefing).unwrap()
-    );
-}
-
-/// The same rule on the create route: a profile is never left half-made around
-/// a briefing that would have been unrenderable.
-#[tokio::test]
-async fn a_create_naming_an_unfillable_placeholder_creates_nothing() {
-    let h = harness().await;
-
-    let err = h
-        .error(
-            post_json(
-                "/v1/profiles",
-                serde_json::json!({
-                    "name": "eng",
-                    "role": "engineer",
-                    "system_prompt": "You are eng.",
-                    "prompts": [
-                        { "kind": "changes_requested", "content": "Fix {feedbcak}." }
-                    ],
-                }),
-            ),
-            StatusCode::BAD_REQUEST,
-        )
-        .await;
-
-    assert_eq!(err.error.code, "invalid_request");
-    assert!(
-        err.error.message.contains("{feedbcak}") && err.error.message.contains("{feedback}"),
-        "unhelpful message: {}",
-        err.error.message
-    );
-    let profiles: Vec<ProfileDto> = h.json(get("/v1/profiles")).await;
-    assert!(profiles.iter().all(|p| p.name != "eng"), "{profiles:?}");
 }
 
 /// Editing a prompt kind of another role is a 400 naming the roles involved,

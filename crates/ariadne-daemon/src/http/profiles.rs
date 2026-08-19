@@ -29,8 +29,6 @@ pub struct ProfileListQuery {
     request_body = CreateProfileRequest,
     responses(
         (status = 201, body = ProfileDto),
-        (status = 400, description = "a prompt kind the role does not own, \
-                                      or a placeholder its kind cannot fill in"),
         (status = 409, description = "name already exists")
     ))]
 pub async fn create(
@@ -169,9 +167,8 @@ pub async fn list_prompts(
     Ok(Json(prompts.into_iter().map(profile_prompt_dto).collect()))
 }
 
-/// Replace the text of one prompt. A template may drop every `{placeholder}`
-/// it was seeded with, but not name one this kind has no value for: that token
-/// would reach the agent as literal text, so it is refused here.
+/// Replace the text of one prompt. Any content is accepted, including text
+/// that drops a `{placeholder}`.
 #[utoipa::path(put, path = "/v1/profiles/{id}/prompts/{kind}", tag = "profiles",
     request_body = UpdateProfilePromptRequest,
     params(
@@ -180,8 +177,7 @@ pub async fn list_prompts(
     ),
     responses(
         (status = 200, body = ProfilePromptDto),
-        (status = 400, description = "unknown kind, a kind the profile's role does not own, \
-                                      or a placeholder the kind cannot fill in"),
+        (status = 400, description = "unknown kind, or a kind the profile's role does not own"),
         (status = 404)
     ))]
 pub async fn update_prompt(

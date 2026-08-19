@@ -9,10 +9,7 @@
 //! lenient by construction: an unknown `{token}`, a brace that never closes,
 //! an empty template — all of them render to *something*, and nothing here
 //! returns an error. A profile with a mangled briefing gets a mangled
-//! briefing, never a session that refuses to start. A `{token}` nothing here
-//! fills in is caught where a template is *saved* instead — see
-//! [`PromptKind::validate_template`], whose allowed names are the ones the
-//! briefings below pass.
+//! briefing, never a session that refuses to start.
 
 use ariadne_core::PromptKind;
 use ariadne_store::defaults::default_prompt;
@@ -309,45 +306,6 @@ mod tests {
         assert_eq!(render("{}", &[("", "empty")]), "empty");
         assert_eq!(render("{{{{", &[]), "{{{{");
         assert_eq!(render("{ü}", &[]), "{ü}");
-    }
-
-    /// Save-time validation lets a template name exactly the placeholders
-    /// `PromptKind::placeholders` lists, so every one of them has to be a
-    /// value the briefing here actually passes: a template that saves cleanly
-    /// must never reach an agent with a raw `{token}` in it.
-    #[test]
-    fn every_allowed_placeholder_is_one_a_briefing_fills_in() {
-        let (task, goal, repo) = (task(), goal(), repo());
-        let feedback = vec![("reviewer 01a".to_string(), "Split it.".to_string())];
-        for kind in PromptKind::ALL {
-            let template = kind
-                .placeholders()
-                .iter()
-                .map(|name| format!("{{{name}}}"))
-                .collect::<Vec<_>>()
-                .join("\n");
-            let rendered = match kind {
-                PromptKind::PlannerBriefing => {
-                    planner_briefing(&template, &goal, std::slice::from_ref(&repo))
-                }
-                PromptKind::EngineerBriefing => {
-                    engineer_briefing(&template, &task, &goal, &repo, &[])
-                }
-                PromptKind::ChangesRequested => changes_requested_briefing(&template, &feedback),
-                PromptKind::MergeInstructions => merge_briefing(&template, &task, &repo),
-                PromptKind::ReviewerBriefing => {
-                    reviewer_briefing(&template, &task, &goal, &repo, Some("done"))
-                }
-                PromptKind::ReviewerResume => {
-                    reviewer_resume_briefing(&template, &task, Some("done"))
-                }
-            };
-            assert!(
-                !rendered.contains('{'),
-                "the {} briefing left a placeholder of its own unfilled: {rendered}",
-                kind.as_str()
-            );
-        }
     }
 
     /// The defaults in the database say what the daemon used to say in code:

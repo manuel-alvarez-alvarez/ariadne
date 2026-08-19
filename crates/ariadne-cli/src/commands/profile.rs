@@ -50,9 +50,6 @@ pub enum ProfileCommand {
     /// changes_requested, merge_instructions; reviewer: reviewer_briefing,
     /// reviewer_resume). Whatever is not given starts as the role default.
     ///
-    /// A briefing may use only the `{placeholder}` tokens its kind fills in;
-    /// one that names another is refused, with the allowed ones listed.
-    ///
     /// `ariadne profile prompt` is the other half of the story: it prints,
     /// pipes and resets the prompts of a profile that already exists.
     Create {
@@ -99,9 +96,6 @@ pub enum ProfileCommand {
     /// changes_requested, merge_instructions; reviewer: reviewer_briefing,
     /// reviewer_resume). Both are repeatable and take each kind once; a
     /// prompt nobody names is left exactly as it is.
-    ///
-    /// A briefing may use only the `{placeholder}` tokens its kind fills in;
-    /// one that names another is refused, with the allowed ones listed.
     ///
     /// `ariadne profile prompt` is the other half of the story: it prints,
     /// pipes and resets the prompts a profile already has.
@@ -772,11 +766,9 @@ fn reset_question(profile: &ProfileDto, kinds: &[PromptArg], all: bool) -> Strin
 /// The new text of a prompt: the file that was named, else stdin.
 ///
 /// Whatever that holds is what gets sent — byte for byte, trailing newlines
-/// and all, an empty file included: the CLI is a pipe here and not a censor,
-/// and the text that goes in is the text `prompt get` prints back. What a
-/// briefing may say is the daemon's call — dropping a placeholder is fine,
-/// naming one its kind cannot fill in comes back as an error printed as it
-/// was sent.
+/// and all, an empty file included. The daemon takes any content (a template
+/// that drops a placeholder, an empty one), so the CLI is a pipe here and not
+/// a censor: the text that goes in is the text `prompt get` prints back.
 ///
 /// The one refusal is a terminal on stdin, where nobody piped anything in and
 /// reading it would hang on a person who expected a prompt.

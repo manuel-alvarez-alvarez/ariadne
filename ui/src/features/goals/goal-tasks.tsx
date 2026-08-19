@@ -22,6 +22,8 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { compareByAttention, TaskCard, taskListQueryOptions } from "@/features/tasks"
 
+import { useBoardAttention } from "./attention"
+
 export function GoalTasks({
   goalId,
   onNewTask,
@@ -31,6 +33,10 @@ export function GoalTasks({
   onNewTask?: () => void
 }) {
   const tasks = useQuery(taskListQueryOptions({ goal: goalId }))
+  // The board's own badges, from the board's own sessions query: a card in the
+  // panel says the same thing about a blocked agent as the card in the lane
+  // behind it.
+  const attention = useBoardAttention()
   // What needs a person comes first: the panel is a small window, and the task
   // that is stuck should not be the one below the fold.
   const ordered = useMemo(() => [...(tasks.data ?? [])].sort(compareByAttention), [tasks.data])
@@ -77,7 +83,7 @@ export function GoalTasks({
     <ul className="flex flex-col gap-2">
       {ordered.map((task) => (
         <li key={task.id}>
-          <TaskCard task={task} showStatus />
+          <TaskCard task={task} showStatus attention={attention.byTask.get(task.id)} />
         </li>
       ))}
     </ul>
