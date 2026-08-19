@@ -12,7 +12,11 @@
 
 import { useSearchParams } from "react-router-dom"
 
-/** The param {@link paths.profile} carries, read by the profiles screen. */
+/**
+ * Which profile row is expanded, on the profiles screen: what
+ * {@link paths.profile} points at, and where that screen keeps the expansion
+ * it is showing.
+ */
 export const PROFILE_EXPAND_PARAM = "expand"
 
 export const paths = {
@@ -24,6 +28,9 @@ export const paths = {
    * The profiles screen, opened on one profile: a row expands in place instead
    * of having a page of its own, so the link asks the screen to expand it and
    * scroll to it (see `features/profiles/profiles-page.tsx`).
+   *
+   * It carries no `?role=`, which is what keeps the row it names out of the
+   * role tab that happened to be up when the link was followed.
    */
   profile: (profileId: string) => `/profiles?${PROFILE_EXPAND_PARAM}=${profileId}`,
   /**

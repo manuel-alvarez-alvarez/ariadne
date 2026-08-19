@@ -1,13 +1,15 @@
 // @vitest-environment jsdom
 
 /**
- * The one thing on this screen that is not the daemon's: `?expand=<id>`, the
- * link the command palette follows when a profile is picked.
+ * The one thing on this screen that is not the daemon's: its view state, which
+ * lives in the URL — `?expand=<id>`, the link the command palette follows when
+ * a profile is picked, and `?role=`, the tab strip over the table.
  *
- * Rendered rather than unit-tested because what makes it work is the screen's
- * own state — the role tab is React state that a same-route navigation does not
- * touch, so a pick made while a tab is up has to widen the list back to All or
- * the row that was asked for never mounts. Only the mounted screen shows that.
+ * Rendered rather than unit-tested because what is being checked is the round
+ * trip: a navigation goes in, and what the table shows comes out. That covers
+ * the two rules the params carry — a pick lands on an unfiltered list, since
+ * a link has an id and no role; and an expansion is a history step, so Back
+ * closes the row it opened — neither of which is visible from the params alone.
  *
  * jsdom is asked for by this file alone (the docblock above): every other test
  * in the app is pure and has no business paying for a DOM.
@@ -16,11 +18,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { cleanup, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { MemoryRouter, useNavigate } from "react-router-dom"
+import { MemoryRouter, useLocation, useNavigate } from "react-router-dom"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { ModelDto, ProfileDto } from "@/api"
-import { paths } from "@/routes/paths"
+import { PROFILE_EXPAND_PARAM, paths } from "@/routes/paths"
 
 import { ProfilesPage } from "./profiles-page"
 
@@ -96,14 +98,26 @@ function stubDaemon(profiles: ProfileDto[]) {
   })
 }
 
-/** The screen, with something next to it that navigates the way the palette does. */
-function renderScreen() {
-  function PickFromPalette() {
+/**
+ * The screen, with the two things around it a URL-driven screen needs to be
+ * tested against: something that navigates the way the command palette does
+ * (and back, the way the window's own Back button does), and the search string
+ * the screen has left behind.
+ */
+function renderScreen(entry: string = paths.profiles()) {
+  function Harness() {
     const navigate = useNavigate()
+    const location = useLocation()
     return (
-      <button type="button" onClick={() => void navigate(paths.profile(ENGINEER.id))}>
-        pick Builder
-      </button>
+      <>
+        <button type="button" onClick={() => void navigate(paths.profile(ENGINEER.id))}>
+          pick Builder
+        </button>
+        <button type="button" onClick={() => void navigate(-1)}>
+          go back
+        </button>
+        <output data-testid="search">{location.search}</output>
+      </>
     )
   }
 
@@ -111,13 +125,18 @@ function renderScreen() {
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   })
   return render(
-    <MemoryRouter initialEntries={[paths.profiles()]}>
+    <MemoryRouter initialEntries={[entry]}>
       <QueryClientProvider client={queryClient}>
-        <PickFromPalette />
+        <Harness />
         <ProfilesPage />
       </QueryClientProvider>
     </MemoryRouter>,
   )
+}
+
+/** What the screen has put in the URL, as the harness above reports it. */
+function currentSearch(): string {
+  return screen.getByTestId("search").textContent ?? ""
 }
 
 beforeEach(() => {
@@ -161,7 +180,7 @@ describe("ProfilesPage, on ?expand=", () => {
     expect(screen.getByRole("tab", { name: "All", selected: true })).toBeDefined()
   })
 
-  it("takes the param back off the URL, so closing the row stays closed", async () => {
+  it("takes the param off the URL when the row is closed, so it stays closed", async () => {
     const user = userEvent.setup()
     renderScreen()
     await screen.findByRole("button", { name: "Builder" })
@@ -175,6 +194,52 @@ describe("ProfilesPage, on ?expand=", () => {
         "false",
       )
     })
+    expect(currentSearch()).toBe("")
+  })
+
+  it("walks expansions with Back, since each one is a history step", async () => {
+    const user = userEvent.setup()
+    renderScreen()
+    await screen.findByRole("button", { name: "Builder" })
+
+    await user.click(screen.getByRole("button", { name: "pick Builder" }))
+    await screen.findByRole("button", { name: "Builder", expanded: true })
+
+    // Expanding another row from there is a step of its own, so Back is the
+    // way from that one to the profile the link opened.
+    await user.click(screen.getByRole("button", { name: "Critic" }))
+    await screen.findByRole("button", { name: "Critic", expanded: true })
+
+    await user.click(screen.getByRole("button", { name: "go back" }))
+    expect(await screen.findByRole("button", { name: "Builder", expanded: true })).toBeDefined()
+  })
+})
+
+describe("ProfilesPage, on a reload", () => {
+  it("comes back up on the role tab and the row the URL names", async () => {
+    renderScreen(`/profiles?role=reviewer&${PROFILE_EXPAND_PARAM}=${REVIEWER.id}`)
+
+    expect(await screen.findByRole("button", { name: "Critic", expanded: true })).toBeDefined()
+    expect(screen.getByRole("tab", { name: "Reviewer", selected: true })).toBeDefined()
+    // The tab is a real filter, not just a selected trigger: it is what the
+    // list was asked for.
+    expect(screen.queryByRole("button", { name: "Builder" })).toBeNull()
+  })
+
+  it("keeps the picked tab in the URL, and the expansion with it", async () => {
+    const user = userEvent.setup()
+    renderScreen()
+    await screen.findByRole("button", { name: "Critic" })
+
+    await user.click(screen.getByRole("button", { name: "Critic" }))
+    await screen.findByRole("button", { name: "Critic", expanded: true })
+    await user.click(screen.getByRole("tab", { name: "Reviewer" }))
+
+    await waitFor(() => {
+      expect(new URLSearchParams(currentSearch()).get("role")).toBe("reviewer")
+    })
+    expect(new URLSearchParams(currentSearch()).get(PROFILE_EXPAND_PARAM)).toBe(REVIEWER.id)
+    expect(screen.getByRole("button", { name: "Critic", expanded: true })).toBeDefined()
   })
 })
 
