@@ -3,13 +3,15 @@
 /**
  * The repositories screen against a stubbed daemon.
  *
- * The table itself is barely worth a test — three columns straight off the
- * DTO — so what is asserted here is the two places the daemon can say no and
- * the screen has to keep the user somewhere useful: an empty list, which is
- * the normal state of a fresh install, and the 409 that says a goal or a task
- * still holds the repository being removed. That refusal has to stay on
- * screen, and the button that caused it has to stop being clickable, because
- * nothing about clicking it again would change the answer.
+ * The table is three columns straight off the DTO, and the one thing about it
+ * worth asserting is that the path leaves with the user: it is shown cut short
+ * to fit its column, and it is the *whole* path that has to reach the
+ * clipboard. The rest of what is asserted here is the two places the daemon
+ * can say no and the screen has to keep the user somewhere useful: an empty
+ * list, which is the normal state of a fresh install, and the 409 that says a
+ * goal or a task still holds the repository being removed. That refusal has to
+ * stay on screen, and the button that caused it has to stop being clickable,
+ * because nothing about clicking it again would change the answer.
  *
  * jsdom is asked for by this file alone (the docblock above): every other test
  * in the app is pure and has no business paying for a DOM.
@@ -120,12 +122,31 @@ describe("RepositoriesPage", () => {
   it("lists what the daemon holds, and says so where a description is missing", async () => {
     renderScreen()
 
-    expect(await screen.findByText(ARIADNE.path)).toBeDefined()
+    // The paths are truncated in the middle, so each one is on screen as two
+    // halves under the title that carries it whole.
+    expect(await screen.findByTitle(ARIADNE.path)).toBeDefined()
     expect(screen.getByText("main")).toBeDefined()
     expect(screen.getByText("The orchestrator itself.")).toBeDefined()
-    expect(screen.getByText(SANDBOX.path)).toBeDefined()
+    expect(screen.getByTitle(SANDBOX.path)).toBeDefined()
     expect(screen.getByText("no description")).toBeDefined()
     expect(screen.getByText("2 repositories")).toBeDefined()
+  })
+
+  it("copies the whole path, which is longer than what the column shows", async () => {
+    const user = userEvent.setup()
+    renderScreen()
+
+    const [path] = await screen.findAllByRole("button", { name: "Copy repository path" })
+    if (!path) throw new Error("the first row offers no way to copy its path")
+    await user.click(path)
+
+    expect(await navigator.clipboard.readText()).toBe(ARIADNE.path)
+
+    const [branch] = screen.getAllByRole("button", { name: "Copy base branch" })
+    if (!branch) throw new Error("the first row offers no way to copy its base branch")
+    await user.click(branch)
+
+    expect(await navigator.clipboard.readText()).toBe(ARIADNE.base_branch)
   })
 
   it("offers the way out of an empty list, which is where a fresh install starts", async () => {
