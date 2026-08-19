@@ -16,6 +16,7 @@ use ariadne_core::{
 use ariadne_store::{AgentSession, SessionFilter, Store, Task, TaskFilter};
 
 use crate::agents::prompts;
+use crate::attention;
 use crate::launcher::Launcher;
 use crate::sleep::SleepInhibitor;
 
@@ -97,6 +98,7 @@ impl Scheduler {
         if let Some(live) = self.liveness_sweep().await {
             self.sleep.set_active(self.prevent_sleep && live > 0);
         }
+        self.stale_attention_sweep().await;
         let goals = match self.store.list_goals(&[]).await {
             Ok(goals) => goals,
             Err(e) => {
@@ -205,7 +207,7 @@ impl Scheduler {
                         // raised for the user. The flag outlives the session
                         // row's `exited` status on purpose — it stays up until
                         // the agent is resumed or replaced.
-                        if self.work_is_active(&session).await {
+                        if attention::work_is_active(&self.store, &session).await {
                             warn!(session = %session.id, role = %session.role, "agent disconnected with work still active");
                             let _ = self
                                 .store
@@ -229,57 +231,31 @@ impl Scheduler {
         Some(alive)
     }
 
-    /// Whether the work this session was started for is still going.
+    /// Take down attention nobody can act on any more.
     ///
-    /// A pane disappearing is only worth the user's attention when the work is
-    /// waiting on *that* agent, which is a question about its role and not
-    /// only about the status: an engineer's pane going away while its task
-    /// sits under review costs nobody anything — the reviewers are the ones
-    /// working, and the engineer is woken by id when they answer — and a
-    /// reviewer that has already voted is done however long the round runs on.
-    async fn work_is_active(&self, session: &AgentSession) -> bool {
-        match session.role() {
-            // The goal being planned is the planner's whole job.
-            Role::Planner => matches!(
-                self.store
-                    .get_goal(&session.goal_id)
-                    .await
-                    .map(|g| g.status()),
-                Ok(GoalStatus::Planning)
-            ),
-            // Every status the engineer is working in or about to be woken
-            // for; `pending` has no engineer yet, and `under_review` is not
-            // its turn.
-            Role::Engineer => match self.task_of(session).await {
-                Some(task) => matches!(
-                    task.status(),
-                    TaskStatus::Ready
-                        | TaskStatus::InProgress
-                        | TaskStatus::ChangesRequested
-                        | TaskStatus::Approved
-                        | TaskStatus::Merging
-                ),
-                None => false,
-            },
-            // A reviewer is only owed to a round it has not voted in.
-            Role::Reviewer => match self.task_of(session).await {
-                Some(task) if task.status() == TaskStatus::UnderReview => self
-                    .store
-                    .list_reviews(&task.id, Some(task.review_round))
-                    .await
-                    .is_ok_and(|reviews| {
-                        !reviews
-                            .iter()
-                            .any(|r| r.reviewer_profile_id == session.profile_id)
-                    }),
-                _ => false,
-            },
+    /// A flag raised by an agent event is only ever taken down by another
+    /// one, and a session sitting on a dialog emits nothing: an engineer
+    /// blocked on a permission prompt whose task then goes under review would
+    /// keep asking for the user for ever. Whatever put a flag up, it comes
+    /// down once the work it was about stopped being this session's — the
+    /// same question the sweep above asks before raising one.
+    async fn stale_attention_sweep(&self) {
+        let Ok(flagged) = self
+            .store
+            .list_sessions(SessionFilter {
+                attention_only: true,
+                ..Default::default()
+            })
+            .await
+        else {
+            return;
+        };
+        for session in flagged {
+            if !attention::work_is_active(&self.store, &session).await {
+                info!(session = %session.id, role = %session.role, "work moved on, dropping attention");
+                let _ = self.store.clear_session_attention(&session.id).await;
+            }
         }
-    }
-
-    async fn task_of(&self, session: &AgentSession) -> Option<Task> {
-        let task_id = session.task_id.as_deref()?;
-        self.store.get_task(task_id).await.ok()
     }
 
     async fn reconcile_session(&mut self, session_id: &str) {

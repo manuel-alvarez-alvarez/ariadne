@@ -2,6 +2,7 @@
 //! the managers directly. The `ariadned` binary is a thin wrapper.
 
 pub mod agents;
+pub mod attention;
 pub mod bus;
 pub mod config;
 pub mod gitutil;
