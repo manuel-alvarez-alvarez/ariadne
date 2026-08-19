@@ -926,6 +926,34 @@ async fn reviving_a_session_revives_it_in_place() {
     assert_eq!(h.sessions_of(&task).await.len(), 1);
 }
 
+/// In place down to the agent and the model: a revive puts the session back on
+/// its feet exactly as it was launched, so a profile edited in the meantime
+/// does not get to move the conversation somewhere else either.
+#[tokio::test]
+async fn a_revive_keeps_the_agent_and_model_the_session_was_launched_with() {
+    let h = harness().await;
+    let (task, _reviewer) = h.task_under_review_on(Some("opus")).await;
+    let session = h.launcher.spawn_engineer(&task.id).await.unwrap();
+    h.launcher.kill_session(&session.id).await.unwrap();
+
+    h.set_agent_and_model(
+        &task.engineer_profile_id,
+        Some(AgentKind::Codex),
+        Some("sonnet"),
+    )
+    .await;
+
+    let revived = h.launcher.revive_session(&session.id, None).await.unwrap();
+    assert_eq!(revived.id, session.id, "the same session, revived");
+    assert_eq!(revived.agent_kind(), AgentKind::ClaudeCode);
+    assert_eq!(revived.model.as_deref(), Some("opus"));
+    let argv = h.spawn_plan(&revived.id).argv.join(" ");
+    assert!(
+        argv.contains("--model opus"),
+        "the revive re-read the profile: {argv}"
+    );
+}
+
 /// Nothing to resume from: an engineer session that never reported an agent id
 /// is not a conversation, so it is left alone and a fresh spawn is what runs
 /// (which fails here for want of a git repo — the point is the path taken).
