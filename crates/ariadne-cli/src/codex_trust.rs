@@ -1,12 +1,13 @@
 //! What codex still trusts of Ariadne's hook declaration.
 //!
 //! The declaration ([`ariadne_core::codex_hooks`]) travels with every spawned
-//! session and codex runs none of it until the user has trusted it. Trust is
-//! granted per event and keyed on a synthetic path, so it survives every
-//! later session — and survives an Ariadne upgrade that *adds* an event, at
-//! which point the six old hooks keep reporting and the new one silently does
-//! not. Codex asks about it at the start of the next session, in a TUI nobody
-//! is watching.
+//! session, and codex does not quietly skip what it has not been trusted
+//! with: it stops the session on its "Hooks need review" prompt before the
+//! first turn, bypass flags and all. Trust is granted per event and keyed on
+//! a synthetic path, so it survives every later session — and survives an
+//! Ariadne upgrade that *adds* an event, which is the dangerous part: the
+//! verdicts already given still stand, and the one new hook takes every
+//! session down to that prompt, at a start nobody is watching.
 //!
 //! So it is read back here, out of codex's own config, and reported by
 //! `ariadne doctor` and by `ariadne setup codex-hooks`. Nothing is written:
@@ -69,9 +70,10 @@ impl Trust {
         self.untrusted.is_empty()
     }
 
-    /// Some hooks report and some do not — the shape an upgrade that added an
-    /// event leaves behind, and the one worth naming, because everything
-    /// looks fine until the new hook is the one that mattered.
+    /// Some events have a verdict and some do not — the shape an upgrade that
+    /// added one leaves behind, and the one worth naming on its own: nothing
+    /// else about the installation looks wrong, and the fix is a command the
+    /// user has already run once and has no reason to think about again.
     pub fn is_stale(&self) -> bool {
         !self.trusted.is_empty() && !self.untrusted.is_empty()
     }

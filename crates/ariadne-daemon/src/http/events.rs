@@ -143,10 +143,12 @@ fn attention_for_event(
         // OpenCode reports a failed turn (API error, aborted tool run) here;
         // the session itself stays alive, so only attention is raised.
         "session.error" => Some(A::AgentError),
-        // Codex's PermissionRequest hook fires as it is about to ask the user
-        // to approve a command. It runs before the answer is known, so it
-        // marks the wait, not its outcome: whichever way the user answers,
-        // the tool call that follows reports `post_tool_use` and clears this.
+        // Codex's PermissionRequest hook fires as it puts the approval dialog
+        // up, after `pre_tool_use` for the same call. It runs before the
+        // answer is known, so it marks the wait and not its outcome:
+        // approved, `post_tool_use` follows and clears this; denied, nothing
+        // follows until the user says what to do instead — which is still a
+        // session waiting on them.
         "permission_request" => Some(A::WaitingPermission),
         // Claude Code's Notification hook: the only place a permission
         // prompt or a pending question surfaces (the session just looks
@@ -247,18 +249,20 @@ mod tests {
         }
     }
 
-    /// A PermissionRequest payload as codex 0.147 sends it: the hook runs
-    /// while the approval dialog is going up, so it carries the call it is
-    /// about and no answer.
+    /// A PermissionRequest payload captured from codex 0.147 sitting on an
+    /// approval dialog: the hook runs while the dialog is up, so it carries
+    /// the call it is about and no answer.
     fn permission_request() -> serde_json::Value {
         json!({
-            "session_id": "01a00b36-1234-7890-abcd-ef0123456789",
-            "transcript_path": "/Users/me/.codex/sessions/rollout.jsonl",
             "cwd": "/tmp/worktree",
             "hook_event_name": "PermissionRequest",
+            "model": "gpt-5.6-sol",
             "permission_mode": "default",
-            "tool_name": "shell",
-            "turn_id": "01a00b36-4444-7890-abcd-ef0123456789",
+            "session_id": "01a01a24-e62e-71c1-ba23-96c62f6acee1",
+            "tool_input": {"command": "touch /tmp/probe"},
+            "tool_name": "Bash",
+            "transcript_path": "/tmp/codex/rollout.jsonl",
+            "turn_id": "01a01a25-610d-7d50-927b-695c137814e7",
         })
     }
 
@@ -280,15 +284,20 @@ mod tests {
         assert_eq!(status_for_event("permission_request"), None);
     }
 
-    /// Approved or denied, the tool call that follows reports as usual and
-    /// takes the flag back down — attention marks the wait, not the verdict.
+    /// What takes the flag back down. Approved, codex runs the call and
+    /// reports `post_tool_use`; denied, no tool event follows at all and the
+    /// wait stands until the user's next prompt — which is the truth of it,
+    /// a denied command is a session still waiting to be told what to do.
     #[test]
-    fn the_tool_call_after_an_approval_clears_the_wait() {
-        assert_eq!(
-            status_for_event("post_tool_use"),
-            Some(SessionStatus::Running)
-        );
-        assert_eq!(attention_for_event("post_tool_use", &json!({})), None);
+    fn the_events_after_an_approval_clear_the_wait() {
+        for event in ["post_tool_use", "user_prompt_submit"] {
+            assert_eq!(
+                status_for_event(event),
+                Some(SessionStatus::Running),
+                "{event}"
+            );
+            assert_eq!(attention_for_event(event, &json!({})), None, "{event}");
+        }
     }
 
     #[test]
