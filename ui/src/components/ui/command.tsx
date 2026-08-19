@@ -22,6 +22,10 @@ import { cn } from "@/lib/utils"
  *   wires `aria-labelledby` from the popup's own subtree;
  * - the input is a plain bordered row rather than the `input-group` primitive,
  *   which the palette is the only thing that would have pulled in.
+ *
+ * The palette also sits a quarter of the way down instead of dead center. It
+ * gets there with a top margin, not a `top`/`translate` pair, so the popup
+ * keeps the transform-free positioning `DialogContent` centers with.
  */
 
 function Command({ className, ...props }: React.ComponentProps<typeof CommandPrimitive>) {
@@ -54,7 +58,7 @@ function CommandDialog({
   return (
     <Dialog {...props}>
       <DialogContent
-        className={cn("top-1/4 translate-y-0 overflow-hidden rounded-xl p-0", className)}
+        className={cn("mt-[25vh] overflow-hidden rounded-xl p-0", className)}
         showCloseButton={showCloseButton}
       >
         <DialogHeader className="sr-only">
