@@ -166,6 +166,9 @@ fn opencode_spawn_plan() {
     assert!(
         plan.argv.contains(&"--agent".to_string()) && plan.argv.contains(&"ariadne".to_string())
     );
+    // Autonomy rides on the configured flags, like the other two agents.
+    assert!(plan.argv.contains(&"--auto".to_string()));
+    assert!(plan.argv.contains(&"--extra".to_string()));
 
     // Config injected via env, not flags.
     let config_path = plan
@@ -176,7 +179,12 @@ fn opencode_spawn_plan() {
         .expect("OPENCODE_CONFIG set");
     let config: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+    // Catch-all allow first, then back go the denies OpenCode ships: last
+    // matching rule wins, so nothing is left asking a human.
     assert_eq!(config["permission"]["*"], "allow");
+    assert_eq!(config["permission"]["question"], "deny");
+    assert_eq!(config["permission"]["plan_enter"], "deny");
+    assert_eq!(config["permission"]["plan_exit"], "deny");
     assert_eq!(config["agent"]["ariadne"]["prompt"], "SYSTEM PROMPT");
     // Model without provider prefix is skipped (opencode wants provider/model).
     assert!(config["agent"]["ariadne"].get("model").is_none());
@@ -197,6 +205,7 @@ fn opencode_spawn_plan() {
         .unwrap();
     let joined = plan.argv.join(" ");
     assert!(joined.contains("--session ses_1") && joined.contains("--prompt apply feedback"));
+    assert!(plan.argv.contains(&"--auto".to_string()));
 }
 
 #[test]
@@ -226,6 +235,7 @@ fn the_adapters_hardcode_no_bypass_flag() {
             AgentKind::Codex,
             "--dangerously-bypass-approvals-and-sandbox",
         ),
+        (AgentKind::Opencode, "--auto"),
     ] {
         let bare = ctx_with_flags(dir.path().into(), vec![]);
         let plan = adapter_for(kind).plan_spawn(&bare).unwrap();
