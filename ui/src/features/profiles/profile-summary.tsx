@@ -8,9 +8,9 @@
  * model an agent is running is the question those mentions are actually there
  * to answer, so they answer it here, once.
  *
- * The name keeps the id on the clipboard ({@link ProfileName}); the two facts
- * after it are quiet secondary text, and the whole line truncates, since it
- * sits in table cells and 48rem panels.
+ * The name links to the profile ({@link ProfileName}); the two facts after it
+ * are quiet secondary text, and the whole line truncates, since it sits in
+ * table cells and 48rem panels.
  *
  * A profile is editable, so what a *session* runs is not necessarily what its
  * profile says today: a session records the agent kind and the model it was
