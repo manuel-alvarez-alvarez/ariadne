@@ -17,6 +17,7 @@ import { PencilIcon } from "lucide-react"
 import { useState } from "react"
 
 import { type AgentConfigDto, ApiError } from "@/api"
+import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { PageHeader } from "@/components/page-header"
 import { Badge } from "@/components/ui/badge"
@@ -31,6 +32,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { AGENT_KIND_LABELS } from "@/lib/labels"
+import { plural } from "@/lib/plural"
 
 import { AgentFlagsDialog } from "./agent-flags-dialog"
 import { sameFlags } from "./agent-flags-values"
@@ -57,6 +59,10 @@ export function AgentsPage() {
         title="Agents"
         description="The coding-agent CLIs Ariadne spawns sessions with. The flags here are appended to every launch of that agent, whichever profile is running on it."
       />
+
+      {configs.data ? (
+        <p className="text-sm text-muted-foreground">{plural(configs.data.length, "agent")}</p>
+      ) : null}
 
       {configs.isError ? (
         <ErrorState
@@ -86,6 +92,12 @@ export function AgentsPage() {
             <TableBody>
               {configs.isPending ? (
                 <LoadingRows />
+              ) : configs.data.length === 0 ? (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={COLUMN_COUNT} className="p-0">
+                    <NoAgents />
+                  </TableCell>
+                </TableRow>
               ) : (
                 configs.data.map((config) => (
                   <AgentRow
@@ -102,6 +114,17 @@ export function AgentsPage() {
 
       <AgentFlagsDialog open={editOpen} onOpenChange={setEditOpen} config={editing} />
     </div>
+  )
+}
+
+function NoAgents() {
+  return (
+    <EmptyState
+      // The table's own frame is the box here.
+      className="border-0 py-12"
+      title="No agents"
+      description="An agent config is the flag list a coding-agent CLI is launched with. There is none to create — the daemon ships one per agent kind — so an empty list means it reported none; the flags can also be set with ariadne agent update."
+    />
   )
 }
 
