@@ -1,10 +1,13 @@
 //! Integration tests for TmuxManager and GitManager.
 //!
 //! Marked #[ignore]: they need `git` and `tmux` on PATH and touch real
-//! processes. Run with `cargo test -p ariadne-daemon -- --ignored`.
+//! processes. Run with `cargo test -p ariadne-daemon -- --ignored`; the spawn
+//! plan test also needs the `ariadne` CLI built into the same target dir
+//! (`cargo build -p ariadne-cli`), since a plan is launched by it.
 
 use std::path::{Path, PathBuf};
 
+use ariadne_core::spawn_plan::SpawnPlanFile;
 use ariadne_daemon::gitwt::GitManager;
 use ariadne_daemon::tmux::{TmuxManager, TmuxSpawn, session_name};
 
@@ -201,6 +204,122 @@ async fn tmux_session_lifecycle() {
 
     tmux.kill_session(&name).await.unwrap();
     assert!(!tmux.has_session(&name).await);
+}
+
+/// The spawn plan against the real tmux: a briefing no command line could
+/// carry, and a pane whose root process is still the agent.
+///
+/// A hundred kilobytes of argv is "command too long" from `new-session` —
+/// tmux ships a command to its server in a single message capped near 16KB —
+/// and that is what took a task down. Through a plan file it is an ordinary
+/// session: `ariadne _spawn` applies the environment and `exec`s the program
+/// the plan names, so what tmux watches is that program and not the `ariadne`
+/// that read the plan for it.
+#[tokio::test]
+#[ignore = "requires tmux and a built ariadne CLI"]
+async fn tmux_runs_a_plan_no_command_line_could_carry() {
+    let tmux = TmuxManager::default();
+    let dir = tempfile::tempdir().unwrap();
+    let name = format!("ariadne-test-plan-{}", std::process::id());
+    let log = dir.path().join("console.log");
+    let briefing = "B".repeat(100_000);
+
+    // The plan a launch writes: an argument far past what tmux would accept,
+    // plus an environment variable that used to arrive as an `-e` pair. The
+    // script reports how much of each reached it and then idles, so the pane
+    // is still there to be asked about.
+    let plan_file = dir.path().join("spawn.json");
+    let plan = SpawnPlanFile::new(
+        vec![
+            "sh".into(),
+            "-c".into(),
+            "printf 'BRIEFING=%s VAR=%s\\n' \"${#1}\" \"$ARIADNE_TEST_VAR\"; \
+             while true; do sleep 1; done"
+                .into(),
+            // $0, then $1 — the briefing.
+            "plan-test".into(),
+            briefing.clone(),
+        ],
+        vec![("ARIADNE_TEST_VAR".into(), "hello-plan".into())],
+        dir.path().to_path_buf(),
+    );
+    std::fs::write(&plan_file, plan.to_json().unwrap()).unwrap();
+
+    tmux.new_session(&TmuxSpawn {
+        session: name.clone(),
+        cwd: dir.path().to_path_buf(),
+        // Empty, as the launcher leaves them: everything is in the plan.
+        env: vec![],
+        argv: vec![
+            ariadne_bin().display().to_string(),
+            "_spawn".into(),
+            plan_file.display().to_string(),
+        ],
+        log_file: Some(log.clone()),
+    })
+    .await
+    .unwrap();
+    assert!(tmux.has_session(&name).await, "the session started");
+
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+    let pane = tmux.capture_pane(&name, 100).await.unwrap();
+    assert!(
+        pane.contains(&format!("BRIEFING={}", briefing.len())),
+        "the whole briefing reached the program: {pane}"
+    );
+    assert!(
+        pane.contains("VAR=hello-plan"),
+        "the plan's environment reached the program: {pane}"
+    );
+
+    // The pane's root process is the program the plan named. `ariadne` exec'd
+    // itself away, so nothing about pane liveness has a wrapper in it.
+    let pid = capture(
+        "tmux",
+        &["display-message", "-p", "-t", &name, "#{pane_pid}"],
+    )
+    .await;
+    let comm = capture("ps", &["-o", "comm=", "-p", pid.trim()]).await;
+    let comm = comm.trim();
+    assert!(
+        comm.ends_with("sh"),
+        "the pane's root process is the plan's program: {comm}"
+    );
+    assert!(
+        !comm.contains("ariadne"),
+        "the pane's root process is a wrapper: {comm}"
+    );
+
+    tmux.kill_session(&name).await.unwrap();
+}
+
+/// The `ariadne` CLI as built beside the test binary (`cargo build`'s target
+/// dir), which is the one that speaks this build's plan format.
+fn ariadne_bin() -> PathBuf {
+    let exe = std::env::current_exe().expect("current exe");
+    // target/<profile>/deps/<test-binary>
+    let bin = exe
+        .parent()
+        .and_then(Path::parent)
+        .expect("target dir")
+        .join("ariadne");
+    assert!(
+        bin.is_file(),
+        "build the CLI first (cargo build -p ariadne-cli): no {}",
+        bin.display()
+    );
+    bin
+}
+
+/// Run a command and return its stdout, failing the test if it does not.
+async fn capture(bin: &str, args: &[&str]) -> String {
+    let out = tokio::process::Command::new(bin)
+        .args(args)
+        .output()
+        .await
+        .unwrap();
+    assert!(out.status.success(), "{bin} {args:?} failed");
+    String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
 /// What `POST /v1/sessions/{id}/input` relies on: the bytes a terminal emits
