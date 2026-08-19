@@ -96,8 +96,12 @@ function lastRequest(method: string, path: string): Recorded | undefined {
   return requests.filter((one) => one.method === method && one.path === path).at(-1)
 }
 
-/** The daemon's profile-prompt endpoints, routed by path the way it routes them. */
-function stubDaemon(profile: ProfileDto) {
+/**
+ * The daemon's profile-prompt endpoints, routed by path the way it routes them.
+ * `refusal`, when given, is the message it answers a briefing save with — the
+ * daemon refuses a `{placeholder}` its kind cannot fill in.
+ */
+function stubDaemon(profile: ProfileDto, refusal?: string) {
   daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(String(input), init)
     const { pathname } = new URL(request.url)
@@ -123,7 +127,15 @@ function stubDaemon(profile: ProfileDto) {
     if (reset) return answer({ kind: reset, content: DEFAULT_PROMPTS[reset], updated_at: STAMP })
 
     const written = pathname.match(/\/prompts\/([a-z_]+)$/)?.[1]
-    if (written) return answer({ kind: written, content: body?.content, updated_at: STAMP })
+    if (written) {
+      if (refusal && request.method === "PUT") {
+        return new Response(
+          JSON.stringify({ error: { code: "invalid_request", message: refusal } }),
+          { status: 400, headers: { "content-type": "application/json" } },
+        )
+      }
+      return answer({ kind: written, content: body?.content, updated_at: STAMP })
+    }
 
     return new Response("not stubbed", { status: 404 })
   })
@@ -238,6 +250,29 @@ describe("ProfilePrompts", () => {
     ).toBeUndefined()
   })
 
+  it("shows the daemon's refusal when a briefing names a placeholder it cannot fill in", async () => {
+    const user = userEvent.setup()
+    const refusal =
+      "the engineer_briefing template has no value for placeholder {task_titel}; " +
+      "the ones it can use are {task_title}, {task_description}, {goal_title}, " +
+      "{worktree_path}, {branch}, {base_branch}, {repo_path}, {dependencies}"
+    stubDaemon(ENGINEER, refusal)
+    renderPrompts(ENGINEER)
+    const box = await editor("Engineer briefing")
+
+    await user.clear(box)
+    // `{{` is how userEvent types a literal brace; the box gets "# {task_titel}".
+    await user.type(box, "# {{task_titel}")
+    await user.click(screen.getByRole("button", { name: "Save Engineer briefing" }))
+
+    // The daemon's sentence, verbatim: the offending token and what was allowed
+    // instead are the whole point of showing it.
+    expect(await screen.findByText(new RegExp(escapeRegExp(refusal)))).toBeDefined()
+    expect(await screen.findByText("Could not save the engineer briefing")).toBeDefined()
+    // The draft survives, so the typo can be fixed rather than retyped.
+    expect(box.value).toBe("# {task_titel}")
+  })
+
   it("saves the system prompt through the profile itself, leaving its other fields alone", async () => {
     const user = userEvent.setup()
     renderPrompts(ENGINEER)
@@ -333,3 +368,8 @@ describe("ProfilePrompts", () => {
     expect(lastRequest("POST", `/v1/profiles/${ENGINEER.id}/system-prompt/reset`)).toBeDefined()
   })
 })
+
+/** The refusal is matched as a whole sentence; nothing in it is a pattern. */
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}

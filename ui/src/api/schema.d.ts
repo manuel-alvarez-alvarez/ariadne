@@ -366,8 +366,9 @@ export interface paths {
         };
         get?: never;
         /**
-         * Replace the text of one prompt. Any content is accepted, including text
-         *     that drops a `{placeholder}`.
+         * Replace the text of one prompt. A template may drop every `{placeholder}`
+         *     it was seeded with, but not name one this kind has no value for: that token
+         *     would reach the agent as literal text, so it is refused here.
          */
         put: operations["profiles_update_prompt"];
         post?: never;
@@ -1930,6 +1931,13 @@ export interface operations {
                     "application/json": components["schemas"]["ProfileDto"];
                 };
             };
+            /** @description a prompt kind the role does not own, or a placeholder its kind cannot fill in */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description name already exists */
             409: {
                 headers: {
@@ -2085,7 +2093,7 @@ export interface operations {
                     "application/json": components["schemas"]["ProfilePromptDto"];
                 };
             };
-            /** @description unknown kind, or a kind the profile's role does not own */
+            /** @description unknown kind, a kind the profile's role does not own, or a placeholder the kind cannot fill in */
             400: {
                 headers: {
                     [name: string]: unknown;
