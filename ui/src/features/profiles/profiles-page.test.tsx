@@ -43,7 +43,6 @@ const ENGINEER: ProfileDto = {
   agent_kind: "claude_code",
   model: null,
   system_prompt: "",
-  extra_flags: [],
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
 }
