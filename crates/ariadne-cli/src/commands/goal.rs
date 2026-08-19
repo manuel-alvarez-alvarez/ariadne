@@ -2,6 +2,7 @@
 
 use anyhow::{Result, bail};
 use clap::Subcommand;
+use serde::Serialize;
 use serde_json::json;
 
 use ariadne_api::goals::{CreateGoalRequest, FinalizePlanRequest, GoalDto};
@@ -9,6 +10,7 @@ use ariadne_api::messages::{CreateMessageRequest, MessageDto};
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::tasks::{TaskDto, TaskListQuery};
 use ariadne_client::Client;
+use ariadne_core::GoalStatus;
 
 use super::{ProfileNames, confirm};
 use crate::output::{
@@ -51,6 +53,10 @@ pub enum GoalCommand {
     },
     /// List goals
     Ls {
+        /// Filter by status, at the daemon; repeatable, and a goal in any of
+        /// the named statuses is listed
+        #[arg(long = "status", value_enum)]
+        statuses: Vec<GoalStatus>,
         /// Print cells in full instead of cutting them to the column width
         #[arg(long)]
         no_trunc: bool,
@@ -150,8 +156,8 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                 Format::Table => println!("{}", goal.id),
             }
         }
-        GoalCommand::Ls { no_trunc } => {
-            let goals: Vec<GoalDto> = client.get_json("/v1/goals").await?;
+        GoalCommand::Ls { statuses, no_trunc } => {
+            let goals: Vec<GoalDto> = client.get_json(&goals_path(&statuses)?).await?;
             match format {
                 Format::Json => print_json(&goals)?,
                 Format::Table => {
@@ -176,7 +182,14 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                         no_trunc,
                     );
                     if goals.is_empty() {
-                        note("no goals yet — create one with: ariadne goal create");
+                        // An empty list under a filter is not an empty
+                        // system, and telling the reader to create a goal
+                        // would hide the ones that are right there.
+                        note(if statuses.is_empty() {
+                            "no goals yet — create one with: ariadne goal create"
+                        } else {
+                            "no goals match that filter"
+                        });
                     }
                 }
             }
@@ -294,6 +307,27 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
         }
     }
     Ok(())
+}
+
+/// The one filter `GET /v1/goals` takes: the statuses to match, as the daemon
+/// spells them — several of them in a single comma-separated `status=`, the
+/// way the goals board asks for them.
+#[derive(Serialize)]
+struct GoalListQuery {
+    status: Option<String>,
+}
+
+/// The path `goal ls` reads: `/v1/goals` untouched when no status was named,
+/// so a plain `ls` asks exactly what it always did.
+fn goals_path(statuses: &[GoalStatus]) -> Result<String> {
+    let status = (!statuses.is_empty()).then(|| {
+        statuses
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join(",")
+    });
+    query_path("/v1/goals", &GoalListQuery { status })
 }
 
 /// What `goal finalize` asks before execution starts: agents are spawned and
@@ -425,6 +459,31 @@ mod tests {
         assert!(
             err.to_string().contains("ariadne repo add /home/me/other"),
             "{err}"
+        );
+    }
+
+    /// No `--status` asks what `goal ls` always asked: the plain list, with
+    /// no stray query on it.
+    #[test]
+    fn no_status_leaves_the_goals_path_alone() {
+        assert_eq!(goals_path(&[]).unwrap(), "/v1/goals");
+    }
+
+    #[test]
+    fn a_status_is_asked_for_in_its_wire_spelling() {
+        assert_eq!(
+            goals_path(&[GoalStatus::Planning]).unwrap(),
+            "/v1/goals?status=planning"
+        );
+    }
+
+    /// Several statuses ride in the one comma-separated `status=` the daemon
+    /// takes — the same request the goals board makes.
+    #[test]
+    fn several_statuses_ride_in_one_comma_separated_parameter() {
+        assert_eq!(
+            goals_path(&[GoalStatus::Active, GoalStatus::Completed]).unwrap(),
+            "/v1/goals?status=active%2Ccompleted"
         );
     }
 
