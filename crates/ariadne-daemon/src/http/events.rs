@@ -79,11 +79,19 @@ pub async fn ingest(
     // exactly when a permission prompt or a question is waiting, so
     // idle/exit must leave the flag be, and a stray event on an ended
     // session must not wipe the reason it ended needing attention.
+    //
+    // Raising it asks one thing more: whether anybody is still waiting on
+    // this agent. A reviewer's approval dialog after it has voted, or a
+    // planner's after the goal left planning, is nobody's to answer — the
+    // event is recorded and the status still follows it, only the flag is
+    // withheld.
     if let Some(reason) = attention_for_event(&req.kind, &req.payload) {
-        state
-            .store
-            .set_session_attention(&session.id, reason)
-            .await?;
+        if crate::attention::work_is_active(&state.store, &session).await {
+            state
+                .store
+                .set_session_attention(&session.id, reason)
+                .await?;
+        }
     } else if session.status().is_live() && status == Some(ariadne_core::SessionStatus::Running) {
         state.store.clear_session_attention(&session.id).await?;
     }
