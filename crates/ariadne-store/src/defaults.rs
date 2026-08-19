@@ -171,3 +171,25 @@ Your worktree has been moved to the new tip of {branch}, so the diff you read la
 
 ## Engineer's summary of this revision
 {summary}"#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The constants are the templates every profile starts from, so they are
+    /// also the ones a save-time check may never refuse: a default that fails
+    /// validation would be a profile nobody can edit back to its own default.
+    #[test]
+    fn every_default_names_only_placeholders_its_kind_can_fill_in() {
+        for role in Role::ALL {
+            for (kind, template) in default_prompts(role) {
+                assert_eq!(
+                    kind.validate_template(template),
+                    Ok(()),
+                    "the default {} template",
+                    kind.as_str()
+                );
+            }
+        }
+    }
+}

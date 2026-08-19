@@ -1220,6 +1220,71 @@ async fn prompts_update_and_reset_to_their_defaults() {
     );
 }
 
+/// A briefing may drop placeholders, keep braces that are only braces, and say
+/// nothing at all — but a token nothing will ever substitute is refused, on
+/// both write paths, with the offender and the allowed set in the message.
+#[tokio::test]
+async fn a_template_naming_a_placeholder_its_kind_cannot_fill_in_is_refused() {
+    let (store, _dir) = test_store().await;
+    let engineer = store.get_profile_by_name("Engineer").await.unwrap();
+
+    let Err(StoreError::Invalid(message)) = store
+        .update_profile_prompt(
+            &engineer.id,
+            PromptKind::EngineerBriefing,
+            "# {task_titel}\n\n{task_description}",
+        )
+        .await
+    else {
+        panic!("a typo'd placeholder was stored");
+    };
+    assert!(
+        message.contains("{task_titel}") && message.contains("{task_title}"),
+        "unhelpful message: {message}"
+    );
+    // ...and nothing was written.
+    assert_eq!(
+        store
+            .get_profile_prompt(&engineer.id, PromptKind::EngineerBriefing)
+            .await
+            .unwrap()
+            .content,
+        default_prompt(Role::Engineer, PromptKind::EngineerBriefing).unwrap()
+    );
+
+    // The same rule seeds a profile: the row must not survive its bad prompt.
+    assert!(matches!(
+        store
+            .create_profile(NewProfile {
+                name: "eng-typo".into(),
+                role: Role::Engineer,
+                agent_kind: None,
+                model: None,
+                system_prompt: "You are eng-typo.".into(),
+                prompts: vec![(PromptKind::ChangesRequested, "{feedbcak}".into())],
+            })
+            .await,
+        Err(StoreError::Invalid(_))
+    ));
+    assert!(matches!(
+        store.get_profile_by_name("eng-typo").await,
+        Err(StoreError::NotFound { .. })
+    ));
+
+    // What renders as itself still saves: literal braces, JSON, no
+    // placeholders at all.
+    for content in [
+        "Merge {branch} into {base_branch}, then answer {\"merged\": true}.",
+        "Do it yourself.",
+        "{unclosed and {branch}",
+    ] {
+        store
+            .update_profile_prompt(&engineer.id, PromptKind::MergeInstructions, content)
+            .await
+            .unwrap();
+    }
+}
+
 #[tokio::test]
 async fn prompt_kinds_are_checked_against_the_profile_role() {
     let (store, _dir) = test_store().await;
