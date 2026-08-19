@@ -77,7 +77,6 @@ impl Harness {
                 agent_kind: Some(AgentKind::ClaudeCode),
                 model: None,
                 system_prompt: format!("You are {name}."),
-                extra_flags: vec![],
                 prompts: vec![],
             })
             .await

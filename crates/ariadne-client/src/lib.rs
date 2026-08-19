@@ -16,12 +16,13 @@ use hyperlocal::{UnixClientExt, UnixConnector, Uri as UnixUri};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+use ariadne_api::agents::{AgentConfigDto, UpdateAgentConfigRequest};
 use ariadne_api::error::ErrorBody;
 use ariadne_api::profiles::{
     ProfileDto, ProfilePromptDto, RolePromptDefaultsDto, UpdateProfilePromptRequest,
 };
 use ariadne_api::{HealthResponse, VersionResponse};
-use ariadne_core::{PromptKind, Role};
+use ariadne_core::{AgentKind, PromptKind, Role};
 
 pub mod endpoint;
 
@@ -210,6 +211,26 @@ impl Client {
 
     pub async fn version(&self) -> Result<VersionResponse, ClientError> {
         self.request(Method::GET, "/v1/version", None::<&()>).await
+    }
+
+    /// How each agent CLI is launched: its flags as they stand, and the
+    /// defaults they were seeded from.
+    pub async fn list_agent_configs(&self) -> Result<Vec<AgentConfigDto>, ClientError> {
+        self.get_json("/v1/agents").await
+    }
+
+    /// Replace one agent kind's flags. The list is replaced whole; sending the
+    /// kind's `default_flags` back is how it is restored to the default.
+    pub async fn update_agent_config(
+        &self,
+        kind: AgentKind,
+        extra_flags: Vec<String>,
+    ) -> Result<AgentConfigDto, ClientError> {
+        self.put_json(
+            &format!("/v1/agents/{}", kind.as_str()),
+            &UpdateAgentConfigRequest { extra_flags },
+        )
+        .await
     }
 
     /// A profile's briefing prompts, in briefing order. `profile` is an id or
