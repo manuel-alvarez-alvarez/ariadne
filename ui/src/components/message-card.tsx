@@ -17,8 +17,8 @@ import type { ReactNode } from "react"
 import type { AuthorRole, MessageDto } from "@/api"
 import { Markdown } from "@/components/markdown"
 import { StatusBadge } from "@/components/status-badge"
+import { When } from "@/components/when"
 import { AUTHOR_ROLE_LABELS } from "@/lib/labels"
-import { formatAbsolute, formatRelative } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
 const ROLE_TONES: Record<AuthorRole, { badge: string; card: string }> = {
@@ -50,8 +50,9 @@ export function MessageCard({
 }: {
   message: MessageDto
   /**
-   * More about who spoke, next to the role pill: the task thread links the
-   * session that posted it, the goal thread has nothing to link to.
+   * More about who spoke, next to the role pill: both threads link the
+   * session that posted the message, when there is one — the user's own
+   * messages come from no session.
    */
   source?: ReactNode
 }) {
@@ -61,13 +62,7 @@ export function MessageCard({
       <header className="mb-1.5 flex flex-wrap items-center gap-2 text-xs">
         <StatusBadge size="sm" label={AUTHOR_ROLE_LABELS[message.author_role]} tone={role.badge} />
         {source}
-        <time
-          className="ml-auto text-muted-foreground"
-          dateTime={message.created_at}
-          title={formatAbsolute(message.created_at)}
-        >
-          {formatRelative(message.created_at)}
-        </time>
+        <When at={message.created_at} className="ml-auto text-muted-foreground" />
       </header>
       <Markdown>{message.body}</Markdown>
     </article>

@@ -11,6 +11,13 @@
  * transition table — the daemon is still the authority, and if it disagrees
  * (the task moved between the render and the click) its error envelope is
  * shown as-is rather than reworded.
+ *
+ * Only cancelling asks first. A confirm dialog here means "this cannot be
+ * undone", and retry is the opposite of that: the task goes back to `ready`
+ * with its branch and worktree kept, exactly like resuming a session, which
+ * also fires on the click. So retry says what it keeps in its tooltip and
+ * toasts its refusal, having no dialog to put one in — see
+ * `features/sessions/session-actions.tsx` for the same pair.
  */
 
 import { BanIcon, PencilIcon, RotateCcwIcon } from "lucide-react"
@@ -21,6 +28,7 @@ import type { TaskDto } from "@/api"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { Button } from "@/components/ui/button"
 import { isSettling } from "@/lib/confirm-flow"
+import { describeError } from "@/lib/errors"
 import { useCancelTask, useRetryTask } from "./queries"
 import { canCancel, canEdit, canRetry, statusLabel } from "./status"
 import { EditTaskDialog } from "./task-form-dialog"
@@ -28,7 +36,7 @@ import { EditTaskDialog } from "./task-form-dialog"
 export function TaskActions({ task }: { task: TaskDto }) {
   const cancel = useCancelTask(task.id)
   const retry = useRetryTask(task.id)
-  const [open, setOpen] = useState<"edit" | "cancel" | "retry" | null>(null)
+  const [open, setOpen] = useState<"edit" | "cancel" | null>(null)
 
   const showEdit = canEdit(task.status)
   const showCancel = canCancel(task.status)
@@ -38,16 +46,16 @@ export function TaskActions({ task }: { task: TaskDto }) {
   // here would take the open dialog — its spinner, and the refusal it may be
   // about to show — down with them. The edit form is kept the same way: if the
   // task starts while it is open, the save must still get to show the 409.
-  const settling = isSettling(
-    { open: open === "cancel", pending: cancel.isPending, error: cancel.error },
-    { open: open === "retry", pending: retry.isPending, error: retry.error },
-  )
+  const settling = isSettling({
+    open: open === "cancel",
+    pending: cancel.isPending,
+    error: cancel.error,
+  })
   if (!showEdit && !showCancel && !showRetry && open !== "edit" && !settling) return null
 
   function close() {
     setOpen(null)
     cancel.reset()
-    retry.reset()
   }
 
   return (
@@ -59,7 +67,25 @@ export function TaskActions({ task }: { task: TaskDto }) {
         </Button>
       )}
       {showRetry && (
-        <Button variant="outline" size="sm" onClick={() => setOpen("retry")}>
+        <Button
+          variant="outline"
+          size="sm"
+          pending={retry.isPending}
+          // The reassuring half of what the confirm used to say; the rest of
+          // it — "back to ready, fresh engineer session" — is the toast.
+          title="The task goes back to ready and the daemon schedules a fresh engineer session for it. Its branch and worktree are kept."
+          onClick={() => {
+            retry.mutate(undefined, {
+              onSuccess: (updated) => {
+                toast.success("Task retried", {
+                  description: `Now ${statusLabel(updated.status).toLowerCase()}.`,
+                })
+              },
+              onError: (error) =>
+                toast.error("Could not retry", { description: describeError(error) }),
+            })
+          }}
+        >
           <RotateCcwIcon />
           Retry task
         </Button>
@@ -80,31 +106,6 @@ export function TaskActions({ task }: { task: TaskDto }) {
         onOpenChange={(next) => {
           if (!next) setOpen(null)
         }}
-      />
-
-      <ConfirmDialog
-        open={open === "retry"}
-        onClose={close}
-        title="Retry this task?"
-        description={
-          <>
-            The task goes back to <strong>ready</strong> and the daemon schedules a fresh engineer
-            session for it. Its branch and worktree are kept.
-          </>
-        }
-        confirmLabel="Retry"
-        pending={retry.isPending}
-        error={retry.error}
-        onConfirm={() =>
-          retry.mutate(undefined, {
-            onSuccess: (updated) => {
-              close()
-              toast.success("Task retried", {
-                description: `Now ${statusLabel(updated.status).toLowerCase()}.`,
-              })
-            },
-          })
-        }
       />
 
       <ConfirmDialog

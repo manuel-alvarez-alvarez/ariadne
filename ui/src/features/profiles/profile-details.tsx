@@ -3,9 +3,9 @@
  * table has no room for.
  *
  * The prompts are the reason this is a panel rather than more columns: they are
- * the long, whitespace-significant fields, and they are edited here rather than
- * in the profile dialog because the daemon takes each of them on its own
- * endpoint (see {@link ProfilePrompts}).
+ * the long, whitespace-significant fields, and the table has nowhere to put
+ * them. They are shown here and edited nowhere but the profile dialog (see
+ * {@link ProfilePrompts}).
  */
 
 import { useQuery } from "@tanstack/react-query"
@@ -14,7 +14,7 @@ import type { ReactNode } from "react"
 import type { ProfileDto } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { formatAbsolute } from "@/lib/time"
+import { When } from "@/components/when"
 
 import { agentKindLabel, modelLabel, roleLabel } from "./profile-labels"
 import { ProfilePrompts } from "./profile-prompts"
@@ -49,8 +49,12 @@ export function ProfileDetails({ profile }: { profile: ProfileDto }) {
         <Detail label="Id">
           <CopyableId value={profile.id} label="profile id" className="text-xs" />
         </Detail>
-        <Detail label="Created">{formatAbsolute(profile.created_at)}</Detail>
-        <Detail label="Updated">{formatAbsolute(profile.updated_at)}</Detail>
+        <Detail label="Created">
+          <When at={profile.created_at} label="created" />
+        </Detail>
+        <Detail label="Updated">
+          <When at={profile.updated_at} label="updated" />
+        </Detail>
       </dl>
 
       <ProfilePrompts profile={profile} />
