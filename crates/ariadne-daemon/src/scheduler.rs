@@ -242,7 +242,10 @@ impl Scheduler {
                 Err(_) => false,
             },
             None => matches!(
-                self.store.get_goal(&session.goal_id).await.map(|g| g.status()),
+                self.store
+                    .get_goal(&session.goal_id)
+                    .await
+                    .map(|g| g.status()),
                 Ok(GoalStatus::Planning)
             ),
         }
