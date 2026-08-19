@@ -21,6 +21,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest"
 
 import type { GoalDto, ProfileDto, SessionDto, TaskDto } from "@/api"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { formatAbsolute } from "@/lib/time"
 
 import { SessionsPage } from "./sessions-page"
 
@@ -258,4 +259,33 @@ it("calls an empty list empty when nothing is filtered", async () => {
   renderScreen()
 
   expect(await screen.findByText("No sessions yet")).toBeTruthy()
+})
+
+/**
+ * The table is the one surface that keeps the compact age as its text — the
+ * heading says what it is the age of, and a column of "N minutes ago" is a
+ * column of repeated words. Everything the column has no room for is the hint
+ * behind it, and the hint opens on focus: both of these were a `title=`, which
+ * a keyboard never reaches.
+ */
+it("puts the stamps behind the table's columns in reach of a keyboard", async () => {
+  const user = userEvent.setup()
+  renderScreen()
+  const engineer = await row("Open Engineer session")
+
+  // The Context cell's link is the trigger, so the pair it names costs no
+  // focus stop of its own.
+  within(engineer).getByRole("link", { name: TASK.title }).focus()
+  expect(await screen.findByText(`Goal: ${GOAL.title}`)).not.toBeNull()
+
+  // The age column is further along the row; Tab walks to it.
+  for (let stop = 0; stop < 8; stop++) {
+    await user.tab()
+    if (screen.queryByText(`last activity ${formatAbsolute(ENGINEER.last_activity_at)}`)) {
+      // The two columns the table dropped ride along in the same hint.
+      expect(screen.getByText(`started ${formatAbsolute(ENGINEER.created_at)}`)).not.toBeNull()
+      return
+    }
+  }
+  throw new Error("the last-activity stamp is not reachable by keyboard")
 })

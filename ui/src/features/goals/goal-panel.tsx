@@ -30,11 +30,11 @@ import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { When } from "@/components/when"
 import { ProfileName } from "@/features/profiles/profile-name"
 import { CreateTaskDialog } from "@/features/tasks/task-form-dialog"
 import { useFocusReturn } from "@/hooks/use-focus-return"
 import { goalCopyEntries } from "@/lib/copy-entries"
-import { formatAbsolute, formatRelative } from "@/lib/time"
 import { paths, taskPanelTo, usePanelSessionNavigation } from "@/routes/paths"
 import { GoalActions } from "./goal-actions"
 import { GoalSessions, GoalSessionView } from "./goal-sessions"
@@ -287,10 +287,10 @@ function GoalMetadata({ goal }: { goal: GoalDto }) {
         <span className="tabular-nums">{goal.max_tasks ?? "unbounded"}</span>
       </Detail>
       <Detail label="Created">
-        <span title={formatAbsolute(goal.created_at)}>{formatRelative(goal.created_at)}</span>
+        <When at={goal.created_at} label="created" />
       </Detail>
       <Detail label="Updated">
-        <span title={formatAbsolute(goal.updated_at)}>{formatRelative(goal.updated_at)}</span>
+        <When at={goal.updated_at} label="updated" />
       </Detail>
       <Detail label="Repositories">
         <ul className="flex flex-col gap-1">

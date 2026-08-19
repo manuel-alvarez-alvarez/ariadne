@@ -14,7 +14,7 @@ import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { StatusBadge } from "@/components/status-badge"
 import { Skeleton } from "@/components/ui/skeleton"
-import { formatAbsolute, formatRelative } from "@/lib/time"
+import { When } from "@/components/when"
 import { cn } from "@/lib/utils"
 import { taskTransitionsQueryOptions } from "./queries"
 import { displayLabel, TASK_STATUS_META } from "./status"
@@ -69,13 +69,7 @@ function TransitionRow({ transition }: { transition: TaskTransitionDto }) {
         <ArrowRightIcon className="size-3 text-muted-foreground" />
         <span className="font-medium">{label(transition.to_status)}</span>
         <StatusBadge size="sm" label={transition.actor} tone="bg-muted text-muted-foreground" />
-        <time
-          className="ml-auto text-xs text-muted-foreground"
-          dateTime={transition.created_at}
-          title={formatAbsolute(transition.created_at)}
-        >
-          {formatRelative(transition.created_at)}
-        </time>
+        <When at={transition.created_at} className="ml-auto text-xs text-muted-foreground" />
       </div>
       {transition.reason && (
         <p className="mt-0.5 text-xs text-muted-foreground">{transition.reason}</p>

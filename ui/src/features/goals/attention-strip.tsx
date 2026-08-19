@@ -20,13 +20,14 @@ import { Link, useSearchParams } from "react-router-dom"
 
 import type { GoalDto } from "@/api"
 import { StatusBadge } from "@/components/status-badge"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { When } from "@/components/when"
 import { SESSION_ATTENTION_META, SessionAttentionBadge } from "@/features/sessions/session-display"
 import { STALLED_META, StalledBadge, TASK_STATUS_META } from "@/features/tasks"
 import { describeError } from "@/lib/errors"
 import { shortId } from "@/lib/ids"
 import { ROLE_LABELS } from "@/lib/labels"
 import { plural } from "@/lib/plural"
-import { formatAbsolute, formatRelative } from "@/lib/time"
 import { sessionPanelTo, taskPanelTo } from "@/routes/paths"
 
 import type { AttentionSessionItem, AttentionTaskItem } from "./attention"
@@ -101,7 +102,10 @@ function TaskRow({ item: { task, reason, goalId, goal } }: { item: AttentionTask
           detail={`Task · ${reason === "stalled" ? STALLED_META.hint : meta.hint}`}
         />
         <GoalRef goalId={goalId} goal={goal} />
-        <Age at={task.updated_at} />
+        {/* One label for both row kinds: a task's row moves when the task is
+            updated, a session's when it started asking — "last moved" is the
+            one thing true of both, and the list is ordered by it. */}
+        <When at={task.updated_at} label="last moved" className="text-xs text-muted-foreground" />
         <RowId id={task.id} />
       </Link>
     </li>
@@ -146,7 +150,7 @@ function SessionRow({
           }
         />
         <GoalRef goalId={goalId} goal={goal} />
-        <Age at={at} />
+        <When at={at} label="last moved" className="text-xs text-muted-foreground" />
         <RowId id={session.id} />
       </Link>
     </li>
@@ -161,17 +165,23 @@ function SessionRow({
  * truncating span — and it was the title, the only part that identifies the
  * row, that lost first. They now truncate independently, so a narrow strip
  * shortens both instead of dropping one.
+ *
+ * Both still truncate, so what a row says in full is only ever in the hint —
+ * one `Tooltip` over the pair rather than a `title=` on each, which is what
+ * puts it in reach of a keyboard.
  */
 function Subject({ subject, detail }: { subject: string; detail: string }) {
   return (
-    <span className="min-w-0 flex-1">
-      <span className="block truncate font-medium" title={subject}>
-        {subject}
-      </span>
-      <span className="block truncate text-xs text-muted-foreground" title={detail}>
-        {detail}
-      </span>
-    </span>
+    <Tooltip>
+      <TooltipTrigger render={<span className="min-w-0 flex-1" />}>
+        <span className="block truncate font-medium">{subject}</span>
+        <span className="block truncate text-xs text-muted-foreground">{detail}</span>
+      </TooltipTrigger>
+      <TooltipContent className="flex-col items-start gap-0.5">
+        <span className="font-medium">{subject}</span>
+        <span className="text-background/70">{detail}</span>
+      </TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -185,25 +195,24 @@ function Subject({ subject, detail }: { subject: string; detail: string }) {
 function GoalRef({ goalId, goal }: { goalId: string; goal: GoalDto | undefined }) {
   const title = goal?.title ?? `Goal ${shortId(goalId)}`
   return (
-    <span className="max-w-40 shrink-0 truncate text-xs text-muted-foreground" title={title}>
-      {title}
-    </span>
-  )
-}
-
-/** When this row last moved, the one way for both kinds. */
-function Age({ at }: { at: string }) {
-  return (
-    <time dateTime={at} className="text-xs text-muted-foreground" title={formatAbsolute(at)}>
-      {formatRelative(at)}
-    </time>
+    <Tooltip>
+      <TooltipTrigger
+        render={<span className="max-w-40 shrink-0 truncate text-xs text-muted-foreground" />}
+      >
+        {title}
+      </TooltipTrigger>
+      <TooltipContent>{title}</TooltipContent>
+    </Tooltip>
   )
 }
 
 function RowId({ id }: { id: string }) {
   return (
-    <span className="font-mono text-xs text-muted-foreground" title={id}>
-      {shortId(id)}
-    </span>
+    <Tooltip>
+      <TooltipTrigger render={<span className="font-mono text-xs text-muted-foreground" />}>
+        {shortId(id)}
+      </TooltipTrigger>
+      <TooltipContent className="font-mono">{id}</TooltipContent>
+    </Tooltip>
   )
 }
