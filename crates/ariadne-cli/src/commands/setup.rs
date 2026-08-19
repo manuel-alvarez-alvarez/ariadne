@@ -93,8 +93,8 @@ pub fn codex_hooks(cli_bin: Option<String>) -> Result<()> {
                 after.untrusted_keys().join(", ")
             );
             println!(
-                "Sessions run without them. Run this command again and answer \
-                 \"Trust all\nand continue\"."
+                "Every session will stop on the same prompt until it does. Run \
+                 this command\nagain and answer \"Trust all and continue\"."
             );
         }
         None => println!("\nDone, as far as can be told — codex's home was not found."),

@@ -245,7 +245,10 @@ async fn examine(client: &Client) -> Report {
                 daemon_checks(client, &health, version, home.as_deref()).await,
             ),
             Section::new("tools", tool_checks(&[tmux, git])),
-            Section::new("agents", agent_checks(&agents, &flags, &available)),
+            Section::new(
+                "agents",
+                agent_checks(&agents, &flags, &available, &profiles),
+            ),
             Section::new(
                 "profiles",
                 match reachable {
@@ -569,6 +572,7 @@ fn agent_checks(
     agents: &[Local],
     flags: &[AgentConfigDto],
     available: &Availability,
+    profiles: &[ProfileDto],
 ) -> Vec<Check> {
     let mut checks: Vec<Check> = AgentKind::ALL
         .iter()
@@ -594,9 +598,11 @@ fn agent_checks(
         .collect();
 
     if available.has(AgentKind::Codex) {
-        checks.extend(codex_hook_checks(&Trust::read(
-            &codex_trust::codex_home().unwrap_or_else(|| PathBuf::from(".codex")),
-        )));
+        let home = codex_trust::codex_home().unwrap_or_else(|| PathBuf::from(".codex"));
+        let runs_codex = profiles
+            .iter()
+            .any(|p| p.agent_kind == Some(AgentKind::Codex));
+        checks.extend(codex_hook_checks(&Trust::read(&home), runs_codex));
     }
 
     if available.effective().is_empty() {
@@ -617,48 +623,54 @@ fn agent_checks(
 
 /// Whether codex still trusts the hooks every session it spawns declares.
 ///
-/// The declaration is passed as `-c` overrides and codex runs none of it
-/// untrusted, so this is the difference between a codex session Ariadne can
-/// see and one it cannot. It is worth its own check rather than a footnote on
-/// the binary because of how it goes wrong: trust is granted per event, so an
-/// Ariadne that declares an event the last `setup codex-hooks` did not keeps
-/// every old hook reporting and loses only the new one — and codex asks about
-/// it at the start of the next session, in a TUI nobody is watching.
+/// The declaration is passed as `-c` overrides, and codex does not quietly
+/// skip what it has not been trusted with: it stops the session on its "Hooks
+/// need review" prompt before the first turn, bypass flags and all. So this
+/// is the difference between a codex session that runs and one that sits
+/// there — and it goes wrong invisibly, because trust is granted per event:
+/// an Ariadne that declares an event the last `setup codex-hooks` did not
+/// leaves the other six trusted and takes every session down to the prompt
+/// over the one that is new.
 ///
-/// A warning rather than a failure: sessions still run, and only the profiles
-/// pinned to codex are affected at all.
-fn codex_hook_checks(trust: &Trust) -> Vec<Check> {
+/// A failure for anyone with a profile on codex, since none of them can
+/// spawn; a warning otherwise, where it is one command's worth of tidying.
+fn codex_hook_checks(trust: &Trust, runs_codex: bool) -> Vec<Check> {
     let total = ariadne_core::codex_hooks::EVENTS.len();
     let config = trust.config.display();
-    let check = if trust.is_complete() {
-        Check::ok(
+    if trust.is_complete() {
+        return vec![Check::ok(
             "codex hooks",
             format!("all {total} hook events trusted in {config}"),
+        )];
+    }
+    let detail = if trust.is_stale() {
+        format!(
+            "{} of {total} hook events not trusted: {}",
+            trust.untrusted.len(),
+            trust.untrusted_keys().join(", ")
         )
-    } else if trust.is_stale() {
-        Check::warn(
-            "codex hooks",
-            format!(
-                "{} of {total} hook events not trusted: {}",
-                trust.untrusted.len(),
-                trust.untrusted_keys().join(", ")
-            ),
-        )
-        .hint(concat!(
-            "this Ariadne declares hooks your last setup did not — ",
-            "re-run `ariadne setup codex-hooks` or they will never run",
-        ))
+    } else if trust.config_exists {
+        format!("none of the {total} hook events are trusted in {config}")
     } else {
-        let detail = match trust.config_exists {
-            true => format!("none of the {total} hook events are trusted in {config}"),
-            false => format!("codex has no config at {config}, so nothing is trusted"),
-        };
-        Check::warn("codex hooks", detail).hint(concat!(
-            "run `ariadne setup codex-hooks` — until then codex sessions ",
-            "never report their id and can be neither resumed nor revived",
-        ))
+        format!("codex has no config at {config}, so nothing is trusted")
     };
-    vec![check]
+    let check = match runs_codex {
+        true => Check::fail("codex hooks", detail),
+        false => Check::warn("codex hooks", detail),
+    };
+    vec![check.hint(match trust.is_stale() {
+        // The upgrade case: everything else looks right, which is exactly
+        // why it needs saying.
+        true => concat!(
+            "this Ariadne declares hooks your last setup did not — re-run ",
+            "`ariadne setup codex-hooks` or codex stops every session on its ",
+            "\"Hooks need review\" prompt",
+        ),
+        false => concat!(
+            "run `ariadne setup codex-hooks` — until then codex stops every ",
+            "session on its \"Hooks need review\" prompt",
+        ),
+    })]
 }
 
 /// Which agent binaries can actually be launched, from both points of view.
@@ -972,10 +984,20 @@ mod tests {
     #[test]
     fn fully_trusted_codex_hooks_are_one_ok_line() {
         let all: Vec<_> = ariadne_core::codex_hooks::EVENTS.to_vec();
-        let checks = codex_hook_checks(&trust_for(&all));
+        let checks = codex_hook_checks(&trust_for(&all), true);
         assert_eq!(checks.len(), 1);
         assert_eq!(checks[0].status, Status::Ok);
         assert!(checks[0].hint.is_none());
+    }
+
+    /// Untrusted hooks stop codex before its first turn, so a profile that
+    /// runs on codex cannot spawn at all — which is a failure, not a note.
+    /// Without such a profile it is one command's worth of tidying.
+    #[test]
+    fn untrusted_hooks_fail_only_where_a_profile_runs_on_codex() {
+        let stale = trust_for(&["SessionStart"]);
+        assert_eq!(codex_hook_checks(&stale, true)[0].status, Status::Fail);
+        assert_eq!(codex_hook_checks(&stale, false)[0].status, Status::Warn);
     }
 
     /// Trust granted before an event was declared: the report has to name
@@ -987,7 +1009,7 @@ mod tests {
             .into_iter()
             .filter(|e| *e != "PermissionRequest")
             .collect();
-        let checks = codex_hook_checks(&trust_for(&old));
+        let checks = codex_hook_checks(&trust_for(&old), false);
         assert_eq!(checks[0].status, Status::Warn);
         assert!(
             checks[0].detail.contains("permission_request"),
@@ -1006,7 +1028,7 @@ mod tests {
     /// nothing was ever trusted, so nothing is missing — it is all missing.
     #[test]
     fn codex_hooks_nobody_ever_trusted_are_reported_as_such() {
-        let checks = codex_hook_checks(&trust_for(&[]));
+        let checks = codex_hook_checks(&trust_for(&[]), false);
         assert_eq!(checks[0].status, Status::Warn);
         assert!(checks[0].detail.contains("none of the"), "{:?}", checks[0]);
 
@@ -1014,7 +1036,7 @@ mod tests {
             config_exists: false,
             ..trust_for(&[])
         };
-        let checks = codex_hook_checks(&never_ran);
+        let checks = codex_hook_checks(&never_ran, false);
         assert_eq!(checks[0].status, Status::Warn);
         assert!(checks[0].detail.contains("no config"), "{:?}", checks[0]);
     }
@@ -1164,7 +1186,7 @@ mod tests {
             },
         ];
         let available = Availability::new(None, &agents);
-        let checks = agent_checks(&agents, &[], &available);
+        let checks = agent_checks(&agents, &[], &available, &[]);
         assert_eq!(
             checks.len(),
             3,
@@ -1187,7 +1209,7 @@ mod tests {
             })
             .collect();
         let available = Availability::new(None, &agents);
-        let checks = agent_checks(&agents, &[], &available);
+        let checks = agent_checks(&agents, &[], &available, &[]);
         assert_eq!(checks.last().unwrap().status, Status::Fail);
     }
 
