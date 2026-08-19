@@ -17,6 +17,11 @@ import { cn } from "@/lib/utils"
  */
 export const SCRIM = "bg-black/10 supports-backdrop-filter:backdrop-blur-xs dark:bg-black/40"
 
+/**
+ * A dialog dismisses freely: an outside press and Escape both close it, which
+ * is right for everything that only shows something. A dialog holding a form
+ * uses `FormDialog` instead, which asks before throwing away what was typed.
+ */
 function Dialog({ ...props }: DialogPrimitive.Root.Props) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />
 }

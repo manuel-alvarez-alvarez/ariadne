@@ -50,8 +50,9 @@ export function MessageCard({
 }: {
   message: MessageDto
   /**
-   * More about who spoke, next to the role pill: the task thread links the
-   * session that posted it, the goal thread has nothing to link to.
+   * More about who spoke, next to the role pill: both threads link the
+   * session that posted the message, when there is one — the user's own
+   * messages come from no session.
    */
   source?: ReactNode
 }) {

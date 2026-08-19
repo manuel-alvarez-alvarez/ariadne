@@ -1,5 +1,5 @@
 /**
- * Every prompt a profile is spawned with, in one stack of editors.
+ * Every prompt a profile is spawned with, shown as it is stored.
  *
  * Which prompts those are is not decided here: `GET /v1/profiles/{id}/prompts`
  * answers exactly the kinds the profile's role owns, in briefing order, so a
@@ -7,50 +7,36 @@
  * which. Only the system prompt is added on top — it lives on the profile
  * itself rather than in that list.
  *
+ * Read-only on purpose: prompts are edited in one place, the profile dialog
+ * (see {@link import("./profile-form-dialog").ProfileFormDialog}), which the
+ * row's Edit button opens. This panel only displays them.
+ *
  * The list is fetched when the details panel opens, which is the only time it
  * is on screen.
  */
 
 import { useQuery } from "@tanstack/react-query"
+import type { ReactNode } from "react"
 
 import type { ProfileDto } from "@/api"
 import { ErrorState } from "@/components/error-state"
+import { FieldDescription, FieldTitle } from "@/components/ui/field"
 import { Skeleton } from "@/components/ui/skeleton"
 
-import { PROMPT_KIND_HINTS, PROMPT_KIND_LABELS, roleLabel } from "./profile-labels"
-import { PromptEditor } from "./prompt-editor"
-import {
-  profilePromptsQueryOptions,
-  useResetProfilePrompt,
-  useResetSystemPrompt,
-  useUpdateProfile,
-  useUpdateProfilePrompt,
-} from "./queries"
+import { PROMPT_KIND_HINTS, PROMPT_KIND_LABELS } from "./profile-labels"
+import { profilePromptsQueryOptions } from "./queries"
 
 export function ProfilePrompts({ profile }: { profile: ProfileDto }) {
   const prompts = useQuery(profilePromptsQueryOptions(profile.id))
-  const updateProfile = useUpdateProfile()
-  const resetSystemPrompt = useResetSystemPrompt(profile.id)
-  const updatePrompt = useUpdateProfilePrompt(profile.id)
-  const resetPrompt = useResetProfilePrompt(profile.id)
-
-  /** "…the default for the engineer role", in every confirmation below. */
-  const role = roleLabel(profile.role).toLowerCase()
 
   return (
     <section className="flex flex-col gap-5">
       <h4 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Prompts</h4>
 
-      <PromptEditor
+      <ReadOnlyPrompt
         label="System prompt"
         hint="Prepended to whatever Ariadne tells the agent about its task."
         content={profile.system_prompt}
-        restoreDescription={`The system prompt goes back to Ariadne's default for the ${role} role. Anything typed into the box and not saved is replaced.`}
-        // A partial update: every field left out of the body stays as it is.
-        onSave={(content) =>
-          updateProfile.mutateAsync({ id: profile.id, body: { system_prompt: content } })
-        }
-        onRestore={() => resetSystemPrompt.mutateAsync().then((updated) => updated.system_prompt)}
       />
 
       {prompts.isPending ? (
@@ -63,18 +49,49 @@ export function ProfilePrompts({ profile }: { profile: ProfileDto }) {
         />
       ) : (
         prompts.data.map((prompt) => (
-          <PromptEditor
+          <ReadOnlyPrompt
             key={prompt.kind}
             label={PROMPT_KIND_LABELS[prompt.kind]}
             hint={PROMPT_KIND_HINTS[prompt.kind]}
             content={prompt.content}
-            restoreDescription={`This briefing goes back to Ariadne's default for the ${role} role. Anything typed into the box and not saved is replaced.`}
-            onSave={(content) => updatePrompt.mutateAsync({ kind: prompt.kind, content })}
-            onRestore={() => resetPrompt.mutateAsync(prompt.kind).then((reset) => reset.content)}
           />
         ))
       )}
     </section>
+  )
+}
+
+/**
+ * One prompt as the panel shows it: its name, its text, and when it is sent.
+ *
+ * A briefing is long, so the block is capped and scrolls on its own — four of
+ * them in one expanded row would otherwise make the row endless. The text is
+ * whitespace-significant and read back as a template, hence monospace and
+ * `pre-wrap`; the block is a labelled region, since there is no control here
+ * for the name to label.
+ */
+function ReadOnlyPrompt({
+  label,
+  hint,
+  content,
+}: {
+  label: string
+  hint: ReactNode
+  content: string
+}) {
+  return (
+    <div className="flex w-full flex-col gap-2">
+      <FieldTitle>{label}</FieldTitle>
+      <section
+        aria-label={label}
+        className="max-h-96 overflow-auto rounded-md border bg-muted/20 px-3 py-2"
+      >
+        <pre className="font-mono text-xs leading-relaxed break-words whitespace-pre-wrap">
+          {content}
+        </pre>
+      </section>
+      <FieldDescription className="text-xs">{hint}</FieldDescription>
+    </div>
   )
 }
 
