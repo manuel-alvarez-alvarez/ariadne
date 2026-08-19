@@ -6,9 +6,8 @@
  * Every prompt the profile is spawned with is edited here, not just the system
  * one: the role's briefings are folded into the same form, prefilled from the
  * role defaults when creating and from the profile's own prompts when editing.
- * Nothing is written until the form is submitted, which is the one thing that
- * separates these editors from the details panel's — there, each box saves
- * itself.
+ * This is the only place any of them is edited or restored — the details panel
+ * shows them read-only. Nothing is written until the form is submitted.
  *
  * How they are written differs by mode. Create sends the whole profile in one
  * request, briefings included, so only the ones edited away from their default
