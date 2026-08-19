@@ -4,6 +4,7 @@
 //! client deserializes them, utoipa derives the OpenAPI schemas from them.
 
 pub mod agents;
+pub mod doctor;
 pub mod error;
 pub mod events;
 pub mod goals;

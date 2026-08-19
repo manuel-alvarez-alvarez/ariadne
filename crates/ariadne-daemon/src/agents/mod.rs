@@ -77,11 +77,7 @@ pub const AGENT_PREFERENCE: [AgentKind; 3] =
 
 /// The executable each agent kind is launched with.
 pub fn binary_for(kind: AgentKind) -> &'static str {
-    match kind {
-        AgentKind::ClaudeCode => "claude",
-        AgentKind::Codex => "codex",
-        AgentKind::Opencode => "opencode",
-    }
+    kind.binary()
 }
 
 /// First agent CLI installed on this machine, in [`AGENT_PREFERENCE`] order.

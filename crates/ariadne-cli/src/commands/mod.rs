@@ -3,6 +3,7 @@
 pub mod agent_event;
 pub mod attach;
 pub mod attention;
+pub mod doctor;
 pub mod goal;
 pub mod mcp;
 pub mod profile;
@@ -239,7 +240,7 @@ fn ariadne_home(home_override: Option<PathBuf>) -> PathBuf {
 }
 
 /// Find the ariadned binary: next to the current executable, else on PATH.
-fn find_ariadned() -> Result<PathBuf> {
+pub fn find_ariadned() -> Result<PathBuf> {
     if let Ok(me) = std::env::current_exe()
         && let Some(dir) = me.parent()
     {
@@ -251,7 +252,7 @@ fn find_ariadned() -> Result<PathBuf> {
     which("ariadned").context("ariadned not found next to ariadne or on PATH")
 }
 
-fn which(name: &str) -> Option<PathBuf> {
+pub fn which(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path)
         .map(|d| d.join(name))
