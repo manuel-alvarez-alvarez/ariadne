@@ -75,14 +75,16 @@ pub async fn ingest(
 
     // Attention follows the event too: an agent that reported an error needs
     // the user, and one that is working again does not. Only a
-    // running-mapped event clears — going idle is exactly when a permission
-    // prompt or a question is waiting, so idle/exit must leave the flag be.
+    // running-mapped event on a live session clears it — going idle is
+    // exactly when a permission prompt or a question is waiting, so
+    // idle/exit must leave the flag be, and a stray event on an ended
+    // session must not wipe the reason it ended needing attention.
     if let Some(reason) = attention_for_event(&req.kind) {
         state
             .store
             .set_session_attention(&session.id, reason)
             .await?;
-    } else if status == Some(ariadne_core::SessionStatus::Running) {
+    } else if session.status().is_live() && status == Some(ariadne_core::SessionStatus::Running) {
         state.store.clear_session_attention(&session.id).await?;
     }
 
