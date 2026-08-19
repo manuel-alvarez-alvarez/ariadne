@@ -29,9 +29,23 @@ use ariadne_store::Store;
 
 async fn harness() -> (Router, Arc<Config>, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    harness_in(dir, home).await
+}
+
+/// The same daemon around an already prepared home directory — a `config.toml`
+/// in it is read as `ariadned` would read it.
+async fn harness_with_home(home: std::path::PathBuf) -> (Router, Arc<Config>, tempfile::TempDir) {
+    harness_in(tempfile::tempdir().unwrap(), home).await
+}
+
+async fn harness_in(
+    dir: tempfile::TempDir,
+    home: std::path::PathBuf,
+) -> (Router, Arc<Config>, tempfile::TempDir) {
     let store = Store::open(dir.path().join("test.db")).await.unwrap();
     let bus = ariadne_daemon::bus::start(store.clone());
-    let cfg = Arc::new(Config::load(Some(dir.path().join("home"))).unwrap());
+    let cfg = Arc::new(Config::load(Some(home)).unwrap());
     let launcher = Arc::new(Launcher {
         cfg: cfg.clone(),
         store: store.clone(),
@@ -108,16 +122,16 @@ async fn the_paths_are_the_ones_this_daemon_was_configured_with() {
 }
 
 /// `Config::load` creates the worktree root, so a freshly configured daemon
-/// must report it as there and nothing about it as refused — and the report
-/// has to leave the directory exactly as it found it, which is the whole
-/// reason writability is not established by creating a file to see whether
-/// one can be created.
+/// must report it as there and writable — and the report has to leave the
+/// directory exactly as it found it, which is why writability is asked of
+/// the kernel rather than established by creating a file to see whether one
+/// can be created.
 #[tokio::test]
-async fn the_worktree_root_is_reported_and_left_alone() {
+async fn the_worktree_root_is_reported_writable_and_left_alone() {
     let (router, cfg, _dir) = harness().await;
     let report = report(&router).await;
     assert!(report.worktree_root.exists);
-    assert_ne!(report.worktree_root.writable, Some(false));
+    assert!(report.worktree_root.writable);
     let leftovers: Vec<_> = std::fs::read_dir(&cfg.worktree_root)
         .unwrap()
         .map(|e| e.unwrap().file_name())
@@ -125,31 +139,44 @@ async fn the_worktree_root_is_reported_and_left_alone() {
     assert!(leftovers.is_empty(), "the report wrote: {leftovers:?}");
 }
 
-/// A directory nothing can be written to is the one writability verdict the
-/// permission bits can give, and the daemon cannot keep worktrees in it.
+/// A worktree root the daemon cannot write is the failure doctor exists to
+/// name: the mode bits say its owner may write it, and the daemon is not its
+/// owner, so nothing short of asking the kernel gets this right.
 #[tokio::test]
-async fn a_worktree_root_nobody_can_write_is_reported_as_such() {
-    use std::os::unix::fs::PermissionsExt;
+async fn a_worktree_root_the_daemon_cannot_write_is_reported_as_such() {
+    if rustix::process::geteuid().is_root() {
+        return; // Root writes everything; there is nothing to tell apart.
+    }
+    let dir = tempfile::tempdir().unwrap();
+    // /usr belongs to root and is 0755: present, plausible, and closed to us.
+    std::fs::write(
+        dir.path().join("home-config.toml"),
+        "worktree_root = \"/usr\"\n",
+    )
+    .unwrap();
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::rename(
+        dir.path().join("home-config.toml"),
+        home.join("config.toml"),
+    )
+    .unwrap();
 
-    let (router, cfg, _dir) = harness().await;
-    let mode = std::fs::metadata(&cfg.worktree_root).unwrap().permissions();
-    std::fs::set_permissions(&cfg.worktree_root, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let (router, cfg, _dir) = harness_with_home(home).await;
+    assert_eq!(cfg.worktree_root, std::path::Path::new("/usr"));
     let report = report(&router).await;
-    std::fs::set_permissions(&cfg.worktree_root, mode).unwrap();
-
     assert!(report.worktree_root.exists);
-    assert_eq!(report.worktree_root.writable, Some(false));
+    assert!(!report.worktree_root.writable);
 }
 
 /// A database file that does not exist yet is not a failure to report on: the
-/// daemon creates it on its first write, and nothing about the directory it
-/// goes in says it cannot.
+/// daemon creates it on its first write, and its directory takes it.
 #[tokio::test]
-async fn a_database_that_is_not_there_yet_is_not_reported_as_refused() {
+async fn a_database_that_is_not_there_yet_is_reported_as_creatable() {
     let (router, _cfg, _dir) = harness().await;
     let report = report(&router).await;
     assert!(!report.db.exists);
-    assert_ne!(report.db.writable, Some(false));
+    assert!(report.db.writable, "its directory takes the file");
 }
 
 /// The endpoint is part of the OpenAPI document.

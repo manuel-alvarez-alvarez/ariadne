@@ -55,6 +55,10 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # misc
+# Safe wrappers over the POSIX calls std does not expose. Used for access(2):
+# whether *this* process may write a directory is a question only the kernel
+# can answer, and `ariadne doctor` must ask it without writing anything.
+rustix = { version = "1", features = ["fs", "process"] }
 ulid = { version = "3", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
