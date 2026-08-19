@@ -9,9 +9,9 @@
  * Five columns in a panel, because the table has to fit a 48rem one as well as
  * a full screen without scrolling sideways: the agent kind and the model ride
  * along with the profile, the review round with the role, and the end of the
- * session with its last activity — the last two on hover, where they were
- * worth a column each only for the sessions that have them. The sixth, the
- * context, is the screen's alone.
+ * session with its last activity — the last two in the hint behind the cell,
+ * where they were worth a column each only for the sessions that have them.
+ * The sixth, the context, is the screen's alone.
  *
  * The filters come from the caller (`{goal}`, `{task}`, whatever the panel
  * has); this component only reads them — but it reads them for more than the
