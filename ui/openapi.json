@@ -10,6 +10,97 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/v1/agents": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "Every agent kind's flags, current and default.",
+        "operationId": "list",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AgentConfigDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/agents/{kind}": {
+      "put": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "Replace an agent kind's flags.",
+        "description": "The list is replaced whole, and an empty one is a legitimate answer.\nRestoring the defaults is this same call with the `default_flags` the GET\nhands out — nothing else to learn, and nothing that can drift from them.",
+        "operationId": "update",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "description": "claude_code, codex or opencode",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAgentConfigRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentConfigDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "unknown agent kind"
+          }
+        }
+      }
+    },
+    "/v1/doctor": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "What the daemon sees: its PATH, the binaries on it, and the state of the\ndirectories it works in.",
+        "operationId": "report",
+        "responses": {
+          "200": {
+            "description": "The daemon's own environment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DaemonReportDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/events": {
       "get": {
         "tags": [
@@ -2002,6 +2093,34 @@
   },
   "components": {
     "schemas": {
+      "AgentConfigDto": {
+        "type": "object",
+        "description": "How one agent CLI is launched, shared by every profile that runs on it.",
+        "required": [
+          "agent_kind",
+          "extra_flags",
+          "default_flags"
+        ],
+        "properties": {
+          "agent_kind": {
+            "$ref": "#/components/schemas/AgentKind"
+          },
+          "default_flags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What Ariadne ships for this agent kind: what `extra_flags` was seeded\nwith, and what restoring the defaults writes back — a client resets by\nsending these back as `extra_flags`."
+          },
+          "extra_flags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Argv flags appended on every spawn and resume of this agent CLI."
+          }
+        }
+      },
       "AgentEventDto": {
         "type": "object",
         "required": [
@@ -2061,6 +2180,45 @@
           "user",
           "system"
         ]
+      },
+      "BinaryDto": {
+        "type": "object",
+        "description": "A binary as the daemon can — or cannot — find it.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "agent_kind": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AgentKind",
+                "description": "Set for the coding-agent CLIs, absent for tmux and git."
+              }
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "Executable name as it is looked up on PATH (\"claude\", \"tmux\").",
+            "example": "claude"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Absolute path, when it was found."
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "First line of its version output, when it answered in time. A binary\nthat is found but does not answer keeps its path and no version."
+          }
+        }
       },
       "CreateGoalRequest": {
         "type": "object",
@@ -2134,12 +2292,6 @@
                 "description": "Omit for auto: the first installed agent CLI is used at spawn time."
               }
             ]
-          },
-          "extra_flags": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
           },
           "model": {
             "type": [
@@ -2254,6 +2406,59 @@
           },
           "title": {
             "type": "string"
+          }
+        }
+      },
+      "DaemonReportDto": {
+        "type": "object",
+        "description": "The daemon's own environment, as `ariadne doctor` renders it.",
+        "required": [
+          "version",
+          "home",
+          "socket_path",
+          "agents",
+          "tools",
+          "db",
+          "worktree_root"
+        ],
+        "properties": {
+          "agents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BinaryDto"
+            },
+            "description": "One entry per [`AgentKind`], in `AgentKind::ALL` order."
+          },
+          "db": {
+            "$ref": "#/components/schemas/PathStateDto"
+          },
+          "home": {
+            "type": "string",
+            "description": "Home directory the daemon resolved, and the socket it listens on."
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The daemon's `PATH`, the one every agent, tmux and git lookup uses."
+          },
+          "socket_path": {
+            "type": "string"
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BinaryDto"
+            },
+            "description": "The other binaries a session needs: tmux and git."
+          },
+          "version": {
+            "type": "string",
+            "example": "0.1.0"
+          },
+          "worktree_root": {
+            "$ref": "#/components/schemas/PathStateDto"
           }
         }
       },
@@ -2800,6 +3005,27 @@
           }
         }
       },
+      "PathStateDto": {
+        "type": "object",
+        "description": "A file or directory the daemon depends on.",
+        "required": [
+          "path",
+          "exists",
+          "writable"
+        ],
+        "properties": {
+          "exists": {
+            "type": "boolean"
+          },
+          "path": {
+            "type": "string"
+          },
+          "writable": {
+            "type": "boolean",
+            "description": "Whether the daemon may write it, asked of the kernel (`access(2)`)\nrather than inferred from the permission bits, which say nothing\nabout the user the daemon happens to run as. For a path that does not\nexist yet this is its directory's answer: whether it could be created.\nNothing is written to find out."
+          }
+        }
+      },
       "ProfileDto": {
         "type": "object",
         "required": [
@@ -2807,7 +3033,6 @@
           "name",
           "role",
           "system_prompt",
-          "extra_flags",
           "created_at",
           "updated_at"
         ],
@@ -2825,13 +3050,6 @@
           },
           "created_at": {
             "type": "string"
-          },
-          "extra_flags": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Extra argv flags appended when spawning the agent CLI."
           },
           "id": {
             "type": "string"
@@ -3390,6 +3608,21 @@
           }
         }
       },
+      "UpdateAgentConfigRequest": {
+        "type": "object",
+        "description": "Body of `PUT /v1/agents/{kind}`: the whole new flag list, empty included.",
+        "required": [
+          "extra_flags"
+        ],
+        "properties": {
+          "extra_flags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "UpdateProfilePromptRequest": {
         "type": "object",
         "description": "Body of `PUT /v1/profiles/{id}/prompts/{kind}`: the whole new text.",
@@ -3412,15 +3645,6 @@
               "null"
             ],
             "description": "New agent kind, or \"auto\" to clear it (resolve the first installed\nCLI at spawn time). Absent = unchanged."
-          },
-          "extra_flags": {
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {
-              "type": "string"
-            }
           },
           "model": {
             "type": [
@@ -3528,6 +3752,10 @@
     {
       "name": "system",
       "description": "Daemon health and metadata"
+    },
+    {
+      "name": "agents",
+      "description": "Per-agent-CLI launch configuration"
     },
     {
       "name": "profiles",
