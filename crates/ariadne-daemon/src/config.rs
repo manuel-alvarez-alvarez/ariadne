@@ -8,36 +8,8 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use serde::Deserialize;
 
 use ariadne_client::endpoint;
-
-/// Optional overrides read from `<root>/config.toml`.
-#[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct FileConfig {
-    socket_path: Option<PathBuf>,
-    db_path: Option<PathBuf>,
-    worktree_root: Option<PathBuf>,
-    run_dir: Option<PathBuf>,
-    /// e.g. "127.0.0.1:7676" — TCP listener is disabled unless set.
-    tcp_listen: Option<SocketAddr>,
-    /// tracing filter, e.g. "info,ariadne_daemon=debug"
-    log_filter: Option<String>,
-    /// Path to the `ariadne` CLI used for hooks and MCP (default: sibling of
-    /// ariadned, else "ariadne" on PATH).
-    cli_bin: Option<String>,
-    /// Delete task branches after merge (default true). Only takes effect
-    /// when the worktrees are deleted too: a kept engineer worktree has the
-    /// task branch checked out, which pins it.
-    delete_merged_branches: Option<bool>,
-    /// Delete task worktrees after merge (default true). Set to false to keep
-    /// them under worktree_root so merged work can be inspected later;
-    /// cancelled tasks always keep theirs, salvageable work included.
-    delete_merged_worktrees: Option<bool>,
-    /// Keep the machine awake while agent sessions are live (default true).
-    prevent_sleep: Option<bool>,
-}
 
 /// Fully resolved daemon configuration.
 #[derive(Debug, Clone)]
@@ -79,16 +51,10 @@ impl Config {
         let root = endpoint::home(home_override)
             .context("cannot determine home directory; pass --home")?;
 
-        let file: FileConfig = {
-            let path = root.join("config.toml");
-            if path.exists() {
-                let raw = std::fs::read_to_string(&path)
-                    .with_context(|| format!("reading {}", path.display()))?;
-                toml::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?
-            } else {
-                FileConfig::default()
-            }
-        };
+        // The strict reading of `config.toml` lives beside the socket
+        // resolution it shares a file with, so `ariadne doctor` reports on
+        // exactly what would stop this daemon from starting.
+        let file = endpoint::parse_config(&root)?.unwrap_or_default();
 
         let config = Config {
             socket_path: file
