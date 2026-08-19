@@ -15,7 +15,7 @@ use tokio::sync::broadcast::Receiver;
 use tower::ServiceExt;
 
 use ariadne_api::stream::{DeletedDto, DomainEvent};
-use ariadne_core::{AgentKind, GoalStatus, Role, TaskStatus};
+use ariadne_core::{AgentKind, AttentionReason, GoalStatus, Role, SessionStatus, TaskStatus};
 use ariadne_daemon::bus::{BusEvent, EventBus};
 use ariadne_daemon::config::Config;
 use ariadne_daemon::gitwt::GitManager;
@@ -497,4 +497,87 @@ async fn launcher_session_writes_emit_session_events() {
     assert_eq!(dto.id, session.id);
     assert_eq!(dto.status, ariadne_core::SessionStatus::Exited);
     assert!(dto.ended_at.is_some());
+}
+
+/// Attention rides the same ingestion path as liveness: an agent that reports
+/// an error needs the user, and one that goes back to work does not — while
+/// going idle, which is exactly when a prompt may be waiting, leaves the flag
+/// alone. Every change reaches the bus as a `session_updated`.
+#[tokio::test]
+async fn ingested_events_raise_and_clear_session_attention() {
+    let h = harness().await;
+    let (goal, task) = h.active_goal_with_task().await;
+    let session = h
+        .store
+        .create_session(ariadne_store::NewSession {
+            goal_id: goal.id.clone(),
+            task_id: Some(task.id.clone()),
+            role: Role::Engineer,
+            profile_id: task.engineer_profile_id.clone(),
+            agent_kind: AgentKind::Opencode,
+            tmux_session: "ariadne-test".into(),
+            worktree_path: Some(PathBuf::from("/tmp/wt").display().to_string()),
+            review_round: None,
+        })
+        .await
+        .unwrap();
+    let mut rx = h.bus.subscribe();
+
+    let ingest = |kind: &str| {
+        post_json(
+            "/internal/agent-events",
+            serde_json::json!({
+                "session_id": session.id,
+                "agent_kind": "opencode",
+                "kind": kind,
+                "payload": {},
+            }),
+        )
+    };
+    let post = async |kind: &str| {
+        let response = h.router.clone().oneshot(ingest(kind)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED, "{kind}");
+    };
+
+    // A failed turn: attention is raised, the lifecycle status is untouched.
+    post("session.error").await;
+    let flagged = h.store.get_session(&session.id).await.unwrap();
+    assert_eq!(
+        flagged.attention_reason(),
+        Some(AttentionReason::AgentError)
+    );
+    assert!(flagged.attention_since.is_some());
+    assert_eq!(flagged.status(), SessionStatus::Starting);
+
+    // ...and the flag is on the bus, not just in the database.
+    let event = next_event(&mut rx, |e| {
+        matches!(&e.event, DomainEvent::SessionUpdated(s)
+            if s.attention_reason == Some(AttentionReason::AgentError))
+    })
+    .await;
+    assert_eq!(event.task_id.as_deref(), Some(task.id.as_str()));
+
+    // Going idle is when a permission prompt or a question is waiting: it
+    // must not clear anything.
+    post("session.idle").await;
+    assert_eq!(
+        h.store
+            .get_session(&session.id)
+            .await
+            .unwrap()
+            .attention_reason(),
+        Some(AttentionReason::AgentError)
+    );
+
+    // Back to work: the agent needs nobody now.
+    post("tool.execute.before").await;
+    let cleared = h.store.get_session(&session.id).await.unwrap();
+    assert_eq!(cleared.attention_reason(), None);
+    assert_eq!(cleared.attention_since, None);
+    assert_eq!(cleared.status(), SessionStatus::Running);
+    next_event(&mut rx, |e| {
+        matches!(&e.event, DomainEvent::SessionUpdated(s)
+            if s.id == session.id && s.attention_reason.is_none())
+    })
+    .await;
 }

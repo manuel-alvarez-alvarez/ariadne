@@ -65,11 +65,25 @@ pub async fn ingest(
     }
 
     // Track liveness from lifecycle events (never resurrect ended sessions).
+    let status = status_for_event(&req.kind);
     if session.status().is_live()
-        && let Some(status) = status_for_event(&req.kind)
+        && let Some(status) = status
         && status != session.status()
     {
         state.store.set_session_status(&session.id, status).await?;
+    }
+
+    // Attention follows the event too: an agent that reported an error needs
+    // the user, and one that is working again does not. Only a
+    // running-mapped event clears — going idle is exactly when a permission
+    // prompt or a question is waiting, so idle/exit must leave the flag be.
+    if let Some(reason) = attention_for_event(&req.kind) {
+        state
+            .store
+            .set_session_attention(&session.id, reason)
+            .await?;
+    } else if status == Some(ariadne_core::SessionStatus::Running) {
+        state.store.clear_session_attention(&session.id).await?;
     }
 
     state.store.touch_session(&session.id).await?;
@@ -117,11 +131,22 @@ fn status_for_event(kind: &str) -> Option<ariadne_core::SessionStatus> {
     }
 }
 
+/// Attention an event raises on its session (None = leave it alone).
+fn attention_for_event(kind: &str) -> Option<ariadne_core::AttentionReason> {
+    use ariadne_core::AttentionReason as A;
+    match kind {
+        // OpenCode reports a failed turn (API error, aborted tool run) here;
+        // the session itself stays alive, so only attention is raised.
+        "session.error" => Some(A::AgentError),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{extract_internal_id, status_for_event};
+    use super::{attention_for_event, extract_internal_id, status_for_event};
 
-    use ariadne_core::{AgentKind, SessionStatus};
+    use ariadne_core::{AgentKind, AttentionReason, SessionStatus};
     use serde_json::json;
 
     #[test]
@@ -162,6 +187,22 @@ mod tests {
             ("session_end", Exited),
         ] {
             assert_eq!(status_for_event(event), Some(expected), "{event}");
+        }
+    }
+
+    #[test]
+    fn session_error_raises_attention_without_touching_the_status() {
+        assert_eq!(
+            attention_for_event("session.error"),
+            Some(AttentionReason::AgentError)
+        );
+        assert_eq!(status_for_event("session.error"), None);
+    }
+
+    #[test]
+    fn ordinary_events_raise_no_attention() {
+        for event in ["session_start", "post_tool_use", "stop", "session.idle"] {
+            assert_eq!(attention_for_event(event), None, "{event}");
         }
     }
 }

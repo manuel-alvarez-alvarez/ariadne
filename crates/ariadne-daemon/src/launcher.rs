@@ -2,11 +2,12 @@
 //! process. Used by the debug spawn endpoint now and by the scheduler loop
 //! once autonomous orchestration lands.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
 
+use ariadne_core::spawn_plan::SpawnPlanFile;
 use ariadne_core::{PromptKind, Role, SessionStatus, TaskStatus};
 use ariadne_store::{AgentSession, NewSession, SessionFilter, Store, Task};
 
@@ -25,6 +26,12 @@ pub struct Launcher {
 impl Launcher {
     fn run_dir(&self, session_id: &str) -> PathBuf {
         self.cfg.run_dir.join(session_id)
+    }
+
+    /// Where a session's spawn plan is written: everything the launch was
+    /// made of, kept afterwards as the record of how the agent was started.
+    fn spawn_plan_file(&self, session_id: &str) -> PathBuf {
+        self.run_dir(session_id).join("spawn.json")
     }
 
     /// Where the last measured pane grid is kept, beside the console log it
@@ -197,14 +204,9 @@ impl Launcher {
         // adapter only creates the run dir when it has config files to write
         // there (codex does not).
         std::fs::create_dir_all(self.run_dir(&session.id)).context("creating session run dir")?;
+        let spawn = self.tmux_spawn(session, plan.argv, env, plan.cwd)?;
         self.tmux
-            .new_session(&TmuxSpawn {
-                session: session.tmux_session.clone(),
-                cwd: plan.cwd,
-                env,
-                argv: plan.argv,
-                log_file: Some(self.run_dir(&session.id).join("console.log")),
-            })
+            .new_session(&spawn)
             .await
             .context("spawning tmux session")?;
         self.store
@@ -212,6 +214,81 @@ impl Launcher {
             .await?;
         self.auto_accept_trust(session.tmux_session.clone());
         Ok(())
+    }
+
+    /// The tmux side of a launch: the plan goes to a file, and tmux gets a
+    /// command whose length says nothing about what is in it.
+    ///
+    /// It used to say everything. The agent's argv — briefing, system prompt
+    /// and all — plus one `-e` pair per environment variable rode in the
+    /// `tmux new-session` arguments, and tmux hands a command to its server as
+    /// a single message capped near 16KB. A five-kilobyte reviewer briefing
+    /// reached it: `new-session` answered "command too long" for every attempt
+    /// the spawn had, and the task was failed for it.
+    ///
+    /// So nothing that varies goes through tmux any more. `ariadne _spawn`
+    /// reads the plan, applies the environment and `exec`s the argv, which
+    /// leaves the agent itself as the pane's root process — tmux is watching
+    /// the same thing it always was.
+    fn tmux_spawn(
+        &self,
+        session: &AgentSession,
+        argv: Vec<String>,
+        env: Vec<(String, String)>,
+        cwd: PathBuf,
+    ) -> Result<TmuxSpawn> {
+        let cli_bin = self.spawn_cli_bin()?;
+        let plan_file = self.spawn_plan_file(&session.id);
+        write_spawn_plan(&plan_file, &SpawnPlanFile::new(argv, env, cwd.clone()))?;
+        Ok(TmuxSpawn {
+            session: session.tmux_session.clone(),
+            // `_spawn` enters the plan's cwd itself; tmux is told it too so
+            // that a pane which never gets that far is still where it belongs.
+            cwd,
+            // Deliberately empty, and the whole point: the environment is in
+            // the plan file.
+            env: Vec::new(),
+            argv: vec![cli_bin, "_spawn".into(), plan_file.display().to_string()],
+            log_file: Some(self.run_dir(&session.id).join("console.log")),
+        })
+    }
+
+    /// The `ariadne` binary tmux runs, checked before the spawn rather than
+    /// after.
+    ///
+    /// `cli_bin` used to be a string handed to the agents for their hooks and
+    /// their MCP entry, where a wrong value costs a hook. It is now the pane's
+    /// root process, so a wrong one costs the whole session — and the pane is
+    /// gone before anyone can read why. A path is therefore checked here; a
+    /// bare name is not, because the daemon cannot answer for it: the pane's
+    /// `PATH` comes from the tmux server, which the daemon did not start.
+    fn spawn_cli_bin(&self) -> Result<String> {
+        let bin = self.cfg.cli_bin.clone();
+        let bad = |reason: &str| {
+            anyhow!(
+                "cannot launch an agent session: cli_bin {bin:?} {reason}. \
+                 Sessions are started as `<cli_bin> _spawn <plan>`, so set `cli_bin` in \
+                 {}/config.toml to the path of the `ariadne` binary that belongs to this \
+                 daemon.",
+                self.cfg.root.display()
+            )
+        };
+        if bin.trim().is_empty() {
+            return Err(bad("is empty"));
+        }
+        if bin.contains('/') {
+            if !is_executable(Path::new(&bin)) {
+                return Err(bad("is not an executable file"));
+            }
+        } else if !on_path(&bin) {
+            // Best effort only — see above on whose PATH decides.
+            tracing::warn!(
+                cli_bin = %bin,
+                "cli_bin is not on the daemon's PATH; agent sessions will fail to start \
+                 unless the tmux server's PATH has it"
+            );
+        }
+        Ok(bin)
     }
 
     async fn spawn(
@@ -707,4 +784,40 @@ impl Launcher {
         }
         Ok(())
     }
+}
+
+/// Write a spawn plan where `ariadne _spawn` will read it.
+///
+/// 0600: the plan holds the agent's whole environment, and everything a
+/// session was told. The mode is set as the file is created, which is the only
+/// way it comes into being — the run dir is the daemon's own.
+fn write_spawn_plan(path: &Path, plan: &SpawnPlanFile) -> Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let json = plan.to_json().context("rendering the spawn plan")?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)
+        .with_context(|| format!("creating the spawn plan {}", path.display()))?;
+    file.write_all(json.as_bytes())
+        .with_context(|| format!("writing the spawn plan {}", path.display()))
+}
+
+/// A file this daemon could exec: present, a file, and with an execute bit.
+/// (`http::doctor` asks the same question to *report* on a binary; here it
+/// decides whether a spawn happens at all.)
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    // Follows symlinks on purpose: what matters is what running it reaches.
+    std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+}
+
+/// Whether a bare name is an executable on the daemon's own `PATH`.
+fn on_path(name: &str) -> bool {
+    std::env::var_os("PATH")
+        .is_some_and(|path| std::env::split_paths(&path).any(|dir| is_executable(&dir.join(name))))
 }

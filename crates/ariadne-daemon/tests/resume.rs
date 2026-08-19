@@ -7,8 +7,10 @@
 //!
 //! No tmux and no agent CLI needed: `tmux` is a stub script that records the
 //! commands the launcher issues, which is also how the console-log wiring is
-//! checked without a pane to pipe. `git` is real — a reviewer's worktree has
-//! to actually move to the branch tip between rounds.
+//! checked without a pane to pipe. What the agent itself was launched with is
+//! read from the session's spawn plan, since that is where it travels — tmux
+//! is handed `ariadne _spawn <plan>`. `git` is real — a reviewer's worktree
+//! has to actually move to the branch tip between rounds.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -17,6 +19,7 @@ use std::time::Duration;
 use tokio::sync::broadcast::Receiver;
 
 use ariadne_api::stream::DomainEvent;
+use ariadne_core::spawn_plan::SpawnPlanFile;
 use ariadne_core::{Actor, AgentKind, PromptKind, Role, SessionStatus, TaskStatus};
 use ariadne_daemon::agents::prompts;
 use ariadne_daemon::bus::{BusEvent, EventBus};
@@ -293,6 +296,31 @@ impl Harness {
             .collect()
     }
 
+    /// The spawn plan the last launch of `session_id` left in its run dir:
+    /// the argv and env that no longer ride in the tmux command line.
+    fn spawn_plan(&self, session_id: &str) -> SpawnPlanFile {
+        let path = self.plan_file(session_id);
+        let raw = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
+        SpawnPlanFile::from_json(&raw).unwrap()
+    }
+
+    fn plan_file(&self, session_id: &str) -> PathBuf {
+        self.launcher
+            .cfg
+            .run_dir
+            .join(session_id)
+            .join("spawn.json")
+    }
+
+    /// The last `new-session` the launcher issued, as the stub recorded it.
+    fn last_new_session(&self) -> String {
+        self.tmux_commands()
+            .into_iter()
+            .rfind(|c| c.starts_with("new-session"))
+            .expect("the launcher started a tmux session")
+    }
+
     fn console_log(&self, session_id: &str) -> PathBuf {
         self.launcher
             .cfg
@@ -348,15 +376,74 @@ async fn resuming_the_engineer_reuses_its_session_across_review_rounds() {
             1,
             "round {round} left more than one engineer session: {sessions:?}"
         );
+        // Each relaunch resumed the stored conversation rather than starting
+        // one. The plan is where that is written now, one per launch.
+        let argv = h.spawn_plan(&resumed.id).argv.join(" ");
+        assert!(argv.contains("--resume uuid-1234"), "round {round}: {argv}");
+        assert!(
+            argv.contains(&format!("Round {round}: please fix things.")),
+            "round {round} carried its instruction: {argv}"
+        );
     }
+}
 
-    // Both relaunches resumed the stored conversation rather than starting one.
-    let commands = h.tmux_commands();
-    let resumes = commands
-        .iter()
-        .filter(|c| c.contains("--resume uuid-1234"))
-        .count();
-    assert_eq!(resumes, 2, "commands: {commands:?}");
+/// The point of the spawn plan: what an agent is told has no bearing on the
+/// size of the command tmux is given.
+///
+/// A briefing of a hundred kilobytes used to be unlaunchable — tmux hands its
+/// server one message, capped near 16KB, so `new-session` answered "command
+/// too long" until the spawn ran out of attempts and the task was failed for
+/// it. Now tmux gets three words and a path, and the launch itself is in the
+/// plan file: argv, environment, working directory, and permissions that keep
+/// it to the daemon.
+#[tokio::test]
+async fn a_launch_hands_tmux_nothing_that_can_outgrow_it() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let h = harness().await;
+    let (task, first) = h.task_with_resumable_engineer().await;
+    let briefing = "B".repeat(100_000);
+
+    let session = h
+        .launcher
+        .resume_engineer(&task.id, &briefing)
+        .await
+        .unwrap();
+    let worktree = session.worktree_path.clone().unwrap();
+
+    // What tmux was asked to run, in full: the plan file and nothing else.
+    let plan_file = h.plan_file(&first.id);
+    assert_eq!(
+        h.last_new_session(),
+        format!(
+            "new-session -d -s {} -c {worktree} -- {} _spawn {}",
+            session.tmux_session,
+            h.launcher.cfg.cli_bin,
+            plan_file.display()
+        )
+    );
+
+    // And the plan is the launch, verbatim: the briefing the adapter built,
+    // the environment that used to arrive as `-e` pairs, the working dir.
+    let plan = h.spawn_plan(&first.id);
+    assert_eq!(plan.argv[0], "claude");
+    assert!(
+        plan.argv.iter().any(|arg| arg.ends_with(&briefing)),
+        "the briefing rode in the plan: {:?}",
+        plan.argv.iter().map(String::len).collect::<Vec<_>>()
+    );
+    assert!(
+        plan.env
+            .contains(&("ARIADNE_SESSION_ID".to_string(), first.id.clone())),
+        "the session env rode in the plan: {:?}",
+        plan.env
+    );
+    assert_eq!(plan.cwd, PathBuf::from(&worktree));
+
+    // The plan stays behind as the record of how the session was started, and
+    // it holds the agent's whole environment: nobody else's to read.
+    let mode = std::fs::metadata(&plan_file).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o600, "plan mode: {mode:o}");
 }
 
 /// A reviewer that sees a task through two rounds is one reviewer with one
@@ -441,17 +528,17 @@ async fn a_reviewer_reuses_its_session_across_review_rounds() {
         "the reviewer woke up in the tree it already reviewed"
     );
 
-    let commands = h.tmux_commands();
-    let log = commands.join("\n");
+    let argv = h.spawn_plan(&second.id).argv.join(" ");
     assert!(
-        log.contains(&format!("--resume {internal}")),
-        "round 2 resumed the stored conversation: {log}"
+        argv.contains(&format!("--resume {internal}")),
+        "round 2 resumed the stored conversation: {argv}"
     );
     assert!(
-        log.contains("review round 2"),
-        "and was told which round it is reviewing: {log}"
+        argv.contains("review round 2"),
+        "and was told which round it is reviewing: {argv}"
     );
     // One console log, appended to across both rounds.
+    let commands = h.tmux_commands();
     let expected = format!("cat >> '{}'", h.console_log(&first.id).display());
     let pipes: Vec<&String> = commands
         .iter()
