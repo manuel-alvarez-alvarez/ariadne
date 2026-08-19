@@ -6,10 +6,12 @@
  * prompt), so this is a box with its own Save rather than a field in a form
  * that posts everything at once.
  *
- * Nothing here reads the template. Placeholders are the daemon's business and a
- * briefing that drops one is explicitly allowed, so there is no validation to
- * fail and no default text on this side — {@link PromptEditorProps.onRestore}
- * asks the daemon for the default and shows what comes back.
+ * Nothing here reads the template. Placeholders are the daemon's business:
+ * dropping one is explicitly allowed, naming one the prompt's kind cannot fill
+ * in is refused when it is saved, and the sentence saying so is the daemon's,
+ * shown under the box as it sent it. No default text lives on this side either
+ * — {@link PromptEditorProps.onRestore} asks the daemon for the default and
+ * shows what comes back.
  */
 
 import { RotateCcwIcon } from "lucide-react"
