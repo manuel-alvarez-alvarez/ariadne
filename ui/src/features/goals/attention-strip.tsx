@@ -105,7 +105,7 @@ function TaskRow({ item: { task, reason, goalId, goal } }: { item: AttentionTask
 }
 
 function SessionRow({
-  item: { session, reason, goalId, goal, at },
+  item: { session, reason, goalId, goal, task, at },
 }: {
   item: AttentionSessionItem
 }) {
@@ -123,7 +123,13 @@ function SessionRow({
         <SessionAttentionBadge attention={reason} />
         <span className="min-w-0 flex-1 truncate">
           {ROLE_LABELS[session.role]} session
-          {session.task_id ? null : <span className="text-muted-foreground"> · planner</span>}
+          {/* What the agent was working on, which is what decides whether this
+              row is worth opening — the goal below is only where it sits. A
+              planner session has no task and says so instead. */}
+          <span className="text-muted-foreground">
+            {" · "}
+            {session.task_id ? (task?.title ?? shortId(session.task_id)) : "planner"}
+          </span>
         </span>
         <GoalRef goalId={goalId} goal={goal} />
         <Age at={at} />
