@@ -2,8 +2,9 @@
  * One task, as it appears on the board and in any other list of tasks.
  *
  * What earns space here is what tells you whether a task needs attention:
- * which round of review it is on, whether its agent went idle, and how many
- * other tasks it is waiting for — plus the branch, which is the one string an
+ * whether one of its agents is waiting on a person, which round of review it
+ * is on, whether its agent went idle, and how many other tasks it is waiting
+ * for — plus the branch, which is the one string an
  * engineer actually wants off the card and into a terminal. It sits outside
  * the link on purpose: a copy button nested in an anchor is neither valid nor
  * clickable without hijacking the navigation.
@@ -22,6 +23,11 @@ import type { TaskDto } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
 import { StatusBadge } from "@/components/status-badge"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import {
+  SESSION_ATTENTION_META,
+  type SessionAttention,
+  SessionAttentionBadge,
+} from "@/features/sessions/session-display"
 import { plural } from "@/lib/plural"
 import { formatAbsolute, formatRelative } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -29,7 +35,24 @@ import { useTaskPanelTo } from "@/routes/paths"
 import { STALLED_META } from "./stalled"
 import { primaryStatus, subStatus, TASK_STATUS_META } from "./status"
 
-export function TaskCard({ task, showStatus = false }: { task: TaskDto; showStatus?: boolean }) {
+export function TaskCard({
+  task,
+  showStatus = false,
+  attention,
+}: {
+  task: TaskDto
+  showStatus?: boolean
+  /**
+   * Why one of this task's sessions wants a person, when one does — the flag
+   * the daemon raised, handed down by whoever is holding the sessions list
+   * (`useBoardAttention`) rather than fetched per card.
+   *
+   * A card is where the work is, and until this was on it the only way to see
+   * that a task was blocked on a permission prompt was to read the strip above
+   * the board and match the titles up.
+   */
+  attention?: SessionAttention | null
+}) {
   const status = TASK_STATUS_META[primaryStatus(task.status)]
   const sub = subStatus(task.status)
   const terminal = task.status === "cancelled"
@@ -39,7 +62,10 @@ export function TaskCard({ task, showStatus = false }: { task: TaskDto; showStat
     <div
       className={cn(
         "rounded-lg border bg-card transition-colors hover:border-foreground/20 hover:bg-muted/50",
-        task.stalled && STALLED_META.border,
+        // An agent waiting on a person outranks a stall the same agent is
+        // being counted as: both are drawn as a coloured outline, and the one
+        // that says what to do about it is this.
+        attention ? SESSION_ATTENTION_META[attention].border : task.stalled && STALLED_META.border,
       )}
     >
       <Link
@@ -56,6 +82,10 @@ export function TaskCard({ task, showStatus = false }: { task: TaskDto; showStat
         </p>
 
         <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+          {/* First in the row, ahead of the status: it is the one thing on the
+              card that is addressed to the reader. Same pill as the attention
+              strip and the sessions table, down to the wording. */}
+          {attention && <SessionAttentionBadge size="sm" attention={attention} />}
           {showStatus && <StatusBadge size="sm" label={status.label} tone={status.badge} />}
           {sub && (
             <Tooltip>

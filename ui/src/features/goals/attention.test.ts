@@ -4,7 +4,7 @@ import type { GoalDto, SessionDto, TaskDto } from "@/api"
 
 import { sessionAttention } from "@/features/sessions/session-display"
 
-import { collectAttention, taskAttentionReason } from "./attention"
+import { collectAttention, collectBoardAttention, taskAttentionReason } from "./attention"
 
 function task(overrides: Partial<TaskDto>): TaskDto {
   return {
@@ -251,5 +251,60 @@ describe("collectAttention", () => {
 
     expect(items.map((item) => item.id)).toEqual(["s1"])
     expect(items[0]?.goal).toBeUndefined()
+  })
+})
+
+describe("collectBoardAttention", () => {
+  it("indexes a flagged session by the task whose card should show it", () => {
+    const board = collectBoardAttention([
+      session({ id: "s1", task_id: "t1", status: "idle", attention_reason: "waiting_permission" }),
+      // Working away with nothing owed to it: no badge on t2's card.
+      session({ id: "s2", task_id: "t2", status: "running", attention_reason: null }),
+    ])
+
+    expect(board.byTask.get("t1")).toBe("waiting_permission")
+    expect(board.byTask.has("t2")).toBe(false)
+    expect(board.byGoal.size).toBe(0)
+  })
+
+  // A planner belongs to no task, so its goal's lane header is the only place
+  // on the board it can ask for anything.
+  it("indexes a session that has no task by its goal", () => {
+    const board = collectBoardAttention([
+      session({ id: "s1", goal_id: "g1", status: "idle", attention_reason: "waiting_input" }),
+    ])
+
+    expect(board.byGoal.get("g1")).toBe("waiting_input")
+    expect(board.byTask.size).toBe(0)
+  })
+
+  // A card has room for one badge, and the reason the user has not seen yet is
+  // the one raised last.
+  it("shows the most recently raised reason when a task has several", () => {
+    const board = collectBoardAttention([
+      session({
+        id: "s1",
+        task_id: "t1",
+        status: "failed",
+        attention_reason: "disconnected",
+        attention_since: "2026-08-16T10:00:00Z",
+      }),
+      session({
+        id: "s2",
+        task_id: "t1",
+        status: "idle",
+        attention_reason: "waiting_permission",
+        attention_since: "2026-08-16T12:00:00Z",
+      }),
+    ])
+
+    expect(board.byTask.get("t1")).toBe("waiting_permission")
+  })
+
+  it("reads a sessions list that never loaded", () => {
+    const board = collectBoardAttention(undefined)
+
+    expect(board.byTask.size).toBe(0)
+    expect(board.byGoal.size).toBe(0)
   })
 })

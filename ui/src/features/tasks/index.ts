@@ -7,7 +7,7 @@
  */
 
 export { taskListQueryOptions } from "./queries"
-export { StalledBadge } from "./stalled"
+export { STALLED_META, StalledBadge } from "./stalled"
 export {
   BOARD_STATUSES,
   compareByAttention,

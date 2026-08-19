@@ -20,8 +20,8 @@ import { Link, useSearchParams } from "react-router-dom"
 
 import type { GoalDto } from "@/api"
 import { StatusBadge } from "@/components/status-badge"
-import { SessionAttentionBadge } from "@/features/sessions/session-display"
-import { StalledBadge, TASK_STATUS_META } from "@/features/tasks"
+import { SESSION_ATTENTION_META, SessionAttentionBadge } from "@/features/sessions/session-display"
+import { STALLED_META, StalledBadge, TASK_STATUS_META } from "@/features/tasks"
 import { describeError } from "@/lib/errors"
 import { shortId } from "@/lib/ids"
 import { ROLE_LABELS } from "@/lib/labels"
@@ -49,8 +49,9 @@ export function AttentionStrip() {
       </header>
 
       {/* Tall enough to read a handful of rows at a glance, capped so a bad
-          morning does not push the board off the screen. */}
-      <ul className="max-h-52 divide-y overflow-y-auto">
+          morning does not push the board off the screen. Two lines a row now,
+          so the cap is a little taller than the handful it used to hold. */}
+      <ul className="max-h-64 divide-y overflow-y-auto">
         {attention.items.map((item) =>
           item.kind === "task" ? (
             <TaskRow key={item.id} item={item} />
@@ -92,10 +93,13 @@ function TaskRow({ item: { task, reason, goalId, goal } }: { item: AttentionTask
     <li>
       <Link to={taskPanelTo(search, task.id)} className={ROW_LINK}>
         <StatusBadge box="badge" label={meta.label} tone={meta.badge} hint={meta.hint} />
-        <span className="min-w-0 flex-1 truncate font-medium">{task.title}</span>
         {/* The status pill already names a failed task; a stall is a flag on
             top of whatever status the task is sitting in. */}
         {reason === "stalled" ? <StalledBadge /> : null}
+        <Subject
+          subject={task.title}
+          detail={`Task · ${reason === "stalled" ? STALLED_META.hint : meta.hint}`}
+        />
         <GoalRef goalId={goalId} goal={goal} />
         <Age at={task.updated_at} />
         <RowId id={task.id} />
@@ -121,21 +125,53 @@ function SessionRow({
             list. `SessionStatusBadge` stays what the sessions feature shows,
             where a badge has five statuses to tell apart. */}
         <SessionAttentionBadge attention={reason} />
-        <span className="min-w-0 flex-1 truncate">
-          {ROLE_LABELS[session.role]} session
-          {/* What the agent was working on, which is what decides whether this
-              row is worth opening — the goal below is only where it sits. A
-              planner session has no task and says so instead. */}
-          <span className="text-muted-foreground">
-            {" · "}
-            {session.task_id ? (task?.title ?? shortId(session.task_id)) : "planner"}
-          </span>
-        </span>
+        <Subject
+          // What the agent was working on, which is what decides whether this
+          // row is worth opening — the goal on the right is only where it
+          // sits. A session with no task is a planner's, and is named by the
+          // one thing it does have: its role and the goal it is planning.
+          subject={
+            session.task_id
+              ? (task?.title ?? `Task ${shortId(session.task_id)}`)
+              : `${ROLE_LABELS[session.role]} · ${goal?.title ?? `Goal ${shortId(goalId)}`}`
+          }
+          // Who is asking and what for, spelled out: the pill's label is four
+          // words, and which agent of the three raised it is the other half of
+          // knowing whether this row is yours to answer. A task-less session
+          // already says its role in the subject.
+          detail={
+            session.task_id
+              ? `${ROLE_LABELS[session.role]} · ${SESSION_ATTENTION_META[reason].hint}`
+              : SESSION_ATTENTION_META[reason].hint
+          }
+        />
         <GoalRef goalId={goalId} goal={goal} />
         <Age at={at} />
         <RowId id={session.id} />
       </Link>
     </li>
+  )
+}
+
+/**
+ * What the row is about, over what it is: the title on top in the row's own
+ * size, the explanation under it in the muted one.
+ *
+ * Two lines rather than one, because the two used to compete for the same
+ * truncating span — and it was the title, the only part that identifies the
+ * row, that lost first. They now truncate independently, so a narrow strip
+ * shortens both instead of dropping one.
+ */
+function Subject({ subject, detail }: { subject: string; detail: string }) {
+  return (
+    <span className="min-w-0 flex-1">
+      <span className="block truncate font-medium" title={subject}>
+        {subject}
+      </span>
+      <span className="block truncate text-xs text-muted-foreground" title={detail}>
+        {detail}
+      </span>
+    </span>
   )
 }
 

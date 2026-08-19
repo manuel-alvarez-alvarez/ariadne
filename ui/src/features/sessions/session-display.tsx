@@ -78,6 +78,12 @@ interface SessionAttentionMeta {
   hint: string
   /** Badge classes, from the status ramp in `index.css`: it carries dark mode. */
   badge: string
+  /**
+   * Card border, for the board card that outlines itself when one of its
+   * sessions is stuck — the same treatment `STALLED_META.border` gives a
+   * stalled task, on whichever step of the ramp this reason sits.
+   */
+  border: string
 }
 
 /**
@@ -94,26 +100,31 @@ export const SESSION_ATTENTION_META: Record<SessionAttention, SessionAttentionMe
     label: "Waiting for permission",
     hint: "The agent is blocked on a permission or approval prompt.",
     badge: "bg-status-warn-soft text-status-warn-fg",
+    border: "border-status-warn/40",
   },
   waiting_input: {
     label: "Waiting for input",
     hint: "The agent asked a question and is idle until it is answered.",
     badge: "bg-status-warn-soft text-status-warn-fg",
+    border: "border-status-warn/40",
   },
   agent_error: {
     label: "Agent error",
     hint: "The agent reported an error.",
     badge: "bg-status-danger-soft text-status-danger-fg",
+    border: "border-status-danger/40",
   },
   disconnected: {
     label: "Disconnected",
     hint: "The agent's terminal is gone while its work is still active.",
     badge: "bg-status-danger-soft text-status-danger-fg",
+    border: "border-status-danger/40",
   },
   stalled: {
     label: "Stalled",
     hint: "No activity for too long.",
     badge: "bg-status-warn-soft text-status-warn-fg",
+    border: "border-status-warn/40",
   },
 }
 
@@ -137,15 +148,19 @@ export function sessionAttention(session: SessionDto): SessionAttention | null {
  */
 export function SessionAttentionBadge({
   attention,
+  /** `sm` for the dense rows of a board card; the default elsewhere. */
+  size,
   className,
 }: {
   attention: SessionAttention
+  size?: "sm" | "md"
   className?: string
 }) {
   const meta = SESSION_ATTENTION_META[attention]
   return (
     <StatusBadge
       box="badge"
+      size={size}
       label={meta.label}
       tone={meta.badge}
       hint={meta.hint}
