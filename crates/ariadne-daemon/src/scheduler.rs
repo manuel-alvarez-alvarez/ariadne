@@ -231,24 +231,55 @@ impl Scheduler {
 
     /// Whether the work this session was started for is still going.
     ///
-    /// A pane disappearing is only worth the user's attention when something
-    /// depends on it: an engineer or reviewer whose task has not reached a
-    /// terminal (or failed) status, a planner whose goal is still being
-    /// planned. Anything else is a session ending as it should.
+    /// A pane disappearing is only worth the user's attention when the work is
+    /// waiting on *that* agent, which is a question about its role and not
+    /// only about the status: an engineer's pane going away while its task
+    /// sits under review costs nobody anything — the reviewers are the ones
+    /// working, and the engineer is woken by id when they answer — and a
+    /// reviewer that has already voted is done however long the round runs on.
     async fn work_is_active(&self, session: &AgentSession) -> bool {
-        match &session.task_id {
-            Some(task_id) => match self.store.get_task(task_id).await {
-                Ok(task) => !task.status().is_terminal() && task.status() != TaskStatus::Failed,
-                Err(_) => false,
-            },
-            None => matches!(
+        match session.role() {
+            // The goal being planned is the planner's whole job.
+            Role::Planner => matches!(
                 self.store
                     .get_goal(&session.goal_id)
                     .await
                     .map(|g| g.status()),
                 Ok(GoalStatus::Planning)
             ),
+            // Every status the engineer is working in or about to be woken
+            // for; `pending` has no engineer yet, and `under_review` is not
+            // its turn.
+            Role::Engineer => match self.task_of(session).await {
+                Some(task) => matches!(
+                    task.status(),
+                    TaskStatus::Ready
+                        | TaskStatus::InProgress
+                        | TaskStatus::ChangesRequested
+                        | TaskStatus::Approved
+                        | TaskStatus::Merging
+                ),
+                None => false,
+            },
+            // A reviewer is only owed to a round it has not voted in.
+            Role::Reviewer => match self.task_of(session).await {
+                Some(task) if task.status() == TaskStatus::UnderReview => self
+                    .store
+                    .list_reviews(&task.id, Some(task.review_round))
+                    .await
+                    .is_ok_and(|reviews| {
+                        !reviews
+                            .iter()
+                            .any(|r| r.reviewer_profile_id == session.profile_id)
+                    }),
+                _ => false,
+            },
         }
+    }
+
+    async fn task_of(&self, session: &AgentSession) -> Option<Task> {
+        let task_id = session.task_id.as_deref()?;
+        self.store.get_task(task_id).await.ok()
     }
 
     async fn reconcile_session(&mut self, session_id: &str) {

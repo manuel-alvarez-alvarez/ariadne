@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ariadne_core::{
-    Actor, AgentKind, AttentionReason, GoalStatus, Role, SessionStatus, TaskStatus,
+    Actor, AgentKind, AttentionReason, GoalStatus, ReviewVerdict, Role, SessionStatus, TaskStatus,
 };
 use ariadne_daemon::config::Config;
 use ariadne_daemon::gitwt::GitManager;
@@ -25,7 +25,8 @@ use ariadne_daemon::launcher::Launcher;
 use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_daemon::tmux::{TmuxManager, session_name};
 use ariadne_store::{
-    AgentSession, Goal, NewGoal, NewProfile, NewRepository, NewSession, NewTask, Store, Task,
+    AgentSession, Goal, NewGoal, NewProfile, NewRepository, NewReview, NewSession, NewTask,
+    SessionFilter, Store, Task,
 };
 
 /// Idle long enough to be past both thresholds (nudge at 300s, flag at 900s).
@@ -57,10 +58,34 @@ struct Harness {
 }
 
 async fn harness() -> Harness {
+    harness_with(Spawns::Work).await
+}
+
+/// A daemon that cannot start anything: `cli_bin` names no executable, so
+/// every fresh session dies at the launch.
+///
+/// What a vanished pane leaves behind is only itself visible while nothing has
+/// replaced it — a successful replacement is supposed to clear the flag — so
+/// the tests about what the sweep concluded run where no replacement can
+/// happen, and the one about the replacement runs where it can.
+async fn cannot_spawn_harness() -> Harness {
+    harness_with(Spawns::Fail).await
+}
+
+enum Spawns {
+    Work,
+    Fail,
+}
+
+async fn harness_with(spawns: Spawns) -> Harness {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(dir.path().join("test.db")).await.unwrap();
     let bus = ariadne_daemon::bus::start(store.clone());
-    let cfg = Arc::new(Config::load(Some(dir.path().join("home"))).unwrap());
+    let mut config = Config::load(Some(dir.path().join("home"))).unwrap();
+    if let Spawns::Fail = spawns {
+        config.cli_bin = dir.path().join("no-such-ariadne").display().to_string();
+    }
+    let cfg = Arc::new(config);
     let launcher = Arc::new(Launcher {
         cfg,
         store: store.clone(),
@@ -124,6 +149,12 @@ impl Harness {
 
     /// A goal still in planning, with a repository behind it.
     async fn planning_goal(&self) -> (Goal, String) {
+        self.planning_goal_needing(1).await
+    }
+
+    /// The same, for a goal that wants `approvals` of them: a round that one
+    /// verdict does not close is where a reviewer sits with its work done.
+    async fn planning_goal_needing(&self, approvals: i64) -> (Goal, String) {
         let planner = self.profile("planner", Role::Planner).await;
         let repo = self
             .store
@@ -141,7 +172,7 @@ impl Harness {
                 description: "desc".into(),
                 planner_profile_id: planner.clone(),
                 max_tasks: None,
-                required_approvals: 1,
+                required_approvals: approvals,
                 repository_ids: vec![repo.id.clone()],
             })
             .await
@@ -152,7 +183,11 @@ impl Harness {
     /// An active goal with one task on it, plus the engineer and reviewer
     /// profile ids the task was created with.
     async fn active_goal_with_task(&self) -> (Goal, Task, String, String) {
-        let (goal, _planner) = self.planning_goal().await;
+        self.active_goal_with_task_needing(1).await
+    }
+
+    async fn active_goal_with_task_needing(&self, approvals: i64) -> (Goal, Task, String, String) {
+        let (goal, _planner) = self.planning_goal_needing(approvals).await;
         self.store
             .set_goal_status(&goal.id, GoalStatus::Active)
             .await
@@ -199,6 +234,7 @@ impl Harness {
                 role,
                 profile_id: profile_id.to_string(),
                 agent_kind: AgentKind::ClaudeCode,
+                model: None,
                 tmux_session: tmux,
                 worktree_path: Some(self.dir.path().join("wt").display().to_string()),
                 review_round: None,
@@ -448,7 +484,7 @@ async fn a_session_waiting_on_a_person_is_never_nudged() {
 /// git repository) and would have nothing to say about attention if it could.
 #[tokio::test]
 async fn a_vanished_pane_with_work_still_active_is_flagged_disconnected() {
-    let h = harness().await;
+    let h = cannot_spawn_harness().await;
     let (goal, planner) = h.planning_goal().await;
     // Live in the database, gone as far as tmux is concerned: never added to
     // the stub's list of panes.
@@ -484,7 +520,7 @@ async fn a_vanished_pane_with_work_still_active_is_flagged_disconnected() {
 /// is the thing the user has to look at.
 #[tokio::test]
 async fn an_engineer_that_cannot_be_resumed_is_flagged_disconnected() {
-    let h = harness().await;
+    let h = cannot_spawn_harness().await;
     let (goal, task, engineer, _reviewer) = h.active_goal_with_task().await;
     h.advance(&task, TaskStatus::InProgress).await;
     // Ended, with no agent conversation to resume and no git repository to
@@ -507,10 +543,121 @@ async fn an_engineer_that_cannot_be_resumed_is_flagged_disconnected() {
     .await;
 }
 
+/// A pane going away while somebody else has the work is not the user's
+/// problem either: the engineer of a task under review is waiting on its
+/// reviewers, and is woken by id when they answer.
+#[tokio::test]
+async fn a_vanished_engineer_pane_under_review_is_not_raised() {
+    let h = cannot_spawn_harness().await;
+    let (goal, task, engineer, _reviewer) = h.active_goal_with_task().await;
+    h.advance(&task, TaskStatus::UnderReview).await;
+    let session = h
+        .session(&goal, Some(&task), Role::Engineer, &engineer)
+        .await;
+
+    let _sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    eventually("the vanished session to be retired", async || {
+        h.store.get_session(&session.id).await.unwrap().status() == SessionStatus::Exited
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        h.attention(&session).await,
+        None,
+        "the round is the reviewers' to finish, not this agent's"
+    );
+}
+
+/// And a reviewer that has already voted is finished, however long the round
+/// it voted in runs on.
+#[tokio::test]
+async fn a_vanished_reviewer_pane_after_its_verdict_is_not_raised() {
+    let h = cannot_spawn_harness().await;
+    // Two approvals wanted, one given: the round stays open around a reviewer
+    // that has nothing left to do.
+    let (goal, task, _engineer, reviewer) = h.active_goal_with_task_needing(2).await;
+    h.advance(&task, TaskStatus::UnderReview).await;
+    // Entering review opens a round: the verdict belongs to that one.
+    let task = h.store.get_task(&task.id).await.unwrap();
+    let session = h
+        .session(&goal, Some(&task), Role::Reviewer, &reviewer)
+        .await;
+    h.store
+        .create_review(NewReview {
+            task_id: task.id.clone(),
+            round: task.review_round,
+            reviewer_profile_id: reviewer.clone(),
+            session_id: Some(session.id.clone()),
+            verdict: ReviewVerdict::Approve,
+            body: None,
+        })
+        .await
+        .unwrap();
+
+    let _sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    eventually("the vanished session to be retired", async || {
+        h.store.get_session(&session.id).await.unwrap().status() == SessionStatus::Exited
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        h.store.get_task(&task.id).await.unwrap().status(),
+        TaskStatus::UnderReview,
+        "the round is still open, so the status is not what makes this quiet"
+    );
+    assert_eq!(
+        h.attention(&session).await,
+        None,
+        "a reviewer that has voted is not an agent anybody is waiting on"
+    );
+}
+
+/// A replacement is a recovery too: the session a fresh spawn supersedes stops
+/// asking for the user, but only once the replacement is actually up.
+#[tokio::test]
+async fn a_superseded_session_drops_its_attention_when_the_replacement_starts() {
+    let h = harness().await;
+    let (goal, planner) = h.planning_goal().await;
+    // The planner cwd has to exist for the spawn to get off the ground.
+    std::fs::create_dir_all(h.dir.path().join("repo")).unwrap();
+    let session = h.session(&goal, None, Role::Planner, &planner).await;
+    h.store
+        .set_session_status(&session.id, SessionStatus::Exited)
+        .await
+        .unwrap();
+    h.store
+        .set_session_attention(&session.id, AttentionReason::Disconnected)
+        .await
+        .unwrap();
+
+    // Nothing live for the goal, so reconciliation starts a new planner.
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    sched
+        .send(SchedEvent::GoalChanged(goal.id.clone()))
+        .unwrap();
+    eventually("the replacement planner to be running", async || {
+        h.store
+            .list_sessions(SessionFilter {
+                goal_id: Some(goal.id.clone()),
+                live_only: true,
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .iter()
+            .any(|s| s.id != session.id)
+    })
+    .await;
+    eventually("the superseded session to be let go", async || {
+        h.attention(&session).await.is_none()
+    })
+    .await;
+}
+
 /// A pane going away after the work is over is just a session ending.
 #[tokio::test]
 async fn a_vanished_pane_on_finished_work_is_not_raised() {
-    let h = harness().await;
+    let h = cannot_spawn_harness().await;
     let (goal, task, engineer, _reviewer) = h.active_goal_with_task().await;
     let session = h
         .session(&goal, Some(&task), Role::Engineer, &engineer)
