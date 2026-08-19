@@ -15,6 +15,8 @@ use axum::Json;
 use axum::extract::State;
 use futures_util::future::join_all;
 
+use rustix::fs::{Access, AtFlags};
+
 use ariadne_api::doctor::{BinaryDto, DaemonReportDto, PathStateDto};
 use ariadne_core::AgentKind;
 
@@ -137,31 +139,36 @@ async fn probe_version(binary: &Path, flag: &str) -> Option<String> {
 /// question of the directory it would be created in.
 fn path_state(path: &Path) -> PathStateDto {
     let exists = path.exists();
-    let subject = match exists {
-        true => Some(path),
-        false => path.parent(),
+    let writable = match (exists, path.is_dir()) {
+        (true, true) => takes_new_entries(path),
+        (true, false) => has_access(path, Access::WRITE_OK),
+        // Not there yet: whether it can be created is its directory's answer.
+        (false, _) => path.parent().is_some_and(takes_new_entries),
     };
     PathStateDto {
         path: path.display().to_string(),
         exists,
-        writable: subject.is_some_and(is_writable),
+        writable,
     }
 }
 
-/// Whether this process may write `path`, as the kernel sees it: ownership,
-/// group membership, ACLs, a read-only mount and running as root all
-/// included, none of which the mode bits alone would have shown.
+/// Whether a worktree or a database file could be created in this directory.
+///
+/// Writing an entry into a directory is a lookup followed by a write, so it
+/// takes search permission as well as write — a directory with `w` and no
+/// `x` accepts nothing, however writable its mode looks.
+fn takes_new_entries(dir: &Path) -> bool {
+    has_access(dir, Access::WRITE_OK | Access::EXEC_OK)
+}
+
+/// What the kernel says this process may do with `path`: ownership, group
+/// membership, ACLs, a read-only mount and running as root all included,
+/// none of which the mode bits alone would have shown.
 ///
 /// `EACCESS` asks about the effective user — the one a spawn would run as —
-/// rather than the real one, which is what `access(2)` would answer for.
-fn is_writable(path: &Path) -> bool {
-    rustix::fs::accessat(
-        rustix::fs::CWD,
-        path,
-        rustix::fs::Access::WRITE_OK,
-        rustix::fs::AtFlags::EACCESS,
-    )
-    .is_ok()
+/// rather than the real one, which is what `access(2)` answers for.
+fn has_access(path: &Path, access: Access) -> bool {
+    rustix::fs::accessat(rustix::fs::CWD, path, access, AtFlags::EACCESS).is_ok()
 }
 
 #[cfg(test)]
@@ -259,6 +266,26 @@ mod tests {
         let state = path_state(system);
         assert!(state.exists);
         assert!(!state.writable, "0{mode:o}, and not ours to write");
+    }
+
+    /// Write permission on a directory is not enough to put anything in it:
+    /// creating an entry is a lookup followed by a write, so a directory
+    /// with `w` and no `x` takes nothing, however writable its mode reads.
+    #[test]
+    fn a_directory_that_cannot_be_searched_takes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let unsearchable = dir.path().join("worktrees");
+        std::fs::create_dir(&unsearchable).unwrap();
+        std::fs::set_permissions(&unsearchable, std::fs::Permissions::from_mode(0o600)).unwrap();
+        // Root searches anything, and is right to be told so.
+        let expected = rustix::process::geteuid().is_root();
+        assert_eq!(path_state(&unsearchable).writable, expected);
+        // ...and neither is a database going to appear inside it.
+        assert_eq!(
+            path_state(&unsearchable.join("ariadne.db")).writable,
+            expected
+        );
+        std::fs::set_permissions(&unsearchable, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
     /// An existing file is asked about as it stands, and asking writes

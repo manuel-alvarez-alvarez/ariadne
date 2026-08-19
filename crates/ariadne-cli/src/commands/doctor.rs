@@ -816,7 +816,10 @@ fn daemon_env_checks(daemon: Option<&DaemonReportDto>, available: &Availability)
             "worktree root",
             format!("{} is not writable by the daemon", root.path),
         )
-        .hint("it belongs to another user, or sits on a read-only filesystem"),
+        .hint(
+            "the daemon needs write and search permission there — check its owner, \
+             its mode, and whether the filesystem is read-only",
+        ),
     });
     checks
 }
