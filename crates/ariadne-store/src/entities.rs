@@ -4,7 +4,8 @@
 use std::str::FromStr;
 
 use ariadne_core::{
-    AgentKind, AuthorRole, GoalStatus, PromptKind, ReviewVerdict, Role, SessionStatus, TaskStatus,
+    AgentKind, AttentionReason, AuthorRole, GoalStatus, PromptKind, ReviewVerdict, Role,
+    SessionStatus, TaskStatus,
 };
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -153,6 +154,11 @@ pub struct AgentSession {
     /// than recording the round the row was created in.
     pub review_round: Option<i64>,
     pub status: String,
+    /// Why this session needs the user's attention, if it does. Orthogonal to
+    /// `status`: an agent blocked on a permission prompt is still running.
+    pub attention_reason: Option<String>,
+    /// When the current `attention_reason` was first raised.
+    pub attention_since: Option<String>,
     pub last_activity_at: Option<String>,
     pub created_at: String,
     pub ended_at: Option<String>,
@@ -167,6 +173,11 @@ impl AgentSession {
     }
     pub fn status(&self) -> SessionStatus {
         SessionStatus::from_str(&self.status).expect("valid session status in db")
+    }
+    pub fn attention_reason(&self) -> Option<AttentionReason> {
+        self.attention_reason
+            .as_deref()
+            .map(|r| AttentionReason::from_str(r).expect("valid attention reason in db"))
     }
 }
 

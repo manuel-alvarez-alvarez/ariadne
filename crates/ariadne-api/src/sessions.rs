@@ -1,6 +1,6 @@
 //! Agent-session DTOs.
 
-use ariadne_core::{AgentKind, Role, SessionStatus};
+use ariadne_core::{AgentKind, AttentionReason, Role, SessionStatus};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -21,6 +21,11 @@ pub struct SessionDto {
     pub worktree_path: Option<String>,
     pub review_round: Option<i64>,
     pub status: SessionStatus,
+    /// Why this session needs the user's attention, if it does. Orthogonal to
+    /// `status`: an agent blocked on a permission prompt is still running.
+    pub attention_reason: Option<AttentionReason>,
+    /// When the current `attention_reason` was first raised.
+    pub attention_since: Option<String>,
     pub last_activity_at: Option<String>,
     pub created_at: String,
     pub ended_at: Option<String>,
@@ -34,6 +39,8 @@ pub struct SessionListQuery {
     pub task: Option<String>,
     /// Filter by status.
     pub status: Option<SessionStatus>,
+    /// Only sessions currently flagged as needing attention.
+    pub attention: Option<bool>,
 }
 
 /// Response of `GET /v1/sessions/{id}/logs`.
