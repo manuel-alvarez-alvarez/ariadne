@@ -48,7 +48,11 @@ pub struct BinaryDto {
 pub struct PathStateDto {
     pub path: String,
     pub exists: bool,
-    /// Writable by the user the daemon runs as — tested, not inferred from
-    /// the permission bits, which say nothing about the effective user.
-    pub writable: bool,
+    /// Whether the daemon's user can write it, as far as that can be told
+    /// without writing anything: `Some(true)` when an existing file opened
+    /// for writing, `Some(false)` when the permission bits deny writing to
+    /// everyone, and `None` when it cannot be settled without creating a
+    /// file — which a report is not allowed to do. Callers must not read
+    /// `None` as a problem.
+    pub writable: Option<bool>,
 }
