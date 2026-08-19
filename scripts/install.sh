@@ -219,12 +219,13 @@ if [ "$WITH_UI" = 1 ]; then
                 ditto "$APP_BUNDLE" "$APP_PATH"
                 ;;
             Linux)
-                # The AppImage when its tooling produced one, the plain binary
-                # otherwise - which Tauri names after productName these days.
+                # The AppImage when its tooling produced one; the plain
+                # binary otherwise, named after the crate - or after
+                # productName, depending on the Tauri version, so try both.
                 APP_BUNDLE=""
                 for _candidate in "$APP_TARGET_DIR/bundle/appimage/"*.AppImage \
-                                  "$APP_TARGET_DIR/$APP_NAME" \
-                                  "$APP_TARGET_DIR/ariadne-ui"; do
+                                  "$APP_TARGET_DIR/ariadne-ui" \
+                                  "$APP_TARGET_DIR/$APP_NAME"; do
                     if [ -f "$_candidate" ]; then
                         APP_BUNDLE="$_candidate"
                         break
