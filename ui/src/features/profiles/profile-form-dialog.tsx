@@ -25,9 +25,8 @@
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useQuery } from "@tanstack/react-query"
-import { PlusIcon, XIcon } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
-import { Controller, useFieldArray, useForm } from "react-hook-form"
+import { Controller, useForm } from "react-hook-form"
 import { toast } from "sonner"
 
 import {
@@ -137,7 +136,6 @@ export function ProfileFormDialog({
     defaultValues: emptyProfileFormValues(),
   })
   const { control, formState, handleSubmit, register, reset, setError, setValue, watch } = form
-  const flags = useFieldArray({ control, name: "extraFlags" })
 
   /** Which prompt sections are folded open, by kind. */
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({})
@@ -413,49 +411,6 @@ export function ProfileFormDialog({
               </div>
               <FieldDescription>
                 Passed to the agent CLI as-is. Empty means the provider default.
-              </FieldDescription>
-            </Field>
-
-            <Field>
-              <FieldLabel>Extra flags</FieldLabel>
-              {flags.fields.length > 0 ? (
-                <div className="flex flex-col gap-2">
-                  {flags.fields.map((flag, index) => (
-                    <div key={flag.id} className="flex items-center gap-2">
-                      <Input
-                        aria-label={`Flag ${index + 1}`}
-                        placeholder="--permission-mode=acceptEdits"
-                        autoComplete="off"
-                        spellCheck={false}
-                        className="font-mono"
-                        {...register(`extraFlags.${index}.value`)}
-                      />
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        aria-label={`Remove flag ${index + 1}`}
-                        onClick={() => flags.remove(index)}
-                      >
-                        <XIcon />
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-              <div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => flags.append({ value: "" })}
-                >
-                  <PlusIcon />
-                  Add flag
-                </Button>
-              </div>
-              <FieldDescription>
-                Appended to the agent CLI's argv when a session is spawned. Blank rows are dropped.
               </FieldDescription>
             </Field>
 
