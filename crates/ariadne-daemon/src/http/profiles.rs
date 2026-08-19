@@ -47,7 +47,6 @@ pub async fn create(
             agent_kind: req.agent_kind,
             model: req.model,
             system_prompt: req.system_prompt,
-            extra_flags: req.extra_flags,
             prompts,
         })
         .await?;
@@ -135,7 +134,6 @@ pub async fn update(
                     _ => Some(m),
                 }),
                 system_prompt: req.system_prompt,
-                extra_flags: req.extra_flags,
             },
         )
         .await?;

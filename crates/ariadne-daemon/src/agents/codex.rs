@@ -1,6 +1,7 @@
 //! Codex CLI adapter.
 //!
-//! - Bypass: `--dangerously-bypass-approvals-and-sandbox`
+//! - Bypass: `--dangerously-bypass-approvals-and-sandbox`, from the agent
+//!   config rather than from here (`SpawnCtx::extra_flags`)
 //! - Events: `-c hooks.<Event>=[...]` overrides piping each hook's JSON
 //!   payload into `ariadne agent-event --kind codex`
 //!   ([`ariadne_core::codex_hooks`]). Nothing is written to the user's
@@ -32,8 +33,7 @@ impl CodexAdapter {
             .collect::<Vec<_>>()
             .join(", ");
         let mut flags = vec![
-            "--dangerously-bypass-approvals-and-sandbox".to_string(),
-            "-c".into(),
+            "-c".to_string(),
             format!("mcp_servers.ariadne.command=\"{}\"", ctx.cli_bin),
             "-c".into(),
             "mcp_servers.ariadne.args=[\"mcp\",\"serve\"]".to_string(),
