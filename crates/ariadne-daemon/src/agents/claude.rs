@@ -1,6 +1,7 @@
 //! Claude Code adapter.
 //!
-//! - Bypass: `--dangerously-skip-permissions`
+//! - Bypass: `--dangerously-skip-permissions`, from the agent config rather
+//!   than from here (`SpawnCtx::extra_flags`) so the user can drop it
 //! - Session id: chosen by us via `--session-id <uuid>` (deterministic capture)
 //! - System prompt: `--append-system-prompt <content>` (inline; the installed
 //!   CLI has no `-file` variant — a copy is kept in the run dir for debugging)
@@ -54,7 +55,6 @@ impl ClaudeAdapter {
         std::fs::write(&settings_file, serde_json::to_string_pretty(&settings)?)?;
 
         Ok(vec![
-            "--dangerously-skip-permissions".into(),
             "--append-system-prompt".into(),
             ctx.system_prompt.clone(),
             "--mcp-config".into(),

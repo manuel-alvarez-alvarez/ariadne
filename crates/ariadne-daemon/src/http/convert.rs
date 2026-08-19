@@ -1,5 +1,6 @@
 //! Store entity -> API DTO conversions.
 
+use ariadne_api::agents::AgentConfigDto;
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::goals::GoalDto;
 use ariadne_api::messages::MessageDto;
@@ -14,13 +15,20 @@ pub fn profile_dto(p: store::Profile) -> ProfileDto {
     ProfileDto {
         role: p.role(),
         agent_kind: p.agent_kind(),
-        extra_flags: p.extra_flags(),
         id: p.id,
         name: p.name,
         model: p.model,
         system_prompt: p.system_prompt,
         created_at: p.created_at,
         updated_at: p.updated_at,
+    }
+}
+
+pub fn agent_config_dto(c: store::AgentConfig) -> AgentConfigDto {
+    AgentConfigDto {
+        agent_kind: c.agent_kind(),
+        default_flags: c.default_flags(),
+        extra_flags: c.extra_flags(),
     }
 }
 
