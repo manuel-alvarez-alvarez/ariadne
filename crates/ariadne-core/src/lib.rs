@@ -149,9 +149,7 @@ impl PromptKind {
                 "dependencies",
             ],
             PromptKind::ChangesRequested => &["feedback"],
-            PromptKind::MergeInstructions => {
-                &["base_branch", "repo_path", "branch", "task_title"]
-            }
+            PromptKind::MergeInstructions => &["base_branch", "repo_path", "branch", "task_title"],
             PromptKind::ReviewerBriefing => &[
                 "task_title",
                 "review_round",
@@ -214,7 +212,10 @@ pub struct UnknownPlaceholders {
 impl std::fmt::Display for UnknownPlaceholders {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let braced = |names: &mut dyn Iterator<Item = &str>| {
-            names.map(|n| format!("{{{n}}}")).collect::<Vec<_>>().join(", ")
+            names
+                .map(|n| format!("{{{n}}}"))
+                .collect::<Vec<_>>()
+                .join(", ")
         };
         let unknown = braced(&mut self.unknown.iter().map(String::as_str));
         let allowed = braced(&mut self.kind.placeholders().iter().copied());
