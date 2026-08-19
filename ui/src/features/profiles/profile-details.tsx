@@ -13,6 +13,7 @@ import type { ReactNode } from "react"
 
 import type { ProfileDto } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
+import { Badge } from "@/components/ui/badge"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { formatAbsolute } from "@/lib/time"
 
@@ -52,6 +53,25 @@ export function ProfileDetails({ profile }: { profile: ProfileDto }) {
         <Detail label="Created">{formatAbsolute(profile.created_at)}</Detail>
         <Detail label="Updated">{formatAbsolute(profile.updated_at)}</Detail>
       </dl>
+
+      <section className="flex flex-col gap-2">
+        <h4 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+          Extra flags
+        </h4>
+        {profile.extra_flags.length > 0 ? (
+          <div className="flex flex-wrap gap-1.5">
+            {profile.extra_flags.map((flag) => (
+              <Badge key={flag} variant="outline" className="font-mono">
+                {flag}
+              </Badge>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            None — the agent CLI is spawned with Ariadne's own arguments only.
+          </p>
+        )}
+      </section>
 
       <ProfilePrompts profile={profile} />
     </div>
