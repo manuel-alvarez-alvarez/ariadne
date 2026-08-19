@@ -601,8 +601,13 @@ mod tests {
 
         // A task the list no longer carries: named by its short id rather than
         // leaving the column empty.
-        let row = &rows(g, &HashMap::new(), now)[0];
-        assert_eq!(row[3], "01T9");
+        let g = &group(
+            vec![goal("01GA", "A")],
+            Vec::new(),
+            vec![dead("01S1", "01GA", Some("01ARZ3NDEKTSV4RRFFQ69G5FAV"))],
+        )
+        .goals[0];
+        assert_eq!(rows(g, &titles, now)[0][3], "…Q69G5FAV");
 
         // A planner belongs to no task, and its goal heading says what it is
         // about.
