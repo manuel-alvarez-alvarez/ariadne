@@ -804,6 +804,10 @@ async fn restarting_a_session_reopens_the_same_row() {
         .set_session_status(&session.id, SessionStatus::Exited)
         .await
         .unwrap();
+    store
+        .set_session_attention(&session.id, AttentionReason::Disconnected)
+        .await
+        .unwrap();
     assert!(
         store
             .get_session(&session.id)
@@ -817,6 +821,12 @@ async fn restarting_a_session_reopens_the_same_row() {
         .restart_session(&session.id, Some("/tmp/wt2"), Some(2))
         .await
         .unwrap();
+    assert_eq!(
+        restarted.attention_reason(),
+        None,
+        "a relaunch is the recovery: what it needed the user for goes with it"
+    );
+    assert_eq!(restarted.attention_since, None);
     assert_eq!(restarted.id, session.id, "the same row is reused");
     assert_eq!(restarted.status(), SessionStatus::Starting);
     assert_eq!(restarted.ended_at, None, "it has not ended after all");

@@ -168,6 +168,11 @@ impl Store {
     /// one when given — the relaunch decides where the agent actually runs —
     /// and so does `review_round`, which for a reviewer session names the
     /// round it is being relaunched for.
+    ///
+    /// Whatever the session needed the user for is dropped too: a relaunch is
+    /// the recovery, so an agent put back on its feet leaves the attention
+    /// list instead of carrying the reason its previous run ended into a run
+    /// that has not gone wrong yet.
     pub async fn restart_session(
         &self,
         id: &str,
@@ -177,6 +182,7 @@ impl Store {
         let n = sqlx::query(
             "UPDATE agent_sessions
                 SET status = 'starting', ended_at = NULL, last_activity_at = ?,
+                    attention_reason = NULL, attention_since = NULL,
                     worktree_path = COALESCE(?, worktree_path),
                     review_round = COALESCE(?, review_round)
               WHERE id = ?",
