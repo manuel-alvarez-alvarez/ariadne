@@ -6,12 +6,14 @@
 //! that cannot get an agent.
 //!
 //! No tmux and no agent CLI: `tmux` is a stub that records the commands the
-//! launcher issues, which is where the rendered briefing can be read back
-//! from. `git` is real — spawning an engineer creates its worktree.
+//! launcher issues, and the rendered briefing is read back from the session's
+//! spawn plan — tmux is handed `ariadne _spawn <plan>` and nothing of the
+//! briefing itself. `git` is real — spawning an engineer creates its worktree.
 
 use std::path::Path;
 use std::sync::Arc;
 
+use ariadne_core::spawn_plan::SpawnPlanFile;
 use ariadne_core::{AgentKind, PromptKind, Role};
 use ariadne_daemon::config::Config;
 use ariadne_daemon::gitwt::GitManager;
@@ -142,6 +144,21 @@ impl Harness {
     fn tmux_log(&self) -> String {
         std::fs::read_to_string(self.dir.path().join("tmux-commands.log")).unwrap_or_default()
     }
+
+    /// The argv the agent of `session_id` was launched with, joined for
+    /// reading. It comes from the session's spawn plan, which is where a
+    /// briefing of any size now travels.
+    fn launched_argv(&self, session_id: &str) -> String {
+        let path = self
+            .launcher
+            .cfg
+            .run_dir
+            .join(session_id)
+            .join("spawn.json");
+        let raw = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
+        SpawnPlanFile::from_json(&raw).unwrap().argv.join(" ")
+    }
 }
 
 /// The briefing in the database is the briefing the agent is launched with,
@@ -161,13 +178,18 @@ async fn a_spawned_engineer_is_briefed_from_its_profiles_prompt() {
 
     let session = h.launcher.spawn_engineer(&task.id).await.unwrap();
     let worktree = session.worktree_path.clone().unwrap();
+    let briefing = format!("Do {} on {}, in {worktree}.", task.title, task.branch);
+    let argv = h.launched_argv(&session.id);
     assert!(
-        h.tmux_log().contains(&format!(
-            "Do {} on {}, in {worktree}.",
-            task.title, task.branch
-        )),
-        "the edited briefing, rendered: {}",
-        h.tmux_log()
+        argv.contains(&briefing),
+        "the edited briefing, rendered: {argv}"
+    );
+    // And nowhere else: a briefing in the tmux command line is what the plan
+    // file exists to prevent, whatever its size.
+    let log = h.tmux_log();
+    assert!(
+        !log.contains(&briefing) && !log.contains("Do "),
+        "the briefing reached the tmux command line: {log}"
     );
 
     // The system layer is the profile's prompt as it stands — no playbook
@@ -200,11 +222,10 @@ async fn a_broken_template_still_spawns_the_engineer() {
 
     let session = h.launcher.spawn_engineer(&task.id).await.unwrap();
     assert_eq!(session.status(), ariadne_core::SessionStatus::Running);
+    let argv = h.launched_argv(&session.id);
     assert!(
-        h.tmux_log()
-            .contains(&format!("# {} {{who_even}} {{unclosed", task.title)),
-        "what could not be substituted stayed as it was: {}",
-        h.tmux_log()
+        argv.contains(&format!("# {} {{who_even}} {{unclosed", task.title)),
+        "what could not be substituted stayed as it was: {argv}"
     );
 }
 
