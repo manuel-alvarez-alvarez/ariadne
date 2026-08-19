@@ -43,6 +43,7 @@ export type CreateReviewRequest = Schemas["CreateReviewRequest"]
 
 export type SessionDto = Schemas["SessionDto"]
 export type SessionStatus = Schemas["SessionStatus"]
+export type AttentionReason = Schemas["AttentionReason"]
 export type SessionLogsResponse = Schemas["SessionLogsResponse"]
 
 export type ProfileDto = Schemas["ProfileDto"]

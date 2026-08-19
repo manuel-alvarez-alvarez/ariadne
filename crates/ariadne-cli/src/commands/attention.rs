@@ -2,21 +2,22 @@
 //!
 //! The CLI's version of the UI's attention strip, composed client-side from
 //! the same three lists (`ui/src/features/goals/attention.ts`): every goal,
-//! every task, and the failed sessions. The inclusion rules mirror the UI's
-//! exactly, so both surfaces agree on what — and how much — is stuck. The
-//! grouping by goal is the CLI's own: the strip lists rows flat.
+//! every task, and every session. The inclusion rules mirror the UI's exactly,
+//! so both surfaces agree on what — and how much — is stuck, and the reasons
+//! are the labels of `SESSION_ATTENTION_META` in
+//! `ui/src/features/sessions/session-display.tsx`, lowercased. The grouping by
+//! goal is the CLI's own: the strip lists rows flat.
 
 use anyhow::Result;
 use serde::Serialize;
 
 use ariadne_api::goals::GoalDto;
-use ariadne_api::sessions::{SessionDto, SessionListQuery};
+use ariadne_api::sessions::SessionDto;
 use ariadne_api::tasks::TaskDto;
 use ariadne_client::Client;
-use ariadne_core::{SessionStatus, TaskStatus};
+use ariadne_core::{AttentionReason, SessionStatus, TaskStatus};
 
 use crate::output::{Column, Format, UNCAPPED, note, print_json, print_table};
-use crate::query::query_path;
 
 /// Columns of one goal's section. Task rows leave `task` empty (their id is
 /// the task); session rows name their role in `title` and their task here.
@@ -28,18 +29,24 @@ const ROWS: &[Column] = &[
     ("age", UNCAPPED),
 ];
 
-/// Why a task is on the list, strongest first.
+/// Why a row is on the list — the task reasons and the session reasons in one
+/// vocabulary, since one table lists both.
 ///
-/// `stalled` is checked last because it is a flag *on top of* a status: the
-/// daemon sets it when an agent went idle without advancing the task and
-/// clears it on the next transition, so a task that also failed is reported
-/// as failed.
+/// For a task, `stalled` is checked last because it is a flag *on top of* a
+/// status: the daemon sets it when an agent went idle without advancing the
+/// task and clears it on the next transition, so a task that also failed is
+/// reported as failed. `failed` is shared: a dead task and a dead agent are
+/// the same word.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum Reason {
     Failed,
     ChangesRequested,
     Stalled,
+    WaitingPermission,
+    WaitingInput,
+    AgentError,
+    Disconnected,
 }
 
 impl Reason {
@@ -49,6 +56,10 @@ impl Reason {
             Reason::Failed => "failed",
             Reason::ChangesRequested => "changes requested",
             Reason::Stalled => "stalled",
+            Reason::WaitingPermission => "waiting for permission",
+            Reason::WaitingInput => "waiting for input",
+            Reason::AgentError => "agent error",
+            Reason::Disconnected => "disconnected",
         }
     }
 }
@@ -61,6 +72,51 @@ fn task_reason(task: &TaskDto) -> Option<Reason> {
         _ if task.stalled => Some(Reason::Stalled),
         _ => None,
     }
+}
+
+impl From<AttentionReason> for Reason {
+    fn from(reason: AttentionReason) -> Self {
+        match reason {
+            AttentionReason::WaitingPermission => Reason::WaitingPermission,
+            AttentionReason::WaitingInput => Reason::WaitingInput,
+            AttentionReason::AgentError => Reason::AgentError,
+            AttentionReason::Disconnected => Reason::Disconnected,
+            AttentionReason::Stalled => Reason::Stalled,
+        }
+    }
+}
+
+/// How a session's `attention_reason` is spelled outside this command —
+/// `session ls` and `session inspect` show the same words, and the words are
+/// this list's, so they are taken from here rather than written twice.
+pub fn reason_label(reason: AttentionReason) -> &'static str {
+    Reason::from(reason).label()
+}
+
+/// Whether this session wants the user, and what for.
+///
+/// The reason wins over the status: a session that died *after* reporting an
+/// error is on the list for the error, which is the half of "failed" that says
+/// something. `status = failed` is the one case the daemon raises no reason
+/// for — the agent died without saying why — and it has always been on this
+/// list. Kept identical to `sessionAttention` in the UI.
+fn session_reason(session: &SessionDto) -> Option<Reason> {
+    match session.attention_reason {
+        Some(reason) => Some(reason.into()),
+        None if session.status == SessionStatus::Failed => Some(Reason::Failed),
+        None => None,
+    }
+}
+
+/// When this session's row last moved: when its reason was raised, else the
+/// death that put it here — and `created_at` only for a session the daemon has
+/// not stamped an end on yet. The UI's rows age by the same three.
+fn session_at(session: &SessionDto) -> &str {
+    session
+        .attention_since
+        .as_deref()
+        .or(session.ended_at.as_deref())
+        .unwrap_or(&session.created_at)
 }
 
 /// The `--format json` document: goals → items, ready for scripting.
@@ -79,8 +135,8 @@ struct Group {
     /// outlive its goal falling out of the list.
     goal: Option<GoalDto>,
     tasks: Vec<AttentionTask>,
-    /// Sessions of this goal that failed, its planner's included.
-    sessions: Vec<SessionDto>,
+    /// Sessions of this goal that want the user, its planner's included.
+    sessions: Vec<AttentionSession>,
 }
 
 #[derive(Serialize)]
@@ -89,18 +145,20 @@ struct AttentionTask {
     task: TaskDto,
 }
 
+#[derive(Serialize)]
+struct AttentionSession {
+    reason: Reason,
+    session: SessionDto,
+}
+
 pub async fn run(client: &Client, no_trunc: bool, format: Format) -> Result<()> {
     let goals: Vec<GoalDto> = client.get_json("/v1/goals").await?;
     let tasks: Vec<TaskDto> = client.get_json("/v1/tasks").await?;
-    let query = SessionListQuery {
-        goal: None,
-        task: None,
-        status: Some(SessionStatus::Failed),
-        attention: None,
-    };
-    let sessions: Vec<SessionDto> = client
-        .get_json(&query_path("/v1/sessions", &query)?)
-        .await?;
+    // Unfiltered, and narrowed by `session_reason` below: the rule is
+    // "flagged for attention *or* dead", and `GET /v1/sessions` ANDs its
+    // `attention` filter with its `status` one, so no single request spells
+    // it. The UI reads the same unfiltered list for the same reason.
+    let sessions: Vec<SessionDto> = client.get_json("/v1/sessions").await?;
 
     let attention = group(goals, tasks, sessions);
     match format {
@@ -150,8 +208,12 @@ fn group(goals: Vec<GoalDto>, tasks: Vec<TaskDto>, sessions: Vec<SessionDto>) ->
         }
     }
     for session in sessions {
-        let i = index_of(&mut groups, &session.goal_id);
-        groups[i].sessions.push(session);
+        if let Some(reason) = session_reason(&session) {
+            let i = index_of(&mut groups, &session.goal_id);
+            groups[i]
+                .sessions
+                .push(AttentionSession { reason, session });
+        }
     }
 
     let order: std::collections::HashMap<&str, usize> = goals
@@ -182,7 +244,7 @@ fn heading(group: &Group) -> String {
     }
 }
 
-/// One goal's rows: its tasks first, then its failed sessions — the order
+/// One goal's rows: its tasks first, then its stuck sessions — the order
 /// the UI lists them in.
 fn rows(group: &Group, now: chrono::DateTime<chrono::Utc>) -> Vec<Vec<String>> {
     let mut rows: Vec<Vec<String>> = group
@@ -198,13 +260,14 @@ fn rows(group: &Group, now: chrono::DateTime<chrono::Utc>) -> Vec<Vec<String>> {
             ]
         })
         .collect();
-    rows.extend(group.sessions.iter().map(|s| {
+    rows.extend(group.sessions.iter().map(|item| {
+        let s = &item.session;
         vec![
             s.id.clone(),
             format!("{} session", s.role.as_str()),
-            "failed".into(),
+            item.reason.label().into(),
             s.task_id.clone().unwrap_or_else(|| "-".into()),
-            age(s.ended_at.as_deref().unwrap_or(&s.created_at), now),
+            age(session_at(s), now),
         ]
     }));
     rows
@@ -281,6 +344,8 @@ mod tests {
         }
     }
 
+    /// A session that is on the list for the bare reason it always was: the
+    /// agent died. `flagged` puts a reason on top of it.
     fn session(id: &str, goal_id: &str, task_id: Option<&str>) -> SessionDto {
         SessionDto {
             id: id.into(),
@@ -306,6 +371,16 @@ mod tests {
         }
     }
 
+    /// A live session the daemon has flagged: still running, still on the list.
+    fn flagged(id: &str, goal_id: &str, reason: AttentionReason) -> SessionDto {
+        SessionDto {
+            status: SessionStatus::Running,
+            attention_reason: Some(reason),
+            attention_since: Some("2026-08-18T11:00:00Z".into()),
+            ..session(id, goal_id, Some("01T9"))
+        }
+    }
+
     /// The reasons the UI reports, in its precedence: a stalled task that
     /// also failed is failed, and a healthy task is nobody's business.
     #[test]
@@ -322,12 +397,84 @@ mod tests {
         assert_eq!(reason(TaskStatus::Merged, false), None);
     }
 
+    /// The reasons the UI reports for a session, in its precedence: the
+    /// flag when there is one, the death when there is not, and a working
+    /// agent is nobody's business.
     #[test]
-    fn healthy_tasks_produce_no_groups_at_all() {
+    fn a_session_is_reported_for_the_reason_the_ui_would_give() {
+        for (flag, expected) in [
+            (
+                AttentionReason::WaitingPermission,
+                Reason::WaitingPermission,
+            ),
+            (AttentionReason::WaitingInput, Reason::WaitingInput),
+            (AttentionReason::AgentError, Reason::AgentError),
+            (AttentionReason::Disconnected, Reason::Disconnected),
+            (AttentionReason::Stalled, Reason::Stalled),
+        ] {
+            assert_eq!(
+                session_reason(&flagged("01S", "01GA", flag)),
+                Some(expected),
+                "{}",
+                flag.as_str()
+            );
+        }
+
+        // Dead without a word about why: the one case with no flag on it.
+        assert_eq!(
+            session_reason(&session("01S", "01GA", None)),
+            Some(Reason::Failed)
+        );
+        // A flag survives the death that followed it, and outranks it.
+        let died_after = SessionDto {
+            status: SessionStatus::Failed,
+            ..flagged("01S", "01GA", AttentionReason::AgentError)
+        };
+        assert_eq!(session_reason(&died_after), Some(Reason::AgentError));
+
+        for status in [
+            SessionStatus::Starting,
+            SessionStatus::Running,
+            SessionStatus::Idle,
+            SessionStatus::Exited,
+        ] {
+            let healthy = SessionDto {
+                status,
+                ..session("01S", "01GA", None)
+            };
+            assert_eq!(session_reason(&healthy), None, "{}", status.as_str());
+        }
+    }
+
+    /// The three stamps the UI ages a session row by, in its order.
+    #[test]
+    fn a_session_row_is_aged_by_when_its_reason_was_raised() {
+        let waiting = flagged("01S", "01GA", AttentionReason::WaitingPermission);
+        assert_eq!(session_at(&waiting), "2026-08-18T11:00:00Z");
+
+        let died = SessionDto {
+            ended_at: Some("2026-08-18T12:00:00Z".into()),
+            ..session("01S", "01GA", None)
+        };
+        assert_eq!(session_at(&died), "2026-08-18T12:00:00Z");
+
+        // Failed, but the daemon never stamped an end on it.
+        assert_eq!(
+            session_at(&session("01S", "01GA", None)),
+            "2026-08-18T10:00:00Z"
+        );
+    }
+
+    #[test]
+    fn healthy_tasks_and_sessions_produce_no_groups_at_all() {
+        let working = SessionDto {
+            status: SessionStatus::Running,
+            ..session("01S1", "01GA", Some("01T1"))
+        };
         let attention = group(
             vec![goal("01GA", "A")],
             vec![task("01T1", "01GA", TaskStatus::InProgress, false)],
-            Vec::new(),
+            vec![working],
         );
         assert_eq!(attention.count, 0);
         assert!(attention.goals.is_empty());
@@ -358,7 +505,7 @@ mod tests {
     }
 
     /// The count is what the UI's badge shows: every task row and every
-    /// failed-session row, planner sessions included.
+    /// stuck-session row, planner sessions included.
     #[test]
     fn a_planner_session_lands_in_its_goals_group() {
         let attention = group(
@@ -367,7 +514,7 @@ mod tests {
             vec![session("01S1", "01GA", None)],
         );
         assert_eq!(attention.count, 1);
-        assert_eq!(attention.goals[0].sessions[0].role, Role::Planner);
+        assert_eq!(attention.goals[0].sessions[0].session.role, Role::Planner);
     }
 
     #[test]
@@ -384,6 +531,27 @@ mod tests {
         assert_eq!(row[1], "engineer session");
         assert_eq!(row[2], "failed");
         assert_eq!(row[3], "01T9");
+    }
+
+    /// The wording the UI's `SESSION_ATTENTION_META` labels lowercase to.
+    #[test]
+    fn a_flagged_session_row_spells_the_reason_the_ui_spells() {
+        let flags = [
+            (AttentionReason::WaitingPermission, "waiting for permission"),
+            (AttentionReason::WaitingInput, "waiting for input"),
+            (AttentionReason::AgentError, "agent error"),
+            (AttentionReason::Disconnected, "disconnected"),
+            (AttentionReason::Stalled, "stalled"),
+        ];
+        let sessions = flags
+            .iter()
+            .enumerate()
+            .map(|(i, (flag, _))| flagged(&format!("01S{i}"), "01GA", *flag))
+            .collect();
+        let g = &group(vec![goal("01GA", "A")], Vec::new(), sessions).goals[0];
+        let rows = rows(g, chrono::Utc::now());
+        let labels: Vec<&str> = rows.iter().map(|row| row[2].as_str()).collect();
+        assert_eq!(labels, flags.map(|(_, label)| label));
     }
 
     #[test]
@@ -436,5 +604,17 @@ mod tests {
         assert_eq!(doc["goals"][0]["goal"]["title"], "A");
         assert_eq!(doc["goals"][0]["tasks"][0]["reason"], "changes_requested");
         assert_eq!(doc["goals"][0]["tasks"][0]["task"]["id"], "01T1");
+
+        let attention = group(
+            vec![goal("01GA", "A")],
+            Vec::new(),
+            vec![flagged("01S1", "01GA", AttentionReason::WaitingPermission)],
+        );
+        let doc = serde_json::to_value(&attention).expect("serialize");
+        assert_eq!(
+            doc["goals"][0]["sessions"][0]["reason"],
+            "waiting_permission"
+        );
+        assert_eq!(doc["goals"][0]["sessions"][0]["session"]["id"], "01S1");
     }
 }
