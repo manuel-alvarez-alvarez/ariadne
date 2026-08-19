@@ -18,6 +18,7 @@ import { afterEach, expect, it } from "vitest"
 
 import type { TaskDto } from "@/api"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import type { SessionAttention } from "@/features/sessions/session-display"
 
 import { TaskCard } from "./task-card"
 
@@ -41,11 +42,11 @@ const TASK: TaskDto = {
   updated_at: "2026-01-01T00:00:00Z",
 }
 
-function mountCard() {
+function mountCard(attention?: SessionAttention) {
   render(
     <TooltipProvider delay={0}>
       <MemoryRouter>
-        <TaskCard task={TASK} />
+        <TaskCard task={TASK} attention={attention} />
       </MemoryRouter>
     </TooltipProvider>,
   )
@@ -70,4 +71,19 @@ it.each([
 ])("opens %s hint on focus", async (_what, text) => {
   const user = mountCard()
   expect(await tabUntilHint(user, text)).toBe(true)
+})
+
+/**
+ * A blocked agent is the one thing on the card addressed to the reader, so it
+ * is said in full on the card itself — the strip above the board is where it
+ * used to be the only place it was said at all.
+ */
+it("says which of the task's agents is waiting on a person", () => {
+  mountCard("waiting_permission")
+  expect(screen.getByText("Waiting for permission")).not.toBeNull()
+})
+
+it("says nothing when no agent of the task is waiting", () => {
+  mountCard()
+  expect(screen.queryByText("Waiting for permission")).toBeNull()
 })
