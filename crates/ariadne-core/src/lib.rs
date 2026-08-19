@@ -297,6 +297,57 @@ impl std::str::FromStr for SessionStatus {
     }
 }
 
+/// Why a live agent session needs the user's attention.
+///
+/// Orthogonal to [`SessionStatus`]: a session waiting on a permission prompt
+/// is still `running` as far as its lifecycle goes, it just cannot make
+/// progress until someone looks at it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum AttentionReason {
+    /// Blocked on a permission / approval prompt.
+    WaitingPermission,
+    /// The agent asked the user something and is idle until answered.
+    WaitingInput,
+    /// The agent reported an error (API error, crash, `session.error`).
+    AgentError,
+    /// Tmux session or agent process gone while its work is still active.
+    Disconnected,
+    /// No activity for too long.
+    Stalled,
+}
+
+impl AttentionReason {
+    pub const ALL: [AttentionReason; 5] = [
+        AttentionReason::WaitingPermission,
+        AttentionReason::WaitingInput,
+        AttentionReason::AgentError,
+        AttentionReason::Disconnected,
+        AttentionReason::Stalled,
+    ];
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AttentionReason::WaitingPermission => "waiting_permission",
+            AttentionReason::WaitingInput => "waiting_input",
+            AttentionReason::AgentError => "agent_error",
+            AttentionReason::Disconnected => "disconnected",
+            AttentionReason::Stalled => "stalled",
+        }
+    }
+}
+
+impl std::str::FromStr for AttentionReason {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        AttentionReason::ALL
+            .into_iter()
+            .find(|v| v.as_str() == s)
+            .ok_or_else(|| format!("unknown attention reason: {s}"))
+    }
+}
+
 /// Review verdict for one reviewer in one round.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
