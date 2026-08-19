@@ -22,6 +22,7 @@ import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { When } from "@/components/when"
 import { type SessionAttention, SessionAttentionBadge } from "@/features/sessions/session-display"
 import {
   BOARD_STATUSES,
@@ -33,7 +34,6 @@ import {
 } from "@/features/tasks"
 import { useHorizontalOverflow } from "@/hooks/use-scroll-overflow"
 import { plural } from "@/lib/plural"
-import { formatAbsolute, formatRelative } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { paths } from "@/routes/paths"
 import { type BoardAttention, useBoardAttention } from "./attention"
@@ -249,10 +249,7 @@ function Lane({
         />
         {planner ? <SessionAttentionBadge attention={planner} /> : null}
         <span className="whitespace-nowrap text-xs text-muted-foreground">
-          {plural(total, "task")} · created{" "}
-          <time dateTime={goal.created_at} title={formatAbsolute(goal.created_at)}>
-            {formatRelative(goal.created_at)}
-          </time>
+          {plural(total, "task")} · created <When at={goal.created_at} label="created" />
         </span>
       </header>
 

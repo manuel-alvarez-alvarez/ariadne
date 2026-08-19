@@ -321,6 +321,8 @@ async fn run(cli: Cli) -> Result<ExitCode> {
 mod tests {
     use super::*;
 
+    use ariadne_core::GoalStatus;
+
     /// clap's own consistency check over the whole tree, shadowed `--format`
     /// arguments included.
     #[test]
@@ -448,6 +450,36 @@ mod tests {
             cmd.find_subcommand("_spawn").expect("_spawn").is_hide_set(),
             "_spawn is advertised in the help"
         );
+    }
+
+    /// `goal ls --status` names as many statuses as the caller likes, and only
+    /// real ones: an unknown status is clap's refusal here rather than a
+    /// request the daemon has to turn down.
+    #[test]
+    fn listing_goals_takes_any_number_of_real_statuses() {
+        let statuses = |args: &[&str]| {
+            let mut argv = vec!["ariadne", "goal", "ls"];
+            argv.extend_from_slice(args);
+            let Command::Goal {
+                command: GoalCommand::Ls { statuses, .. },
+            } = parse(&argv).command
+            else {
+                panic!("goal ls");
+            };
+            statuses
+        };
+        assert_eq!(statuses(&[]), []);
+        assert_eq!(statuses(&["--status", "active"]), [GoalStatus::Active]);
+        assert_eq!(
+            statuses(&["--status", "active", "--status", "completed"]),
+            [GoalStatus::Active, GoalStatus::Completed]
+        );
+        let Err(err) = try_parse(&["ariadne", "goal", "ls", "--status", "done"]) else {
+            panic!("\"done\" is not a goal status");
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("invalid value 'done'"), "{msg}");
+        assert!(msg.contains("completed"), "the refusal lists the real ones");
     }
 
     /// `--host` was the documented spelling before `--endpoint`; scripts that

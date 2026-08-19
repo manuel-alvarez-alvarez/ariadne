@@ -37,11 +37,11 @@ import { Link, useSearchParams } from "react-router-dom"
 import type { SessionDto } from "@/api"
 import { CopyableId, CopyableIdMenu } from "@/components/copyable-id"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { When } from "@/components/when"
 import { modelLabel } from "@/features/profiles/profile-labels"
 import { ProfileSummary } from "@/features/profiles/profile-summary"
 import { sessionCopyEntries } from "@/lib/copy-entries"
 import { ROLE_LABELS } from "@/lib/labels"
-import { formatAbsolute, formatAge } from "@/lib/time"
 import { paths, useTaskPanelTo } from "@/routes/paths"
 
 import { goalQueryOptions, taskQueryOptions } from "./queries"
@@ -49,7 +49,6 @@ import { SessionActions } from "./session-actions"
 import { SessionActivity } from "./session-activity"
 import { SessionAttentionBadge, SessionStatusBadge } from "./session-display"
 import { SessionTerminal } from "./session-terminal"
-import { useNow } from "./use-now"
 
 /** The two halves of what a session is doing; the pane is what is opened for. */
 const TABS = ["terminal", "activity"] as const
@@ -69,7 +68,6 @@ export function SessionDetailView({
   /** Where to go once a resume hands the session back; see {@link SessionActions}. */
   onResumed?: (session: SessionDto) => void
 }) {
-  const now = useNow()
   const goal = useQuery(goalQueryOptions(session.goal_id))
   const task = useQuery({
     ...taskQueryOptions(session.task_id ?? ""),
@@ -167,14 +165,17 @@ export function SessionDetailView({
         <Detail label="Review round">{session.review_round ?? <Dash />}</Detail>
         {session.attention_reason ? (
           <Detail label="Needs attention since">
-            <Ago at={session.attention_since} now={now} />
+            <When at={session.attention_since} label="since" />
           </Detail>
         ) : null}
         <Detail label="Started">
-          <Ago at={session.created_at} now={now} />
+          <When at={session.created_at} label="started" />
         </Detail>
         <Detail label={session.ended_at ? "Ended" : "Last activity"}>
-          <Ago at={session.ended_at ?? session.last_activity_at} now={now} />
+          <When
+            at={session.ended_at ?? session.last_activity_at}
+            label={session.ended_at ? "ended" : "last activity"}
+          />
         </Detail>
       </dl>
 
@@ -200,16 +201,6 @@ function Detail({ label, children }: { label: string; children: ReactNode }) {
       <dt className="text-xs text-muted-foreground">{label}</dt>
       <dd className="truncate text-sm">{children}</dd>
     </div>
-  )
-}
-
-/** Age of a timestamp, with the exact time on hover. */
-function Ago({ at, now }: { at: string | null | undefined; now: number }) {
-  if (!at) return <Dash />
-  return (
-    <time dateTime={at} title={formatAbsolute(at)}>
-      {formatAge(at, now)}
-    </time>
   )
 }
 
