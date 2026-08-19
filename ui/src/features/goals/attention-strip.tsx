@@ -20,6 +20,7 @@ import { Link, useSearchParams } from "react-router-dom"
 
 import type { GoalDto } from "@/api"
 import { StatusBadge } from "@/components/status-badge"
+import { SessionAttentionBadge } from "@/features/sessions/session-display"
 import { StalledBadge, TASK_STATUS_META } from "@/features/tasks"
 import { describeError } from "@/lib/errors"
 import { shortId } from "@/lib/ids"
@@ -103,21 +104,23 @@ function TaskRow({ item: { task, reason, goalId, goal } }: { item: AttentionTask
   )
 }
 
-function SessionRow({ item: { session, goalId, goal, at } }: { item: AttentionSessionItem }) {
+function SessionRow({
+  item: { session, reason, goalId, goal, at },
+}: {
+  item: AttentionSessionItem
+}) {
   const [search] = useSearchParams()
-  const meta = TASK_STATUS_META.failed
 
   return (
     <li>
       {/* A session opens in a panel of its own, over the board — the same one
           for a planner session, which belongs to no task. */}
       <Link to={sessionPanelTo(search, session.id)} className={ROW_LINK}>
-        {/* This list holds failed sessions only, and the failed task above it
-            is already a tinted badge — so "Failed" is spelled the one way in
-            this strip rather than being the session badge here and the task
-            badge one row up. `SessionStatusBadge` stays what the sessions
-            feature shows, where a badge has five statuses to tell apart. */}
-        <StatusBadge box="badge" label={meta.label} tone={meta.badge} hint="The agent died." />
+        {/* The reason, not the status: a session blocked on a permission
+            prompt is still running, and "Running" is not why it is on this
+            list. `SessionStatusBadge` stays what the sessions feature shows,
+            where a badge has five statuses to tell apart. */}
+        <SessionAttentionBadge attention={reason} />
         <span className="min-w-0 flex-1 truncate">
           {ROLE_LABELS[session.role]} session
           {session.task_id ? null : <span className="text-muted-foreground"> · planner</span>}

@@ -13,8 +13,6 @@ pub struct SessionDto {
     pub role: Role,
     pub profile_id: String,
     pub agent_kind: AgentKind,
-    /// Model requested at launch; null = the agent CLI's default.
-    pub model: Option<String>,
     /// Agent-internal id: claude session uuid / codex thread id / opencode session id.
     pub internal_session_id: Option<String>,
     pub tmux_session: String,

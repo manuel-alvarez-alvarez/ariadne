@@ -1,15 +1,10 @@
 //! `ariadne session ...`
 
-use std::collections::HashMap;
-
 use anyhow::Result;
 use clap::Subcommand;
 
-use ariadne_api::goals::GoalDto;
 use ariadne_api::sessions::{SessionDto, SessionListQuery};
-use ariadne_api::tasks::TaskDto;
 use ariadne_client::Client;
-use ariadne_core::SessionStatus;
 
 use super::{ProfileNames, confirm};
 use crate::output::{
@@ -17,12 +12,9 @@ use crate::output::{
 };
 use crate::query::query_path;
 
-/// Columns of `session ls`. The context is the one written by a human — a goal
-/// or task title runs as long as it likes — so it is capped the way `task ls`
-/// caps its titles; what it is cut to still says which work the row is about.
+/// Columns of `session ls`.
 const LS: &[Column] = &[
     ("id", UNCAPPED),
-    ("context", 40),
     ("role", UNCAPPED),
     ("agent", UNCAPPED),
     ("status", UNCAPPED),
@@ -40,13 +32,7 @@ pub enum SessionCommand {
         /// Filter by goal id
         #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
         goal: Option<String>,
-        /// Filter by status, at the daemon: names one status instead of the
-        /// live/finished split --all makes, and so replaces it — a status is
-        /// listed whether or not it is a live one
-        #[arg(long, value_enum)]
-        status: Option<SessionStatus>,
-        /// Include finished sessions (exited/failed), not just live ones;
-        /// nothing to add once --status names one
+        /// Include finished sessions (exited/failed), not just live ones
         #[arg(short, long)]
         all: bool,
         /// Print cells in full instead of cutting them to the column width
@@ -87,31 +73,25 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
         SessionCommand::Ls {
             task,
             goal,
-            status,
             all,
             no_trunc,
         } => {
-            let filtered = goal.is_some() || task.is_some() || status.is_some();
+            let filtered = goal.is_some() || task.is_some();
             let query = SessionListQuery {
                 goal,
                 task,
-                status,
+                status: None,
                 attention: None,
             };
             let mut sessions: Vec<SessionDto> = client
                 .get_json(&query_path("/v1/sessions", &query)?)
                 .await?;
-            // The default is docker's: live sessions, history behind --all.
-            // A named status is that same choice made precisely, so it takes
-            // over — `--status exited` that then dropped every row for not
-            // being live would answer nothing at all.
-            if !all && status.is_none() {
+            if !all {
                 sessions.retain(|s| s.status.is_live());
             }
             match format {
                 Format::Json => print_json(&sessions)?,
                 Format::Table => {
-                    let context = SessionContext::fetch_for(client, &sessions).await;
                     print_table(
                         LS,
                         &sessions
@@ -119,7 +99,6 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
                             .map(|s| {
                                 vec![
                                     s.id.clone(),
-                                    context.label(s),
                                     s.role.as_str().into(),
                                     s.agent_kind.as_str().into(),
                                     s.status.as_str().into(),
@@ -131,9 +110,7 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
                         no_trunc,
                     );
                     if sessions.is_empty() {
-                        // A named status already says which sessions were
-                        // asked for, so --all has nothing left to offer.
-                        note(match (filtered, all || status.is_some()) {
+                        note(match (filtered, all) {
                             (true, true) => "no sessions match that filter",
                             (true, false) => {
                                 "no live sessions match that filter — finished ones are behind --all"
@@ -158,9 +135,6 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
                         ("role", s.role.as_str().into()),
                         ("profile", profiles.label(&s.profile_id)),
                         ("agent", s.agent_kind.as_str().into()),
-                        // Recorded at launch, so it is what this session runs
-                        // on even if the profile has moved on since.
-                        ("model", s.model.unwrap_or_else(|| "default".into())),
                         ("status", s.status.as_str().into()),
                         ("tmux", s.tmux_session),
                         ("worktree", s.worktree_path.unwrap_or_else(|| "-".into())),
@@ -235,50 +209,6 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
     Ok(())
 }
 
-/// The goal and task titles behind the sessions of a table, for its context
-/// column: which piece of work each agent was run for, which the ids on the
-/// row cannot say.
-///
-/// One list call each for the whole table, the way [`ProfileNames`] resolves
-/// profile names. A title is a courtesy: a daemon that will not answer these
-/// leaves the ids in place rather than failing the `ls` that asked for them.
-#[derive(Default)]
-struct SessionContext {
-    goals: HashMap<String, String>,
-    tasks: HashMap<String, String>,
-}
-
-impl SessionContext {
-    /// The titles for these sessions, or nothing to look up when there are no
-    /// sessions — an empty table asks the daemon nothing.
-    async fn fetch_for(client: &Client, sessions: &[SessionDto]) -> Self {
-        if sessions.is_empty() {
-            return Self::default();
-        }
-        let goals: Vec<GoalDto> = client.get_json("/v1/goals").await.unwrap_or_default();
-        let tasks: Vec<TaskDto> = client.get_json("/v1/tasks").await.unwrap_or_default();
-        Self {
-            goals: goals.into_iter().map(|g| (g.id, g.title)).collect(),
-            tasks: tasks.into_iter().map(|t| (t.id, t.title)).collect(),
-        }
-    }
-
-    /// What one session was run for: its task, or — for a planner session,
-    /// which has none — the goal itself, prefixed so a whole goal is never
-    /// read as a task of that name. An id stands in for a title the daemon did
-    /// not answer with.
-    fn label(&self, s: &SessionDto) -> String {
-        match &s.task_id {
-            Some(task) => self
-                .tasks
-                .get(task)
-                .cloned()
-                .unwrap_or_else(|| task.clone()),
-            None => format!("goal: {}", self.goals.get(&s.goal_id).unwrap_or(&s.goal_id)),
-        }
-    }
-}
-
 /// What `session kill` asks: a live agent is about to lose its terminal, and
 /// the id alone does not say whose.
 fn kill_question(s: &SessionDto) -> String {
@@ -287,67 +217,4 @@ fn kill_question(s: &SessionDto) -> String {
         None => format!("{} of goal {}", s.role.as_str(), s.goal_id),
     };
     format!("Kill session {} ({what}, {})?", s.id, s.status.as_str())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use ariadne_core::{AgentKind, Role};
-
-    fn context() -> SessionContext {
-        SessionContext {
-            goals: HashMap::from([("01GOAL".to_string(), "Ship the board".to_string())]),
-            tasks: HashMap::from([("01TASK".to_string(), "Wire the screen".to_string())]),
-        }
-    }
-
-    fn session(goal: &str, task: Option<&str>) -> SessionDto {
-        SessionDto {
-            id: "01SESS".into(),
-            goal_id: goal.into(),
-            task_id: task.map(Into::into),
-            role: Role::Engineer,
-            profile_id: "01PROF".into(),
-            agent_kind: AgentKind::ClaudeCode,
-            model: None,
-            internal_session_id: None,
-            tmux_session: "ariadne-01SESS".into(),
-            worktree_path: None,
-            review_round: None,
-            status: SessionStatus::Running,
-            attention_reason: None,
-            attention_since: None,
-            last_activity_at: None,
-            created_at: "2026-01-01T00:00:00Z".into(),
-            ended_at: None,
-        }
-    }
-
-    #[test]
-    fn a_session_on_a_task_is_named_by_the_task() {
-        assert_eq!(
-            context().label(&session("01GOAL", Some("01TASK"))),
-            "Wire the screen"
-        );
-    }
-
-    /// The planner runs for the goal itself, and the row says so rather than
-    /// leaving a goal title where every other row carries a task.
-    #[test]
-    fn a_planner_session_is_named_by_its_goal() {
-        assert_eq!(
-            context().label(&session("01GOAL", None)),
-            "goal: Ship the board"
-        );
-    }
-
-    /// Titles are a courtesy — a daemon that would not answer the lists, or a
-    /// task created since they were read, still leaves a usable row.
-    #[test]
-    fn an_unknown_id_stands_in_for_its_title() {
-        let empty = SessionContext::default();
-        assert_eq!(empty.label(&session("01GOAL", Some("01OTHER"))), "01OTHER");
-        assert_eq!(empty.label(&session("01GOAL", None)), "goal: 01GOAL");
-    }
 }

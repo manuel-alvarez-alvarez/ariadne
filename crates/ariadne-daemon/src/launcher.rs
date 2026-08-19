@@ -163,11 +163,6 @@ impl Launcher {
     /// The agent's flags are read here rather than baked into the adapters, on
     /// every spawn and every resume alike: an edit to the agent config is meant
     /// to reach the next launch, whichever path that launch comes down.
-    ///
-    /// The model the adapter is handed is written back onto the session row
-    /// for the same reason, and because that is the only moment it is known:
-    /// a resume after a profile edit launches with the model in effect now,
-    /// and the row is what says which one that was.
     async fn spawn_ctx(
         &self,
         session: &AgentSession,
@@ -177,11 +172,6 @@ impl Launcher {
         initial_prompt: String,
     ) -> Result<SpawnCtx> {
         let agent = self.store.get_agent_config(session.agent_kind()).await?;
-        if session.model != profile.model {
-            self.store
-                .set_session_model(&session.id, profile.model.as_deref())
-                .await?;
-        }
         Ok(SpawnCtx {
             session_id: session.id.clone(),
             goal_id: session.goal_id.clone(),
@@ -333,7 +323,6 @@ impl Launcher {
                 role: Role::Planner,
                 profile_id: profile.id.clone(),
                 agent_kind: self.resolve_agent_kind(&profile)?,
-                model: profile.model.clone(),
                 tmux_session: session_name(&goal.id, None, "planner", None),
                 worktree_path: None,
                 review_round: None,
@@ -389,7 +378,6 @@ impl Launcher {
                 role: Role::Engineer,
                 profile_id: profile.id.clone(),
                 agent_kind: self.resolve_agent_kind(&profile)?,
-                model: profile.model.clone(),
                 tmux_session: session_name(&goal.id, Some(&task.id), "engineer", None),
                 worktree_path: Some(worktree.display().to_string()),
                 review_round: None,
@@ -482,7 +470,6 @@ impl Launcher {
                 role: Role::Reviewer,
                 profile_id: profile.id.clone(),
                 agent_kind: self.resolve_agent_kind(&profile)?,
-                model: profile.model.clone(),
                 tmux_session: session_name(
                     &goal.id,
                     Some(&task.id),

@@ -26,12 +26,6 @@ export const paths = {
    * scroll to it (see `features/profiles/profiles-page.tsx`).
    */
   profile: (profileId: string) => `/profiles?${PROFILE_EXPAND_PARAM}=${profileId}`,
-  /**
-   * Every session there is, filtered on the screen itself. A session's own
-   * details are a `?session=` panel over whatever screen picked it (see
-   * {@link sessionPanelTo}), this being the one that lists them all.
-   */
-  sessions: () => "/sessions",
   agents: () => "/agents",
   repositories: () => "/repositories",
   /**

@@ -3343,13 +3343,6 @@
               "null"
             ]
           },
-          "model": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Model requested at launch; null = the agent CLI's default."
-          },
           "profile_id": {
             "type": "string"
           },

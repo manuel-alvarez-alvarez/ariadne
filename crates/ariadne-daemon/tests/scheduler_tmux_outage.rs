@@ -109,7 +109,6 @@ async fn reconciliation_with_tmux_unavailable_neither_spawns_nor_fails_the_task(
             role: Role::Engineer,
             profile_id: engineer,
             agent_kind: AgentKind::ClaudeCode,
-            model: None,
             tmux_session: session_name(&goal.id, Some(&task.id), "engineer", None),
             worktree_path: None,
             review_round: None,

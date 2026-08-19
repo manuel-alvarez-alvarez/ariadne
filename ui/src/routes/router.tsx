@@ -17,7 +17,6 @@ import { agentRoutes } from "@/features/agents/routes"
 import { goalRoutes } from "@/features/goals/routes"
 import { profileRoutes } from "@/features/profiles/routes"
 import { repositoryRoutes } from "@/features/repositories/routes"
-import { sessionRoutes } from "@/features/sessions/routes"
 import { taskRoutes } from "@/features/tasks/routes"
 import { NotFoundPage } from "@/routes/not-found-page"
 import { paths } from "@/routes/paths"
@@ -31,7 +30,6 @@ export const router = createHashRouter([
       { index: true, element: <Navigate to={paths.goals()} replace /> },
       ...goalRoutes,
       ...taskRoutes,
-      ...sessionRoutes,
       ...profileRoutes,
       ...agentRoutes,
       ...repositoryRoutes,
