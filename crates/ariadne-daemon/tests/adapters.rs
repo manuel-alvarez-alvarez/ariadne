@@ -156,10 +156,14 @@ fn assert_codex_hooks(argv: &[String]) {
     for flag in ariadne_core::codex_hooks::config_flags("/usr/local/bin/ariadne") {
         assert!(argv.contains(&flag), "missing {flag} in {argv:?}");
     }
-    assert!(
-        argv.iter()
-            .any(|a| a.starts_with("hooks.SessionStart=") && a.contains("agent-event --kind codex"))
-    );
+    for event in ["SessionStart", "PermissionRequest"] {
+        assert!(
+            argv.iter()
+                .any(|a| a.starts_with(&format!("hooks.{event}="))
+                    && a.contains("agent-event --kind codex")),
+            "no {event} hook in {argv:?}"
+        );
+    }
 }
 
 #[test]

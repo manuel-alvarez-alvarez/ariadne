@@ -26,6 +26,7 @@ use ariadne_client::endpoint::{self, ConfigError, FileConfig};
 use ariadne_client::{Client, ClientError};
 use ariadne_core::AgentKind;
 
+use crate::codex_trust::{self, Trust};
 use crate::output::{Format, note, print_json};
 
 /// How long any probe — a `--version`, a `launchctl` call — may take. A hung
@@ -592,6 +593,12 @@ fn agent_checks(
         })
         .collect();
 
+    if available.has(AgentKind::Codex) {
+        checks.extend(codex_hook_checks(&Trust::read(
+            &codex_trust::codex_home().unwrap_or_else(|| PathBuf::from(".codex")),
+        )));
+    }
+
     if available.effective().is_empty() {
         let check = Check::fail(
             "any agent",
@@ -606,6 +613,52 @@ fn agent_checks(
         });
     }
     checks
+}
+
+/// Whether codex still trusts the hooks every session it spawns declares.
+///
+/// The declaration is passed as `-c` overrides and codex runs none of it
+/// untrusted, so this is the difference between a codex session Ariadne can
+/// see and one it cannot. It is worth its own check rather than a footnote on
+/// the binary because of how it goes wrong: trust is granted per event, so an
+/// Ariadne that declares an event the last `setup codex-hooks` did not keeps
+/// every old hook reporting and loses only the new one — and codex asks about
+/// it at the start of the next session, in a TUI nobody is watching.
+///
+/// A warning rather than a failure: sessions still run, and only the profiles
+/// pinned to codex are affected at all.
+fn codex_hook_checks(trust: &Trust) -> Vec<Check> {
+    let total = ariadne_core::codex_hooks::EVENTS.len();
+    let config = trust.config.display();
+    let check = if trust.is_complete() {
+        Check::ok(
+            "codex hooks",
+            format!("all {total} hook events trusted in {config}"),
+        )
+    } else if trust.is_stale() {
+        Check::warn(
+            "codex hooks",
+            format!(
+                "{} of {total} hook events not trusted: {}",
+                trust.untrusted.len(),
+                trust.untrusted_keys().join(", ")
+            ),
+        )
+        .hint(concat!(
+            "this Ariadne declares hooks your last setup did not — ",
+            "re-run `ariadne setup codex-hooks` or they will never run",
+        ))
+    } else {
+        let detail = match trust.config_exists {
+            true => format!("none of the {total} hook events are trusted in {config}"),
+            false => format!("codex has no config at {config}, so nothing is trusted"),
+        };
+        Check::warn("codex hooks", detail).hint(concat!(
+            "run `ariadne setup codex-hooks` — until then codex sessions ",
+            "never report their id and can be neither resumed nor revived",
+        ))
+    };
+    vec![check]
 }
 
 /// Which agent binaries can actually be launched, from both points of view.
@@ -901,6 +954,69 @@ mod tests {
             daemon: Some(kinds.to_vec()),
             client: Vec::new(),
         }
+    }
+
+    /// A trust verdict with `trusted` of the declared events granted.
+    fn trust_for(trusted: &[&'static str]) -> Trust {
+        let (trusted, untrusted) = ariadne_core::codex_hooks::EVENTS
+            .into_iter()
+            .partition(|e| trusted.contains(e));
+        Trust {
+            config: PathBuf::from("/home/me/.codex/config.toml"),
+            config_exists: true,
+            trusted,
+            untrusted,
+        }
+    }
+
+    #[test]
+    fn fully_trusted_codex_hooks_are_one_ok_line() {
+        let all: Vec<_> = ariadne_core::codex_hooks::EVENTS.to_vec();
+        let checks = codex_hook_checks(&trust_for(&all));
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].status, Status::Ok);
+        assert!(checks[0].hint.is_none());
+    }
+
+    /// Trust granted before an event was declared: the report has to name
+    /// the events that will not run and the command that fixes it, because
+    /// nothing else about the installation looks wrong.
+    #[test]
+    fn stale_codex_trust_names_the_events_and_the_command() {
+        let old: Vec<_> = ariadne_core::codex_hooks::EVENTS
+            .into_iter()
+            .filter(|e| *e != "PermissionRequest")
+            .collect();
+        let checks = codex_hook_checks(&trust_for(&old));
+        assert_eq!(checks[0].status, Status::Warn);
+        assert!(
+            checks[0].detail.contains("permission_request"),
+            "{:?}",
+            checks[0]
+        );
+        assert!(
+            checks[0]
+                .hint
+                .as_ref()
+                .is_some_and(|h| h.contains("ariadne setup codex-hooks"))
+        );
+    }
+
+    /// Setup skipped altogether reads differently from setup gone stale:
+    /// nothing was ever trusted, so nothing is missing — it is all missing.
+    #[test]
+    fn codex_hooks_nobody_ever_trusted_are_reported_as_such() {
+        let checks = codex_hook_checks(&trust_for(&[]));
+        assert_eq!(checks[0].status, Status::Warn);
+        assert!(checks[0].detail.contains("none of the"), "{:?}", checks[0]);
+
+        let never_ran = Trust {
+            config_exists: false,
+            ..trust_for(&[])
+        };
+        let checks = codex_hook_checks(&never_ran);
+        assert_eq!(checks[0].status, Status::Warn);
+        assert!(checks[0].detail.contains("no config"), "{:?}", checks[0]);
     }
 
     fn report(sections: Vec<Section>) -> Report {

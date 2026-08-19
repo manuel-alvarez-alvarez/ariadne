@@ -119,6 +119,10 @@ mod tests {
             flags[1],
             r#"hooks.SessionStart=[{hooks=[{type="command",command="/usr/local/bin/ariadne agent-event --kind codex"}]}]"#
         );
+        assert_eq!(
+            flags[7],
+            r#"hooks.PermissionRequest=[{hooks=[{type="command",command="/usr/local/bin/ariadne agent-event --kind codex"}]}]"#
+        );
     }
 
     #[test]
