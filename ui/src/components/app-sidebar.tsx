@@ -1,13 +1,15 @@
 /**
- * The app's navigation. Four screens, in the order an orchestrator asks for
- * them: what is being worked on, what the agents run as, how the agent CLIs
- * themselves are launched, and the checkouts they work in.
+ * The app's navigation. Five screens, in the order an orchestrator asks for
+ * them: what is being worked on, who is working on it right now, what the
+ * agents run as, how the agent CLIs themselves are launched, and the checkouts
+ * they work in.
  *
  * What is *stuck* has no entry — it is a strip on the goals board, above the
- * lanes it is about (see `features/goals/attention-strip.tsx`). Neither do the
- * running sessions: one is opened from the panel of the goal or the task it
- * runs, in a panel of its own (see `features/sessions/session-panel.tsx`) —
- * "Agents" here is the CLIs and their flags, not what is running on them.
+ * lanes it is about (see `features/goals/attention-strip.tsx`). "Sessions" is
+ * the agents that are running, across every goal; "Agents" is the CLIs and
+ * their flags, not what is running on them. A single session still has no entry
+ * of its own: it opens as a panel over whichever list picked it (see
+ * `features/sessions/session-panel.tsx`).
  *
  * The labels are the ones the shell's header shows, which come from each
  * route's own `handle` (see `src/routes/page-title.ts`) — they are written
@@ -15,7 +17,7 @@
  * entry and a route are not the same list: not every route belongs here.
  */
 
-import { BotIcon, CpuIcon, FolderGit2Icon, TargetIcon } from "lucide-react"
+import { BotIcon, CpuIcon, FolderGit2Icon, RadioTowerIcon, TargetIcon } from "lucide-react"
 import { NavLink } from "react-router-dom"
 
 import { cn } from "@/lib/utils"
@@ -23,6 +25,7 @@ import { paths } from "@/routes/paths"
 
 const NAV_ITEMS = [
   { to: paths.goals(), label: "Goals", icon: TargetIcon },
+  { to: paths.sessions(), label: "Sessions", icon: RadioTowerIcon },
   { to: paths.profiles(), label: "Profiles", icon: CpuIcon },
   { to: paths.agents(), label: "Agents", icon: BotIcon },
   { to: paths.repositories(), label: "Repositories", icon: FolderGit2Icon },

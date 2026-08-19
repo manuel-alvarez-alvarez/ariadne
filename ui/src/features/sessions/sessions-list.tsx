@@ -7,11 +7,11 @@
  * screen turns the pick into a link of its own.
  *
  * Five columns in a panel, because the table has to fit a 48rem one as well as
- * a full screen without scrolling sideways: the agent kind rides along with the
- * profile, the review round with the role, and the end of the session with its
- * last activity — all three on hover, where they were worth a column each only
- * for the sessions that have them. The sixth, the context, is the screen's
- * alone.
+ * a full screen without scrolling sideways: the agent kind and the model ride
+ * along with the profile, the review round with the role, and the end of the
+ * session with its last activity — the last two on hover, where they were
+ * worth a column each only for the sessions that have them. The sixth, the
+ * context, is the screen's alone.
  *
  * The filters come from the caller (`{goal}`, `{task}`, whatever the panel
  * has); this component only reads them — but it reads them for more than the
@@ -29,7 +29,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link, useSearchParams } from "react-router-dom"
 
-import type { GoalDto, ProfileDto, SessionDto, TaskDto } from "@/api"
+import type { GoalDto, SessionDto, TaskDto } from "@/api"
 import { CopyableIdMenu } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
@@ -46,19 +46,15 @@ import {
 // barrel: `@/features/tasks` re-exports the task panel, whose sessions tab is
 // this very component, and the round trip is an import cycle.
 import { goalsQueryOptions } from "@/features/goals/queries"
+import { ProfileSummary } from "@/features/profiles/profile-summary"
 import { taskListQueryOptions } from "@/features/tasks/queries"
 import { sessionCopyEntries } from "@/lib/copy-entries"
 import { shortId } from "@/lib/ids"
-import { AGENT_KIND_LABELS, ROLE_LABELS } from "@/lib/labels"
+import { ROLE_LABELS } from "@/lib/labels"
 import { formatAbsolute, formatAge } from "@/lib/time"
 import { paths, taskPanelTo } from "@/routes/paths"
 
-import {
-  byId,
-  profilesQueryOptions,
-  type SessionListFilters,
-  sessionsQueryOptions,
-} from "./queries"
+import { byId, type SessionListFilters, sessionsQueryOptions } from "./queries"
 import { SessionAttentionBadge, SessionStatusBadge } from "./session-display"
 import { useNow } from "./use-now"
 
@@ -84,7 +80,9 @@ function emptyTitle(filters: SessionListFilters): string {
     case "goal":
       return "No sessions yet for this goal"
     default:
-      return filters.status || filters.role ? "No sessions match these filters" : "No sessions yet"
+      return filters.status || filters.role || filters.live
+        ? "No sessions match these filters"
+        : "No sessions yet"
   }
 }
 
@@ -108,8 +106,6 @@ export function SessionsList({
   const selected = selectedId ?? search.get("session") ?? undefined
   const now = useNow()
   const sessions = useQuery(sessionsQueryOptions(filters))
-  const profiles = useQuery(profilesQueryOptions())
-  const profilesById = byId(profiles.data)
 
   // Both are shared keys the rest of the app already holds (the goals board's
   // attention strip mounts them), so the sixth column usually costs no request
@@ -157,7 +153,6 @@ export function SessionsList({
               <SessionRow
                 key={session.id}
                 session={session}
-                profile={profilesById.get(session.profile_id)}
                 goal={goalsById.get(session.goal_id)}
                 task={session.task_id ? tasksById.get(session.task_id) : undefined}
                 showContext={showContext}
@@ -175,7 +170,6 @@ export function SessionsList({
 
 function SessionRow({
   session,
-  profile,
   goal,
   task,
   showContext,
@@ -184,7 +178,6 @@ function SessionRow({
   onSelect,
 }: {
   session: SessionDto
-  profile: ProfileDto | undefined
   /** The goal this session ran for, when the goals list has it. */
   goal: GoalDto | undefined
   /** The task it ran, when there is one and the task list has it. */
@@ -194,8 +187,6 @@ function SessionRow({
   selected: boolean
   onSelect: () => void
 }) {
-  const agent = AGENT_KIND_LABELS[session.agent_kind]
-
   return (
     <TableRow
       className="cursor-pointer"
@@ -254,8 +245,11 @@ function SessionRow({
           </span>
         ) : null}
       </TableCell>
-      <TableCell className="text-muted-foreground" title={`${agent} · ${session.profile_id}`}>
-        {profile?.name ?? <span className="font-mono text-xs">{shortId(session.profile_id)}</span>}
+      {/* The agent kind and the model ride along with the name: which CLI and
+          which model an agent is running is what the column is read for, and
+          they were a `title=` nobody hovers. */}
+      <TableCell className="max-w-56 text-xs">
+        <ProfileSummary profileId={session.profile_id} launched={session} />
       </TableCell>
       {/* The reason rides in the status cell rather than taking a seventh
           column: it is empty for almost every row, and where it is not it is
