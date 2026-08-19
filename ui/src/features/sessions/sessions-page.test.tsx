@@ -10,7 +10,8 @@
  * turning into `?session=` over the screen rather than a navigation away from
  * it, and the two filters — one of which the daemon answers (`?status=failed`)
  * and one of which it cannot (`live` is three statuses, so it is narrowed
- * here).
+ * here) — including what a second visit to the screen opens on, which is the
+ * one thing about them that no single render shows.
  */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
@@ -22,17 +23,33 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import type { GoalDto, ProfileDto, SessionDto, TaskDto } from "@/api"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { formatAbsolute } from "@/lib/time"
+import { useSettingsStore } from "@/stores/settings"
 
 import { SessionsPage } from "./sessions-page"
 
 /**
  * Hoisted, and not `vi.stubGlobal`: `openapi-fetch` takes its `fetch` when the
  * client is built, which is when `@/api` is imported — a stub installed after
- * that is a stub the daemon client never sees.
+ * that is a stub the daemon client never sees. The same goes for the store the
+ * settings persist to, which jsdom does not provide and `zustand/middleware`
+ * takes hold of when `@/stores/settings` is imported.
  */
 const { daemonFetch } = vi.hoisted(() => {
   const daemonFetch = vi.fn()
   globalThis.fetch = daemonFetch as unknown as typeof fetch
+
+  const entries = new Map<string, string>()
+  globalThis.localStorage = {
+    get length() {
+      return entries.size
+    },
+    key: (index: number) => [...entries.keys()][index] ?? null,
+    getItem: (key: string) => entries.get(key) ?? null,
+    setItem: (key: string, value: string) => void entries.set(key, value),
+    removeItem: (key: string) => void entries.delete(key),
+    clear: () => entries.clear(),
+  } as Storage
+
   return { daemonFetch }
 })
 
@@ -179,6 +196,8 @@ beforeEach(() => {
   )
   daemonFetch.mockReset()
   stubDaemon()
+  localStorage.clear()
+  useSettingsStore.setState({ sessionStatusFilter: "", sessionRoleFilter: "" })
 })
 
 afterEach(() => {
@@ -288,4 +307,121 @@ it("puts the stamps behind the table's columns in reach of a keyboard", async ()
     }
   }
   throw new Error("the last-activity stamp is not reachable by keyboard")
+})
+
+/** Leaving the screen for another one, and coming back to the sidebar's `/sessions`. */
+function leaveAndComeBack() {
+  cleanup()
+  daemonFetch.mockClear()
+  return renderScreen()
+}
+
+/** The trigger of one filter, which doubles as the summary of what is selected. */
+function trigger(name: "Filter by status" | "Filter by role") {
+  return screen.getByRole("button", { name })
+}
+
+/** Pick one value out of one filter's menu. */
+async function pick(
+  user: ReturnType<typeof userEvent.setup>,
+  filter: "Filter by status" | "Filter by role",
+  value: string,
+) {
+  await user.click(trigger(filter))
+  await user.click(await screen.findByRole("menuitemradio", { name: value }))
+}
+
+it("comes back to the filters the screen was left with", async () => {
+  const user = userEvent.setup()
+  renderScreen()
+  await waitFor(() => expect(sessionRequests().length).toBeGreaterThan(0))
+
+  await pick(user, "Filter by status", "Failed")
+  await pick(user, "Filter by role", "Planner")
+  await waitFor(() => expect(sessionRequests()).toContain("failed"))
+
+  const seen = leaveAndComeBack()
+
+  await waitFor(() => expect(seen.url).toBe("/sessions?status=failed&role=planner"))
+  // The screen is narrowed again, not just the URL: the daemon is asked for
+  // the status, and the role is applied here.
+  await waitFor(() => expect(sessionRequests()).toContain("failed"))
+  expect(trigger("Filter by status").textContent).toContain("Failed")
+  expect(trigger("Filter by role").textContent).toContain("Planner")
+  expect(await screen.findByRole("button", { name: "Open Planner session" })).toBeTruthy()
+})
+
+it("keeps the filters where a restart can find them", async () => {
+  const user = userEvent.setup()
+  renderScreen()
+  await waitFor(() => expect(sessionRequests().length).toBeGreaterThan(0))
+
+  await pick(user, "Filter by status", "Live")
+  await pick(user, "Filter by role", "Engineer")
+
+  await waitFor(() =>
+    expect(JSON.parse(localStorage.getItem("ariadne.settings") ?? "{}")).toMatchObject({
+      state: { sessionStatusFilter: "live", sessionRoleFilter: "engineer" },
+    }),
+  )
+})
+
+it("shows what an explicit filter asks for, not what is remembered", async () => {
+  useSettingsStore.setState({ sessionStatusFilter: "live", sessionRoleFilter: "engineer" })
+  const seen = renderScreen("/sessions?status=failed&role=planner")
+
+  await waitFor(() => expect(sessionRequests()).toContain("failed"))
+  expect(seen.url).toBe("/sessions?status=failed&role=planner")
+  expect(trigger("Filter by status").textContent).toContain("Failed")
+  expect(trigger("Filter by role").textContent).toContain("Planner")
+
+  // ...and that is what the next visit opens on: the screen remembers what it
+  // is showing, however it was asked to show it.
+  const back = leaveAndComeBack()
+  await waitFor(() => expect(back.url).toBe("/sessions?status=failed&role=planner"))
+})
+
+it("restores the one filter a deep link says nothing about", async () => {
+  useSettingsStore.setState({ sessionStatusFilter: "failed", sessionRoleFilter: "planner" })
+  const seen = renderScreen("/sessions?status=live")
+
+  await waitFor(() => expect(seen.url).toBe("/sessions?status=live&role=planner"))
+})
+
+it("drops a remembered value the daemon no longer defines", async () => {
+  useSettingsStore.setState({ sessionStatusFilter: "nonsense", sessionRoleFilter: "nobody" })
+  const seen = renderScreen()
+
+  await waitFor(() => expect(sessionRequests().length).toBeGreaterThan(0))
+  expect(seen.url).toBe("/sessions")
+  expect(sessionRequests().every((status) => status === null)).toBe(true)
+  expect(trigger("Filter by status").textContent).toContain("All statuses")
+  expect(trigger("Filter by role").textContent).toContain("All roles")
+})
+
+it("leaves a cleared filter cleared", async () => {
+  const user = userEvent.setup()
+  renderScreen("/sessions?status=failed&role=planner")
+  await waitFor(() => expect(sessionRequests()).toContain("failed"))
+
+  await pick(user, "Filter by status", "All statuses")
+  await pick(user, "Filter by role", "All roles")
+  await waitFor(() => expect(sessionRequests()).toContain(null))
+
+  const seen = leaveAndComeBack()
+
+  await waitFor(() => expect(sessionRequests().length).toBeGreaterThan(0))
+  expect(seen.url).toBe("/sessions")
+  expect(sessionRequests()).not.toContain("failed")
+  expect(trigger("Filter by status").textContent).toContain("All statuses")
+  expect(trigger("Filter by role").textContent).toContain("All roles")
+})
+
+it("restores the filters under a panel the entry opened", async () => {
+  useSettingsStore.setState({ sessionStatusFilter: "failed", sessionRoleFilter: "planner" })
+  const seen = renderScreen(`/sessions?session=${ENGINEER.id}`)
+
+  await waitFor(() =>
+    expect(seen.url).toBe(`/sessions?session=${ENGINEER.id}&status=failed&role=planner`),
+  )
 })
