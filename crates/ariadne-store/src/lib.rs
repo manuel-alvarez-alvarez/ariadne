@@ -97,17 +97,23 @@ impl Store {
             .max_connections(1)
             .connect_with(options.clone())
             .await?;
+
+        sqlx::migrate!("./migrations")
+            .run(&write)
+            .await
+            .map_err(|e| StoreError::Invalid(format!("migration failed: {e}")))?;
+
+        // Opened after the migrations, not before: a connection that read the
+        // schema first keeps the old column set, and a migration that adds a
+        // column would then have every `SELECT *` on that table read short by
+        // one until the process restarts.
+        //
         // Safe to open read-only: the write pool above connected with
         // `create_if_missing`, so the file already exists.
         let read = SqlitePoolOptions::new()
             .max_connections(4)
             .connect_with(options.read_only(true))
             .await?;
-
-        sqlx::migrate!("./migrations")
-            .run(&write)
-            .await
-            .map_err(|e| StoreError::Invalid(format!("migration failed: {e}")))?;
 
         let store = Self {
             write,
