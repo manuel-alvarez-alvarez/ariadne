@@ -54,12 +54,48 @@ is tracked so sessions can be resumed and attached.
 
 ```sh
 scripts/install.sh             # builds, installs to ~/.local/bin, registers the
-                               # daemon service (launchd / systemd --user) and
-                               # bash+zsh completions. Idempotent — re-run to upgrade.
+                               # daemon service (launchd / systemd --user),
+                               # bash+zsh completions and the Ariadne Desktop
+                               # app. Idempotent — re-run to upgrade.
 scripts/install.sh --prefix /usr/local/bin   # custom location
+scripts/install.sh --no-ui     # CLI and daemon only, no desktop app
 scripts/uninstall.sh           # removes everything, keeps ~/.ariadne data
 scripts/uninstall.sh --purge   # ...and deletes the data too
 ```
+
+Both scripts run as a numbered list of steps, each marked ✓ done, ↷ skipped or
+✗ failed, and both end with a summary of what went where. The noise (cargo,
+npm, launchctl, systemctl) is captured to `~/.ariadne/install.log` — or
+`$TMPDIR/ariadne-uninstall.log`, which `--purge` cannot delete — and printed
+only when a step fails. Colors and symbols are used only on a terminal, and
+never when `NO_COLOR` is set.
+
+| flag | |
+| --- | --- |
+| `--prefix DIR` | install binaries into `DIR` (default `~/.local/bin`); on the uninstaller, where to look when there is no manifest |
+| `--no-service` | skip the daemon service registration (install) |
+| `--no-completions` | skip the shell completions (install) |
+| `--no-codex-hooks` | skip the Codex hook trust step (install) |
+| `--no-ui` | skip building and installing the Ariadne Desktop app (install) |
+| `--purge` | also delete `~/.ariadne` (uninstall) |
+| `--verbose` | stream the subcommand output instead of capturing it |
+| `--quiet` | errors and the final summary only |
+| `--dry-run` | print the steps that would run and change nothing |
+| `--yes`, `-y` | non-interactive: skip the Codex prompt (install; the uninstaller never asks) |
+| `--help`, `-h` | the same list, from the script |
+
+The desktop app (`ui/`, a Tauri shell around the web UI) is built and installed
+as one of those steps, best-effort: it needs `npm` — the Tauri CLI itself comes
+from `ui/`'s devDependencies — and without it the step is skipped (↷) rather
+than failing the install, which is what `--no-ui` does too. It lands in
+`/Applications/Ariadne Desktop.app` on macOS (`~/Applications` when
+`/Applications` is not writable) and as `$PREFIX/ariadne-desktop` on Linux (the
+AppImage, or the plain binary when no AppImage was produced). Wherever it went
+is recorded in the manifest, and that is the exact path the uninstaller removes.
+
+Adding a step to either script is a `plan_add` where the plan is built and a
+`step_begin`/`step_ok` pair where the work happens; the shared output
+framework is `scripts/lib.sh`.
 
 Codex needs one manual step, which the installer runs last: it opens a codex
 session so you can accept its "Hooks need review" prompt. Ariadne's codex hooks
@@ -69,7 +105,7 @@ you can make. It is asked once: codex keys command-line hook trust on a
 synthetic path, so the approval covers every later session in every worktree.
 Without it, codex sessions run but never report their id and can be neither
 resumed nor revived. Re-run it any time with `ariadne setup codex-hooks`, or
-skip it during install with `--no-codex-hooks`.
+skip it during install with `--no-codex-hooks` (or `--yes`).
 
 The daemon then runs as a user service with restart-on-failure
 (`launchctl bootout gui/$(id -u)/dev.ariadne.daemon` /
@@ -216,6 +252,7 @@ crates/
   ariadne-daemon   ariadned: axum API, scheduler, tmux/git managers, agent adapters
   ariadne-cli      ariadne: CLI, MCP server (`mcp serve`), hook sink (`agent-event`)
 assets/opencode-plugin/  event-forwarding plugin installed for OpenCode
+scripts/         install.sh / uninstall.sh + lib.sh, their shared step output
 ui/              Ariadne Desktop (Tauri 2 + React): a REST/SSE client of the daemon's
                  TCP listener, outside the cargo workspace — see ui/README.md
 ```
