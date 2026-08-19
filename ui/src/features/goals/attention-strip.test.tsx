@@ -160,7 +160,7 @@ it("mixes tasks and stuck sessions into one list, each naming its goal", async (
   const rows = await screen.findAllByRole("listitem")
   // The session ended an hour after the task moved, so it leads.
   expect(rows).toHaveLength(2)
-  expect(rows[0]?.textContent).toContain("Engineer session")
+  expect(rows[0]?.textContent).toContain("Disconnected")
   expect(rows[1]?.textContent).toContain("Wire the strip")
   for (const row of rows) expect(row.textContent).toContain(GOAL.title)
 })
@@ -191,8 +191,55 @@ it("shows a live session that is waiting on the user, why, and on what", async (
 
   const rows = await screen.findAllByRole("listitem")
   expect(rows).toHaveLength(1)
-  expect(rows[0]?.textContent).toContain("Waiting for permission")
-  expect(rows[0]?.textContent).toContain("Engineer session · Wire the strip")
+  // Three separate elements, none of them a tooltip: what it is, who is
+  // asking, and what for — all of them readable without a pointer.
+  expect(screen.getByText("Waiting for permission")).not.toBeNull()
+  expect(screen.getByText("Wire the strip")).not.toBeNull()
+  expect(
+    screen.getByText("Engineer · The agent is blocked on a permission or approval prompt."),
+  ).not.toBeNull()
+})
+
+it("names a planner session by its role and the goal it is planning", async () => {
+  stubDaemon({
+    sessions: [
+      {
+        ...SESSION,
+        role: "planner",
+        status: "idle",
+        ended_at: undefined,
+        attention_reason: "waiting_input",
+        attention_since: "2026-01-01T03:00:00Z",
+      },
+    ],
+  })
+  renderStrip()
+
+  // No task to be named by, and the row still says whose it is and what it is
+  // about — the goal, which is all a planner session has.
+  expect(await screen.findByText(`Planner · ${GOAL.title}`)).not.toBeNull()
+  expect(
+    screen.getByText("The agent asked a question and is idle until it is answered."),
+  ).not.toBeNull()
+})
+
+it("names a task session by the task, even when the task list has not got it", async () => {
+  stubDaemon({
+    sessions: [
+      {
+        ...SESSION,
+        task_id: TASK.id,
+        status: "running",
+        ended_at: undefined,
+        attention_reason: "waiting_permission",
+      },
+    ],
+  })
+  renderStrip()
+
+  // The task list answered without it — a filtered list, a task just created —
+  // so the row names it by its short id rather than dropping the subject.
+  expect(await screen.findByText(`Task …${TASK.id.slice(-8)}`)).not.toBeNull()
 })
 
 it("flags a stalled task without a status of its own to show it", async () => {

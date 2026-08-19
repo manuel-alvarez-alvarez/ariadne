@@ -3,9 +3,7 @@
 //! A profile owns its whole prompt set: the system prompt on the profile row
 //! and one `profile_prompts` row per [`PromptKind`] of its role. Every prompt
 //! is editable and every prompt can be put back to the constant it was seeded
-//! from (see [`crate::defaults`]). Editing is free apart from one rule: a
-//! briefing may only name the `{placeholder}`s its kind knows how to fill in,
-//! since anything else would reach the agent as literal text.
+//! from (see [`crate::defaults`]).
 
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -120,11 +118,6 @@ impl Store {
     }
 
     /// Replace the text of one prompt.
-    ///
-    /// A template naming a `{placeholder}` the kind has no value for is
-    /// refused here rather than at spawn time: rendering would carry the token
-    /// through to the agent as literal text, and the save is the last moment
-    /// anyone is looking.
     pub async fn update_profile_prompt(
         &self,
         profile_id: &str,
@@ -133,7 +126,6 @@ impl Store {
     ) -> Result<ProfilePrompt> {
         let profile = self.get_profile(profile_id).await?;
         check_kind(&profile, kind)?;
-        check_placeholders(kind, content)?;
         self.write_prompt(profile_id, kind, content).await
     }
 
@@ -204,14 +196,6 @@ fn check_kind(profile: &Profile, kind: PromptKind) -> Result<&'static str> {
         profile.role(),
         &format!("{} ({})", profile.name, profile.role),
     )
-}
-
-/// Reject a template using a `{placeholder}` its kind cannot fill in, with the
-/// offending tokens and the whole allowed set in the message — one save is
-/// enough to learn what a briefing may say.
-pub(crate) fn check_placeholders(kind: PromptKind, content: &str) -> Result<()> {
-    kind.validate_template(content)
-        .map_err(|e| StoreError::Invalid(e.to_string()))
 }
 
 /// The default text of `kind` for a profile of `role`, or an error naming the

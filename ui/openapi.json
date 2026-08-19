@@ -783,9 +783,6 @@
               }
             }
           },
-          "400": {
-            "description": "a prompt kind the role does not own, or a placeholder its kind cannot fill in"
-          },
           "409": {
             "description": "name already exists"
           }
@@ -942,7 +939,7 @@
         "tags": [
           "profiles"
         ],
-        "summary": "Replace the text of one prompt. A template may drop every `{placeholder}`\nit was seeded with, but not name one this kind has no value for: that token\nwould reach the agent as literal text, so it is refused here.",
+        "summary": "Replace the text of one prompt. Any content is accepted, including text\nthat drops a `{placeholder}`.",
         "operationId": "update_prompt",
         "parameters": [
           {
@@ -986,7 +983,7 @@
             }
           },
           "400": {
-            "description": "unknown kind, a kind the profile's role does not own, or a placeholder the kind cannot fill in"
+            "description": "unknown kind, or a kind the profile's role does not own"
           },
           "404": {
             "description": ""

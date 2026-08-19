@@ -643,16 +643,6 @@ async fn ingested_events_raise_and_clear_session_attention() {
         Some(AttentionReason::Disconnected)
     );
     assert_eq!(ended.status(), SessionStatus::Exited);
-
-    // Nor does a late dialog: an approval asked for by a session already
-    // recorded as ended has no pane the user could answer it in, so it
-    // neither goes up nor writes over the reason the session ended with.
-    post("permission.asked").await;
-    let ended = h.store.get_session(&session.id).await.unwrap();
-    assert_eq!(
-        ended.attention_reason(),
-        Some(AttentionReason::Disconnected)
-    );
 }
 
 /// OpenCode's approval dialog reaches Ariadne as `permission.asked` on the

@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use ariadne_core::id::new_id;
 use ariadne_core::{AgentKind, PromptKind, Role};
 
-use crate::prompts::{check_placeholders, check_role_kind};
+use crate::prompts::check_role_kind;
 use crate::{Change, Profile, Result, Store, StoreError, not_found, now};
 
 #[derive(Debug, Clone)]
@@ -17,9 +17,8 @@ pub struct NewProfile {
     pub model: Option<String>,
     pub system_prompt: String,
     /// Briefing prompts seeded instead of the role defaults, by kind. A kind
-    /// the role does not own, or a template naming a placeholder that kind
-    /// cannot fill in, rejects the whole creation; a kind listed twice keeps
-    /// the last entry.
+    /// the role does not own rejects the whole creation; a kind listed twice
+    /// keeps the last entry.
     pub prompts: Vec<(PromptKind, String)>,
 }
 
@@ -43,7 +42,6 @@ impl Store {
         let mut prompts = HashMap::with_capacity(new.prompts.len());
         for (kind, content) in new.prompts {
             check_role_kind(kind, new.role, &whose)?;
-            check_placeholders(kind, &content)?;
             prompts.insert(kind, content);
         }
         let id = new_id();
