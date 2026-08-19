@@ -177,6 +177,7 @@ dependencies = [
  "futures-util",
  "http-body-util",
  "keepawake",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",
