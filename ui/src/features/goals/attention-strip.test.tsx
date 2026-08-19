@@ -138,7 +138,7 @@ it("stays out of the way when nothing is stuck", async () => {
   expect(screen.queryByRole("region", { name: "Needs attention" })).toBeNull()
 })
 
-it("mixes tasks and failed sessions into one list, each naming its goal", async () => {
+it("mixes tasks and stuck sessions into one list, each naming its goal", async () => {
   stubDaemon({
     tasks: [{ ...TASK, status: "failed", updated_at: "2026-01-01T01:00:00Z" }],
     sessions: [SESSION],
@@ -151,6 +151,27 @@ it("mixes tasks and failed sessions into one list, each naming its goal", async 
   expect(rows[0]?.textContent).toContain("Engineer session")
   expect(rows[1]?.textContent).toContain("Wire the strip")
   for (const row of rows) expect(row.textContent).toContain(GOAL.title)
+})
+
+it("shows a live session that is waiting on the user, and why", async () => {
+  stubDaemon({
+    sessions: [
+      {
+        ...SESSION,
+        status: "running",
+        ended_at: undefined,
+        attention_reason: "waiting_permission",
+        attention_since: "2026-01-01T03:00:00Z",
+      },
+      // Running and nobody's problem: it is not on the list at all.
+      { ...SESSION, id: "01JSESS0000000000000000002", status: "running", ended_at: undefined },
+    ],
+  })
+  renderStrip()
+
+  const rows = await screen.findAllByRole("listitem")
+  expect(rows).toHaveLength(1)
+  expect(rows[0]?.textContent).toContain("Waiting for permission")
 })
 
 it("flags a stalled task without a status of its own to show it", async () => {

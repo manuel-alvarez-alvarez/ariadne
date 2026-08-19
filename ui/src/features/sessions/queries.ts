@@ -24,8 +24,6 @@ import {
   unwrap,
 } from "@/api"
 
-import { isLiveStatus } from "./session-display"
-
 /** What the sessions list can be narrowed by. */
 export interface SessionListFilters {
   goal?: string
@@ -37,23 +35,15 @@ export interface SessionListFilters {
    * makes, and the role is a per-observer `select` over it.
    */
   role?: Role
-  /**
-   * Only the sessions with a pane that may still produce output. Client-side
-   * for the same reason the role is, and for one more: the daemon's filter
-   * takes *one* status, and being live is three of them (see
-   * {@link isLiveStatus}). Set alongside `status` it would only narrow it
-   * further, so the two are never used together.
-   */
-  live?: boolean
 }
 
-export function sessionsQueryOptions({ role, live, ...query }: SessionListFilters = {}) {
-  const narrowed = (session: SessionDto) =>
-    (!role || session.role === role) && (!live || isLiveStatus(session.status))
+export function sessionsQueryOptions({ role, ...query }: SessionListFilters = {}) {
   return queryOptions({
     queryKey: qk.sessions.list(query),
     queryFn: () => unwrap(api().GET("/v1/sessions", { params: { query } })),
-    select: role || live ? (sessions: SessionDto[]) => sessions.filter(narrowed) : undefined,
+    select: role
+      ? (sessions: SessionDto[]) => sessions.filter((session) => session.role === role)
+      : undefined,
   })
 }
 

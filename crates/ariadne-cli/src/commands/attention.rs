@@ -292,7 +292,6 @@ mod tests {
             },
             profile_id: "01PROFILE".into(),
             agent_kind: AgentKind::ClaudeCode,
-            model: None,
             internal_session_id: None,
             tmux_session: "ariadne-x".into(),
             worktree_path: None,
