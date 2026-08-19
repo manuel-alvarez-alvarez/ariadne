@@ -17,13 +17,6 @@
  * costs a reconnect and shows the same thing, where keeping it mounted would
  * hold a stream open for a pane nobody is looking at.
  *
- * The tab lives in the URL (`?tab=`), the way the goal and task panels keep
- * theirs: a reload stays on the tab the user was reading, and a link can point
- * at one agent's reported activity rather than at its pane. It is the same
- * param those panels use — while one of them is drilled into a session it is
- * showing this view and nothing else, and coming back out sets `?tab=sessions`
- * again — so a value that is not one of these two simply reads as the default.
- *
  * The metadata comes from the query cache, which the event dispatcher keeps
  * current — a session going idle or being killed elsewhere updates this view
  * without a refetch. The terminal is the exception: it is a byte stream, not
@@ -31,8 +24,8 @@
  */
 
 import { useQuery } from "@tanstack/react-query"
-import type { ReactNode } from "react"
-import { Link, useSearchParams } from "react-router-dom"
+import { type ReactNode, useState } from "react"
+import { Link } from "react-router-dom"
 
 import type { SessionDto } from "@/api"
 import { CopyableId, CopyableIdMenu } from "@/components/copyable-id"
@@ -52,8 +45,7 @@ import { SessionTerminal } from "./session-terminal"
 import { useNow } from "./use-now"
 
 /** The two halves of what a session is doing; the pane is what is opened for. */
-const TABS = ["terminal", "activity"] as const
-type Tab = (typeof TABS)[number]
+type Tab = "terminal" | "activity"
 
 export function SessionDetailView({
   session,
@@ -76,16 +68,7 @@ export function SessionDetailView({
     enabled: Boolean(session.task_id),
   })
   const taskTo = useTaskPanelTo(session.task_id ?? "")
-  const [search, setSearch] = useSearchParams()
-  const tab = TABS.find((value) => value === search.get("tab")) ?? "terminal"
-
-  // Replaces rather than pushes: which half of a session is on screen is not a
-  // step of its own, and Back should leave the session, not walk its tabs.
-  function setTab(next: Tab) {
-    const params = new URLSearchParams(search)
-    params.set("tab", next)
-    setSearch(params, { replace: true })
-  }
+  const [tab, setTab] = useState<Tab>("terminal")
 
   return (
     <div className="space-y-4">

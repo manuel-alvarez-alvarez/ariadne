@@ -8,21 +8,13 @@
  * screen with `?expand=<id>` on it (`paths.profile`), which is what the command
  * palette takes a picked profile to.
  *
- * Both of this screen's pieces of view state live in the URL — the expanded row
- * under that same `?expand=`, the role tab under `?role=` — the way every
- * sibling surface keeps its own (the sessions screen's filters, the panels'
- * tabs). A hash-router desktop app reloads often enough that component state
- * would silently drop them, and the expansion is the thing links point at.
- * The tab replaces, the way the sessions screen's filters do — a filter is not
- * a place — while an expansion pushes, so Back closes the row it opened.
- *
  * Nothing here polls: the list is a plain query and the SSE dispatcher
  * invalidates it, so a profile created from the CLI shows up on its own.
  */
 
 import { useQuery } from "@tanstack/react-query"
 import { ChevronRightIcon, PencilIcon, PlusIcon, Trash2Icon } from "lucide-react"
-import { Fragment, type ReactNode, useCallback, useEffect, useRef, useState } from "react"
+import { Fragment, type ReactNode, useCallback, useEffect, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 
 import { ApiError, type ProfileDto, type Role } from "@/api"
@@ -56,15 +48,14 @@ import { profilesQueryOptions } from "./queries"
 /** The role tabs, where "all" means the unfiltered request. */
 type RoleFilter = Role | "all"
 
-/** The param the role tab travels in, alongside `?expand=`. */
-const ROLE_PARAM = "role"
-
-/** No filter, on the tab strip: the value an absent `?role=` stands for. */
-const ALL = "all"
-
 const COLUMN_COUNT = 6
 
 export function ProfilesPage() {
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>("all")
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+  /** The row a link asked for, until it has been scrolled to. */
+  const [scrollToId, setScrollToId] = useState<string | null>(null)
+
   // The dialogs keep their subject after closing so the exit animation still
   // has something to render; only `open` flips on close.
   const [formOpen, setFormOpen] = useState(false)
@@ -72,65 +63,31 @@ export function ProfilesPage() {
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleting, setDeleting] = useState<ProfileDto | null>(null)
 
+  const profiles = useQuery(profilesQueryOptions(roleFilter === "all" ? undefined : roleFilter))
+
   const [search, setSearch] = useSearchParams()
-  const roleFilter: RoleFilter = ROLES.find((role) => role === search.get(ROLE_PARAM)) ?? ALL
-  const expandedId = search.get(PROFILE_EXPAND_PARAM)
-
-  const profiles = useQuery(profilesQueryOptions(roleFilter === ALL ? undefined : roleFilter))
-
-  /** The row a link asked for, until it has been scrolled to. */
-  const [scrollToId, setScrollToId] = useState<string | null>(null)
-  /** The last row expanded by a click here, which is already on screen. */
-  const clicked = useRef<string | null>(null)
+  const requested = search.get(PROFILE_EXPAND_PARAM)
 
   /**
-   * Anything that expands a row *other* than a click on it — a link followed
-   * onto this screen (`paths.profile`, which is where the command palette
-   * takes a picked profile), a reload, a Back step — has to bring the row into
-   * view, since there is no reason for it to be where the user is looking.
+   * A profile picked in the command palette arrives as `?expand=<id>`. Honour
+   * it once and take the param back off the URL: from there the expansion is
+   * this screen's own state, so closing the row stays closed and the link is
+   * not re-applied on every render.
+   *
+   * The role tab goes back to "All" first. A link carries an id and no role,
+   * and the tab is this screen's own state that a same-route navigation does
+   * not touch — so a profile picked while the Reviewer tab is up would be
+   * asked for and then filtered out of the list it was asked for in.
    */
   useEffect(() => {
-    if (!expandedId) {
-      clicked.current = null
-      return
-    }
-    if (expandedId !== clicked.current) setScrollToId(expandedId)
-  }, [expandedId])
-
-  /**
-   * Selects a role, keeping every other param. It replaces rather than pushes,
-   * the way the sessions screen's filters do: a filter is not a place, and
-   * Back should leave this screen rather than walk the tabs that got here.
-   *
-   * The expansion rides along, so widening the tab again shows the open row
-   * rather than having lost it. The rule the other way round — that a linked
-   * profile is never filtered out of the list it lands in — belongs to the URL
-   * now: `paths.profile` is a whole search string, with an id and no role on
-   * it, so following one drops whatever tab was up.
-   */
-  function filterByRole(value: string) {
+    if (!requested) return
+    setRoleFilter("all")
+    setExpandedId(requested)
+    setScrollToId(requested)
     const next = new URLSearchParams(search)
-    if (value === ALL) next.delete(ROLE_PARAM)
-    else next.set(ROLE_PARAM, value)
+    next.delete(PROFILE_EXPAND_PARAM)
     setSearch(next, { replace: true })
-  }
-
-  /**
-   * Opens a row, or closes the open one. Unlike the tab, this pushes: an
-   * expansion is what a link points at, so Back has to close the row it opened
-   * and Forward has to bring it back.
-   */
-  function toggleExpanded(profileId: string) {
-    const next = new URLSearchParams(search)
-    if (expandedId === profileId) {
-      clicked.current = null
-      next.delete(PROFILE_EXPAND_PARAM)
-    } else {
-      clicked.current = profileId
-      next.set(PROFILE_EXPAND_PARAM, profileId)
-    }
-    setSearch(next)
-  }
+  }, [requested, search, setSearch])
 
   /**
    * Scrolls the asked-for row into view as it mounts — which is the first
@@ -172,9 +129,9 @@ export function ProfilesPage() {
       />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Tabs value={roleFilter} onValueChange={filterByRole}>
+        <Tabs value={roleFilter} onValueChange={(value) => setRoleFilter(value as RoleFilter)}>
           <TabsList>
-            <TabsTrigger value={ALL}>All</TabsTrigger>
+            <TabsTrigger value="all">All</TabsTrigger>
             {ROLES.map((role) => (
               <TabsTrigger key={role} value={role}>
                 {ROLE_LABELS[role]}
@@ -230,7 +187,9 @@ export function ProfilesPage() {
                     profile={profile}
                     ref={profile.id === scrollToId ? scrollToRow : undefined}
                     expanded={expandedId === profile.id}
-                    onToggle={() => toggleExpanded(profile.id)}
+                    onToggle={() =>
+                      setExpandedId((current) => (current === profile.id ? null : profile.id))
+                    }
                     onEdit={() => openEdit(profile)}
                     onDelete={() => openDelete(profile)}
                   />
@@ -354,7 +313,7 @@ function LoadingRows() {
 }
 
 function NoProfiles({ roleFilter, onCreate }: { roleFilter: RoleFilter; onCreate: () => void }) {
-  const filtered = roleFilter !== ALL
+  const filtered = roleFilter !== "all"
   return (
     <EmptyState
       // The table's own frame is the box here.
