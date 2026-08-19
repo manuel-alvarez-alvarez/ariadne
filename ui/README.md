@@ -1,4 +1,4 @@
-# Ariadne UI
+# Ariadne Desktop
 
 Desktop client for `ariadned`. A [Tauri 2](https://v2.tauri.app) window around a
 Vite + React + TypeScript app.
