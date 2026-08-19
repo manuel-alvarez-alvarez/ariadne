@@ -165,9 +165,11 @@ impl AgentKind {
         match self {
             AgentKind::ClaudeCode => &["--dangerously-skip-permissions"],
             AgentKind::Codex => &["--dangerously-bypass-approvals-and-sandbox"],
-            // OpenCode has no such flag: its permissions are granted in the
-            // `opencode.json` the adapter generates per session.
-            AgentKind::Opencode => &[],
+            // "auto-approve permissions that are not explicitly denied
+            // (dangerous!)" — `opencode --help`, v1.18.15. The generated
+            // `opencode.json` already allows the tools; this covers whatever
+            // asks for approval outside it.
+            AgentKind::Opencode => &["--auto"],
         }
     }
 }
