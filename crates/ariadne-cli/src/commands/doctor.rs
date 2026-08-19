@@ -191,6 +191,12 @@ impl Local {
 }
 
 /// Ask the whole installation how it is doing.
+///
+/// One pass, whether or not there is a daemon to ask: a stopped daemon is one
+/// failing check inside a full report, not a command that gives up. What
+/// needed the daemon is marked as unmeasured, and everything else — the
+/// binaries, the home, the service registration, which is exactly what one
+/// wants to see when the daemon is down — is measured as usual.
 async fn examine(client: &Client) -> Report {
     let home = endpoint::home(None);
     let config = home.as_deref().map(endpoint::parse_config);
@@ -207,75 +213,53 @@ async fn examine(client: &Client) -> Report {
     let agents = vec![claude, codex, opencode];
 
     let health = client.health().await;
-    // Everything below only exists for a daemon that answered at all.
-    let (version, daemon, profiles, flags) = match health {
-        Ok(_) => tokio::join!(
-            client.version(),
-            client.daemon_report(),
-            client.get_json::<Vec<ProfileDto>>("/v1/profiles"),
-            client.list_agent_configs(),
-        ),
-        Err(_) => {
-            return unreachable_report(client, &health, home, config, agents, tmux, git, ariadned);
+    let reachable = health.is_ok();
+    // Everything here only exists for a daemon that answered at all.
+    let (version, daemon, profiles, flags) = match reachable {
+        true => {
+            let (version, daemon, profiles, flags) = tokio::join!(
+                client.version(),
+                client.daemon_report(),
+                client.get_json::<Vec<ProfileDto>>("/v1/profiles"),
+                client.list_agent_configs(),
+            );
+            (
+                version.ok().map(|v| v.version),
+                daemon.ok(),
+                profiles.unwrap_or_default(),
+                flags.unwrap_or_default(),
+            )
         }
+        false => (None, None, Vec::new(), Vec::new()),
     };
-    let daemon = daemon.ok();
-    let profiles = profiles.unwrap_or_default();
-    let flags = flags.unwrap_or_default();
     let available = Availability::new(daemon.as_ref(), &agents);
 
     Report::new(
         client.endpoint(),
         vec![
-            Section::new("client", client_checks(&ariadned, health.is_ok())),
+            Section::new("client", client_checks(&ariadned, reachable)),
             Section::new("home", home_checks(home.as_deref(), config)),
             Section::new(
                 "daemon",
-                daemon_checks(
-                    client,
-                    &health,
-                    version.ok().map(|v| v.version),
-                    home.as_deref(),
-                )
-                .await,
+                daemon_checks(client, &health, version, home.as_deref()).await,
             ),
             Section::new("tools", tool_checks(&[tmux, git])),
             Section::new("agents", agent_checks(&agents, &flags, &available)),
-            Section::new("profiles", profile_checks(&profiles, &available)),
+            Section::new(
+                "profiles",
+                match reachable {
+                    true => profile_checks(&profiles, &available),
+                    // Nothing was listed, which is not the same as no profiles.
+                    false => vec![Check::warn(
+                        "profiles",
+                        "not checked — the daemon did not answer",
+                    )],
+                },
+            ),
             Section::new(
                 "daemon environment",
-                daemon_env_checks(daemon.as_ref(), &agents),
+                daemon_env_checks(daemon.as_ref(), &available),
             ),
-        ],
-    )
-}
-
-/// The same report with everything that needed the daemon left unmeasured —
-/// still a full report, so a stopped daemon reads as one problem and not as
-/// a command that gave up.
-#[allow(clippy::too_many_arguments)]
-fn unreachable_report(
-    client: &Client,
-    health: &Result<ariadne_api::HealthResponse, ClientError>,
-    home: Option<PathBuf>,
-    config: Option<Result<Option<FileConfig>, ConfigError>>,
-    agents: Vec<Local>,
-    tmux: Local,
-    git: Local,
-    ariadned: Local,
-) -> Report {
-    let available = Availability::new(None, &agents);
-    let daemon = vec![unreachable_check(health)];
-    Report::new(
-        client.endpoint(),
-        vec![
-            Section::new("client", client_checks(&ariadned, false)),
-            Section::new("home", home_checks(home.as_deref(), config)),
-            Section::new("daemon", daemon),
-            Section::new("tools", tool_checks(&[tmux, git])),
-            Section::new("agents", agent_checks(&agents, &[], &available)),
-            Section::new("profiles", profile_checks_unknown()),
-            Section::new("daemon environment", daemon_env_checks(None, &agents)),
         ],
     )
 }
@@ -397,14 +381,14 @@ fn home_checks(
             .hint("the daemon creates it on its first start"),
     }];
 
+    // Only `None` for a home that could not be resolved, handled above.
+    let config = config.unwrap_or(Ok(None));
     let config_path = endpoint::config_file(home);
-    checks.push(match config {
-        Some(Ok(None)) => Check::ok("config.toml", "none — built-in defaults"),
-        Some(Ok(Some(_))) => Check::ok("config.toml", config_path.display().to_string()),
-        Some(Err(e)) => Check::fail("config.toml", e.to_string())
+    checks.push(match &config {
+        Ok(None) => Check::ok("config.toml", "none — built-in defaults"),
+        Ok(Some(_)) => Check::ok("config.toml", config_path.display().to_string()),
+        Err(e) => Check::fail("config.toml", e.to_string())
             .hint("the daemon refuses to start on a config it cannot read"),
-        // Only reachable with no home, which was handled above.
-        None => Check::warn("config.toml", "not checked"),
     });
 
     let socket = endpoint::socket_path(home);
@@ -414,7 +398,13 @@ fn home_checks(
             .hint("no daemon has listened on this home yet"),
     });
 
-    let db = home.join("ariadne.db");
+    // Wherever the config puts it: a report on the default path would be
+    // about a file the daemon never opens.
+    let db = config
+        .ok()
+        .flatten()
+        .and_then(|c| c.db_path)
+        .unwrap_or_else(|| home.join("ariadne.db"));
     checks.push(match db.is_file() {
         true => Check::ok("database", db.display().to_string()),
         false => Check::warn("database", format!("{} does not exist yet", db.display()))
@@ -448,12 +438,23 @@ async fn daemon_checks(
     }];
 
     let client_version = env!("CARGO_PKG_VERSION");
-    checks.push(match &daemon_version {
-        Some(v) if v == client_version => Check::ok("version", format!("ariadned {v}")),
-        Some(v) => Check::warn("version", format!("daemon {v}, client {client_version}"))
-            .hint("restart the daemon so it runs the version you installed"),
-        None => Check::warn("version", "the daemon did not answer /v1/version"),
-    });
+    match (&daemon_version, health.is_ok()) {
+        (Some(v), _) if v == client_version => {
+            checks.push(Check::ok("version", format!("ariadned {v}")))
+        }
+        // An upgrade installed under a daemon that is still running the old
+        // binary: everything works and nothing is what you installed.
+        (Some(v), _) => checks.push(
+            Check::warn("version", format!("daemon {v}, client {client_version}"))
+                .hint("restart the daemon so it runs the version you installed"),
+        ),
+        (None, true) => checks.push(Check::warn(
+            "version",
+            "the daemon did not answer /v1/version",
+        )),
+        // Nothing answered at all; the check above already said so.
+        (None, false) => {}
+    }
 
     checks.extend(service_checks(home).await);
     checks
@@ -749,16 +750,8 @@ pub fn profile_checks(profiles: &[ProfileDto], available: &Availability) -> Vec<
     checks
 }
 
-/// Profiles with no daemon to ask about them.
-fn profile_checks_unknown() -> Vec<Check> {
-    vec![Check::warn(
-        "profiles",
-        "not checked — the daemon did not answer",
-    )]
-}
-
 /// The daemon's own environment, or the absence of one.
-fn daemon_env_checks(daemon: Option<&DaemonReportDto>, client_agents: &[Local]) -> Vec<Check> {
+fn daemon_env_checks(daemon: Option<&DaemonReportDto>, available: &Availability) -> Vec<Check> {
     let Some(daemon) = daemon else {
         return vec![
             Check::fail(
@@ -777,9 +770,7 @@ fn daemon_env_checks(daemon: Option<&DaemonReportDto>, client_agents: &[Local]) 
     for binary in &daemon.agents {
         let on_client = binary
             .agent_kind
-            .and_then(|kind| AgentKind::ALL.iter().position(|k| *k == kind))
-            .and_then(|i| client_agents.get(i))
-            .is_some_and(|local| local.path.is_some());
+            .is_some_and(|kind| available.only_on_client(kind));
         checks.push(match binary.path {
             Some(_) => Check::ok(binary.name.clone(), describe(binary)),
             None if on_client => Check::warn(
@@ -1078,7 +1069,7 @@ mod tests {
     /// — with no daemon there is nothing to spawn sessions.
     #[test]
     fn a_missing_daemon_report_is_a_failure_not_a_blank() {
-        let checks = daemon_env_checks(None, &[]);
+        let checks = daemon_env_checks(None, &Availability::default());
         assert_eq!(checks.len(), 1);
         assert_eq!(checks[0].status, Status::Fail);
         assert!(checks[0].hint.is_some());
@@ -1146,6 +1137,21 @@ mod tests {
         let config = checks.iter().find(|c| c.name == "config.toml").unwrap();
         assert_eq!(config.status, Status::Fail);
         assert!(config.detail.contains("prevent_slep"), "{config:?}");
+    }
+
+    /// A config that moves the database moves what is reported: a check on
+    /// the default path would be about a file the daemon never opens.
+    #[test]
+    fn the_database_check_follows_the_configured_path() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("config.toml"),
+            "db_path = \"/scratch/elsewhere.db\"\n",
+        )
+        .unwrap();
+        let checks = home_checks(Some(dir.path()), Some(endpoint::parse_config(dir.path())));
+        let db = checks.iter().find(|c| c.name == "database").unwrap();
+        assert!(db.detail.contains("/scratch/elsewhere.db"), "{db:?}");
     }
 
     #[test]
