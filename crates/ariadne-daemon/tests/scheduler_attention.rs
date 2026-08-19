@@ -302,6 +302,29 @@ impl Harness {
         pool.close().await;
     }
 
+    /// Write an attention flag straight into the database, the way a daemon
+    /// that did not know better left one behind. It has to go around the
+    /// store, which now refuses to raise a prompt on a session that has
+    /// ended — which is why there are rows like this to heal at all.
+    async fn stale_attention(&self, session: &AgentSession, reason: AttentionReason) {
+        let pool = sqlx::SqlitePool::connect(&format!(
+            "sqlite://{}",
+            self.dir.path().join("test.db").display()
+        ))
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE agent_sessions SET attention_reason = ?, attention_since = ? WHERE id = ?",
+        )
+        .bind(reason.as_str())
+        .bind(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+        .bind(&session.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+    }
+
     /// Tell the stub tmux this pane exists.
     fn pane_exists(&self, session: &AgentSession) {
         let alive = self.dir.path().join("alive");
@@ -818,5 +841,147 @@ async fn attention_survives_the_sweep_while_the_work_is_still_owed() {
     assert_eq!(
         kept.attention_since, raised_at,
         "and how long it has been waiting is not reset under it"
+    );
+}
+
+/// A prompt is a dialog on the agent's pane: nobody can answer one on a
+/// session that has ended, so retiring a session takes what it was waiting on
+/// with it. Every role, and every one of them with its work still owed —
+/// which is exactly when nothing else would take the flag down.
+#[tokio::test]
+async fn a_prompt_flag_does_not_outlive_the_session_it_was_raised_on() {
+    /// Flag a session, retire it, and say what it is left carrying.
+    async fn retire_on(
+        h: &Harness,
+        session: &AgentSession,
+        reason: AttentionReason,
+    ) -> Option<AttentionReason> {
+        h.store
+            .set_session_attention(&session.id, reason)
+            .await
+            .unwrap();
+        h.store
+            .set_session_status(&session.id, SessionStatus::Exited)
+            .await
+            .unwrap();
+        let ended = h.store.get_session(&session.id).await.unwrap();
+        assert_eq!(ended.attention_since, None, "and the clock under it");
+        ended.attention_reason()
+    }
+
+    let h = harness().await;
+    // One goal, walked from planning to active, so every role is retired in
+    // the state its own work is still going in.
+    let (goal, planner) = h.planning_goal().await;
+    let planner_session = h.session(&goal, None, Role::Planner, &planner).await;
+    assert_eq!(
+        retire_on(&h, &planner_session, AttentionReason::WaitingInput).await,
+        None,
+        "the goal is still being planned, and the planner is still waiting on nobody"
+    );
+
+    h.store
+        .set_goal_status(&goal.id, GoalStatus::Active)
+        .await
+        .unwrap();
+    let goal = h.store.get_goal(&goal.id).await.unwrap();
+    let engineer = h.profile("engineer", Role::Engineer).await;
+    let reviewer = h.profile("reviewer", Role::Reviewer).await;
+    let task = h
+        .extra_task(&goal, &engineer, &reviewer, "in progress")
+        .await;
+    h.advance(&task, TaskStatus::InProgress).await;
+    let engineer_session = h
+        .session(&goal, Some(&task), Role::Engineer, &engineer)
+        .await;
+    let review = h
+        .extra_task(&goal, &engineer, &reviewer, "under review")
+        .await;
+    h.advance(&review, TaskStatus::UnderReview).await;
+    let reviewer_session = h
+        .session(&goal, Some(&review), Role::Reviewer, &reviewer)
+        .await;
+
+    assert_eq!(
+        retire_on(&h, &engineer_session, AttentionReason::WaitingPermission).await,
+        None,
+        "nor is the engineer of a task still in progress"
+    );
+    assert_eq!(
+        retire_on(&h, &reviewer_session, AttentionReason::WaitingPermission).await,
+        None,
+        "nor the reviewer of a round it has not voted in"
+    );
+}
+
+/// A pane that vanishes while its agent was sitting on a prompt still ends as
+/// a disconnect: what the user has to know is that the work lost its agent,
+/// not what the agent happened to be asking when it went.
+#[tokio::test]
+async fn a_vanished_pane_on_a_prompt_ends_disconnected() {
+    let h = cannot_spawn_harness().await;
+    let (goal, planner) = h.planning_goal().await;
+    // Live in the database, gone as far as tmux is concerned, and blocked on
+    // a dialog that died with it.
+    let session = h.session(&goal, None, Role::Planner, &planner).await;
+    h.store
+        .set_session_attention(&session.id, AttentionReason::WaitingPermission)
+        .await
+        .unwrap();
+
+    let _sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    eventually("the vanished session to be swept", async || {
+        h.store.get_session(&session.id).await.unwrap().status() == SessionStatus::Exited
+    })
+    .await;
+    // Whatever else that pass had to say about it would have been said by now.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        h.attention(&session).await,
+        Some(AttentionReason::Disconnected),
+        "the goal is still being planned, so its planner going away is the news"
+    );
+}
+
+/// Rows that were already stale when the daemon started are healed by the
+/// first sweep — and only the ones that are nonsense: a session that ended
+/// reporting an error, or having stalled, ended carrying something true.
+#[tokio::test]
+async fn a_stale_prompt_flag_from_before_the_daemon_started_is_swept_up() {
+    let h = cannot_spawn_harness().await;
+    let (goal, planner) = h.planning_goal().await;
+
+    // Written the way an older daemon left them: ended, and still saying they
+    // are waiting on somebody.
+    let mut sessions = Vec::new();
+    for reason in [
+        AttentionReason::WaitingInput,
+        AttentionReason::AgentError,
+        AttentionReason::Stalled,
+    ] {
+        let session = h.session(&goal, None, Role::Planner, &planner).await;
+        h.store
+            .set_session_status(&session.id, SessionStatus::Exited)
+            .await
+            .unwrap();
+        h.stale_attention(&session, reason).await;
+        sessions.push(session);
+    }
+
+    // The sweep runs on the tick, and the first tick is immediate.
+    let _sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    eventually("the stale prompt flag to be dropped", async || {
+        h.attention(&sessions[0]).await.is_none()
+    })
+    .await;
+    assert_eq!(
+        h.attention(&sessions[1]).await,
+        Some(AttentionReason::AgentError),
+        "an error the agent reported before it died is still worth reading"
+    );
+    assert_eq!(
+        h.attention(&sessions[2]).await,
+        Some(AttentionReason::Stalled),
+        "and so is the stall it ended in"
     );
 }
