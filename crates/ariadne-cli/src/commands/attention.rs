@@ -14,6 +14,8 @@
 //! session's `attention_reason`; deriving a row from a bare status here is
 //! what made this list disagree with it.
 
+use std::collections::HashMap;
+
 use anyhow::Result;
 use serde::Serialize;
 
@@ -26,12 +28,14 @@ use ariadne_core::{AttentionReason, TaskStatus};
 use crate::output::{Column, Format, UNCAPPED, note, print_json, print_table};
 
 /// Columns of one goal's section. Task rows leave `task` empty (their id is
-/// the task); session rows name their role in `title` and their task here.
+/// the task); session rows name their role in `title` and the task they were
+/// run for here — by its title, the way the UI's strip names it, since a bare
+/// ULID says nothing about which work is blocked.
 const ROWS: &[Column] = &[
     ("id", UNCAPPED),
     ("title", 48),
     ("reason", UNCAPPED),
-    ("task", UNCAPPED),
+    ("task", 40),
     ("age", UNCAPPED),
 ];
 
@@ -169,6 +173,9 @@ pub async fn run(client: &Client, no_trunc: bool, format: Format) -> Result<()> 
     // the same unfiltered list.
     let sessions: Vec<SessionDto> = client.get_json("/v1/sessions").await?;
 
+    // Every task, not only the ones on the list: a session's row is named by
+    // the task it was run for, which is usually a task that is doing fine.
+    let titles = task_titles(&tasks);
     let attention = group(goals, tasks, sessions);
     match format {
         Format::Json => print_json(&attention)?,
@@ -178,7 +185,7 @@ pub async fn run(client: &Client, no_trunc: bool, format: Format) -> Result<()> 
                     println!();
                 }
                 println!("{}", heading(group));
-                print_table(ROWS, &rows(group, chrono::Utc::now()), no_trunc);
+                print_table(ROWS, &rows(group, &titles, chrono::Utc::now()), no_trunc);
             }
             if attention.goals.is_empty() {
                 note("nothing needs attention");
@@ -225,7 +232,7 @@ fn group(goals: Vec<GoalDto>, tasks: Vec<TaskDto>, sessions: Vec<SessionDto>) ->
         }
     }
 
-    let order: std::collections::HashMap<&str, usize> = goals
+    let order: HashMap<&str, usize> = goals
         .iter()
         .enumerate()
         .map(|(i, g)| (g.id.as_str(), i))
@@ -253,9 +260,25 @@ fn heading(group: &Group) -> String {
     }
 }
 
+/// Task id → title, for naming the task a session was run for.
+fn task_titles(tasks: &[TaskDto]) -> HashMap<String, String> {
+    tasks
+        .iter()
+        .map(|task| (task.id.clone(), task.title.clone()))
+        .collect()
+}
+
 /// One goal's rows: its tasks first, then its stuck sessions — the order
 /// the UI lists them in.
-fn rows(group: &Group, now: chrono::DateTime<chrono::Utc>) -> Vec<Vec<String>> {
+///
+/// `titles` names the task each session was working on. A task the list no
+/// longer carries falls back to its short id rather than dropping the column:
+/// the row still has to say what the agent was doing.
+fn rows(
+    group: &Group,
+    titles: &HashMap<String, String>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Vec<Vec<String>> {
     let mut rows: Vec<Vec<String>> = group
         .tasks
         .iter()
@@ -275,7 +298,12 @@ fn rows(group: &Group, now: chrono::DateTime<chrono::Utc>) -> Vec<Vec<String>> {
             s.id.clone(),
             format!("{} session", s.role.as_str()),
             item.reason.label().into(),
-            s.task_id.clone().unwrap_or_else(|| "-".into()),
+            // A planner belongs to no task, and the goal heading above is
+            // already what it is about.
+            s.task_id
+                .as_deref()
+                .map(|id| titles.get(id).cloned().unwrap_or_else(|| short_id(id)))
+                .unwrap_or_else(|| "-".into()),
             age(session_at(s), now),
         ]
     }));
@@ -551,20 +579,57 @@ mod tests {
         assert_eq!(attention.goals[0].sessions[0].session.role, Role::Planner);
     }
 
+    /// Who is asking and what they were working on: the row names its role,
+    /// and the task by its title — the same two things the UI's strip row
+    /// leads with. A ULID in that column named nothing at all.
     #[test]
-    fn a_session_row_names_its_role_and_task() {
+    fn a_session_row_names_its_role_and_the_task_it_was_run_for() {
+        let tasks = vec![task("01T9", "01GA", TaskStatus::InProgress, false)];
+        let titles = task_titles(&tasks);
         let g = &group(
             vec![goal("01GA", "A")],
-            Vec::new(),
+            tasks.clone(),
             vec![dead("01S1", "01GA", Some("01T9"))],
         )
         .goals[0];
         let now = chrono::Utc::now();
-        let row = &rows(g, now)[0];
+        let row = &rows(g, &titles, now)[0];
         assert_eq!(row[0], "01S1");
         assert_eq!(row[1], "engineer session");
         assert_eq!(row[2], "disconnected");
+        assert_eq!(row[3], "task 01T9");
+
+        // A task the list no longer carries: named by its short id rather than
+        // leaving the column empty.
+        let row = &rows(g, &HashMap::new(), now)[0];
         assert_eq!(row[3], "01T9");
+
+        // A planner belongs to no task, and its goal heading says what it is
+        // about.
+        let g = &group(
+            vec![goal("01GA", "A")],
+            Vec::new(),
+            vec![dead("01S1", "01GA", None)],
+        )
+        .goals[0];
+        assert_eq!(rows(g, &titles, now)[0][3], "-");
+    }
+
+    /// A task row is its own subject: the title is the row, and the id is
+    /// beside it.
+    #[test]
+    fn a_task_row_names_the_task_by_its_title() {
+        let g = &group(
+            vec![goal("01GA", "A")],
+            vec![task("01T1", "01GA", TaskStatus::Failed, false)],
+            Vec::new(),
+        )
+        .goals[0];
+        let row = &rows(g, &HashMap::new(), chrono::Utc::now())[0];
+        assert_eq!(row[0], "01T1");
+        assert_eq!(row[1], "task 01T1");
+        assert_eq!(row[2], "failed");
+        assert_eq!(row[3], "-");
     }
 
     /// The wording the UI's `SESSION_ATTENTION_META` labels lowercase to.
@@ -583,7 +648,7 @@ mod tests {
             .map(|(i, (flag, _))| flagged(&format!("01S{i}"), "01GA", *flag))
             .collect();
         let g = &group(vec![goal("01GA", "A")], Vec::new(), sessions).goals[0];
-        let rows = rows(g, chrono::Utc::now());
+        let rows = rows(g, &HashMap::new(), chrono::Utc::now());
         let labels: Vec<&str> = rows.iter().map(|row| row[2].as_str()).collect();
         assert_eq!(labels, flags.map(|(_, label)| label));
     }
