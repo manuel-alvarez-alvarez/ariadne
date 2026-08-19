@@ -6,7 +6,20 @@ use std::path::PathBuf;
 use ariadne_core::{AgentKind, Role};
 use ariadne_daemon::agents::{SpawnCtx, adapter_for};
 
-fn ctx(run_dir: PathBuf) -> SpawnCtx {
+/// The context the launcher assembles for `kind`: the flags are the ones the
+/// agent config holds — the kind's defaults plus whatever the user added —
+/// never anything the adapter puts there itself.
+fn ctx(run_dir: PathBuf, kind: AgentKind) -> SpawnCtx {
+    let flags = kind
+        .default_flags()
+        .iter()
+        .map(|f| f.to_string())
+        .chain(["--extra".to_string()])
+        .collect();
+    ctx_with_flags(run_dir, flags)
+}
+
+fn ctx_with_flags(run_dir: PathBuf, extra_flags: Vec<String>) -> SpawnCtx {
     SpawnCtx {
         session_id: "01sessionxxxxxxxxxxxxxxxxx".into(),
         goal_id: "01goalxxxxxxxxxxxxxxxxxxxx".into(),
@@ -19,15 +32,16 @@ fn ctx(run_dir: PathBuf) -> SpawnCtx {
         system_prompt: "SYSTEM PROMPT".into(),
         initial_prompt: "DO THE TASK".into(),
         model: Some("test-model".into()),
-        extra_flags: vec!["--extra".into()],
+        extra_flags,
     }
 }
 
 #[test]
 fn claude_spawn_plan() {
+    const KIND: AgentKind = AgentKind::ClaudeCode;
     let dir = tempfile::tempdir().unwrap();
     let plan = adapter_for(AgentKind::ClaudeCode)
-        .plan_spawn(&ctx(dir.path().into()))
+        .plan_spawn(&ctx(dir.path().into(), KIND))
         .unwrap();
 
     assert_eq!(plan.argv[0], "claude");
@@ -73,7 +87,7 @@ fn claude_spawn_plan() {
 
     // Resume keeps the internal id and passes --resume.
     let plan = adapter_for(AgentKind::ClaudeCode)
-        .plan_resume(&ctx(dir.path().into()), "abc-123", "apply feedback")
+        .plan_resume(&ctx(dir.path().into(), KIND), "abc-123", "apply feedback")
         .unwrap();
     assert!(
         plan.argv.contains(&"--resume".to_string()) && plan.argv.contains(&"abc-123".to_string())
@@ -83,9 +97,10 @@ fn claude_spawn_plan() {
 
 #[test]
 fn codex_spawn_plan() {
+    const KIND: AgentKind = AgentKind::Codex;
     let dir = tempfile::tempdir().unwrap();
     let plan = adapter_for(AgentKind::Codex)
-        .plan_spawn(&ctx(dir.path().into()))
+        .plan_spawn(&ctx(dir.path().into(), KIND))
         .unwrap();
 
     assert_eq!(plan.argv[0], "codex");
@@ -109,7 +124,7 @@ fn codex_spawn_plan() {
 
     // Resume re-passes every config flag (codex does not inherit them).
     let plan = adapter_for(AgentKind::Codex)
-        .plan_resume(&ctx(dir.path().into()), "thread-1", "merge now")
+        .plan_resume(&ctx(dir.path().into(), KIND), "thread-1", "merge now")
         .unwrap();
     assert_eq!(
         &plan.argv[1..3],
@@ -141,9 +156,10 @@ fn assert_codex_hooks(argv: &[String]) {
 
 #[test]
 fn opencode_spawn_plan() {
+    const KIND: AgentKind = AgentKind::Opencode;
     let dir = tempfile::tempdir().unwrap();
     let plan = adapter_for(AgentKind::Opencode)
-        .plan_spawn(&ctx(dir.path().into()))
+        .plan_spawn(&ctx(dir.path().into(), KIND))
         .unwrap();
 
     assert_eq!(plan.argv[0], "opencode");
@@ -177,7 +193,7 @@ fn opencode_spawn_plan() {
 
     // Resume goes through the TUI with --session (stays attachable).
     let plan = adapter_for(AgentKind::Opencode)
-        .plan_resume(&ctx(dir.path().into()), "ses_1", "apply feedback")
+        .plan_resume(&ctx(dir.path().into(), KIND), "ses_1", "apply feedback")
         .unwrap();
     let joined = plan.argv.join(" ");
     assert!(joined.contains("--session ses_1") && joined.contains("--prompt apply feedback"));
@@ -185,9 +201,10 @@ fn opencode_spawn_plan() {
 
 #[test]
 fn base_env_carries_session_context() {
+    const KIND: AgentKind = AgentKind::ClaudeCode;
     let dir = tempfile::tempdir().unwrap();
     let plan = adapter_for(AgentKind::ClaudeCode)
-        .plan_spawn(&ctx(dir.path().into()))
+        .plan_spawn(&ctx(dir.path().into(), KIND))
         .unwrap();
     let env: std::collections::HashMap<_, _> = plan.env.into_iter().collect();
     assert_eq!(env["ARIADNE_SESSION_ID"], "01sessionxxxxxxxxxxxxxxxxx");
@@ -195,4 +212,58 @@ fn base_env_carries_session_context() {
     assert_eq!(env["ARIADNE_TASK_ID"], "01taskxxxxxxxxxxxxxxxxxxxx");
     assert_eq!(env["ARIADNE_ROLE"], "engineer");
     assert_eq!(env["ARIADNE_SOCKET"], "/tmp/ariadne.sock");
+}
+
+/// The permission bypasses live in the agent config, not in the adapters: an
+/// agent whose flags the user emptied is launched without one, and whatever
+/// the user put there instead is what reaches the argv.
+#[test]
+fn the_adapters_hardcode_no_bypass_flag() {
+    let dir = tempfile::tempdir().unwrap();
+    for (kind, bypass) in [
+        (AgentKind::ClaudeCode, "--dangerously-skip-permissions"),
+        (
+            AgentKind::Codex,
+            "--dangerously-bypass-approvals-and-sandbox",
+        ),
+    ] {
+        let bare = ctx_with_flags(dir.path().into(), vec![]);
+        let plan = adapter_for(kind).plan_spawn(&bare).unwrap();
+        assert!(
+            !plan.argv.contains(&bypass.to_string()),
+            "{kind:?}: {plan:?}"
+        );
+        let plan = adapter_for(kind)
+            .plan_resume(&bare, "id-1", "go on")
+            .unwrap();
+        assert!(
+            !plan.argv.contains(&bypass.to_string()),
+            "{kind:?}: {plan:?}"
+        );
+
+        // What the config does hold is passed on, spawn and resume alike.
+        let configured = ctx_with_flags(dir.path().into(), vec!["--sandbox=off".into()]);
+        let plan = adapter_for(kind).plan_spawn(&configured).unwrap();
+        assert!(plan.argv.contains(&"--sandbox=off".to_string()), "{kind:?}");
+        let plan = adapter_for(kind)
+            .plan_resume(&configured, "id-1", "go on")
+            .unwrap();
+        assert!(plan.argv.contains(&"--sandbox=off".to_string()), "{kind:?}");
+    }
+}
+
+/// Exactly once: the flag comes from the config and from nowhere else, so a
+/// claude session cannot end up with it twice over.
+#[test]
+fn the_configured_flags_are_passed_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let plan = adapter_for(AgentKind::ClaudeCode)
+        .plan_spawn(&ctx(dir.path().into(), AgentKind::ClaudeCode))
+        .unwrap();
+    let bypasses = plan
+        .argv
+        .iter()
+        .filter(|a| *a == "--dangerously-skip-permissions")
+        .count();
+    assert_eq!(bypasses, 1, "{:?}", plan.argv);
 }
