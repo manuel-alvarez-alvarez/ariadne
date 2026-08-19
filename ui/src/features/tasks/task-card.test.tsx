@@ -11,10 +11,10 @@
  * using `title=` (see its docblock, and `components/ui/tooltip.tsx`).
  */
 
-import { cleanup, render, screen } from "@testing-library/react"
+import { act, cleanup, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
-import { afterEach, expect, it } from "vitest"
+import { afterEach, expect, it, vi } from "vitest"
 
 import type { TaskDto } from "@/api"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -23,7 +23,10 @@ import type { SessionAttention } from "@/features/sessions/session-display"
 import { TaskCard } from "./task-card"
 
 // `globals` is off, so nothing unmounts a screen between tests but this.
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.useRealTimers()
+})
 
 const TASK: TaskDto = {
   id: "01JTASK0000000000000000001",
@@ -42,11 +45,11 @@ const TASK: TaskDto = {
   updated_at: "2026-01-01T00:00:00Z",
 }
 
-function mountCard(attention?: SessionAttention) {
+function mountCard(attention?: SessionAttention, task: TaskDto = TASK) {
   render(
     <TooltipProvider delay={0}>
       <MemoryRouter>
-        <TaskCard task={TASK} attention={attention} />
+        <TaskCard task={task} attention={attention} />
       </MemoryRouter>
     </TooltipProvider>,
   )
@@ -86,4 +89,20 @@ it("says which of the task's agents is waiting on a person", () => {
 it("says nothing when no agent of the task is waiting", () => {
   mountCard()
   expect(screen.queryByText("Waiting for permission")).toBeNull()
+})
+
+/**
+ * A board is left open, and the card is the surface that goes stale fastest —
+ * it used to keep whatever "N minutes ago" it was rendered with. The clock is
+ * shared and the card only reads it (`components/when.tsx`), so advancing time
+ * is enough: nothing here refetches.
+ */
+it("keeps its timestamp true as the clock moves", () => {
+  vi.useFakeTimers()
+  vi.setSystemTime(new Date("2026-08-19T12:00:00Z"))
+  mountCard(undefined, { ...TASK, updated_at: "2026-08-19T11:59:00Z" })
+  expect(screen.getByText("1 minute ago")).not.toBeNull()
+
+  act(() => void vi.advanceTimersByTime(4 * 60_000))
+  expect(screen.getByText("5 minutes ago")).not.toBeNull()
 })
