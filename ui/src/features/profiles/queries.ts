@@ -138,6 +138,27 @@ export function useUpdateProfilePrompt(id: string) {
   })
 }
 
+export function useResetProfilePrompt(id: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (kind: PromptKind) =>
+      unwrap(
+        api().POST("/v1/profiles/{id}/prompts/{kind}/reset", { params: { path: { id, kind } } }),
+      ),
+    onSuccess: (prompt) => cachePrompt(queryClient, id, prompt),
+  })
+}
+
+/** `POST /v1/profiles/{id}/system-prompt/reset`, which answers the whole profile. */
+export function useResetSystemPrompt(id: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () =>
+      unwrap(api().POST("/v1/profiles/{id}/system-prompt/reset", { params: { path: { id } } })),
+    onSuccess: (profile) => cacheProfile(queryClient, profile),
+  })
+}
+
 /** What the dispatcher does for a `profile_created` / `profile_updated` event. */
 function cacheProfile(queryClient: QueryClient, profile: ProfileDto): void {
   queryClient.setQueryData(qk.profiles.detail(profile.id), profile)

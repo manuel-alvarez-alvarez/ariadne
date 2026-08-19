@@ -2,9 +2,11 @@
  * One prompt inside the profile form: a collapsible section holding a plain
  * form field.
  *
- * Nothing is written until the form is submitted, so there is no save and no
- * failure of its own — only text, and a "restore default" that fills the box
- * from the role's defaults and leaves the writing to the submit.
+ * Deliberately not {@link import("./prompt-editor").PromptEditor}, which is the
+ * details panel's box with its own Save and its own confirmation. Here nothing
+ * is written until the form is submitted, so there is no save, no confirmation
+ * and no failure of its own — only text, and a "restore default" that fills the
+ * box from the role's defaults and leaves the writing to the submit.
  *
  * A profile carries up to four prompts and every one of them is long, so they
  * are folded away by default. Collapsed sections are unmounted; their text
