@@ -580,4 +580,22 @@ async fn ingested_events_raise_and_clear_session_attention() {
             if s.id == session.id && s.attention_reason.is_none())
     })
     .await;
+
+    // A session that ended needing attention keeps the reason: a stray event
+    // arriving afterwards resurrects neither its status nor its flag.
+    h.store
+        .set_session_status(&session.id, SessionStatus::Exited)
+        .await
+        .unwrap();
+    h.store
+        .set_session_attention(&session.id, AttentionReason::Disconnected)
+        .await
+        .unwrap();
+    post("tool.execute.before").await;
+    let ended = h.store.get_session(&session.id).await.unwrap();
+    assert_eq!(
+        ended.attention_reason(),
+        Some(AttentionReason::Disconnected)
+    );
+    assert_eq!(ended.status(), SessionStatus::Exited);
 }
