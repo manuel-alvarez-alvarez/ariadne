@@ -35,7 +35,7 @@ import { CreateTaskDialog } from "@/features/tasks/task-form-dialog"
 import { useFocusReturn } from "@/hooks/use-focus-return"
 import { goalCopyEntries } from "@/lib/copy-entries"
 import { formatAbsolute, formatRelative } from "@/lib/time"
-import { paths, taskPanelTo, usePanelSessionNavigation } from "@/routes/paths"
+import { taskPanelTo, usePanelSessionNavigation } from "@/routes/paths"
 import { GoalActions } from "./goal-actions"
 import { GoalSessions, GoalSessionView } from "./goal-sessions"
 import { GoalTasks } from "./goal-tasks"
@@ -296,17 +296,7 @@ function GoalMetadata({ goal }: { goal: GoalDto }) {
         <ul className="flex flex-col gap-1">
           {goal.repos.map((repo) => (
             <li key={repo.id} className="min-w-0">
-              {/* The path is the repository's name, so it is also the way to
-                  its registration — where the base branch and the description
-                  below it are edited (the rows there do not expand, so the
-                  screen itself is as far as a link can point). */}
-              <CopyableId
-                value={repo.path}
-                label="repository path"
-                wrap
-                to={paths.repositories()}
-                className="text-xs"
-              />
+              <CopyableId value={repo.path} label="repository path" wrap className="text-xs" />
               <span className="font-mono text-xs text-muted-foreground">
                 base: {repo.base_branch}
               </span>
