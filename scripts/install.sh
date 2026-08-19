@@ -78,14 +78,14 @@ BASH_DIR="$DATA_DIR/bash-completion/completions"
 ZSH_DIR="$DATA_DIR/zsh/site-functions"
 ZSHRC="${ZDOTDIR:-$HOME}/.zshrc"
 
+# Only a label for the step title and the summary; an OS with no service of
+# ours still gets everything before that step, and fails inside it.
+SERVICE_DESC=""
 if [ "$WITH_SERVICE" = 1 ]; then
     case "$OS" in
         Darwin) SERVICE_DESC="launchd $PLIST_LABEL" ;;
         Linux) SERVICE_DESC="systemd --user ariadned.service" ;;
-        *)
-            echo "unsupported OS for service setup: $OS (use --no-service and run ariadned yourself)" >&2
-            exit 1
-            ;;
+        *) SERVICE_DESC="unsupported on $OS" ;;
     esac
 fi
 
@@ -257,6 +257,12 @@ EOF
             run_logged systemctl --user enable ariadned.service || true
             run_logged systemctl --user restart ariadned.service \
                 || ui_die "systemctl --user restart ariadned.service failed"
+            ;;
+        *)
+            # No log tail to show: nothing ran, the OS is simply not one of ours.
+            step_fail
+            ui_error "unsupported OS for service setup: $OS (use --no-service and run ariadned yourself)"
+            exit 1
             ;;
     esac
     step_ok
