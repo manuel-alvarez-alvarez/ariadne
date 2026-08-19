@@ -1,7 +1,7 @@
 //! Prompt assembly from the database.
 //!
 //! Every prompt an agent runs on belongs to its profile: the system layer is
-//! the profile's own `system_prompt` (persona and playbooks folded together),
+//! the profile's own `system_prompt` (the role's persona and playbook),
 //! the task layer is one of its briefing templates — one per
 //! [`PromptKind`] — with the concrete goal, task and review values put in.
 //!
@@ -386,7 +386,8 @@ mod tests {
             "# Goal: {}\n\n{}\n\n## Repositories\n{}\n\n## Constraints\n\
              - Maximum number of tasks: {}\n- Approvals required per task: {}\n\n\
              Discuss this goal with the user in this terminal, then break it into \
-             tasks via the Ariadne MCP tools. Call `finalize_plan` when done.",
+             tasks with `create_task`. Call `finalize_plan` when the user agrees \
+             the plan is done.",
             goal.title,
             goal.description,
             repo_lines,
