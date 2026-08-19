@@ -20,6 +20,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { defaultFilter, useCommandState } from "cmdk"
 import {
+  BotIcon,
   CpuIcon,
   ListChecksIcon,
   MoonIcon,
@@ -192,6 +193,7 @@ function Hint({ keys, children }: { keys: string; children: ReactNode }) {
 const PAGES = [
   { label: "Goals", path: paths.goals(), icon: TargetIcon },
   { label: "Profiles", path: paths.profiles(), icon: CpuIcon },
+  { label: "Agents", path: paths.agents(), icon: BotIcon },
 ] as const
 
 /** The entity groups, in the order they are listed when nothing separates them. */

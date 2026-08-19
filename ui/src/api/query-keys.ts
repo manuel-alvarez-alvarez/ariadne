@@ -107,6 +107,15 @@ export const qk = {
     detail: (role: Role) => ["roles", "detail", role] as const,
     promptDefaults: (role: Role) => ["roles", "detail", role, "prompt-defaults"] as const,
   },
+  /**
+   * How each coding-agent CLI is launched (`GET /v1/agents`): one unfiltered
+   * list of every agent kind, because the daemon answers with all of them.
+   */
+  agents: {
+    all: () => ["agents"] as const,
+    lists: () => ["agents", "list"] as const,
+    list: () => ["agents", "list", {}] as const,
+  },
   /** The model catalog (`GET /v1/models`), one unfiltered list for all agents. */
   models: {
     all: () => ["models"] as const,
