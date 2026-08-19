@@ -227,6 +227,8 @@ mod tests {
             max_tasks: Some(4),
             required_approvals: 2,
             planner_profile_id: "01plannerxxxxxxxxxxxxxxxxx".into(),
+            agent_kind: None,
+            model: None,
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:00Z".into(),
         }
@@ -252,6 +254,8 @@ mod tests {
             description: "Read them from `profile_prompts`.".into(),
             status: "in_progress".into(),
             engineer_profile_id: "01engineerxxxxxxxxxxxxxxxx".into(),
+            agent_kind: None,
+            model: None,
             branch: "ariadne/task-01taskxxxxxxxxxxxxxxxxxxxx".into(),
             worktree_path: Some("/worktrees/task-eng".into()),
             review_round: 3,

@@ -6,7 +6,9 @@ use std::collections::{HashMap, HashSet};
 use ariadne_core::id::new_id;
 use ariadne_core::{Actor, TaskStatus, check_transition};
 
-use crate::{Change, Result, Store, StoreError, Task, TaskTransition, not_found, now};
+use crate::{
+    Change, Result, Store, StoreError, Task, TaskReviewer, TaskTransition, not_found, now,
+};
 
 #[derive(Debug, Clone)]
 pub struct NewTask {
@@ -74,10 +76,16 @@ impl Store {
             }
         }
 
+        // The engineer's agent and model are copied onto the task here and
+        // never re-read: editing the profile later must not move a task that
+        // is already defined, let alone one mid-flight.
+        let engineer = Self::get_profile_in_tx(&mut tx, &new.engineer_profile_id).await?;
+
         sqlx::query(
             "INSERT INTO tasks (id, goal_id, repo_id, title, description, status,
-                                engineer_profile_id, branch, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)",
+                                engineer_profile_id, agent_kind, model, branch,
+                                created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&goal.id)
@@ -85,22 +93,15 @@ impl Store {
         .bind(&new.title)
         .bind(&new.description)
         .bind(&new.engineer_profile_id)
+        .bind(&engineer.agent_kind)
+        .bind(&engineer.model)
         .bind(&branch)
         .bind(&ts)
         .bind(&ts)
         .execute(&mut *tx)
         .await?;
 
-        for (position, profile_id) in new.reviewer_profile_ids.iter().enumerate() {
-            sqlx::query(
-                "INSERT INTO task_reviewers (task_id, profile_id, position) VALUES (?, ?, ?)",
-            )
-            .bind(&id)
-            .bind(profile_id)
-            .bind(position as i64)
-            .execute(&mut *tx)
-            .await?;
-        }
+        Self::insert_reviewers(&mut tx, &id, &new.reviewer_profile_ids).await?;
 
         if !new.depends_on.is_empty() {
             Self::insert_dependencies(&mut tx, &goal.id, &id, &new.depends_on).await?;
@@ -275,16 +276,9 @@ impl Store {
                 .bind(id)
                 .execute(&mut *tx)
                 .await?;
-            for (position, profile_id) in reviewers.iter().enumerate() {
-                sqlx::query(
-                    "INSERT INTO task_reviewers (task_id, profile_id, position) VALUES (?, ?, ?)",
-                )
-                .bind(id)
-                .bind(profile_id)
-                .bind(position as i64)
-                .execute(&mut *tx)
-                .await?;
-            }
+            // Reassigning reviewers writes new slots, so each one pins the
+            // profile as it stands now, the same way creation does.
+            Self::insert_reviewers(&mut tx, id, &reviewers).await?;
         }
         tx.commit().await?;
         let task = self.get_task(id).await?;
@@ -417,6 +411,43 @@ impl Store {
         .bind(task_id)
         .fetch_all(self.r())
         .await?)
+    }
+
+    /// The reviewer slots themselves, in the same order, each carrying the
+    /// agent and model it was pinned to when it was assigned.
+    pub async fn list_task_reviewer_pins(&self, task_id: &str) -> Result<Vec<TaskReviewer>> {
+        Ok(sqlx::query_as::<_, TaskReviewer>(
+            "SELECT * FROM task_reviewers WHERE task_id = ? ORDER BY position",
+        )
+        .bind(task_id)
+        .fetch_all(self.r())
+        .await?)
+    }
+
+    /// Write one reviewer slot per profile, in the order given, pinning each
+    /// profile's agent and model onto the slot. Read inside the transaction
+    /// that writes the slots, so a profile edited in between cannot land
+    /// half-applied across them.
+    async fn insert_reviewers(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        task_id: &str,
+        reviewer_profile_ids: &[String],
+    ) -> Result<()> {
+        for (position, profile_id) in reviewer_profile_ids.iter().enumerate() {
+            let profile = Self::get_profile_in_tx(tx, profile_id).await?;
+            sqlx::query(
+                "INSERT INTO task_reviewers (task_id, profile_id, position, agent_kind, model)
+                 VALUES (?, ?, ?, ?, ?)",
+            )
+            .bind(task_id)
+            .bind(&profile.id)
+            .bind(position as i64)
+            .bind(&profile.agent_kind)
+            .bind(&profile.model)
+            .execute(&mut **tx)
+            .await?;
+        }
+        Ok(())
     }
 
     pub async fn list_task_dependencies(&self, task_id: &str) -> Result<Vec<String>> {
