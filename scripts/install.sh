@@ -214,7 +214,9 @@ if [ "$WITH_UI" = 1 ]; then
                 mkdir -p "$APP_INSTALL_DIR"
                 APP_PATH="$APP_INSTALL_DIR/$APP_NAME.app"
                 rm -rf "$APP_PATH"
-                cp -R "$APP_BUNDLE" "$APP_PATH"
+                # ditto, not cp: it is what copies a bundle whole, extended
+                # attributes and code signature included.
+                ditto "$APP_BUNDLE" "$APP_PATH"
                 ;;
             Linux)
                 # The AppImage when its tooling produced one, the plain binary
