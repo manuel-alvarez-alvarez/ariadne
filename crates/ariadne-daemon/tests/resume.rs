@@ -28,8 +28,8 @@ use ariadne_daemon::gitwt::GitManager;
 use ariadne_daemon::launcher::Launcher;
 use ariadne_daemon::tmux::{TmuxManager, session_name};
 use ariadne_store::{
-    AgentSession, NewGoal, NewProfile, NewRepository, NewSession, NewTask, SessionFilter, Store,
-    Task,
+    AgentSession, NewGoal, NewProfile, NewRepository, NewSession, NewTask, ProfileUpdate,
+    SessionFilter, Store, Task,
 };
 
 /// How long a test waits for an event before giving up.
@@ -150,6 +150,7 @@ impl Harness {
                 role: Role::Engineer,
                 profile_id: engineer,
                 agent_kind: AgentKind::ClaudeCode,
+                model: None,
                 tmux_session: session_name(&goal.id, Some(&task.id), "engineer", None),
                 worktree_path: Some(worktree.display().to_string()),
                 review_round: None,
@@ -277,6 +278,20 @@ impl Harness {
             .id
     }
 
+    /// Point a profile at another model, the way an edit in the UI would.
+    async fn set_model(&self, profile_id: &str, model: Option<&str>) {
+        self.store
+            .update_profile(
+                profile_id,
+                ProfileUpdate {
+                    model: Some(model.map(str::to_string)),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+    }
+
     async fn sessions_of(&self, task: &Task) -> Vec<AgentSession> {
         self.store
             .list_sessions(SessionFilter {
@@ -342,6 +357,71 @@ async fn next_event(rx: &mut Receiver<BusEvent>, pred: impl Fn(&BusEvent) -> boo
     })
     .await
     .expect("timed out waiting for a matching domain event")
+}
+
+/// Which model a session runs on is written on the session, not looked up on
+/// its profile: the profile is edited over time, and the answer to "what is
+/// this session running?" has to stay the model that launch actually asked
+/// for. A resume asks afresh, so the row moves with it.
+#[tokio::test]
+async fn a_launch_records_the_model_it_ran_with() {
+    let h = harness().await;
+    let (task, reviewer) = h.task_under_review().await;
+    h.set_model(&reviewer, Some("opus")).await;
+
+    // Nothing to resume yet, so this is the reviewer's first spawn.
+    let first = h
+        .launcher
+        .resume_reviewer(&task.id, &reviewer, "(unused: no session yet)")
+        .await
+        .unwrap();
+    assert_eq!(first.model.as_deref(), Some("opus"));
+
+    // The profile moves to another model while the session is alive. The row
+    // still says what this launch is running on.
+    h.set_model(&reviewer, Some("sonnet")).await;
+    assert_eq!(
+        h.store
+            .get_session(&first.id)
+            .await
+            .unwrap()
+            .model
+            .as_deref(),
+        Some("opus"),
+        "a profile edit rewrote a running session's model"
+    );
+
+    // Round two relaunches the same session — with the model in effect now,
+    // which is therefore what the row records from here on.
+    h.launcher.kill_session(&first.id).await.unwrap();
+    let task = h.next_round(&task).await;
+    let second = h
+        .launcher
+        .resume_reviewer(&task.id, &reviewer, "Round 2: have another look.")
+        .await
+        .unwrap();
+    assert_eq!(second.id, first.id, "round 2 reused the session");
+    assert_eq!(second.model.as_deref(), Some("sonnet"));
+    let argv = h.spawn_plan(&second.id).argv.join(" ");
+    assert!(
+        argv.contains("--model sonnet"),
+        "and that is what the agent was launched with: {argv}"
+    );
+
+    // Cleared back to the agent's own default, the row says so too: nothing
+    // was asked for.
+    h.set_model(&reviewer, None).await;
+    h.launcher.kill_session(&second.id).await.unwrap();
+    let third = h
+        .launcher
+        .resume_reviewer(&task.id, &reviewer, "Round 3: once more.")
+        .await
+        .unwrap();
+    assert_eq!(third.model, None);
+    assert!(
+        !h.spawn_plan(&third.id).argv.join(" ").contains("--model"),
+        "no model was asked for"
+    );
 }
 
 /// The changes-requested bounce, twice over: the task panel's Sessions tab
@@ -568,6 +648,7 @@ async fn a_reviewer_without_an_agent_id_is_spawned_afresh() {
             role: Role::Reviewer,
             profile_id: reviewer.clone(),
             agent_kind: AgentKind::ClaudeCode,
+            model: None,
             tmux_session: session_name(&task.goal_id, Some(&task.id), "reviewer", Some("rev")),
             worktree_path: None,
             review_round: Some(1),

@@ -1,7 +1,7 @@
 //! Agent-session repository.
 
 use ariadne_core::id::new_id;
-use ariadne_core::{AgentKind, AttentionReason, Role, SessionStatus};
+use ariadne_core::{AgentKind, Role, SessionStatus};
 
 use crate::{AgentSession, Change, Result, Store, not_found, now};
 
@@ -12,6 +12,8 @@ pub struct NewSession {
     pub role: Role,
     pub profile_id: String,
     pub agent_kind: AgentKind,
+    /// Model to launch with; None = the agent CLI's own default.
+    pub model: Option<String>,
     pub tmux_session: String,
     pub worktree_path: Option<String>,
     pub review_round: Option<i64>,
@@ -24,8 +26,6 @@ pub struct SessionFilter {
     pub status: Option<SessionStatus>,
     /// Only sessions in a live status (starting/running/idle).
     pub live_only: bool,
-    /// Only sessions currently flagged as needing attention.
-    pub attention_only: bool,
 }
 
 impl Store {
@@ -33,9 +33,9 @@ impl Store {
     pub async fn create_session(&self, new: NewSession) -> Result<AgentSession> {
         let id = new_id();
         sqlx::query(
-            "INSERT INTO agent_sessions (id, goal_id, task_id, role, profile_id, agent_kind,
+            "INSERT INTO agent_sessions (id, goal_id, task_id, role, profile_id, agent_kind, model,
                                          tmux_session, worktree_path, review_round, status, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?)",
         )
         .bind(&id)
         .bind(&new.goal_id)
@@ -43,6 +43,7 @@ impl Store {
         .bind(new.role.as_str())
         .bind(&new.profile_id)
         .bind(new.agent_kind.as_str())
+        .bind(&new.model)
         .bind(&new.tmux_session)
         .bind(&new.worktree_path)
         .bind(new.review_round)
@@ -76,9 +77,6 @@ impl Store {
         if filter.live_only {
             sql.push_str(" AND status IN ('starting', 'running', 'idle')");
         }
-        if filter.attention_only {
-            sql.push_str(" AND attention_reason IS NOT NULL");
-        }
         sql.push_str(" ORDER BY id");
         // Safe: only fixed clause fragments are appended; values are bound.
         let mut q = sqlx::query_as::<_, AgentSession>(sqlx::AssertSqlSafe(sql));
@@ -110,50 +108,6 @@ impl Store {
         .rows_affected();
         if n == 0 {
             return Err(not_found("session", id));
-        }
-        self.publish_session_update(id).await
-    }
-
-    /// Flag a session as needing the user's attention.
-    ///
-    /// Re-raising the reason already stored is a no-op, `attention_since`
-    /// included: a detector that keeps seeing the same permission prompt must
-    /// not keep resetting how long the agent has been stuck on it.
-    pub async fn set_session_attention(&self, id: &str, reason: AttentionReason) -> Result<()> {
-        let n = sqlx::query(
-            "UPDATE agent_sessions
-                SET attention_reason = ?, attention_since = ?
-              WHERE id = ? AND (attention_reason IS NULL OR attention_reason <> ?)",
-        )
-        .bind(reason.as_str())
-        .bind(now())
-        .bind(id)
-        .bind(reason.as_str())
-        .execute(self.w())
-        .await?
-        .rows_affected();
-        if n == 0 {
-            // Either the session is gone or it already carries this reason.
-            self.get_session(id).await?;
-            return Ok(());
-        }
-        self.publish_session_update(id).await
-    }
-
-    /// Drop any attention flag from a session (the agent moved on).
-    pub async fn clear_session_attention(&self, id: &str) -> Result<()> {
-        let n = sqlx::query(
-            "UPDATE agent_sessions
-                SET attention_reason = NULL, attention_since = NULL
-              WHERE id = ? AND attention_reason IS NOT NULL",
-        )
-        .bind(id)
-        .execute(self.w())
-        .await?
-        .rows_affected();
-        if n == 0 {
-            self.get_session(id).await?;
-            return Ok(());
         }
         self.publish_session_update(id).await
     }
@@ -198,6 +152,23 @@ impl Store {
     pub async fn set_session_internal_id(&self, id: &str, internal: &str) -> Result<()> {
         let n = sqlx::query("UPDATE agent_sessions SET internal_session_id = ? WHERE id = ?")
             .bind(internal)
+            .bind(id)
+            .execute(self.w())
+            .await?
+            .rows_affected();
+        if n == 0 {
+            return Err(not_found("session", id));
+        }
+        self.publish_session_update(id).await
+    }
+
+    /// Record the model a launch is using. Called on every launch, fresh or
+    /// resumed: a session resumed after its profile was edited runs with the
+    /// model in effect now, and the row is meant to say so. `None` = no model
+    /// was asked for, i.e. the agent CLI's default.
+    pub async fn set_session_model(&self, id: &str, model: Option<&str>) -> Result<()> {
+        let n = sqlx::query("UPDATE agent_sessions SET model = ? WHERE id = ?")
+            .bind(model)
             .bind(id)
             .execute(self.w())
             .await?

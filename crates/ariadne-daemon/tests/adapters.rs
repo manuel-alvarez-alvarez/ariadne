@@ -78,15 +78,7 @@ fn claude_spawn_plan() {
     let settings: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(dir.path().join("settings.json")).unwrap())
             .unwrap();
-    for event in [
-        "SessionStart",
-        "UserPromptSubmit",
-        "PreToolUse",
-        "PostToolUse",
-        "Notification",
-        "Stop",
-        "SessionEnd",
-    ] {
+    for event in ["SessionStart", "PostToolUse", "Stop", "SessionEnd"] {
         let cmd = settings["hooks"][event][0]["hooks"][0]["command"]
             .as_str()
             .unwrap();

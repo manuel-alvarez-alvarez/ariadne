@@ -96,7 +96,6 @@ pub async fn run(client: &Client, no_trunc: bool, format: Format) -> Result<()> 
         goal: None,
         task: None,
         status: Some(SessionStatus::Failed),
-        attention: None,
     };
     let sessions: Vec<SessionDto> = client
         .get_json(&query_path("/v1/sessions", &query)?)
@@ -292,13 +291,12 @@ mod tests {
             },
             profile_id: "01PROFILE".into(),
             agent_kind: AgentKind::ClaudeCode,
+            model: None,
             internal_session_id: None,
             tmux_session: "ariadne-x".into(),
             worktree_path: None,
             review_round: None,
             status: SessionStatus::Failed,
-            attention_reason: None,
-            attention_since: None,
             last_activity_at: None,
             created_at: "2026-08-18T10:00:00Z".into(),
             ended_at: None,
