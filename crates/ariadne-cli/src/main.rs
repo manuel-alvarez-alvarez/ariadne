@@ -321,7 +321,7 @@ async fn run(cli: Cli) -> Result<ExitCode> {
 mod tests {
     use super::*;
 
-    use ariadne_core::GoalStatus;
+    use ariadne_core::{GoalStatus, Role};
 
     /// clap's own consistency check over the whole tree, shadowed `--format`
     /// arguments included.
@@ -480,6 +480,23 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("invalid value 'done'"), "{msg}");
         assert!(msg.contains("completed"), "the refusal lists the real ones");
+    }
+
+    /// `session ls --role` names one of the three roles, and nothing else
+    /// reaches the list to be filtered on.
+    #[test]
+    fn listing_sessions_takes_one_real_role() {
+        let Command::Session {
+            command: SessionCommand::Ls { role, .. },
+        } = parse(&["ariadne", "session", "ls", "--role", "reviewer"]).command
+        else {
+            panic!("session ls");
+        };
+        assert_eq!(role, Some(Role::Reviewer));
+        assert!(
+            try_parse(&["ariadne", "session", "ls", "--role", "critic"]).is_err(),
+            "an unknown role is a usage error"
+        );
     }
 
     /// `--host` was the documented spelling before `--endpoint`; scripts that
