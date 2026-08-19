@@ -315,7 +315,7 @@ impl Scheduler {
                     self.check_session_stall(
                         &planner,
                         (goal.status.clone(), 0),
-                        "Reminder: this goal is still in planning. Continue breaking it into tasks with create_task, or call finalize_plan if the plan is complete.",
+                        "Keep planning this goal: create the tasks it still needs with `create_task`, or call `finalize_plan` once the user agrees the plan is complete.",
                     )
                     .await?;
                 }
@@ -581,7 +581,7 @@ impl Scheduler {
                         self.check_session_stall(
                             &reviewer,
                             (task.status.clone(), task.review_round),
-                            "Reminder: this task is still waiting on your review. Finish reviewing and call approve or request_changes.",
+                            "Finish reviewing this round and submit your verdict with `approve` or `request_changes`.",
                         )
                         .await?;
                     } else {
@@ -746,7 +746,7 @@ impl Scheduler {
             info!(task = %task.id, "no live engineer session, resuming");
             if let Err(e) = self
                 .launcher
-                .resume_engineer(&task.id, "Your previous session ended unexpectedly. Continue the task from where it left off.")
+                .resume_engineer(&task.id, "Your previous session ended: continue this task on the same branch in your worktree, and call `request_review` when the work is complete and verified.")
                 .await
             {
                 // The task still wants an engineer and could not get one:
@@ -758,10 +758,10 @@ impl Scheduler {
         };
         let nudge = match task.status() {
             TaskStatus::Merging => {
-                "Reminder: your task is approved and waiting to be merged. Follow the merge instructions and call mark_merged."
+                "Your task is approved: merge it as the merge instructions say, then call `mark_merged` with the merge commit sha."
             }
             _ => {
-                "Reminder: your task is still in progress. Continue working on it, or call request_review if it is complete."
+                "Keep working on this task, and call `request_review` with a summary once the work is complete and verified."
             }
         };
         let stalled = self

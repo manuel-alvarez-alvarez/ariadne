@@ -26,15 +26,9 @@ function task(overrides: Partial<TaskDto>): TaskDto {
   }
 }
 
-/**
- * A session the daemon has flagged — which is the only way one gets onto the
- * list. `attention_reason: null` is what the tests below hand a session that
- * has nothing owed to it, whatever its status.
- */
 function session(overrides: Partial<SessionDto>): SessionDto {
   return {
     agent_kind: "claude_code",
-    attention_reason: "disconnected",
     created_at: "2026-08-16T10:00:00Z",
     goal_id: "g1",
     id: "s1",
@@ -68,46 +62,29 @@ describe("taskAttentionReason", () => {
     expect(taskAttentionReason(task({ status: "under_review" }))).toBeNull()
   })
 
-  // The reviewer has spoken and the daemon resumes the engineer itself, so
-  // the task is waiting on an agent rather than on a person.
-  it("leaves a task whose review asked for changes alone", () => {
-    expect(taskAttentionReason(task({ status: "changes_requested" }))).toBeNull()
-  })
-
-  it("reports the two states that want the user", () => {
+  it("reports the three statuses that want the user", () => {
     expect(taskAttentionReason(task({ status: "failed" }))).toBe("failed")
+    expect(taskAttentionReason(task({ status: "changes_requested" }))).toBe("changes_requested")
     expect(taskAttentionReason(task({ stalled: true }))).toBe("stalled")
   })
 
   it("prefers the status over the stall flag on top of it", () => {
     expect(taskAttentionReason(task({ status: "failed", stalled: true }))).toBe("failed")
-  })
-
-  // A stall is a flag on top of any status, including the one that is not a
-  // reason of its own.
-  it("still reports a task that stalled while changes were requested", () => {
     expect(taskAttentionReason(task({ status: "changes_requested", stalled: true }))).toBe(
-      "stalled",
+      "changes_requested",
     )
   })
 })
 
 describe("sessionAttention", () => {
-  it("leaves a session the daemon raised nothing for alone", () => {
-    expect(sessionAttention(session({ status: "running", attention_reason: null }))).toBeNull()
-    expect(sessionAttention(session({ status: "idle", attention_reason: null }))).toBeNull()
-    expect(sessionAttention(session({ status: "exited", attention_reason: null }))).toBeNull()
+  it("leaves a healthy session alone", () => {
+    expect(sessionAttention(session({ status: "running" }))).toBeNull()
+    expect(sessionAttention(session({ status: "idle" }))).toBeNull()
+    expect(sessionAttention(session({ status: "exited" }))).toBeNull()
   })
 
-  // The daemon flags the agent it still owes work to as `disconnected` and
-  // leaves the rest alone: a reviewer that exited after voting is finished,
-  // not stuck, and the stored reason is what says which.
-  it("leaves a dead session the daemon raised nothing for alone", () => {
-    expect(sessionAttention(session({ status: "failed", attention_reason: null }))).toBeNull()
-  })
-
-  // The same five the daemon can raise, and nothing else.
-  it("reports every reason the daemon can flag", () => {
+  // The same five the daemon can raise, plus the death that raises none.
+  it("reports every reason the daemon can flag, and a dead agent", () => {
     expect(
       sessionAttention(session({ status: "running", attention_reason: "waiting_permission" })),
     ).toBe("waiting_permission")
@@ -123,9 +100,10 @@ describe("sessionAttention", () => {
     expect(sessionAttention(session({ status: "idle", attention_reason: "stalled" }))).toBe(
       "stalled",
     )
+    expect(sessionAttention(session({ status: "failed" }))).toBe("failed")
   })
 
-  it("keeps the reason of a session that died after raising it", () => {
+  it("prefers the reason over the death that followed it", () => {
     expect(sessionAttention(session({ status: "failed", attention_reason: "agent_error" }))).toBe(
       "agent_error",
     )
@@ -153,13 +131,10 @@ describe("collectAttention", () => {
       [goal({})],
       [],
       [
-        session({ id: "s1", status: "running", attention_reason: null }),
-        // Dead, and nothing owed to it: the daemon raised no reason, so it is
-        // no more on the list than the healthy one above.
-        session({ id: "s2", status: "failed", attention_reason: null }),
-        session({ id: "s3", status: "failed", ended_at: "2026-08-16T10:00:00Z" }),
+        session({ id: "s1", status: "running" }),
+        session({ id: "s2", status: "failed", ended_at: "2026-08-16T10:00:00Z" }),
         session({
-          id: "s4",
+          id: "s3",
           status: "idle",
           attention_reason: "waiting_permission",
           attention_since: "2026-08-16T12:00:00Z",
@@ -167,10 +142,10 @@ describe("collectAttention", () => {
       ],
     )
 
-    expect(items.map((item) => item.id)).toEqual(["s4", "s3"])
+    expect(items.map((item) => item.id)).toEqual(["s3", "s2"])
     expect(items.map((item) => item.kind === "session" && item.reason)).toEqual([
       "waiting_permission",
-      "disconnected",
+      "failed",
     ])
   })
 
@@ -179,7 +154,7 @@ describe("collectAttention", () => {
       [goal({})],
       [
         task({ id: "t1", status: "failed", updated_at: "2026-08-16T10:00:00Z" }),
-        task({ id: "t2", stalled: true, updated_at: "2026-08-16T12:00:00Z" }),
+        task({ id: "t2", status: "changes_requested", updated_at: "2026-08-16T12:00:00Z" }),
       ],
       [session({ id: "s1", ended_at: "2026-08-16T11:00:00Z" })],
     )
