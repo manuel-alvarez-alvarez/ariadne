@@ -91,6 +91,7 @@ src/
     tasks/         task detail
     sessions/      session list + session detail, embedded by the panels
     profiles/      profiles screen
+    agents/        agent-kind screen: the flags each CLI is launched with
 src-tauri/         the Tauri shell (deliberately empty: no commands)
 ```
 

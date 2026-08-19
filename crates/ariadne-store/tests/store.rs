@@ -1,8 +1,8 @@
 //! Store integration tests against a temp-file SQLite database.
 
 use ariadne_core::{
-    Actor, AgentKind, AuthorRole, GoalStatus, PromptKind, ReviewVerdict, Role, SessionStatus,
-    TaskStatus,
+    Actor, AgentKind, AttentionReason, AuthorRole, GoalStatus, PromptKind, ReviewVerdict, Role,
+    SessionStatus, TaskStatus,
 };
 use ariadne_store::defaults::{default_prompt, default_system_prompt};
 use ariadne_store::*;
@@ -853,6 +853,121 @@ async fn restarting_a_session_reopens_the_same_row() {
     assert!(
         store
             .restart_session("01ARZ3NDEKTSV4RRFFQ69G5FAV", None, None)
+            .await
+            .is_err()
+    );
+}
+
+/// Attention is orthogonal to the lifecycle status: it is raised and cleared
+/// on its own, and re-raising the same reason keeps the clock running rather
+/// than restarting it.
+#[tokio::test]
+async fn session_attention_is_raised_kept_and_cleared() {
+    let (store, _dir) = test_store().await;
+    let planner = seed_profile(&store, "planner", Role::Planner).await;
+    let (goal, repo) = seed_goal(&store, &planner, None).await;
+    let task = seed_task(&store, &goal, &repo, vec![]).await;
+
+    let session = store
+        .create_session(NewSession {
+            goal_id: goal.id.clone(),
+            task_id: Some(task.id.clone()),
+            role: Role::Engineer,
+            profile_id: task.engineer_profile_id.clone(),
+            agent_kind: AgentKind::ClaudeCode,
+            tmux_session: "ariadne-test-eng".into(),
+            worktree_path: Some("/tmp/wt".into()),
+            review_round: None,
+        })
+        .await
+        .unwrap();
+    let fresh = store.get_session(&session.id).await.unwrap();
+    assert_eq!(fresh.attention_reason(), None);
+    assert_eq!(fresh.attention_since, None);
+
+    store
+        .set_session_attention(&session.id, AttentionReason::WaitingPermission)
+        .await
+        .unwrap();
+    let flagged = store.get_session(&session.id).await.unwrap();
+    assert_eq!(
+        flagged.attention_reason(),
+        Some(AttentionReason::WaitingPermission)
+    );
+    let since = flagged
+        .attention_since
+        .clone()
+        .expect("raising attention stamps when it started");
+    assert_eq!(
+        flagged.status(),
+        SessionStatus::Starting,
+        "attention leaves the lifecycle status alone"
+    );
+
+    // The same reason again: the clock keeps running from the first sighting.
+    store
+        .set_session_attention(&session.id, AttentionReason::WaitingPermission)
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .get_session(&session.id)
+            .await
+            .unwrap()
+            .attention_since,
+        Some(since.clone())
+    );
+
+    // A different reason replaces it, clock included.
+    store
+        .set_session_attention(&session.id, AttentionReason::AgentError)
+        .await
+        .unwrap();
+    let changed = store.get_session(&session.id).await.unwrap();
+    assert_eq!(
+        changed.attention_reason(),
+        Some(AttentionReason::AgentError)
+    );
+    assert!(changed.attention_since.is_some());
+
+    // Only flagged sessions come back under the filter...
+    let flagged = store
+        .list_sessions(SessionFilter {
+            attention_only: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(flagged.len(), 1);
+    assert_eq!(flagged[0].id, session.id);
+
+    store.clear_session_attention(&session.id).await.unwrap();
+    let cleared = store.get_session(&session.id).await.unwrap();
+    assert_eq!(cleared.attention_reason(), None);
+    assert_eq!(cleared.attention_since, None);
+    assert!(
+        store
+            .list_sessions(SessionFilter {
+                attention_only: true,
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    // Clearing an unflagged session is a no-op, not an error.
+    store.clear_session_attention(&session.id).await.unwrap();
+    // An id that names no session still reports it.
+    assert!(
+        store
+            .set_session_attention("01ARZ3NDEKTSV4RRFFQ69G5FAV", AttentionReason::Stalled)
+            .await
+            .is_err()
+    );
+    assert!(
+        store
+            .clear_session_attention("01ARZ3NDEKTSV4RRFFQ69G5FAV")
             .await
             .is_err()
     );

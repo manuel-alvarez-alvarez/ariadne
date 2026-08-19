@@ -13,6 +13,7 @@
 import { createHashRouter, Navigate } from "react-router-dom"
 
 import { AppShell } from "@/components/app-shell"
+import { agentRoutes } from "@/features/agents/routes"
 import { goalRoutes } from "@/features/goals/routes"
 import { profileRoutes } from "@/features/profiles/routes"
 import { repositoryRoutes } from "@/features/repositories/routes"
@@ -30,6 +31,7 @@ export const router = createHashRouter([
       ...goalRoutes,
       ...taskRoutes,
       ...profileRoutes,
+      ...agentRoutes,
       ...repositoryRoutes,
       { path: "*", element: <NotFoundPage /> },
     ],
