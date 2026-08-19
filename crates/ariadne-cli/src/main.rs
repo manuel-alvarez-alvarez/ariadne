@@ -1,5 +1,6 @@
 //! ariadne — CLI for the Ariadne daemon.
 
+mod codex_trust;
 mod commands;
 mod complete;
 mod error;
