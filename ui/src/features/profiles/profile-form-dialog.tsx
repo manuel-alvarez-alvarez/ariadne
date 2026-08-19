@@ -36,10 +36,10 @@ import {
   type UpdateProfileRequest,
 } from "@/api"
 import { ErrorState } from "@/components/error-state"
+import { FormDialog } from "@/components/form-dialog"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
-  Dialog,
   DialogClose,
   DialogContent,
   DialogDescription,
@@ -287,7 +287,7 @@ export function ProfileFormDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <FormDialog open={open} onOpenChange={onOpenChange} dirty={formState.isDirty}>
       <DialogContent className="sm:max-w-2xl">
         <form onSubmit={handleSubmit(submit)} className="grid gap-4">
           <DialogHeader>
@@ -496,7 +496,7 @@ export function ProfileFormDialog({
           </DialogFooter>
         </form>
       </DialogContent>
-    </Dialog>
+    </FormDialog>
   )
 }
 

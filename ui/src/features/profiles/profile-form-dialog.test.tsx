@@ -158,11 +158,14 @@ function stubDaemon({
   })
 }
 
-function renderDialog(profile: ProfileDto | null) {
+function renderDialog(
+  profile: ProfileDto | null,
+  onOpenChange: (open: boolean) => void = () => {},
+) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
   return render(
     <QueryClientProvider client={queryClient}>
-      <ProfileFormDialog open onOpenChange={() => {}} profile={profile} />
+      <ProfileFormDialog open onOpenChange={onOpenChange} profile={profile} />
     </QueryClientProvider>,
   )
 }
@@ -452,5 +455,46 @@ describe("the prompt editors", () => {
     })
     // The profile itself already landed, so the retry leaves it alone.
     expect(requestsTo("PUT", `/v1/profiles/${PROFILE.id}`)).toHaveLength(1)
+  })
+})
+
+/**
+ * Four prompt editors deep, an outside press is the most expensive misclick in
+ * the app — but the prefill that fills those editors is the dialog's own doing,
+ * not the user's, so it must not be what turns a glance into a question.
+ */
+describe("dismissing the dialog", () => {
+  it("closes straight away once the profile's own briefings have landed", async () => {
+    const user = userEvent.setup()
+    const onOpenChange = vi.fn()
+    renderDialog(PROFILE, onOpenChange)
+
+    // The prefill is what this is about: wait until it is on screen.
+    expect((await expandPrompt(user, "Engineer briefing")).value).toBe("Stored engineer briefing.")
+
+    await user.keyboard("{Escape}")
+
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+    expect(screen.queryByText("Discard changes?")).toBeNull()
+  })
+
+  it("asks before dropping an edited briefing, and keeps it when the answer is no", async () => {
+    const user = userEvent.setup()
+    const onOpenChange = vi.fn()
+    renderDialog(PROFILE, onOpenChange)
+
+    const briefing = await expandPrompt(user, "Engineer briefing")
+    await user.type(briefing, " Also: never force-push.")
+    await user.keyboard("{Escape}")
+
+    expect(await screen.findByText("Discard changes?")).toBeDefined()
+    expect(onOpenChange).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole("button", { name: "Keep editing" }))
+
+    expect((await promptBox("Engineer briefing")).value).toBe(
+      "Stored engineer briefing. Also: never force-push.",
+    )
+    expect(onOpenChange).not.toHaveBeenCalled()
   })
 })
