@@ -3,9 +3,9 @@
  * table has no room for.
  *
  * The prompts are the reason this is a panel rather than more columns: they are
- * the long, whitespace-significant fields, and the table has nowhere to put
- * them. They are shown here and edited nowhere but the profile dialog (see
- * {@link ProfilePrompts}).
+ * the long, whitespace-significant fields, and they are edited here rather than
+ * in the profile dialog because the daemon takes each of them on its own
+ * endpoint (see {@link ProfilePrompts}).
  */
 
 import { useQuery } from "@tanstack/react-query"

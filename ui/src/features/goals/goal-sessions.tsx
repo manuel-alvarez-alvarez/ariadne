@@ -28,6 +28,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { sessionQueryOptions } from "@/features/sessions/queries"
 import { SessionDetailView } from "@/features/sessions/session-detail-view"
 import { SessionsList } from "@/features/sessions/sessions-list"
+import { shortId } from "@/lib/ids"
 
 export function GoalSessions({
   goalId,
@@ -81,11 +82,11 @@ export function GoalSessionView({
           onClick={() => onSelect(null)}
         >
           <ArrowLeftIcon />
-          <span className="truncate">Back to {goalTitle ?? "the goal"}</span>
+          <span className="truncate">Back to {goalTitle ?? `goal ${shortId(goalId)}`}</span>
         </Button>
         {/* The panel is a dialog and needs a name of its own; the view below
             carries the visible heading. */}
-        <SheetTitle className="sr-only">Session {sessionId}</SheetTitle>
+        <SheetTitle className="sr-only">Session {shortId(sessionId)}</SheetTitle>
       </SheetHeader>
 
       {session.isPending ? (
@@ -98,7 +99,7 @@ export function GoalSessionView({
         // A link can point at a session that is gone altogether; the panel says
         // so and keeps the way back.
         <ErrorState
-          title={`Could not load session ${sessionId}`}
+          title={`Could not load session ${shortId(sessionId)}`}
           error={session.error}
           onRetry={() => void session.refetch()}
         />
@@ -106,7 +107,7 @@ export function GoalSessionView({
         <Alert variant="destructive">
           <AlertTitle>Not a session of this goal</AlertTitle>
           <AlertDescription>
-            Session {sessionId} belongs to another goal, so it is not shown here.
+            Session {shortId(sessionId)} belongs to another goal, so it is not shown here.
           </AlertDescription>
         </Alert>
       ) : (
