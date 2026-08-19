@@ -126,41 +126,42 @@ async fn probe_version(binary: &Path, flag: &str) -> Option<String> {
     (!line.is_empty()).then(|| line.to_string())
 }
 
-/// Whether a path is there, and what can be said about writing it without
-/// writing anything.
+/// Whether a path is there, and whether this process can write it.
 ///
-/// A report diagnoses; it does not touch the machine it reports on. So an
-/// existing file is opened for writing — which changes nothing, and is a real
-/// answer — while for a directory only the permission bits can be read, and
-/// they only ever prove the negative: no write bit anywhere means nobody
-/// writes there, while a write bit says nothing about *this* user. That case
-/// stays unsettled rather than being guessed at, or answered by creating a
-/// file to see whether it can be created.
+/// Both questions are answered without touching anything: `access(2)` asks
+/// the kernel whether *this* process may write, which is the only way to get
+/// a true answer. The permission bits cannot give one — a `0755` directory
+/// belonging to somebody else has a write bit and is closed to us — and
+/// neither can creating a file to see whether it can be created, which a
+/// report has no business doing. A path that is not there yet asks the
+/// question of the directory it would be created in.
 fn path_state(path: &Path) -> PathStateDto {
     let exists = path.exists();
-    let writable = if path.is_dir() {
-        denied_to_everyone(path)
-    } else if exists {
-        // Opening for writing neither creates, truncates nor modifies.
-        Some(std::fs::OpenOptions::new().write(true).open(path).is_ok())
-    } else {
-        // Not there yet: the question becomes its directory's.
-        path.parent().and_then(denied_to_everyone)
+    let subject = match exists {
+        true => Some(path),
+        false => path.parent(),
     };
     PathStateDto {
         path: path.display().to_string(),
         exists,
-        writable,
+        writable: subject.is_some_and(is_writable),
     }
 }
 
-/// `Some(false)` when the permission bits deny writing to everyone, `None`
-/// when they do not settle it — never `Some(true)`, which the bits alone
-/// cannot establish for the user the daemon happens to run as.
-fn denied_to_everyone(path: &Path) -> Option<bool> {
-    use std::os::unix::fs::PermissionsExt;
-    let mode = std::fs::metadata(path).ok()?.permissions().mode();
-    (mode & 0o222 == 0).then_some(false)
+/// Whether this process may write `path`, as the kernel sees it: ownership,
+/// group membership, ACLs, a read-only mount and running as root all
+/// included, none of which the mode bits alone would have shown.
+///
+/// `EACCESS` asks about the effective user — the one a spawn would run as —
+/// rather than the real one, which is what `access(2)` would answer for.
+fn is_writable(path: &Path) -> bool {
+    rustix::fs::accessat(
+        rustix::fs::CWD,
+        path,
+        rustix::fs::Access::WRITE_OK,
+        rustix::fs::AtFlags::EACCESS,
+    )
+    .is_ok()
 }
 
 #[cfg(test)]
@@ -221,46 +222,82 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let state = path_state(dir.path());
         assert!(state.exists);
-        // Writable to this user, but the bits alone cannot prove it.
-        assert_eq!(state.writable, None);
+        assert!(state.writable);
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 
-    /// What the bits *can* prove is the negative.
+    /// A directory nobody at all can write.
     #[test]
-    fn a_directory_nobody_can_write_is_reported_as_such() {
+    fn a_directory_with_no_write_bit_is_not_writable() {
         let dir = tempfile::tempdir().unwrap();
         let locked = dir.path().join("worktrees");
         std::fs::create_dir(&locked).unwrap();
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
-        assert_eq!(path_state(&locked).writable, Some(false));
+        // Root writes it regardless, and is right to be told so — which the
+        // permission bits on their own would have got wrong.
+        assert_eq!(
+            path_state(&locked).writable,
+            rustix::process::geteuid().is_root()
+        );
         // Leave it removable by the temp dir's own cleanup.
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
-    /// An existing file is a real answer: opening it for writing changes
-    /// nothing and settles the question.
+    /// The case the permission bits get exactly backwards: a directory whose
+    /// *owner* may write it, where the owner is somebody else. `/usr` is
+    /// root's and 0755, so it looks writable to anything reading modes and
+    /// is closed to the daemon — which is what a `worktree_root` pointed at
+    /// the wrong place looks like, and what doctor exists to catch.
     #[test]
-    fn an_existing_file_is_tested_by_opening_it() {
+    fn a_directory_owned_by_another_user_is_not_writable() {
+        if rustix::process::geteuid().is_root() {
+            return; // Root writes everything; there is nothing to tell apart.
+        }
+        let system = Path::new("/usr");
+        let mode = std::fs::metadata(system).unwrap().permissions().mode();
+        assert_ne!(mode & 0o200, 0, "/usr has an owner write bit");
+        let state = path_state(system);
+        assert!(state.exists);
+        assert!(!state.writable, "0{mode:o}, and not ours to write");
+    }
+
+    /// An existing file is asked about as it stands, and asking writes
+    /// nothing to it.
+    #[test]
+    fn an_existing_file_is_asked_about_as_it_stands() {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("ariadne.db");
         write(&db, 0o644);
         let state = path_state(&db);
         assert!(state.exists);
-        assert_eq!(state.writable, Some(true));
-        assert_eq!(std::fs::read(&db).unwrap(), b"", "opened, never written");
+        assert!(state.writable);
+        assert_eq!(std::fs::read(&db).unwrap(), b"", "read, never written");
 
         std::fs::set_permissions(&db, std::fs::Permissions::from_mode(0o444)).unwrap();
-        assert_eq!(path_state(&db).writable, Some(false));
+        assert_eq!(
+            path_state(&db).writable,
+            rustix::process::geteuid().is_root()
+        );
     }
 
-    /// A database the daemon has not created yet is not a failure to report:
-    /// nothing about its directory says it cannot be created.
+    /// A database the daemon has not created yet asks its directory instead:
+    /// what matters is whether it can still be created.
     #[test]
     fn a_missing_file_falls_back_to_its_directory() {
         let dir = tempfile::tempdir().unwrap();
         let state = path_state(&dir.path().join("ariadne.db"));
         assert!(!state.exists);
-        assert_eq!(state.writable, None);
+        assert!(state.writable, "its directory takes the file");
+    }
+
+    /// ...and one in a directory that is not ours will not be created either.
+    #[test]
+    fn a_missing_file_in_a_closed_directory_is_not_writable() {
+        if rustix::process::geteuid().is_root() {
+            return;
+        }
+        let state = path_state(Path::new("/usr/ariadne.db"));
+        assert!(!state.exists);
+        assert!(!state.writable);
     }
 }
