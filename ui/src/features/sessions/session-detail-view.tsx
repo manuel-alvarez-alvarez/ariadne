@@ -24,7 +24,7 @@ import { paths, useTaskPanelTo } from "@/routes/paths"
 import { goalQueryOptions, profilesQueryOptions, taskQueryOptions } from "./queries"
 import { SessionActions } from "./session-actions"
 import { SessionActivity } from "./session-activity"
-import { SessionStatusBadge } from "./session-display"
+import { SessionAttentionBadge, SessionStatusBadge } from "./session-display"
 import { SessionTerminal } from "./session-terminal"
 import { useNow } from "./use-now"
 
@@ -59,6 +59,12 @@ export function SessionDetailView({
           {ROLE_LABELS[session.role]} session
         </h1>
         <SessionStatusBadge status={session.status} />
+        {/* Next to the status rather than instead of it: the two are
+            orthogonal — an agent blocked on a permission prompt is still
+            running — and the pair is what says what to do about it. */}
+        {session.attention_reason ? (
+          <SessionAttentionBadge attention={session.attention_reason} />
+        ) : null}
         <CopyableIdMenu
           value={session.id}
           label="session id"
@@ -129,6 +135,11 @@ export function SessionDetailView({
               )}
             </Detail>
             <Detail label="Review round">{session.review_round ?? <Dash />}</Detail>
+            {session.attention_reason ? (
+              <Detail label="Needs attention since">
+                <Ago at={session.attention_since} now={now} />
+              </Detail>
+            ) : null}
             <Detail label="Started">
               <Ago at={session.created_at} now={now} />
             </Detail>

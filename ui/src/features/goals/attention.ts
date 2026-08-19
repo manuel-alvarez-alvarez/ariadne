@@ -2,9 +2,10 @@
  * What is stuck, in one query, for the strip above the board.
  *
  * The orchestrator's first question — "which tasks are stalled or failed, which
- * agents died?" — used to need every goal opened one by one. It is three list
- * queries, all of them shared keys the SSE dispatcher already invalidates, so
- * the answer stays live without anything here subscribing to events.
+ * agents died or are waiting on me?" — used to need every goal opened one by
+ * one. It is three list queries, all of them shared keys the SSE dispatcher
+ * already invalidates, so the answer stays live without anything here
+ * subscribing to events.
  *
  * All three are read unfiltered on purpose: the board's status filter narrows
  * the lanes, never this — a stuck task the filter hides is exactly the one the
@@ -16,6 +17,7 @@ import { useMemo } from "react"
 
 import type { GoalDto, SessionDto, TaskDto } from "@/api"
 import { sessionsQueryOptions } from "@/features/sessions/queries"
+import { type SessionAttention, sessionAttention } from "@/features/sessions/session-display"
 import { taskListQueryOptions } from "@/features/tasks"
 
 import { goalsQueryOptions } from "./queries"
@@ -56,12 +58,14 @@ export interface AttentionTaskItem extends AttentionRow {
 export interface AttentionSessionItem extends AttentionRow {
   kind: "session"
   session: SessionDto
+  /** Why the session is here — its `attention_reason`, or `failed`. */
+  reason: SessionAttention
 }
 
 export type AttentionItem = AttentionTaskItem | AttentionSessionItem
 
 export interface Attention {
-  /** Tasks and failed sessions in one list, most recently updated first. */
+  /** Tasks and sessions in one list, most recently updated first. */
   items: AttentionItem[]
   isPending: boolean
   /** The first of the three queries that failed, if any. */
@@ -81,7 +85,13 @@ export interface Attention {
 export function useAttention(): Attention {
   const goals = useQuery(goalsQueryOptions())
   const tasks = useQuery(taskListQueryOptions())
-  const sessions = useQuery(sessionsQueryOptions({ status: "failed" }))
+  // Unfiltered, and narrowed by `sessionAttention` below rather than by the
+  // daemon: the rule is "flagged for attention *or* dead", and `GET
+  // /v1/sessions` ANDs `attention` with `status`, so no single request spells
+  // it. Filtering here is also what keeps the rule in one place for both this
+  // strip and `ariadne attention`. The key is the one the sessions screen
+  // already holds, so the extra rows usually cost no extra request.
+  const sessions = useQuery(sessionsQueryOptions())
 
   const items = useMemo(
     () => collectAttention(goals.data, tasks.data, sessions.data),
@@ -105,6 +115,9 @@ export function useAttention(): Attention {
 
 /**
  * The two kinds interleaved into one list, newest first.
+ *
+ * Which sessions belong is {@link sessionAttention}'s call, not this list's,
+ * so the strip and `ariadne attention` include and label the same ones.
  *
  * A goal the goals list did not carry does not drop its rows: a task or a
  * session can outlive its goal falling out of a filtered list, and hiding it
@@ -134,15 +147,21 @@ export function collectAttention(
   }
 
   for (const session of sessions ?? []) {
+    const reason = sessionAttention(session)
+    if (!reason) continue
     items.push({
       kind: "session",
       id: session.id,
       goalId: session.goal_id,
       goal: goalsById.get(session.goal_id),
-      // A failed session's last move is its death; `created_at` is only the
-      // fallback for one the daemon has not stamped an end on yet.
-      at: session.ended_at ?? session.created_at,
+      // When the reason was raised is what the row is about, so it comes
+      // first: a session that has been waiting on a permission prompt for an
+      // hour says so, rather than reporting when it started. A failed
+      // session's last move is its death; `created_at` is only the fallback
+      // for one the daemon has not stamped an end on yet.
+      at: session.attention_since ?? session.ended_at ?? session.created_at,
       session,
+      reason,
     })
   }
 

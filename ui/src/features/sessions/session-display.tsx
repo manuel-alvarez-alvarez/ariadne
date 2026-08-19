@@ -1,13 +1,19 @@
 /**
- * How a session is spelled out on screen: the labels and the status badge.
+ * How a session is spelled out on screen: the labels, the status badge, and
+ * the badge for why it is waiting on a person.
  *
  * The status labels are declared as a total record over the generated enum, so
- * a new status in the daemon fails to compile here until it is given one. The
- * role and agent-kind names are app-wide rather than this feature's and come
- * from `@/lib/labels`, the way timestamps come from `@/lib/time`.
+ * a new status in the daemon fails to compile here until it is given one — and
+ * {@link SESSION_ATTENTION_META} is the same total record over the attention
+ * reasons. Both are declared here rather than at their call sites because the
+ * reason is shown in four places (the board's attention strip, the sessions
+ * table, the session panel, and the CLI's `ariadne attention`, which mirrors
+ * this wording) and they have to agree. The role and agent-kind names are
+ * app-wide rather than this feature's and come from `@/lib/labels`, the way
+ * timestamps come from `@/lib/time`.
  */
 
-import type { SessionStatus } from "@/api"
+import type { AttentionReason, SessionDto, SessionStatus } from "@/api"
 import { StatusBadge } from "@/components/status-badge"
 
 /**
@@ -54,6 +60,100 @@ export function SessionStatusBadge({
       tone={live ? "text-foreground" : "text-muted-foreground"}
       dot={meta.dot}
       pulse={live}
+      className={className}
+    />
+  )
+}
+
+/**
+ * Why a session is waiting on a person: the daemon's `attention_reason`, or
+ * the bare fact that the agent died — which raises no reason of its own but
+ * has always been on the attention list, and is spelled here so both halves
+ * of that list read the same way.
+ */
+export type SessionAttention = AttentionReason | "failed"
+
+interface SessionAttentionMeta {
+  label: string
+  /** What the reason means; shown on hover and on focus. */
+  hint: string
+  /** Badge classes, from the status ramp in `index.css`: it carries dark mode. */
+  badge: string
+}
+
+/**
+ * The warm half of the ramp throughout — every one of these is something gone
+ * wrong or something waiting — with the two that ended the agent's work
+ * (`agent_error`, `failed`) and the one that lost it (`disconnected`) on the
+ * danger step, and the three it can still be talked out of on the warn step.
+ *
+ * `crates/ariadne-cli/src/commands/attention.rs` spells the same reasons for
+ * the terminal; the wording there is these labels, lowercased.
+ */
+export const SESSION_ATTENTION_META: Record<SessionAttention, SessionAttentionMeta> = {
+  waiting_permission: {
+    label: "Waiting for permission",
+    hint: "The agent is blocked on a permission or approval prompt.",
+    badge: "bg-status-warn-soft text-status-warn-fg",
+  },
+  waiting_input: {
+    label: "Waiting for input",
+    hint: "The agent asked a question and is idle until it is answered.",
+    badge: "bg-status-warn-soft text-status-warn-fg",
+  },
+  agent_error: {
+    label: "Agent error",
+    hint: "The agent reported an error.",
+    badge: "bg-status-danger-soft text-status-danger-fg",
+  },
+  disconnected: {
+    label: "Disconnected",
+    hint: "The agent's terminal is gone while its work is still active.",
+    badge: "bg-status-danger-soft text-status-danger-fg",
+  },
+  stalled: {
+    label: "Stalled",
+    hint: "No activity for too long.",
+    badge: "bg-status-warn-soft text-status-warn-fg",
+  },
+  failed: {
+    label: "Failed",
+    hint: "The agent died.",
+    badge: "bg-status-danger-soft text-status-danger-fg",
+  },
+}
+
+/**
+ * Why a session wants the user, and nothing when it does not.
+ *
+ * The reason wins over the status: a session that died *after* reporting an
+ * error is on the list for the error, which is the half of "failed" that says
+ * something. Kept identical in `attention.rs`.
+ */
+export function sessionAttention(session: SessionDto): SessionAttention | null {
+  if (session.attention_reason) return session.attention_reason
+  return session.status === "failed" ? "failed" : null
+}
+
+/**
+ * The reason pill. Deliberately separate from {@link SessionStatusBadge}: a
+ * session blocked on a permission prompt is still *running*, so the two say
+ * different things and are shown side by side.
+ */
+export function SessionAttentionBadge({
+  attention,
+  className,
+}: {
+  attention: SessionAttention
+  className?: string
+}) {
+  const meta = SESSION_ATTENTION_META[attention]
+  return (
+    <StatusBadge
+      box="badge"
+      label={meta.label}
+      tone={meta.badge}
+      hint={meta.hint}
       className={className}
     />
   )

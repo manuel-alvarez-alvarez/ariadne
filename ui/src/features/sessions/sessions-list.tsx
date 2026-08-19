@@ -59,7 +59,7 @@ import {
   type SessionListFilters,
   sessionsQueryOptions,
 } from "./queries"
-import { SessionStatusBadge } from "./session-display"
+import { SessionAttentionBadge, SessionStatusBadge } from "./session-display"
 import { useNow } from "./use-now"
 
 /**
@@ -257,8 +257,17 @@ function SessionRow({
       <TableCell className="text-muted-foreground" title={`${agent} · ${session.profile_id}`}>
         {profile?.name ?? <span className="font-mono text-xs">{shortId(session.profile_id)}</span>}
       </TableCell>
+      {/* The reason rides in the status cell rather than taking a seventh
+          column: it is empty for almost every row, and where it is not it is
+          the one thing on the row worth reading — a session can be `running`
+          and still be waiting on a permission prompt. */}
       <TableCell>
-        <SessionStatusBadge status={session.status} />
+        <div className="flex flex-wrap items-center gap-1.5">
+          <SessionStatusBadge status={session.status} />
+          {session.attention_reason ? (
+            <SessionAttentionBadge attention={session.attention_reason} />
+          ) : null}
+        </div>
       </TableCell>
       <TableCell
         className="text-right tabular-nums text-muted-foreground"
