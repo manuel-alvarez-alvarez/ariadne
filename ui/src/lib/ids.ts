@@ -9,8 +9,8 @@
 
 /**
  * Ids are 26-character ULIDs: unreadable in full, but the tail is enough to
- * tell two of them apart. The full id always stays available as a `title`, or
- * on the clipboard.
+ * tell two of them apart. The full id always stays one hint or one copy away
+ * wherever this is shown.
  */
 export function shortId(id: string): string {
   return id.length <= 10 ? id : `…${id.slice(-8)}`

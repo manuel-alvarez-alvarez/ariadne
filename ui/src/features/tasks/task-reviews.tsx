@@ -15,9 +15,9 @@ import { ErrorState } from "@/components/error-state"
 import { Markdown } from "@/components/markdown"
 import { StatusBadge } from "@/components/status-badge"
 import { Skeleton } from "@/components/ui/skeleton"
+import { When } from "@/components/when"
 import { ProfileName } from "@/features/profiles/profile-name"
 import { plural } from "@/lib/plural"
-import { formatAbsolute, formatRelative } from "@/lib/time"
 import { taskReviewsQueryOptions } from "./queries"
 import { SessionLink } from "./task-sessions"
 
@@ -96,13 +96,7 @@ function ReviewCard({ review }: { review: ReviewDto }) {
           className="font-medium text-foreground"
         />
         {review.session_id && <SessionLink sessionId={review.session_id} />}
-        <time
-          className="ml-auto text-muted-foreground"
-          dateTime={review.created_at}
-          title={formatAbsolute(review.created_at)}
-        >
-          {formatRelative(review.created_at)}
-        </time>
+        <When at={review.created_at} className="ml-auto text-muted-foreground" />
       </header>
       {review.body ? (
         <Markdown>{review.body}</Markdown>

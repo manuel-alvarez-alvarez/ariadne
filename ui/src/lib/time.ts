@@ -9,6 +9,10 @@
  * the middle of English sentences ("updated 3 minutes ago"), and a machine set
  * to another language would otherwise produce half-translated lines. The time
  * zone still comes from the system, which is the part that matters.
+ *
+ * Formatting only. *Which* of these forms a screen shows, when it re-renders
+ * and where the exact stamp hangs off it is one decision made once, in
+ * {@link import("@/components/when").When}.
  */
 
 const LOCALE = "en"
@@ -44,7 +48,7 @@ export function formatAbsolute(iso: string | null | undefined): string {
   return date ? ABSOLUTE.format(date) : iso
 }
 
-/** `3 minutes ago` — the glanceable form, with the absolute stamp on hover. */
+/** `3 minutes ago` — the glanceable form; the absolute stamp is the hint behind it. */
 export function formatRelative(iso: string, now: number = Date.now()): string {
   const date = parse(iso)
   if (!date) return iso
@@ -58,8 +62,11 @@ export function formatRelative(iso: string, now: number = Date.now()): string {
 /**
  * Compact age, e.g. `12s`, `4m`, `3h`, `2d` — the tabular form, where the
  * label next to it ("Last activity", "Started") already says what it is, so it
- * carries no "ago" suffix. Pass `now` from
- * {@link import("@/features/sessions/use-now").useNow} so it refreshes itself.
+ * carries no "ago" suffix.
+ *
+ * Nothing renders this itself: {@link import("@/components/when").When} does,
+ * with `format="age"`, which is what feeds it the ticking `now` and hangs the
+ * absolute stamp off it.
  */
 export function formatAge(iso: string | null | undefined, now: number): string {
   if (!iso) return NONE
