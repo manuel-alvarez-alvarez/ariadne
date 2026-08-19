@@ -112,13 +112,13 @@ async fn agent_configs_are_seeded_with_the_defaults() {
             .extra_flags(),
         vec!["--dangerously-bypass-approvals-and-sandbox".to_string()]
     );
-    assert!(
+    assert_eq!(
         store
             .get_agent_config(AgentKind::Opencode)
             .await
             .unwrap()
-            .extra_flags()
-            .is_empty()
+            .extra_flags(),
+        vec!["--auto".to_string()]
     );
 }
 

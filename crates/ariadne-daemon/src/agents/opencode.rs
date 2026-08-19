@@ -1,8 +1,10 @@
 //! OpenCode adapter.
 //!
 //! - Config injection: `OPENCODE_CONFIG=<run>/opencode.json` env var —
-//!   permission allow-all, custom `ariadne` agent carrying the system prompt,
-//!   MCP server entry, and the Ariadne events plugin.
+//!   the permission block below, a custom `ariadne` agent carrying the system
+//!   prompt, the MCP server entry, and the Ariadne events plugin.
+//! - Autonomy: the `--auto` flag comes from the agent config
+//!   ([`AgentKind::default_flags`]); the permission block here is structural.
 //! - Session id: captured by the plugin from `session.created` events.
 //! - Resume: TUI `opencode --session <id> --prompt "<instruction>"` so the
 //!   resumed session stays interactively attachable.
@@ -39,7 +41,18 @@ impl OpencodeAdapter {
 
         let config = json!({
             "$schema": "https://opencode.ai/config.json",
-            "permission": { "*": "allow" },
+            // Rules are matched in order with the last match winning, so
+            // the catch-all first turns every OpenCode default that would
+            // *ask* (`doom_loop`, `external_directory`, reading `.env`) into
+            // an allow, and the entries after it put back the ones OpenCode
+            // *denies* out of the box: each of those hands control to a human
+            // — the very thing a tmux-parked agent must never do.
+            "permission": {
+                "*": "allow",
+                "question": "deny",
+                "plan_enter": "deny",
+                "plan_exit": "deny",
+            },
             "agent": { "ariadne": agent },
             "mcp": {
                 "ariadne": {
