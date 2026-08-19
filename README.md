@@ -200,9 +200,12 @@ ariadne attach <id>                    # session, task or goal id
 
 `ariadne attention` answers the question the day starts with: what is waiting
 for me? It is the web UI's "Needs attention" strip in the terminal, and it
-lists, per goal, the tasks that failed, came back with changes requested or
-stalled, and the agent sessions that want you. A session is listed with the
-reason the daemon raised for it:
+lists, per goal, the tasks that failed or stalled, and the agent sessions the
+daemon raised a reason for. Work that is waiting on an agent rather than on
+you stays off it: a task whose review asked for changes is one the daemon
+resumes the engineer on, and a session that exited with nothing owed to it is
+finished, not stuck. A session is listed with the reason the daemon raised for
+it:
 
 | Reason | What it means |
 |---|---|
@@ -211,7 +214,6 @@ reason the daemon raised for it:
 | `agent error` | the agent reported an error |
 | `disconnected` | its terminal is gone while its work is still active |
 | `stalled` | no activity for too long |
-| `failed` | the agent died without saying why |
 
 The same reason rides along with the session in `ariadne session ls` and
 `ariadne session inspect`, and on its badge in the UI. Both surfaces apply the

@@ -90,10 +90,9 @@ enum Command {
     },
     /// Show everything that needs a human, grouped by goal
     ///
-    /// The UI's Attention page from the terminal: tasks that failed, came
-    /// back with changes requested or stalled, plus agent sessions waiting
-    /// on a permission prompt or an answer, in error, disconnected, stalled
-    /// or dead.
+    /// The UI's Attention page from the terminal: tasks that failed or
+    /// stalled, plus agent sessions waiting on a permission prompt or an
+    /// answer, in error, disconnected or stalled.
     Attention {
         /// Print cells in full instead of cutting them to the column width
         #[arg(long)]
