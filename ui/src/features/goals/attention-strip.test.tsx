@@ -67,6 +67,9 @@ const SESSION: SessionDto = {
   role: "engineer",
   agent_kind: "claude_code",
   status: "failed",
+  // The daemon's flag is the whole reason a session is on the strip; a death
+  // it raised nothing for is not.
+  attention_reason: "disconnected",
   tmux_session: "ariadne-01JSESS0000000000000000001",
   created_at: "2026-01-01T00:00:00Z",
   ended_at: "2026-01-01T02:00:00Z",
@@ -128,7 +131,16 @@ beforeEach(() => {
 afterEach(cleanup)
 
 it("stays out of the way when nothing is stuck", async () => {
-  stubDaemon({ tasks: [{ ...TASK, status: "in_progress" }] })
+  stubDaemon({
+    tasks: [
+      { ...TASK, status: "in_progress" },
+      // Waiting on the engineer the daemon resumes, not on the user.
+      { ...TASK, id: "01JTASK0000000000000000002", status: "changes_requested" },
+    ],
+    // Dead with nothing owed to it: the daemon raised no reason, and neither
+    // does the strip.
+    sessions: [{ ...SESSION, attention_reason: null }],
+  })
   const queryClient = renderStrip()
 
   // Not "nothing yet": every one of the three lists has answered, and none of
@@ -166,7 +178,13 @@ it("shows a live session that is waiting on the user, why, and on what", async (
         attention_since: "2026-01-01T03:00:00Z",
       },
       // Running and nobody's problem: it is not on the list at all.
-      { ...SESSION, id: "01JSESS0000000000000000002", status: "running", ended_at: undefined },
+      {
+        ...SESSION,
+        id: "01JSESS0000000000000000002",
+        status: "running",
+        ended_at: undefined,
+        attention_reason: null,
+      },
     ],
   })
   renderStrip()
@@ -185,7 +203,7 @@ it("flags a stalled task without a status of its own to show it", async () => {
 })
 
 it("opens each row's panel over the board, keeping the board's filter", async () => {
-  stubDaemon({ tasks: [{ ...TASK, status: "changes_requested" }], sessions: [SESSION] })
+  stubDaemon({ tasks: [{ ...TASK, status: "failed" }], sessions: [SESSION] })
   renderStrip()
 
   const links = await screen.findAllByRole("link")
