@@ -78,7 +78,7 @@ never when `NO_COLOR` is set.
 | `--verbose` | stream the subcommand output instead of capturing it |
 | `--quiet` | errors and the final summary only |
 | `--dry-run` | print the steps that would run and change nothing |
-| `--yes`, `-y` | non-interactive: skip the Codex prompt, do not ask before `--purge` |
+| `--yes`, `-y` | non-interactive: skip the Codex prompt (install; the uninstaller never asks) |
 | `--help`, `-h` | the same list, from the script |
 
 Adding a step to either script is a `plan_add` where the plan is built and a

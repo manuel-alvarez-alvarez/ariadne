@@ -17,7 +17,7 @@
 #   --verbose     stream subcommand output instead of capturing it
 #   --quiet       print errors and the final summary only
 #   --dry-run     print the steps that would run, change nothing
-#   --yes, -y     non-interactive: do not ask before --purge deletes data
+#   --yes, -y     accepted for symmetry with install.sh; nothing here asks
 #   --help, -h    show usage
 set -euo pipefail
 
@@ -37,7 +37,7 @@ Usage: scripts/uninstall.sh [options]
   --verbose     stream subcommand output instead of capturing it
   --quiet       print errors and the final summary only
   --dry-run     print the steps that would run, change nothing
-  --yes, -y     non-interactive: do not ask before --purge deletes data
+  --yes, -y     accepted for symmetry with install.sh; nothing here asks
   --help, -h    show this help
 
 Environment: PREFIX, ARIADNE_HOME, NO_COLOR.
@@ -109,18 +109,6 @@ ui_header "Ariadne uninstaller" \
 if [ "$UI_DRY_RUN" = 1 ]; then
     plan_print
     exit 0
-fi
-
-# --purge deletes the database and every worktree; confirm unless told not to.
-if [ "$PURGE" = 1 ] && [ "$UI_YES" = 0 ] && [ -t 0 ] && [ -d "$ARIADNE_HOME" ]; then
-    printf '  %s%s%s delete %s and everything in it? [y/N] ' \
-        "$UI_YELLOW" "$UI_BULLET" "$UI_R" "$(ui_tilde "$ARIADNE_HOME")"
-    read -r reply || reply=""
-    case "$reply" in
-        y|Y|yes|YES) ;;
-        *) printf '\n'; ui_error "aborted"; exit 1 ;;
-    esac
-    printf '\n'
 fi
 
 ui_log_init "$LOG_FILE"
