@@ -17,6 +17,7 @@ import { PencilIcon, PlusIcon, Trash2Icon } from "lucide-react"
 import { useState } from "react"
 
 import { ApiError, type RepositoryDto } from "@/api"
+import { CopyableId } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { PageHeader } from "@/components/page-header"
@@ -152,8 +153,19 @@ function RepositoryRow({
 }) {
   return (
     <TableRow>
-      <TableCell className="font-mono text-xs font-medium">{repository.path}</TableCell>
-      <TableCell className="font-mono text-xs">{repository.base_branch}</TableCell>
+      {/* The path is what this screen is visited for: it is read here on its
+          way into a terminal, so it is one click onto the clipboard rather
+          than a retype, and the ellipsis goes in the middle — the checkout's
+          own name is the last segment, which cutting the end would take.
+          `max-w-*` on the cell is what makes the ellipsis possible at all: the
+          cell's own `whitespace-nowrap` would otherwise widen the column to
+          the longest path there is. */}
+      <TableCell className="max-w-96 text-xs font-medium">
+        <CopyableId value={repository.path} label="repository path" truncate="middle" />
+      </TableCell>
+      <TableCell className="max-w-56 text-xs">
+        <CopyableId value={repository.base_branch} label="base branch" truncate="middle" />
+      </TableCell>
       <TableCell className="whitespace-normal text-muted-foreground">
         {repository.description ?? <span className="italic">no description</span>}
       </TableCell>
