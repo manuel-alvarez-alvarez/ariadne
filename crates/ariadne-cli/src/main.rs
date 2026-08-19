@@ -14,6 +14,7 @@ use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use ariadne_client::Client;
 
+use crate::commands::agent::AgentCommand;
 use crate::commands::goal::GoalCommand;
 use crate::commands::profile::ProfileCommand;
 use crate::commands::repo::RepoCommand;
@@ -55,6 +56,11 @@ enum Command {
     Daemon {
         #[command(subcommand)]
         command: DaemonCommand,
+    },
+    /// Manage the agent CLIs: the flags each one is launched with
+    Agent {
+        #[command(subcommand)]
+        command: AgentCommand,
     },
     /// Manage agent profiles
     Profile {
@@ -260,6 +266,7 @@ async fn run(cli: Cli) -> Result<ExitCode> {
             DaemonCommand::Logs { follow } => commands::daemon_logs(follow),
         },
         Command::Attach { id, role } => commands::attach::attach_any(&client, &id, role).await,
+        Command::Agent { command } => commands::agent::run(&client, command, cli.format).await,
         Command::Profile { command } => commands::profile::run(&client, command, cli.format).await,
         Command::Repo { command } => commands::repo::run(&client, command, cli.format).await,
         Command::Goal { command } => commands::goal::run(&client, command, cli.format).await,
@@ -299,6 +306,8 @@ mod tests {
     /// what it prints. Hidden internal commands are in here too: `--format`
     /// is global, so it reaches them whether or not anyone meant it to.
     const LEAVES: &[(&str, bool)] = &[
+        ("agent list", true),
+        ("agent update", true),
         ("agent-event", false),
         ("attach", false),
         ("attention", true),
@@ -416,6 +425,67 @@ mod tests {
             Format::Json
         );
         assert_eq!(parse(&["ariadne", "attach", "x"]).format, Format::Table);
+    }
+
+    /// The flag list is replaced whole, so a line has to say how: name the
+    /// flags, clear them, or go back to the default — and never two of those.
+    #[test]
+    fn updating_an_agent_takes_flags_or_clear_or_reset_but_only_one() {
+        let update = |args: &[&str]| {
+            let mut argv = vec!["ariadne", "agent", "update", "claude_code"];
+            argv.extend_from_slice(args);
+            try_parse(&argv).is_ok()
+        };
+        assert!(!update(&[]), "nothing to do");
+        assert!(update(&["--flag", "--verbose"]), "flags");
+        assert!(update(&["--clear-flags"]), "--clear-flags");
+        assert!(update(&["--reset"]), "--reset");
+        assert!(
+            !update(&["--flag", "--verbose", "--reset"]),
+            "flags + reset"
+        );
+        assert!(!update(&["--flag", "--verbose", "--clear-flags"]), "both");
+        assert!(!update(&["--clear-flags", "--reset"]), "clear + reset");
+    }
+
+    /// Every flag an agent takes starts with a dash, so a `--flag` value that
+    /// reads like a flag of clap's own has to reach the daemon as it was
+    /// typed — that is the whole point of the option.
+    #[test]
+    fn an_agent_flag_that_looks_like_a_flag_is_taken_as_it_is() {
+        let Command::Agent {
+            command: AgentCommand::Update { kind, flags, .. },
+        } = parse(&[
+            "ariadne",
+            "agent",
+            "update",
+            "claude-code",
+            "--flag",
+            "--dangerously-skip-permissions",
+            "--flag",
+            "--verbose",
+        ])
+        .command
+        else {
+            panic!("agent update");
+        };
+        // The dash spelling names the agent the daemon calls claude_code.
+        assert_eq!(kind, ariadne_core::AgentKind::ClaudeCode);
+        assert_eq!(flags, ["--dangerously-skip-permissions", "--verbose"]);
+    }
+
+    /// An agent nobody runs is a usage error: no daemon is asked about it,
+    /// and the message says which agents there are.
+    #[test]
+    fn an_unknown_agent_kind_never_reaches_the_daemon() {
+        let err = try_parse(&["ariadne", "agent", "update", "emacs", "--reset"])
+            .err()
+            .expect("unknown agent kind")
+            .to_string();
+        assert!(err.contains("unknown agent kind: emacs"), "{err}");
+        for kind in ariadne_core::AgentKind::ALL {
+            assert!(err.contains(kind.as_str()), "{err}");
+        }
     }
 
     /// `profile prompt reset` has to be told what to reset: one kind, or

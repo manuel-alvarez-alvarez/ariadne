@@ -1,5 +1,6 @@
 //! CLI command implementations.
 
+pub mod agent;
 pub mod agent_event;
 pub mod attach;
 pub mod attention;
