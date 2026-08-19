@@ -7,6 +7,7 @@
 //! else. Sessions are spawned by this process, so this is the answer that
 //! decides whether a profile can run at all.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -78,10 +79,26 @@ async fn probe(name: &str, version_flag: &str, agent_kind: Option<AgentKind>) ->
 
 /// First entry of `PATH` holding an executable of that name.
 fn which(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
+    which_in(&std::env::var_os("PATH")?, name)
+}
+
+/// The same lookup against a given `PATH`, so it can be tested without
+/// rewriting the environment of the process running the tests.
+fn which_in(path: &OsStr, name: &str) -> Option<PathBuf> {
+    std::env::split_paths(path)
         .map(|dir| dir.join(name))
-        .find(|candidate| candidate.is_file())
+        .find(|candidate| is_executable(candidate))
+}
+
+/// A file the daemon could actually launch.
+///
+/// Presence is not enough: a `claude` on PATH with no execute bit is a file,
+/// not an agent, and reporting it as available would let a profile pinned to
+/// it pass a check its sessions then fail.
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    // Follows symlinks on purpose: what matters is what running it reaches.
+    std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
 
 /// The first line of `<binary> <flag>`, bounded by [`PROBE_TIMEOUT`].
@@ -109,22 +126,26 @@ async fn probe_version(binary: &Path, flag: &str) -> Option<String> {
     (!line.is_empty()).then(|| line.to_string())
 }
 
-/// Whether a path is there and whether the daemon's user can write it.
+/// Whether a path is there, and what can be said about writing it without
+/// writing anything.
 ///
-/// Writability is tested rather than read off the permission bits: those say
-/// what the owner may do, and the daemon is not necessarily the owner. For a
-/// directory that means creating a probe file and removing it again — the one
-/// thing in the whole report that touches the filesystem, and it leaves it as
-/// it found it.
+/// A report diagnoses; it does not touch the machine it reports on. So an
+/// existing file is opened for writing — which changes nothing, and is a real
+/// answer — while for a directory only the permission bits can be read, and
+/// they only ever prove the negative: no write bit anywhere means nobody
+/// writes there, while a write bit says nothing about *this* user. That case
+/// stays unsettled rather than being guessed at, or answered by creating a
+/// file to see whether it can be created.
 fn path_state(path: &Path) -> PathStateDto {
     let exists = path.exists();
     let writable = if path.is_dir() {
-        dir_is_writable(path)
+        denied_to_everyone(path)
     } else if exists {
-        std::fs::OpenOptions::new().write(true).open(path).is_ok()
+        // Opening for writing neither creates, truncates nor modifies.
+        Some(std::fs::OpenOptions::new().write(true).open(path).is_ok())
     } else {
-        // Not there yet: what matters is whether it can be created.
-        path.parent().is_some_and(dir_is_writable)
+        // Not there yet: the question becomes its directory's.
+        path.parent().and_then(denied_to_everyone)
     };
     PathStateDto {
         path: path.display().to_string(),
@@ -133,24 +154,113 @@ fn path_state(path: &Path) -> PathStateDto {
     }
 }
 
-fn dir_is_writable(dir: &Path) -> bool {
-    let probe = dir.join(".ariadne-doctor-write-probe");
-    match std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&probe)
-    {
-        Ok(_) => {
-            let _ = std::fs::remove_file(&probe);
-            true
-        }
-        // A probe file left behind by a report that died between creating and
-        // removing it: the directory was writable then, and nothing about a
-        // stale file says it no longer is.
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            let _ = std::fs::remove_file(&probe);
-            true
-        }
-        Err(_) => false,
+/// `Some(false)` when the permission bits deny writing to everyone, `None`
+/// when they do not settle it — never `Some(true)`, which the bits alone
+/// cannot establish for the user the daemon happens to run as.
+fn denied_to_everyone(path: &Path) -> Option<bool> {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = std::fs::metadata(path).ok()?.permissions().mode();
+    (mode & 0o222 == 0).then_some(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::os::unix::fs::PermissionsExt;
+
+    fn write(path: &Path, mode: u32) {
+        std::fs::write(path, "").unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+    }
+
+    /// A file on PATH that cannot be executed is not a binary anyone can
+    /// launch, and a lookup that says otherwise sends a profile into a spawn
+    /// that fails.
+    #[test]
+    fn a_file_with_no_execute_bit_is_not_executable() {
+        let dir = tempfile::tempdir().unwrap();
+        let plain = dir.path().join("claude");
+        write(&plain, 0o644);
+        assert!(!is_executable(&plain));
+        std::fs::set_permissions(&plain, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(is_executable(&plain));
+    }
+
+    /// A directory named like the binary is not the binary either.
+    #[test]
+    fn a_directory_is_never_executable() {
+        let dir = tempfile::tempdir().unwrap();
+        let named = dir.path().join("codex");
+        std::fs::create_dir(&named).unwrap();
+        assert!(!is_executable(&named));
+    }
+
+    /// PATH order stands, but a non-executable entry is skipped rather than
+    /// shadowing the real thing further along.
+    #[test]
+    fn a_non_executable_entry_does_not_shadow_a_later_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let (first, second) = (dir.path().join("a"), dir.path().join("b"));
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        write(&first.join("claude"), 0o644);
+        write(&second.join("claude"), 0o755);
+
+        let path = std::env::join_paths([&first, &second]).unwrap();
+        assert_eq!(which_in(&path, "claude"), Some(second.join("claude")));
+        // ...and with nothing runnable anywhere, nothing is reported.
+        let only_first = std::env::join_paths([&first]).unwrap();
+        assert_eq!(which_in(&only_first, "claude"), None);
+    }
+
+    /// The report reads the filesystem and leaves it exactly as it was — no
+    /// probe file, and nothing removed to make room for one.
+    #[test]
+    fn reporting_on_a_directory_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = path_state(dir.path());
+        assert!(state.exists);
+        // Writable to this user, but the bits alone cannot prove it.
+        assert_eq!(state.writable, None);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    /// What the bits *can* prove is the negative.
+    #[test]
+    fn a_directory_nobody_can_write_is_reported_as_such() {
+        let dir = tempfile::tempdir().unwrap();
+        let locked = dir.path().join("worktrees");
+        std::fs::create_dir(&locked).unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+        assert_eq!(path_state(&locked).writable, Some(false));
+        // Leave it removable by the temp dir's own cleanup.
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// An existing file is a real answer: opening it for writing changes
+    /// nothing and settles the question.
+    #[test]
+    fn an_existing_file_is_tested_by_opening_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("ariadne.db");
+        write(&db, 0o644);
+        let state = path_state(&db);
+        assert!(state.exists);
+        assert_eq!(state.writable, Some(true));
+        assert_eq!(std::fs::read(&db).unwrap(), b"", "opened, never written");
+
+        std::fs::set_permissions(&db, std::fs::Permissions::from_mode(0o444)).unwrap();
+        assert_eq!(path_state(&db).writable, Some(false));
+    }
+
+    /// A database the daemon has not created yet is not a failure to report:
+    /// nothing about its directory says it cannot be created.
+    #[test]
+    fn a_missing_file_falls_back_to_its_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = path_state(&dir.path().join("ariadne.db"));
+        assert!(!state.exists);
+        assert_eq!(state.writable, None);
     }
 }
