@@ -10,9 +10,7 @@
  * the goal exists), where it waits in the thread like any message would.
  *
  * Each message is the shared {@link MessageCard}, the same one the task thread
- * draws, and — as there — the session that posted it is a way into that
- * session: a planner message carries the `author_session_id` of the agent that
- * said it. What is this surface's own is the card the thread sits in.
+ * draws; what is this surface's own is the card the thread sits in.
  */
 
 import { useQuery } from "@tanstack/react-query"
@@ -24,7 +22,6 @@ import { MessageCard } from "@/components/message-card"
 import { MessageComposer } from "@/components/message-composer"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
-import { SessionLink } from "@/features/tasks/task-sessions"
 import { goalMessagesQueryOptions, usePostGoalMessage } from "./queries"
 
 export function GoalThread({ goalId, className }: { goalId: string; className?: string }) {
@@ -77,15 +74,7 @@ function MessageList({ messages }: { messages: MessageDto[] }) {
   return (
     <div className="flex flex-col gap-3">
       {messages.map((message) => (
-        <MessageCard
-          key={message.id}
-          message={message}
-          // The user's own messages come from no session; everything else was
-          // said by an agent this links to.
-          source={
-            message.author_session_id ? <SessionLink sessionId={message.author_session_id} /> : null
-          }
-        />
+        <MessageCard key={message.id} message={message} />
       ))}
     </div>
   )
