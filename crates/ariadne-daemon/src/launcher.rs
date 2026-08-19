@@ -8,7 +8,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result, anyhow};
 
 use ariadne_core::spawn_plan::SpawnPlanFile;
-use ariadne_core::{PromptKind, Role, SessionStatus, TaskStatus};
+use ariadne_core::{AgentKind, PromptKind, Role, SessionStatus, TaskStatus};
 use ariadne_store::{AgentSession, NewSession, SessionFilter, Store, Task};
 
 use crate::agents::{SpawnCtx, SpawnPlan, adapter_for, detect_first_available, prompts};
@@ -66,18 +66,19 @@ impl Launcher {
         crate::tmux::parse_size(raw.trim())
     }
 
-    /// Agent kind for a profile: explicit, or the first installed CLI
-    /// (claude_code, then codex, then opencode) for auto profiles.
-    fn resolve_agent_kind(
-        &self,
-        profile: &ariadne_store::Profile,
-    ) -> Result<ariadne_core::AgentKind> {
-        match profile.agent_kind() {
+    /// Agent kind for a pinned value: the pin itself, or the first installed
+    /// CLI (claude_code, then codex, then opencode) when the pin is auto.
+    ///
+    /// The pin is the one taken from the profile when the work was defined —
+    /// the task's for an engineer, the reviewer slot's for a reviewer, the
+    /// goal's for a planner — never the profile as it reads now. `owner` names
+    /// the row it came from, for the error a missing CLI raises.
+    fn resolve_agent_kind(&self, pinned: Option<AgentKind>, owner: &str) -> Result<AgentKind> {
+        match pinned {
             Some(kind) => Ok(kind),
             None => detect_first_available().ok_or_else(|| {
                 anyhow!(
-                    "profile {} has no agent kind and no coding agent CLI (claude, codex, opencode) was found on PATH",
-                    profile.name
+                    "{owner} is pinned to no agent kind (auto) and no coding agent CLI (claude, codex, opencode) was found on PATH"
                 )
             }),
         }
@@ -164,24 +165,18 @@ impl Launcher {
     /// every spawn and every resume alike: an edit to the agent config is meant
     /// to reach the next launch, whichever path that launch comes down.
     ///
-    /// The model the adapter is handed is written back onto the session row
-    /// for the same reason, and because that is the only moment it is known:
-    /// a resume after a profile edit launches with the model in effect now,
-    /// and the row is what says which one that was.
+    /// The model is the opposite: it is the one the session was created with,
+    /// off the pin its role carries, and no launch of that session ever moves
+    /// it. Editing a profile is meant to steer the work defined after it, not
+    /// to switch the model out from under a conversation already running.
     async fn spawn_ctx(
         &self,
         session: &AgentSession,
         cwd: PathBuf,
-        profile: &ariadne_store::Profile,
         system_prompt: String,
         initial_prompt: String,
     ) -> Result<SpawnCtx> {
         let agent = self.store.get_agent_config(session.agent_kind()).await?;
-        if session.model != profile.model {
-            self.store
-                .set_session_model(&session.id, profile.model.as_deref())
-                .await?;
-        }
         Ok(SpawnCtx {
             session_id: session.id.clone(),
             goal_id: session.goal_id.clone(),
@@ -193,7 +188,7 @@ impl Launcher {
             cli_bin: self.cfg.cli_bin.clone(),
             system_prompt,
             initial_prompt,
-            model: profile.model.clone(),
+            model: session.model.clone(),
             extra_flags: agent.extra_flags(),
         })
     }
@@ -308,9 +303,8 @@ impl Launcher {
         system_prompt: String,
         initial_prompt: String,
     ) -> Result<()> {
-        let profile = self.store.get_profile(&session.profile_id).await?;
         let ctx = self
-            .spawn_ctx(session, cwd, &profile, system_prompt, initial_prompt)
+            .spawn_ctx(session, cwd, system_prompt, initial_prompt)
             .await?;
         let plan = adapter_for(session.agent_kind()).plan_spawn(&ctx)?;
         self.launch(session, plan).await?;
@@ -375,8 +369,9 @@ impl Launcher {
                 task_id: None,
                 role: Role::Planner,
                 profile_id: profile.id.clone(),
-                agent_kind: self.resolve_agent_kind(&profile)?,
-                model: profile.model.clone(),
+                agent_kind: self
+                    .resolve_agent_kind(goal.agent_kind(), &format!("goal {}", goal.id))?,
+                model: goal.model.clone(),
                 tmux_session: session_name(&goal.id, None, "planner", None),
                 worktree_path: None,
                 review_round: None,
@@ -431,8 +426,9 @@ impl Launcher {
                 task_id: Some(task.id.clone()),
                 role: Role::Engineer,
                 profile_id: profile.id.clone(),
-                agent_kind: self.resolve_agent_kind(&profile)?,
-                model: profile.model.clone(),
+                agent_kind: self
+                    .resolve_agent_kind(task.agent_kind(), &format!("task {}", task.id))?,
+                model: task.model.clone(),
                 tmux_session: session_name(&goal.id, Some(&task.id), "engineer", None),
                 worktree_path: Some(worktree.display().to_string()),
                 review_round: None,
@@ -501,18 +497,21 @@ impl Launcher {
         let goal = self.store.get_goal(&task.goal_id).await?;
         let repo = self.store.get_repository(&task.repo_id).await?;
         let profile = self.store.get_profile(profile_id).await?;
-        if !self
+        // The reviewer's slot on the task: both the proof that this profile
+        // reviews it at all, and the agent and model it was assigned with.
+        let slot = self
             .store
-            .list_task_reviewers(task_id)
+            .list_task_reviewer_pins(task_id)
             .await?
-            .contains(&profile.id)
-        {
-            return Err(anyhow!(
-                "profile {} is not a reviewer of task {}",
-                profile.id,
-                task_id
-            ));
-        }
+            .into_iter()
+            .find(|r| r.profile_id == profile.id)
+            .ok_or_else(|| {
+                anyhow!(
+                    "profile {} is not a reviewer of task {}",
+                    profile.id,
+                    task_id
+                )
+            })?;
         self.assert_no_live_session(&goal.id, Some(task_id), Role::Reviewer, Some(&profile.id))
             .await?;
 
@@ -524,8 +523,11 @@ impl Launcher {
                 task_id: Some(task.id.clone()),
                 role: Role::Reviewer,
                 profile_id: profile.id.clone(),
-                agent_kind: self.resolve_agent_kind(&profile)?,
-                model: profile.model.clone(),
+                agent_kind: self.resolve_agent_kind(
+                    slot.agent_kind(),
+                    &format!("reviewer {} of task {}", profile.id, task.id),
+                )?,
+                model: slot.model.clone(),
                 tmux_session: session_name(
                     &goal.id,
                     Some(&task.id),
@@ -610,7 +612,6 @@ impl Launcher {
             .spawn_ctx(
                 &session,
                 worktree,
-                &profile,
                 prompts::system_prompt(&profile),
                 String::new(),
             )
@@ -671,7 +672,6 @@ impl Launcher {
             .spawn_ctx(
                 &session,
                 worktree,
-                &profile,
                 prompts::system_prompt(&profile),
                 String::new(),
             )
@@ -736,7 +736,6 @@ impl Launcher {
             .spawn_ctx(
                 &session,
                 cwd,
-                &profile,
                 prompts::system_prompt(&profile),
                 String::new(),
             )
