@@ -4,11 +4,17 @@
  * The guard itself, on a form small enough that nothing but the dismissal is
  * under test.
  *
- * Every way out of a dialog funnels through the root's `onOpenChange`, so what
- * has to hold is the fork it takes: pristine, the parent hears the close it
- * has always heard; dirty, it hears nothing until the question has been
- * answered, and answering it "keep editing" has to leave the form exactly as
- * it was rather than reopen it from scratch.
+ * Every *dismissal* funnels through the root's `onOpenChange`, so what has to
+ * hold is the fork it takes: pristine, the parent hears the close it has
+ * always heard; dirty, it hears nothing until the question has been answered,
+ * and answering it "keep editing" has to leave the form exactly as it was
+ * rather than reopen it from scratch.
+ *
+ * A submit is not a dismissal and must not be treated as one. The harness
+ * closes on save the way every real form dialog does — by calling the
+ * `onOpenChange` it was handed, which is the parent's own setter rather than
+ * the guarded handler the dialog root gets — so a saved form closes on the
+ * spot with nothing asked about a draft that is no longer a draft.
  */
 
 import { cleanup, render, screen } from "@testing-library/react"
@@ -31,6 +37,10 @@ function Harness({ onOpenChange }: { onOpenChange: (open: boolean) => void }) {
         <input id="harness-brief" value={text} onChange={(event) => setText(event.target.value)} />
         <DialogFooter>
           <DialogClose render={<Button type="button" />}>Cancel</DialogClose>
+          {/* What a submit handler does once its mutation has landed. */}
+          <Button type="button" onClick={() => onOpenChange(false)}>
+            Save
+          </Button>
         </DialogFooter>
       </DialogContent>
     </FormDialog>
@@ -108,5 +118,19 @@ describe("dismissing a form with unsaved input", () => {
 
     expect(await screen.findByText("Discard changes?")).toBeDefined()
     expect(onOpenChange).not.toHaveBeenCalled()
+  })
+})
+
+describe("saving a form with unsaved input", () => {
+  it("closes on the spot, with no draft left to ask about", async () => {
+    const user = userEvent.setup()
+    const onOpenChange = vi.fn()
+    render(<Harness onOpenChange={onOpenChange} />)
+
+    await user.type(screen.getByLabelText("Brief"), "a paragraph worth saving")
+    await user.click(screen.getByRole("button", { name: "Save" }))
+
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+    expect(screen.queryByText("Discard changes?")).toBeNull()
   })
 })
