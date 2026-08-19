@@ -169,6 +169,27 @@ async fn a_worktree_root_the_daemon_cannot_write_is_reported_as_such() {
     assert!(!report.worktree_root.writable);
 }
 
+/// The same through the endpoint for the other way a directory refuses new
+/// entries: write permission without search. Creating a worktree in it is a
+/// lookup followed by a write, so it fails, and a report reading the mode
+/// bits would have called it healthy.
+#[tokio::test]
+async fn a_worktree_root_that_cannot_be_searched_is_reported_as_such() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if rustix::process::geteuid().is_root() {
+        return; // Root searches anything; there is nothing to tell apart.
+    }
+    let (router, cfg, _dir) = harness().await;
+    let mode = std::fs::metadata(&cfg.worktree_root).unwrap().permissions();
+    std::fs::set_permissions(&cfg.worktree_root, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let report = report(&router).await;
+    std::fs::set_permissions(&cfg.worktree_root, mode).unwrap();
+
+    assert!(report.worktree_root.exists);
+    assert!(!report.worktree_root.writable);
+}
+
 /// A database file that does not exist yet is not a failure to report on: the
 /// daemon creates it on its first write, and its directory takes it.
 #[tokio::test]
