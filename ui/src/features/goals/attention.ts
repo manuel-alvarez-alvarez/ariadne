@@ -60,6 +60,12 @@ export interface AttentionSessionItem extends AttentionRow {
   session: SessionDto
   /** Why the session is here — its `attention_reason`, or `failed`. */
   reason: SessionAttention
+  /**
+   * The task it was run for, when it has one and the task list carries it —
+   * the row's own subject, where the goal is only where it sits. A planner
+   * session has none.
+   */
+  task: TaskDto | undefined
 }
 
 export type AttentionItem = AttentionTaskItem | AttentionSessionItem
@@ -130,6 +136,7 @@ export function collectAttention(
   sessions: SessionDto[] | undefined,
 ): AttentionItem[] {
   const goalsById = new Map((goals ?? []).map((goal) => [goal.id, goal]))
+  const tasksById = new Map((tasks ?? []).map((task) => [task.id, task]))
   const items: AttentionItem[] = []
 
   for (const task of tasks ?? []) {
@@ -162,6 +169,7 @@ export function collectAttention(
       at: session.attention_since ?? session.ended_at ?? session.created_at,
       session,
       reason,
+      task: session.task_id ? tasksById.get(session.task_id) : undefined,
     })
   }
 

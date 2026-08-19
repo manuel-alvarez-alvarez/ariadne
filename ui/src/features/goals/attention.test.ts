@@ -188,6 +188,22 @@ describe("collectAttention", () => {
     expect(item?.at).toBe("2026-08-16T11:00:00Z")
   })
 
+  // The goal is where the row sits; the task is what the agent was doing.
+  it("names the task a session was run for, and nothing for a planner's", () => {
+    const items = collectAttention(
+      [goal({})],
+      [task({ id: "t1", title: "Wire the strip" })],
+      [
+        session({ id: "s1", task_id: "t1" }),
+        session({ id: "s2", role: "planner" }),
+        session({ id: "s3", task_id: "gone" }),
+      ],
+    )
+
+    const tasks = items.map((item) => item.kind === "session" && item.task?.title)
+    expect(tasks).toEqual(["Wire the strip", undefined, undefined])
+  })
+
   it("names the goal each row belongs to, and keeps rows whose goal is missing", () => {
     const items = collectAttention(
       [goal({ id: "g1", title: "Known" })],
