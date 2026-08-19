@@ -7,6 +7,8 @@ use std::process::Command;
 
 use anyhow::{Context, Result};
 
+use crate::codex_trust::Trust;
+
 /// `ariadne setup codex-hooks` — have the user trust Ariadne's Codex hooks.
 ///
 /// Nothing is installed: the hooks travel with every spawned session as `-c`
@@ -20,7 +22,7 @@ pub fn codex_hooks(cli_bin: Option<String>) -> Result<()> {
     let cli_bin = cli_bin.unwrap_or_else(default_cli_bin);
     let flags = ariadne_core::codex_hooks::config_flags(&cli_bin);
 
-    println!("Codex hooks report session ids and liveness to Ariadne:");
+    println!("Codex hooks report session ids, liveness and approval waits to Ariadne:");
     println!(
         "  command: {}",
         ariadne_core::codex_hooks::command(&cli_bin)
@@ -34,6 +36,14 @@ pub fn codex_hooks(cli_bin: Option<String>) -> Result<()> {
          only\nonce you have trusted them — and it asks at the start of a \
          session."
     );
+
+    // Trust is per event, so an Ariadne that declares one the last run of
+    // this command did not leaves the rest working and that one silent. Say
+    // which those are before opening codex, and check again afterwards.
+    let before = trust();
+    if let Some(before) = &before {
+        report_trust(before);
+    }
 
     if which("codex").is_none() {
         println!(
@@ -69,8 +79,48 @@ pub fn codex_hooks(cli_bin: Option<String>) -> Result<()> {
         println!("\ncodex exited with {status}; the hooks may not be trusted yet.");
         return Ok(());
     }
-    println!("\nDone. Ariadne's codex sessions will report from now on.");
+
+    // Codex records the verdict as it takes it, so its own config is the only
+    // honest answer to whether this worked — saying "done" on an exit status
+    // alone is how a half-trusted install goes unnoticed.
+    match trust() {
+        Some(after) if after.is_complete() => {
+            println!("\nDone. Ariadne's codex sessions will report from now on.");
+        }
+        Some(after) => {
+            println!(
+                "\ncodex still has no verdict for: {}",
+                after.untrusted_keys().join(", ")
+            );
+            println!(
+                "Sessions run without them. Run this command again and answer \
+                 \"Trust all\nand continue\"."
+            );
+        }
+        None => println!("\nDone, as far as can be told — codex's home was not found."),
+    }
     Ok(())
+}
+
+/// What codex records of the declaration, or nothing when its home is not
+/// where it can be found.
+fn trust() -> Option<Trust> {
+    crate::codex_trust::codex_home().map(|home| Trust::read(&home))
+}
+
+/// The verdicts as they stand, in the words that say what to do about them.
+fn report_trust(trust: &Trust) {
+    if trust.is_complete() {
+        println!("\nCodex already trusts all of them; this will simply confirm it.");
+    } else if trust.is_stale() {
+        println!(
+            "\nCodex trusts {} of them already and has never been asked about: {}",
+            trust.trusted.len(),
+            trust.untrusted_keys().join(", ")
+        );
+    } else {
+        println!("\nCodex trusts none of them yet.");
+    }
 }
 
 fn flush() {
