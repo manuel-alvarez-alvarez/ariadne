@@ -127,7 +127,6 @@ dependencies = [
  "serde_urlencoded",
  "tempfile",
  "tokio",
- "toml",
 ]
 
 [[package]]

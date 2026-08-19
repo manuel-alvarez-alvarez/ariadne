@@ -79,7 +79,7 @@ pub async fn ingest(
     // exactly when a permission prompt or a question is waiting, so
     // idle/exit must leave the flag be, and a stray event on an ended
     // session must not wipe the reason it ended needing attention.
-    if let Some(reason) = attention_for_event(&req.kind, &req.payload) {
+    if let Some(reason) = attention_for_event(&req.kind) {
         state
             .store
             .set_session_attention(&session.id, reason)
@@ -134,55 +134,13 @@ fn status_for_event(kind: &str) -> Option<ariadne_core::SessionStatus> {
 }
 
 /// Attention an event raises on its session (None = leave it alone).
-fn attention_for_event(
-    kind: &str,
-    payload: &serde_json::Value,
-) -> Option<ariadne_core::AttentionReason> {
+fn attention_for_event(kind: &str) -> Option<ariadne_core::AttentionReason> {
     use ariadne_core::AttentionReason as A;
     match kind {
         // OpenCode reports a failed turn (API error, aborted tool run) here;
         // the session itself stays alive, so only attention is raised.
         "session.error" => Some(A::AgentError),
-        // Codex's PermissionRequest hook fires as it puts the approval dialog
-        // up, after `pre_tool_use` for the same call. It runs before the
-        // answer is known, so it marks the wait and not its outcome:
-        // approved, `post_tool_use` follows and clears this; denied, nothing
-        // follows until the user says what to do instead — which is still a
-        // session waiting on them.
-        "permission_request" => Some(A::WaitingPermission),
-        // Claude Code's Notification hook: the only place a permission
-        // prompt or a pending question surfaces (the session just looks
-        // idle otherwise).
-        "notification" => attention_for_notification(payload),
         _ => None,
-    }
-}
-
-/// Classify a Claude Code `Notification` hook payload.
-///
-/// `notification_type` is the reliable discriminator (it is also what the
-/// hook matcher filters on); the message text is a fallback for CLI versions
-/// that only send `message`. Both matches are deliberately narrow: an
-/// unrecognized notification is recorded as an event and nothing more —
-/// flagging a working agent as blocked is worse than missing a prompt.
-fn attention_for_notification(
-    payload: &serde_json::Value,
-) -> Option<ariadne_core::AttentionReason> {
-    use ariadne_core::AttentionReason as A;
-    if let Some(kind) = payload.get("notification_type").and_then(|v| v.as_str()) {
-        return match kind {
-            "permission_prompt" | "worker_permission_prompt" => Some(A::WaitingPermission),
-            "idle_prompt" | "agent_needs_input" => Some(A::WaitingInput),
-            _ => None,
-        };
-    }
-    let message = payload.get("message").and_then(|v| v.as_str())?;
-    if message.contains("needs your permission") || message.contains("needs permission for") {
-        Some(A::WaitingPermission)
-    } else if message.contains("waiting for your input") || message.contains("needs your input") {
-        Some(A::WaitingInput)
-    } else {
-        None
     }
 }
 
@@ -234,76 +192,10 @@ mod tests {
         }
     }
 
-    /// Nothing may be declared and then dropped on the floor: every event
-    /// Ariadne asks codex for has to move either the status or the attention,
-    /// or the flag pair is paying a trust prompt for nothing.
-    #[test]
-    fn every_declared_codex_event_is_acted_on() {
-        for event in ariadne_core::codex_hooks::EVENTS {
-            let kind = ariadne_core::codex_hooks::event_kind(event);
-            assert!(
-                status_for_event(&kind).is_some()
-                    || attention_for_event(&kind, &permission_request()).is_some(),
-                "{event} is declared but ingested as a no-op"
-            );
-        }
-    }
-
-    /// A PermissionRequest payload captured from codex 0.147 sitting on an
-    /// approval dialog: the hook runs while the dialog is up, so it carries
-    /// the call it is about and no answer.
-    fn permission_request() -> serde_json::Value {
-        json!({
-            "cwd": "/tmp/worktree",
-            "hook_event_name": "PermissionRequest",
-            "model": "gpt-5.6-sol",
-            "permission_mode": "default",
-            "session_id": "01a01a24-e62e-71c1-ba23-96c62f6acee1",
-            "tool_input": {"command": "touch /tmp/probe"},
-            "tool_name": "Bash",
-            "transcript_path": "/tmp/codex/rollout.jsonl",
-            "turn_id": "01a01a25-610d-7d50-927b-695c137814e7",
-        })
-    }
-
-    /// The whole point of declaring the hook: a codex session sitting on an
-    /// approval dialog is otherwise indistinguishable from one thinking.
-    #[test]
-    fn a_permission_request_means_the_agent_is_blocked_on_the_user() {
-        assert_eq!(
-            attention_for_event("permission_request", &permission_request()),
-            Some(AttentionReason::WaitingPermission)
-        );
-    }
-
-    /// ...and it must not read as liveness. `PreToolUse` fires just before
-    /// it for the same call, so a `Running` mapping here would clear the
-    /// attention the event itself raised.
-    #[test]
-    fn a_permission_request_implies_no_status_change() {
-        assert_eq!(status_for_event("permission_request"), None);
-    }
-
-    /// What takes the flag back down. Approved, codex runs the call and
-    /// reports `post_tool_use`; denied, no tool event follows at all and the
-    /// wait stands until the user's next prompt — which is the truth of it,
-    /// a denied command is a session still waiting to be told what to do.
-    #[test]
-    fn the_events_after_an_approval_clear_the_wait() {
-        for event in ["post_tool_use", "user_prompt_submit"] {
-            assert_eq!(
-                status_for_event(event),
-                Some(SessionStatus::Running),
-                "{event}"
-            );
-            assert_eq!(attention_for_event(event, &json!({})), None, "{event}");
-        }
-    }
-
     #[test]
     fn session_error_raises_attention_without_touching_the_status() {
         assert_eq!(
-            attention_for_event("session.error", &json!({})),
+            attention_for_event("session.error"),
             Some(AttentionReason::AgentError)
         );
         assert_eq!(status_for_event("session.error"), None);
@@ -312,129 +204,7 @@ mod tests {
     #[test]
     fn ordinary_events_raise_no_attention() {
         for event in ["session_start", "post_tool_use", "stop", "session.idle"] {
-            assert_eq!(attention_for_event(event, &json!({})), None, "{event}");
-        }
-    }
-
-    /// A Notification payload captured from Claude Code 2.1.235 sitting on a
-    /// permission dialog.
-    fn permission_notification() -> serde_json::Value {
-        json!({
-            "cwd": "/tmp/wt",
-            "hook_event_name": "Notification",
-            "message": "Claude needs your permission",
-            "notification_type": "permission_prompt",
-            "prompt_id": "c58b5911-1a83-4548-8d70-ba2e83ade968",
-            "session_id": "5cf3f43d-6d22-42eb-8e44-8213bee346cd",
-            "transcript_path": "/Users/me/.claude/projects/-tmp-wt/5cf3f43d.jsonl",
-        })
-    }
-
-    /// The same hook after the prompt input sat idle past the threshold.
-    fn idle_notification() -> serde_json::Value {
-        json!({
-            "cwd": "/tmp/wt",
-            "hook_event_name": "Notification",
-            "message": "Claude is waiting for your input",
-            "notification_type": "idle_prompt",
-            "prompt_id": "c58b5911-1a83-4548-8d70-ba2e83ade968",
-            "session_id": "5cf3f43d-6d22-42eb-8e44-8213bee346cd",
-            "transcript_path": "/Users/me/.claude/projects/-tmp-wt/5cf3f43d.jsonl",
-        })
-    }
-
-    #[test]
-    fn a_permission_notification_means_the_agent_is_blocked_on_the_user() {
-        assert_eq!(
-            attention_for_event("notification", &permission_notification()),
-            Some(AttentionReason::WaitingPermission)
-        );
-        // A worker of an agent fleet asking for permission counts too.
-        assert_eq!(
-            attention_for_event(
-                "notification",
-                &json!({
-                    "hook_event_name": "Notification",
-                    "message": "agent_7 needs permission for Bash",
-                    "notification_type": "worker_permission_prompt",
-                })
-            ),
-            Some(AttentionReason::WaitingPermission)
-        );
-    }
-
-    #[test]
-    fn an_idle_notification_means_the_agent_is_waiting_for_an_answer() {
-        assert_eq!(
-            attention_for_event("notification", &idle_notification()),
-            Some(AttentionReason::WaitingInput)
-        );
-        assert_eq!(
-            attention_for_event(
-                "notification",
-                &json!({
-                    "hook_event_name": "Notification",
-                    "message": "docs-writer needs your input: pick a heading",
-                    "notification_type": "agent_needs_input",
-                })
-            ),
-            Some(AttentionReason::WaitingInput)
-        );
-    }
-
-    #[test]
-    fn unrecognized_notifications_raise_nothing() {
-        for payload in [
-            json!({"hook_event_name": "Notification", "notification_type": "auth_success",
-                   "message": "Logged in as me@example.com"}),
-            json!({"hook_event_name": "Notification", "notification_type": "agent_completed",
-                   "message": "docs-writer finished"}),
-            json!({"hook_event_name": "Notification", "message": "Task completed"}),
-            json!({"hook_event_name": "Notification"}),
-        ] {
-            assert_eq!(
-                attention_for_event("notification", &payload),
-                None,
-                "{payload}"
-            );
-        }
-    }
-
-    /// Older CLIs send only `message`; the text is the fallback discriminator.
-    #[test]
-    fn notifications_without_a_type_fall_back_to_the_message() {
-        for (message, expected) in [
-            (
-                "Claude needs your permission to use Bash",
-                AttentionReason::WaitingPermission,
-            ),
-            (
-                "Claude is waiting for your input",
-                AttentionReason::WaitingInput,
-            ),
-        ] {
-            let payload = json!({"hook_event_name": "Notification", "message": message});
-            assert_eq!(
-                attention_for_event("notification", &payload),
-                Some(expected),
-                "{message}"
-            );
-        }
-    }
-
-    /// A blocked agent is not a working one: the notification itself must
-    /// leave the lifecycle status alone (mapping it to `Running` would clear
-    /// the very attention it raises), and the next real work event clears it.
-    #[test]
-    fn a_notification_implies_no_status_change() {
-        assert_eq!(status_for_event("notification"), None);
-        for event in ["pre_tool_use", "user_prompt_submit"] {
-            assert_eq!(
-                status_for_event(event),
-                Some(SessionStatus::Running),
-                "{event}"
-            );
-            assert_eq!(attention_for_event(event, &json!({})), None, "{event}");
+            assert_eq!(attention_for_event(event), None, "{event}");
         }
     }
 }

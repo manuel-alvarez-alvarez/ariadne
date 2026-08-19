@@ -30,7 +30,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { goalQueryOptions } from "@/features/goals/queries"
-import { ProfileSummary } from "@/features/profiles/profile-summary"
+import { ProfileName } from "@/features/profiles/profile-name"
 import { useFocusReturn } from "@/hooks/use-focus-return"
 import { taskCopyEntries } from "@/lib/copy-entries"
 import { shortId } from "@/lib/ids"
@@ -277,15 +277,18 @@ function TaskFacts({ task }: { task: TaskDto }) {
         )}
       </Fact>
       <Fact label="Engineer">
-        <ProfileSummary profileId={task.engineer_profile_id} className="text-xs" />
+        <ProfileName profileId={task.engineer_profile_id} className="text-xs" />
       </Fact>
       <Fact label="Reviewers">
         {task.reviewer_profile_ids.length > 0 ? (
-          // One line each: a reviewer is now a name and the two facts after
-          // it, which side by side would be a run-on the eye cannot split.
-          <span className="flex flex-col gap-0.5 text-xs">
-            {task.reviewer_profile_ids.map((id) => (
-              <ProfileSummary key={id} profileId={id} />
+          // Each profile is its own click target; the separators are plain text
+          // so the row still reads as the single list it was.
+          <span className="text-xs">
+            {task.reviewer_profile_ids.map((id, index) => (
+              <span key={id}>
+                {index > 0 ? ", " : null}
+                <ProfileName profileId={id} className="text-xs" />
+              </span>
             ))}
           </span>
         ) : (
