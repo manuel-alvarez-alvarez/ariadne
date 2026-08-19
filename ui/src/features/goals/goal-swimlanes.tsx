@@ -22,6 +22,7 @@ import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { type SessionAttention, SessionAttentionBadge } from "@/features/sessions/session-display"
 import {
   BOARD_STATUSES,
   OFF_BOARD_STATUSES,
@@ -35,6 +36,7 @@ import { plural } from "@/lib/plural"
 import { formatAbsolute, formatRelative } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { paths } from "@/routes/paths"
+import { type BoardAttention, useBoardAttention } from "./attention"
 import { useCollapsedLanes } from "./collapsed-lanes"
 import { GOAL_STATUS_META } from "./status"
 
@@ -64,6 +66,11 @@ const LANE_HEADER = "sticky left-0 z-10 flex w-fit max-w-full items-center gap-2
 export function GoalSwimlanes({ goals }: { goals: GoalDto[] }) {
   const tasks = useQuery(taskListQueryOptions({}))
   const byGoal = useMemo(() => groupByGoal(tasks.data ?? []), [tasks.data])
+  // Which cards — and which lanes — are asking for a person, off the sessions
+  // query the attention strip above the board already holds. The board is
+  // where the work is, and a card that says nothing about its blocked agent is
+  // what made the strip the only way to find one.
+  const attention = useBoardAttention()
   const { collapsed, toggle } = useCollapsedLanes()
   const board = useHorizontalOverflow<HTMLElement>()
 
@@ -123,6 +130,7 @@ export function GoalSwimlanes({ goals }: { goals: GoalDto[] }) {
               key={goal.id}
               goal={goal}
               tasks={byGoal.get(goal.id)}
+              attention={attention}
               collapsed={collapsed.has(goal.id)}
               onToggle={() => toggle(goal.id)}
             />
@@ -182,16 +190,24 @@ function ScrollEdge({ side, show }: { side: "start" | "end"; show: boolean }) {
 function Lane({
   goal,
   tasks,
+  attention,
   collapsed,
   onToggle,
 }: {
   goal: GoalDto
   tasks?: GoalTasks
+  /** The whole board's index; the lane takes its own rows out of it. */
+  attention: BoardAttention
   collapsed: boolean
   onToggle: () => void
 }) {
   const total = tasks?.all.length ?? 0
   const repos = goal.repos.map((repo) => `${repo.path} [${repo.base_branch}]`).join("\n")
+  // A planner belongs to no task, so it has no card to be flagged on: the lane
+  // header is the only place its goal is named, and so the only place it can
+  // ask for a person. It is shown collapsed too — a lane folded away is
+  // exactly where a stuck planner would otherwise go unseen.
+  const planner: SessionAttention | undefined = attention.byGoal.get(goal.id)
 
   return (
     <section className="border-b last:border-b-0">
@@ -231,6 +247,7 @@ function Lane({
           label={GOAL_STATUS_META[goal.status].label}
           tone={GOAL_STATUS_META[goal.status].badge}
         />
+        {planner ? <SessionAttentionBadge attention={planner} /> : null}
         <span className="whitespace-nowrap text-xs text-muted-foreground">
           {plural(total, "task")} · created{" "}
           <time dateTime={goal.created_at} title={formatAbsolute(goal.created_at)}>
@@ -250,7 +267,7 @@ function Lane({
             // nothing in it, and a board of placeholders says nothing at all.
             <div key={status} className="flex flex-col gap-2">
               {(tasks?.columns[status] ?? []).map((task) => (
-                <TaskCard key={task.id} task={task} />
+                <TaskCard key={task.id} task={task} attention={attention.byTask.get(task.id)} />
               ))}
             </div>
           ))}
@@ -262,7 +279,12 @@ function Lane({
           <h3 className="text-xs font-medium text-muted-foreground">Off the pipeline</h3>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {tasks.offBoard.map((task) => (
-              <TaskCard key={task.id} task={task} showStatus />
+              <TaskCard
+                key={task.id}
+                task={task}
+                showStatus
+                attention={attention.byTask.get(task.id)}
+              />
             ))}
           </div>
         </div>
