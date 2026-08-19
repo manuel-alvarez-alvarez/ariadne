@@ -277,3 +277,43 @@ describe("with nothing registered", () => {
     expect(screen.getByTestId("where").textContent).toBe(paths.repositories())
   })
 })
+
+/**
+ * The brief is the longest thing the app asks anyone to write, and the planner
+ * form fills two of its own fields on open — a preselected planner profile is
+ * the dialog's doing, not the user's, so it must not be what makes walking away
+ * a question.
+ */
+describe("dismissing the dialog", () => {
+  it("closes an untouched form straight away, preselected planner and all", async () => {
+    const user = userEvent.setup()
+    const { onOpenChange } = renderDialog()
+
+    // The preselect is what this is about: wait until it has happened.
+    expect(await screen.findByText("Planner")).toBeDefined()
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }))
+
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+    expect(screen.queryByText("Discard changes?")).toBeNull()
+  })
+
+  it("asks before dropping a typed brief, and keeps it when the answer is no", async () => {
+    const user = userEvent.setup()
+    const { onOpenChange } = renderDialog()
+
+    const description = screen.getByLabelText("Description")
+    await user.type(description, "Rewrite the scheduler.")
+    await user.keyboard("{Escape}")
+
+    expect(await screen.findByText("Discard changes?")).toBeDefined()
+    expect(onOpenChange).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole("button", { name: "Keep editing" }))
+
+    expect((screen.getByLabelText("Description") as HTMLTextAreaElement).value).toBe(
+      "Rewrite the scheduler.",
+    )
+    expect(onOpenChange).not.toHaveBeenCalled()
+  })
+})
