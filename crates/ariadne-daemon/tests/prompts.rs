@@ -3,7 +3,10 @@
 //! Two things have to hold for prompts to be a developer's to edit: what the
 //! database says is what the session gets, and a template edited into nonsense
 //! still starts a session — a broken prompt is a bad briefing, never a task
-//! that cannot get an agent.
+//! that cannot get an agent. Saving such a template is refused these days (see
+//! `PromptKind::validate_template`), so the broken one below is put into the
+//! database behind the store's back, the way one written before the check
+//! existed sits there.
 //!
 //! No tmux and no agent CLI: `tmux` is a stub that records the commands the
 //! launcher issues, and the rendered briefing is read back from the session's
@@ -124,6 +127,29 @@ impl Harness {
         (task, engineer)
     }
 
+    /// Store a template the store itself would refuse, straight into the row.
+    ///
+    /// Placeholders are validated when a prompt is saved, never when one is
+    /// rendered, so a database can still hold a briefing naming a token
+    /// nothing fills in: edited by hand, restored from a backup, or written
+    /// before the check existed. Spawning has to survive it.
+    async fn plant_template(&self, profile_id: &str, kind: PromptKind, content: &str) {
+        let pool = sqlx::SqlitePool::connect(&format!(
+            "sqlite://{}",
+            self.dir.path().join("test.db").display()
+        ))
+        .await
+        .unwrap();
+        sqlx::query("UPDATE profile_prompts SET content = ? WHERE profile_id = ? AND kind = ?")
+            .bind(content)
+            .bind(profile_id)
+            .bind(kind.as_str())
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+    }
+
     async fn profile(&self, name: &str, role: Role) -> String {
         self.store
             .create_profile(NewProfile {
@@ -205,20 +231,19 @@ async fn a_spawned_engineer_is_briefed_from_its_profiles_prompt() {
     assert_eq!(system, "You are engineer.");
 }
 
-/// A template edited into nonsense is still a briefing: the unknown token and
-/// the brace that never closes travel through verbatim and the session starts.
+/// A template that is nonsense by the time it is read is still a briefing: the
+/// unknown token and the brace that never closes travel through verbatim and
+/// the session starts.
 #[tokio::test]
 async fn a_broken_template_still_spawns_the_engineer() {
     let h = harness().await;
     let (task, engineer) = h.task().await;
-    h.store
-        .update_profile_prompt(
-            &engineer,
-            PromptKind::EngineerBriefing,
-            "# {task_title} {who_even} {unclosed",
-        )
-        .await
-        .unwrap();
+    h.plant_template(
+        &engineer,
+        PromptKind::EngineerBriefing,
+        "# {task_title} {who_even} {unclosed",
+    )
+    .await;
 
     let session = h.launcher.spawn_engineer(&task.id).await.unwrap();
     assert_eq!(session.status(), ariadne_core::SessionStatus::Running);
