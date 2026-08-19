@@ -53,7 +53,6 @@ async fn reconciliation_with_tmux_unavailable_neither_spawns_nor_fails_the_task(
                     agent_kind: Some(AgentKind::ClaudeCode),
                     model: None,
                     system_prompt: "You work.".into(),
-                    extra_flags: vec![],
                     prompts: vec![],
                 })
                 .await

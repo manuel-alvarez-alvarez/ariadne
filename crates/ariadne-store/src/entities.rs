@@ -16,8 +16,6 @@ pub struct Profile {
     pub agent_kind: Option<String>,
     pub model: Option<String>,
     pub system_prompt: String,
-    /// JSON array of argv strings.
-    pub extra_flags: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -31,8 +29,32 @@ impl Profile {
             .as_deref()
             .map(|s| AgentKind::from_str(s).expect("valid agent kind in db"))
     }
+}
+
+/// How one agent CLI is launched, shared by every profile that runs on it.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct AgentConfig {
+    pub agent_kind: String,
+    /// JSON array of argv strings.
+    pub extra_flags: String,
+    pub updated_at: String,
+}
+
+impl AgentConfig {
+    pub fn agent_kind(&self) -> AgentKind {
+        AgentKind::from_str(&self.agent_kind).expect("valid agent kind in db")
+    }
     pub fn extra_flags(&self) -> Vec<String> {
         serde_json::from_str(&self.extra_flags).unwrap_or_default()
+    }
+    /// What this agent kind ships with, and what restoring the defaults puts
+    /// back.
+    pub fn default_flags(&self) -> Vec<String> {
+        self.agent_kind()
+            .default_flags()
+            .iter()
+            .map(|f| f.to_string())
+            .collect()
     }
 }
 

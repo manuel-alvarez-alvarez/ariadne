@@ -14,8 +14,6 @@ pub struct ProfileDto {
     pub agent_kind: Option<AgentKind>,
     pub model: Option<String>,
     pub system_prompt: String,
-    /// Extra argv flags appended when spawning the agent CLI.
-    pub extra_flags: Vec<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -29,8 +27,6 @@ pub struct CreateProfileRequest {
     pub agent_kind: Option<AgentKind>,
     pub model: Option<String>,
     pub system_prompt: String,
-    #[serde(default)]
-    pub extra_flags: Vec<String>,
     /// Briefing prompts to seed instead of the role defaults. A kind listed
     /// here replaces its default; every other kind of the role is seeded as
     /// usual. Absent or empty = the role defaults, unedited.
@@ -58,7 +54,6 @@ pub struct UpdateProfileRequest {
     /// default. Absent = unchanged.
     pub model: Option<String>,
     pub system_prompt: Option<String>,
-    pub extra_flags: Option<Vec<String>>,
 }
 
 /// One of the briefing prompts a profile owns beside its system prompt.

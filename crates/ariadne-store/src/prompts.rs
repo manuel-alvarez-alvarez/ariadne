@@ -45,8 +45,8 @@ impl Store {
         let ts = now();
         for builtin in &BUILTIN_PROFILES {
             sqlx::query(
-                "INSERT INTO profiles (id, name, role, agent_kind, model, system_prompt, extra_flags, created_at, updated_at)
-                 VALUES (?, ?, ?, NULL, NULL, ?, '[]', ?, ?)",
+                "INSERT INTO profiles (id, name, role, agent_kind, model, system_prompt, created_at, updated_at)
+                 VALUES (?, ?, ?, NULL, NULL, ?, ?, ?)",
             )
             .bind(builtin.id)
             .bind(builtin.name)

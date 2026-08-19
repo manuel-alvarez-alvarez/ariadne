@@ -1,5 +1,6 @@
 //! Axum application: routes, shared state, OpenAPI document.
 
+mod agents;
 mod auth;
 pub(crate) mod convert;
 mod error;
@@ -77,6 +78,7 @@ impl AppState {
     paths(
         health,
         version,
+        agents::list, agents::update,
         profiles::create, profiles::list, profiles::get, profiles::update, profiles::delete,
         profiles::list_prompts, profiles::update_prompt, profiles::reset_prompt,
         profiles::reset_system_prompt, profiles::prompt_defaults,
@@ -104,6 +106,7 @@ impl AppState {
     )),
     tags(
         (name = "system", description = "Daemon health and metadata"),
+        (name = "agents", description = "Per-agent-CLI launch configuration"),
         (name = "profiles", description = "Agent profiles (role + system prompt + agent CLI)"),
         (name = "repositories", description = "Git repositories registered with the daemon"),
         (name = "goals", description = "Goals and their planning threads"),
@@ -121,6 +124,9 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/v1/health", get(health))
         .route("/v1/version", get(version))
+        // agents
+        .route("/v1/agents", get(agents::list))
+        .route("/v1/agents/{kind}", put(agents::update))
         // profiles
         .route("/v1/profiles", post(profiles::create).get(profiles::list))
         .route(

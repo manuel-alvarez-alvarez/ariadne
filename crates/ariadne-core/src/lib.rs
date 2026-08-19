@@ -151,6 +151,25 @@ impl AgentKind {
             AgentKind::Opencode => "opencode",
         }
     }
+
+    /// The argv flags Ariadne launches this agent CLI with out of the box:
+    /// the permission bypass each one spells its own way, so an agent working
+    /// unattended in a throwaway worktree is not left waiting at a prompt.
+    ///
+    /// This is what a fresh database seeds the agent's flag list with and what
+    /// restoring the defaults puts back; from there the list is the user's,
+    /// edited over `/v1/agents`. Only flags a user may reasonably drop belong
+    /// here — the structural ones (session ids, MCP and hook config, the
+    /// system prompt, the model) are the adapters' own and are not negotiable.
+    pub fn default_flags(&self) -> &'static [&'static str] {
+        match self {
+            AgentKind::ClaudeCode => &["--dangerously-skip-permissions"],
+            AgentKind::Codex => &["--dangerously-bypass-approvals-and-sandbox"],
+            // OpenCode has no such flag: its permissions are granted in the
+            // `opencode.json` the adapter generates per session.
+            AgentKind::Opencode => &[],
+        }
+    }
 }
 
 impl std::str::FromStr for AgentKind {
