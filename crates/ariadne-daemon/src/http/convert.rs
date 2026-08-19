@@ -132,6 +132,7 @@ pub fn session_dto(s: store::AgentSession) -> SessionDto {
         goal_id: s.goal_id,
         task_id: s.task_id,
         profile_id: s.profile_id,
+        model: s.model,
         internal_session_id: s.internal_session_id,
         tmux_session: s.tmux_session,
         worktree_path: s.worktree_path,

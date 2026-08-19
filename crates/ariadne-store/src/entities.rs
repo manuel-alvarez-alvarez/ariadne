@@ -140,6 +140,11 @@ pub struct AgentSession {
     pub role: String,
     pub profile_id: String,
     pub agent_kind: String,
+    /// Model this session was launched with, as handed to the agent CLI.
+    /// None = no model was asked for, i.e. the CLI's own default. Snapshotted
+    /// at launch rather than read off the profile, so editing a profile does
+    /// not rewrite what a running session is actually using.
+    pub model: Option<String>,
     pub internal_session_id: Option<String>,
     pub tmux_session: String,
     pub worktree_path: Option<String>,

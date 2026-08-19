@@ -134,6 +134,9 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
                         ("role", s.role.as_str().into()),
                         ("profile", profiles.label(&s.profile_id)),
                         ("agent", s.agent_kind.as_str().into()),
+                        // Recorded at launch, so it is what this session runs
+                        // on even if the profile has moved on since.
+                        ("model", s.model.unwrap_or_else(|| "default".into())),
                         ("status", s.status.as_str().into()),
                         ("tmux", s.tmux_session),
                         ("worktree", s.worktree_path.unwrap_or_else(|| "-".into())),
