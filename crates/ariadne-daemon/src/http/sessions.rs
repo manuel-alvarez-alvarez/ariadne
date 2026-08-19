@@ -28,6 +28,7 @@ pub async fn list(
             task_id: q.task,
             status: q.status,
             live_only: false,
+            attention_only: q.attention.unwrap_or(false),
         })
         .await?;
     Ok(Json(sessions.into_iter().map(session_dto).collect()))
