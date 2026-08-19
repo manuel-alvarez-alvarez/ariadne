@@ -35,9 +35,9 @@ import {
   type UpdateTaskRequest,
 } from "@/api"
 import { ErrorState } from "@/components/error-state"
-import { FormDialog } from "@/components/form-dialog"
 import { Button } from "@/components/ui/button"
 import {
+  Dialog,
   DialogClose,
   DialogContent,
   DialogDescription,
@@ -293,7 +293,7 @@ function TaskFormDialog({
   }
 
   return (
-    <FormDialog open={open} onOpenChange={onOpenChange} dirty={form.formState.isDirty}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
         <form onSubmit={form.handleSubmit(onSubmit)} className="grid gap-4">
           <DialogHeader>
@@ -549,7 +549,7 @@ function TaskFormDialog({
           </DialogFooter>
         </form>
       </DialogContent>
-    </FormDialog>
+    </Dialog>
   )
 }
 
