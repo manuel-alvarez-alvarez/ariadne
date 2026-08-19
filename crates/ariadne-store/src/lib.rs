@@ -5,6 +5,7 @@
 //! [`Store::transition_task`], which validates against the core state machine
 //! and records the audit row in the same transaction.
 
+mod agents;
 mod change;
 pub mod defaults;
 mod entities;
@@ -114,6 +115,7 @@ impl Store {
             changes: Arc::default(),
         };
         store.seed_builtin_profiles().await?;
+        store.seed_agent_configs().await?;
         Ok(store)
     }
 
@@ -139,6 +141,7 @@ impl Store {
             changes: Arc::default(),
         };
         store.seed_builtin_profiles().await?;
+        store.seed_agent_configs().await?;
         Ok(store)
     }
 

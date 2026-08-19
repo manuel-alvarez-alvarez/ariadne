@@ -21,7 +21,6 @@ async fn seed_profile(store: &Store, name: &str, role: Role) -> Profile {
             agent_kind: Some(AgentKind::ClaudeCode),
             model: None,
             system_prompt: format!("You are {name}."),
-            extra_flags: vec![],
             prompts: vec![],
         })
         .await
@@ -84,6 +83,91 @@ async fn seed_task(store: &Store, goal: &Goal, repo: &Repository, deps: Vec<Stri
         .unwrap()
 }
 
+/// A fresh database knows how to launch every agent CLI, with the flags the
+/// core defaults name — nothing to configure before the first spawn.
+#[tokio::test]
+async fn agent_configs_are_seeded_with_the_defaults() {
+    let (store, _dir) = test_store().await;
+    let configs = store.list_agent_configs().await.unwrap();
+    assert_eq!(
+        configs.iter().map(|c| c.agent_kind()).collect::<Vec<_>>(),
+        AgentKind::ALL.to_vec()
+    );
+    for config in configs {
+        assert_eq!(config.extra_flags(), config.default_flags());
+    }
+    assert_eq!(
+        store
+            .get_agent_config(AgentKind::ClaudeCode)
+            .await
+            .unwrap()
+            .extra_flags(),
+        vec!["--dangerously-skip-permissions".to_string()]
+    );
+    assert_eq!(
+        store
+            .get_agent_config(AgentKind::Codex)
+            .await
+            .unwrap()
+            .extra_flags(),
+        vec!["--dangerously-bypass-approvals-and-sandbox".to_string()]
+    );
+    assert!(
+        store
+            .get_agent_config(AgentKind::Opencode)
+            .await
+            .unwrap()
+            .extra_flags()
+            .is_empty()
+    );
+}
+
+/// The flags are the user's to replace, emptying them included, and the
+/// defaults stay readable beside them so a reset needs nothing remembered.
+#[tokio::test]
+async fn agent_config_flags_are_replaced_whole() {
+    let (store, _dir) = test_store().await;
+    let updated = store
+        .update_agent_config(
+            AgentKind::ClaudeCode,
+            vec!["--permission-mode=acceptEdits".into()],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        updated.extra_flags(),
+        vec!["--permission-mode=acceptEdits".to_string()]
+    );
+    assert_eq!(
+        updated.default_flags(),
+        vec!["--dangerously-skip-permissions".to_string()]
+    );
+    // Re-opening the same database reads back the edit, not the seed.
+    assert_eq!(
+        store
+            .get_agent_config(AgentKind::ClaudeCode)
+            .await
+            .unwrap()
+            .extra_flags(),
+        vec!["--permission-mode=acceptEdits".to_string()]
+    );
+
+    let emptied = store
+        .update_agent_config(AgentKind::Codex, vec![])
+        .await
+        .unwrap();
+    assert!(emptied.extra_flags().is_empty());
+    // One agent's flags are its own.
+    assert_eq!(
+        store
+            .get_agent_config(AgentKind::ClaudeCode)
+            .await
+            .unwrap()
+            .extra_flags(),
+        vec!["--permission-mode=acceptEdits".to_string()]
+    );
+}
+
 #[tokio::test]
 async fn profile_crud_and_delete_guard() {
     let (store, _dir) = test_store().await;
@@ -98,7 +182,6 @@ async fn profile_crud_and_delete_guard() {
             agent_kind: Some(AgentKind::Codex),
             model: None,
             system_prompt: "x".into(),
-            extra_flags: vec![],
             prompts: vec![],
         })
         .await;
@@ -1209,6 +1292,14 @@ async fn a_pre_repositories_database_migrates_its_goals_and_tasks() {
             .len(),
         1
     );
+
+    // A database that predates the agent configs is given them on the way up,
+    // with the same defaults a fresh one is seeded with.
+    let configs = store.list_agent_configs().await.unwrap();
+    assert_eq!(configs.len(), AgentKind::ALL.len());
+    for config in configs {
+        assert_eq!(config.extra_flags(), config.default_flags());
+    }
 
     // And the goal still holds them, so the repositories cannot be deleted.
     assert!(matches!(
