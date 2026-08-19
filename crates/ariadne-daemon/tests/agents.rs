@@ -18,6 +18,7 @@ use tower::ServiceExt;
 
 use ariadne_api::agents::AgentConfigDto;
 use ariadne_api::error::ErrorBody;
+use ariadne_core::spawn_plan::SpawnPlanFile;
 use ariadne_core::{AgentKind, Role, SessionStatus};
 use ariadne_daemon::config::Config;
 use ariadne_daemon::gitwt::GitManager;
@@ -187,21 +188,20 @@ impl Harness {
             .id
     }
 
-    /// Every command the launcher gave the stub `tmux`, one per line.
-    fn tmux_commands(&self) -> Vec<String> {
-        std::fs::read_to_string(self.dir.path().join("tmux-commands.log"))
-            .unwrap_or_default()
-            .lines()
-            .map(str::to_string)
-            .collect()
-    }
-
-    /// The argv of the last agent the launcher started.
-    fn last_launch(&self) -> String {
-        self.tmux_commands()
-            .into_iter()
-            .rfind(|c| c.starts_with("new-session"))
-            .expect("the launcher started a tmux session")
+    /// The argv of the last agent the launcher started, joined for reading.
+    ///
+    /// Read from the session's spawn plan: the tmux command line carries
+    /// `ariadne _spawn <plan>` and none of the agent's own argv.
+    fn launched_argv(&self, session_id: &str) -> String {
+        let path = self
+            .launcher
+            .cfg
+            .run_dir
+            .join(session_id)
+            .join("spawn.json");
+        let raw = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
+        SpawnPlanFile::from_json(&raw).unwrap().argv.join(" ")
     }
 }
 
@@ -311,11 +311,12 @@ async fn a_launch_takes_its_flags_from_the_agent_config() {
     let h = harness().await;
     let task = h.resumable_engineer().await;
 
-    h.launcher
+    let session = h
+        .launcher
         .resume_engineer(&task, "Round 1: please fix things.")
         .await
         .unwrap();
-    let argv = h.last_launch();
+    let argv = h.launched_argv(&session.id);
     assert_eq!(
         argv.matches("--dangerously-skip-permissions").count(),
         1,
@@ -332,11 +333,12 @@ async fn a_launch_takes_its_flags_from_the_agent_config() {
             StatusCode::OK,
         )
         .await;
-    h.launcher
+    let session = h
+        .launcher
         .resume_engineer(&task, "Round 2: please fix things.")
         .await
         .unwrap();
-    let argv = h.last_launch();
+    let argv = h.launched_argv(&session.id);
     assert!(
         argv.contains("--permission-mode=acceptEdits"),
         "the edited flags: {argv}"
