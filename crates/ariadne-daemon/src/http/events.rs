@@ -84,7 +84,11 @@ pub async fn ingest(
     // this agent. A reviewer's approval dialog after it has voted, or a
     // planner's after the goal left planning, is nobody's to answer — the
     // event is recorded and the status still follows it, only the flag is
-    // withheld.
+    // withheld. Whether the session is still live enough to be asking is a
+    // second condition, and one this handler deliberately does not test
+    // itself: the status read above is a moment old by the time the raise
+    // runs, so the store makes it part of the write — a prompt only ever
+    // lands on a session that is still live at that instant.
     if let Some(reason) = attention_for_event(&req.kind, &req.payload) {
         if crate::attention::work_is_active(&state.store, &session).await {
             state
