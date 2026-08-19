@@ -7,6 +7,7 @@
 //! Explicit endpoint overrides (`--endpoint` / `ARIADNE_SOCKET`) sit in front of
 //! all of it — see [`Client::resolve`](crate::Client::resolve).
 
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -15,10 +16,82 @@ use serde::Deserialize;
 pub const HOME_ENV: &str = "ARIADNE_HOME";
 
 /// The `config.toml` fields the endpoint depends on. Unknown keys are ignored
-/// here; the daemon parses the same file strictly and reports on them.
+/// here: a socket has to be named even for a config that will not parse, so
+/// that whoever reports the breakage can still say which daemon it is about.
 #[derive(Debug, Default, Deserialize)]
-struct FileConfig {
+struct SocketOnly {
     socket_path: Option<PathBuf>,
+}
+
+/// Everything `<home>/config.toml` may set.
+///
+/// This is the strict reading — an unknown key is an error, not a silently
+/// ignored line — and it lives here rather than in the daemon because the
+/// daemon is not the only one that has to answer for it: `ariadne doctor`
+/// reports on a config whose daemon refuses to start because of it.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileConfig {
+    pub socket_path: Option<PathBuf>,
+    pub db_path: Option<PathBuf>,
+    pub worktree_root: Option<PathBuf>,
+    pub run_dir: Option<PathBuf>,
+    /// e.g. "127.0.0.1:7676" — TCP listener is disabled unless set.
+    pub tcp_listen: Option<SocketAddr>,
+    /// tracing filter, e.g. "info,ariadne_daemon=debug"
+    pub log_filter: Option<String>,
+    /// Path to the `ariadne` CLI used for hooks and MCP (default: sibling of
+    /// ariadned, else "ariadne" on PATH).
+    pub cli_bin: Option<String>,
+    /// Delete task branches after merge (default true). Only takes effect
+    /// when the worktrees are deleted too: a kept engineer worktree has the
+    /// task branch checked out, which pins it.
+    pub delete_merged_branches: Option<bool>,
+    /// Delete task worktrees after merge (default true). Set to false to keep
+    /// them under worktree_root so merged work can be inspected later;
+    /// cancelled tasks always keep theirs, salvageable work included.
+    pub delete_merged_worktrees: Option<bool>,
+    /// Keep the machine awake while agent sessions are live (default true).
+    pub prevent_sleep: Option<bool>,
+}
+
+/// Why `<home>/config.toml` could not be read as configuration.
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigError {
+    #[error("reading {path}: {source}")]
+    Read {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("parsing {path}: {source}")]
+    Parse {
+        path: PathBuf,
+        #[source]
+        source: toml::de::Error,
+    },
+}
+
+/// The config file of a home directory.
+pub fn config_file(home: &Path) -> PathBuf {
+    home.join("config.toml")
+}
+
+/// Read `<home>/config.toml` the way the daemon reads it: strictly, so a
+/// misspelled key is reported rather than ignored. `Ok(None)` means there is
+/// no config file at all, which is the ordinary case.
+pub fn parse_config(home: &Path) -> Result<Option<FileConfig>, ConfigError> {
+    let path = config_file(home);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = std::fs::read_to_string(&path).map_err(|source| ConfigError::Read {
+        path: path.clone(),
+        source,
+    })?;
+    toml::from_str(&raw)
+        .map(Some)
+        .map_err(|source| ConfigError::Parse { path, source })
 }
 
 /// Ariadne home: `--home` > `ARIADNE_HOME` > `~/.ariadne`. `None` only when
@@ -60,8 +133,8 @@ pub fn pid_file(home: &Path) -> PathBuf {
     home.join("ariadned.pid")
 }
 
-fn file_config(home: &Path) -> FileConfig {
-    std::fs::read_to_string(home.join("config.toml"))
+fn file_config(home: &Path) -> SocketOnly {
+    std::fs::read_to_string(config_file(home))
         .ok()
         .and_then(|raw| toml::from_str(&raw).ok())
         .unwrap_or_default()
@@ -136,5 +209,48 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         write_config(dir.path(), "socket_path = [not toml\n");
         assert_eq!(socket_path(dir.path()), dir.path().join("ariadne.sock"));
+    }
+
+    /// No config file is not a failure: it is how most homes are set up.
+    #[test]
+    fn a_home_without_a_config_parses_to_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(parse_config(dir.path()).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_config_parses_into_its_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        write_config(
+            dir.path(),
+            "db_path = \"/scratch/ariadne.db\"\nprevent_sleep = false\n",
+        );
+        let config = parse_config(dir.path()).unwrap().expect("a config");
+        assert_eq!(config.db_path, Some(PathBuf::from("/scratch/ariadne.db")));
+        assert_eq!(config.prevent_sleep, Some(false));
+        assert_eq!(config.socket_path, None);
+    }
+
+    /// A misspelled key is the whole point of parsing strictly: it would
+    /// otherwise be a setting the user believes is in force and is not.
+    #[test]
+    fn an_unknown_key_is_an_error_naming_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        write_config(dir.path(), "prevent_slep = false\n");
+        let err = parse_config(dir.path())
+            .expect_err("unknown key")
+            .to_string();
+        assert!(err.contains("config.toml"), "{err}");
+        assert!(err.contains("prevent_slep"), "{err}");
+    }
+
+    #[test]
+    fn a_syntax_error_is_reported_rather_than_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        write_config(dir.path(), "socket_path = [not toml\n");
+        assert!(matches!(
+            parse_config(dir.path()),
+            Err(ConfigError::Parse { .. })
+        ));
     }
 }

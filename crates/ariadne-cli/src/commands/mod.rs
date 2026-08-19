@@ -3,6 +3,7 @@
 pub mod agent_event;
 pub mod attach;
 pub mod attention;
+pub mod doctor;
 pub mod goal;
 pub mod mcp;
 pub mod profile;
@@ -12,7 +13,7 @@ pub mod setup;
 pub mod task;
 
 use std::io::{IsTerminal, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -239,21 +240,87 @@ fn ariadne_home(home_override: Option<PathBuf>) -> PathBuf {
 }
 
 /// Find the ariadned binary: next to the current executable, else on PATH.
-fn find_ariadned() -> Result<PathBuf> {
+pub fn find_ariadned() -> Result<PathBuf> {
     if let Ok(me) = std::env::current_exe()
         && let Some(dir) = me.parent()
     {
         let sibling = dir.join("ariadned");
-        if sibling.is_file() {
+        if is_executable(&sibling) {
             return Ok(sibling);
         }
     }
     which("ariadned").context("ariadned not found next to ariadne or on PATH")
 }
 
-fn which(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .map(|d| d.join(name))
-        .find(|c| c.is_file())
+/// First entry of `PATH` holding an executable of that name.
+pub fn which(name: &str) -> Option<PathBuf> {
+    which_in(&std::env::var_os("PATH")?, name)
+}
+
+/// The same lookup against a given `PATH`, so it can be tested without
+/// rewriting the environment of the process running the tests.
+fn which_in(path: &std::ffi::OsStr, name: &str) -> Option<PathBuf> {
+    std::env::split_paths(path)
+        .map(|dir| dir.join(name))
+        .find(|candidate| is_executable(candidate))
+}
+
+/// A file that can actually be run.
+///
+/// Presence is not enough: a `codex` on PATH with no execute bit is a file,
+/// not an agent, and every caller here is about to run what it finds — or,
+/// in `ariadne doctor`, to report that something else can.
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    // Follows symlinks on purpose: what matters is what running it reaches.
+    std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::os::unix::fs::PermissionsExt;
+
+    fn write(path: &Path, mode: u32) {
+        std::fs::write(path, "").unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+    }
+
+    /// `which` answers for callers that are about to run what it finds, so a
+    /// file without an execute bit is not an answer.
+    #[test]
+    fn a_file_with_no_execute_bit_is_not_executable() {
+        let dir = tempfile::tempdir().unwrap();
+        let plain = dir.path().join("codex");
+        write(&plain, 0o644);
+        assert!(!is_executable(&plain));
+        std::fs::set_permissions(&plain, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(is_executable(&plain));
+    }
+
+    #[test]
+    fn a_directory_is_never_executable() {
+        let dir = tempfile::tempdir().unwrap();
+        let named = dir.path().join("ariadned");
+        std::fs::create_dir(&named).unwrap();
+        assert!(!is_executable(&named));
+    }
+
+    /// PATH order stands, but a non-executable entry is skipped rather than
+    /// shadowing the real thing further along.
+    #[test]
+    fn a_non_executable_entry_does_not_shadow_a_later_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let (first, second) = (dir.path().join("a"), dir.path().join("b"));
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        write(&first.join("codex"), 0o644);
+        write(&second.join("codex"), 0o755);
+
+        let path = std::env::join_paths([&first, &second]).unwrap();
+        assert_eq!(which_in(&path, "codex"), Some(second.join("codex")));
+        let only_first = std::env::join_paths([&first]).unwrap();
+        assert_eq!(which_in(&only_first, "codex"), None);
+    }
 }

@@ -125,6 +125,7 @@ if [ "$WITH_SERVICE" = 1 ]; then
 fi
 [ "$WITH_CODEX_HOOKS" = 1 ] && plan_add "Trusting Ariadne's Codex hooks"
 plan_add "Writing the install manifest $UI_ARROW $(ui_tilde "$MANIFEST")"
+plan_add "Checking the installation (ariadne doctor)"
 ui_start
 
 ui_header "Ariadne installer" \
@@ -395,6 +396,27 @@ EOF
 [ -n "$APP_PATH" ] && printf 'ARIADNE_APP="%s"\n' "$APP_PATH" >> "$MANIFEST"
 step_ok
 
+# --- checkup ----------------------------------------------------------------------------
+# Everything is installed and the daemon has answered, so the install itself
+# has succeeded; this is the report on what the finished machine looks like.
+# doctor exits 1 when it finds something broken — a missing agent CLI, an
+# unwritable directory — and none of that unmakes the install, so its verdict
+# is shown and never allowed to fail the script. The binary is the one just
+# installed, not whatever an older PATH entry answers to.
+DOCTOR_STATE="ok"
+step_begin
+if [ "$UI_QUIET" = 1 ]; then
+    # --quiet is errors and the summary only: the report goes to the log.
+    run_logged "$PREFIX/ariadne" doctor || DOCTOR_STATE="reported problems"
+else
+    run_interactive "$PREFIX/ariadne" doctor || DOCTOR_STATE="reported problems"
+fi
+if [ "$DOCTOR_STATE" = "ok" ]; then
+    step_ok
+else
+    step_ok "$DOCTOR_STATE - see the report above"
+fi
+
 # --- summary ----------------------------------------------------------------------------
 printf '\n%sAriadne installed.%s\n\n' "$UI_B$UI_GREEN" "$UI_R"
 ui_field "binaries" "$(ui_tilde "$PREFIX")/{ariadne,ariadned}"
@@ -410,6 +432,7 @@ else
 fi
 ui_field "desktop app" "$APP_STATE"
 [ "$WITH_CODEX_HOOKS" = 1 ] && ui_field "codex hooks" "$CODEX_STATE"
+ui_field "checkup" "ariadne doctor - $DOCTOR_STATE"
 ui_field "manifest" "$(ui_tilde "$MANIFEST")"
 ui_field "log" "$(ui_tilde "$LOG_FILE")"
 printf '\n'
