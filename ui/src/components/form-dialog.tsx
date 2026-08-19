@@ -10,9 +10,15 @@
  * So a form dialog says whether it is dirty, and this stands in for
  * `<Dialog>`: pristine it dismisses exactly as before, dirty every way out —
  * outside press, Escape, the close button, the form's own Cancel — asks
- * first. There is one way out it deliberately does not touch, which is the
- * form submitting: that closes through `onOpenChange` from the submit handler
- * rather than through a dismissal, and by then there is nothing to discard.
+ * first.
+ *
+ * What it guards is dismissal, which is the dialog root's `onOpenChange` and
+ * nothing else. A submit is not a dismissal and needs no way around the guard:
+ * a form closes itself on success by calling the `onOpenChange` it was handed,
+ * which is the caller's own setter rather than the guarded handler this passes
+ * down, so a saved form closes on the spot with nothing asked about a draft
+ * that is no longer one. `form-dialog.test.tsx` pins that, as does the
+ * repository dialog's own test through a real mutation.
  *
  * The confirmation is a dialog of its own nested inside this one's root, which
  * is what keeps Base UI's stacking, focus trap and Escape handling straight:
