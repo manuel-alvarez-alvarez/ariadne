@@ -302,6 +302,29 @@ impl Harness {
         pool.close().await;
     }
 
+    /// Write an attention flag straight into the database, the way a daemon
+    /// that did not know better left one behind. It has to go around the
+    /// store, which now refuses to raise a prompt on a session that has
+    /// ended — which is why there are rows like this to heal at all.
+    async fn stale_attention(&self, session: &AgentSession, reason: AttentionReason) {
+        let pool = sqlx::SqlitePool::connect(&format!(
+            "sqlite://{}",
+            self.dir.path().join("test.db").display()
+        ))
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE agent_sessions SET attention_reason = ?, attention_since = ? WHERE id = ?",
+        )
+        .bind(reason.as_str())
+        .bind(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+        .bind(&session.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+    }
+
     /// Tell the stub tmux this pane exists.
     fn pane_exists(&self, session: &AgentSession) {
         let alive = self.dir.path().join("alive");
@@ -941,10 +964,7 @@ async fn a_stale_prompt_flag_from_before_the_daemon_started_is_swept_up() {
             .set_session_status(&session.id, SessionStatus::Exited)
             .await
             .unwrap();
-        h.store
-            .set_session_attention(&session.id, reason)
-            .await
-            .unwrap();
+        h.stale_attention(&session, reason).await;
         sessions.push(session);
     }
 

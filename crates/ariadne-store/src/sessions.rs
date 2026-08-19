@@ -152,12 +152,29 @@ impl Store {
     /// Re-raising the reason already stored is a no-op, `attention_since`
     /// included: a detector that keeps seeing the same permission prompt must
     /// not keep resetting how long the agent has been stuck on it.
+    ///
+    /// A prompt-style reason additionally only lands on a session that is
+    /// still live, and that half of the question rides in the `UPDATE` rather
+    /// than being asked first: the caller's view of the status is always a
+    /// moment old, and a permission event being ingested as the session is
+    /// retired must not write the dialog back onto the row the retirement
+    /// just cleaned. The reasons a session ends carrying go up whatever its
+    /// status is — flagging a dead agent is what `disconnected` is for.
+    ///
+    /// A withheld raise is not an error: the session exists, it just is not
+    /// somewhere the flag means anything.
     pub async fn set_session_attention(&self, id: &str, reason: AttentionReason) -> Result<()> {
-        let n = sqlx::query(
+        // Same statuses as `SessionStatus::is_live`, in the one place SQL has
+        // to know them next to the live filter in `list_sessions`.
+        let while_live = match reason.is_prompt() {
+            true => " AND status IN ('starting', 'running', 'idle')",
+            false => "",
+        };
+        let n = sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE agent_sessions
                 SET attention_reason = ?, attention_since = ?
-              WHERE id = ? AND (attention_reason IS NULL OR attention_reason <> ?)",
-        )
+              WHERE id = ? AND (attention_reason IS NULL OR attention_reason <> ?){while_live}"
+        )))
         .bind(reason.as_str())
         .bind(now())
         .bind(id)
@@ -166,7 +183,8 @@ impl Store {
         .await?
         .rows_affected();
         if n == 0 {
-            // Either the session is gone or it already carries this reason.
+            // The session is gone, it already carries this reason, or it has
+            // ended and cannot be waiting on a dialog.
             self.get_session(id).await?;
             return Ok(());
         }
