@@ -243,32 +243,30 @@ mod tests {
         }
     }
 
-    /// A real Claude Code 2.1.235 Notification payload for a tool that is
-    /// waiting on the permission dialog.
+    /// A Notification payload captured from Claude Code 2.1.235 sitting on a
+    /// permission dialog.
     fn permission_notification() -> serde_json::Value {
         json!({
-            "session_id": "5f3b1c8e-1234-4a2b-9d0e-0123456789ab",
-            "transcript_path": "/Users/me/.claude/projects/-tmp-wt/5f3b1c8e.jsonl",
             "cwd": "/tmp/wt",
-            "permission_mode": "default",
             "hook_event_name": "Notification",
-            "message": "Claude needs your permission to use Bash",
-            "title": "Claude Code",
+            "message": "Claude needs your permission",
             "notification_type": "permission_prompt",
+            "prompt_id": "c58b5911-1a83-4548-8d70-ba2e83ade968",
+            "session_id": "5cf3f43d-6d22-42eb-8e44-8213bee346cd",
+            "transcript_path": "/Users/me/.claude/projects/-tmp-wt/5cf3f43d.jsonl",
         })
     }
 
     /// The same hook after the prompt input sat idle past the threshold.
     fn idle_notification() -> serde_json::Value {
         json!({
-            "session_id": "5f3b1c8e-1234-4a2b-9d0e-0123456789ab",
-            "transcript_path": "/Users/me/.claude/projects/-tmp-wt/5f3b1c8e.jsonl",
             "cwd": "/tmp/wt",
-            "permission_mode": "default",
             "hook_event_name": "Notification",
             "message": "Claude is waiting for your input",
-            "title": "Claude Code",
             "notification_type": "idle_prompt",
+            "prompt_id": "c58b5911-1a83-4548-8d70-ba2e83ade968",
+            "session_id": "5cf3f43d-6d22-42eb-8e44-8213bee346cd",
+            "transcript_path": "/Users/me/.claude/projects/-tmp-wt/5cf3f43d.jsonl",
         })
     }
 
