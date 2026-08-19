@@ -16,10 +16,10 @@ import { toast } from "sonner"
 import { z } from "zod"
 
 import { ApiError, type RepositoryDto } from "@/api"
-import { FormDialog } from "@/components/form-dialog"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
+  Dialog,
   DialogClose,
   DialogContent,
   DialogDescription,
@@ -136,7 +136,7 @@ export function RepositoryFormDialog({
   }
 
   return (
-    <FormDialog open={open} onOpenChange={onOpenChange} dirty={formState.isDirty}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <form onSubmit={handleSubmit(submit)} className="grid gap-4">
           <DialogHeader>
@@ -221,6 +221,6 @@ export function RepositoryFormDialog({
           </DialogFooter>
         </form>
       </DialogContent>
-    </FormDialog>
+    </Dialog>
   )
 }

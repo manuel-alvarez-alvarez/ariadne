@@ -78,14 +78,11 @@ function stubDaemon(failure?: { status: number; code: string; message: string })
   })
 }
 
-function renderDialog(
-  repository: RepositoryDto | null,
-  onOpenChange: (open: boolean) => void = () => {},
-) {
+function renderDialog(repository: RepositoryDto | null) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
   return render(
     <QueryClientProvider client={queryClient}>
-      <RepositoryFormDialog open onOpenChange={onOpenChange} repository={repository} />
+      <RepositoryFormDialog open onOpenChange={() => {}} repository={repository} />
     </QueryClientProvider>,
   )
 }
@@ -229,68 +226,5 @@ describe("editing a repository", () => {
       expect(lastWrite()).toBeDefined()
     })
     expect(lastWrite()?.body?.description).toBe("")
-  })
-})
-
-/**
- * The form holds a path nobody enjoys typing twice, so an outside press is not
- * an instruction to delete it — but an untouched form is still a form the user
- * gets to walk away from without being asked anything.
- */
-describe("dismissing the dialog", () => {
-  it("closes an untouched form straight away", async () => {
-    const user = userEvent.setup()
-    const onOpenChange = vi.fn()
-    renderDialog(REPOSITORY, onOpenChange)
-
-    await user.click(screen.getByRole("button", { name: "Cancel" }))
-
-    expect(onOpenChange).toHaveBeenCalledWith(false)
-    expect(screen.queryByText("Discard changes?")).toBeNull()
-  })
-
-  it("asks before dropping what was typed, and keeps it when the answer is no", async () => {
-    const user = userEvent.setup()
-    const onOpenChange = vi.fn()
-    renderDialog(null, onOpenChange)
-
-    await user.type(screen.getByLabelText("Path"), "/home/me/dev/new")
-    await user.keyboard("{Escape}")
-
-    expect(await screen.findByText("Discard changes?")).toBeDefined()
-    expect(onOpenChange).not.toHaveBeenCalled()
-
-    await user.click(screen.getByRole("button", { name: "Keep editing" }))
-
-    expect((screen.getByLabelText("Path") as HTMLInputElement).value).toBe("/home/me/dev/new")
-    expect(onOpenChange).not.toHaveBeenCalled()
-  })
-
-  it("closes a saved form on the spot, with no draft left to ask about", async () => {
-    const user = userEvent.setup()
-    const onOpenChange = vi.fn()
-    renderDialog(null, onOpenChange)
-
-    await user.type(screen.getByLabelText("Path"), "/home/me/dev/new")
-    await user.click(screen.getByRole("button", { name: "Register repository" }))
-
-    await waitFor(() => {
-      expect(onOpenChange).toHaveBeenCalledWith(false)
-    })
-    expect(lastWrite()).toMatchObject({ method: "POST", path: "/v1/repositories" })
-    expect(screen.queryByText("Discard changes?")).toBeNull()
-  })
-
-  it("closes and drops the draft once the discard is confirmed", async () => {
-    const user = userEvent.setup()
-    const onOpenChange = vi.fn()
-    renderDialog(null, onOpenChange)
-
-    await user.type(screen.getByLabelText("Path"), "/home/me/dev/new")
-    await user.click(screen.getByRole("button", { name: "Cancel" }))
-    await user.click(await screen.findByRole("button", { name: "Discard" }))
-
-    expect(onOpenChange).toHaveBeenCalledWith(false)
-    expect(requests.filter((one) => one.method !== "GET")).toEqual([])
   })
 })
