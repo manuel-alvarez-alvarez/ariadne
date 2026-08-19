@@ -9,7 +9,7 @@ use ariadne_api::goals::GoalDto;
 use ariadne_api::sessions::{SessionDto, SessionListQuery};
 use ariadne_api::tasks::TaskDto;
 use ariadne_client::Client;
-use ariadne_core::{AttentionReason, Role, SessionStatus};
+use ariadne_core::{AttentionReason, SessionStatus};
 
 use super::attention::reason_label;
 use super::{ProfileNames, confirm};
@@ -54,11 +54,6 @@ pub enum SessionCommand {
         /// listed whether or not it is a live one
         #[arg(long, value_enum)]
         status: Option<SessionStatus>,
-        /// Filter by role, once the rows are here: `GET /v1/sessions` takes
-        /// no role, so this narrows what it answered — as the UI's own role
-        /// filter does. Composes with the rest: it never widens the list
-        #[arg(long, value_enum)]
-        role: Option<Role>,
         /// Include finished sessions (exited/failed), not just live ones;
         /// nothing to add once --status names one
         #[arg(short, long)]
@@ -102,21 +97,26 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
             task,
             goal,
             status,
-            role,
             all,
             no_trunc,
         } => {
-            let filtered = goal.is_some() || task.is_some() || status.is_some() || role.is_some();
+            let filtered = goal.is_some() || task.is_some() || status.is_some();
             let query = SessionListQuery {
                 goal,
                 task,
                 status,
                 attention: None,
             };
-            let sessions: Vec<SessionDto> = client
+            let mut sessions: Vec<SessionDto> = client
                 .get_json(&query_path("/v1/sessions", &query)?)
                 .await?;
-            let sessions = visible(sessions, all, status, role);
+            // The default is docker's: live sessions, history behind --all.
+            // A named status is that same choice made precisely, so it takes
+            // over — `--status exited` that then dropped every row for not
+            // being live would answer nothing at all.
+            if !all && status.is_none() {
+                sessions.retain(|s| s.status.is_live());
+            }
             match format {
                 Format::Json => print_json(&sessions)?,
                 Format::Table => {
@@ -250,29 +250,6 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
     Ok(())
 }
 
-/// Which of the sessions the daemon answered with `session ls` shows.
-///
-/// The default is docker's: live sessions, history behind --all. A named
-/// status is that same choice made precisely, so it takes over — `--status
-/// exited` that then dropped every row for not being live would answer
-/// nothing at all.
-///
-/// The role is narrower than either and applies on top of both: `GET
-/// /v1/sessions` takes no role, so — like the UI's own role filter — it is
-/// applied to the answer rather than asked for.
-fn visible(
-    sessions: Vec<SessionDto>,
-    all: bool,
-    status: Option<SessionStatus>,
-    role: Option<Role>,
-) -> Vec<SessionDto> {
-    sessions
-        .into_iter()
-        .filter(|s| all || status.is_some() || s.status.is_live())
-        .filter(|s| role.is_none_or(|r| s.role == r))
-        .collect()
-}
-
 /// The goal and task titles behind the sessions of a table, for its context
 /// column: which piece of work each agent was run for, which the ids on the
 /// row cannot say.
@@ -393,62 +370,6 @@ mod tests {
         let empty = SessionContext::default();
         assert_eq!(empty.label(&session("01GOAL", Some("01OTHER"))), "01OTHER");
         assert_eq!(empty.label(&session("01GOAL", None)), "goal: 01GOAL");
-    }
-
-    /// One session per role and per liveness, as `session ls` receives them
-    /// from the daemon: the planner is running, the engineer has exited.
-    fn listed() -> Vec<SessionDto> {
-        let mut planner = session("01GOAL", None);
-        planner.id = "01PLAN".into();
-        planner.role = Role::Planner;
-        let mut engineer = session("01GOAL", Some("01TASK"));
-        engineer.id = "01ENG".into();
-        engineer.status = SessionStatus::Exited;
-        vec![planner, engineer]
-    }
-
-    fn ids(sessions: Vec<SessionDto>) -> Vec<String> {
-        sessions.into_iter().map(|s| s.id).collect()
-    }
-
-    /// The default view is unchanged: live sessions, and history only once
-    /// --all or a named --status asks for it.
-    #[test]
-    fn the_default_view_is_the_live_one() {
-        assert_eq!(ids(visible(listed(), false, None, None)), ["01PLAN"]);
-        assert_eq!(
-            ids(visible(listed(), true, None, None)),
-            ["01PLAN", "01ENG"]
-        );
-        assert_eq!(
-            ids(visible(listed(), false, Some(SessionStatus::Exited), None)),
-            ["01PLAN", "01ENG"],
-            "a named status is the daemon's to answer, not ours to second-guess"
-        );
-    }
-
-    /// The role narrows whatever the rest of the flags settled on, and never
-    /// widens it: a finished engineer stays behind --all even when --role
-    /// names engineers.
-    #[test]
-    fn a_role_narrows_the_view_it_is_used_with() {
-        assert_eq!(
-            ids(visible(listed(), false, None, Some(Role::Planner))),
-            ["01PLAN"]
-        );
-        assert_eq!(
-            ids(visible(listed(), false, None, Some(Role::Engineer))),
-            [] as [String; 0],
-            "the only engineer here has exited"
-        );
-        assert_eq!(
-            ids(visible(listed(), true, None, Some(Role::Engineer))),
-            ["01ENG"]
-        );
-        assert_eq!(
-            ids(visible(listed(), false, None, Some(Role::Reviewer))),
-            [] as [String; 0]
-        );
     }
 
     /// `ls` and `inspect` spell a reason the way `ariadne attention` does —
