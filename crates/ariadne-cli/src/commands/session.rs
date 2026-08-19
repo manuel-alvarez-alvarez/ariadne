@@ -9,23 +9,32 @@ use ariadne_api::goals::GoalDto;
 use ariadne_api::sessions::{SessionDto, SessionListQuery};
 use ariadne_api::tasks::TaskDto;
 use ariadne_client::Client;
-use ariadne_core::SessionStatus;
+use ariadne_core::{AttentionReason, SessionStatus};
 
+use super::attention::reason_label;
 use super::{ProfileNames, confirm};
 use crate::output::{
     Column, Format, UNCAPPED, local_time, note, print_json, print_kv, print_table,
 };
 use crate::query::query_path;
 
-/// Columns of `session ls`. The context is the one written by a human — a goal
-/// or task title runs as long as it likes — so it is capped the way `task ls`
-/// caps its titles; what it is cut to still says which work the row is about.
+/// Columns of `session ls`.
+///
+/// `context` is the one written by a human — a goal or task title runs as long
+/// as it likes — so it is capped the way `task ls` caps its titles; what it is
+/// cut to still says which work the row is about.
+///
+/// `attention` is next to `status` because the two are orthogonal: an agent
+/// blocked on a permission prompt is still `running`, and the status alone
+/// says nothing about it. It is `-` for a healthy session, and its wording is
+/// `ariadne attention`'s, which is the UI's.
 const LS: &[Column] = &[
     ("id", UNCAPPED),
     ("context", 40),
     ("role", UNCAPPED),
     ("agent", UNCAPPED),
     ("status", UNCAPPED),
+    ("attention", UNCAPPED),
     ("tmux", 32),
     ("internal id", 36),
 ];
@@ -123,6 +132,7 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
                                     s.role.as_str().into(),
                                     s.agent_kind.as_str().into(),
                                     s.status.as_str().into(),
+                                    attention_label(s.attention_reason),
                                     s.tmux_session.clone(),
                                     s.internal_session_id.clone().unwrap_or_else(|| "-".into()),
                                 ]
@@ -162,6 +172,11 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
                         // on even if the profile has moved on since.
                         ("model", s.model.unwrap_or_else(|| "default".into())),
                         ("status", s.status.as_str().into()),
+                        ("attention", attention_label(s.attention_reason)),
+                        (
+                            "attention since",
+                            s.attention_since.as_deref().map_or("-".into(), local_time),
+                        ),
                         ("tmux", s.tmux_session),
                         ("worktree", s.worktree_path.unwrap_or_else(|| "-".into())),
                         (
@@ -279,6 +294,12 @@ impl SessionContext {
     }
 }
 
+/// Why this session wants the user, in `ariadne attention`'s own words — and
+/// `-` when it does not.
+fn attention_label(reason: Option<AttentionReason>) -> String {
+    reason.map_or("-".into(), |r| reason_label(r).to_string())
+}
+
 /// What `session kill` asks: a live agent is about to lose its terminal, and
 /// the id alone does not say whose.
 fn kill_question(s: &SessionDto) -> String {
@@ -349,5 +370,29 @@ mod tests {
         let empty = SessionContext::default();
         assert_eq!(empty.label(&session("01GOAL", Some("01OTHER"))), "01OTHER");
         assert_eq!(empty.label(&session("01GOAL", None)), "goal: 01GOAL");
+    }
+
+    /// `ls` and `inspect` spell a reason the way `ariadne attention` does —
+    /// which is the UI's wording — and say nothing at all when there is none.
+    #[test]
+    fn a_session_carries_the_attention_wording_of_the_attention_list() {
+        assert_eq!(
+            attention_label(Some(AttentionReason::WaitingPermission)),
+            "waiting for permission"
+        );
+        assert_eq!(
+            attention_label(Some(AttentionReason::WaitingInput)),
+            "waiting for input"
+        );
+        assert_eq!(
+            attention_label(Some(AttentionReason::AgentError)),
+            "agent error"
+        );
+        assert_eq!(
+            attention_label(Some(AttentionReason::Disconnected)),
+            "disconnected"
+        );
+        assert_eq!(attention_label(Some(AttentionReason::Stalled)), "stalled");
+        assert_eq!(attention_label(None), "-");
     }
 }

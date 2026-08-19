@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest"
 
 import type { GoalDto, SessionDto, TaskDto } from "@/api"
 
+import { sessionAttention } from "@/features/sessions/session-display"
+
 import { collectAttention, taskAttentionReason } from "./attention"
 
 function task(overrides: Partial<TaskDto>): TaskDto {
@@ -74,6 +76,40 @@ describe("taskAttentionReason", () => {
   })
 })
 
+describe("sessionAttention", () => {
+  it("leaves a healthy session alone", () => {
+    expect(sessionAttention(session({ status: "running" }))).toBeNull()
+    expect(sessionAttention(session({ status: "idle" }))).toBeNull()
+    expect(sessionAttention(session({ status: "exited" }))).toBeNull()
+  })
+
+  // The same five the daemon can raise, plus the death that raises none.
+  it("reports every reason the daemon can flag, and a dead agent", () => {
+    expect(
+      sessionAttention(session({ status: "running", attention_reason: "waiting_permission" })),
+    ).toBe("waiting_permission")
+    expect(sessionAttention(session({ status: "idle", attention_reason: "waiting_input" }))).toBe(
+      "waiting_input",
+    )
+    expect(sessionAttention(session({ status: "running", attention_reason: "agent_error" }))).toBe(
+      "agent_error",
+    )
+    expect(sessionAttention(session({ status: "running", attention_reason: "disconnected" }))).toBe(
+      "disconnected",
+    )
+    expect(sessionAttention(session({ status: "idle", attention_reason: "stalled" }))).toBe(
+      "stalled",
+    )
+    expect(sessionAttention(session({ status: "failed" }))).toBe("failed")
+  })
+
+  it("prefers the reason over the death that followed it", () => {
+    expect(sessionAttention(session({ status: "failed", attention_reason: "agent_error" }))).toBe(
+      "agent_error",
+    )
+  })
+})
+
 describe("collectAttention", () => {
   it("keeps only the tasks that want the user", () => {
     const items = collectAttention(
@@ -90,7 +126,30 @@ describe("collectAttention", () => {
     expect(items.every((item) => item.kind === "task")).toBe(true)
   })
 
-  it("mixes tasks and failed sessions into one list, most recently moved first", () => {
+  it("keeps only the sessions that want the user", () => {
+    const items = collectAttention(
+      [goal({})],
+      [],
+      [
+        session({ id: "s1", status: "running" }),
+        session({ id: "s2", status: "failed", ended_at: "2026-08-16T10:00:00Z" }),
+        session({
+          id: "s3",
+          status: "idle",
+          attention_reason: "waiting_permission",
+          attention_since: "2026-08-16T12:00:00Z",
+        }),
+      ],
+    )
+
+    expect(items.map((item) => item.id)).toEqual(["s3", "s2"])
+    expect(items.map((item) => item.kind === "session" && item.reason)).toEqual([
+      "waiting_permission",
+      "failed",
+    ])
+  })
+
+  it("mixes tasks and sessions into one list, most recently moved first", () => {
     const items = collectAttention(
       [goal({})],
       [
@@ -107,6 +166,42 @@ describe("collectAttention", () => {
     const [item] = collectAttention([], [], [session({ created_at: "2026-08-16T08:00:00Z" })])
 
     expect(item?.at).toBe("2026-08-16T08:00:00Z")
+  })
+
+  // The row is about the waiting, not about the agent: a session that has been
+  // blocked on a prompt for an hour reads as an hour old, not as however long
+  // ago it started.
+  it("ages a flagged session by when its reason was raised", () => {
+    const [item] = collectAttention(
+      [],
+      [],
+      [
+        session({
+          status: "running",
+          attention_reason: "waiting_permission",
+          attention_since: "2026-08-16T11:00:00Z",
+          created_at: "2026-08-16T08:00:00Z",
+        }),
+      ],
+    )
+
+    expect(item?.at).toBe("2026-08-16T11:00:00Z")
+  })
+
+  // The goal is where the row sits; the task is what the agent was doing.
+  it("names the task a session was run for, and nothing for a planner's", () => {
+    const items = collectAttention(
+      [goal({})],
+      [task({ id: "t1", title: "Wire the strip" })],
+      [
+        session({ id: "s1", task_id: "t1" }),
+        session({ id: "s2", role: "planner" }),
+        session({ id: "s3", task_id: "gone" }),
+      ],
+    )
+
+    const tasks = items.map((item) => item.kind === "session" && item.task?.title)
+    expect(tasks).toEqual(["Wire the strip", undefined, undefined])
   })
 
   it("names the goal each row belongs to, and keeps rows whose goal is missing", () => {

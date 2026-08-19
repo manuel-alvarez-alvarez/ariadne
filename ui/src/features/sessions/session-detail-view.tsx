@@ -3,6 +3,20 @@
  * what it reported. No page chrome, so it renders the same inside the goal
  * panel and the task panel.
  *
+ * What it is comes first and stays there — a compact block of facts, the same
+ * shape as the task panel's — because it is what identifies the session, and
+ * it is short. What it is *doing* is the long half, and the two halves of that
+ * (the pane and the reported events) are two answers to the same question:
+ * they share the space as tabs rather than stacking into a page nobody reaches
+ * the bottom of. The terminal is the tab that is open by default, since it is
+ * why one opens a session at all.
+ *
+ * Switching tabs unmounts the terminal, which drops its log stream. That is
+ * the same trade `task-sessions.tsx` already takes for the selection itself:
+ * every connection replays the whole pane from a snapshot, so coming back
+ * costs a reconnect and shows the same thing, where keeping it mounted would
+ * hold a stream open for a pane nobody is looking at.
+ *
  * The metadata comes from the query cache, which the event dispatcher keeps
  * current — a session going idle or being killed elsewhere updates this view
  * without a refetch. The terminal is the exception: it is a byte stream, not
@@ -10,23 +24,28 @@
  */
 
 import { useQuery } from "@tanstack/react-query"
-import type { ReactNode } from "react"
+import { type ReactNode, useState } from "react"
 import { Link } from "react-router-dom"
 
 import type { SessionDto } from "@/api"
 import { CopyableId, CopyableIdMenu } from "@/components/copyable-id"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { modelLabel } from "@/features/profiles/profile-labels"
+import { ProfileSummary } from "@/features/profiles/profile-summary"
 import { sessionCopyEntries } from "@/lib/copy-entries"
-import { AGENT_KIND_LABELS, ROLE_LABELS } from "@/lib/labels"
+import { ROLE_LABELS } from "@/lib/labels"
 import { formatAbsolute, formatAge } from "@/lib/time"
 import { paths, useTaskPanelTo } from "@/routes/paths"
 
-import { goalQueryOptions, profilesQueryOptions, taskQueryOptions } from "./queries"
+import { goalQueryOptions, taskQueryOptions } from "./queries"
 import { SessionActions } from "./session-actions"
 import { SessionActivity } from "./session-activity"
-import { SessionStatusBadge } from "./session-display"
+import { SessionAttentionBadge, SessionStatusBadge } from "./session-display"
 import { SessionTerminal } from "./session-terminal"
 import { useNow } from "./use-now"
+
+/** The two halves of what a session is doing; the pane is what is opened for. */
+type Tab = "terminal" | "activity"
 
 export function SessionDetailView({
   session,
@@ -48,9 +67,8 @@ export function SessionDetailView({
     ...taskQueryOptions(session.task_id ?? ""),
     enabled: Boolean(session.task_id),
   })
-  const profiles = useQuery(profilesQueryOptions())
-  const profile = profiles.data?.find((item) => item.id === session.profile_id)
   const taskTo = useTaskPanelTo(session.task_id ?? "")
+  const [tab, setTab] = useState<Tab>("terminal")
 
   return (
     <div className="space-y-4">
@@ -59,6 +77,12 @@ export function SessionDetailView({
           {ROLE_LABELS[session.role]} session
         </h1>
         <SessionStatusBadge status={session.status} />
+        {/* Next to the status rather than instead of it: the two are
+            orthogonal — an agent blocked on a permission prompt is still
+            running — and the pair is what says what to do about it. */}
+        {session.attention_reason ? (
+          <SessionAttentionBadge attention={session.attention_reason} />
+        ) : null}
         <CopyableIdMenu
           value={session.id}
           label="session id"
@@ -70,92 +94,85 @@ export function SessionDetailView({
         </div>
       </header>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Details</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
-            {context === "goal" ? null : (
-              <Detail label="Goal">
-                <Link to={paths.goal(session.goal_id)} className="hover:underline">
-                  {goal.data?.title ?? <Mono>{session.goal_id}</Mono>}
-                </Link>
-              </Detail>
+      <dl className="grid gap-x-6 gap-y-3 rounded-lg border bg-card p-3 sm:grid-cols-2 lg:grid-cols-3">
+        {context === "goal" ? null : (
+          <Detail label="Goal">
+            <Link to={paths.goal(session.goal_id)} className="hover:underline">
+              {goal.data?.title ?? <Mono>{session.goal_id}</Mono>}
+            </Link>
+          </Detail>
+        )}
+        {context === "task" ? null : (
+          <Detail label="Task">
+            {session.task_id ? (
+              <Link to={taskTo} className="hover:underline">
+                {task.data?.title ?? <Mono>{session.task_id}</Mono>}
+              </Link>
+            ) : (
+              <span className="text-muted-foreground">— (planner session)</span>
             )}
-            {context === "task" ? null : (
-              <Detail label="Task">
-                {session.task_id ? (
-                  <Link to={taskTo} className="hover:underline">
-                    {task.data?.title ?? <Mono>{session.task_id}</Mono>}
-                  </Link>
-                ) : (
-                  <span className="text-muted-foreground">— (planner session)</span>
-                )}
-              </Detail>
-            )}
-            <Detail label="Profile">
-              {profile?.name ?? (
-                <CopyableId value={session.profile_id} label="profile id" className="text-xs" />
-              )}
-              <span className="text-muted-foreground">
-                {" "}
-                · {AGENT_KIND_LABELS[session.agent_kind]}
-              </span>
-            </Detail>
-            <Detail label="tmux session">
-              <CopyableId value={session.tmux_session} label="tmux session" className="text-xs" />
-            </Detail>
-            <Detail label="Worktree">
-              {session.worktree_path ? (
-                <CopyableId
-                  value={session.worktree_path}
-                  label="worktree path"
-                  className="text-xs"
-                />
-              ) : (
-                <Dash />
-              )}
-            </Detail>
-            <Detail label="Agent session id">
-              {session.internal_session_id ? (
-                <CopyableId
-                  value={session.internal_session_id}
-                  label="agent session id"
-                  className="text-xs"
-                />
-              ) : (
-                <Dash />
-              )}
-            </Detail>
-            <Detail label="Review round">{session.review_round ?? <Dash />}</Detail>
-            <Detail label="Started">
-              <Ago at={session.created_at} now={now} />
-            </Detail>
-            <Detail label={session.ended_at ? "Ended" : "Last activity"}>
-              <Ago at={session.ended_at ?? session.last_activity_at} now={now} />
-            </Detail>
-          </dl>
-        </CardContent>
-      </Card>
+          </Detail>
+        )}
+        <Detail label="Profile">
+          {/* The session's own snapshot, not the profile's current fields: the
+              profile may have been edited since this agent was launched. */}
+          <ProfileSummary profileId={session.profile_id} launched={session} className="text-sm" />
+        </Detail>
+        <Detail label="Model">
+          {/* Null on the wire means the agent CLI picked, which is a fact
+              about the session and not a missing value — hence a word rather
+              than a dash. */}
+          <span className={session.model ? "font-mono text-xs" : "text-muted-foreground"}>
+            {modelLabel(session.model)}
+          </span>
+        </Detail>
+        <Detail label="tmux session">
+          <CopyableId value={session.tmux_session} label="tmux session" className="text-xs" />
+        </Detail>
+        <Detail label="Worktree">
+          {session.worktree_path ? (
+            <CopyableId value={session.worktree_path} label="worktree path" className="text-xs" />
+          ) : (
+            <Dash />
+          )}
+        </Detail>
+        <Detail label="Agent session id">
+          {session.internal_session_id ? (
+            <CopyableId
+              value={session.internal_session_id}
+              label="agent session id"
+              className="text-xs"
+            />
+          ) : (
+            <Dash />
+          )}
+        </Detail>
+        <Detail label="Review round">{session.review_round ?? <Dash />}</Detail>
+        {session.attention_reason ? (
+          <Detail label="Needs attention since">
+            <Ago at={session.attention_since} now={now} />
+          </Detail>
+        ) : null}
+        <Detail label="Started">
+          <Ago at={session.created_at} now={now} />
+        </Detail>
+        <Detail label={session.ended_at ? "Ended" : "Last activity"}>
+          <Ago at={session.ended_at ?? session.last_activity_at} now={now} />
+        </Detail>
+      </dl>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Terminal</CardTitle>
-        </CardHeader>
-        <CardContent>
+      <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
+        <TabsList>
+          <TabsTrigger value="terminal">Terminal</TabsTrigger>
+          <TabsTrigger value="activity">Agent activity</TabsTrigger>
+        </TabsList>
+        <TabsContent value="terminal" className="pt-3">
           <SessionTerminal sessionId={session.id} status={session.status} />
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Agent activity</CardTitle>
-        </CardHeader>
-        <CardContent>
+        </TabsContent>
+        <TabsContent value="activity" className="pt-3">
           <SessionActivity sessionId={session.id} />
-        </CardContent>
-      </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }
