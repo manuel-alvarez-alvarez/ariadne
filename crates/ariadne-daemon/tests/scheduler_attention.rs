@@ -441,18 +441,18 @@ async fn a_session_waiting_on_a_person_is_never_nudged() {
 
 /// A pane that vanished while its work was still going is not a session that
 /// finished: it is an agent the user has lost, and it says so until something
-/// puts it back. (Here the blind resume cannot succeed — the repository is not
-/// a git repository — which is exactly the case the flag is for.)
+/// puts it back.
+///
+/// A planner, so that nothing but the sweep is under test: the goal's own
+/// reconciliation cannot start a replacement here (the repository is not a
+/// git repository) and would have nothing to say about attention if it could.
 #[tokio::test]
 async fn a_vanished_pane_with_work_still_active_is_flagged_disconnected() {
     let h = harness().await;
-    let (goal, task, engineer, _reviewer) = h.active_goal_with_task().await;
-    h.advance(&task, TaskStatus::InProgress).await;
+    let (goal, planner) = h.planning_goal().await;
     // Live in the database, gone as far as tmux is concerned: never added to
     // the stub's list of panes.
-    let session = h
-        .session(&goal, Some(&task), Role::Engineer, &engineer)
-        .await;
+    let session = h.session(&goal, None, Role::Planner, &planner).await;
 
     // The sweep runs on the tick, and the first tick is immediate.
     let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
@@ -469,7 +469,7 @@ async fn a_vanished_pane_with_work_still_active_is_flagged_disconnected() {
     // And it stays raised: a session that ended needing attention keeps the
     // reason until it is resumed or replaced.
     sched
-        .send(SchedEvent::TaskChanged(task.id.clone()))
+        .send(SchedEvent::GoalChanged(goal.id.clone()))
         .unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(
@@ -477,6 +477,34 @@ async fn a_vanished_pane_with_work_still_active_is_flagged_disconnected() {
         Some(AttentionReason::Disconnected),
         "the flag outlives the session's own status"
     );
+}
+
+/// The engineer of an active task with no live session is resumed blind, and
+/// when even that cannot get off the ground the session it tried to bring back
+/// is the thing the user has to look at.
+#[tokio::test]
+async fn an_engineer_that_cannot_be_resumed_is_flagged_disconnected() {
+    let h = harness().await;
+    let (goal, task, engineer, _reviewer) = h.active_goal_with_task().await;
+    h.advance(&task, TaskStatus::InProgress).await;
+    // Ended, with no agent conversation to resume and no git repository to
+    // spawn a fresh one in: the resume attempt cannot succeed.
+    let session = h
+        .session(&goal, Some(&task), Role::Engineer, &engineer)
+        .await;
+    h.store
+        .set_session_status(&session.id, SessionStatus::Exited)
+        .await
+        .unwrap();
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    sched
+        .send(SchedEvent::TaskChanged(task.id.clone()))
+        .unwrap();
+    eventually("the failed resume to be raised", async || {
+        h.attention(&session).await == Some(AttentionReason::Disconnected)
+    })
+    .await;
 }
 
 /// A pane going away after the work is over is just a session ending.
