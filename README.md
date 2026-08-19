@@ -107,6 +107,15 @@ Without it, codex sessions run but never report their id and can be neither
 resumed nor revived. Re-run it any time with `ariadne setup codex-hooks`, or
 skip it during install with `--no-codex-hooks` (or `--yes`).
 
+Codex grants that trust per event, so an Ariadne that declares a hook event
+your last setup did not keeps every old hook reporting and loses only the new
+one — quietly, since codex asks about it at the start of a session nobody is
+watching. `ariadne doctor` reads the verdicts back out of codex's config and
+warns by name when any declared event has none; `ariadne setup codex-hooks`
+says which are missing before it opens codex and checks again afterwards. The
+answer to both is to run setup again. Which events are declared, and why each
+one, is in `crates/ariadne-core/src/codex_hooks.rs`.
+
 The daemon then runs as a user service with restart-on-failure
 (`launchctl bootout gui/$(id -u)/dev.ariadne.daemon` /
 `systemctl --user stop ariadned` to stop it). The install ends with a checkup —
