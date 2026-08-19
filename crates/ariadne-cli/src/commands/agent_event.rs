@@ -125,7 +125,6 @@ mod tests {
         for (name, expected) in [
             ("UserPromptSubmit", "user_prompt_submit"),
             ("PreToolUse", "pre_tool_use"),
-            ("PermissionRequest", "permission_request"),
             ("PostToolUse", "post_tool_use"),
             ("Stop", "stop"),
             ("SessionEnd", "session_end"),

@@ -103,21 +103,9 @@ travel with every session as `-c` overrides — nothing is written to `~/.codex`
 but codex only runs hooks it has been trusted with, and trust is a decision only
 you can make. It is asked once: codex keys command-line hook trust on a
 synthetic path, so the approval covers every later session in every worktree.
-Without it, codex stops each session on that prompt before its first turn —
-bypass flags and all — so nothing runs, no id is reported, and the session can
-be neither resumed nor revived. Re-run it any time with `ariadne setup
-codex-hooks`, or skip it during install with `--no-codex-hooks` (or `--yes`).
-
-Codex grants that trust per event, so an Ariadne that declares a hook event
-your last setup did not keeps the verdicts you already gave and takes every
-session down to the prompt over the one that is new — quietly, since the
-prompt is at the start of a session nobody is watching. **After upgrading,
-re-run `ariadne setup codex-hooks`.** `ariadne doctor` reads the verdicts back
-out of codex's config and names any declared event that has none; `ariadne
-setup codex-hooks` says which are missing before it opens codex, and checks
-codex's own config again afterwards rather than trusting an exit status. Which
-events are declared, and why each one, is in
-`crates/ariadne-core/src/codex_hooks.rs`.
+Without it, codex sessions run but never report their id and can be neither
+resumed nor revived. Re-run it any time with `ariadne setup codex-hooks`, or
+skip it during install with `--no-codex-hooks` (or `--yes`).
 
 The daemon then runs as a user service with restart-on-failure
 (`launchctl bootout gui/$(id -u)/dev.ariadne.daemon` /

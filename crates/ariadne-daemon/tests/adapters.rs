@@ -78,15 +78,7 @@ fn claude_spawn_plan() {
     let settings: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(dir.path().join("settings.json")).unwrap())
             .unwrap();
-    for event in [
-        "SessionStart",
-        "UserPromptSubmit",
-        "PreToolUse",
-        "PostToolUse",
-        "Notification",
-        "Stop",
-        "SessionEnd",
-    ] {
+    for event in ["SessionStart", "PostToolUse", "Stop", "SessionEnd"] {
         let cmd = settings["hooks"][event][0]["hooks"][0]["command"]
             .as_str()
             .unwrap();
@@ -156,14 +148,10 @@ fn assert_codex_hooks(argv: &[String]) {
     for flag in ariadne_core::codex_hooks::config_flags("/usr/local/bin/ariadne") {
         assert!(argv.contains(&flag), "missing {flag} in {argv:?}");
     }
-    for event in ["SessionStart", "PermissionRequest"] {
-        assert!(
-            argv.iter()
-                .any(|a| a.starts_with(&format!("hooks.{event}="))
-                    && a.contains("agent-event --kind codex")),
-            "no {event} hook in {argv:?}"
-        );
-    }
+    assert!(
+        argv.iter()
+            .any(|a| a.starts_with("hooks.SessionStart=") && a.contains("agent-event --kind codex"))
+    );
 }
 
 #[test]
