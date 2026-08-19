@@ -71,9 +71,6 @@ pub enum ProfileCommand {
         /// Set one prompt from a file: <kind>=<path>, repeatable
         #[arg(long = "prompt-file", value_name = "KIND=PATH", value_parser = parse_prompt_file, add = clap_complete::engine::ArgValueCompleter::new(crate::complete::prompt_file_assignment))]
         prompt_files: Vec<PromptAssignment>,
-        /// Extra argv flag appended when spawning (repeatable)
-        #[arg(long = "flag")]
-        flags: Vec<String>,
     },
     /// List profiles
     Ls {
@@ -122,13 +119,6 @@ pub enum ProfileCommand {
         /// Replace one prompt with a file's contents: <kind>=<path>, repeatable
         #[arg(long = "prompt-file", value_name = "KIND=PATH", value_parser = parse_prompt_file, add = clap_complete::engine::ArgValueCompleter::new(crate::complete::prompt_file_assignment))]
         prompt_files: Vec<PromptAssignment>,
-        /// Extra argv flag appended when spawning; repeatable, and replaces
-        /// the profile's flags rather than adding to them
-        #[arg(long = "flag", conflicts_with = "clear_flags")]
-        flags: Vec<String>,
-        /// Drop every extra flag
-        #[arg(long)]
-        clear_flags: bool,
     },
     /// Delete a profile
     Rm {
@@ -360,7 +350,6 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
             model,
             prompts,
             prompt_files,
-            flags,
         } => {
             let given = read_prompts(prompts, prompt_files)?;
             let (system_prompt, briefings) = split_system(owned_prompts(Owner::Role(role), given)?);
@@ -379,7 +368,6 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
                         agent_kind: agent,
                         model,
                         system_prompt,
-                        extra_flags: flags,
                         // Seeded with the profile, in this one call: a
                         // briefing given here is never written twice, and a
                         // kind nobody named keeps its role default.
@@ -439,7 +427,6 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
                     ("role", p.role.as_str().into()),
                     ("agent", p.agent_kind.map_or("auto", |k| k.as_str()).into()),
                     ("model", p.model.unwrap_or_else(|| "-".into())),
-                    ("flags", format!("{:?}", p.extra_flags)),
                     ("created", local_time(&p.created_at)),
                     ("prompt", format!("\n---\n{}", p.system_prompt)),
                 ]),
@@ -452,8 +439,6 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
             model,
             prompts,
             prompt_files,
-            flags,
-            clear_flags,
         } => {
             // Everything that can be settled without the daemon is settled
             // first, so a line that repeats a kind or names an unreadable
@@ -478,7 +463,6 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
                         agent_kind: agent.map(|a| a.replace('-', "_")),
                         model,
                         system_prompt,
-                        extra_flags: flags_update(flags, clear_flags),
                     },
                 )
                 .await?;
@@ -752,18 +736,6 @@ async fn reset_prompt(client: &Client, profile: &ProfileDto, kind: PromptArg) ->
     }
 }
 
-/// The `extra_flags` half of a PUT body: the flags replace the whole list —
-/// as `task update --reviewer` does — and `--clear-flags` is how an empty one
-/// is spelled, since a repeatable flag cannot be given zero times on purpose.
-/// Neither flag leaves the field out, keeping what the profile has.
-fn flags_update(flags: Vec<String>, clear_flags: bool) -> Option<Vec<String>> {
-    match (clear_flags, flags.is_empty()) {
-        (true, _) => Some(Vec::new()),
-        (false, true) => None,
-        (false, false) => Some(flags),
-    }
-}
-
 /// What `profile rm` asks before it deletes: the id alone does not say which
 /// agent setup is about to go, so the question names the profile and its role.
 fn rm_question(p: &ProfileDto) -> String {
@@ -929,7 +901,6 @@ mod tests {
             agent_kind: None,
             model: None,
             system_prompt: "you are an engineer".into(),
-            extra_flags: Vec::new(),
             created_at: "2026-08-17T08:00:00Z".into(),
             updated_at: "2026-08-17T09:00:00Z".into(),
         }
@@ -1141,8 +1112,6 @@ mod tests {
             model: None,
             prompts,
             prompt_files: files,
-            flags: Vec::new(),
-            clear_flags: false,
         }
     }
 
@@ -1344,27 +1313,6 @@ mod tests {
     #[test]
     fn yes_skips_the_confirmation() {
         assert!(confirm("Reset?", true).is_ok());
-    }
-
-    /// The flags replace rather than extend, so an absent `--flag` must not
-    /// send an empty list and wipe what the profile has.
-    #[test]
-    fn flags_that_were_not_given_are_left_alone() {
-        assert_eq!(flags_update(vec![], false), None);
-    }
-
-    #[test]
-    fn the_flags_are_replaced_by_what_was_given() {
-        assert_eq!(
-            flags_update(vec!["--verbose".into(), "--flag=1".into()], false),
-            Some(vec!["--verbose".to_string(), "--flag=1".to_string()])
-        );
-    }
-
-    /// The one thing the repeatable flag cannot say on its own.
-    #[test]
-    fn clearing_the_flags_sends_an_empty_list() {
-        assert_eq!(flags_update(vec![], true), Some(Vec::new()));
     }
 
     /// The question is the last thing between the caller and a deleted
