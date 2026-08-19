@@ -47,7 +47,13 @@ impl ClaudeAdapter {
         let settings = json!({
             "hooks": {
                 "SessionStart": hook("SessionStart"),
+                "UserPromptSubmit": hook("UserPromptSubmit"),
+                "PreToolUse": hook("PreToolUse"),
                 "PostToolUse": hook("PostToolUse"),
+                // Fires when Claude asks for permission or has been waiting
+                // for input: the only signal that an idle-looking agent is
+                // actually blocked on the user.
+                "Notification": hook("Notification"),
                 "Stop": hook("Stop"),
                 "SessionEnd": hook("SessionEnd"),
             }

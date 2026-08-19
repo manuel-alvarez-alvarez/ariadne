@@ -10,8 +10,10 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
-use ariadne_core::{Actor, GoalStatus, PromptKind, ReviewVerdict, Role, SessionStatus, TaskStatus};
-use ariadne_store::{SessionFilter, Store, Task, TaskFilter};
+use ariadne_core::{
+    Actor, AttentionReason, GoalStatus, PromptKind, ReviewVerdict, Role, SessionStatus, TaskStatus,
+};
+use ariadne_store::{AgentSession, SessionFilter, Store, Task, TaskFilter};
 
 use crate::agents::prompts;
 use crate::launcher::Launcher;
@@ -32,9 +34,9 @@ pub enum SchedEvent {
 const TICK_SECS: u64 = 15;
 /// Spawn attempts per task before it is failed.
 const SPAWN_RETRY_BUDGET: u32 = 3;
-/// Idle time after which an engineer on an active task gets one nudge.
+/// Idle time after which an agent with work in front of it gets one nudge.
 const STALL_NUDGE_SECS: i64 = 300;
-/// Idle time after which the task is flagged stalled (post-nudge).
+/// Idle time after which the stall is raised for the user (post-nudge).
 const STALL_FLAG_SECS: i64 = 900;
 
 pub struct Scheduler {
@@ -43,7 +45,9 @@ pub struct Scheduler {
     /// Spawn failures per task (in-memory: resets on daemon restart, which is
     /// fine — a restart is exactly when a retry is warranted).
     spawn_failures: HashMap<String, u32>,
-    /// Tasks nudged in their current (status, round); cleared on transition.
+    /// Sessions nudged in the (status, round) they were nudged for, keyed by
+    /// session id; a transition changes the key, which is what allows the one
+    /// nudge per situation rather than one per session for ever.
     nudged: HashMap<String, (String, i64)>,
     /// Held while any session is live, so the machine does not idle-sleep
     /// out from under a working agent.
@@ -195,6 +199,19 @@ impl Scheduler {
                             .store
                             .set_session_status(&session.id, SessionStatus::Exited)
                             .await;
+                        // A pane that went away while its work is still going
+                        // is not a session that finished: whatever was waiting
+                        // on this agent is now waiting on nobody, so it is
+                        // raised for the user. The flag outlives the session
+                        // row's `exited` status on purpose — it stays up until
+                        // the agent is resumed or replaced.
+                        if self.work_is_active(&session).await {
+                            warn!(session = %session.id, role = %session.role, "agent disconnected with work still active");
+                            let _ = self
+                                .store
+                                .set_session_attention(&session.id, AttentionReason::Disconnected)
+                                .await;
+                        }
                     }
                     Ok(true) => {
                         alive += 1;
@@ -210,6 +227,25 @@ impl Scheduler {
             }
         }
         Some(alive)
+    }
+
+    /// Whether the work this session was started for is still going.
+    ///
+    /// A pane disappearing is only worth the user's attention when something
+    /// depends on it: an engineer or reviewer whose task has not reached a
+    /// terminal (or failed) status, a planner whose goal is still being
+    /// planned. Anything else is a session ending as it should.
+    async fn work_is_active(&self, session: &AgentSession) -> bool {
+        match &session.task_id {
+            Some(task_id) => match self.store.get_task(task_id).await {
+                Ok(task) => !task.status().is_terminal() && task.status() != TaskStatus::Failed,
+                Err(_) => false,
+            },
+            None => matches!(
+                self.store.get_goal(&session.goal_id).await.map(|g| g.status()),
+                Ok(GoalStatus::Planning)
+            ),
+        }
     }
 
     async fn reconcile_session(&mut self, session_id: &str) {
@@ -233,10 +269,21 @@ impl Scheduler {
         match goal.status() {
             // A goal in planning wants a live planner session.
             GoalStatus::Planning => {
-                let planner_alive = self.live_sessions(goal_id, None, Role::Planner).await?;
-                if planner_alive == 0 {
+                let planners = self.live_sessions(goal_id, None, Role::Planner).await?;
+                if planners.is_empty() {
                     info!(goal = %goal.id, "spawning planner");
                     self.launcher.spawn_planner(goal_id).await?;
+                }
+                // A planner has no task to flag: its session carries the
+                // stall, which is the only place a goal still in planning has
+                // to say that nothing is happening.
+                for planner in planners {
+                    self.check_session_stall(
+                        &planner,
+                        (goal.status.clone(), 0),
+                        "Reminder: this goal is still in planning. Continue breaking it into tasks with create_task, or call finalize_plan if the plan is complete.",
+                    )
+                    .await?;
                 }
             }
             GoalStatus::Active => {
@@ -334,10 +381,10 @@ impl Scheduler {
         }
     }
 
-    /// How many sessions for this role are still running — counting the ones
+    /// The sessions for this role that are still running — including the ones
     /// tmux would not answer for.
     ///
-    /// This number decides whether to spawn, so an unanswered question has to
+    /// Their number decides whether to spawn, so an unanswered question has to
     /// count as a session: the sweep leaves such rows alone precisely because
     /// nothing is known about them, and reconciling on the assumption they are
     /// dead is how a tmux outage turns into two agents on one task.
@@ -346,7 +393,7 @@ impl Scheduler {
         goal_id: &str,
         task_id: Option<&str>,
         role: Role,
-    ) -> anyhow::Result<usize> {
+    ) -> anyhow::Result<Vec<AgentSession>> {
         let sessions = self
             .store
             .list_sessions(SessionFilter {
@@ -356,8 +403,8 @@ impl Scheduler {
                 ..Default::default()
             })
             .await?;
-        let mut count = 0;
-        for s in &sessions {
+        let mut out = Vec::new();
+        for s in sessions {
             if s.role() == role
                 && self
                     .launcher
@@ -365,10 +412,10 @@ impl Scheduler {
                     .has_session_or_unknown(&s.tmux_session)
                     .await
             {
-                count += 1;
+                out.push(s);
             }
         }
-        Ok(count)
+        Ok(out)
     }
 
     async fn reconcile_task(&mut self, task_id: &str) -> anyhow::Result<()> {
@@ -398,7 +445,7 @@ impl Scheduler {
                 if self
                     .live_sessions(&goal.id, Some(&task.id), Role::Engineer)
                     .await?
-                    == 0
+                    .is_empty()
                 {
                     info!(task = %task.id, "spawning engineer");
                     self.launcher.spawn_engineer(&task.id).await?;
@@ -476,7 +523,7 @@ impl Scheduler {
                     // As in `live_sessions`: a pane tmux would not answer for
                     // counts as one, so an outage cannot put a second reviewer
                     // on a round that already has one.
-                    let mut has_live = false;
+                    let mut running = None;
                     for s in &live {
                         if s.role() == Role::Reviewer
                             && s.profile_id == profile_id
@@ -486,11 +533,24 @@ impl Scheduler {
                                 .has_session_or_unknown(&s.tmux_session)
                                 .await
                         {
-                            has_live = true;
+                            running = Some(s.clone());
                             break;
                         }
                     }
-                    if !has_live {
+                    // A reviewer with no verdict yet is the round's only
+                    // reason to still be open, so an idle one is watched the
+                    // same way an engineer is. Reviewers that already voted
+                    // are not in `pending` and are left to sit: waiting for
+                    // the others is not a stall. There is no task-level flag
+                    // for this — the session's own is the signal.
+                    if let Some(reviewer) = running {
+                        self.check_session_stall(
+                            &reviewer,
+                            (task.status.clone(), task.review_round),
+                            "Reminder: this task is still waiting on your review. Finish reviewing and call approve or request_changes.",
+                        )
+                        .await?;
+                    } else {
                         info!(task = %task.id, reviewer = %profile_id, round = task.review_round, "starting reviewer");
                         // Resumes the reviewer's earlier session when there is
                         // one, spawns a first for it otherwise.
@@ -637,7 +697,7 @@ impl Scheduler {
 
     /// An engineer idle too long on an active task gets exactly one tmux
     /// nudge per (status, round); if it stays idle, the task is flagged
-    /// stalled for the user (never an endless loop).
+    /// stalled for the user (never an endless loop) and the session says why.
     async fn check_stall(&mut self, task: &Task) -> anyhow::Result<()> {
         let sessions = self
             .store
@@ -650,43 +710,111 @@ impl Scheduler {
         let Some(engineer) = sessions.iter().find(|s| s.role() == Role::Engineer) else {
             // No live engineer at all: respawn/resume path.
             info!(task = %task.id, "no live engineer session, resuming");
-            self.launcher
+            if let Err(e) = self
+                .launcher
                 .resume_engineer(&task.id, "Your previous session ended unexpectedly. Continue the task from where it left off.")
-                .await?;
+                .await
+            {
+                // The task still wants an engineer and could not get one:
+                // the ended session is the thing the user has to look at.
+                self.flag_last_engineer_disconnected(task).await;
+                return Err(e);
+            }
             return Ok(());
         };
-        if engineer.status() != SessionStatus::Idle {
-            return Ok(());
-        }
-        let Some(last) = &engineer.last_activity_at else {
-            return Ok(());
+        let nudge = match task.status() {
+            TaskStatus::Merging => {
+                "Reminder: your task is approved and waiting to be merged. Follow the merge instructions and call mark_merged."
+            }
+            _ => {
+                "Reminder: your task is still in progress. Continue working on it, or call request_review if it is complete."
+            }
         };
-        let Ok(last) = chrono::DateTime::parse_from_rfc3339(last) else {
-            return Ok(());
-        };
-        let idle_secs = (chrono::Utc::now() - last.with_timezone(&chrono::Utc)).num_seconds();
-        let key = (task.status.clone(), task.review_round);
-        let already_nudged = self.nudged.get(&task.id) == Some(&key);
-
-        if idle_secs >= STALL_FLAG_SECS && already_nudged && !task.is_stalled() {
-            warn!(task = %task.id, idle_secs, "task stalled, flagging for user attention");
+        let stalled = self
+            .check_session_stall(engineer, (task.status.clone(), task.review_round), nudge)
+            .await?;
+        // The engineer is the one role whose stall has somewhere else to
+        // show: the task carries a flag of its own, next to the session's.
+        if stalled && !task.is_stalled() {
+            warn!(task = %task.id, "task stalled, flagging for user attention");
             self.store.set_task_stalled(&task.id, true).await?;
-        } else if idle_secs >= STALL_NUDGE_SECS && !already_nudged {
-            info!(task = %task.id, idle_secs, "nudging idle engineer");
-            let nudge = match task.status() {
-                TaskStatus::Merging => {
-                    "Reminder: your task is approved and waiting to be merged. Follow the merge instructions and call mark_merged."
-                }
-                _ => {
-                    "Reminder: your task is still in progress. Continue working on it, or call request_review if it is complete."
-                }
-            };
-            self.launcher
-                .tmux
-                .send_text(&engineer.tmux_session, nudge)
-                .await?;
-            self.nudged.insert(task.id.clone(), key);
         }
         Ok(())
+    }
+
+    /// Raise `disconnected` on the engineer session that was last on this
+    /// task, whatever state it ended in. Best effort: this runs while another
+    /// failure is being reported, and adds nothing to it if it fails too.
+    async fn flag_last_engineer_disconnected(&self, task: &Task) {
+        let Ok(sessions) = self
+            .store
+            .list_sessions(SessionFilter {
+                task_id: Some(task.id.clone()),
+                ..Default::default()
+            })
+            .await
+        else {
+            return;
+        };
+        if let Some(previous) = sessions.iter().rev().find(|s| s.role() == Role::Engineer) {
+            warn!(task = %task.id, session = %previous.id, "resuming the engineer failed, flagging it disconnected");
+            let _ = self
+                .store
+                .set_session_attention(&previous.id, AttentionReason::Disconnected)
+                .await;
+        }
+    }
+
+    /// One idle agent, measured against the stall thresholds: a single nudge
+    /// at [`STALL_NUDGE_SECS`], and at [`STALL_FLAG_SECS`] the session is
+    /// raised for the user. Returns whether it crossed that second threshold,
+    /// which is all the caller needs to decide about the work itself.
+    ///
+    /// `key` is the situation the nudge is spent on — the status and round the
+    /// agent was idle in — so moving on earns a fresh one.
+    async fn check_session_stall(
+        &mut self,
+        session: &AgentSession,
+        key: (String, i64),
+        nudge: &str,
+    ) -> anyhow::Result<bool> {
+        if session.status() != SessionStatus::Idle {
+            return Ok(false);
+        }
+        // An agent waiting on a person is not stalled, it is blocked, and the
+        // attention entry already says so. Nudging it would type into whatever
+        // it is waiting on — a permission prompt takes Enter for an answer —
+        // so neither the keystroke nor the escalation behind it applies here.
+        if matches!(
+            session.attention_reason(),
+            Some(AttentionReason::WaitingPermission | AttentionReason::WaitingInput)
+        ) {
+            return Ok(false);
+        }
+        let Some(last) = &session.last_activity_at else {
+            return Ok(false);
+        };
+        let Ok(last) = chrono::DateTime::parse_from_rfc3339(last) else {
+            return Ok(false);
+        };
+        let idle_secs = (chrono::Utc::now() - last.with_timezone(&chrono::Utc)).num_seconds();
+        let already_nudged = self.nudged.get(&session.id) == Some(&key);
+
+        if idle_secs >= STALL_FLAG_SECS && already_nudged {
+            warn!(session = %session.id, role = %session.role, idle_secs, "session stalled, flagging for user attention");
+            self.store
+                .set_session_attention(&session.id, AttentionReason::Stalled)
+                .await?;
+            return Ok(true);
+        }
+        if idle_secs >= STALL_NUDGE_SECS && !already_nudged {
+            info!(session = %session.id, role = %session.role, idle_secs, "nudging idle agent");
+            self.launcher
+                .tmux
+                .send_text(&session.tmux_session, nudge)
+                .await?;
+            self.nudged.insert(session.id.clone(), key);
+        }
+        Ok(false)
     }
 }
