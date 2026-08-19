@@ -120,6 +120,150 @@ impl PromptKind {
             Role::Reviewer => &[PromptKind::ReviewerBriefing, PromptKind::ReviewerResume],
         }
     }
+
+    /// The placeholders the daemon fills in when it renders this kind's
+    /// template, in the order its briefing builder passes them.
+    ///
+    /// This list is the contract between the templates and the `prompts`
+    /// builders in the daemon: a `{token}` outside it is one nothing will ever
+    /// substitute, which is why [`PromptKind::validate_template`] refuses it
+    /// when a template is saved. Adding a value to a builder means adding its
+    /// name here.
+    pub fn placeholders(&self) -> &'static [&'static str] {
+        match self {
+            PromptKind::PlannerBriefing => &[
+                "goal_title",
+                "goal_description",
+                "repositories",
+                "max_tasks",
+                "required_approvals",
+            ],
+            PromptKind::EngineerBriefing => &[
+                "task_title",
+                "task_description",
+                "goal_title",
+                "worktree_path",
+                "branch",
+                "base_branch",
+                "repo_path",
+                "dependencies",
+            ],
+            PromptKind::ChangesRequested => &["feedback"],
+            PromptKind::MergeInstructions => {
+                &["base_branch", "repo_path", "branch", "task_title"]
+            }
+            PromptKind::ReviewerBriefing => &[
+                "task_title",
+                "review_round",
+                "task_description",
+                "goal_title",
+                "branch",
+                "base_branch",
+                "repo_path",
+                "summary",
+            ],
+            // Fewer than the initial briefing: a resumed reviewer is told what
+            // moved under it, and the goal and the repository are things it
+            // already read last round.
+            PromptKind::ReviewerResume => &["review_round", "task_title", "branch", "summary"],
+        }
+    }
+
+    /// Refuse a template that names a placeholder this kind has no value for.
+    ///
+    /// Rendering is lenient by design — an unknown `{token}` reaches the agent
+    /// as literal text rather than failing its spawn — so a typo like
+    /// `{task_titel}` is invisible until someone reads a briefing. Saving is
+    /// where it is caught instead, and only there: this is never called on the
+    /// way to an agent.
+    ///
+    /// Only what rendering would treat as a placeholder is checked, and of
+    /// that only plain identifiers. A brace that never closes, a `{}` and a
+    /// JSON snippet are all text as far as rendering is concerned, so they are
+    /// text here too.
+    pub fn validate_template(&self, template: &str) -> Result<(), UnknownPlaceholders> {
+        let mut unknown: Vec<String> = Vec::new();
+        for name in placeholder_names(template) {
+            if !is_identifier(name)
+                || self.placeholders().contains(&name)
+                || unknown.iter().any(|seen| seen == name)
+            {
+                continue;
+            }
+            unknown.push(name.to_string());
+        }
+        if unknown.is_empty() {
+            return Ok(());
+        }
+        Err(UnknownPlaceholders {
+            kind: *self,
+            unknown,
+        })
+    }
+}
+
+/// A template saved with `{token}`s the daemon has no value for, and the kind
+/// that would have had to fill them in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownPlaceholders {
+    pub kind: PromptKind,
+    /// The offending names, without braces, in the order they appear.
+    pub unknown: Vec<String>,
+}
+
+impl std::fmt::Display for UnknownPlaceholders {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let braced = |names: &mut dyn Iterator<Item = &str>| {
+            names.map(|n| format!("{{{n}}}")).collect::<Vec<_>>().join(", ")
+        };
+        let unknown = braced(&mut self.unknown.iter().map(String::as_str));
+        let allowed = braced(&mut self.kind.placeholders().iter().copied());
+        let plural = if self.unknown.len() == 1 {
+            "placeholder"
+        } else {
+            "placeholders"
+        };
+        write!(
+            f,
+            "the {} template has no value for {plural} {unknown}; \
+             the ones it can use are {allowed}",
+            self.kind.as_str()
+        )
+    }
+}
+
+impl std::error::Error for UnknownPlaceholders {}
+
+/// The names rendering would look up in a template, in order and with repeats.
+///
+/// Deliberately the same scan as the daemon's `render`: a name runs from a `{`
+/// to the next `}` with no `{` in between, and anything else is text.
+fn placeholder_names(template: &str) -> Vec<&str> {
+    let mut names = Vec::new();
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        let after = &rest[open + 1..];
+        match after.find(['{', '}']) {
+            Some(end) if after.as_bytes()[end] == b'}' => {
+                names.push(&after[..end]);
+                rest = &after[end + 1..];
+            }
+            // An unclosed brace, or one closed only after another `{`: not a
+            // placeholder, so the scan carries on from just after it.
+            _ => rest = after,
+        }
+    }
+    names
+}
+
+/// Whether a name is one a placeholder could plausibly be spelled with:
+/// `{"repo": "x"}` and `{}` are not typos to be corrected, they are text.
+fn is_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 impl std::str::FromStr for PromptKind {
@@ -421,5 +565,107 @@ impl std::str::FromStr for AuthorRole {
             .into_iter()
             .find(|v| v.as_str() == s)
             .ok_or_else(|| format!("unknown author role: {s}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The names a kind's briefing builder passes are the names its template
+    /// may use — no more, and none missing.
+    #[test]
+    fn every_kind_names_the_placeholders_its_briefing_fills_in() {
+        for kind in PromptKind::ALL {
+            let allowed = kind.placeholders();
+            assert!(!allowed.is_empty(), "{} has no placeholders", kind.as_str());
+            let template = allowed
+                .iter()
+                .map(|name| format!("{{{name}}}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert_eq!(kind.validate_template(&template), Ok(()));
+        }
+    }
+
+    #[test]
+    fn a_typo_is_refused_with_the_token_and_the_allowed_set() {
+        let err = PromptKind::EngineerBriefing
+            .validate_template("# {task_titel}\n\n{task_description}")
+            .unwrap_err();
+        assert_eq!(err.unknown, ["task_titel"]);
+        let message = err.to_string();
+        assert!(message.contains("engineer_briefing"), "{message}");
+        assert!(message.contains("{task_titel}"), "{message}");
+        assert!(message.contains("{task_title}"), "{message}");
+        assert!(message.contains("{dependencies}"), "{message}");
+    }
+
+    /// Every offending token is named, once each: a template is fixed in one
+    /// pass, not one save per typo.
+    #[test]
+    fn every_unknown_token_is_named_once() {
+        let err = PromptKind::ChangesRequested
+            .validate_template("{feedback} {who} {what} {who}")
+            .unwrap_err();
+        assert_eq!(err.unknown, ["who", "what"]);
+        assert!(err.to_string().contains("{who}, {what}"), "{err}");
+    }
+
+    /// A placeholder of another kind's briefing is still one this kind cannot
+    /// fill in: the sets are per kind, not one pool.
+    #[test]
+    fn a_placeholder_of_another_kind_is_unknown_here() {
+        assert!(
+            PromptKind::PlannerBriefing
+                .validate_template("Plan {goal_title} for {task_title}.")
+                .is_err()
+        );
+        // The reviewer's resume is briefed with less than its first round.
+        assert!(
+            PromptKind::ReviewerResume
+                .validate_template("Round {review_round} of {task_title} in {repo_path}.")
+                .is_err()
+        );
+        assert_eq!(
+            PromptKind::ReviewerBriefing
+                .validate_template("Round {review_round} of {task_title} in {repo_path}."),
+            Ok(())
+        );
+    }
+
+    /// Whatever rendering treats as text, validation treats as text: braces
+    /// that never close, empty names, JSON, non-identifier noise. Rejecting
+    /// those would refuse templates that render exactly as written.
+    #[test]
+    fn what_is_not_a_placeholder_is_not_checked() {
+        for template in [
+            "",
+            "Just read the diff.",
+            "{unclosed and {task_title}",
+            "} {task_title}",
+            "{}",
+            "{{{{",
+            "{ü}",
+            "Answer with {\"verdict\": \"approve\"} and nothing else.",
+            "The set is {task_title, branch}.",
+            r"printf '%s' {} \;",
+        ] {
+            assert_eq!(
+                PromptKind::EngineerBriefing.validate_template(template),
+                Ok(()),
+                "refused text that renders as itself: {template}"
+            );
+        }
+    }
+
+    /// A briefing that uses none of its placeholders is a developer's call,
+    /// not a mistake: dropping a value has never been an error.
+    #[test]
+    fn a_template_may_use_none_of_its_placeholders() {
+        assert_eq!(
+            PromptKind::MergeInstructions.validate_template("Merge it yourself."),
+            Ok(())
+        );
     }
 }
