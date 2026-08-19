@@ -58,8 +58,12 @@ export interface PromptFormValue {
 }
 
 /**
- * The briefings are an array because `useFieldArray` keys rows by identity,
- * and because their order is the daemon's.
+ * Extra flags are held as objects because `useFieldArray` keys rows by
+ * identity: an array of bare strings loses the row a value belongs to as soon
+ * as one is removed.
+ *
+ * The briefings are an array for the same reason, and because their order is
+ * the daemon's.
  */
 export const profileFormSchema = z.object({
   name: z
@@ -71,6 +75,7 @@ export const profileFormSchema = z.object({
   systemPrompt: z
     .string()
     .refine((value) => value.trim().length > 0, { message: "A system prompt is required." }),
+  extraFlags: z.array(z.object({ value: z.string() })),
   // A briefing may legitimately be emptied, so there is nothing to validate.
   prompts: z.array(z.object({ kind: z.enum(PROMPT_KINDS), content: z.string() })),
 })
@@ -85,6 +90,7 @@ export function emptyProfileFormValues(role: Role = "engineer"): ProfileFormValu
     agentKind: AUTO_AGENT_KIND,
     model: "",
     systemPrompt: "",
+    extraFlags: [],
     prompts: [],
   }
 }
@@ -105,6 +111,7 @@ export function profileToFormValues(
     agentKind: profile.agent_kind ?? AUTO_AGENT_KIND,
     model: profile.model ?? "",
     systemPrompt: profile.system_prompt,
+    extraFlags: profile.extra_flags.map((value) => ({ value })),
     prompts: prompts.map((prompt) => ({ kind: prompt.kind, content: prompt.content })),
   }
 }
@@ -147,6 +154,7 @@ export function toCreateRequest(
     agent_kind: values.agentKind === AUTO_AGENT_KIND ? null : values.agentKind,
     model: model.length > 0 ? model : null,
     system_prompt: values.systemPrompt,
+    extra_flags: cleanFlags(values.extraFlags),
     ...(prompts.length > 0 ? { prompts } : {}),
   }
 }
@@ -159,5 +167,11 @@ export function toUpdateRequest(values: ProfileFormValues): UpdateProfileRequest
     agent_kind: values.agentKind,
     model: model.length > 0 ? model : DEFAULT_MODEL_SENTINEL,
     system_prompt: values.systemPrompt,
+    extra_flags: cleanFlags(values.extraFlags),
   }
+}
+
+/** Flags go on an argv line, so blank rows are dropped and edges trimmed. */
+function cleanFlags(flags: ProfileFormValues["extraFlags"]): string[] {
+  return flags.map((flag) => flag.value.trim()).filter((flag) => flag.length > 0)
 }

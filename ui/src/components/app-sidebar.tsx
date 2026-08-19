@@ -1,13 +1,12 @@
 /**
- * The app's navigation. Four screens, in the order an orchestrator asks for
- * them: what is being worked on, what the agents run as, how the agent CLIs
- * themselves are launched, and the checkouts they work in.
+ * The app's navigation. Three screens, in the order an orchestrator asks for
+ * them: what is being worked on, what the agents run as, and the checkouts
+ * they work in.
  *
  * What is *stuck* has no entry — it is a strip on the goals board, above the
  * lanes it is about (see `features/goals/attention-strip.tsx`). Neither do the
- * running sessions: one is opened from the panel of the goal or the task it
- * runs, in a panel of its own (see `features/sessions/session-panel.tsx`) —
- * "Agents" here is the CLIs and their flags, not what is running on them.
+ * agents themselves: a session is opened from the panel of the goal or the
+ * task it runs, in a panel of its own (see `features/sessions/session-panel.tsx`).
  *
  * The labels are the ones the shell's header shows, which come from each
  * route's own `handle` (see `src/routes/page-title.ts`) — they are written
@@ -15,7 +14,7 @@
  * entry and a route are not the same list: not every route belongs here.
  */
 
-import { BotIcon, CpuIcon, FolderGit2Icon, TargetIcon } from "lucide-react"
+import { CpuIcon, FolderGit2Icon, TargetIcon } from "lucide-react"
 import { NavLink } from "react-router-dom"
 
 import { cn } from "@/lib/utils"
@@ -24,7 +23,6 @@ import { paths } from "@/routes/paths"
 const NAV_ITEMS = [
   { to: paths.goals(), label: "Goals", icon: TargetIcon },
   { to: paths.profiles(), label: "Profiles", icon: CpuIcon },
-  { to: paths.agents(), label: "Agents", icon: BotIcon },
   { to: paths.repositories(), label: "Repositories", icon: FolderGit2Icon },
 ] as const
 
