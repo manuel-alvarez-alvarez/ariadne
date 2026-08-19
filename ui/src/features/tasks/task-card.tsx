@@ -23,13 +23,13 @@ import type { TaskDto } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
 import { StatusBadge } from "@/components/status-badge"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { When } from "@/components/when"
 import {
   SESSION_ATTENTION_META,
   type SessionAttention,
   SessionAttentionBadge,
 } from "@/features/sessions/session-display"
 import { plural } from "@/lib/plural"
-import { formatAbsolute, formatRelative } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { useTaskPanelTo } from "@/routes/paths"
 import { STALLED_META } from "./stalled"
@@ -127,12 +127,7 @@ export function TaskCard({
               <TooltipContent>{STALLED_META.hint}</TooltipContent>
             </Tooltip>
           )}
-          <Tooltip>
-            <TooltipTrigger render={<time className="ml-auto" dateTime={task.updated_at} />}>
-              {formatRelative(task.updated_at)}
-            </TooltipTrigger>
-            <TooltipContent>updated {formatAbsolute(task.updated_at)}</TooltipContent>
-          </Tooltip>
+          <When at={task.updated_at} label="updated" className="ml-auto" />
         </div>
       </Link>
 

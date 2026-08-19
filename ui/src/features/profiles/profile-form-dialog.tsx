@@ -6,9 +6,8 @@
  * Every prompt the profile is spawned with is edited here, not just the system
  * one: the role's briefings are folded into the same form, prefilled from the
  * role defaults when creating and from the profile's own prompts when editing.
- * Nothing is written until the form is submitted, which is the one thing that
- * separates these editors from the details panel's — there, each box saves
- * itself.
+ * This is the only place any of them is edited or restored — the details panel
+ * shows them read-only. Nothing is written until the form is submitted.
  *
  * How they are written differs by mode. Create sends the whole profile in one
  * request, briefings included, so only the ones edited away from their default
@@ -37,10 +36,10 @@ import {
   type UpdateProfileRequest,
 } from "@/api"
 import { ErrorState } from "@/components/error-state"
+import { FormDialog } from "@/components/form-dialog"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
-  Dialog,
   DialogClose,
   DialogContent,
   DialogDescription,
@@ -288,7 +287,7 @@ export function ProfileFormDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <FormDialog open={open} onOpenChange={onOpenChange} dirty={formState.isDirty}>
       <DialogContent className="sm:max-w-2xl">
         <form onSubmit={handleSubmit(submit)} className="grid gap-4">
           <DialogHeader>
@@ -497,7 +496,7 @@ export function ProfileFormDialog({
           </DialogFooter>
         </form>
       </DialogContent>
-    </Dialog>
+    </FormDialog>
   )
 }
 

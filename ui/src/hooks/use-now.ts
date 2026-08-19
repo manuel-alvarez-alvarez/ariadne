@@ -5,6 +5,10 @@
  * quiet stops producing events, and its "last activity" would otherwise sit at
  * whatever it said when the row last rendered. One shared interval drives all
  * of them rather than one timer per row.
+ *
+ * It lives here rather than under a feature because every screen has a
+ * timestamp on it: the board's cards, the attention strip, the tables and the
+ * panels all read the same tick through {@link import("@/components/when").When}.
  */
 
 import { useSyncExternalStore } from "react"

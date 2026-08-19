@@ -10,9 +10,10 @@
  * back — there is no reset endpoint, and a list hand-copied from anywhere else
  * would silently drift from what Ariadne ships.
  *
- * The rest is what the screen says about a list before it is touched: whether
- * it is still the default, which is the only thing a flag list on its own does
- * not tell a reader.
+ * The rest is what the screen says about a list before it is touched: how many
+ * agents there are, whether each list is still the default — the only thing a
+ * flag list on its own does not tell a reader — and what a daemon that answers
+ * with no agents at all leaves on screen.
  */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
@@ -162,6 +163,26 @@ describe("AgentsPage", () => {
     expect(await screen.findAllByText("Customized")).toHaveLength(2)
     expect(screen.getAllByText("Unchanged")).toHaveLength(1)
     expect(screen.getByText(/none — Ariadne's own arguments only/)).toBeDefined()
+  })
+
+  it("counts the rows it is showing", async () => {
+    renderScreen()
+
+    expect(await screen.findByText("3 agents")).toBeDefined()
+  })
+
+  /**
+   * The list is the daemon's, and a daemon that answers with none leaves a
+   * headed table over nothing — so the table says it is empty rather than
+   * looking like it is still loading.
+   */
+  it("says the list is empty rather than showing a bare table", async () => {
+    stubDaemon([])
+    renderScreen()
+
+    expect(await screen.findByText("No agents")).toBeDefined()
+    expect(screen.getByText("0 agents")).toBeDefined()
+    expect(screen.queryByRole("button", { name: /Edit .* flags/ })).toBeNull()
   })
 
   it("opens the dialog on the agent of the row it was clicked in", async () => {

@@ -23,12 +23,13 @@
  * once it is gone, and a goal takes the task stacked on it down with it.
  *
  * The session panel is the one `session` with no panel around it (see
- * `components/detail-panels.tsx`), so that param is all it has to take.
+ * `components/detail-panels.tsx`); its `tab` is the session view's own
+ * terminal/activity strip, which is inside it like any other.
  */
 export const PANEL_PARAMS = {
   goal: ["goal", "task", "tab", "session"],
   task: ["task", "tab", "session"],
-  session: ["session"],
+  session: ["session", "tab"],
 } as const satisfies Record<string, readonly string[]>
 
 export type Panel = keyof typeof PANEL_PARAMS
