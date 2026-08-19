@@ -97,6 +97,15 @@ impl Store {
         Ok(q.fetch_all(self.r()).await?)
     }
 
+    /// Move a session to a new lifecycle status.
+    ///
+    /// Retiring one takes any prompt-style attention down with it, wherever
+    /// the status write came from: `waiting_permission` and `waiting_input`
+    /// describe a dialog on the agent's terminal, and a session that has
+    /// ended has no terminal to answer in — a flag left behind that way asks
+    /// the user to go and reply to nobody. The reasons a session ends
+    /// *carrying* (an error, a disconnect, a stall) are meant to outlive it
+    /// and are left alone; so is a session that stays live.
     pub async fn set_session_status(&self, id: &str, status: SessionStatus) -> Result<()> {
         let ended_at = match status {
             SessionStatus::Exited | SessionStatus::Failed => Some(now()),
@@ -114,7 +123,28 @@ impl Store {
         if n == 0 {
             return Err(not_found("session", id));
         }
+        if !status.is_live() {
+            self.clear_prompt_attention(id).await?;
+        }
         self.publish_session_update(id).await
+    }
+
+    /// Drop the prompt-style reasons (`AttentionReason::is_prompt`), leaving
+    /// every other reason where it is. Its own statement next to the status
+    /// write, whose `publish_session_update` runs after both: what watchers
+    /// are handed is the session with the flag already gone.
+    async fn clear_prompt_attention(&self, id: &str) -> Result<()> {
+        sqlx::query(
+            "UPDATE agent_sessions
+                SET attention_reason = NULL, attention_since = NULL
+              WHERE id = ? AND attention_reason IN (?, ?)",
+        )
+        .bind(id)
+        .bind(AttentionReason::WaitingPermission.as_str())
+        .bind(AttentionReason::WaitingInput.as_str())
+        .execute(self.w())
+        .await?;
+        Ok(())
     }
 
     /// Flag a session as needing the user's attention.

@@ -477,6 +477,20 @@ impl AttentionReason {
         AttentionReason::Stalled,
     ];
 
+    /// Whether this reason describes a dialog on the agent's own terminal.
+    ///
+    /// Only a live session can be sitting on one: a permission prompt and a
+    /// question are things somebody types an answer into, and a pane that is
+    /// gone has neither. The other reasons are the ones a session ends
+    /// *carrying* — an error it reported, a disconnect, a stall — and they
+    /// stay true after the agent has stopped.
+    pub fn is_prompt(&self) -> bool {
+        matches!(
+            self,
+            AttentionReason::WaitingPermission | AttentionReason::WaitingInput
+        )
+    }
+
     pub fn as_str(&self) -> &'static str {
         match self {
             AttentionReason::WaitingPermission => "waiting_permission",
