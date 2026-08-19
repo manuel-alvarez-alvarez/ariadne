@@ -39,10 +39,14 @@ impl Store {
         let id = new_id();
         let ts = now();
         let mut tx = self.w().begin().await?;
+        // The planner's agent and model are copied onto the goal here and
+        // never re-read: editing the profile later must not move a goal that
+        // is already being planned.
+        let planner = Self::get_profile_in_tx(&mut tx, &new.planner_profile_id).await?;
         sqlx::query(
             "INSERT INTO goals (id, title, description, status, max_tasks, required_approvals,
-                                planner_profile_id, created_at, updated_at)
-             VALUES (?, ?, ?, 'planning', ?, ?, ?, ?, ?)",
+                                planner_profile_id, agent_kind, model, created_at, updated_at)
+             VALUES (?, ?, ?, 'planning', ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&new.title)
@@ -50,6 +54,8 @@ impl Store {
         .bind(new.max_tasks)
         .bind(new.required_approvals)
         .bind(&new.planner_profile_id)
+        .bind(&planner.agent_kind)
+        .bind(&planner.model)
         .bind(&ts)
         .bind(&ts)
         .execute(&mut *tx)
