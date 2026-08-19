@@ -152,15 +152,20 @@ impl Launcher {
     }
 
     /// Assemble the adapter context for launching `session` in `cwd`.
-    fn spawn_ctx(
+    ///
+    /// The agent's flags are read here rather than baked into the adapters, on
+    /// every spawn and every resume alike: an edit to the agent config is meant
+    /// to reach the next launch, whichever path that launch comes down.
+    async fn spawn_ctx(
         &self,
         session: &AgentSession,
         cwd: PathBuf,
         profile: &ariadne_store::Profile,
         system_prompt: String,
         initial_prompt: String,
-    ) -> SpawnCtx {
-        SpawnCtx {
+    ) -> Result<SpawnCtx> {
+        let agent = self.store.get_agent_config(session.agent_kind()).await?;
+        Ok(SpawnCtx {
             session_id: session.id.clone(),
             goal_id: session.goal_id.clone(),
             task_id: session.task_id.clone(),
@@ -172,8 +177,8 @@ impl Launcher {
             system_prompt,
             initial_prompt,
             model: profile.model.clone(),
-            extra_flags: profile.extra_flags(),
-        }
+            extra_flags: agent.extra_flags(),
+        })
     }
 
     /// Shared launch tail for fresh spawns and resumes: persist the internal
@@ -217,7 +222,9 @@ impl Launcher {
         initial_prompt: String,
     ) -> Result<()> {
         let profile = self.store.get_profile(&session.profile_id).await?;
-        let ctx = self.spawn_ctx(session, cwd, &profile, system_prompt, initial_prompt);
+        let ctx = self
+            .spawn_ctx(session, cwd, &profile, system_prompt, initial_prompt)
+            .await?;
         let plan = adapter_for(session.agent_kind()).plan_spawn(&ctx)?;
         self.launch(session, plan).await
     }
@@ -466,13 +473,15 @@ impl Launcher {
             )
             .await?;
 
-        let ctx = self.spawn_ctx(
-            &session,
-            worktree,
-            &profile,
-            prompts::system_prompt(&profile),
-            String::new(),
-        );
+        let ctx = self
+            .spawn_ctx(
+                &session,
+                worktree,
+                &profile,
+                prompts::system_prompt(&profile),
+                String::new(),
+            )
+            .await?;
         let plan = adapter_for(session.agent_kind()).plan_resume(&ctx, &internal, instruction)?;
         self.launch(&session, plan).await?;
         self.store
@@ -525,13 +534,15 @@ impl Launcher {
             .restart_session(&previous.id, Some(&worktree.display().to_string()), None)
             .await?;
 
-        let ctx = self.spawn_ctx(
-            &session,
-            worktree,
-            &profile,
-            prompts::system_prompt(&profile),
-            String::new(),
-        );
+        let ctx = self
+            .spawn_ctx(
+                &session,
+                worktree,
+                &profile,
+                prompts::system_prompt(&profile),
+                String::new(),
+            )
+            .await?;
         let plan = adapter_for(session.agent_kind()).plan_resume(&ctx, &internal, instruction)?;
         self.launch(&session, plan).await?;
         self.store
@@ -588,13 +599,15 @@ impl Launcher {
         // Neither the worktree nor (for a reviewer) the round changes: this is
         // the same session put back on its feet, not a new round of work.
         let session = self.store.restart_session(&previous.id, None, None).await?;
-        let ctx = self.spawn_ctx(
-            &session,
-            cwd,
-            &profile,
-            prompts::system_prompt(&profile),
-            String::new(),
-        );
+        let ctx = self
+            .spawn_ctx(
+                &session,
+                cwd,
+                &profile,
+                prompts::system_prompt(&profile),
+                String::new(),
+            )
+            .await?;
         let plan = adapter_for(session.agent_kind()).plan_resume(
             &ctx,
             &internal,

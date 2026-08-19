@@ -3,6 +3,7 @@
 //! Single source of truth for wire types: the daemon serializes them, the
 //! client deserializes them, utoipa derives the OpenAPI schemas from them.
 
+pub mod agents;
 pub mod error;
 pub mod events;
 pub mod goals;
