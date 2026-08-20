@@ -182,6 +182,10 @@ fn opencode_spawn_plan() {
     assert!(plan.argv.contains(&"--auto".to_string()));
     assert!(plan.argv.contains(&"--extra".to_string()));
 
+    // Nothing to type after a spawn: the briefing rides `--prompt`, which
+    // OpenCode honors for a session it creates.
+    assert!(plan.post_launch_input.is_none());
+
     // Config injected via env, not flags.
     let config_path = plan
         .env
@@ -191,13 +195,21 @@ fn opencode_spawn_plan() {
         .expect("OPENCODE_CONFIG set");
     let config: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
-    // Catch-all allow first, then back go the denies OpenCode ships: last
-    // matching rule wins, so nothing is left asking a human.
+    // The denies are the load-bearing part: `--auto` approves whatever still
+    // asks, but never what is explicitly denied — and each denied tool hands
+    // control to a human.
     assert_eq!(config["permission"]["*"], "allow");
     assert_eq!(config["permission"]["question"], "deny");
     assert_eq!(config["permission"]["plan_enter"], "deny");
     assert_eq!(config["permission"]["plan_exit"], "deny");
+    // Every message runs as the ariadne agent, which carries the system
+    // prompt: it is the default, and the primaries OpenCode would fall back
+    // to (or Tab-cycle onto) are disabled.
+    assert_eq!(config["default_agent"], "ariadne");
     assert_eq!(config["agent"]["ariadne"]["prompt"], "SYSTEM PROMPT");
+    assert_eq!(config["agent"]["ariadne"]["mode"], "primary");
+    assert_eq!(config["agent"]["build"]["disable"], true);
+    assert_eq!(config["agent"]["plan"]["disable"], true);
     // Model without provider prefix is skipped (opencode wants provider/model).
     assert!(config["agent"]["ariadne"].get("model").is_none());
     assert_eq!(
@@ -211,13 +223,23 @@ fn opencode_spawn_plan() {
             .contains("ariadne-events.js")
     );
 
-    // Resume goes through the TUI with --session (stays attachable).
+    // Resume goes through the TUI with --session (stays attachable). The
+    // instruction is NOT on the argv — OpenCode drops --prompt when resuming
+    // — it is typed into the TUI by the launcher instead.
     let plan = adapter_for(AgentKind::Opencode)
         .plan_resume(&ctx(dir.path().into(), KIND), "ses_1", "apply feedback")
         .unwrap();
     let joined = plan.argv.join(" ");
-    assert!(joined.contains("--session ses_1") && joined.contains("--prompt apply feedback"));
+    assert!(joined.contains("--session ses_1"));
+    assert!(!joined.contains("--prompt"), "{joined}");
+    assert_eq!(plan.post_launch_input.as_deref(), Some("apply feedback"));
     assert!(plan.argv.contains(&"--auto".to_string()));
+
+    // An interactive resume (ariadne attach) types nothing.
+    let plan = adapter_for(AgentKind::Opencode)
+        .plan_resume(&ctx(dir.path().into(), KIND), "ses_1", "")
+        .unwrap();
+    assert!(plan.post_launch_input.is_none());
 }
 
 #[test]

@@ -3,11 +3,19 @@
 //! - Config injection: `OPENCODE_CONFIG=<run>/opencode.json` env var —
 //!   the permission block below, a custom `ariadne` agent carrying the system
 //!   prompt, the MCP server entry, and the Ariadne events plugin.
+//! - Agent pinning: the system prompt exists only on the `ariadne` agent, so
+//!   every message must run as it. `default_agent` alone is not enough —
+//!   OpenCode falls back to `build` whenever the named agent is unavailable,
+//!   and Tab in an attached TUI cycles primaries — so `build` and `plan` are
+//!   disabled outright, which leaves nothing to fall back or cycle to.
 //! - Autonomy: the `--auto` flag comes from the agent config
 //!   ([`AgentKind::default_flags`]); the permission block here is structural.
 //! - Session id: captured by the plugin from `session.created` events.
-//! - Resume: TUI `opencode --session <id> --prompt "<instruction>"` so the
-//!   resumed session stays interactively attachable.
+//! - Resume: TUI `opencode --session <id>` so the resumed session stays
+//!   interactively attachable. The instruction cannot ride the argv —
+//!   OpenCode (verified on 1.18.15) silently drops `--prompt` when resuming
+//!   an existing session — so it goes out as [`SpawnPlan::post_launch_input`]
+//!   for the launcher to type into the TUI once it is up.
 
 use anyhow::{Context, Result};
 use serde_json::json;
@@ -29,6 +37,7 @@ impl OpencodeAdapter {
 
         let mut agent = json!({
             "description": "Ariadne-orchestrated agent",
+            "mode": "primary",
             "prompt": ctx.system_prompt,
         });
         // OpenCode expects provider/model; skip when the profile model has no
@@ -41,19 +50,29 @@ impl OpencodeAdapter {
 
         let config = json!({
             "$schema": "https://opencode.ai/config.json",
-            // Rules are matched in order with the last match winning, so
-            // the catch-all first turns every OpenCode default that would
-            // *ask* (`doom_loop`, `external_directory`, reading `.env`) into
-            // an allow, and the entries after it put back the ones OpenCode
-            // *denies* out of the box: each of those hands control to a human
-            // — the very thing a tmux-parked agent must never do.
+            // The catch-all allow does not silence everything: OpenCode
+            // resolves its built-in *ask* rules (`doom_loop`,
+            // `external_directory`, reading `.env`) after the config's, and
+            // it is the `--auto` flag from the agent config that approves
+            // whatever still asks. What `--auto` never overrides are denies,
+            // which is exactly what the entries here are for: each of these
+            // tools hands control to a human — the very thing a tmux-parked
+            // agent must never do.
             "permission": {
                 "*": "allow",
                 "question": "deny",
                 "plan_enter": "deny",
                 "plan_exit": "deny",
             },
-            "agent": { "ariadne": agent },
+            // Every message must run as `ariadne` — its prompt is the system
+            // layer. See the module docs on why build/plan are disabled
+            // rather than merely not defaulted to.
+            "default_agent": "ariadne",
+            "agent": {
+                "ariadne": agent,
+                "build": { "disable": true },
+                "plan": { "disable": true },
+            },
             "mcp": {
                 "ariadne": {
                     "type": "local",
@@ -101,6 +120,7 @@ impl AgentAdapter for OpencodeAdapter {
             cwd: ctx.cwd.clone(),
             // Captured from the plugin's session.created event.
             internal_session_id: None,
+            post_launch_input: None,
         })
     }
 
@@ -118,17 +138,15 @@ impl AgentAdapter for OpencodeAdapter {
             "--session".into(),
             internal_id.to_string(),
         ];
-        // Empty instruction = interactive resume without a message.
-        if !instruction.is_empty() {
-            argv.push("--prompt".into());
-            argv.push(instruction.to_string());
-        }
         argv.extend(ctx.extra_flags.iter().cloned());
         Ok(SpawnPlan {
             env: self.env_with_config(ctx, &config_file),
             argv,
             cwd: ctx.cwd.clone(),
             internal_session_id: Some(internal_id.to_string()),
+            // Typed into the TUI, not passed as `--prompt`: see module docs.
+            // Empty instruction = interactive resume without a message.
+            post_launch_input: (!instruction.is_empty()).then(|| instruction.to_string()),
         })
     }
 }
