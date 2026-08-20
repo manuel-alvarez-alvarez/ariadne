@@ -328,6 +328,7 @@ function TaskFormDialog({
             <FieldLabel htmlFor="task-description">Description</FieldLabel>
             <Textarea
               id="task-description"
+              rows={5}
               placeholder="What should be built, and anything the engineer needs to know."
               {...form.register("description")}
             />
