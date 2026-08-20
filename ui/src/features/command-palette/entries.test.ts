@@ -27,7 +27,7 @@ const TASK: TaskDto = {
   engineer_profile_id: "01JPROF0000000000000000AA",
   repo_id: "01JREPO0000000000000000AA",
   review_round: 0,
-  reviewer_profile_ids: [],
+  reviewers: [],
   stalled: false,
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
