@@ -48,6 +48,12 @@ pub struct SpawnPlan {
     pub cwd: PathBuf,
     /// Known ahead of time only for Claude Code (we choose the uuid).
     pub internal_session_id: Option<String>,
+    /// Text the launcher types into the pane once the TUI is up, for a CLI
+    /// that cannot take the instruction on its argv: OpenCode silently drops
+    /// `--prompt` when `--session` resumes an existing conversation (verified
+    /// on 1.18.15), so its resume instruction goes in as a bracketed paste
+    /// instead. `None` for spawns and for interactive resumes.
+    pub post_launch_input: Option<String>,
 }
 
 pub trait AgentAdapter: Send + Sync {

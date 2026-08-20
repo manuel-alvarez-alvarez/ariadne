@@ -73,6 +73,7 @@ impl AgentAdapter for CodexAdapter {
             cwd: ctx.cwd.clone(),
             // The session id arrives with the SessionStart hook event.
             internal_session_id: None,
+            post_launch_input: None,
         })
     }
 
@@ -98,6 +99,7 @@ impl AgentAdapter for CodexAdapter {
             env: base_env(ctx),
             cwd: ctx.cwd.clone(),
             internal_session_id: Some(internal_id.to_string()),
+            post_launch_input: None,
         })
     }
 }

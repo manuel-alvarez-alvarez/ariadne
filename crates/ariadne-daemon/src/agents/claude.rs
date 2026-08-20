@@ -98,6 +98,7 @@ impl AgentAdapter for ClaudeAdapter {
             env: base_env(ctx),
             cwd: ctx.cwd.clone(),
             internal_session_id: Some(session_uuid),
+            post_launch_input: None,
         })
     }
 
@@ -122,6 +123,7 @@ impl AgentAdapter for ClaudeAdapter {
             env: base_env(ctx),
             cwd: ctx.cwd.clone(),
             internal_session_id: Some(internal_id.to_string()),
+            post_launch_input: None,
         })
     }
 }

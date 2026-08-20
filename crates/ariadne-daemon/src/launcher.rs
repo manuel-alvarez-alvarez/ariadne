@@ -132,13 +132,16 @@ impl Launcher {
     /// dialog well after spawn, and a watcher that has already given up leaves
     /// the agent waiting on it forever. A single failed capture is likewise no
     /// reason to stop watching — only the session going away is.
+    /// What the trust dialog looks like in a pane, lowercased. Shared with
+    /// the typed-input deliverer, which must not paste into that dialog.
+    const TRUST_PATTERNS: [&'static str; 4] = [
+        "do you trust",
+        "trust this folder",
+        "trust the contents",
+        "press enter to continue",
+    ];
+
     fn auto_accept_trust(&self, tmux_session: String) {
-        const PATTERNS: [&str; 4] = [
-            "do you trust",
-            "trust this folder",
-            "trust the contents",
-            "press enter to continue",
-        ];
         let tmux = self.tmux.clone();
         tokio::spawn(async move {
             for _ in 0..240 {
@@ -150,12 +153,56 @@ impl Launcher {
                     continue;
                 };
                 let lower = pane.to_lowercase();
-                if PATTERNS.iter().any(|p| lower.contains(p)) {
+                if Self::TRUST_PATTERNS.iter().any(|p| lower.contains(p)) {
                     tracing::info!(session = %tmux_session, "accepting directory-trust dialog");
                     let _ = tmux.send_enter(&tmux_session).await;
                     tokio::time::sleep(std::time::Duration::from_millis(700)).await;
                 }
             }
+        });
+    }
+
+    /// Type a resume instruction into the pane once its TUI is up — the
+    /// delivery for [`SpawnPlan::post_launch_input`], whose docs say which
+    /// CLI needs it and why.
+    ///
+    /// Readiness is judged from the pane itself: something has to be drawn,
+    /// and it must not be the directory-trust dialog, whose accept would
+    /// swallow the paste. One short beat later the instruction goes in as a
+    /// single bracketed paste. The watch window matches the trust watcher's
+    /// two minutes; delivery happens once or — for a session that dies or
+    /// never draws — not at all, and the giving-up is logged.
+    fn deliver_typed_input(&self, tmux_session: String, input: String) {
+        let tmux = self.tmux.clone();
+        tokio::spawn(async move {
+            for _ in 0..240 {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                if !tmux.has_session(&tmux_session).await {
+                    return;
+                }
+                let Ok(pane) = tmux.capture_pane(&tmux_session, 50).await else {
+                    continue;
+                };
+                let lower = pane.to_lowercase();
+                if lower.trim().is_empty()
+                    || Self::TRUST_PATTERNS.iter().any(|p| lower.contains(p))
+                {
+                    continue;
+                }
+                // One more beat: a TUI that just painted its first frame may
+                // still be wiring up its input handling.
+                tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+                match tmux.send_paste(&tmux_session, &input).await {
+                    Ok(()) => {
+                        tracing::info!(session = %tmux_session, "typed the resume instruction into the TUI")
+                    }
+                    Err(e) => {
+                        tracing::warn!(session = %tmux_session, error = %e, "typing the resume instruction failed")
+                    }
+                }
+                return;
+            }
+            tracing::warn!(session = %tmux_session, "gave up waiting for a TUI to type the resume instruction into");
         });
     }
 
@@ -218,6 +265,9 @@ impl Launcher {
             .set_session_status(&session.id, SessionStatus::Running)
             .await?;
         self.auto_accept_trust(session.tmux_session.clone());
+        if let Some(input) = plan.post_launch_input {
+            self.deliver_typed_input(session.tmux_session.clone(), input);
+        }
         Ok(())
     }
 
