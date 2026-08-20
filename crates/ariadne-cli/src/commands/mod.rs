@@ -24,6 +24,7 @@ use serde_json::json;
 
 use ariadne_api::profiles::ProfileDto;
 use ariadne_client::{Client, endpoint};
+use ariadne_core::AgentKind;
 
 use crate::output::{Format, print_json};
 
@@ -227,12 +228,22 @@ impl ProfileNames {
         }
     }
 
-    /// A list of ids, labelled, in the order they were given.
-    pub fn labels(&self, ids: &[String]) -> String {
-        ids.iter()
-            .map(|id| self.label(id))
-            .collect::<Vec<_>>()
-            .join(", ")
+    /// `Name (id) · agent · model`: the mention, plus what the agent behind it
+    /// is pinned to run on.
+    ///
+    /// A profile is editable and a pin is not, so the two answers drift: what
+    /// a task's engineer, a task's reviewer or a goal's planner runs on is the
+    /// snapshot taken when it was assigned, not what the profile says today.
+    /// No agent kind pinned means auto — the first installed CLI, resolved at
+    /// spawn time — and no model means that CLI's own default, the same two
+    /// words `profile inspect` and the web use.
+    pub fn pinned_label(&self, id: &str, agent: Option<AgentKind>, model: Option<&str>) -> String {
+        format!(
+            "{} · {} · {}",
+            self.label(id),
+            agent.map_or("auto", |k| k.as_str()),
+            model.unwrap_or("default"),
+        )
     }
 }
 

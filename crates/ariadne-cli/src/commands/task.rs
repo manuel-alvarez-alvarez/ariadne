@@ -287,8 +287,31 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                         ("goal", t.goal_id),
                         ("title", t.title),
                         ("status", t.status.as_str().into()),
-                        ("engineer", profiles.label(&t.engineer_profile_id)),
-                        ("reviewers", profiles.labels(&t.reviewer_profile_ids)),
+                        (
+                            "engineer",
+                            profiles.pinned_label(
+                                &t.engineer_profile_id,
+                                t.agent_kind,
+                                t.model.as_deref(),
+                            ),
+                        ),
+                        (
+                            "reviewers",
+                            // One reviewer per line: each is now a mention and
+                            // the two facts after it, and the review order is
+                            // what the column reads down.
+                            t.reviewers
+                                .iter()
+                                .map(|r| {
+                                    profiles.pinned_label(
+                                        &r.profile_id,
+                                        r.agent_kind,
+                                        r.model.as_deref(),
+                                    )
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n             "),
+                        ),
                         (
                             "depends_on",
                             if t.depends_on.is_empty() {
@@ -598,7 +621,9 @@ mod tests {
             description: String::new(),
             status: TaskStatus::InProgress,
             engineer_profile_id: "01ENG".into(),
-            reviewer_profile_ids: vec![],
+            agent_kind: None,
+            model: None,
+            reviewers: vec![],
             depends_on: vec![],
             branch: "ariadne/task-01TASK".into(),
             worktree_path: None,
