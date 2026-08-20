@@ -16,7 +16,6 @@ import type { TaskDto, TaskStatus } from "@/api"
 /** Pipeline columns, in the order a task moves through them. */
 export const BOARD_STATUSES = [
   "pending",
-  "ready",
   "in_progress",
   "under_review",
   "merged",
@@ -26,11 +25,19 @@ export const BOARD_STATUSES = [
 export const OFF_BOARD_STATUSES = ["cancelled", "failed"] as const satisfies readonly TaskStatus[]
 
 /**
- * The daemon statuses the UI folds into a primary one: `changes_requested`
- * and `merging` are phases of `in_progress`, `approved` is a phase of
- * `under_review`. The raw status stays visible as a sub-status badge.
+ * The daemon statuses the UI folds into a primary one: `ready` is a phase of
+ * `pending`, `changes_requested` and `merging` are phases of `in_progress`,
+ * `approved` is a phase of `under_review`. The raw status stays visible as a
+ * sub-status badge.
+ *
+ * `ready` is folded because the daemon spawns the engineer in the same
+ * reconcile pass that made the task ready — nothing queues there, so a column
+ * of its own was empty by design. A task that *does* linger in it (paused
+ * goal, daemon down, engineer spawn failing, a failure just retried) is
+ * exactly what the badge on the Pending card says.
  */
 const SUB_STATUS_OF = {
+  ready: "pending",
   changes_requested: "in_progress",
   merging: "in_progress",
   approved: "under_review",
@@ -65,21 +72,23 @@ interface StatusMeta {
 
 /**
  * Which step of the ramp each status takes. The pipeline reads left to right —
- * pending grey, ready teal, in progress accent, review violet, merged green —
- * and the two statuses that mean "something is wrong" (changes requested,
- * failed) are the only warm ones, so a stalled task is never mistaken for a
- * waiting one.
+ * pending grey, in progress accent, review violet, merged green — with the
+ * folded sub-statuses on the step of the column they sit in (`ready` teal, one
+ * shade off its grey column, because a task parked there is not simply
+ * waiting). The two statuses that mean "something is wrong" (changes
+ * requested, failed) are the only warm ones, so a stalled task is never
+ * mistaken for a waiting one.
  */
 export const TASK_STATUS_META: Record<TaskStatus, StatusMeta> = {
   pending: {
     label: "Pending",
-    hint: "Waiting for its dependencies to merge.",
+    hint: "Not started yet: waiting for its dependencies to merge, or ready and waiting for an engineer session.",
     badge: "bg-status-pending-soft text-status-pending-fg",
     dot: "bg-status-pending",
   },
   ready: {
     label: "Ready",
-    hint: "Dependencies merged; waiting for an engineer session.",
+    hint: "Dependencies merged, and still waiting for an engineer session — the daemon normally starts one at once, so a task sitting here means its goal is paused, the daemon is down, the spawn is failing, or it was just retried.",
     badge: "bg-status-ready-soft text-status-ready-fg",
     dot: "bg-status-ready",
   },
@@ -163,10 +172,6 @@ export function compareByAttention(a: TaskDto, b: TaskDto): number {
   if (a.stalled !== b.stalled) return a.stalled ? -1 : 1
   const rank = ATTENTION_RANK[a.status] - ATTENTION_RANK[b.status]
   return rank !== 0 ? rank : Date.parse(b.updated_at) - Date.parse(a.updated_at)
-}
-
-export function statusLabel(status: TaskStatus): string {
-  return TASK_STATUS_META[primaryStatus(status)].label
 }
 
 /** Terminal statuses are frozen: nothing, and nobody, moves a task out of them. */
