@@ -1,6 +1,6 @@
 //! Task DTOs.
 
-use ariadne_core::TaskStatus;
+use ariadne_core::{AgentKind, TaskStatus};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -14,8 +14,15 @@ pub struct TaskDto {
     pub description: String,
     pub status: TaskStatus,
     pub engineer_profile_id: String,
-    /// Reviewer profile ids in planner-assigned order.
-    pub reviewer_profile_ids: Vec<String>,
+    /// Agent CLI the engineer runs on, pinned from the profile when the task
+    /// was created; editing the profile afterwards leaves it alone. None =
+    /// auto, resolved at spawn time to the first installed CLI.
+    pub agent_kind: Option<AgentKind>,
+    /// Model the engineer runs on, pinned like `agent_kind`. None = the agent
+    /// CLI's own default.
+    pub model: Option<String>,
+    /// Reviewer slots in planner-assigned order, each carrying its own pin.
+    pub reviewers: Vec<TaskReviewerDto>,
     /// Ids of tasks that must merge before this one starts.
     pub depends_on: Vec<String>,
     pub branch: String,
@@ -26,6 +33,19 @@ pub struct TaskDto {
     pub merge_commit: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+/// One reviewer slot of a task: which profile reviews it, and what that
+/// reviewer was pinned to run on when the slot was assigned. Pinned the same
+/// way the engineer is, and read the same way: what a reviewer of this task
+/// runs on, not what its profile says today.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct TaskReviewerDto {
+    pub profile_id: String,
+    /// None = auto, resolved at spawn time to the first installed CLI.
+    pub agent_kind: Option<AgentKind>,
+    /// None = the agent CLI's own default.
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

@@ -8,7 +8,7 @@ use ariadne_api::profiles::{ProfileDto, ProfilePromptDto};
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::reviews::ReviewDto;
 use ariadne_api::sessions::SessionDto;
-use ariadne_api::tasks::{TaskDto, TaskTransitionDto};
+use ariadne_api::tasks::{TaskDto, TaskReviewerDto, TaskTransitionDto};
 use ariadne_store as store;
 
 pub fn profile_dto(p: store::Profile) -> ProfileDto {
@@ -54,29 +54,45 @@ pub fn repository_dto(r: store::Repository) -> RepositoryDto {
 pub fn goal_dto(g: store::Goal, repos: Vec<store::Repository>) -> GoalDto {
     GoalDto {
         status: g.status(),
+        agent_kind: g.agent_kind(),
         id: g.id,
         title: g.title,
         description: g.description,
         max_tasks: g.max_tasks,
         required_approvals: g.required_approvals,
         planner_profile_id: g.planner_profile_id,
+        model: g.model,
         repos: repos.into_iter().map(repository_dto).collect(),
         created_at: g.created_at,
         updated_at: g.updated_at,
     }
 }
 
-pub fn task_dto(t: store::Task, reviewers: Vec<String>, depends_on: Vec<String>) -> TaskDto {
+pub fn task_reviewer_dto(r: store::TaskReviewer) -> TaskReviewerDto {
+    TaskReviewerDto {
+        agent_kind: r.agent_kind(),
+        profile_id: r.profile_id,
+        model: r.model,
+    }
+}
+
+pub fn task_dto(
+    t: store::Task,
+    reviewers: Vec<store::TaskReviewer>,
+    depends_on: Vec<String>,
+) -> TaskDto {
     TaskDto {
         status: t.status(),
         stalled: t.is_stalled(),
+        agent_kind: t.agent_kind(),
         id: t.id,
         goal_id: t.goal_id,
         repo_id: t.repo_id,
         title: t.title,
         description: t.description,
         engineer_profile_id: t.engineer_profile_id,
-        reviewer_profile_ids: reviewers,
+        model: t.model,
+        reviewers: reviewers.into_iter().map(task_reviewer_dto).collect(),
         depends_on,
         branch: t.branch,
         worktree_path: t.worktree_path,
