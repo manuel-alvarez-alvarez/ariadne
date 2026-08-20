@@ -7,8 +7,9 @@
  *
  * The panel it lives in is narrow, and a wide diff does not fit it, so the same
  * viewer — toolbar, file sections, raw fallback and all — can be lifted into a
- * near-fullscreen dialog. It is lifted rather than duplicated: one instance,
- * mounted in whichever of the two frames is showing.
+ * dialog that takes the width of the viewport and as much of its height as the
+ * diff needs. It is lifted rather than duplicated: one instance, mounted in
+ * whichever of the two frames is showing.
  */
 
 import { useQuery } from "@tanstack/react-query"
@@ -128,11 +129,21 @@ export function TaskDiff({ taskId }: { taskId: string }) {
         }
       />
       <Dialog open onOpenChange={(open) => open || setExpanded(false)}>
-        {/* Near-fullscreen, and a two-row grid so only the diff scrolls: the
-            toolbar — file navigation, Raw, wrap — stays put above it. */}
+        {/* As tall as the diff needs and no taller, up to near-fullscreen: a
+            max-height over the popup's own `h-fit`, so a three-line diff gets a
+            three-line modal and a long one caps at the viewport. A column, so
+            that when it does cap only the diff scrolls — the toolbar, Raw and
+            wrap stay put above it.
+
+            A flex column rather than the popup's grid on purpose: WebKit sizes
+            a `height: fit-content` grid container that is out of flow — which
+            every dialog here is — to the whole space it could have taken, so a
+            grid never hugs a short diff there, while Chromium only hugs a grid
+            whose scrolling row is `minmax(0,1fr)`. A flex column hugs and caps
+            in both. */}
         <DialogContent
           showCloseButton={false}
-          className="h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] grid-rows-[auto_minmax(0,1fr)] gap-3 sm:max-w-[calc(100vw-2rem)]"
+          className="flex max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] flex-col gap-3 sm:max-w-[calc(100vw-2rem)]"
         >
           <DialogTitle className="sr-only">Diff of the task branch</DialogTitle>
           {toolbar}
