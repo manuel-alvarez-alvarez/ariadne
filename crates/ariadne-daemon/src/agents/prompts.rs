@@ -501,12 +501,18 @@ mod tests {
         );
 
         let expected = format!(
-            "Your task has been approved. Merge it now:\n\n\
-                 1. In your worktree, rebase onto the latest base if needed: \
+            "Your task has been approved. Merge it now, keeping the base \
+                 branch's history linear — one commit per task, no merge \
+                 commits:\n\n\
+                 1. In your worktree, rebase onto the latest base: \
                  `git fetch . && git rebase {base}` (resolve conflicts if any).\n\
-                 2. Merge into the base branch from the primary checkout: \
-                 `git -C {repo} merge --no-ff {branch} -m \"merge: {title}\"`.\n\
-                 3. Call `mark_merged` with the merge commit sha \
+                 2. Squash the branch into a single commit on top of the base: \
+                 `git reset --soft {base} && git commit -m \"{title}\" \
+                 -m \"<what changed and why>\"`.\n\
+                 3. Fast-forward the base branch from the primary checkout: \
+                 `git -C {repo} merge --ff-only {branch}`. If it refuses \
+                 because the base moved, go back to step 1.\n\
+                 4. Call `mark_merged` with the resulting commit sha \
                  (`git -C {repo} rev-parse {base}`).",
             base = repo.base_branch,
             repo = repo.path,
