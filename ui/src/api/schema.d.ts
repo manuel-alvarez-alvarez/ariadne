@@ -1027,6 +1027,7 @@ export interface components {
             summary: string;
         };
         GoalDto: {
+            agent_kind?: null | components["schemas"]["AgentKind"];
             created_at: string;
             description: string;
             id: string;
@@ -1035,6 +1036,11 @@ export interface components {
              * @description None = unbounded.
              */
             max_tasks?: number | null;
+            /**
+             * @description Model the planner runs on, pinned like `agent_kind`. None = the agent
+             *     CLI's own default.
+             */
+            model?: string | null;
             planner_profile_id: string;
             /**
              * @description The registered repositories the goal works in, as they stand now: a
@@ -1297,6 +1303,7 @@ export interface components {
          */
         SessionStatus: "starting" | "running" | "idle" | "exited" | "failed";
         TaskDto: {
+            agent_kind?: null | components["schemas"]["AgentKind"];
             branch: string;
             created_at: string;
             /** @description Ids of tasks that must merge before this one starts. */
@@ -1306,18 +1313,35 @@ export interface components {
             goal_id: string;
             id: string;
             merge_commit?: string | null;
+            /**
+             * @description Model the engineer runs on, pinned like `agent_kind`. None = the agent
+             *     CLI's own default.
+             */
+            model?: string | null;
             /** @description Id of the repository the task works in, one of its goal's. */
             repo_id: string;
             /** Format: int64 */
             review_round: number;
-            /** @description Reviewer profile ids in planner-assigned order. */
-            reviewer_profile_ids: string[];
+            /** @description Reviewer slots in planner-assigned order, each carrying its own pin. */
+            reviewers: components["schemas"]["TaskReviewerDto"][];
             /** @description Set when the agent went idle without advancing the task. */
             stalled: boolean;
             status: components["schemas"]["TaskStatus"];
             title: string;
             updated_at: string;
             worktree_path?: string | null;
+        };
+        /**
+         * @description One reviewer slot of a task: which profile reviews it, and what that
+         *     reviewer was pinned to run on when the slot was assigned. Pinned the same
+         *     way the engineer is, and read the same way: what a reviewer of this task
+         *     runs on, not what its profile says today.
+         */
+        TaskReviewerDto: {
+            agent_kind?: null | components["schemas"]["AgentKind"];
+            /** @description None = the agent CLI's own default. */
+            model?: string | null;
+            profile_id: string;
         };
         /**
          * @description Task lifecycle status.

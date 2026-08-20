@@ -131,7 +131,7 @@ export function SessionDetailView({
         <Detail label="Profile">
           {/* The session's own snapshot, not the profile's current fields: the
               profile may have been edited since this agent was launched. */}
-          <ProfileSummary profileId={session.profile_id} launched={session} className="text-sm" />
+          <ProfileSummary profileId={session.profile_id} pinned={session} className="text-sm" />
         </Detail>
         <Detail label="Model">
           {/* Null on the wire means the agent CLI picked, which is a fact
