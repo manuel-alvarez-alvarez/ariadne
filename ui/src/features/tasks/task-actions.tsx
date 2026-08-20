@@ -30,7 +30,7 @@ import { Button } from "@/components/ui/button"
 import { isSettling } from "@/lib/confirm-flow"
 import { describeError } from "@/lib/errors"
 import { useCancelTask, useRetryTask } from "./queries"
-import { canCancel, canEdit, canRetry, statusLabel } from "./status"
+import { canCancel, canEdit, canRetry, TASK_STATUS_META } from "./status"
 import { EditTaskDialog } from "./task-form-dialog"
 
 export function TaskActions({ task }: { task: TaskDto }) {
@@ -78,7 +78,9 @@ export function TaskActions({ task }: { task: TaskDto }) {
             retry.mutate(undefined, {
               onSuccess: (updated) => {
                 toast.success("Task retried", {
-                  description: `Now ${statusLabel(updated.status).toLowerCase()}.`,
+                  // The raw status, not the column it is drawn in: a retried
+                  // task lands in `ready`, which the board folds into Pending.
+                  description: `Now ${TASK_STATUS_META[updated.status].label.toLowerCase()}.`,
                 })
               },
               onError: (error) =>

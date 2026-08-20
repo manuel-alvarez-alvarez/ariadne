@@ -10,10 +10,14 @@
  * board shows is *where* a reason lands — on the task it belongs to, in the
  * lane of the goal whose planner raised it, and nowhere at all when nothing is
  * stuck.
+ *
+ * The columns are here for the same reason: which cell a card lands in is a
+ * property of the mounted grid, and `ready` folding into Pending is exactly
+ * that.
  */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, render, screen } from "@testing-library/react"
+import { cleanup, render, screen, within } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 
@@ -167,4 +171,41 @@ it("badges the lane header when a goal's planner is waiting", async () => {
   const badge = await screen.findByText("Waiting for input")
   expect(badge.closest("header")).not.toBeNull()
   expect(badge.closest("a")).toBeNull()
+})
+
+/** The four pipeline columns, in order; `ready` is folded into the first. */
+it("lays the pipeline out in four columns", async () => {
+  stubDaemon({ tasks: [TASK] })
+  renderBoard()
+
+  await screen.findByText(TASK.title)
+  const columns = screen.getAllByRole("heading", { level: 2 })
+  expect(columns.map((column) => column.textContent)).toEqual([
+    "Pending",
+    "In progress",
+    "Under review",
+    "Merged",
+  ])
+})
+
+it("puts a ready task in the Pending column, badged with the status it is really in", async () => {
+  const blocked: TaskDto = { ...TASK, id: `${TASK.id}P`, title: "Waiting on a dependency" }
+  blocked.status = "pending"
+  const ready: TaskDto = { ...TASK, id: `${TASK.id}R`, title: "Retried, no engineer yet" }
+  ready.status = "ready"
+  stubDaemon({ tasks: [blocked, ready] })
+  renderBoard()
+
+  // The card's own box is the link's parent; the cell is the box's.
+  const cell = (await screen.findByText(ready.title)).closest("a")?.parentElement?.parentElement
+  expect(cell).toBeDefined()
+  // First cell of the lane's grid, holding the plainly pending task too: that
+  // is what "folded into Pending" looks like on screen.
+  expect([...(cell?.parentElement?.children ?? [])].indexOf(cell as Element)).toBe(0)
+  expect(cell?.textContent).toContain(blocked.title)
+
+  // And still told apart from the one that is only waiting on a dependency:
+  // the sub-status badge is on the ready card and on nothing else.
+  expect(within(cell as HTMLElement).getByText("Ready")).not.toBeNull()
+  expect(screen.getAllByText("Ready")).toHaveLength(1)
 })
