@@ -1,20 +1,22 @@
 /**
  * A profile in one line: `name · agent kind · model`.
  *
- * The three surfaces that mention a profile — a session's summary, the
- * sessions table, the task panel's Engineer and Reviewers — each used to say
- * something different about it: the name alone, the name with the agent kind
- * hidden in a `title=`, the name and nothing else. Which agent CLI and which
- * model an agent is running is the question those mentions are actually there
- * to answer, so they answer it here, once.
+ * The surfaces that mention a profile — a session's summary, the sessions
+ * table, the task panel's Engineer and Reviewers, the goal panel's Planner —
+ * each used to say something different about it: the name alone, the name with
+ * the agent kind hidden in a `title=`, the name and nothing else. Which agent
+ * CLI and which model an agent is running is the question those mentions are
+ * actually there to answer, so they answer it here, once.
  *
  * The name links to the profile ({@link ProfileName}); the two facts after it
  * are quiet secondary text, and the whole line truncates, since it sits in
  * table cells and 48rem panels.
  *
- * A profile is editable, so what a *session* runs is not necessarily what its
- * profile says today: a session records the agent kind and the model it was
- * launched with, and those win where there are any (see {@link launched}).
+ * A profile is editable and what runs is not: a session records what it was
+ * launched with, and a task, a reviewer slot and a goal each record what they
+ * were created with. Those snapshots win over the profile wherever there is one
+ * (see {@link pinned}) — which is the whole point, since the moment the two
+ * disagree is the moment somebody edited the profile.
  */
 
 import { useQuery } from "@tanstack/react-query"
@@ -28,23 +30,24 @@ import { profilesQueryOptions } from "./queries"
 
 export function ProfileSummary({
   profileId,
-  launched,
+  pinned,
   className,
 }: {
   profileId: string
   /**
-   * What was actually launched, for a profile shown as a session's: the
-   * session's own snapshot, taken when it started. A null model there means
-   * the agent CLI's default was used — not that the profile's model applies.
+   * What this mention's agent actually runs on: a session's launch snapshot, a
+   * task's or a reviewer slot's pin, a goal's. A null agent kind is `auto`
+   * resolved at spawn time and a null model is the agent CLI's default —
+   * neither falls back to what the profile says.
    */
-  launched?: { agent_kind: AgentKind; model?: string | null }
+  pinned?: { agent_kind?: AgentKind | null; model?: string | null }
   className?: string
 }) {
   const profiles = useQuery(profilesQueryOptions())
   const profile = profiles.data?.find((item) => item.id === profileId)
   // Nothing to fall back on while the profiles are still loading: the facts
   // wait for the answer rather than claiming `auto · default` and flipping.
-  const facts = launched ?? profile
+  const facts = pinned ?? profile
 
   return (
     <span className={cn("flex min-w-0 items-baseline gap-1", className)}>

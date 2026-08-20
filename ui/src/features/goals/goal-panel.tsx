@@ -31,7 +31,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { When } from "@/components/when"
-import { ProfileName } from "@/features/profiles/profile-name"
+import { ProfileSummary } from "@/features/profiles/profile-summary"
 import { CreateTaskDialog } from "@/features/tasks/task-form-dialog"
 import { useFocusReturn } from "@/hooks/use-focus-return"
 import { goalCopyEntries } from "@/lib/copy-entries"
@@ -278,7 +278,9 @@ function GoalMetadata({ goal }: { goal: GoalDto }) {
   return (
     <dl className="grid gap-x-6 gap-y-3 rounded-lg border bg-card p-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
       <Detail label="Planner">
-        <ProfileName profileId={goal.planner_profile_id} />
+        {/* The goal's pin: what the planner runs on, which a later edit to its
+            profile leaves alone. */}
+        <ProfileSummary profileId={goal.planner_profile_id} pinned={goal} />
       </Detail>
       <Detail label="Approvals">
         <span className="tabular-nums">{goal.required_approvals}</span>

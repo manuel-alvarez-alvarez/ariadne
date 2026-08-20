@@ -248,7 +248,7 @@ function SessionRow({
           which model an agent is running is what the column is read for, and
           they were a `title=` nobody hovers. */}
       <TableCell className="max-w-56 text-xs">
-        <ProfileSummary profileId={session.profile_id} launched={session} />
+        <ProfileSummary profileId={session.profile_id} pinned={session} />
       </TableCell>
       {/* The reason rides in the status cell rather than taking a seventh
           column: it is empty for almost every row, and where it is not it is

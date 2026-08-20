@@ -2830,6 +2830,17 @@
           "updated_at"
         ],
         "properties": {
+          "agent_kind": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AgentKind",
+                "description": "Agent CLI the planner runs on, pinned from the profile when the goal\nwas created; editing the profile afterwards leaves it alone. None =\nauto, resolved at spawn time to the first installed CLI."
+              }
+            ]
+          },
           "created_at": {
             "type": "string"
           },
@@ -2846,6 +2857,13 @@
             ],
             "format": "int64",
             "description": "None = unbounded."
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Model the planner runs on, pinned like `agent_kind`. None = the agent\nCLI's own default."
           },
           "planner_profile_id": {
             "type": "string"
@@ -3487,7 +3505,7 @@
           "description",
           "status",
           "engineer_profile_id",
-          "reviewer_profile_ids",
+          "reviewers",
           "depends_on",
           "branch",
           "review_round",
@@ -3496,6 +3514,17 @@
           "updated_at"
         ],
         "properties": {
+          "agent_kind": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AgentKind",
+                "description": "Agent CLI the engineer runs on, pinned from the profile when the task\nwas created; editing the profile afterwards leaves it alone. None =\nauto, resolved at spawn time to the first installed CLI."
+              }
+            ]
+          },
           "branch": {
             "type": "string"
           },
@@ -3527,6 +3556,13 @@
               "null"
             ]
           },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Model the engineer runs on, pinned like `agent_kind`. None = the agent\nCLI's own default."
+          },
           "repo_id": {
             "type": "string",
             "description": "Id of the repository the task works in, one of its goal's."
@@ -3535,12 +3571,12 @@
             "type": "integer",
             "format": "int64"
           },
-          "reviewer_profile_ids": {
+          "reviewers": {
             "type": "array",
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/TaskReviewerDto"
             },
-            "description": "Reviewer profile ids in planner-assigned order."
+            "description": "Reviewer slots in planner-assigned order, each carrying its own pin."
           },
           "stalled": {
             "type": "boolean",
@@ -3560,6 +3596,36 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "TaskReviewerDto": {
+        "type": "object",
+        "description": "One reviewer slot of a task: which profile reviews it, and what that\nreviewer was pinned to run on when the slot was assigned. Pinned the same\nway the engineer is, and read the same way: what a reviewer of this task\nruns on, not what its profile says today.",
+        "required": [
+          "profile_id"
+        ],
+        "properties": {
+          "agent_kind": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AgentKind",
+                "description": "None = auto, resolved at spawn time to the first installed CLI."
+              }
+            ]
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "None = the agent CLI's own default."
+          },
+          "profile_id": {
+            "type": "string"
           }
         }
       },

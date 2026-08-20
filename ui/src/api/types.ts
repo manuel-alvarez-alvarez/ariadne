@@ -27,6 +27,7 @@ export type UpdateRepositoryRequest = Schemas["UpdateRepositoryRequest"]
 
 export type TaskDto = Schemas["TaskDto"]
 export type TaskStatus = Schemas["TaskStatus"]
+export type TaskReviewerDto = Schemas["TaskReviewerDto"]
 export type TaskTransitionDto = Schemas["TaskTransitionDto"]
 export type TaskUpdatedDto = Schemas["TaskUpdatedDto"]
 export type CreateTaskRequest = Schemas["CreateTaskRequest"]

@@ -17,7 +17,7 @@ function task(overrides: Partial<TaskDto>): TaskDto {
     id: "t1",
     repo_id: "r1",
     review_round: 0,
-    reviewer_profile_ids: [],
+    reviewers: [],
     stalled: false,
     status: "in_progress",
     title: "A task",
