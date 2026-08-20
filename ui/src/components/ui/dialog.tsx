@@ -62,6 +62,14 @@ function DialogOverlay({ className, ...props }: DialogPrimitive.Backdrop.Props) 
  * same box in layout instead, so the settled dialog carries no transform at
  * all. The enter and exit animations still scale it, which is fine — that is
  * over before the dialog is anything to read.
+ *
+ * The popup is a flex column rather than a grid for a second reason of the
+ * same kind: WebKit sizes an out-of-flow `height: fit-content` grid container
+ * — which every dialog here is — to the whole space it could have taken, so
+ * the box ends up viewport-tall and its rows stretch, leaving craters between
+ * the header, the fields and the footer. Chromium hugs either way. A flex
+ * column hugs its content in both engines, and caps and scrolls in both when a
+ * caller adds a `max-h-*`.
  */
 function DialogContent({
   className,
@@ -77,7 +85,7 @@ function DialogContent({
       <DialogPrimitive.Popup
         data-slot="dialog-content"
         className={cn(
-          "fixed inset-0 z-50 m-auto grid h-fit w-full max-w-[calc(100%-2rem)] gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          "fixed inset-0 z-50 m-auto flex h-fit w-full max-w-[calc(100%-2rem)] flex-col gap-3 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className,
         )}
         {...props}
@@ -99,7 +107,7 @@ function DialogContent({
 
 function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
-    <div data-slot="dialog-header" className={cn("flex flex-col gap-2", className)} {...props} />
+    <div data-slot="dialog-header" className={cn("flex flex-col gap-1.5", className)} {...props} />
   )
 }
 
@@ -115,7 +123,7 @@ function DialogFooter({
     <div
       data-slot="dialog-footer"
       className={cn(
-        "-mx-4 -mb-4 flex flex-col-reverse gap-2 rounded-b-xl border-t bg-muted/50 p-4 sm:flex-row sm:justify-end",
+        "-mx-4 -mb-4 flex flex-col-reverse gap-2 rounded-b-xl border-t bg-muted/50 px-4 py-3 sm:flex-row sm:justify-end",
         className,
       )}
       {...props}

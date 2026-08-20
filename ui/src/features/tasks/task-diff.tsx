@@ -131,19 +131,12 @@ export function TaskDiff({ taskId }: { taskId: string }) {
       <Dialog open onOpenChange={(open) => open || setExpanded(false)}>
         {/* As tall as the diff needs and no taller, up to near-fullscreen: a
             max-height over the popup's own `h-fit`, so a three-line diff gets a
-            three-line modal and a long one caps at the viewport. A column, so
-            that when it does cap only the diff scrolls — the toolbar, Raw and
-            wrap stay put above it.
-
-            A flex column rather than the popup's grid on purpose: WebKit sizes
-            a `height: fit-content` grid container that is out of flow — which
-            every dialog here is — to the whole space it could have taken, so a
-            grid never hugs a short diff there, while Chromium only hugs a grid
-            whose scrolling row is `minmax(0,1fr)`. A flex column hugs and caps
-            in both. */}
+            three-line modal and a long one caps at the viewport. The popup is
+            already a flex column (see `dialog.tsx`), so when it does cap only
+            the diff scrolls — the toolbar, Raw and wrap stay put above it. */}
         <DialogContent
           showCloseButton={false}
-          className="flex max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] flex-col gap-3 sm:max-w-[calc(100vw-2rem)]"
+          className="max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] sm:max-w-[calc(100vw-2rem)]"
         >
           <DialogTitle className="sr-only">Diff of the task branch</DialogTitle>
           {toolbar}
