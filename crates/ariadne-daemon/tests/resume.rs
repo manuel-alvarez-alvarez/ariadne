@@ -178,9 +178,30 @@ impl Harness {
     /// A task under review for real: a repo on disk with a commit on the task
     /// branch, and one reviewer assigned to it (whose id is returned).
     async fn task_under_review(&self) -> (Task, String) {
+        self.task_under_review_on(None).await
+    }
+
+    /// The same, with the engineer and reviewer profiles carrying `model` at
+    /// the moment the task is created — so that is what the task and the
+    /// reviewer slot are pinned to.
+    async fn task_under_review_on(&self, model: Option<&str>) -> (Task, String) {
         let planner = self.profile("planner", Role::Planner).await;
-        let engineer = self.profile("engineer", Role::Engineer).await;
-        let reviewer = self.profile("reviewer", Role::Reviewer).await;
+        let engineer = self
+            .profile_with(
+                "engineer",
+                Role::Engineer,
+                Some(AgentKind::ClaudeCode),
+                model,
+            )
+            .await;
+        let reviewer = self
+            .profile_with(
+                "reviewer",
+                Role::Reviewer,
+                Some(AgentKind::ClaudeCode),
+                model,
+            )
+            .await;
         let repo_path = self.dir.path().join("repo-git");
         std::fs::create_dir_all(&repo_path).unwrap();
         sh(
@@ -264,12 +285,23 @@ impl Harness {
     }
 
     async fn profile(&self, name: &str, role: Role) -> String {
+        self.profile_with(name, role, Some(AgentKind::ClaudeCode), None)
+            .await
+    }
+
+    async fn profile_with(
+        &self,
+        name: &str,
+        role: Role,
+        agent_kind: Option<AgentKind>,
+        model: Option<&str>,
+    ) -> String {
         self.store
             .create_profile(NewProfile {
                 name: name.into(),
                 role,
-                agent_kind: Some(AgentKind::ClaudeCode),
-                model: None,
+                agent_kind,
+                model: model.map(str::to_string),
                 system_prompt: format!("You are {name}."),
                 prompts: vec![],
             })
@@ -278,12 +310,66 @@ impl Harness {
             .id
     }
 
+    /// A goal on a repo of its own, whose planner profile was pinned at
+    /// `model` when the goal was created. Returns the goal and the planner's
+    /// profile id.
+    async fn goal_with_planner(&self, model: Option<&str>) -> (String, String) {
+        let planner = self
+            .profile_with("planner", Role::Planner, Some(AgentKind::ClaudeCode), model)
+            .await;
+        let repo_path = self.dir.path().join("repo-planner");
+        std::fs::create_dir_all(&repo_path).unwrap();
+        let repo = self
+            .store
+            .create_repository(NewRepository {
+                path: repo_path.display().to_string(),
+                base_branch: "main".into(),
+                description: None,
+            })
+            .await
+            .unwrap();
+        let goal = self
+            .store
+            .create_goal(NewGoal {
+                title: "Plan the work".into(),
+                description: "desc".into(),
+                planner_profile_id: planner.clone(),
+                max_tasks: None,
+                required_approvals: 1,
+                repository_ids: vec![repo.id],
+            })
+            .await
+            .unwrap();
+        (goal.id, planner)
+    }
+
     /// Point a profile at another model, the way an edit in the UI would.
     async fn set_model(&self, profile_id: &str, model: Option<&str>) {
         self.store
             .update_profile(
                 profile_id,
                 ProfileUpdate {
+                    model: Some(model.map(str::to_string)),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+    }
+
+    /// Move a profile onto another agent CLI *and* another model, which is
+    /// what a `PUT /v1/profiles/{id}` from the UI amounts to.
+    async fn set_agent_and_model(
+        &self,
+        profile_id: &str,
+        agent_kind: Option<AgentKind>,
+        model: Option<&str>,
+    ) {
+        self.store
+            .update_profile(
+                profile_id,
+                ProfileUpdate {
+                    agent_kind: Some(agent_kind),
                     model: Some(model.map(str::to_string)),
                     ..Default::default()
                 },
@@ -359,15 +445,14 @@ async fn next_event(rx: &mut Receiver<BusEvent>, pred: impl Fn(&BusEvent) -> boo
     .expect("timed out waiting for a matching domain event")
 }
 
-/// Which model a session runs on is written on the session, not looked up on
-/// its profile: the profile is edited over time, and the answer to "what is
-/// this session running?" has to stay the model that launch actually asked
-/// for. A resume asks afresh, so the row moves with it.
+/// Which agent and model a session runs on comes off the pin its role
+/// carries — the reviewer slot here — and a profile edited afterwards does not
+/// reach it, on any launch path: not the resume that carries a reviewer into
+/// round two, and not the fresh session a round with nothing to resume gets.
 #[tokio::test]
-async fn a_launch_records_the_model_it_ran_with() {
+async fn a_reviewers_pin_outlives_a_profile_edit() {
     let h = harness().await;
-    let (task, reviewer) = h.task_under_review().await;
-    h.set_model(&reviewer, Some("opus")).await;
+    let (task, reviewer) = h.task_under_review_on(Some("opus")).await;
 
     // Nothing to resume yet, so this is the reviewer's first spawn.
     let first = h
@@ -376,10 +461,18 @@ async fn a_launch_records_the_model_it_ran_with() {
         .await
         .unwrap();
     assert_eq!(first.model.as_deref(), Some("opus"));
+    assert!(
+        h.spawn_plan(&first.id)
+            .argv
+            .join(" ")
+            .contains("--model opus"),
+        "the launch asked for the pinned model"
+    );
 
-    // The profile moves to another model while the session is alive. The row
-    // still says what this launch is running on.
-    h.set_model(&reviewer, Some("sonnet")).await;
+    // The profile moves to another agent and another model while the session
+    // is alive. The row is not rewritten behind it.
+    h.set_agent_and_model(&reviewer, Some(AgentKind::Codex), Some("sonnet"))
+        .await;
     assert_eq!(
         h.store
             .get_session(&first.id)
@@ -391,8 +484,8 @@ async fn a_launch_records_the_model_it_ran_with() {
         "a profile edit rewrote a running session's model"
     );
 
-    // Round two relaunches the same session — with the model in effect now,
-    // which is therefore what the row records from here on.
+    // Round two relaunches the same session, on the same agent and model it
+    // was pinned to — the profile now says codex/sonnet.
     h.launcher.kill_session(&first.id).await.unwrap();
     let task = h.next_round(&task).await;
     let second = h
@@ -401,25 +494,110 @@ async fn a_launch_records_the_model_it_ran_with() {
         .await
         .unwrap();
     assert_eq!(second.id, first.id, "round 2 reused the session");
-    assert_eq!(second.model.as_deref(), Some("sonnet"));
+    assert_eq!(second.agent_kind(), AgentKind::ClaudeCode);
+    assert_eq!(second.model.as_deref(), Some("opus"));
     let argv = h.spawn_plan(&second.id).argv.join(" ");
     assert!(
-        argv.contains("--model sonnet"),
+        argv.contains("--model opus"),
         "and that is what the agent was launched with: {argv}"
     );
 
-    // Cleared back to the agent's own default, the row says so too: nothing
-    // was asked for.
-    h.set_model(&reviewer, None).await;
+    // A round that finds nothing to resume spawns afresh, and lands on the
+    // pin just the same.
     h.launcher.kill_session(&second.id).await.unwrap();
     let third = h
         .launcher
-        .resume_reviewer(&task.id, &reviewer, "Round 3: once more.")
+        .spawn_reviewer(&task.id, &reviewer)
         .await
         .unwrap();
-    assert_eq!(third.model, None);
+    assert_ne!(third.id, second.id, "a fresh session, not the old one");
+    assert_eq!(third.agent_kind(), AgentKind::ClaudeCode);
+    assert_eq!(third.model.as_deref(), Some("opus"));
     assert!(
-        !h.spawn_plan(&third.id).argv.join(" ").contains("--model"),
+        h.spawn_plan(&third.id)
+            .argv
+            .join(" ")
+            .contains("--model opus"),
+        "a fresh session read the profile instead of the pin"
+    );
+}
+
+/// The same for the engineer, whose pin is the task's: the spawn that starts
+/// the work and every resume that carries it through review run on the model
+/// the task was created with.
+#[tokio::test]
+async fn an_engineers_pin_outlives_a_profile_edit() {
+    let h = harness().await;
+    let (task, _reviewer) = h.task_under_review_on(Some("opus")).await;
+    h.set_agent_and_model(
+        &task.engineer_profile_id,
+        Some(AgentKind::Codex),
+        Some("sonnet"),
+    )
+    .await;
+
+    let first = h.launcher.spawn_engineer(&task.id).await.unwrap();
+    assert_eq!(first.agent_kind(), AgentKind::ClaudeCode);
+    assert_eq!(first.model.as_deref(), Some("opus"));
+
+    h.launcher.kill_session(&first.id).await.unwrap();
+    let resumed = h
+        .launcher
+        .resume_engineer(&task.id, "Round 1: please fix things.")
+        .await
+        .unwrap();
+    assert_eq!(resumed.id, first.id, "the resume reused the session");
+    assert_eq!(resumed.model.as_deref(), Some("opus"));
+    let argv = h.spawn_plan(&resumed.id).argv.join(" ");
+    assert!(
+        argv.contains("--model opus"),
+        "the resume re-read the profile: {argv}"
+    );
+}
+
+/// And for the planner, whose pin is the goal's: a respawn after the profile
+/// moved still plans on the agent and model the goal was created with.
+#[tokio::test]
+async fn a_planner_respawn_stays_on_the_goals_pin() {
+    let h = harness().await;
+    let (goal, planner) = h.goal_with_planner(Some("opus")).await;
+
+    let first = h.launcher.spawn_planner(&goal).await.unwrap();
+    assert_eq!(first.model.as_deref(), Some("opus"));
+
+    h.set_agent_and_model(&planner, Some(AgentKind::Codex), Some("sonnet"))
+        .await;
+    h.launcher.kill_session(&first.id).await.unwrap();
+
+    let second = h.launcher.spawn_planner(&goal).await.unwrap();
+    assert_ne!(second.id, first.id, "a planner respawn is a fresh session");
+    assert_eq!(second.agent_kind(), AgentKind::ClaudeCode);
+    assert_eq!(second.model.as_deref(), Some("opus"));
+    assert!(
+        h.spawn_plan(&second.id)
+            .argv
+            .join(" ")
+            .contains("--model opus"),
+        "the respawn read the profile instead of the goal's pin"
+    );
+}
+
+/// A pin of "no model" is a pin too: the work runs on the agent CLI's own
+/// default however the profile is edited afterwards.
+#[tokio::test]
+async fn a_pin_of_no_model_stays_the_agents_own_default() {
+    let h = harness().await;
+    let (task, reviewer) = h.task_under_review_on(None).await;
+    h.set_model(&reviewer, Some("sonnet")).await;
+
+    let session = h
+        .launcher
+        .spawn_reviewer(&task.id, &reviewer)
+        .await
+        .unwrap();
+    assert_eq!(session.model, None);
+    assert!(
+        !h.spawn_plan(&session.id).argv.join(" ").contains("--model"),
         "no model was asked for"
     );
 }
@@ -746,6 +924,34 @@ async fn reviving_a_session_revives_it_in_place() {
     assert_eq!(revived.ended_at, None);
     assert_eq!(revived.worktree_path, first.worktree_path);
     assert_eq!(h.sessions_of(&task).await.len(), 1);
+}
+
+/// In place down to the agent and the model: a revive puts the session back on
+/// its feet exactly as it was launched, so a profile edited in the meantime
+/// does not get to move the conversation somewhere else either.
+#[tokio::test]
+async fn a_revive_keeps_the_agent_and_model_the_session_was_launched_with() {
+    let h = harness().await;
+    let (task, _reviewer) = h.task_under_review_on(Some("opus")).await;
+    let session = h.launcher.spawn_engineer(&task.id).await.unwrap();
+    h.launcher.kill_session(&session.id).await.unwrap();
+
+    h.set_agent_and_model(
+        &task.engineer_profile_id,
+        Some(AgentKind::Codex),
+        Some("sonnet"),
+    )
+    .await;
+
+    let revived = h.launcher.revive_session(&session.id, None).await.unwrap();
+    assert_eq!(revived.id, session.id, "the same session, revived");
+    assert_eq!(revived.agent_kind(), AgentKind::ClaudeCode);
+    assert_eq!(revived.model.as_deref(), Some("opus"));
+    let argv = h.spawn_plan(&revived.id).argv.join(" ");
+    assert!(
+        argv.contains("--model opus"),
+        "the revive re-read the profile: {argv}"
+    );
 }
 
 /// Nothing to resume from: an engineer session that never reported an agent id
