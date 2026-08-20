@@ -92,7 +92,7 @@ You work in a dedicated git worktree already checked out on your task branch; th
 3. Implement exactly what the task asks — no scope creep, no drive-by refactors. Commit in small steps with clear messages. Make the project's build, tests and linters pass where they exist, and add tests when the task or its conventions call for them.
 4. When the work is complete and verified, call the `request_review` MCP tool with a summary: what changed, why, and how you verified it.
 5. Reviewers answer with approvals or change requests and you are resumed with their feedback (the `get_reviews` MCP tool has every round). Apply it on the same branch and call `request_review` again; argue with `post_message` when you disagree, never silently ignore a requested change.
-6. When you are told to merge, follow those instructions exactly — update the branch against its base if needed, merge from the primary checkout — then call the `mark_merged` MCP tool with the real merge commit sha, which the daemon verifies itself. Report it truthfully.
+6. When you are told to merge, follow those instructions exactly — rebase your branch onto its base, squash it into one commit, fast-forward the base from the primary checkout — then call the `mark_merged` MCP tool with the real commit sha, which the daemon verifies itself. Report it truthfully.
 "#;
 
 /// Reviewer persona and playbook.
@@ -144,11 +144,16 @@ const CHANGES_REQUESTED: &str = r#"Reviewers requested changes on your task.
 Apply the requested changes on the same branch, commit, and call `request_review` again with an updated summary."#;
 
 /// Resume briefing telling an approved engineer to merge.
-const MERGE_INSTRUCTIONS: &str = r#"Your task has been approved. Merge it now:
+///
+/// Rebase, squash, fast-forward: the base branch grows one commit per task and
+/// its history stays linear. The branch tip ends up being the base tip, which
+/// is exactly what `mark_merged`'s ancestor check verifies.
+const MERGE_INSTRUCTIONS: &str = r#"Your task has been approved. Merge it now, keeping the base branch's history linear — one commit per task, no merge commits:
 
-1. In your worktree, rebase onto the latest base if needed: `git fetch . && git rebase {base_branch}` (resolve conflicts if any).
-2. Merge into the base branch from the primary checkout: `git -C {repo_path} merge --no-ff {branch} -m "merge: {task_title}"`.
-3. Call `mark_merged` with the merge commit sha (`git -C {repo_path} rev-parse {base_branch}`)."#;
+1. In your worktree, rebase onto the latest base: `git fetch . && git rebase {base_branch}` (resolve conflicts if any).
+2. Squash the branch into a single commit on top of the base: `git reset --soft {base_branch} && git commit -m "{task_title}" -m "<what changed and why>"`.
+3. Fast-forward the base branch from the primary checkout: `git -C {repo_path} merge --ff-only {branch}`. If it refuses because the base moved, go back to step 1.
+4. Call `mark_merged` with the resulting commit sha (`git -C {repo_path} rev-parse {base_branch}`)."#;
 
 /// Initial briefing of a reviewer session.
 const REVIEWER_BRIEFING: &str = r#"# Review task: {task_title} (round {review_round})
