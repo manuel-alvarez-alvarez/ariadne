@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest"
 
 import type { TaskDto, TaskStatus } from "@/api"
-import { canEdit, compareByAttention } from "./status"
+import {
+  BOARD_STATUSES,
+  canCancel,
+  canEdit,
+  compareByAttention,
+  displayLabel,
+  primaryStatus,
+  subStatus,
+} from "./status"
 
 function task(id: string, status: TaskStatus, extra: Partial<TaskDto> = {}): TaskDto {
   return {
@@ -76,5 +84,33 @@ describe("canEdit", () => {
 
     for (const status of editable) expect(canEdit(status)).toBe(true)
     for (const status of frozen) expect(canEdit(status)).toBe(false)
+  })
+})
+
+describe("the ready fold", () => {
+  it("gives the board four columns, ready not among them", () => {
+    expect(BOARD_STATUSES).toEqual(["pending", "in_progress", "under_review", "merged"])
+  })
+
+  it("puts a ready task in the pending column, still saying it is ready", () => {
+    expect(primaryStatus("ready")).toBe("pending")
+    expect(subStatus("ready")?.label).toBe("Ready")
+    expect(displayLabel("ready")).toBe("Pending · Ready")
+  })
+
+  it("leaves what the user may do to a ready task alone", () => {
+    // The fold is where the card is drawn, nothing else: a ready task is still
+    // pre-start, so it is still editable and cancellable.
+    expect(canEdit("ready")).toBe(true)
+    expect(canCancel("ready")).toBe(true)
+  })
+
+  it("keeps ready ahead of pending, so a stuck task sorts above a blocked one", () => {
+    const ordered = [
+      task("dependency-blocked", "pending"),
+      task("waiting-for-an-engineer", "ready"),
+    ].sort(compareByAttention)
+
+    expect(ordered.map((t) => t.id)).toEqual(["waiting-for-an-engineer", "dependency-blocked"])
   })
 })
