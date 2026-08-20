@@ -194,6 +194,7 @@ export function RepositoryFormDialog({
               <FieldLabel htmlFor="repository-description">Description</FieldLabel>
               <Textarea
                 id="repository-description"
+                rows={2}
                 placeholder="What lives in this repo."
                 {...register("description")}
               />
