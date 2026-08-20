@@ -275,15 +275,23 @@ function TaskFacts({ task }: { task: TaskDto }) {
         )}
       </Fact>
       <Fact label="Engineer">
-        <ProfileSummary profileId={task.engineer_profile_id} className="text-xs" />
+        {/* The task's pin, not the profile's live agent and model: editing the
+            profile does not move work that is already assigned. */}
+        <ProfileSummary profileId={task.engineer_profile_id} pinned={task} className="text-xs" />
       </Fact>
       <Fact label="Reviewers">
-        {task.reviewer_profile_ids.length > 0 ? (
+        {task.reviewers.length > 0 ? (
           // One line each: a reviewer is now a name and the two facts after
           // it, which side by side would be a run-on the eye cannot split.
+          // Each slot carries its own pin, so two reviewers on the same
+          // profile can still read differently.
           <span className="flex flex-col gap-0.5 text-xs">
-            {task.reviewer_profile_ids.map((id) => (
-              <ProfileSummary key={id} profileId={id} />
+            {task.reviewers.map((reviewer) => (
+              <ProfileSummary
+                key={reviewer.profile_id}
+                profileId={reviewer.profile_id}
+                pinned={reviewer}
+              />
             ))}
           </span>
         ) : (

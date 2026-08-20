@@ -171,7 +171,7 @@ function TaskFormDialog({
             title: editing.title,
             description: editing.description,
             engineer_profile: editing.engineer_profile_id,
-            reviewers: editing.reviewer_profile_ids.map((profile) => ({ profile })),
+            reviewers: editing.reviewers.map((reviewer) => ({ profile: reviewer.profile_id })),
             repo_id: "",
             depends_on: editing.depends_on.map((task) => ({ task })),
           }

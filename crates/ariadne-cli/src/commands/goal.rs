@@ -204,7 +204,14 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                         ("id", g.id),
                         ("title", g.title),
                         ("status", g.status.as_str().into()),
-                        ("planner", profiles.label(&g.planner_profile_id)),
+                        (
+                            "planner",
+                            profiles.pinned_label(
+                                &g.planner_profile_id,
+                                g.agent_kind,
+                                g.model.as_deref(),
+                            ),
+                        ),
                         ("approvals", g.required_approvals.to_string()),
                         (
                             "max_tasks",

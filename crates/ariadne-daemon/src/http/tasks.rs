@@ -20,7 +20,7 @@ use super::convert::{message_dto, review_dto, task_dto, transition_dto};
 use super::error::{ApiError, ApiResult};
 
 async fn to_dto(store: &Store, task: Task) -> ApiResult<TaskDto> {
-    let reviewers = store.list_task_reviewers(&task.id).await?;
+    let reviewers = store.list_task_reviewer_pins(&task.id).await?;
     let deps = store.list_task_dependencies(&task.id).await?;
     Ok(task_dto(task, reviewers, deps))
 }

@@ -1,6 +1,6 @@
 //! Goal DTOs.
 
-use ariadne_core::GoalStatus;
+use ariadne_core::{AgentKind, GoalStatus};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -16,6 +16,13 @@ pub struct GoalDto {
     pub max_tasks: Option<i64>,
     pub required_approvals: i64,
     pub planner_profile_id: String,
+    /// Agent CLI the planner runs on, pinned from the profile when the goal
+    /// was created; editing the profile afterwards leaves it alone. None =
+    /// auto, resolved at spawn time to the first installed CLI.
+    pub agent_kind: Option<AgentKind>,
+    /// Model the planner runs on, pinned like `agent_kind`. None = the agent
+    /// CLI's own default.
+    pub model: Option<String>,
     /// The registered repositories the goal works in, as they stand now: a
     /// goal references them, so an edit to one shows up here.
     pub repos: Vec<RepositoryDto>,

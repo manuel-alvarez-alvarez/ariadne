@@ -205,7 +205,7 @@ async fn task_dto_of(
     store: &Store,
     task: Task,
 ) -> Result<(ariadne_api::tasks::TaskDto, (String, String))> {
-    let reviewers = store.list_task_reviewers(&task.id).await?;
+    let reviewers = store.list_task_reviewer_pins(&task.id).await?;
     let deps = store.list_task_dependencies(&task.id).await?;
     let keys = (task.goal_id.clone(), task.id.clone());
     Ok((task_dto(task, reviewers, deps), keys))
