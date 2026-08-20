@@ -176,7 +176,6 @@ export function CreateGoalDialog({
             <FieldLabel htmlFor="goal-description">Description</FieldLabel>
             <Textarea
               id="goal-description"
-              rows={5}
               placeholder="What should be achieved, and anything the planner needs to know."
               {...form.register("description")}
             />
