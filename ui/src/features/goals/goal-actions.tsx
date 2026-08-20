@@ -141,7 +141,6 @@ function FinalizePlanDialog({
         <FieldLabel htmlFor="finalize-summary">Summary</FieldLabel>
         <Textarea
           id="finalize-summary"
-          rows={3}
           value={summary}
           onChange={(event) => setSummary(event.target.value)}
           placeholder="Optional — recorded in the goal thread."
