@@ -237,6 +237,24 @@ impl TmuxManager {
         Ok(())
     }
 
+    /// Paste `text` into the session as one bracketed paste, then press
+    /// Enter to submit it.
+    ///
+    /// For delivering a whole (multi-line) prompt to an agent TUI.
+    /// [`Self::send_text`] cannot carry one: every newline byte in a `-l`
+    /// send acts as its own Enter, so the message would submit in fragments.
+    /// Wrapped in bracketed-paste markers, the same bytes arrive as a single
+    /// paste event — exactly what a terminal in front of a user would send —
+    /// and the trailing Enter submits the one assembled message.
+    pub async fn send_paste(&self, name: &str, text: &str) -> Result<()> {
+        let mut data = Vec::with_capacity(text.len() + 12);
+        data.extend_from_slice(b"\x1b[200~");
+        data.extend_from_slice(text.as_bytes());
+        data.extend_from_slice(b"\x1b[201~");
+        self.send_raw(name, &data).await?;
+        self.send_enter(name).await
+    }
+
     /// Press Enter in the session (accepts pre-selected TUI dialogs).
     pub async fn send_enter(&self, name: &str) -> Result<()> {
         self.tmux(&["send-keys", "-t", name, "Enter"])
