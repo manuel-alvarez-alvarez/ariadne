@@ -193,8 +193,8 @@ async fn typing_reaches_the_pane_byte_for_byte() {
     );
 }
 
-/// `send_text` appends an Enter; this endpoint must not — the terminal already
-/// sends its own `\r` when the user presses Return.
+/// `send_submitted` presses Enter of its own; this endpoint must not — the
+/// terminal already sends its own `\r` when the user presses Return.
 #[tokio::test]
 async fn nothing_is_appended_to_the_input() {
     let h = harness().await;

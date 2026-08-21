@@ -31,6 +31,9 @@ use ariadne_store::{
 
 /// Idle long enough to be past both thresholds (nudge at 300s, flag at 900s).
 const LONG_IDLE_SECS: i64 = 1_000;
+/// The first of those thresholds, for a test that wants the nudge and not the
+/// escalation behind it.
+const STALL_NUDGE_SECS: i64 = 300;
 /// How long a test waits for a reconciliation to reach the store.
 const TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -101,7 +104,9 @@ async fn harness_with(spawns: Spawns) -> Harness {
 }
 
 /// A `tmux` that has exactly the sessions a test wrote into `alive`, and that
-/// records the `send-keys` it is asked for so nudges can be counted.
+/// records the `send-keys` it is asked for so nudges can be counted. Its panes
+/// draw whatever a test wrote into `composer` — nothing, unless the test is
+/// about a nudge that stays in one.
 fn write_tmux_stub(dir: &Path) -> TmuxManager {
     use std::os::unix::fs::PermissionsExt;
 
@@ -111,6 +116,7 @@ fn write_tmux_stub(dir: &Path) -> TmuxManager {
         "#!/bin/sh\n\
          alive='{alive}'\n\
          sent='{sent}'\n\
+         composer='{composer}'\n\
          target=''\n\
          prev=''\n\
          for a in \"$@\"; do\n\
@@ -121,10 +127,12 @@ fn write_tmux_stub(dir: &Path) -> TmuxManager {
         \x20 has-session) grep -qx \"$target\" \"$alive\" || exit 1 ;;\n\
         \x20 display-message) grep -qx \"$target\" \"$alive\" || exit 1; echo '80x24 0,0' ;;\n\
         \x20 send-keys) echo \"$target\" >> \"$sent\" ;;\n\
+        \x20 capture-pane) cat \"$composer\" 2>/dev/null ;;\n\
          esac\n\
          exit 0\n",
         alive = dir.join("alive").display(),
         sent = dir.join("send-keys.log").display(),
+        composer = dir.join("composer").display(),
     );
     std::fs::write(&bin, script).unwrap();
     std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -334,6 +342,12 @@ impl Harness {
         std::fs::write(&alive, names).unwrap();
     }
 
+    /// What every pane draws: a composer holding `text`, for good. A nudge
+    /// pasted into it is still there after the Enter, however many are sent.
+    fn composer_keeps(&self, text: &str) {
+        std::fs::write(self.dir.path().join("composer"), format!("> {text}\n")).unwrap();
+    }
+
     /// How many `send-keys` this session's pane was handed.
     fn keystrokes(&self, session: &AgentSession) -> usize {
         std::fs::read_to_string(self.dir.path().join("send-keys.log"))
@@ -440,6 +454,43 @@ async fn an_engineer_stall_flags_the_task_and_its_session() {
         h.attention(&session).await,
         Some(AttentionReason::Stalled),
         "and the session carries the reason as well"
+    );
+}
+
+/// A nudge that does not leave the composer is not a nudge. The pane keeps
+/// showing it however many Enters follow, so the session is raised for the
+/// user rather than counted as told — the flag says the agent is not moving,
+/// which is exactly what a message it never received leaves behind.
+#[tokio::test]
+async fn a_nudge_that_never_submits_raises_the_session() {
+    let h = harness().await;
+    let (goal, task, engineer, _reviewer) = h.active_goal_with_task().await;
+    h.advance(&task, TaskStatus::InProgress).await;
+    let session = h
+        .session(&goal, Some(&task), Role::Engineer, &engineer)
+        .await;
+    h.pane_exists(&session);
+    // Past the nudge threshold and nowhere near the flag one: the only route
+    // to a raised session here is the delivery that could not be confirmed.
+    h.idle_for(&session, STALL_NUDGE_SECS + 60).await;
+    h.composer_keeps("Keep working on this task, and call `request_review`");
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    sched
+        .send(SchedEvent::TaskChanged(task.id.clone()))
+        .unwrap();
+
+    eventually("the session to be raised", async || {
+        h.attention(&session).await == Some(AttentionReason::Stalled)
+    })
+    .await;
+    assert!(
+        h.keystrokes(&session) > 2,
+        "the paste was followed by more than one Enter"
+    );
+    assert!(
+        !h.store.get_task(&task.id).await.unwrap().is_stalled(),
+        "the task is not escalated for it: this is about the message, not the work"
     );
 }
 

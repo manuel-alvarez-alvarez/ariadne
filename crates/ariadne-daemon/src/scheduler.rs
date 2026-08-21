@@ -835,11 +835,21 @@ impl Scheduler {
         }
         if idle_secs >= STALL_NUDGE_SECS && !already_nudged {
             info!(session = %session.id, role = %session.role, idle_secs, "nudging idle agent");
-            self.launcher
+            // The nudge counts as spent either way: a pane that would not take
+            // it this pass will not take it the next one, and the user is told
+            // instead.
+            let delivered = self
+                .launcher
                 .tmux
-                .send_text(&session.tmux_session, nudge)
+                .send_submitted(&session.tmux_session, nudge)
                 .await?;
             self.nudged.insert(session.id.clone(), key);
+            if !delivered {
+                warn!(session = %session.id, role = %session.role, "the nudge stayed in the agent's composer, flagging for user attention");
+                self.store
+                    .set_session_attention(&session.id, AttentionReason::Stalled)
+                    .await?;
+            }
         }
         Ok(false)
     }
