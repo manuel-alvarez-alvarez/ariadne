@@ -8,7 +8,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result, anyhow};
 
 use ariadne_core::spawn_plan::SpawnPlanFile;
-use ariadne_core::{AgentKind, PromptKind, Role, SessionStatus, TaskStatus};
+use ariadne_core::{AgentKind, AttentionReason, PromptKind, Role, SessionStatus, TaskStatus};
 use ariadne_store::{AgentSession, NewSession, SessionFilter, Store, Task};
 
 use crate::agents::{SpawnCtx, SpawnPlan, adapter_for, detect_first_available, prompts};
@@ -168,12 +168,17 @@ impl Launcher {
     ///
     /// Readiness is judged from the pane itself: something has to be drawn,
     /// and it must not be the directory-trust dialog, whose accept would
-    /// swallow the paste. One short beat later the instruction goes in as a
-    /// single bracketed paste. The watch window matches the trust watcher's
-    /// two minutes; delivery happens once or — for a session that dies or
-    /// never draws — not at all, and the giving-up is logged.
-    fn deliver_typed_input(&self, tmux_session: String, input: String) {
+    /// swallow the paste. One short beat later the instruction goes in
+    /// through [`TmuxManager::send_submitted`], which is the only way to know
+    /// the TUI took it rather than left it sitting in its composer. When it
+    /// cannot be confirmed the session is raised for the user: a resumed
+    /// agent that never heard its instruction sits there doing nothing, and
+    /// this is the only place that knows it. The watch window matches the
+    /// trust watcher's two minutes; delivery happens once or — for a session
+    /// that dies or never draws — not at all, and the giving-up is logged.
+    fn deliver_typed_input(&self, session_id: String, tmux_session: String, input: String) {
         let tmux = self.tmux.clone();
+        let store = self.store.clone();
         tokio::spawn(async move {
             for _ in 0..240 {
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -184,20 +189,24 @@ impl Launcher {
                     continue;
                 };
                 let lower = pane.to_lowercase();
-                if lower.trim().is_empty()
-                    || Self::TRUST_PATTERNS.iter().any(|p| lower.contains(p))
+                if lower.trim().is_empty() || Self::TRUST_PATTERNS.iter().any(|p| lower.contains(p))
                 {
                     continue;
                 }
                 // One more beat: a TUI that just painted its first frame may
                 // still be wiring up its input handling.
                 tokio::time::sleep(std::time::Duration::from_millis(700)).await;
-                match tmux.send_paste(&tmux_session, &input).await {
-                    Ok(()) => {
+                match tmux.send_submitted(&tmux_session, &input).await {
+                    Ok(true) => {
                         tracing::info!(session = %tmux_session, "typed the resume instruction into the TUI")
                     }
+                    Ok(false) => {
+                        tracing::warn!(session = %tmux_session, "the resume instruction stayed in the TUI's composer; flagging for user attention");
+                        raise_stalled(&store, &session_id).await;
+                    }
                     Err(e) => {
-                        tracing::warn!(session = %tmux_session, error = %e, "typing the resume instruction failed")
+                        tracing::warn!(session = %tmux_session, error = %e, "typing the resume instruction failed");
+                        raise_stalled(&store, &session_id).await;
                     }
                 }
                 return;
@@ -266,7 +275,7 @@ impl Launcher {
             .await?;
         self.auto_accept_trust(session.tmux_session.clone());
         if let Some(input) = plan.post_launch_input {
-            self.deliver_typed_input(session.tmux_session.clone(), input);
+            self.deliver_typed_input(session.id.clone(), session.tmux_session.clone(), input);
         }
         Ok(())
     }
@@ -888,6 +897,18 @@ impl Launcher {
             self.git.delete_branch(&repo_path, &task.branch).await.ok();
         }
         Ok(())
+    }
+}
+
+/// Raise a session for the user, from a spawned task that has nothing to
+/// return its failure to. A flag that will not store is only worth a line in
+/// the log — the delivery it was about is already lost.
+async fn raise_stalled(store: &Store, session_id: &str) {
+    if let Err(e) = store
+        .set_session_attention(session_id, AttentionReason::Stalled)
+        .await
+    {
+        tracing::warn!(session = %session_id, error = %e, "flagging the session failed");
     }
 }
 

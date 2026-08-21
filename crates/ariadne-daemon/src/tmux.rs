@@ -4,12 +4,26 @@
 //! the user attaches with `tmux attach -t <name>` (via `ariadne attach`).
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use tokio::process::Command;
 
 /// Input bytes per `send-keys -H` call; see [`TmuxManager::send_raw`].
 const RAW_SEND_BATCH: usize = 512;
+/// How long a pane is left alone between the end of a paste and the Enter
+/// meant to submit it, so a TUI that reads fast input as a paste has closed
+/// that window. Codex needs the beat; without it the Enter becomes a newline.
+const PASTE_SETTLE: Duration = Duration::from_millis(400);
+/// How long a TUI gets to redraw after an Enter before its pane is read for
+/// whether the message went. Doubled for each further attempt.
+const SUBMIT_SETTLE: Duration = Duration::from_millis(600);
+/// How many Enters one delivery is worth before it is given up on.
+const SUBMIT_ATTEMPTS: u32 = 3;
+/// Shortest composer row taken as evidence that the message is still there.
+/// A row of one or two characters is a bar or a bullet, and short enough to
+/// turn up inside any message by chance.
+const COMPOSER_ROW_MIN: usize = 4;
 
 #[derive(Debug, Clone)]
 pub struct TmuxManager {
@@ -205,15 +219,6 @@ impl TmuxManager {
         parse_geometry(raw).with_context(|| format!("unexpected pane geometry for {name}: {raw:?}"))
     }
 
-    /// Type `text` into the session followed by Enter (used to nudge
-    /// interactive agents).
-    pub async fn send_text(&self, name: &str, text: &str) -> Result<()> {
-        // -l = literal (no key-name lookup), then a separate Enter press.
-        self.tmux(&["send-keys", "-t", name, "-l", text]).await?;
-        self.tmux(&["send-keys", "-t", name, "Enter"]).await?;
-        Ok(())
-    }
-
     /// Type `data` into the session's pane exactly as given: no Enter
     /// appended, no key-name lookup, no shell-quoting hazards.
     ///
@@ -237,22 +242,71 @@ impl TmuxManager {
         Ok(())
     }
 
-    /// Paste `text` into the session as one bracketed paste, then press
-    /// Enter to submit it.
+    /// Deliver `text` to an agent's TUI and keep pressing Enter until the pane
+    /// shows it left the composer. Returns whether that was confirmed.
     ///
-    /// For delivering a whole (multi-line) prompt to an agent TUI.
-    /// [`Self::send_text`] cannot carry one: every newline byte in a `-l`
-    /// send acts as its own Enter, so the message would submit in fragments.
-    /// Wrapped in bracketed-paste markers, the same bytes arrive as a single
-    /// paste event — exactly what a terminal in front of a user would send —
-    /// and the trailing Enter submits the one assembled message.
-    pub async fn send_paste(&self, name: &str, text: &str) -> Result<()> {
+    /// Everything here exists because "tmux accepted the keystrokes" is not
+    /// "the agent got the message". The text goes in as one bracketed paste —
+    /// a `-l` send types it byte by byte, which a coding-agent TUI reads as a
+    /// burst and, with Codex, classifies as a paste anyway: an Enter landing
+    /// inside that window becomes a newline in the composer instead of a
+    /// submission, and the message sits there unsent until a human presses
+    /// Return. So the paste is explicit, the Enter comes a beat later with the
+    /// burst window shut, and the pane itself is asked whether the composer
+    /// let go of the message.
+    ///
+    /// "The pane changed" is no answer: a swallowed Enter changes it too, by
+    /// inserting that newline. What is asked instead is whether the composer
+    /// still holds the message — see [`composer_holds`] — and every Enter that
+    /// leaves it there earns another, with a widening backoff, up to
+    /// [`SUBMIT_ATTEMPTS`]. An unconfirmed delivery is the caller's to report:
+    /// it is a session that never heard what it was told.
+    pub async fn send_submitted(&self, name: &str, text: &str) -> Result<bool> {
+        self.paste(name, text).await?;
+        // Let the TUI close its paste window before the Enter, or the Enter is
+        // part of the paste.
+        tokio::time::sleep(PASTE_SETTLE).await;
+        let mut settle = SUBMIT_SETTLE;
+        for attempt in 1..=SUBMIT_ATTEMPTS {
+            self.send_enter(name).await?;
+            tokio::time::sleep(settle).await;
+            // Each swallowed Enter pushes the composer down by the newline it
+            // inserted, so the rows worth reading grow with the attempts.
+            let screen = self.capture_screen(name).await?;
+            let cursor = self.pane_geometry(name).await?.cursor_y;
+            if !composer_holds(&screen, cursor, attempt as usize, text) {
+                return Ok(true);
+            }
+            tracing::debug!(
+                session = %name,
+                attempt,
+                "the message is still in the agent's composer; pressing Enter again"
+            );
+            settle *= 2;
+        }
+        Ok(false)
+    }
+
+    /// Put `text` in the pane's composer as one bracketed paste, pressing
+    /// nothing.
+    ///
+    /// A `-l` send cannot carry a whole (multi-line) prompt: every newline
+    /// byte in it acts as its own Enter, so the message would submit in
+    /// fragments. Wrapped in bracketed-paste markers, the same bytes arrive as
+    /// a single paste event — exactly what a terminal in front of a user would
+    /// send — and the composer assembles one message out of them.
+    async fn paste(&self, name: &str, text: &str) -> Result<()> {
         let mut data = Vec::with_capacity(text.len() + 12);
         data.extend_from_slice(b"\x1b[200~");
         data.extend_from_slice(text.as_bytes());
         data.extend_from_slice(b"\x1b[201~");
-        self.send_raw(name, &data).await?;
-        self.send_enter(name).await
+        self.send_raw(name, &data).await
+    }
+
+    /// The pane's visible screen as plain text: no scrollback, no escape
+    /// sequences. What [`composer_holds`] reads.
+    async fn capture_screen(&self, name: &str) -> Result<String> {
+        self.tmux(&["capture-pane", "-p", "-t", name]).await
     }
 
     /// Press Enter in the session (accepts pre-selected TUI dialogs).
@@ -270,6 +324,58 @@ impl TmuxManager {
             Err(_) => Ok(Vec::new()),
         }
     }
+}
+
+/// Whether the pane's composer is still holding `text`, one `above` row per
+/// Enter already pressed — which is to say, whether the Enter was swallowed.
+///
+/// The cursor is the anchor. Whatever a TUI's layout is — Codex's composer
+/// floats under its transcript, OpenCode's and Claude Code's sit in a box at
+/// the foot of the screen — the cursor is in the composer, so the rows that
+/// can hold an unsent message are the cursor's own and the few over it: a
+/// swallowed Enter inserts a newline, which pushes the text up exactly one row
+/// per attempt. Rows further up are the transcript, and a message that *did*
+/// submit is drawn there; reading them would call every delivery a failure.
+///
+/// A row is evidence when what it says — stripped of the prompt marks and
+/// rules a TUI draws around a composer — is a piece of the message. A piece,
+/// not the whole of it: composers wrap long lines and show tall messages
+/// tail-first, so what is on screen is some contiguous slice. The other tell
+/// is a placeholder: Codex and OpenCode both collapse a long paste into a
+/// `[Pasted …]` summary, and then none of the message's own text is drawn at
+/// all.
+fn composer_holds(screen: &str, cursor_y: u16, above: usize, text: &str) -> bool {
+    let rows: Vec<&str> = screen.lines().collect();
+    let cursor = (cursor_y as usize).min(rows.len().saturating_sub(1));
+    let first = cursor.saturating_sub(above);
+    rows.get(first..=cursor)
+        .unwrap_or_default()
+        .iter()
+        .any(|row| {
+            let row = strip_chrome(row);
+            is_paste_placeholder(row)
+                || (row.chars().count() >= COMPOSER_ROW_MIN && text.contains(row))
+        })
+}
+
+/// A composer row with the furniture taken off: the bars, rules and prompt
+/// marks a TUI draws around what was typed into it.
+fn strip_chrome(row: &str) -> &str {
+    row.trim_matches(|c: char| {
+        c.is_whitespace()
+            || matches!(c, '>' | '|' | '*' | '-' | '\u{b7}' | '\u{2022}')
+            // Box drawing and block elements: every bar and rule a TUI frames
+            // its composer with.
+            || ('\u{2500}'..='\u{259f}').contains(&c)
+            // The single-angle and heavy-angle quotes used as prompt marks.
+            || matches!(c, '\u{ab}' | '\u{bb}' | '\u{2039}' | '\u{203a}' | '\u{276f}')
+    })
+}
+
+/// A composer that swallowed our paste into a summary of it: `[Pasted Content
+/// 1446 chars]` in Codex, `[Pasted ~12 lines]` in OpenCode.
+fn is_paste_placeholder(row: &str) -> bool {
+    row.to_ascii_lowercase().contains("[pasted")
 }
 
 /// Short display form of a ULID: ULIDs are long; the trailing 8 chars are
@@ -299,4 +405,78 @@ pub fn session_name(
         name.push_str(&format!("-{suffix}"));
     }
     name
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const NUDGE: &str =
+        "Finish reviewing this round and submit your verdict with `approve` or `request_changes`.";
+
+    /// Codex, message unsent: the Enter it swallowed became the empty row the
+    /// cursor is on, one under the message.
+    #[test]
+    fn a_message_left_in_a_composer_is_seen() {
+        let screen = format!(
+            "  I'll take a look.\n\n\n\u{203a} {NUDGE}\n\n\n  gpt-5.6-terra medium \u{b7} /work\n"
+        );
+        assert!(composer_holds(&screen, 4, 1, NUDGE));
+    }
+
+    /// The same pane once it submitted: the composer is back to its prompt and
+    /// the message is up in the transcript, where it is not read.
+    #[test]
+    fn a_submitted_message_is_not_mistaken_for_a_waiting_one() {
+        let screen = format!(
+            "\u{203a} {NUDGE}\n\n\u{2022} Working (1s \u{b7} esc to interrupt)\n\n\n\u{203a} Ask Codex to do anything\n\n  gpt-5.6-terra medium \u{b7} /work\n"
+        );
+        assert!(!composer_holds(&screen, 5, 1, NUDGE));
+    }
+
+    /// A composer wraps what it is given, so no row holds the whole message —
+    /// each holds a slice of it, and the last one can be a few characters.
+    #[test]
+    fn a_wrapped_message_is_seen_by_its_tail() {
+        let screen = "\u{203a} Finish reviewing this round and submit your verdict with `approve` or `req\nuest_changes.`\n";
+        assert!(composer_holds(screen, 1, 1, NUDGE));
+    }
+
+    /// A long paste is collapsed into a summary of itself, so none of its own
+    /// text is on screen to look for.
+    #[test]
+    fn a_collapsed_paste_is_seen_by_its_placeholder() {
+        let screen = "\u{2503}\n\u{2503}  [Pasted ~12 lines]\n\u{2503}\n\u{2503}  Build \u{b7} Claude Opus 5\n";
+        assert!(composer_holds(screen, 1, 1, "a long resume instruction"));
+    }
+
+    /// An empty composer is bars and a placeholder of the TUI's own, whatever
+    /// the message was.
+    #[test]
+    fn an_empty_composer_holds_nothing() {
+        let screen = "\u{2503}\n\u{2503}  Ask anything... \"Fix broken tests\"\n\u{2503}\n\u{2503}  Build \u{b7} Claude Opus 5\n\u{2570}\u{2500}\u{2500}\u{2500}\u{2500}\n";
+        assert!(!composer_holds(screen, 1, 1, NUDGE));
+        // Claude Code's, which is a rule, a prompt mark and nothing else.
+        let screen = "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\n\u{276f} \n\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\n";
+        assert!(!composer_holds(screen, 1, 1, NUDGE));
+    }
+
+    /// Every Enter that is swallowed pushes the message another row up, so the
+    /// rows read grow with the attempts — otherwise the second look would find
+    /// only the newlines the first one made.
+    #[test]
+    fn the_rows_read_grow_with_the_attempts() {
+        let screen = format!("\u{203a} {NUDGE}\n\n\n");
+        assert!(!composer_holds(&screen, 2, 1, NUDGE), "one row up is short");
+        assert!(composer_holds(&screen, 2, 2, NUDGE), "two rows up finds it");
+    }
+
+    /// A pane whose program keeps no composer at all — the cursor sits below
+    /// everything it printed — is read from the rows over the cursor all the
+    /// same, rather than from an empty slice.
+    #[test]
+    fn a_cursor_past_the_last_row_reads_what_is_over_it() {
+        let screen = format!("\u{203a} {NUDGE}\n");
+        assert!(composer_holds(&screen, 40, 1, NUDGE));
+    }
 }
