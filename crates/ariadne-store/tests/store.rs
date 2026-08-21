@@ -772,6 +772,92 @@ async fn messages_sessions_events_round_trip() {
     assert_eq!(events[0].kind, "post_tool_use");
 }
 
+/// What a launch is dated for: asking whether *this* run of an agent has
+/// reported anything of a given kind since it started. A relaunch moves the
+/// date, which is what makes the question about the run rather than the row.
+#[tokio::test]
+async fn a_launch_is_dated_and_what_followed_it_can_be_asked_for() {
+    let (store, _dir) = test_store().await;
+    let planner = seed_profile(&store, "planner", Role::Planner).await;
+    let (goal, repo) = seed_goal(&store, &planner, None).await;
+    let task = seed_task(&store, &goal, &repo, vec![]).await;
+
+    let session = store
+        .create_session(NewSession {
+            goal_id: goal.id.clone(),
+            task_id: Some(task.id.clone()),
+            role: Role::Engineer,
+            profile_id: task.engineer_profile_id.clone(),
+            agent_kind: AgentKind::ClaudeCode,
+            model: None,
+            tmux_session: "ariadne-test-eng".into(),
+            worktree_path: Some("/tmp/wt".into()),
+            review_round: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        session.launched_at, None,
+        "a row that was created but never launched is dated by nothing"
+    );
+
+    store.mark_session_launched(&session.id).await.unwrap();
+    let first = store
+        .get_session(&session.id)
+        .await
+        .unwrap()
+        .launched_at
+        .expect("the launch is dated");
+    let event = |kind: &str| NewAgentEvent {
+        session_id: Some(session.id.clone()),
+        task_id: Some(task.id.clone()),
+        agent_kind: Some(AgentKind::ClaudeCode),
+        kind: kind.into(),
+        payload: serde_json::json!({}),
+    };
+    store.create_event(event("session_start")).await.unwrap();
+    store.create_event(event("pre_tool_use")).await.unwrap();
+
+    assert!(
+        store
+            .session_reported_since(&session.id, &first, &["pre_tool_use", "user_prompt_submit"])
+            .await
+            .unwrap()
+    );
+    assert!(
+        !store
+            .session_reported_since(&session.id, &first, &["user_prompt_submit"])
+            .await
+            .unwrap(),
+        "kinds outside the asked-for set are not an answer"
+    );
+    assert!(
+        !store
+            .session_reported_since(&session.id, &first, &[])
+            .await
+            .unwrap(),
+        "and asking for nothing finds nothing"
+    );
+
+    // Launched again — a resume — with everything above now behind it.
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    store.mark_session_launched(&session.id).await.unwrap();
+    let second = store
+        .get_session(&session.id)
+        .await
+        .unwrap()
+        .launched_at
+        .expect("the relaunch is dated too");
+    assert!(second > first, "every launch moves the date");
+    assert!(
+        !store
+            .session_reported_since(&session.id, &second, &["pre_tool_use"])
+            .await
+            .unwrap(),
+        "what the previous run did says nothing about this one"
+    );
+}
+
 /// A resumed agent conversation keeps its one session row: restarting puts
 /// the row back where a spawn leaves it, so nothing downstream can tell the
 /// relaunch from a first launch.

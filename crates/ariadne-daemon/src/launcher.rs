@@ -270,6 +270,11 @@ impl Launcher {
             .new_session(&spawn)
             .await
             .context("spawning tmux session")?;
+        // Stamped before the status, so that a session seen `running` is
+        // always a session whose launch is dated: the scheduler measures a
+        // resumed agent's silence from here, and a launch it cannot date is a
+        // launch it cannot watch.
+        self.store.mark_session_launched(&session.id).await?;
         self.store
             .set_session_status(&session.id, SessionStatus::Running)
             .await?;

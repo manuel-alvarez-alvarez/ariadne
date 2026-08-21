@@ -46,6 +46,42 @@ impl Store {
         Ok(event)
     }
 
+    /// Whether this session reported any of `kinds` after `since`.
+    ///
+    /// A question about a window rather than a page: the caller is asking
+    /// what happened since some moment of its own — a launch, say — which is
+    /// not something a cursor over ids answers.
+    ///
+    /// "After" is strict, and stored times are milliseconds, so an event
+    /// sharing a millisecond with `since` reads as older than it. That is the
+    /// safe way round: the two failures are not comparable. Counting such an
+    /// event out costs the caller a false silence, which is a question asked
+    /// again; counting it in would let one event from before the moment
+    /// answer for everything after it.
+    pub async fn session_reported_since(
+        &self,
+        session_id: &str,
+        since: &str,
+        kinds: &[&str],
+    ) -> Result<bool> {
+        if kinds.is_empty() {
+            return Ok(false);
+        }
+        let placeholders = vec!["?"; kinds.len()].join(", ");
+        // Safe: only the placeholders vary; every value is bound.
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT 1 FROM agent_events
+              WHERE session_id = ? AND created_at > ? AND kind IN ({placeholders})
+              LIMIT 1"
+        )))
+        .bind(session_id)
+        .bind(since);
+        for kind in kinds {
+            q = q.bind(kind.to_string());
+        }
+        Ok(q.fetch_optional(self.r()).await?.is_some())
+    }
+
     pub async fn list_events(&self, filter: EventFilter) -> Result<Vec<AgentEvent>> {
         let mut sql = String::from("SELECT * FROM agent_events WHERE id > ?");
         if filter.session_id.is_some() {

@@ -265,6 +265,24 @@ impl Store {
         self.publish_session_update(id).await
     }
 
+    /// Stamp the moment this session's agent process was started.
+    ///
+    /// Every launch overwrites it, resumes included: what a watcher asks of
+    /// the column is whether *this* run of the agent has got going, and the
+    /// run before it says nothing about that.
+    pub async fn mark_session_launched(&self, id: &str) -> Result<()> {
+        let n = sqlx::query("UPDATE agent_sessions SET launched_at = ? WHERE id = ?")
+            .bind(now())
+            .bind(id)
+            .execute(self.w())
+            .await?
+            .rows_affected();
+        if n == 0 {
+            return Err(not_found("session", id));
+        }
+        self.publish_session_update(id).await
+    }
+
     pub async fn touch_session(&self, id: &str) -> Result<()> {
         let n = sqlx::query("UPDATE agent_sessions SET last_activity_at = ? WHERE id = ?")
             .bind(now())
