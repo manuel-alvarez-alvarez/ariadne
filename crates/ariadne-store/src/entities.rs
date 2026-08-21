@@ -209,6 +209,10 @@ pub struct AgentSession {
     /// When the current `attention_reason` was first raised.
     pub attention_since: Option<String>,
     pub last_activity_at: Option<String>,
+    /// When this session's agent process was last started. Every launch of
+    /// the row — the first spawn and every resume after it — moves it, so it
+    /// dates the run the session is in rather than the row.
+    pub launched_at: Option<String>,
     pub created_at: String,
     pub ended_at: Option<String>,
 }

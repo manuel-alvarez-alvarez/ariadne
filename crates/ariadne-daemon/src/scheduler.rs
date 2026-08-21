@@ -39,6 +39,58 @@ const SPAWN_RETRY_BUDGET: u32 = 3;
 const STALL_NUDGE_SECS: i64 = 300;
 /// Idle time after which the stall is raised for the user (post-nudge).
 const STALL_FLAG_SECS: i64 = 900;
+/// Time since a launch after which an agent that never started its turn has
+/// Enter pressed into its pane. The same clock as an idle stall, for the same
+/// reason: long enough that a slow start is not read as a stuck one.
+const UNSTARTED_ENTER_SECS: i64 = STALL_NUDGE_SECS;
+/// Time since a launch after which that agent is raised for the user
+/// (post-Enter).
+const UNSTARTED_FLAG_SECS: i64 = STALL_FLAG_SECS;
+
+/// Event kinds only an agent whose turn actually started can have reported.
+///
+/// What is missing from the set is the point of it. Lifecycle alone proves
+/// nothing: codex reports `session_start` for a TUI that has merely come up,
+/// and opencode keeps emitting `session.updated` whether or not anything is
+/// happening — neither says a prompt was ever submitted. Measured against
+/// codex 0.148: a resumed thread whose instruction is left sitting in the
+/// composer fires no hook whatsoever, and the single Enter that submits it
+/// fires `SessionStart`, `UserPromptSubmit` and `Stop` together — so even
+/// `session_start` arrives *with* the turn rather than ahead of it there. The
+/// discriminator is therefore a prompt, a tool call or a dialog: things that
+/// only happen inside a turn.
+const TURN_ACTIVITY: [&str; 13] = [
+    // Codex and Claude Code hooks.
+    "user_prompt_submit",
+    "pre_tool_use",
+    "post_tool_use",
+    "permission_request",
+    // OpenCode's plugin. `session.idle` and `stop` are deliberately absent:
+    // they end a turn, and a session that reported one is `idle` rather than
+    // `running` — the other watchdog's, not this one's.
+    //
+    // `session.error` is here for the opposite reason: a failed turn is a
+    // turn. It leaves the session running (the ingest maps it to no status at
+    // all) with the failure raised for the user, and an agent that got far
+    // enough to report one is not an agent sitting on an unsubmitted
+    // instruction.
+    "session.error",
+    "tool.execute.before",
+    "tool.execute.after",
+    "permission.asked",
+    "permission.updated",
+    "permission.replied",
+    "question.asked",
+    "question.replied",
+    "question.rejected",
+];
+
+/// How far the never-started-turn watchdog has taken one session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Unstarted {
+    EnterPressed,
+    Flagged,
+}
 
 pub struct Scheduler {
     store: Store,
@@ -50,6 +102,11 @@ pub struct Scheduler {
     /// session id; a transition changes the key, which is what allows the one
     /// nudge per situation rather than one per session for ever.
     nudged: HashMap<String, (String, i64)>,
+    /// Sessions this watchdog has acted on and the launch (`launched_at`) it
+    /// acted on, keyed by session id: a relaunch changes the key the same way
+    /// a transition changes `nudged`'s, which is what keeps it to one Enter
+    /// and one flag per launch rather than one per tick.
+    unstarted: HashMap<String, (String, Unstarted)>,
     /// Held while any session is live, so the machine does not idle-sleep
     /// out from under a working agent.
     sleep: SleepInhibitor,
@@ -69,6 +126,7 @@ pub fn start(
         launcher,
         spawn_failures: HashMap::new(),
         nudged: HashMap::new(),
+        unstarted: HashMap::new(),
         sleep: SleepInhibitor::new(),
         prevent_sleep,
     };
@@ -791,10 +849,18 @@ impl Scheduler {
         }
     }
 
-    /// One idle agent, measured against the stall thresholds: a single nudge
-    /// at [`STALL_NUDGE_SECS`], and at [`STALL_FLAG_SECS`] the session is
-    /// raised for the user. Returns whether it crossed that second threshold,
-    /// which is all the caller needs to decide about the work itself.
+    /// One agent that is not getting on with the work in front of it.
+    ///
+    /// There are two ways to be doing nothing and they want opposite
+    /// remedies. An idle agent finished a turn and stopped: it is measured
+    /// against the stall thresholds below — a single nudge at
+    /// [`STALL_NUDGE_SECS`], and at [`STALL_FLAG_SECS`] the session is raised
+    /// for the user. Returns whether it crossed that second threshold, which
+    /// is all the caller needs to decide about the work itself. A running one
+    /// that never started a turn is stuck holding its instruction, and what
+    /// that needs is a keystroke rather than another message — see
+    /// [`Self::check_unstarted_turn`], which has thresholds of its own and
+    /// nothing to say about the task.
     ///
     /// `key` is the situation the nudge is spent on — the status and round the
     /// agent was idle in — so moving on earns a fresh one.
@@ -804,6 +870,10 @@ impl Scheduler {
         key: (String, i64),
         nudge: &str,
     ) -> anyhow::Result<bool> {
+        if session.status() == SessionStatus::Running {
+            self.check_unstarted_turn(session).await?;
+            return Ok(false);
+        }
         if session.status() != SessionStatus::Idle {
             return Ok(false);
         }
@@ -852,5 +922,86 @@ impl Scheduler {
             }
         }
         Ok(false)
+    }
+
+    /// One launched agent that never started its turn: an Enter at
+    /// [`UNSTARTED_ENTER_SECS`], and the user at [`UNSTARTED_FLAG_SECS`].
+    ///
+    /// The instruction a resume carries can end up composed but unsent — an
+    /// Enter the TUI swallowed, or `codex resume <thread> <instruction>`,
+    /// which hands the prompt to the composer through argv and leaves it
+    /// there for somebody to submit. The agent then runs no turn and reports
+    /// nothing, and since the launch marked it `running` it stays that way for
+    /// ever: the idle stall never looks at a running session, so nothing else
+    /// in the daemon can see this at all. What a human does on finding such a
+    /// pane is press Enter, so that is what happens here — it submits a held
+    /// message and does nothing to an empty composer. If the turn has still
+    /// not started a threshold later, the session is raised instead: the
+    /// keystroke was not the answer and only a person can say why.
+    ///
+    /// "Started" is read off what the session reported since its launch, and
+    /// only [`TURN_ACTIVITY`] counts — lifecycle events fire on a TUI that is
+    /// merely up.
+    async fn check_unstarted_turn(&mut self, session: &AgentSession) -> anyhow::Result<()> {
+        // An agent waiting on a person is blocked, not stuck: an Enter into a
+        // pane holding a dialog answers it, which is the one thing the daemon
+        // must not decide (same reasoning as the idle nudge above). An agent
+        // that reported an error is already asking for the user by name, and
+        // overwriting that reason with a stall would take away the more
+        // useful half of what it said.
+        if matches!(
+            session.attention_reason(),
+            Some(
+                AttentionReason::WaitingPermission
+                    | AttentionReason::WaitingInput
+                    | AttentionReason::AgentError
+            )
+        ) {
+            return Ok(());
+        }
+        // A launch nobody dated is a launch nothing is concluded from.
+        let Some(launched) = session.launched_at.clone() else {
+            return Ok(());
+        };
+        let Ok(at) = chrono::DateTime::parse_from_rfc3339(&launched) else {
+            return Ok(());
+        };
+        let silent_secs = (chrono::Utc::now() - at.with_timezone(&chrono::Utc)).num_seconds();
+        if silent_secs < UNSTARTED_ENTER_SECS {
+            return Ok(());
+        }
+        if self
+            .store
+            .session_reported_since(&session.id, &launched, &TURN_ACTIVITY)
+            .await?
+        {
+            return Ok(());
+        }
+        // Only what was done for *this* launch counts: a relaunched session
+        // is a fresh instruction that may be stuck in its own right.
+        let done = self
+            .unstarted
+            .get(&session.id)
+            .filter(|(l, _)| *l == launched)
+            .map(|(_, step)| *step);
+
+        if silent_secs >= UNSTARTED_FLAG_SECS && done == Some(Unstarted::EnterPressed) {
+            warn!(session = %session.id, role = %session.role, silent_secs, "the agent never started its turn, flagging for user attention");
+            self.store
+                .set_session_attention(&session.id, AttentionReason::Stalled)
+                .await?;
+            self.unstarted
+                .insert(session.id.clone(), (launched, Unstarted::Flagged));
+            return Ok(());
+        }
+        if done.is_none() {
+            info!(session = %session.id, role = %session.role, silent_secs, "no turn since the launch, pressing Enter into the pane");
+            // Spent whether or not tmux took it, exactly as the nudge is: a
+            // pane that refused the keystroke this pass will refuse the next.
+            self.unstarted
+                .insert(session.id.clone(), (launched, Unstarted::EnterPressed));
+            self.launcher.tmux.send_enter(&session.tmux_session).await?;
+        }
+        Ok(())
     }
 }
