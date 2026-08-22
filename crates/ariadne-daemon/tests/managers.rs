@@ -29,8 +29,8 @@ async fn toy_repo() -> (tempfile::TempDir, PathBuf) {
     std::fs::create_dir(&repo).unwrap();
     sh(
         &repo,
-        "git init -q -b main && echo v1 > file.txt && git add . && \
-               git -c user.email=t@t -c user.name=t commit -qm init",
+        "git init -q -b main && git config user.email t@t && git config user.name t && \
+               echo v1 > file.txt && git add . && git commit -qm init",
     )
     .await;
     (dir, repo)
@@ -52,7 +52,7 @@ async fn git_worktree_lifecycle_and_merge_verification() {
     // Commit on the task branch.
     sh(
         &wt,
-        "echo v2 > file.txt && git add . && git -c user.email=t@t -c user.name=t commit -qm change",
+        "echo v2 > file.txt && git add . && git commit -qm change",
     )
     .await;
 
@@ -118,11 +118,7 @@ async fn reviewer_worktree_refresh_between_rounds() {
     git.add_worktree(&repo, &wt, "ariadne/task-1", "main")
         .await
         .unwrap();
-    sh(
-        &wt,
-        "echo r1 > file.txt && git add . && git -c user.email=t@t -c user.name=t commit -qm r1",
-    )
-    .await;
+    sh(&wt, "echo r1 > file.txt && git add . && git commit -qm r1").await;
 
     let wt_rev = dir.path().join("wt-rev");
     git.add_detached_worktree(&repo, &wt_rev, "ariadne/task-1")
@@ -136,11 +132,7 @@ async fn reviewer_worktree_refresh_between_rounds() {
     );
 
     // Round 2: engineer pushes more commits; reviewer worktree is refreshed.
-    sh(
-        &wt,
-        "echo r2 > file.txt && git add . && git -c user.email=t@t -c user.name=t commit -qm r2",
-    )
-    .await;
+    sh(&wt, "echo r2 > file.txt && git add . && git commit -qm r2").await;
     git.checkout_detached(&wt_rev, "ariadne/task-1")
         .await
         .unwrap();
