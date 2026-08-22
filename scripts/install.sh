@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
-# Ariadne installer: builds from source, installs the binaries, registers the
-# daemon as a user service (launchd on macOS, systemd --user on Linux),
-# installs bash/zsh completions, builds and installs the "Ariadne Desktop"
-# app when its toolchain is present, and has the user trust Ariadne's Codex
-# hooks.
+# Ariadne installer: installs the binaries, registers the daemon as a user
+# service (launchd on macOS, systemd --user on Linux), installs bash/zsh
+# completions, installs the "Ariadne Desktop" app, and has the user trust
+# Ariadne's Codex hooks.
+#
+# The binaries and the app come from a GitHub release by default, and from a
+# local build with --build-from-source. Release assets are unsigned; what they
+# carry is a build provenance attestation, so every downloaded file is checked
+# with `gh attestation verify` before anything is installed - which makes the
+# GitHub CLI a hard requirement of the default flow - and the macOS quarantine
+# attribute is cleared from what we install.
 #
 # Idempotent: safe to re-run after upgrades or config changes; every step
 # replaces what a previous run installed. What was installed where is
@@ -12,14 +18,17 @@
 # Output is a numbered step list; noisy subcommands (cargo, npm, launchctl,
 # systemctl) go to ~/.ariadne/install.log and are only shown when a step fails.
 #
-# Usage: scripts/install.sh [--prefix DIR] [--no-service] [--no-completions]
+# Usage: scripts/install.sh [--build-from-source] [--version vX.Y.Z]
+#                           [--prefix DIR] [--no-service] [--no-completions]
 #                           [--no-codex-hooks] [--no-ui] [--verbose] [--quiet]
 #                           [--dry-run] [--yes] [--help]
+#   --build-from-source  compile locally instead of downloading a release
+#   --version vX.Y.Z   release to install (default: the latest one)
 #   --prefix DIR       install binaries into DIR (default: ~/.local/bin)
 #   --no-service       skip daemon service registration
 #   --no-completions   skip shell completion installation
 #   --no-codex-hooks   skip the Codex hook trust prompt
-#   --no-ui            skip building and installing the Ariadne Desktop app
+#   --no-ui            skip installing the Ariadne Desktop app
 #   --verbose          stream subcommand output instead of capturing it
 #   --quiet            print errors and the final summary only
 #   --dry-run          print the steps that would run, change nothing
@@ -33,26 +42,36 @@ REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 usage() {
     cat <<'EOF'
-Ariadne installer - builds from source and installs ariadne + ariadned.
+Ariadne installer - installs ariadne + ariadned from a verified GitHub release.
 
 Usage: scripts/install.sh [options]
 
+  --build-from-source, --build
+                     compile with cargo/npm instead of downloading a release
+  --version vX.Y.Z   release to install (default: the latest one); download
+                     mode only
   --prefix DIR       install binaries into DIR (default: ~/.local/bin)
   --no-service       skip daemon service registration (launchd / systemd --user)
   --no-completions   skip shell completion installation
   --no-codex-hooks   skip the Codex hook trust prompt
-  --no-ui            skip building and installing the "Ariadne Desktop" app
+  --no-ui            skip installing the "Ariadne Desktop" app
   --verbose          stream subcommand output instead of capturing it
   --quiet            print errors and the final summary only
   --dry-run          print the steps that would run, change nothing
   --yes, -y          non-interactive: skip anything that would ask
   --help, -h         show this help
 
+Downloaded assets are verified with `gh attestation verify` against the
+release repository (the checkout's origin remote), so the GitHub CLI must be
+installed and logged in; --build-from-source needs neither.
+
 Environment: PREFIX, ARIADNE_HOME, NO_COLOR.
 EOF
 }
 
 PREFIX="${PREFIX:-$HOME/.local/bin}"
+BUILD_FROM_SOURCE=0
+RELEASE_TAG=""
 WITH_SERVICE=1
 WITH_COMPLETIONS=1
 WITH_CODEX_HOOKS=1
@@ -60,6 +79,8 @@ WITH_UI=1
 while [ $# -gt 0 ]; do
     if ui_common_flag "$1"; then shift; continue; fi
     case "$1" in
+        --build-from-source|--build) BUILD_FROM_SOURCE=1; shift ;;
+        --version) RELEASE_TAG="$2"; shift 2 ;;
         --prefix) PREFIX="$2"; shift 2 ;;
         --no-service) WITH_SERVICE=0; shift ;;
         --no-completions) WITH_COMPLETIONS=0; shift ;;
@@ -69,6 +90,14 @@ while [ $# -gt 0 ]; do
         *) echo "unknown option: $1" >&2; echo >&2; usage >&2; exit 2 ;;
     esac
 done
+if [ "$BUILD_FROM_SOURCE" = 1 ] && [ -n "$RELEASE_TAG" ]; then
+    echo "--version names a published release; it cannot be combined with --build-from-source" >&2
+    exit 2
+fi
+# Releases are tagged v<semver>; take the bare version too.
+case "$RELEASE_TAG" in
+    [0-9]*) RELEASE_TAG="v$RELEASE_TAG" ;;
+esac
 ui_init
 trap 'ui_on_err $?' ERR
 
@@ -86,6 +115,14 @@ ZSHRC="${ZDOTDIR:-$HOME}/.zshrc"
 APP_NAME="Ariadne Desktop"
 APP_SRC_DIR="$REPO_DIR/ui"
 APP_TARGET_DIR="$APP_SRC_DIR/src-tauri/target/release"
+
+# Download-mode state; all empty when building from source.
+TARGET=""          # the release target triple this machine runs
+BIN_ASSET=""       # the tarball with ariadne + ariadned
+APP_ASSET=""       # the desktop bundle (.app.tar.gz on macOS, .AppImage on Linux)
+RELEASE_REPO=""    # owner/repo the release and its attestations come from
+RESOLVED_TAG=""    # the tag actually installed, once gh has told us
+STAGE_DIR=""       # scratch directory the assets are downloaded into
 
 # Only a label for the step title and the summary; an OS with no service of
 # ours still gets everything before that step, and fails inside it.
@@ -112,12 +149,125 @@ app_npm() {
     ( cd "$APP_SRC_DIR" && run_logged npm "$@" )
 }
 
+# --- release downloads ---------------------------------------------------------
+
+# The target triple naming the release assets for this machine. Only the four
+# triples the release workflow builds exist; anything else has to be compiled.
+detect_target() {
+    case "$OS/$(uname -m)" in
+        Darwin/arm64|Darwin/aarch64) TARGET="aarch64-apple-darwin" ;;
+        Darwin/x86_64) TARGET="x86_64-apple-darwin" ;;
+        Linux/x86_64|Linux/amd64) TARGET="x86_64-unknown-linux-gnu" ;;
+        Linux/aarch64|Linux/arm64) TARGET="aarch64-unknown-linux-gnu" ;;
+        *) ui_die "no release is published for $OS $(uname -m) - re-run with --build-from-source" ;;
+    esac
+}
+
+# gh is not a convenience here: it is what verifies the attestations, and an
+# unverified install is not on offer.
+require_gh() {
+    command -v gh > /dev/null 2>&1 \
+        || ui_die "the GitHub CLI (gh) is required to install a release - install it from https://cli.github.com, or re-run with --build-from-source"
+    run_logged gh auth status \
+        || ui_die "gh is not logged in - run 'gh auth login', or re-run with --build-from-source"
+}
+
+# owner/repo for `gh release download` and `gh attestation verify`, read off
+# the checkout the installer was run from. Handles the https, ssh and scp-like
+# forms of a remote URL.
+resolve_release_repo() {
+    local url owner name
+    url="$(git -C "$REPO_DIR" remote get-url origin 2>/dev/null)" || url=""
+    [ -n "$url" ] \
+        || ui_die "no 'origin' remote in $(ui_tilde "$REPO_DIR") to take the release repository from - re-run with --build-from-source"
+    url="${url%.git}"
+    url="${url%/}"
+    name="${url##*/}"
+    owner="${url%/*}"
+    owner="${owner##*[:/]}"
+    [ -n "$owner" ] && [ -n "$name" ] && [ "$owner" != "$url" ] \
+        || ui_die "could not read owner/repo out of the origin remote ($url) - re-run with --build-from-source"
+    RELEASE_REPO="$owner/$name"
+}
+
+# Release assets are unsigned and arrive over the network, so macOS parks a
+# com.apple.quarantine attribute on them and Gatekeeper then refuses to run
+# what we installed. Nothing to clear elsewhere, or when it is already absent.
+clear_quarantine() {
+    [ "$OS" = Darwin ] || return 0
+    local path
+    for path in "$@"; do
+        xattr -r -d com.apple.quarantine "$path" > /dev/null 2>&1 || true
+    done
+    return 0
+}
+
+# Put a built or downloaded desktop bundle in place, setting APP_PATH to where
+# it landed: the .app in /Applications on macOS, the AppImage (or plain binary)
+# as $PREFIX/ariadne-desktop on Linux.
+install_app_bundle() {
+    local bundle="$1"
+    case "$OS" in
+        Darwin)
+            # /Applications is writable by admin users; anyone else gets
+            # the per-user one, which Finder and Spotlight treat the same.
+            APP_INSTALL_DIR="/Applications"
+            [ -w "$APP_INSTALL_DIR" ] || APP_INSTALL_DIR="$HOME/Applications"
+            mkdir -p "$APP_INSTALL_DIR"
+            APP_PATH="$APP_INSTALL_DIR/$APP_NAME.app"
+            rm -rf "$APP_PATH"
+            # ditto, not cp: it is what copies a bundle whole, extended
+            # attributes and code signature included.
+            ditto "$bundle" "$APP_PATH"
+            ;;
+        Linux)
+            mkdir -p "$PREFIX"
+            APP_PATH="$PREFIX/ariadne-desktop"
+            install -m 755 "$bundle" "$APP_PATH"
+            ;;
+        *)
+            ui_die "unsupported OS for the desktop app: $OS (use --no-ui)"
+            ;;
+    esac
+}
+
+# What is being installed and where it comes from, for the plan, the header
+# and the summary. Deciding the target now keeps an unsupported machine from
+# getting as far as a plan it could never carry out.
+RELEASE_DESC=""
+SOURCE_DESC="repo    $REPO_DIR"
+if [ "$BUILD_FROM_SOURCE" = 0 ]; then
+    detect_target
+    BIN_ASSET="ariadne-$TARGET.tar.gz"
+    case "$OS" in
+        Darwin) APP_ASSET="ariadne-desktop-$TARGET.app.tar.gz" ;;
+        *) APP_ASSET="ariadne-desktop-$TARGET.AppImage" ;;
+    esac
+    if [ -n "$RELEASE_TAG" ]; then
+        RELEASE_DESC="release $RELEASE_TAG"
+    else
+        RELEASE_DESC="the latest release"
+    fi
+    SOURCE_DESC="release ${RELEASE_TAG:-latest} ($TARGET)"
+fi
+
 # --- the plan ------------------------------------------------------------------
 # One plan_add per step, in execution order; the step count adapts to the flags.
-plan_add "Building release binaries"
+if [ "$BUILD_FROM_SOURCE" = 1 ]; then
+    plan_add "Building release binaries"
+else
+    plan_add "Downloading $RELEASE_DESC for $TARGET"
+    plan_add "Verifying the build provenance (gh attestation verify)"
+fi
 plan_add "Stopping any running daemon"
 plan_add "Installing binaries $UI_ARROW $(ui_tilde "$PREFIX")"
-[ "$WITH_UI" = 1 ] && plan_add "Building and installing $APP_NAME"
+if [ "$WITH_UI" = 1 ]; then
+    if [ "$BUILD_FROM_SOURCE" = 1 ]; then
+        plan_add "Building and installing $APP_NAME"
+    else
+        plan_add "Installing $APP_NAME"
+    fi
+fi
 [ "$WITH_COMPLETIONS" = 1 ] && plan_add "Registering shell completions"
 if [ "$WITH_SERVICE" = 1 ]; then
     plan_add "Registering the daemon service ($SERVICE_DESC)"
@@ -129,7 +279,7 @@ plan_add "Checking the installation (ariadne doctor)"
 ui_start
 
 ui_header "Ariadne installer" \
-    "repo    $REPO_DIR" \
+    "$SOURCE_DESC" \
     "prefix  $(ui_tilde "$PREFIX")" \
     "log     $(ui_tilde "$LOG_FILE")"
 
@@ -147,11 +297,54 @@ if [ -f "$MANIFEST" ]; then
     OLD_PREFIX="$(. "$MANIFEST" && echo "${ARIADNE_PREFIX:-}")"
 fi
 
-# --- build ---------------------------------------------------------------------
-step_begin
-run_logged cargo build --release --manifest-path "$REPO_DIR/Cargo.toml" \
-    || ui_die "cargo build failed"
-step_ok
+# --- build, or download and verify ---------------------------------------------
+# Where the binaries to install come from: the release build in this checkout,
+# or the assets unpacked out of the staging directory.
+BIN_SRC_DIR="$REPO_DIR/target/release"
+if [ "$BUILD_FROM_SOURCE" = 1 ]; then
+    step_begin
+    run_logged cargo build --release --manifest-path "$REPO_DIR/Cargo.toml" \
+        || ui_die "cargo build failed"
+    step_ok
+else
+    step_begin
+    require_gh
+    resolve_release_repo
+    # Ask which tag is being installed before downloading anything: with no
+    # --version that is whatever gh calls the latest release, and the step
+    # note, the summary and the error messages all want its name.
+    if [ -n "$RELEASE_TAG" ]; then
+        RESOLVED_TAG="$(gh release view "$RELEASE_TAG" --repo "$RELEASE_REPO" \
+            --json tagName --jq .tagName 2>> "$LOG_FILE")" \
+            || ui_die "no release $RELEASE_TAG in $RELEASE_REPO"
+    else
+        RESOLVED_TAG="$(gh release view --repo "$RELEASE_REPO" \
+            --json tagName --jq .tagName 2>> "$LOG_FILE")" \
+            || ui_die "$RELEASE_REPO has no published release yet - use --build-from-source"
+    fi
+
+    STAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ariadne-install.XXXXXX")"
+    trap 'rm -rf "$STAGE_DIR"' EXIT
+    BIN_SRC_DIR="$STAGE_DIR"
+    run_logged gh release download "$RESOLVED_TAG" --repo "$RELEASE_REPO" \
+        --dir "$STAGE_DIR" --pattern "$BIN_ASSET" \
+        || ui_die "$RESOLVED_TAG has no $BIN_ASSET - use --build-from-source"
+    if [ "$WITH_UI" = 1 ]; then
+        run_logged gh release download "$RESOLVED_TAG" --repo "$RELEASE_REPO" \
+            --dir "$STAGE_DIR" --pattern "$APP_ASSET" \
+            || ui_die "$RESOLVED_TAG has no $APP_ASSET (--no-ui installs the CLI and daemon only)"
+    fi
+    step_ok "$RESOLVED_TAG"
+
+    # Nothing downloaded is touched until GitHub has confirmed it was built by
+    # the release workflow of this very repository, from this very tag.
+    step_begin
+    for _asset in "$STAGE_DIR"/*; do
+        run_logged gh attestation verify "$_asset" --repo "$RELEASE_REPO" \
+            || ui_die "$(basename "$_asset") failed attestation verification - nothing was installed"
+    done
+    step_ok "$RELEASE_REPO"
+fi
 
 # --- stop whatever is currently running ------------------------------------------
 step_begin
@@ -167,9 +360,16 @@ step_ok
 
 # --- binaries --------------------------------------------------------------------
 step_begin
+if [ "$BUILD_FROM_SOURCE" = 0 ]; then
+    # Both binaries sit at the root of the tarball.
+    run_logged tar -xzf "$STAGE_DIR/$BIN_ASSET" -C "$STAGE_DIR" \
+        || ui_die "could not unpack $BIN_ASSET"
+    clear_quarantine "$STAGE_DIR/ariadne" "$STAGE_DIR/ariadned"
+fi
 mkdir -p "$PREFIX"
-install -m 755 "$REPO_DIR/target/release/ariadne" "$PREFIX/ariadne"
-install -m 755 "$REPO_DIR/target/release/ariadned" "$PREFIX/ariadned"
+install -m 755 "$BIN_SRC_DIR/ariadne" "$PREFIX/ariadne"
+install -m 755 "$BIN_SRC_DIR/ariadned" "$PREFIX/ariadned"
+[ "$BUILD_FROM_SOURCE" = 1 ] || clear_quarantine "$PREFIX/ariadne" "$PREFIX/ariadned"
 if [ -n "$OLD_PREFIX" ] && [ "$OLD_PREFIX" != "$PREFIX" ]; then
     rm -f "$OLD_PREFIX/ariadne" "$OLD_PREFIX/ariadned"
     step_ok "previous prefix $(ui_tilde "$OLD_PREFIX") cleaned"
@@ -178,12 +378,32 @@ else
 fi
 
 # --- desktop app --------------------------------------------------------------------
-# Optional and best-effort: the Tauri app in ui/ needs a Node toolchain, and a
-# machine without one still deserves a complete install. The Tauri CLI itself
-# comes from ui/'s devDependencies, so npm is the only thing we ask for.
+# Downloaded, the app is one more verified asset and installs like the
+# binaries. Built, it is optional and best-effort: the Tauri app in ui/ needs
+# a Node toolchain, and a machine without one still deserves a complete
+# install. The Tauri CLI itself comes from ui/'s devDependencies, so npm is
+# the only thing we ask for.
 APP_PATH=""
 APP_STATE="not installed (--no-ui)"
-if [ "$WITH_UI" = 1 ]; then
+if [ "$WITH_UI" = 1 ] && [ "$BUILD_FROM_SOURCE" = 0 ]; then
+    step_begin
+    case "$OS" in
+        Darwin)
+            # --mac-metadata: the archive carries the bundle's extended
+            # attributes and symlinks, and the .app needs them to stay loadable.
+            run_logged tar --mac-metadata -xzf "$STAGE_DIR/$APP_ASSET" -C "$STAGE_DIR" \
+                || ui_die "could not unpack $APP_ASSET"
+            APP_BUNDLE="$STAGE_DIR/$APP_NAME.app"
+            [ -d "$APP_BUNDLE" ] || ui_die "$APP_ASSET holds no $APP_NAME.app"
+            ;;
+        Linux) APP_BUNDLE="$STAGE_DIR/$APP_ASSET" ;;
+        *) ui_die "unsupported OS for the desktop app: $OS (use --no-ui)" ;;
+    esac
+    install_app_bundle "$APP_BUNDLE"
+    clear_quarantine "$APP_PATH"
+    APP_STATE="$(ui_tilde "$APP_PATH")"
+    step_ok "$(ui_tilde "$APP_PATH")"
+elif [ "$WITH_UI" = 1 ]; then
     step_begin
     if ! command -v npm > /dev/null 2>&1; then
         APP_STATE="skipped - npm not found"
@@ -208,16 +428,6 @@ if [ "$WITH_UI" = 1 ]; then
             Darwin)
                 APP_BUNDLE="$APP_TARGET_DIR/bundle/macos/$APP_NAME.app"
                 [ -d "$APP_BUNDLE" ] || ui_die "the build produced no $APP_NAME.app"
-                # /Applications is writable by admin users; anyone else gets
-                # the per-user one, which Finder and Spotlight treat the same.
-                APP_INSTALL_DIR="/Applications"
-                [ -w "$APP_INSTALL_DIR" ] || APP_INSTALL_DIR="$HOME/Applications"
-                mkdir -p "$APP_INSTALL_DIR"
-                APP_PATH="$APP_INSTALL_DIR/$APP_NAME.app"
-                rm -rf "$APP_PATH"
-                # ditto, not cp: it is what copies a bundle whole, extended
-                # attributes and code signature included.
-                ditto "$APP_BUNDLE" "$APP_PATH"
                 ;;
             Linux)
                 # The AppImage when its tooling produced one; the plain
@@ -233,14 +443,12 @@ if [ "$WITH_UI" = 1 ]; then
                     fi
                 done
                 [ -n "$APP_BUNDLE" ] || ui_die "the build produced no AppImage and no binary"
-                mkdir -p "$PREFIX"
-                APP_PATH="$PREFIX/ariadne-desktop"
-                install -m 755 "$APP_BUNDLE" "$APP_PATH"
                 ;;
             *)
                 ui_die "unsupported OS for the desktop app: $OS (use --no-ui)"
                 ;;
         esac
+        install_app_bundle "$APP_BUNDLE"
         APP_STATE="$(ui_tilde "$APP_PATH")"
         step_ok "$(ui_tilde "$APP_PATH")"
     fi
@@ -419,6 +627,11 @@ fi
 
 # --- summary ----------------------------------------------------------------------------
 printf '\n%sAriadne installed.%s\n\n' "$UI_B$UI_GREEN" "$UI_R"
+if [ "$BUILD_FROM_SOURCE" = 1 ]; then
+    ui_field "source" "built from $(ui_tilde "$REPO_DIR")"
+else
+    ui_field "source" "release $RESOLVED_TAG ($TARGET), attestation verified"
+fi
 ui_field "binaries" "$(ui_tilde "$PREFIX")/{ariadne,ariadned}"
 if [ "$WITH_SERVICE" = 1 ]; then
     ui_field "service" "$SERVICE_DESC - daemon $DAEMON_STATE"

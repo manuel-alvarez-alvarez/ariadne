@@ -53,15 +53,37 @@ is tracked so sessions can be resumed and attached.
 ## Install
 
 ```sh
-scripts/install.sh             # builds, installs to ~/.local/bin, registers the
-                               # daemon service (launchd / systemd --user),
-                               # bash+zsh completions and the Ariadne Desktop
-                               # app. Idempotent — re-run to upgrade.
+scripts/install.sh             # downloads the latest release, installs to
+                               # ~/.local/bin, registers the daemon service
+                               # (launchd / systemd --user), bash+zsh
+                               # completions and the Ariadne Desktop app.
+                               # Idempotent — re-run to upgrade.
+scripts/install.sh --version v0.2.0          # a specific release
+scripts/install.sh --build-from-source       # compile this checkout instead
 scripts/install.sh --prefix /usr/local/bin   # custom location
 scripts/install.sh --no-ui     # CLI and daemon only, no desktop app
 scripts/uninstall.sh           # removes everything, keeps ~/.ariadne data
 scripts/uninstall.sh --purge   # ...and deletes the data too
 ```
+
+By default the binaries and the desktop app come from the GitHub release named
+by `--version` (the latest one when it is not given), for the target triple
+this machine runs — `aarch64-apple-darwin`, `x86_64-apple-darwin`,
+`x86_64-unknown-linux-gnu` or `aarch64-unknown-linux-gnu`; anything else has
+to be built. The assets are unsigned, but they carry a build provenance
+attestation, and **every downloaded file is checked with `gh attestation
+verify` before anything is installed** — so the [GitHub
+CLI](https://cli.github.com) has to be installed and logged in
+(`gh auth login`), and a failed check aborts the install with nothing touched.
+The repository the release and its attestations are read from is the `origin`
+remote of the checkout you run the script from. Since nothing is signed,
+macOS would quarantine what was downloaded, so the installer clears
+`com.apple.quarantine` from the binaries and the app it installs.
+
+`--build-from-source` is the other way in: it compiles this checkout with
+`cargo build --release` and builds the desktop app with `npm run tauri build`,
+exactly as the installer always did, and needs neither `gh` nor a published
+release.
 
 Both scripts run as a numbered list of steps, each marked ✓ done, ↷ skipped or
 ✗ failed, and both end with a summary of what went where. The noise (cargo,
@@ -72,11 +94,13 @@ never when `NO_COLOR` is set.
 
 | flag | |
 | --- | --- |
+| `--build-from-source`, `--build` | compile this checkout instead of downloading a release (install) |
+| `--version vX.Y.Z` | the release to install, default the latest one (install, download mode only) |
 | `--prefix DIR` | install binaries into `DIR` (default `~/.local/bin`); on the uninstaller, where to look when there is no manifest |
 | `--no-service` | skip the daemon service registration (install) |
 | `--no-completions` | skip the shell completions (install) |
 | `--no-codex-hooks` | skip the Codex hook trust step (install) |
-| `--no-ui` | skip building and installing the Ariadne Desktop app (install) |
+| `--no-ui` | skip installing the Ariadne Desktop app (install) |
 | `--purge` | also delete `~/.ariadne` (uninstall) |
 | `--verbose` | stream the subcommand output instead of capturing it |
 | `--quiet` | errors and the final summary only |
@@ -84,10 +108,11 @@ never when `NO_COLOR` is set.
 | `--yes`, `-y` | non-interactive: skip the Codex prompt (install; the uninstaller never asks) |
 | `--help`, `-h` | the same list, from the script |
 
-The desktop app (`ui/`, a Tauri shell around the web UI) is built and installed
-as one of those steps, best-effort: it needs `npm` — the Tauri CLI itself comes
-from `ui/`'s devDependencies — and without it the step is skipped (↷) rather
-than failing the install, which is what `--no-ui` does too. It lands in
+The desktop app (`ui/`, a Tauri shell around the web UI) is installed as one of
+those steps: downloaded, it is one more verified asset; built, it is
+best-effort, since it needs `npm` — the Tauri CLI itself comes from `ui/`'s
+devDependencies — and without it the step is skipped (↷) rather than failing
+the install, which is what `--no-ui` does too. It lands in
 `/Applications/Ariadne Desktop.app` on macOS (`~/Applications` when
 `/Applications` is not writable) and as `$PREFIX/ariadne-desktop` on Linux (the
 AppImage, or the plain binary when no AppImage was produced). Wherever it went
