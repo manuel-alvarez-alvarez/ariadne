@@ -20,7 +20,7 @@ use tokio::sync::broadcast::Receiver;
 
 use ariadne_api::stream::DomainEvent;
 use ariadne_core::spawn_plan::SpawnPlanFile;
-use ariadne_core::{Actor, AgentKind, PromptKind, Role, SessionStatus, TaskStatus};
+use ariadne_core::{Actor, AgentKind, GoalStatus, PromptKind, Role, SessionStatus, TaskStatus};
 use ariadne_daemon::agents::prompts;
 use ariadne_daemon::bus::{BusEvent, EventBus};
 use ariadne_daemon::config::Config;
@@ -980,4 +980,33 @@ async fn a_session_without_an_agent_id_is_not_revived() {
         "an un-resumable session stays finished"
     );
     assert_eq!(h.sessions_of(&task).await.len(), 1);
+}
+
+/// A finished goal has nothing left for an agent to come back to, and the
+/// scheduler kills what is live under one — so a revive here would put a
+/// session up for the next tick to take straight down. Refused instead, and
+/// the session stays as it ended.
+#[tokio::test]
+async fn a_session_of_a_finished_goal_is_not_revived() {
+    for finished in [GoalStatus::Completed, GoalStatus::Cancelled] {
+        let h = harness().await;
+        let (_task, session) = h.task_with_resumable_engineer().await;
+        h.store
+            .set_goal_status(&session.goal_id, finished)
+            .await
+            .unwrap();
+
+        let error = h
+            .launcher
+            .revive_session(&session.id, None)
+            .await
+            .expect_err("a finished goal revives nothing")
+            .to_string();
+        assert!(
+            error.contains(finished.as_str()),
+            "the refusal says what the goal is: {error}"
+        );
+        let after = h.store.get_session(&session.id).await.unwrap();
+        assert_eq!(after.status(), SessionStatus::Exited);
+    }
 }

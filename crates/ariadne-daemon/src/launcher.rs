@@ -763,6 +763,18 @@ impl Launcher {
             // Already alive — attaching needs nothing from us.
             return Ok(previous);
         }
+        // A finished goal has no work left for an agent to come back to, and
+        // the scheduler kills what is live under one: reviving here would put
+        // a session up only for the next tick to take it down again. Refused
+        // at the source instead, so nobody watches an agent start and vanish.
+        let goal = self.store.get_goal(&previous.goal_id).await?;
+        if goal.status().is_terminal() {
+            anyhow::bail!(
+                "cannot revive session {}: its goal is {}",
+                previous.id,
+                goal.status
+            );
+        }
         let internal = previous.internal_session_id.clone().with_context(|| {
             format!(
                 "session {} has no internal agent id to resume from",

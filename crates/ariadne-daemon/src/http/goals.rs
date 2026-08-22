@@ -10,7 +10,7 @@ use ariadne_api::Page;
 use ariadne_api::goals::{CreateGoalRequest, FinalizePlanRequest, GoalDto};
 use ariadne_api::messages::{CreateMessageRequest, MessageDto};
 use ariadne_core::{GoalStatus, Role};
-use ariadne_store::{NewGoal, NewMessage};
+use ariadne_store::{NewGoal, NewMessage, SessionFilter};
 
 use super::AppState;
 use super::auth::call_ctx;
@@ -165,6 +165,27 @@ pub async fn delete(
             "goal is {}, cancel it before deleting it",
             goal.status
         )));
+    }
+    // A terminal goal is *supposed* to own nothing live, but the delete is
+    // what makes a mistake permanent: the rows cascade away and a pane that
+    // outlived them is no longer anything the daemon can name, let alone
+    // reap. So whatever is still standing is taken down first, and only a
+    // clean teardown gets to delete.
+    for session in state
+        .store
+        .list_sessions(SessionFilter {
+            goal_id: Some(goal.id.clone()),
+            live_only: true,
+            ..Default::default()
+        })
+        .await?
+    {
+        tracing::info!(goal = %goal.id, session = %session.id, "deleting goal: killing a session that outlived it");
+        state
+            .launcher
+            .kill_session(&session.id)
+            .await
+            .map_err(|e| ApiError::conflict(e.to_string()))?;
     }
     state.store.delete_goal(&id).await?;
     Ok(StatusCode::NO_CONTENT)

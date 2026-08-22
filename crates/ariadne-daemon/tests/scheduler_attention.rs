@@ -1265,3 +1265,83 @@ async fn a_stale_prompt_flag_from_before_the_daemon_started_is_swept_up() {
         "and so is the stall it ended in"
     );
 }
+
+/// A finished goal owns nothing live, and the scheduler keeps it that way on
+/// every pass rather than only on the way in.
+///
+/// The kill that runs at the transition is a one-off: a `resume` landing just
+/// after it — the UI's button on the planner of a goal that had completed
+/// seconds earlier — puts an agent back under a goal with no work left, where
+/// it sits for ever holding the machine awake. So the completed arm reconciles
+/// like every other one.
+#[tokio::test]
+async fn a_session_that_outlived_its_completed_goal_is_killed() {
+    let h = harness().await;
+    let (goal, planner) = h.planning_goal().await;
+    h.store
+        .set_goal_status(&goal.id, GoalStatus::Completed)
+        .await
+        .unwrap();
+    // Live under a goal that was already finished, which is what a revive
+    // racing the completion leaves behind.
+    let session = h.session(&goal, None, Role::Planner, &planner).await;
+    h.pane_exists(&session);
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    sched
+        .send(SchedEvent::GoalChanged(goal.id.clone()))
+        .unwrap();
+    eventually("the leftover planner to be killed", async || {
+        !h.store
+            .get_session(&session.id)
+            .await
+            .unwrap()
+            .status()
+            .is_live()
+    })
+    .await;
+}
+
+/// The same pass on a goal that has nothing live left does nothing at all: the
+/// reconciliation is convergent, not a kill re-issued every tick at a session
+/// that already ended.
+#[tokio::test]
+async fn a_completed_goal_with_nothing_live_is_left_alone() {
+    let h = harness().await;
+    let (goal, planner) = h.planning_goal().await;
+    let session = h.session(&goal, None, Role::Planner, &planner).await;
+    h.pane_exists(&session);
+    h.store
+        .set_session_status(&session.id, SessionStatus::Exited)
+        .await
+        .unwrap();
+    h.store
+        .set_goal_status(&goal.id, GoalStatus::Completed)
+        .await
+        .unwrap();
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    for _ in 0..3 {
+        sched
+            .send(SchedEvent::GoalChanged(goal.id.clone()))
+            .unwrap();
+    }
+    // Nothing to wait for, so the assertion is made after a pass has surely
+    // run: the sends above are ordered ahead of this one on the same channel.
+    sched
+        .send(SchedEvent::GoalChanged(goal.id.clone()))
+        .unwrap();
+    eventually("the passes to have run", async || {
+        h.store.get_goal(&goal.id).await.unwrap().status() == GoalStatus::Completed
+    })
+    .await;
+    assert_eq!(
+        h.keystrokes(&session),
+        0,
+        "a finished session is not typed into"
+    );
+    assert_eq!(
+        h.store.get_session(&session.id).await.unwrap().status(),
+        SessionStatus::Exited
+    );
+}

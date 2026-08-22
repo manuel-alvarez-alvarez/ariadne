@@ -418,13 +418,27 @@ impl Scheduler {
                 }
                 self.kill_goal_sessions(&goal.id).await;
             }
-            GoalStatus::Completed => {}
+            // Nothing left to do, but the teardown is repeated rather than
+            // assumed: the kill on the way in is a one-off, and anything that
+            // puts a session back on its feet afterwards — a `resume` racing
+            // the transition, a kill that did not take — would otherwise keep
+            // an agent alive under a finished goal for ever, holding the
+            // machine awake with it. Every other arm converges on each tick;
+            // so does this one. Sessions are killed at most once in practice,
+            // because a killed one is no longer live.
+            GoalStatus::Completed => self.kill_goal_sessions(&goal.id).await,
         }
         Ok(())
     }
 
+    /// Kill every live session of a goal, whatever ended it.
+    ///
+    /// Failures are logged and otherwise swallowed: reconciliation carries on
+    /// for the rest of the sessions, and the next tick asks again — but a
+    /// session that will not die has to be visible, or the only symptom is a
+    /// machine that never sleeps.
     async fn kill_goal_sessions(&self, goal_id: &str) {
-        if let Ok(sessions) = self
+        let sessions = match self
             .store
             .list_sessions(SessionFilter {
                 goal_id: Some(goal_id.to_string()),
@@ -433,8 +447,16 @@ impl Scheduler {
             })
             .await
         {
-            for session in sessions {
-                let _ = self.launcher.kill_session(&session.id).await;
+            Ok(sessions) => sessions,
+            Err(e) => {
+                warn!(goal = %goal_id, error = %e, "listing sessions to kill failed");
+                return;
+            }
+        };
+        for session in sessions {
+            info!(goal = %goal_id, session = %session.id, role = %session.role, "killing session of a finished goal");
+            if let Err(e) = self.launcher.kill_session(&session.id).await {
+                warn!(goal = %goal_id, session = %session.id, error = %e, "killing the session failed");
             }
         }
     }

@@ -23,14 +23,15 @@ use ariadne_api::messages::MessageDto;
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::stream::DomainEvent;
 use ariadne_api::tasks::TaskDto;
+use ariadne_core::{AgentKind, Role};
 use ariadne_daemon::bus::{BusEvent, EventBus};
 use ariadne_daemon::config::Config;
 use ariadne_daemon::gitwt::GitManager;
 use ariadne_daemon::http::{self, AppState};
 use ariadne_daemon::launcher::Launcher;
 use ariadne_daemon::logbuf::LogBuffer;
-use ariadne_daemon::tmux::TmuxManager;
-use ariadne_store::Store;
+use ariadne_daemon::tmux::{TmuxManager, session_name};
+use ariadne_store::{AgentSession, NewProfile, NewSession, Store};
 
 /// How long a test waits for an event before giving up.
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -38,6 +39,7 @@ const TIMEOUT: Duration = Duration::from_secs(5);
 struct Harness {
     bus: EventBus,
     router: Router,
+    store: Store,
     dir: tempfile::TempDir,
 }
 
@@ -50,11 +52,14 @@ async fn harness() -> Harness {
     let launcher = Arc::new(Launcher {
         cfg,
         store: store.clone(),
-        tmux: TmuxManager::default(),
+        // A stub rather than the real thing: this file is the only one that
+        // asks the launcher to kill a pane, and what it asserts is that the
+        // kill was issued before the rows went.
+        tmux: write_tmux_stub(dir.path()),
         git: GitManager,
     });
     let state = AppState {
-        store,
+        store: store.clone(),
         started_at: Instant::now(),
         launcher,
         sched_tx: None,
@@ -64,8 +69,39 @@ async fn harness() -> Harness {
     Harness {
         router: http::router(state),
         bus,
+        store,
         dir,
     }
+}
+
+/// A `tmux` whose sessions are the names a test wrote into `alive`, and which
+/// writes down every `kill-session` it is handed.
+fn write_tmux_stub(dir: &FsPath) -> TmuxManager {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::write(dir.join("alive"), "").unwrap();
+    let bin = dir.join("tmux-stub.sh");
+    let script = format!(
+        "#!/bin/sh\n\
+         alive='{alive}'\n\
+         killed='{killed}'\n\
+         target=''\n\
+         prev=''\n\
+         for a in \"$@\"; do\n\
+        \x20 if [ \"$prev\" = \"-t\" ]; then target=\"$a\"; fi\n\
+        \x20 prev=\"$a\"\n\
+         done\n\
+         case \"$1\" in\n\
+        \x20 has-session) grep -qx \"$target\" \"$alive\" || exit 1 ;;\n\
+        \x20 kill-session) echo \"$target\" >> \"$killed\" ;;\n\
+         esac\n\
+         exit 0\n",
+        alive = dir.join("alive").display(),
+        killed = dir.join("kill-session.log").display(),
+    );
+    std::fs::write(&bin, script).unwrap();
+    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+    TmuxManager::new(bin.display().to_string())
 }
 
 impl Harness {
@@ -137,6 +173,52 @@ impl Harness {
             StatusCode::CREATED,
         )
         .await
+    }
+
+    /// A live session on a goal, with a pane the stub tmux answers for.
+    async fn live_session(&self, goal: &GoalDto) -> AgentSession {
+        let planner = self
+            .store
+            .create_profile(NewProfile {
+                name: "leftover planner".into(),
+                role: Role::Planner,
+                agent_kind: Some(AgentKind::ClaudeCode),
+                model: None,
+                system_prompt: "You plan.".into(),
+                prompts: vec![],
+            })
+            .await
+            .unwrap();
+        let session = self
+            .store
+            .create_session(NewSession {
+                goal_id: goal.id.clone(),
+                task_id: None,
+                role: Role::Planner,
+                profile_id: planner.id,
+                agent_kind: AgentKind::ClaudeCode,
+                model: None,
+                tmux_session: session_name(&goal.id, None, "pla", None),
+                worktree_path: None,
+                review_round: None,
+            })
+            .await
+            .unwrap();
+        std::fs::write(
+            self.dir.path().join("alive"),
+            format!("{}\n", session.tmux_session),
+        )
+        .unwrap();
+        session
+    }
+
+    /// The panes the launcher asked tmux to kill.
+    fn killed_panes(&self) -> Vec<String> {
+        std::fs::read_to_string(self.dir.path().join("kill-session.log"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
     }
 
     async fn cancel(&self, goal: &GoalDto) -> GoalDto {
@@ -311,4 +393,34 @@ async fn deleting_an_unknown_goal_is_a_404() {
         "the refusal names the id: {}",
         err.error.message
     );
+}
+
+/// The delete is what makes an orphan permanent: the rows cascade away, and a
+/// pane that outlived them is no longer anything the daemon can name, let
+/// alone reap. A finished goal is not supposed to own one — but if it does,
+/// the pane goes before the rows do.
+#[tokio::test]
+async fn deleting_a_goal_takes_down_a_session_that_outlived_it() {
+    let h = harness().await;
+    let goal = h.goal("repo").await;
+    let goal = h.cancel(&goal).await;
+    let session = h.live_session(&goal).await;
+
+    let (status, body) = h.send(delete(&format!("/v1/goals/{}", goal.id))).await;
+    assert_eq!(
+        status,
+        StatusCode::NO_CONTENT,
+        "{}",
+        String::from_utf8_lossy(&body)
+    );
+    assert_eq!(
+        h.killed_panes(),
+        vec![session.tmux_session],
+        "the pane was killed before its row was deleted"
+    );
+    h.error(
+        get(&format!("/v1/sessions/{}", session.id)),
+        StatusCode::NOT_FOUND,
+    )
+    .await;
 }

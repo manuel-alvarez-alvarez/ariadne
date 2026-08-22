@@ -49,6 +49,10 @@ pub async fn get(
 /// the stored internal session id). Returns the session to attach to, which
 /// is this one either way — relaunched under its own id and tmux name, or
 /// untouched when its tmux turned out to be alive already.
+///
+/// `409` when there is nothing to come back to: no stored agent id, a
+/// worktree that was cleaned up — or a goal that has finished, whose live
+/// sessions the scheduler takes down anyway.
 #[utoipa::path(post, path = "/v1/sessions/{id}/resume", tag = "sessions",
     params(("id" = String, Path, description = "session id")),
     responses((status = 200, body = SessionDto), (status = 404), (status = 409)))]
