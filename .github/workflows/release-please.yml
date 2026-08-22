@@ -1,0 +1,42 @@
+# Versioning, changelog and GitHub Releases, driven by conventional commits.
+#
+# On every push to `main` release-please recomputes the pending release from
+# the commits since the last tag and keeps a single "chore(main): release
+# X.Y.Z" pull request open. Merging that PR bumps every version location
+# listed in `release-please-config.json`, writes `CHANGELOG.md`, tags `vX.Y.Z`
+# and publishes the matching GitHub Release; the release build workflow hangs
+# off that Release.
+#
+# Only conventional-commit subjects reach the notes and move the version:
+# `feat:` (minor), `fix:`/`perf:`/`revert:` (patch), and `feat!:` or a
+# `BREAKING CHANGE:` footer (minor while we are pre-1.0). `chore:`, `docs:`
+# and friends ride along in a release but never trigger one; anything that is
+# not a conventional commit is ignored entirely.
+#
+# See .github/RELEASING.md, including the one-time repository setting that
+# lets Actions open the release PR.
+name: release-please
+
+on:
+  push:
+    branches:
+      - main
+
+# The default GITHUB_TOKEN is enough; no PAT is needed.
+permissions:
+  contents: write # create tags, releases and the release branch
+  pull-requests: write # open and update the release PR
+
+# Two pushes in quick succession must not race to create the release PR.
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
