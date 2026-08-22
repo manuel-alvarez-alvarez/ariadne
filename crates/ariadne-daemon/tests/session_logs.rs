@@ -1,9 +1,10 @@
 //! Integration tests for `GET /v1/sessions/{id}/logs/stream`.
 //!
-//! No tmux needed: the sessions here point at a tmux name that does not
-//! exist, which is exactly the "session already over" path — the one whose
-//! framing and lifecycle the acceptance criteria pin down. Following a live
-//! pane is the tailing logic, unit-tested in `logtail`.
+//! No tmux needed: every `tmux` here is a stub script. The sessions point at
+//! a name no stub admits to, which is exactly the "session already over" path
+//! — the one whose framing and lifecycle the acceptance criteria pin down.
+//! Following a live pane is the tailing logic, unit-tested in `logtail`; the
+//! one test that drives a real pane is `#[ignore]`d and asks for real tmux.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -35,8 +36,14 @@ struct Harness {
     dir: tempfile::TempDir,
 }
 
+/// A harness whose `tmux` denies every session it is asked about.
+///
+/// That is what a real `tmux` answers for a session that has ended — and,
+/// unlike a real `tmux`, it answers the same on a machine with none
+/// installed, where "cannot ask" is a third thing the stream treats as
+/// "still there".
 async fn harness() -> Harness {
-    build(false).await
+    build(Tmux::Gone).await
 }
 
 /// A harness whose `tmux` is a stub script: `has-session` succeeds while a
@@ -45,18 +52,31 @@ async fn harness() -> Harness {
 /// path — a running pane whose session ends or is resized underneath it —
 /// reproducible without tmux and without a real agent.
 async fn harness_with_stub_tmux() -> Harness {
-    build(true).await
+    build(Tmux::Stub).await
 }
 
-async fn build(stub_tmux: bool) -> Harness {
+/// A harness on the real `tmux` binary. Only a test that drives an actual
+/// pane needs one, and every such test is `#[ignore]`d.
+async fn harness_with_real_tmux() -> Harness {
+    build(Tmux::Real).await
+}
+
+/// Which `tmux` a harness is built on.
+enum Tmux {
+    Gone,
+    Stub,
+    Real,
+}
+
+async fn build(kind: Tmux) -> Harness {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(dir.path().join("test.db")).await.unwrap();
     let bus = ariadne_daemon::bus::start(store.clone());
     let cfg = Arc::new(Config::load(Some(dir.path().join("home"))).unwrap());
-    let tmux = if stub_tmux {
-        write_tmux_stub(dir.path())
-    } else {
-        TmuxManager::default()
+    let tmux = match kind {
+        Tmux::Gone => write_tmux_gone_stub(dir.path()),
+        Tmux::Stub => write_tmux_stub(dir.path()),
+        Tmux::Real => TmuxManager::default(),
     };
     let launcher = Arc::new(Launcher {
         cfg,
@@ -78,6 +98,18 @@ async fn build(stub_tmux: bool) -> Harness {
         launcher,
         dir,
     }
+}
+
+/// A `tmux` that fails every command, the way the real one does for a session
+/// that is not there: `has-session` says no, and there is no pane to capture
+/// or measure.
+fn write_tmux_gone_stub(dir: &std::path::Path) -> TmuxManager {
+    use std::os::unix::fs::PermissionsExt;
+
+    let bin = dir.join("tmux-gone.sh");
+    std::fs::write(&bin, "#!/bin/sh\nexit 1\n").unwrap();
+    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+    TmuxManager::new(bin.display().to_string())
 }
 
 fn write_tmux_stub(dir: &std::path::Path) -> TmuxManager {
@@ -1200,7 +1232,7 @@ async fn a_half_written_character_still_reaches_the_client() {
 #[tokio::test]
 #[ignore = "requires tmux"]
 async fn a_live_session_streams_new_output_until_it_is_killed() {
-    let h = harness().await;
+    let h = harness_with_real_tmux().await;
     let tmux_name = format!("ariadne-test-logstream-{}", std::process::id());
     let session = h.session(&tmux_name).await;
     let run_dir = h.launcher.cfg.run_dir.join(&session.id);

@@ -7,7 +7,8 @@
 //! base branch the repository holds — including after that base branch moves.
 //!
 //! No tmux and no agent CLI: `tmux` is a stub that answers "no session" and
-//! records what it was told. `git` is real.
+//! records what it was told, and the profiles are pinned to an agent kind so
+//! that nothing here looks for a coding-agent CLI on `PATH`. `git` is real.
 
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
@@ -22,8 +23,10 @@ use tower::ServiceExt;
 
 use ariadne_api::error::ErrorBody;
 use ariadne_api::goals::GoalDto;
+use ariadne_api::profiles::ProfileDto;
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::tasks::TaskDto;
+use ariadne_core::AgentKind;
 use ariadne_daemon::bus::EventBus;
 use ariadne_daemon::config::Config;
 use ariadne_daemon::gitwt::GitManager;
@@ -32,6 +35,7 @@ use ariadne_daemon::launcher::Launcher;
 use ariadne_daemon::logbuf::LogBuffer;
 use ariadne_daemon::tmux::TmuxManager;
 use ariadne_store::Store;
+use ariadne_store::defaults::BUILTIN_PROFILES;
 
 struct Harness {
     router: Router,
@@ -58,11 +62,13 @@ async fn harness() -> Harness {
         events: bus,
         logs: LogBuffer::new(),
     };
-    Harness {
+    let harness = Harness {
         router: http::router(state),
         launcher,
         dir,
-    }
+    };
+    harness.pin_builtin_profiles().await;
+    harness
 }
 
 /// A `tmux` with no sessions that swallows every command it is given.
@@ -112,6 +118,27 @@ impl Harness {
         let (status, body) = self.send(request).await;
         assert_eq!(status, expected, "{}", String::from_utf8_lossy(&body));
         serde_json::from_slice(&body).unwrap()
+    }
+
+    /// Fix what the seeded profiles run on.
+    ///
+    /// They are seeded on "auto", which at spawn time means "the first
+    /// coding-agent CLI on `PATH`" — and where there is none, as on every CI
+    /// runner, spawning fails outright. What is under test here is the
+    /// worktree a spawn cuts, not the agent it starts, so the kind is pinned
+    /// and never looked up.
+    async fn pin_builtin_profiles(&self) {
+        for builtin in BUILTIN_PROFILES {
+            let _: ProfileDto = self
+                .json(
+                    put_json(
+                        &format!("/v1/profiles/{}", builtin.id),
+                        serde_json::json!({"agent_kind": AgentKind::ClaudeCode.as_str()}),
+                    ),
+                    StatusCode::OK,
+                )
+                .await;
+        }
     }
 
     async fn register(&self, path: &FsPath, base_branch: &str) -> RepositoryDto {
