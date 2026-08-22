@@ -341,3 +341,29 @@ cargo test                                  # unit + store integration tests
 cargo test -p ariadne-daemon -- --ignored   # tmux/git integration tests
 cargo clippy --all-targets
 ```
+
+## Commit conventions
+
+Commits follow [Conventional Commits](https://www.conventionalcommits.org):
+`type(scope): subject`, with a lowercase type and an imperative subject
+("add", not "added"/"adds"). Release notes and version bumps are generated
+from these messages by release-please, so a subject is written to be read by a
+user in a changelog — the full release loop is in
+[`.github/RELEASING.md`](.github/RELEASING.md).
+
+| Type | Effect on a release |
+| --- | --- |
+| `feat` | minor bump while pre-1.0 (0.1.0 → 0.2.0) |
+| `fix`, `perf`, `revert` | patch bump (0.1.0 → 0.1.1) |
+| `docs`, `refactor`, `test`, `chore`, `style`, `build`, `ci` | hidden: they ride along in a release triggered by something else, never trigger one on their own |
+
+A `!` before the colon (`feat!: …`) or a `BREAKING CHANGE:` footer marks a
+breaking change; while the project is pre-1.0 that is still a minor bump.
+
+The scope is optional but encouraged, and it is one of the repository's area
+names: `ui`, `daemon`, `cli`, `store`, `api`, `core`, `mcp`, `prompts`,
+`doctor`, `codex`, `opencode`, `install`, `scripts`.
+
+History is linear — **no merge commits, ever**. A task branch lands on its base
+by squash or fast-forward, and the commit that lands carries a conventional
+subject of its own.
