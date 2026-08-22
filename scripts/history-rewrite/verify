@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# Check that a rewritten history is a faithful linearization of the original.
+#
+# Five things have to hold, and all five are checked before anything is
+# reported, so one run tells the whole story:
+#
+#   1. the new history has no merge commits;
+#   2. it has exactly as many commits as the old one has non-merge commits;
+#   3. its tip tree is byte-identical to the old tip tree - the working tree
+#      the rewrite lands on is the one that was there before;
+#   4. every subject speaks conventional commits, so release-please sees all
+#      of them (see .github/RELEASING.md);
+#   5. walked pairwise in --topo-order, each new commit has the same author
+#      name, email and author date as the original non-merge commit it stands
+#      for - the timeline and the authorship are untouched.
+#
+# Usage: scripts/history-rewrite/verify <old-ref> <new-ref>
+set -euo pipefail
+
+CONVENTIONAL='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9,./ -]+\))?!?: .+'
+# The same grammar, to be matched after a "<sha> " prefix.
+SHA_CONVENTIONAL="^[0-9a-f]{40} ${CONVENTIONAL#^}"
+
+usage() {
+    cat <<'EOF'
+Check that a rewritten history is a faithful linearization of the original.
+
+Usage: scripts/history-rewrite/verify <old-ref> <new-ref>
+
+  <old-ref>   the history that was rewritten, e.g. main
+  <new-ref>   the rewritten tip, as printed by linearize
+
+Exits non-zero, naming what broke, unless every check passes.
+EOF
+}
+
+case "${1:-}" in --help|-h) usage; exit 0 ;; esac
+[ $# = 2 ] || { usage >&2; exit 2; }
+
+OLD="$1"
+NEW="$2"
+
+git rev-parse --verify --quiet "$OLD^{commit}" >/dev/null || {
+    echo "verify: no such ref: $OLD" >&2; exit 2; }
+git rev-parse --verify --quiet "$NEW^{commit}" >/dev/null || {
+    echo "verify: no such ref: $NEW" >&2; exit 2; }
+
+FAILED=0
+ok() { printf 'ok    %s\n' "$1"; }
+bad() { printf 'FAIL  %s\n' "$1" >&2; FAILED=1; }
+detail() { printf '        %s\n' "$1" >&2; }
+
+# 1. no merges left.
+merges="$(git rev-list --merges --count "$NEW")"
+if [ "$merges" = 0 ]; then
+    ok "$NEW is linear (no merge commits)"
+else
+    bad "$NEW still has $merges merge commit(s)"
+fi
+
+# 2. every non-merge commit survived, and nothing was invented.
+old_count="$(git rev-list --count --no-merges "$OLD")"
+new_count="$(git rev-list --count "$NEW")"
+if [ "$new_count" = "$old_count" ]; then
+    ok "commit count matches ($new_count)"
+else
+    bad "commit count differs: $NEW has $new_count, $OLD has $old_count non-merge commit(s)"
+fi
+
+# 3. same content at the tip.
+old_tree="$(git rev-parse "$OLD^{tree}")"
+new_tree="$(git rev-parse "$NEW^{tree}")"
+if [ "$new_tree" = "$old_tree" ]; then
+    ok "tip tree is identical ($new_tree)"
+else
+    bad "tip tree differs: $NEW is $new_tree, $OLD is $old_tree"
+    detail "compare with: git diff $OLD $NEW"
+fi
+
+# 4. release-please can read every subject.
+offenders="$(git log --format='%H %s' "$NEW" | grep -vE "$SHA_CONVENTIONAL" || true)"
+if [ -z "$offenders" ]; then
+    ok "all $new_count subject(s) are conventional commits"
+else
+    bad "$(printf '%s\n' "$offenders" | grep -c .) subject(s) are not conventional:"
+    printf '%s\n' "$offenders" | head -20 | while IFS= read -r line; do
+        detail "$line"
+    done
+fi
+
+# 5. authorship and timeline, pairwise in the order the rewrite walks.
+old_authors="$(git rev-list --reverse --topo-order --no-merges "$OLD" |
+    git log --stdin --no-walk=unsorted --no-merges --format='%an|%ae|%aI')"
+new_authors="$(git rev-list --reverse --topo-order "$NEW" |
+    git log --stdin --no-walk=unsorted --format='%an|%ae|%aI')"
+if [ "$old_authors" = "$new_authors" ]; then
+    ok "author name, email and date match pairwise ($new_count commit(s))"
+else
+    bad "authorship or author dates differ"
+    diff <(printf '%s\n' "$old_authors") <(printf '%s\n' "$new_authors") |
+        head -10 | while IFS= read -r line; do detail "$line"; done
+fi
+
+if [ "$FAILED" = 0 ]; then
+    printf '\n%s is a faithful linearization of %s.\n' "$NEW" "$OLD"
+else
+    printf '\n%s is NOT a faithful linearization of %s.\n' "$NEW" "$OLD" >&2
+fi
+exit "$FAILED"
