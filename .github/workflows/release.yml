@@ -1,8 +1,12 @@
 # Attaches the compiled artifacts to a published GitHub Release.
 #
-# release-please cuts the tag and publishes the release; this workflow builds
-# every supported target on its own native runner (no cross-compilation) and
-# uploads the assets the installer script downloads by name:
+# release-please cuts the tag and publishes the release, then dispatches this
+# workflow with that tag — a release it publishes with the default
+# `GITHUB_TOKEN` fires no `release: published` event, so the trigger below
+# would never see it. That trigger stays for releases published by hand, which
+# do fire it. Either way this workflow builds every supported target on its
+# own native runner (no cross-compilation) and uploads the assets the
+# installer script downloads by name:
 #
 #   ariadne-<target>.tar.gz              the `ariadne` and `ariadned` binaries
 #   ariadne-desktop-<target>.app.tar.gz  Ariadne Desktop.app (macOS)
@@ -16,10 +20,11 @@
 name: Release assets
 
 on:
+  # Only for releases published by hand: see the header.
   release:
     types: [published]
-  # Reruns: point at an existing tag when a matrix leg failed or a runner
-  # image broke mid-release.
+  # The path release-please takes, and reruns: point at an existing tag when a
+  # matrix leg failed or a runner image broke mid-release.
   workflow_dispatch:
     inputs:
       tag:

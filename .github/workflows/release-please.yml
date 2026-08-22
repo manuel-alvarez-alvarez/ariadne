@@ -4,8 +4,14 @@
 # the commits since the last tag and keeps a single "chore(main): release
 # X.Y.Z" pull request open. Merging that PR bumps every version location
 # listed in `release-please-config.json`, writes `CHANGELOG.md`, tags `vX.Y.Z`
-# and publishes the matching GitHub Release; the release build workflow hangs
-# off that Release.
+# and publishes the matching GitHub Release.
+#
+# The assets that hang off that Release are built by a second workflow,
+# `.github/workflows/release.yml`, which this one dispatches explicitly. It
+# cannot simply trigger on the Release: GitHub never fires workflow triggers
+# for events created with the default `GITHUB_TOKEN`, so the `release:
+# published` trigger in release.yml never sees a release-please release at
+# all. Hence the dispatch step below, and the `actions: write` scope it needs.
 #
 # Only conventional-commit subjects reach the notes and move the version:
 # `feat:` (minor), `fix:`/`perf:`/`revert:` (patch), and `feat!:` or a
@@ -26,6 +32,7 @@ on:
 permissions:
   contents: write # create tags, releases and the release branch
   pull-requests: write # open and update the release PR
+  actions: write # dispatch the release assets build
 
 # Two pushes in quick succession must not race to create the release PR.
 concurrency:
@@ -36,7 +43,20 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
-      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+      - id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      # The one package in the manifest is the repository root, so v5 writes
+      # its outputs unprefixed: `release_created` is set only on the runs that
+      # actually published a Release, and `tag_name` is the tag it was cut
+      # from — the tag release.yml checks out and uploads to.
+      - name: Build the release assets
+        if: steps.release.outputs.release_created == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.release.outputs.tag_name }}
+        run: gh workflow run release.yml --field tag="$TAG"
