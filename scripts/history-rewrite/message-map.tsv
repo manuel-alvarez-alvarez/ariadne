@@ -1,0 +1,332 @@
+0b823ca7c720cd1a07f48a43189453facbc8e433	feat: bootstrap the Ariadne coding-agent orchestrator
+e60c70844292d90ec19b6501c079b2fde8646d88	fix(core): allow a ready task back to pending when its dependencies change
+fb4ed8fdc869b58fb63e736521d140ed067bf2ae	fix(store): validate and audit every status change inside the write transaction
+713e981d8cf3f1aefaedaacd3e5802ae2e109925	fix(store): open the read pool read-only
+ef70c03b8c69ce33d008b1e763eac4b103405971	refactor(cli): build agent events from the shared IngestEventRequest
+cee3d6ea6a2e94df5e9a5c8b1aa3b672871a65ca	refactor(cli): build MCP request bodies from the shared API types
+1dcd441ebc0164fee453f616b6d825e883b1046c	refactor(cli): build query strings and parse --status through shared types
+a79ae052d1cd5883698cd9c5de06417666c7cfaf	feat(cli): session ls shows live sessions by default, --all for history
+10a5956ded7f70ef663eaf82a18a87a428bdf5e1	feat(cli): attach revives an ended session instead of failing
+e534aaec72b4b2c46650fdda6203cef2d25fcdb4	feat(daemon): keep merged worktrees by default, behind delete_merged_worktrees
+bcb2b8ab61737bd49676bcc9b5a8d148bc3a0178	style(store): cargo fmt the dependency-downgrade test
+58f25b7b3fcd26e890d5d089d965e73833265a8e	feat: install and uninstall scripts, and shell completions
+9c39dd2be0d09f8a723ce28b0549bfbc5d281451	fix(scripts): register the zsh completion even when compinit already ran
+186fda6907276c6ac7ae3d645c33a9ef4c2eb9b8	feat(cli): complete live ids, profiles, roles and statuses from the daemon
+a1d1fa53acd5f4a50bc8e48a3007e67e9608d36c	feat(cli): profile update can change the agent kind and clear the model
+c168eaecf647d2e46612e937d406779e59a018cf	feat(daemon): profile update and delete accept a name or an id
+29ecb4a8607456de7f0f98a868e090ba341cad86	feat(cli): complete agent kinds and models on TAB
+019144cdccb646fabd87a1aedcc5a978cfe84639	feat(cli): discover codex models from session rollouts
+2efef8f31196e0e18e784c96921106bf25237c99	feat(cli): discover claude models from session transcripts
+6caa327e8ed7cb366da2c7d838bb94ee0d3b7708	refactor(cli): complete codex and claude models from curated catalogs
+e1cdbfaf86cd0726662e8f19fa9c1da221496aad	fix(daemon): spawn agents under the bare PATH of launchd and systemd
+019a91be7d8081a8f17b9633a7a7748a742f9e1b	feat(daemon): typed domain event bus, SSE stream endpoint and CORS
+6511b088f61e817c19b8959cb8193555b546eaa0	test(daemon): cover the event bus, the SSE stream and CORS
+518764c3539a47716bf797300c54ca5060868227	docs: document the domain-event stream
+e72ea66117f8c0e6b466f8283b3df8ab397fc656	fix(daemon): signal resync and close the SSE stream when a subscriber lags
+b026414b60b6166faa8d2af2b4241cc49f73371a	feat(daemon): stream session logs over SSE
+33a61055a0842546431c86e858b9bfc41a1ee061	test(daemon): cover the log stream against a live tmux session
+bd8aa3a36f63ba129499c8eb37c55ad349271952	fix(daemon): correct the log stream's session lifecycle edge cases
+ae553d586e16ac2a9bf7affe3f77fd82c0a2cdfe	feat(ui): Tauri 2 desktop shell with a typed API client and SSE wiring
+50524a90e6b35c1b1462c797c50391c93a980f89	feat(ui): notice a dead daemon on the event stream
+340466b1b840c449df23db3ff65ca5f10d0df961	docs: point at the desktop UI in the workspace layout
+7254f79010d4f0df373880579b4313c1594c1b98	fix(ui): keep the health watchdog from interrupting the first connect
+6692522c4db4bbf4339b2887ba54513c78c00fa2	fix(ui): treat any stream open after a gap as a reconnect
+eb7bffdb20d82442be6082f815bb3f4f73f12a8f	feat(ui): shared task status vocabulary, queries and formatting
+6054b41091a7950980ad49f914e1d5b8f8dd17e8	feat(ui): the board of a goal's tasks, and the flat task list
+6de85f3ad4988a210f8e888963ac526b9107aeec	feat(ui): task detail with conversation, reviews, history and diff
+0df2dd9dd817bad3737a4ad6efe3fadc91a14747	fix(ui): pin task date formatting to the English locale
+76f38fa80cc838686e9397a1f70d4b9447607c54	feat(ui): profiles screen with create, edit, inspect and delete
+46523af57e21f6d06b40a93aa3ff4ce3339c9917	fix(ui): render an added file as added, not as a diff against nothing
+8bafeb3989af06b147f59f9df18aece8fdba1433	feat(ui): sessions list and live terminal view
+8d73751e27814a65f9f591f616e7bee3adfcc82f	fix(ui): say what resume actually did
+210970e6794838efffacaf4c6b1cdbc658812726	fix(ui): reset the terminal inside the stream so a reconnect clears it
+d66e6f6e3998a54a7619bd03f4e6a84dd47ffa67	feat(ui): goals list, goal creation and the planner thread
+a0f6793de174e5f8dc354f6feeea2595a7a2c8a4	fix(ui): show labels in the goal selects and keep the list rows compact
+383ac2454c4a7057530069c4fdb0d0675b8625b5	fix(daemon): diff a merged task through its merge commit
+81d42c8628b25f41e80f79e8e8079e98108b272c	fix(ui): reset the query cache only when the daemon URL changes
+b21f58f83f9e1c8c03b0444f08a0c70862993cdc	feat(ui): swimlane goals board with side panels for goals and tasks
+8a8f5bb42db51c3514314e16c3716ffd3423ce79	chore: ignore IDE module files
+1d3e8d5ffece418e4913ff213076fd342cecb364	feat(ui): make the task conversation read-only
+0a84dd5c29302b34683761baf5a8e84b5ebb45a6	refactor(ui): extract embeddable session list and detail views
+ead6287de420adf94f7416d2dcbd9d202bdbb11e	test(ui): cover the panel params taskPanelTo carries and drops
+ed322b30fcb77a4f8873c16cd2cb598c764854eb	feat(ui): add a Sessions tab to the task panel
+7c889e4082834edf64c3d3d2bde8659a2fa1a39e	feat(ui): tab the goal panel and add its sessions tab
+da2f3bac11698462eb372fc126908cfa34a6ee9f	fix(ui): keep the goal's sessions tab to that goal's own sessions
+6772106032d6fb7a7a335c23447eae552fdd6b6b	refactor(ui): drop the standalone Sessions section
+c3d1dee894fe3e754ebebd43733c00b4ea9391cd	feat(ui): open a selected session over the whole task panel
+91748533038b2c326d3f528eebf196ccd36855d1	feat(ui): open a selected session over the whole goal panel
+08f772dd14523d2db49536de0fc8e27aaea287fc	feat(daemon): accept terminal input on POST /v1/sessions/{id}/input
+d0b03347d8b1bfe31288eac887c659bf27c61dbe	chore(ui): regenerate the OpenAPI snapshot and its types
+df3ef41de571682c410d95486df4c28600c1fbe0	feat(ui): type into the terminal of a live session
+1b5b5962501d579d780319a5bc9f3d2fa8b0a43c	fix(ui): drop queued terminal input when a send fails
+6fb681537adf3b8e589e935b907ce65b41f68821	feat(cli): attach accepts a session id
+d97fb1583d5902f135ffd5c80af132b94b69d9f3	fix(cli): let tmux decide whether an attached session is live
+d21646fa33a8a316fc5f5e629141de6fcd1496a0	feat(store): restart_session relaunches a finished session in place
+47504abb1f319cae0da288906b5414d56089f23e	fix(daemon): reuse the engineer session across review rounds
+a972b51e3f68a34ea3432f9049eb6455626220bd	fix(ui): tell a real revive from an already live pane by status, not by id
+dda4250de2cf46d86f98c2f90bec145a1df770e2	feat(ui): a clickable id that copies itself
+7228c3968fae2c1783457418d2bd7301adfcddea	feat(ui): copy every id shown in the panels on click
+467c369738bf0b55dd7ac2fc0455d6c99b6c7f0e	fix(codex): capture the session id from a trusted SessionStart hook
+e8f6ea804f77c8f6f342fb8a7836d03730483d00	fix(codex): declare the hooks per session instead of in the global config
+79c421181422be2058cb8f76683aff5bbaafe32a	refactor(ui): add the shared primitives the screens were each reimplementing
+0e7ae145392098d9b5b79892d6d9baf4af42643d	refactor(ui): move every screen onto the shared primitives, drop the dead code
+ebc17ba39b5ea1fa66028c78a1054b3c407ccfa9	fix(ui): keep each surface's own presentation while sharing the primitives
+9219c6674b1b60c403cf6b465f47f6d6ef23a499	feat(daemon): stream the pane's screen and its grid, not a copy of its text
+6cea084e1200df68191bedefb481526afb60a2ea	fix(ui): draw the terminal at the pane's grid, in a frame of its own
+cff47cd89076ccdfd46574bd370270fdce00d7ee	fix(daemon): restart the log stream on a resize, and outlive the pane
+ec8da3229340cfb51ea342d6f0cb427182cdd733	fix(daemon): hold the log stream shut until the new screen is in hand
+c9943f09fc0ecedd7630652d50f7efafa7d68a6a	fix(daemon): send a screen with the grid that describes it, or nothing
+2f0c3c3e0dbbf6758bea561abe65ea37edff7adf	refactor(daemon): capture the opening screen the careful way, like the rest
+317d455201a1276e617104ac055d0be000c6f244	fix(daemon): stop the log output when the pane stops answering
+50f9fb9408d3945fcb7113f450425c35b02cd149	fix(daemon): an unanswered tmux is not an absent one, wherever it is asked
+35a6e909476048bb8e09e454563538181ad61720	feat(ui): stack the goal and task panels so both stay visible
+8de5e665ca5251778485fdcf295c7036969d3fc8	fix(ui): close a panel by unwinding the history entry that opened it
+87228c10ecc42f781bf3ef08bf3bf9c97245f152	refactor(ui): move the shared id and page-title helpers out of the tasks feature
+97b0ab4e742f3b2e6276ca6a64dead8ac570cfe3	feat(ui): a sessions screen, narrowed by status and role
+44ee41b3d6f82d499d57b1a1fc3d9ea706cdd63e	feat(ui): an attention screen for what is stuck
+aeddded2f89366bfbba8469fcd5188b167645ecb	feat(ui): name the screen in the header, say once when the daemon is gone
+c137ee9dbe25e659e76e50e636a3f0ee178ad41c	fix(ui): validate the sessions filter params against their own vocabularies
+bfad346ff1045fa4f12e729c57492a14673c5b00	fix(ui): a solid destructive button, and one busy signal for all of them
+48aa19b065e8053d4705ddb980e4050bcfd78178	refactor(ui): put every mutation button on the shared busy pattern
+a4a00a7f02693aad56a8d41c253ceda500838fb7	feat(ui): cancel and kill land on the row before the round trip does
+0c05123b2c71ed63d91610b2e4c08e728d12f443	fix(ui): configure the toaster, and write down which errors reach it
+04536af2923328739b7a7884a317f55b6e9d096c	fix(ui): keep a confirm dialog alive through the state flip it causes
+4ea92f055e926ef0cd88aac3634d04e2d205defe	feat(ui): a board that keeps its labels, its filter and its folds
+98144ec9818e80119860a710ddc3580ac5cf41bf	feat(ui): put the branch on the task card, with real tooltips
+6ad1bfe4c3765d70bb2e6759e117727d7645edb2	refactor(ui): a status ramp and one accent, instead of palette classes
+8e9affb5039925c0b9b14830c05e213cc947b07a	fix(ui): make an invalid field look invalid whichever way it is flagged
+4e0ba05e898711a6009c7a2d358e51cf506351c7	refactor(ui): put the new surfaces on the status ramp
+a9dc4cf9aebb2b5d54f7063fec6348283002f661	feat(ui): a command palette and the chords that open it
+85beb90060756a685b492869e880d2f80dca23df	fix(ui): rank palette matches by what the query names, not by its letters
+6de29b7bcf3d14a487c2aab9da73b8d520def6c8	feat(ui): read the diff viewer at full width
+9f61f90545b4ba5e7b50dd4dd5e60b83897811d3	fix(ui): a folded diff file stays folded when the viewer is expanded
+11d996035fa0aee9acd7021e4e333b78d8697561	fix(ui): the id is plain text again, and the copy is a button beside it
+316c674225f400f8800f3ccbf17d4dd3e7d634d1	feat(ui): the ids that go into a command line now offer the command
+a4e47df08cdd97831d0b253a6489fa6249a48e95	fix(ui): a path that is read, not recognised, still wraps
+e018a0bf843916b47ff33354615e917fdc49ca60	feat(ui): the description is a tab, so the panel's tabs stay in view
+52c225ae637c1aeca95d3be6ea97e48f4fcf54ba	fix(daemon): a reviewer is one session for the whole review, not one per round
+b08ff007e44157d18959b08c0210a4c760484236	test(daemon): two rounds, one reviewer session
+4ffdfcc5e04f201c03938c6e42365f4d496bb465	fix(ui): give every session row its own click target
+b1b2b2afb3a1bd1de7aade2e93c2b2deddc5db78	fix(ui): only the copy trigger keeps the row's click from it
+db438b89a8ba788b1a3984ea49733eb075fd1f24	fix(ui): a copy from the menu is not a pick of the row
+9bf6da0a3e8f208257506e82657337848564a069	feat(ui): a session opens in a side panel of its own
+8071a487fd137e9011e0334f267aec077464b113	fix(ui): the goal panel's sessions tab lists only the planner
+81cb1eb0ac1d986dcdcc9366fcf9619e156efe49	fix(cli): one endpoint resolution for every command
+b81e1d5defb7a6a4f2684e2c472ad1f3b7f91efa	fix(cli): daemon start addresses the daemon it spawns
+4c792579b901e81f1a0ab7cf6fbe648ed1093a4f	fix(daemon): errors people can act on, not enum names
+455cf1a047c8a548caf816060da12e9215e7b965	fix(cli): a failed command prints one line
+99693c43d497641539a842500f0c615a3dd84a74	fix(cli): attach names what the id actually is
+74873ae1dd289fa97f299a85df062b8f1e9b1155	fix(cli): keep hyper's error text out of ariadne version's daemon line
+2f0cd2edc7e228f80de7b3e731d5d58d3669b7c6	refactor(ui): one source for role and agent-kind labels
+f28c16f1e0a1b8fdcfadfe267a83984c873fa590	refactor(ui): one message card for the goal and task threads
+f9aa830b22dd6935bbe810547367c9ac0c70d187	refactor(ui): put the stall flag on the warn step of the ramp
+9298aa7dbc8d6d81ed66745b82e1c9d72242e8bc	refactor(ui): the last hand-rolled pills become StatusBadge
+c3c663e535716df36a2d8d1aec2bafc323d8991e	refactor(ui): a plural helper, and one timestamp rule for tables
+dec5733b21020c7363ec20098eb16b3518d418fe	style(ui): one shape for error titles and empty-state titles
+4460d295c93703b603f59cdbeb9f29a5ce7e55d7	refactor(ui): drop the message card's unused className escape hatch
+c31139f81ade89ba7d7baeed1265a2b742c278ed	feat(ui): typed chords — a bare key, or a lead key and a key
+242121d482552efc9a3ea89ab6d98f555cf319a8	feat(ui): readable palette rows, a hint footer, and every chord on show
+8a8824ea9955ee651c3a118ade56261d0e1d9ad8	feat(ui): a picked profile keeps its subject, as ?expand=<id>
+dac87a6823484f17a17aed27dfac69f514312589	fix(ui): say what a palette entry's detail is now that the row leads with its label
+8f710ab93d6df21a657a190a2f834be0dd13d0c6	fix(ui): an expand link widens the role tab, or it lands on a hidden row
+b27de16749b59d0e5ef7cc5943b016d65b94bbce	feat(ui): sessions rows carry the work they were run for
+1c9e22664eee2287b0629acd2f050ffb9b778e67	fix(ui): attention rows read as one list, and say when they are incomplete
+794c7cf4e00da3caa66d7170e416d0b9d525f685	fix(ui): the kill toast says what was done
+b0e7209923b3d4098fabed7abd1e1069326285d2	fix(ui): a long goal title keeps the panel's close button reachable
+5d06b38989c0fa2dfe0f2190e9e02891ac9fdc88	fix(ui): a daemon that is down is reported at the same moment everywhere
+227c7fdd92f83515c4bdcb1da18fbdffe76a340a	refactor(ui): reach the task list query without the tasks barrel
+fe949c12d53578beec38c0d51a1c924f153b9d04	fix(cli): honour --format json everywhere, cap table columns, name profiles
+f169e41cc8555be46a208c31dc02434dc7b91e79	fix(cli): an empty filtered list says the filter came up empty
+4dd2222765c2ed0016aa386f6adb824799b89784	fix(ui): middle-truncate branch chips so the slug survives
+b212b34d7edabb565f5f8cb96fad8dd7ea664c56	fix(ui): the task panel and reviews name their profiles instead of showing ulids
+8727fc3767aa6b4766ba83326028f08ffb0f1b66	fix(ui): the board shows where it is cut, and lane titles are readable in full
+caa9a65cd92a60a973e5fda2a744e576018a5c4b	fix(ui): one action slot across the panels, and a way out of an empty goals board
+28c6f6c02ffda41808bfc55ef990861097c47889	fix(ui): session actions name what they act on, like the goal's and the task's
+b2b26c7665039b875aa316e9151174e5c48851be	fix(ui): the planner's name takes the metadata grid's own size
+c17a0141a8e46df8715a57580d3b0879ed67c5f4	fix(ui): a middle-truncated value stays inside its box
+009ca305b8e2ddcd97bedf761b9939f8d584f538	fix(ui): draw the board's edge fade over the sticky headers, and on an empty row
+173285689fc4b99d26389571cc34ffe2ee907d7b	fix(cli): the hidden internal commands stop advertising --format too
+3dd85cf9e3803aed835678715d624d79e85e775a	fix(ui): every hint a keyboard can reach
+bd28a6998c7cc9387b72e53247b10989247ca4d9	fix(ui): focus comes back out of a panel's drill-down
+1d7967ca264a208e89282aeebea009dd72d95f2a	fix(ui): honour reduced motion, and a scrim that shows in the dark
+f623dc182304daf07abe899317bfeb2ae57043bc	fix(ui): keyboard-scrollable regions, a live stream status, a quiet icon
+76d25b62ed48211aff64304be4072610783d64ae	fix(daemon): let reviewers install dependencies and build in their worktree
+2d8a8d2324303a933dbd2e8a417074a47ef96829	fix(daemon): create the session run dir before pipe-pane writes its log
+5520cfeb35c804f79499234c7c80acf59b499379	feat(cli): task create, task update and goal finalize
+dbfbf3a3d5007327c1d4b515597c5085352523a9	refactor(core): PromptKind, the prompts a profile owns per role
+8319f608cc9642b1e3e266cd62800eafd7428e0f	refactor(store): one schema-only migration, with the default prompts in Rust
+bbc1b3842e6e702d87dcc442eb4361ee93c62fcc	feat(store): seed built-in profiles and their per-profile prompts, with reset
+986d2bb92b31f8e62cab325eebf9de916e71a746	feat(daemon): brief agents from the profile's stored prompts
+fdc0d648c35c8dd1241dbc941e9718d2647efc38	feat(daemon): expose per-profile prompts with update and reset endpoints
+5e3dc5dab2028c848cfaf64ec86a2379d7176da2	chore(ui): regenerate the API types for the profile prompt endpoints
+3ccd3eaf78355fcc3fff8914e130f4019f612c3c	chore(ui): keep the openapi.json snapshot out of this branch
+ab89e2304cd4c0756ba24c0ed88a21f957007461	feat(ui): edit a profile's prompts, each with its own restore-to-default
+6296b78ee5e910a12a6ccc62f48606391610c704	test(ui): cover the reviewer role in the prompt-editor tests
+1ba2949f42b533b0e30bf357a542434a607ce428	feat(cli): read, replace and reset a profile's prompts
+bc02ecb6c8db85fbbcbc231eae344c490e569ee8	feat(cli): say whether a prompt is still the default, and stop censoring content
+1a24175861d9d3f93aeef7177b5daa3a3241e354	feat(daemon): remove a merged task's worktrees, and so its branch, by default
+2650cd59fdeb8b0da1af3fcd793a92e6e3246ea2	refactor(core): curated model catalogs for claude_code and codex in one module
+031eb474bc9ee2457d38073c31b3605b4360dfdb	feat(daemon): GET /v1/models — curated catalogs plus live opencode discovery
+9d0cf08577ba83c986d5629b39bdf9391fc469d9	refactor(cli): build --model completion from the shared ariadne-core catalog
+7a15e266d7def527143928cb7be142db49874eae	chore(ui): regenerate the API artefacts with GET /v1/models
+145f013d0d898e21076f87c2267b0d80ad8af655	feat(ui): a model combobox with capability descriptions in the profile form
+eb8f9a34ea3f3e160d5ef2da25bbe5aacfb8dd73	test(ui): cover the model combobox and the details blurb
+3658c0ffd7be367c1b2ed003b0f989c92bfba533	fix(cli): send SEP-2549 cache hints on tools/list, and bump rmcp to 3.1.3
+189c90ee85a5ffb2936f1b8d3ddc726ee1dd8326	feat(api): daemon-log DTOs for a log snapshot and its lines
+6cea36d92227c478d3aa2ff20e3e9d8cc60fd88b	feat(daemon): capture log events into a bounded in-memory ring buffer
+6186441ffd785efe90329a7624df06ca7a79635c	feat(daemon): GET /v1/logs and GET /v1/logs/stream
+fb25101046921a1253de66221d0629d36a6f73dd	feat(ui): move the daemon status from the sidebar badge to a sticky footer
+2edb785050c6734b934395d341dce6b8dcf835e4	chore(ui): regenerate the API artefacts with the daemon log endpoints
+a8d42560ba17ba393f8fe390d20f910605599b8c	feat(ui): a daemon log stream client
+ed4d2bf0fc25fd45c48adfcb41b7ca9ade0c0d6e	feat(ui): give the Sheet a bottom side
+435eb43b41d56e60ac7c71bb39abb99b6fa320eb	feat(ui): a daemon logs drawer, opened from the footer status button
+76d4ab94e62d4d80a9eab52cb7330017f0993d57	fix(ui): a full-width footer, with the sidebar and header borders aligned
+a50076681f455d209f145c468dca2a847b92fab6	test(ui): fix the strict-index type errors incremental tsc had masked
+df86e9042cb93181bb00d8965c63658825961572	feat(cli): goal msg posts to the planner thread
+21469cb0dbcacb4656fc5d9299e9f5bcf0683a53	feat(cli): an attention overview command
+a86990b9ce921ed51c40c41223b9864291c8879d	feat(ui): create a task from the goal panel
+3d03ad681d4f16ff2c454fe05d0a06cbdbfb9aa6	feat(ui): edit pending and ready tasks from the task panel
+acf59ebd1eba5abd64fc68a385a9d839525271a8	fix(ui): open the side panels on the description tab
+b563fce43cff40ae38a7121f8fddd44e2e0ff9cb	feat(cli): confirmations, profile flags, session resume and model completion
+3f5c4595727f82167dd77252e4ffc5836c3ab187	feat(ui): compose messages in the goal and task threads
+714aa83f4394d7707e0786eb6e1fa89f70c5950d	fix(ui): scroll the thread's panel, not the sticky box, after a send
+48dbd37c65787ac165aa6309473850494c111e69	feat(daemon): read-only role prompt defaults, and creating a profile with prompts
+b657f00c25098104dd39f84f51e7b0cbc8792216	chore(ui): regenerate the API types for the prompt-defaults endpoint
+8a7064f80dfdff3b2561f8d62c49cfd075367ffd	feat(ui): edit every prompt of a profile in the form dialog
+018fa638f51fa0d5be45cc278b2dfb0fe0428e2d	test(ui): cover the dialog's prompt editors
+b1cd3f1a48d35436fae26dbb33b6abf03cbae685	feat(ui): show what is stuck atop the goals board
+adc2f838a0c46b4cee9df5fadf77b8806e9eaedd	test(ui): cover the attention strip's partial-failure case
+3d6d8df3f3e67fd50c86a744266f2fd20f278474	feat(daemon): accept several statuses on GET /v1/goals
+dbf19fbc5aef97319dcf429c53d8a2e5d0360650	chore(ui): regenerate the API types for the multi-status goals filter
+be743d95bd9ae738345aa935ff05dd1b0b97a856	feat(cli): kind-aware --prompt flags on profile create and update
+37936a03ceda60676ce70b1aa95d16fdb39e43e8	fix(cli): check the prompt flags before fetching the profile
+36d3dd1a16ba721295de57f3e0605fb9dacab8d9	feat(ui): an expandable session terminal
+dacea8d52b4385dbb5fc2b843ab95c4004705ec5	feat(ui): make the goal status filter multi-select
+dc709bf43b86b7e43ec8aa4c686787091297f479	refactor(ui): remove the Sessions page and its navigation entries
+f28f132e0df3818995772ca32806343ecaacde02	feat(daemon): keep the machine awake while agents are working
+5d88cb2b50874050ff915ce2d22c11bbd1c447df	fix(daemon): take the single sleep:idle logind lock on Linux
+7d66c0a5432dbc47a86c8290cc381844e9dfbaac	feat: repositories become a standalone entity in the store, the API and the daemon
+1904f70bb90462f9b08e6bed365b26bd2f430047	feat(cli): repo add, ls, inspect, edit and rm
+e1e4ef1621d985fd97c9e62c8687958740bbe465	feat: goals and tasks reference the registered repositories
+282de6c0e81eda376b9b82f662fea4ee41fb1ee5	test: cover the repository references end to end
+ac74544ef76ff9eaead26de5c0901fa74413295e	style(cli): run the formatter over attention.rs
+7426d328984839b2a70a5cf1230a650b36667a8c	chore(ui): regenerate the schema for repositories and the new goal DTOs
+1a0b107ef4afb4b241f74b1415a3ed72f056497f	feat(ui): a Repositories section, and goals created from what it registers
+e9ac0f86c7941e594a822e5052337eaa47f81c4f	test(ui): cover the repositories screen and the goal dialog's new field
+fe4c1b4538b090bc6d7cd5285b96947afd12641f	feat(daemon): delete a finished goal, with the event that says it is gone
+ff823e516a5dc3000cace8613ad1587b7bf61a96	feat(cli): ariadne goal rm, the terminal half of the new endpoint
+a4a74125e4824f8e49011a2e3954edda1ee40a73	chore(ui): regenerate the schema for the goal delete endpoint
+b00652027d12d0502d7e7a4297b582f14d82c946	docs(cli): say the goal rm help in one sentence per idea
+0e8d31436f786e6a357a869ac16239d5963a2c7e	feat(ui): take the new goal_deleted event kind the types make compulsory
+ce280b7466d75c620a6c2c3b10bc867f0edd52eb	feat(ui): remember the goals board's status filter in the settings
+fcfca20f789aee0d428302bdf76bbac34a795c83	feat(ui): put the remembered filter back when the goals board is entered
+6bb4bff0435ee326ea41485a9e8373f48dac7411	feat(ui): search the goal's repositories instead of scrolling them
+e989d4a0340a623cb9b0332ef6614087cb2c0797	test(ui): drive the goal dialog's repositories through the combobox
+6bc0e01117608921f19f82bd9eff21081a88f499	feat(ui): delete a finished goal from its panel
+f6c3dbad8542beaa74ab8db0d7090354b5fdce56	feat(scripts): numbered, quiet-by-default install and uninstall output
+62990571d30bb4d94c853aaafa01f62b9c514989	fix(scripts): keep --purge unprompted and fail late on an unsupported OS
+e812fc001bd670dcb61b8a5253f23bb105548444	fix(scripts): show the log tail when an unsupported OS fails the service step
+a51745595c315da22c990a41b9a413fa41d62e41	feat(ui): name the desktop app "Ariadne Desktop"
+d140343d43afc3129d6f19d5a31185ba0eb389eb	feat(ui): give Ariadne its own icon — the thread through the labyrinth
+4fe98adaf486a3c97ee7de4b5c832003685cf910	feat(scripts): build and install the Ariadne Desktop app
+344348e3fbf87b26c41dcd051136672604e302a4	fix(scripts): copy the app bundle with ditto instead of cp -R
+fc8e51d89f9107ebe0dcbe9b117e00320a9da689	fix(scripts): prefer the crate-named binary for the Linux fallback
+b59c6a4795b7ce0dd93a958a5d6d1972332d7b11	feat(store): per-agent-kind flag configuration
+59c34481ef28f19eb6ee93f4730f18e21e51b3d8	feat(daemon): serve the agent config and launch from it
+05b22aa9d6d379ee3f1ea5fa762a26a06c106548	feat(cli): follow the agent config in the client and the CLI
+0f79cef506aec5edc24e1eb6587b1ab94061311d	fix(daemon): make opencode sessions genuinely unattended
+3c33e0b09e2be567d407de61b944f877a6a2ea3e	feat(cli): ariadne doctor, with a daemon-side environment report
+d4c25f11d4c451c7331676107bb0802be8bc249d	feat(scripts): end the install with a checkup, and document doctor
+9043731fbdbc8f0571e5dff0a426df34ff5a92db	fix(cli): one pass over the doctor report, daemon down included
+b79973e80016cfb0528c8bfb9fd8ee6ac6467a9e	fix(cli): doctor never writes to report, and counts only binaries that can run
+2ccb658623bbe085a975dbb5d232029ece0b02b5	fix(daemon): ask the kernel whether the daemon can write, not the mode bits
+88c7ec7c70ba5fdd44e1a916a34513db80084709	fix(daemon): a directory takes new entries only if it can be searched too
+c776d3ce1df4507cbff3871c7e34c1c6cf7a5706	feat(core): a spawn plan, so a launch is not carried on the tmux command line
+30a9d566b5763134a760be63af09a2258dd65fe0	fix(daemon): hand tmux a plan file instead of the whole launch
+631dd99b7f3ba5f29c91ba5e2b2d96d279313d78	test(daemon): prove a plan-sized launch against the real tmux
+0fea9ce7fd8ffcc7a1aa45de0b95dc2085094232	docs: cli_bin is what starts an agent session now, not only its hooks
+d530e0585b8de72f07f89d2f88df8ef14b85c7dd	chore(ui): regenerate the API types against the merged daemon
+0910c978c960fc471e9118978080b1cce9f67663	feat(ui): an Agents screen for the per-agent CLI flags
+b901c87d31db3410b0d3674a8b34cc8061468e89	test(ui): cover the agents screen and its round trip
+34e119eb17b649eef008f1f0e187d274bf343b63	feat(cli): agent list and agent update for the flags each CLI is launched with
+ff3e4194f6261d7bac7ebb21086b80ed04789a06	feat: model why a session needs attention
+f9bacc52d6fa98108e1676b61c7a943cc4d81d49	chore(ui): regenerate the API types with the session attention fields
+b3e77dc8e5bbc4afe0baeb92533eb432425d2765	fix(daemon): keep the attention of a session that already ended
+85c7b3f0fca4a679e02af78d9fa871e4741d5156	feat(daemon): see a blocked Claude session through its Notification hook
+bb0eb53cc11dbd624f9ea57af011518769856dd7	test(daemon): pin the notification fixtures to captured payloads
+8be19c417200e8f885b969419d73d0f9f2c3a543	feat(daemon): record the model a session was launched with
+0d4b2688d2b52cc990fa985cec263b4c4263fbfb	chore(ui): regenerate the API types for SessionDto.model
+758342a197bf15cfefe001ba23a07a99ab84415b	feat(ui): a session summary, with Terminal and Activity tabs
+a531a074db5d518954158962fea2677fa8297149	test(ui): cover the session view's tabs and its model row
+8d3b9804613bd78e2159f5b4c69874bd6438b102	feat(daemon): read codex's PermissionRequest hook as a session waiting
+0ee4b2fc205ad7081571301be1f965ce539799be	fix(cli): report codex trust that predates a newly declared hook event
+b03ad811b90d3adf73014dc26fab2b2154e41edb	fix(cli): say what untrusted codex hooks actually do to a session
+81153be2663b04f8ad055b585089fe7bb69a1ee5	feat(ui): a sessions screen — every agent, and what it was run for
+dba0c3df54bbadbcd26af799f2437e66c693a6c4	feat(cli): session ls learns --status, and says what each agent is on
+e7036ed40738d6dbb27e86dd479f9a016b7c638c	feat(ui): surface why a session needs attention, not just that it died
+85ba0cadc49b972f1f1df0ff09f8212c6b371652	feat(cli): give session attention reasons the same words the UI uses
+fb2f16c441d49d5ff4f74d73c793fee8b43916d5	feat(ui): name the task a stuck session was working on
+09f3d41257a0e9b2e3b91483f33a939cb14aae30	feat(daemon): watch every role for stalls and disconnects
+37beab047637c39c58c3a3638bd484807f9ab936	test(daemon): cover stalls and disconnects for every role
+91fa07dde18aa1826e492adfd2f01971e3399fba	test(daemon): isolate the sweep's disconnect from the failed-resume one
+f01865f4b64522f96a14c58172986ed470b2b1d8	fix(daemon): raise only the agent the work is actually waiting on
+029973465a9c822e8beb13f0edfaa90dd9742312	feat(daemon): read an opencode approval dialog as a session waiting on the user
+40174e4476b6e63410c8491fba4ad0be9aac9bc2	refactor(prompts): say each rule once, in one piece
+6f0411481c3b6e2e14095decdb6ea2845021daa3	fix(prompts): reviewers are told how to reach the other agents
+dca8419d2d61371065a75c0f29debcbb175ea13a	fix: only list what a person is actually waiting on
+85c40aedd4d56f68f1b6381253c2d97e5a5b367a	fix(prompts): each stall nudge names the tool to call next
+1a579c68e3e440e50c257af56e51c80b97e6efe5	fix(prompts): tool descriptions say what the tool does and when to call it
+9493371660f554f5446558a9befec0dfbfcb617a	fix(daemon): raise attention only on the agent the work is waiting on
+ff8dc44f665986569894569dd0b95ea00e68da86	feat(core): name each prompt kind's placeholders and validate a template
+6d442e3f4a3376394c36822f13d557414c9dd4ff	feat(store): refuse a briefing naming a placeholder its kind cannot fill in
+9f87ffcd7e651e66a64ffbf5755661d72938b9a6	feat(daemon): reject an unfillable placeholder on the prompt write endpoints
+bdc5b7ac86cf36192426f24c1ff8ab2e4429fb2f	feat(ui): show the daemon's refusal when a briefing names an unfillable placeholder
+77b4240468f4055f7f6eccbbd583a299b38811e6	docs(cli): say which placeholders a briefing may use
+26e7b16ca7b49cd084e0159e62bfc5ce0b981ddf	fix(store): retiring a session takes its prompt attention with it
+9b05405759b8880791479479ea30cd9f0f9fb633	fix(daemon): sweep up prompt attention left on ended sessions
+af913c7016dae04b2e84316477eae8753f5e99c6	feat(ui): show who needs attention on the board, and sharpen the strip rows
+14af1423d51fa91c875909afca019e3598cfa6ff	fix(cli): name the task a stuck session was working on
+6f4994306234d7154bf19c2bfda929d2c412d73d	test(cli): prove the task fallback shortens a real ulid
+8779ac2d4b025c7eec964ce83d9e425d7d7ced98	fix(daemon): a prompt only goes up on a session that is still live
+332c44a5327cc789805e15e6bd2ea4c7a1cf095b	fix(ui): the profiles role tab and the expanded row live in the URL
+0ba4d167317dbdc56acc238f04f501e6ee176008	fix(ui): the session view's tab lives in the URL
+7968d9f8a734ae9f484b26de4caacdd7014b2222	fix(ui): a closing session panel takes its tab with it
+18be661fd8144da50804dc0c872aadd43e8be87e	test(ui): cover the session view's tab param
+f038b13e70bc94b82878ea4f6db5ad5359e5a8d5	fix(ui): every sidebar screen is in the palette and on a chord
+6d925ccad8073a6a0b6e0c9f1ae16c6b14d79ff8	feat(ui): a repository in a goal panel leads to its registration
+f3283479af614fdb912d27dd733e8a7d266f2033	feat(ui): the repositories table copies its path and base branch
+b25d5b899dd5c1cf39895fd0cf95ae87b5e92f5b	refactor(ui): the profile panel shows prompts, the dialog edits them
+3114bb0f523710bdc621bb1f8dfd652fd5d7977c	feat(ui): the goal thread links its sessions, and its drill-down shortens ids
+b88018e97121a63fdcf4056237e81c6e01a526a1	feat(ui): a form dialog asks before discarding what was typed into it
+eae6df2fbf9ad465966693c70c757ab990383dd8	test(ui): cover the task form's dismissal, preselected profiles included
+df585e7ef069081208f7cf844887155fd1c0ed7f	test(ui): pin that saving a dirty form closes it without asking
+cc6628ed7f3d0b66f7c6ffa8aef75f78f7ba0cbc	fix(ui): the agents table says how many it has, and when it has none
+b2bac45c77833f9b0c403c93a20db2bc891a6582	fix(ui): retry a task on the click, like resuming a session
+5a9b8aec97c00022fa3e2fa17a5513b3e8752722	feat(ui): a profile name links to the profile instead of copying its id
+fa60013424b3e07059156a4a7a900aae328b250f	refactor(ui): one shared <When>, on one shared clock, with a real tooltip
+ad364c49c1069a2800559c3f778a21b8bff38e9d	test(ui): pin the timestamp ticking and its keyboard reach
+9593f8369dd076e3eb6fc5424fea5c0ca6393f7a	fix(prompts): name the MCP tools as such in the default system prompts
+5fbc7c731734e31464bff5805b83bb2ecd5f70a9	feat(cli): filter goal ls by status
+2cac20ab54bc01f9f820abee1883af9f2c33a780	feat(cli): filter session ls by role
+05c244bbc89718434a92b81fa898ebd918d80eae	feat(ui): remember the sessions screen's two filters
+02baf6782aaa43f626e70d95639eeab33f1d9edd	feat(ui): put the sessions filters back where the screen was left
+21986f20157118bc7b2464ef2a56ac2d5fbd11de	fix(ui): land the select popup on the pixel grid
+bf8d96fd9591bba9c1de7edd0421e08e6cb5bf0f	fix(ui): center dialogs in layout so they stop being blurry
+c26504db84420b7d72790c5ab29df61bdaa2f0d7	chore(ui): verify that sheets and drawers render sharp
+03fc82aae956bb621d143083789325b6f84f14a8	fix(store): open the read pool after the migrations, not before
+af9b58b5c351287ecf531f2f048cdc0fcc2794cd	feat(store): pin agent_kind and model onto tasks, reviewers and goals
+1644096678e5a1189021342c2d1fece52c558f05	fix(daemon): launch and resume sessions from the pin, not the live profile
+cb05cbe4fb4d2c0ac895e573825916bffe7f85fd	test(daemon): a profile edit cannot move pinned work
+0c1ee3947b6ce91094cbb7b1a025c5881c97b11c	test(daemon): a revive keeps the session's agent and model too
+cc844ba0731a9567b135f47d95c3d41f059cedfa	feat(api): carry the pinned agent and model on the task and goal DTOs
+26d895fdc1a2df8b01b8a8d23857e6be9a7a69f0	fix(ui): show the pinned agent and model on the task and goal panels
+374c198e520d12040d776e7a348257a8b66df62f	fix(daemon): pin the opencode agent, and type resume instructions into the TUI
+75779d341cc1d86002fe87c9f9ce725e41cace7b	feat(ui): fold the Ready board column into Pending as a sub-status
+91f1679143d40eadf812f12832ab20ef5d47fca5	fix(ui): drop rows from the dialog textareas so empty ones stay small
+5aac8011d68cdd7be8b83eae6a69a17ae6181fe1	style(ui): trim the dialog chrome's vertical padding
+57f71348ecb47639501a25ff19883a36f8f34184	fix(ui): size the expanded diff modal to the diff, capped at the viewport
+2a210e99a3f70b64c257fe99a0705056f80b2e4b	fix(ui): let every dialog hug its content in WebKit
+7293bcf8000ea91ed24283ddb128ce5ead6416a3	fix(prompts): merge tasks by squash and fast-forward, not a merge commit
+2e7e49cd325311df056b0fed1cd6bbdeaa8929b1	fix(daemon): verify keystroke delivery so nudges and resumes actually submit
+ebe5fc61ccaeb1b0023252214836cae1d8e1b85d	feat(daemon): a watchdog for resumed sessions that never start their turn
+8bd269af71deb6453481f7f4f121507c4f91da4b	feat(scripts): download verified release binaries by default
