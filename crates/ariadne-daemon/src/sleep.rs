@@ -1,10 +1,10 @@
 //! Keeping the machine awake while agents are working.
 //!
 //! Agents live in tmux panes driven by long-running CLI processes; if the box
-//! goes to idle sleep mid-task they stall until someone wakes it. The
-//! scheduler already knows how many sessions are live on every tick, so it
-//! flips this inhibitor on the edges of "any agent working" and the platform
-//! keeps the machine up.
+//! sleeps mid-task — the idle timer running out, or a lid coming down — they
+//! stall until someone wakes it. The scheduler already knows how many
+//! sessions are live on every tick, so it flips this inhibitor on the edges
+//! of "any agent working" and the platform keeps the machine up.
 //!
 //! macOS and Windows go through [`keepawake`], which wraps the two calls we
 //! would otherwise hand-roll — `IOPMAssertionCreateWithName` and
@@ -134,15 +134,29 @@ mod platform {
     pub(super) type Held = keepawake::KeepAwake;
 
     pub(super) fn create() -> anyhow::Result<Held> {
-        Ok(keepawake::Builder::default()
+        let mut builder = keepawake::Builder::default();
+        builder
             // macOS: an `IOPMAssertionCreateWithName` assertion of type
-            // PreventUserIdleSystemSleep, named with our reason. Windows:
+            // PreventUserIdleSystemSleep. Windows:
             // `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)`.
-            // Deliberately nothing else: the display may sleep, and an
-            // explicit sleep request stays the user's to make.
+            // Both stop the idle timer; neither touches the display, which
+            // may sleep while the agents keep working.
             .idle(true)
-            .reason(super::REASON)
-            .create()?)
+            .reason(super::REASON);
+        // macOS only: PreventUserIdleSystemSleep holds off the *idle timer*
+        // and nothing else, so closing the lid still put the machine to
+        // sleep on a working agent ("Entering Sleep state due to 'Clamshell
+        // Sleep'" in `pmset -g log`). PreventSystemSleep — what `caffeinate
+        // -s` takes — is the assertion that covers that, and the display is
+        // still free to sleep under it. Apple honours it on AC power only:
+        // on battery the lid still wins, which no assertion can change.
+        //
+        // Not on Windows, where the same flag means ES_AWAYMODE_REQUIRED —
+        // away mode, a different feature that modern standby machines
+        // largely ignore.
+        #[cfg(target_os = "macos")]
+        builder.sleep(true);
+        Ok(builder.create()?)
     }
 }
 
