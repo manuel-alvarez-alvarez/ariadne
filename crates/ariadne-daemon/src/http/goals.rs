@@ -308,6 +308,10 @@ pub async fn post_message(
             body: req.body,
         })
         .await?;
+    // Addressed or not, the scheduler is told: what an unaddressed message
+    // wakes is nobody, and that is its decision to make rather than the
+    // handler's.
+    state.notify_scheduler_message(&msg.id).await;
     Ok((
         StatusCode::CREATED,
         Json(message_dto_of(&state.store, msg).await?),

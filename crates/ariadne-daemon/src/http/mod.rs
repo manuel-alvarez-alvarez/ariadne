@@ -68,6 +68,13 @@ impl AppState {
             let _ = tx.send(SchedEvent::GoalChanged(goal_id.to_string()));
         }
     }
+
+    /// A message was posted: whoever it addresses is woken with it.
+    pub async fn notify_scheduler_message(&self, message_id: &str) {
+        if let Some(tx) = &self.sched_tx {
+            let _ = tx.send(SchedEvent::MessagePosted(message_id.to_string()));
+        }
+    }
 }
 
 #[derive(OpenApi)]

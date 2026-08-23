@@ -4,7 +4,7 @@
 //! reconciles everything so crashes, missed events and dead tmux sessions
 //! self-heal. Every rule is idempotent: read state, compare desired, act.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use tokio::sync::mpsc;
@@ -13,7 +13,7 @@ use tracing::{info, warn};
 use ariadne_core::{
     Actor, AttentionReason, GoalStatus, PromptKind, ReviewVerdict, Role, SessionStatus, TaskStatus,
 };
-use ariadne_store::{AgentSession, SessionFilter, Store, Task, TaskFilter};
+use ariadne_store::{AgentSession, Message, Recipient, SessionFilter, Store, Task, TaskFilter};
 
 use crate::agents::prompts;
 use crate::attention;
@@ -29,6 +29,9 @@ pub enum SchedEvent {
     GoalChanged(String),
     /// An agent session reported activity.
     SessionEvent(String),
+    /// A message was posted into a goal or task conversation, by id: whoever
+    /// it addresses is woken with it.
+    MessagePosted(String),
 }
 
 /// How often the full reconciliation tick runs.
@@ -107,6 +110,11 @@ pub struct Scheduler {
     /// a transition changes `nudged`'s, which is what keeps it to one Enter
     /// and one flag per launch rather than one per tick.
     unstarted: HashMap<String, (String, Unstarted)>,
+    /// Messages already delivered to their addressee, by message id. In
+    /// memory like the two maps above, and for the same reason: what it
+    /// prevents is typing one message into a pane twice, which is only ever
+    /// at stake while the daemon that saw it posted is still running.
+    delivered: HashSet<String>,
     /// Held while any session is live, so the machine does not idle-sleep
     /// out from under a working agent.
     sleep: SleepInhibitor,
@@ -127,6 +135,7 @@ pub fn start(
         spawn_failures: HashMap::new(),
         nudged: HashMap::new(),
         unstarted: HashMap::new(),
+        delivered: HashSet::new(),
         sleep: SleepInhibitor::new(),
         prevent_sleep,
     };
@@ -139,6 +148,7 @@ pub fn start(
                     Some(SchedEvent::TaskChanged(id)) => scheduler.reconcile_task_logged(&id).await,
                     Some(SchedEvent::GoalChanged(id)) => scheduler.reconcile_goal_logged(&id).await,
                     Some(SchedEvent::SessionEvent(id)) => scheduler.reconcile_session(&id).await,
+                    Some(SchedEvent::MessagePosted(id)) => scheduler.deliver_message(&id).await,
                     None => break, // daemon shutting down
                 },
                 _ = tick.tick() => scheduler.reconcile_all().await,
@@ -1026,4 +1036,147 @@ impl Scheduler {
         }
         Ok(())
     }
+
+    /// Take a posted message to whoever it addresses.
+    ///
+    /// A conversation an agent only reads when it next happens to look is a
+    /// conversation nobody can hold: a message with a recipient is carried to
+    /// that recipient, and one addressed to the thread wakes nobody, exactly
+    /// as every message did before recipients existed.
+    async fn deliver_message(&mut self, message_id: &str) {
+        if let Err(e) = self.deliver(message_id).await {
+            warn!(message = %message_id, error = %format!("{e:#}"), "delivering the message failed");
+        }
+    }
+
+    async fn deliver(&mut self, message_id: &str) -> anyhow::Result<()> {
+        let message = self.store.get_message(message_id).await?;
+        let Some(recipient) = message.recipient() else {
+            return Ok(());
+        };
+        // One delivery per message, however often the event is seen: the tick
+        // resweeps everything, and a second pass would type the same message
+        // into the pane again. Spent before the attempt rather than after it,
+        // like the stall nudge — whatever comes of this one, repeating it is
+        // not the remedy.
+        if !self.delivered.insert(message.id.clone()) {
+            return Ok(());
+        }
+        match recipient {
+            Recipient::User => self.raise_for_user(&message).await,
+            Recipient::Profile(profile_id) => self.wake_profile(&message, &profile_id).await,
+        }
+    }
+
+    /// A message for the human, which no agent is woken for: it goes up the
+    /// attention path the UI strip and `ariadne attention` already show, on
+    /// the session of the agent that wrote it — the session the user answers
+    /// in, and the one place the message can be traced back to.
+    async fn raise_for_user(&self, message: &Message) -> anyhow::Result<()> {
+        let Some(session_id) = &message.author_session_id else {
+            // The user wrote to the user: nobody is waiting on an answer.
+            return Ok(());
+        };
+        info!(message = %message.id, session = %session_id, "message addressed to the user, raising its author for them");
+        self.store
+            .set_session_attention(session_id, AttentionReason::WaitingInput)
+            .await?;
+        Ok(())
+    }
+
+    /// A message for an agent: nudged into its pane if it has one, and
+    /// otherwise resumed with the message as its instruction.
+    ///
+    /// An addressee with no session to deliver to at all — a reviewer between
+    /// rounds, an engineer whose task has not started — is not a failure and
+    /// not a message lost: it stays in the thread, and the briefings send
+    /// every agent to read the conversation when it next starts.
+    async fn wake_profile(&self, message: &Message, profile_id: &str) -> anyhow::Result<()> {
+        let Some(session) = self.recipient_session(message, profile_id).await? else {
+            info!(message = %message.id, profile = %profile_id, "nobody to wake for this message; it waits in the thread");
+            return Ok(());
+        };
+        // An agent does not need waking for what it said itself.
+        if message.author_session_id.as_deref() == Some(session.id.as_str()) {
+            return Ok(());
+        }
+        let text = delivery_text(message);
+        if !self.launcher.tmux.has_session(&session.tmux_session).await {
+            info!(message = %message.id, session = %session.id, role = %session.role, "resuming the addressed agent with the message");
+            // Nothing to resume from (no agent id yet, a working directory
+            // that is gone) reads the same way as no session at all: the
+            // message keeps its place in the thread and is read from there.
+            if let Err(e) = self.launcher.revive_session(&session.id, Some(&text)).await {
+                info!(message = %message.id, session = %session.id, error = %format!("{e:#}"), "the addressed agent could not be resumed; the message waits in the thread");
+            }
+            return Ok(());
+        }
+        // An agent sitting on a dialog is not typed into: what a pane holding
+        // a permission prompt does with the Enter behind a paste is answer it,
+        // and that is the one decision the daemon must not make. The message
+        // waits in the thread, where the agent reads it once the user has
+        // dealt with the prompt.
+        if matches!(
+            session.attention_reason(),
+            Some(AttentionReason::WaitingPermission | AttentionReason::WaitingInput)
+        ) {
+            info!(message = %message.id, session = %session.id, "the addressed agent is waiting on the user; the message waits in the thread");
+            return Ok(());
+        }
+        info!(message = %message.id, session = %session.id, role = %session.role, "nudging the addressed agent with the message");
+        let delivered = self
+            .launcher
+            .tmux
+            .send_submitted(&session.tmux_session, &text)
+            .await?;
+        if !delivered {
+            warn!(message = %message.id, session = %session.id, "the message stayed in the agent's composer, flagging for user attention");
+            self.store
+                .set_session_attention(&session.id, AttentionReason::Stalled)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// The session a message's addressee works in, the most recent one first.
+    ///
+    /// A task message looks in that task. A goal-thread one looks at the
+    /// goal's own sessions — the ones with no task — because that is where
+    /// the planner runs, and the planner is the only agent a goal thread can
+    /// address; filtering by goal alone would reach into its tasks.
+    async fn recipient_session(
+        &self,
+        message: &Message,
+        profile_id: &str,
+    ) -> anyhow::Result<Option<AgentSession>> {
+        let sessions = self
+            .store
+            .list_sessions(SessionFilter {
+                goal_id: Some(message.goal_id.clone()),
+                task_id: message.task_id.clone(),
+                ..Default::default()
+            })
+            .await?;
+        Ok(sessions.into_iter().rev().find(|s| {
+            s.profile_id == profile_id && (message.task_id.is_some() || s.task_id.is_none())
+        }))
+    }
+}
+
+/// What the woken agent is told: who wrote, what they wrote, and where to
+/// answer. The message is quoted whole — an agent asked to go and look it up
+/// before it knows what it says has been woken for nothing — with the pointer
+/// there for the rest of the thread.
+fn delivery_text(message: &Message) -> String {
+    let thread = match message.task_id {
+        Some(_) => "your task conversation",
+        None => "the goal's planning thread",
+    };
+    format!(
+        "New message from the {author} in {thread}:\n\n{body}\n\n\
+         Read the whole conversation with `list_messages`, and answer with \
+         `post_message`.",
+        author = message.author_role().as_str(),
+        body = message.body,
+    )
 }
