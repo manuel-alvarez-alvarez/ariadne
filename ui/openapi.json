@@ -1547,6 +1547,51 @@
         }
       }
     },
+    "/v1/sessions/{id}/resize": {
+      "post": {
+        "tags": [
+          "sessions"
+        ],
+        "summary": "Resize a session's pane to the grid a viewer is showing it at.",
+        "description": "The web terminal is not a tmux client, so nothing sizes the pane for it:\nleft alone a detached session stays at tmux's 80×24 and a panel with room\nfor far more shows a small pane in a large box. This is the attach a\nbrowser cannot make — the same `resize-window` a `tmux attach` performs —\nand the new grid comes back to every viewer through the log stream, which\nalready notices a pane that changed size.\n\nSeveral viewers each fit the pane to their own panel; the last one to ask\nwins, exactly as the last client to attach does in tmux.\n\nLiveness is checked as it is for input: a finished session's status, and\ntmux itself, since a stale name may belong to a successor's pane by now.",
+        "operationId": "resize",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "session id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionResizeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Pane resized"
+          },
+          "400": {
+            "description": ""
+          },
+          "404": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
+          }
+        }
+      }
+    },
     "/v1/sessions/{id}/resume": {
       "post": {
         "tags": [
@@ -3527,6 +3572,26 @@
       "SessionPaneSize": {
         "type": "object",
         "description": "Payload of the `resize` event of `GET /v1/sessions/{id}/logs/stream`: the\ngrid the pane is drawing against, in cells.\n\nA terminal stream only means anything at a size. The agent addresses the\ncursor and erases lines against *this* grid, so a viewer that renders the\nbytes at any other one has every repaint land on the wrong row.",
+        "required": [
+          "cols",
+          "rows"
+        ],
+        "properties": {
+          "cols": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "rows": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "SessionResizeRequest": {
+        "type": "object",
+        "description": "Body of `POST /v1/sessions/{id}/resize`.\n\nThe grid a viewer wants the pane to draw at, in cells — what a terminal\nhands its pty when its window changes, and what `tmux attach` gives the\npane it attaches to.",
         "required": [
           "cols",
           "rows"

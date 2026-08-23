@@ -219,6 +219,60 @@ impl TmuxManager {
         parse_geometry(raw).with_context(|| format!("unexpected pane geometry for {name}: {raw:?}"))
     }
 
+    /// Resize the session's window to `cols`×`rows`, and leave it there.
+    ///
+    /// This is what a `tmux attach` does for a pane — the client's size
+    /// becomes the window's — done for a viewer that is not a tmux client at
+    /// all. The pane's TUI redraws itself against the new grid, and the log
+    /// stream reports it (see `http/session_logs.rs`), so the size a viewer
+    /// asks for is the size every viewer then renders at.
+    ///
+    /// Sizing is taken off tmux's hands to do it. The default `window-size`
+    /// of `latest` sizes a window after the client last attached to it, and a
+    /// window with no client at all is left at tmux's default 80×24: a
+    /// detached session — which is every session here until someone attaches
+    /// — would ignore the resize. `manual` is what makes the size ours, and
+    /// `resize-window -x/-y` sets it of its own accord anyway; it is set here
+    /// too so the behaviour is stated rather than inherited.
+    ///
+    /// Which would leave sizing ours for good, including for the next
+    /// `ariadne attach` — a client would then be shown a window it did not
+    /// fit, cropped, instead of resizing it the way attaching always has. So
+    /// the `client-attached` hook hands sizing straight back: the moment a
+    /// real client arrives, `window-size` is unset and the window follows it
+    /// again. Last resize wins either way, which is what tmux itself does
+    /// with several clients.
+    ///
+    /// All of it goes out as one `tmux` invocation: three commands, one
+    /// process, and no window that is briefly `manual` at the old size.
+    pub async fn resize_window(&self, name: &str, cols: u16, rows: u16) -> Result<()> {
+        let cols = cols.to_string();
+        let rows = rows.to_string();
+        self.tmux(&[
+            "set-hook",
+            "-t",
+            name,
+            "client-attached",
+            "set-window-option -u window-size",
+            ";",
+            "set-window-option",
+            "-t",
+            name,
+            "window-size",
+            "manual",
+            ";",
+            "resize-window",
+            "-t",
+            name,
+            "-x",
+            &cols,
+            "-y",
+            &rows,
+        ])
+        .await
+        .map(|_| ())
+    }
+
     /// Type `data` into the session's pane exactly as given: no Enter
     /// appended, no key-name lookup, no shell-quoting hazards.
     ///

@@ -24,6 +24,7 @@ import {
   unwrap,
 } from "@/api"
 
+import type { PaneSize } from "./log-stream"
 import { isLiveStatus } from "./session-display"
 
 /** What the sessions list can be narrowed by. */
@@ -178,6 +179,52 @@ async function drainSessionInput(id: string): Promise<void> {
     // showing by then. A session that briefly has no pane while it starts up
     // is exactly where this happens.
     inputQueue.delete(id)
+    throw error
+  }
+}
+
+/** The size a session's pane is waiting to be asked for, per session. */
+const resizeQueue = new Map<string, PaneSize>()
+/** The in-flight resize for a session, while one is running. */
+const resizeInFlight = new Map<string, Promise<void>>()
+
+/**
+ * Ask a live session's pane to draw at `size`. Not a mutation, for the reasons
+ * {@link sendSessionInput} is not one: it changes nothing the cache holds, and
+ * a pending state would re-render the terminal every time its frame moves.
+ *
+ * One request per session at a time, like the keystrokes — a pane's size is
+ * last-write-wins, and two overlapping resizes can land in either order, which
+ * would leave the pane at a size nobody is showing. A size measured while a
+ * request is in flight replaces whatever was queued behind it: only the newest
+ * one is worth asking for.
+ *
+ * There is no retry. The next thing that moves the frame measures again, and
+ * until then the terminal scales its font to the grid it has — a pane that was
+ * not resized is a pane rendered smaller, not a terminal that stopped working.
+ */
+export function sendSessionResize(id: string, size: PaneSize): Promise<void> {
+  resizeQueue.set(id, size)
+  const running = resizeInFlight.get(id)
+  if (running) return running
+  const drain = drainSessionResize(id).finally(() => resizeInFlight.delete(id))
+  resizeInFlight.set(id, drain)
+  return drain
+}
+
+async function drainSessionResize(id: string): Promise<void> {
+  try {
+    for (;;) {
+      const size = resizeQueue.get(id)
+      if (size === undefined) return
+      resizeQueue.delete(id)
+      await unwrap(api().POST("/v1/sessions/{id}/resize", { params: { path: { id } }, body: size }))
+    }
+  } catch (error) {
+    // A size queued behind a request that failed goes with it: the frame it
+    // was measured from is a moment old, and the next thing to move it
+    // measures again anyway.
+    resizeQueue.delete(id)
     throw error
   }
 }

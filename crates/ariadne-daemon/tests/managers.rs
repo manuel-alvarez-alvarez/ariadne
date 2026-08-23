@@ -356,6 +356,60 @@ async fn tmux_send_raw_delivers_control_bytes_verbatim() {
     let _ = tmux.kill_session(&name).await;
 }
 
+/// What `POST /v1/sessions/{id}/resize` relies on: a pane nobody is attached
+/// to takes the size it is given, and keeps it.
+///
+/// This is the half a stubbed tmux cannot answer. tmux sizes a window after
+/// the client last attached to it, and these sessions are created detached —
+/// so without sizing being taken off its hands the pane stays at 80x24 and a
+/// web viewer's resize does nothing at all.
+#[tokio::test]
+#[ignore = "requires tmux"]
+async fn tmux_resizes_a_pane_with_no_client_attached() {
+    let tmux = TmuxManager::default();
+    let dir = tempfile::tempdir().unwrap();
+    let name = format!("ariadne-test-resize-{}", std::process::id());
+
+    tmux.new_session(&TmuxSpawn {
+        session: name.clone(),
+        cwd: dir.path().to_path_buf(),
+        env: vec![],
+        argv: vec!["sh".into(), "-c".into(), "sleep 30".into()],
+        log_file: None,
+    })
+    .await
+    .unwrap();
+
+    tmux.resize_window(&name, 137, 41).await.unwrap();
+    let geometry = tmux.pane_geometry(&name).await.unwrap();
+    assert_eq!(
+        (geometry.cols, geometry.rows),
+        (137, 41),
+        "the detached pane draws at the size it was given: {geometry:?}"
+    );
+
+    // And the next size wins, the way the last client to attach does.
+    tmux.resize_window(&name, 90, 30).await.unwrap();
+    let geometry = tmux.pane_geometry(&name).await.unwrap();
+    assert_eq!((geometry.cols, geometry.rows), (90, 30));
+
+    // Sizing is ours only for as long as nobody attaches: the hook hands it
+    // back the moment a real client arrives, so an `ariadne attach` still
+    // sizes the window to the terminal it runs in rather than being shown a
+    // window it does not fit.
+    let hooks = std::process::Command::new("tmux")
+        .args(["show-hooks", "-t", &name])
+        .output()
+        .unwrap();
+    let hooks = String::from_utf8_lossy(&hooks.stdout);
+    assert!(
+        hooks.contains("client-attached") && hooks.contains("window-size"),
+        "the attach hook unsets the manual sizing: {hooks}"
+    );
+
+    let _ = tmux.kill_session(&name).await;
+}
+
 #[test]
 fn session_names_are_stable_and_short() {
     let goal = "01m02trjnexw78vdrftjs6gk44";

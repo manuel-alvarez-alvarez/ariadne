@@ -6,14 +6,23 @@
  * rather than rendered as text: anything less would show the control codes of
  * a full-screen TUI instead of what the agent is actually drawing.
  *
- * The emulator runs at the pane's grid, never at the panel's. A pane is 80×24,
- * or whatever a client last attached with, and its TUI addresses the cursor
- * and erases lines in *that* grid: rendered even a column wider, every line
- * that wraps in the pane but not here shifts the rows below it, and each
- * repaint lands on the wrong one. So the frame's width picks the font size
- * instead of the column count — a narrower panel shows the same pane, smaller
- * — and the grid changes only when the daemon says the pane changed (see
- * `log-stream.ts`).
+ * The emulator runs at the pane's grid, never at the panel's. A pane's TUI
+ * addresses the cursor and erases lines in *that* grid: rendered even a column
+ * wider, every line that wraps in the pane but not here shifts the rows below
+ * it, and each repaint lands on the wrong one. So the grid is never fitted to
+ * the frame here — it changes when the daemon says the pane changed, and only
+ * then (see `log-stream.ts`).
+ *
+ * What the frame does instead is ask for the pane it wants. A tmux pane is
+ * 80×24 until a client attaches to it and a browser never does, so a live
+ * session measures the room it has at {@link BASE_FONT_SIZE} and posts that
+ * grid to `POST /v1/sessions/{id}/resize` — the attach it cannot make. The
+ * pane redraws itself at the new size and the stream reports it, so what the
+ * panel ends up showing is a pane the size of the panel rather than a small
+ * one blown up. Scaling the font (see {@link scaleToFit}) is what is left for
+ * the cases that cannot: a session that is over, whose replay was written at
+ * the size its pane had then, and the moment between asking for a grid and
+ * being given it.
  *
  * Typing goes the other way, to `POST /v1/sessions/{id}/input`, and only for a
  * live session — a finished one has no pane to type into, so its terminal
@@ -23,10 +32,11 @@
  *
  * A panel is a small window onto all of that, so the terminal can be lifted
  * into a near-fullscreen dialog, the way `task-diff.tsx` lifts the diff. Only
- * the frame changes: the grid stays the pane's there too, and what the room
- * buys is a bigger font — which is why the height budget and the font ceiling
- * are per-frame (see {@link screenHeightBudget}) rather than the panel's
- * constants everywhere. The emulator itself makes that trip: it is rendered
+ * the frame changes: the pane is asked for the dialog's room on the way in and
+ * for the panel's on the way out, and a replay that can only be scaled gets a
+ * bigger font — which is why the height budget and the font ceiling are
+ * per-frame (see {@link screenHeightBudget}) rather than the panel's constants
+ * everywhere. The emulator itself makes that trip: it is rendered
  * into an element of its own that is *moved* between the two frames, so
  * expanding costs a re-scale and nothing more — the same emulator, the same
  * open stream, and no snapshot fetched again for output already on screen.
@@ -51,7 +61,7 @@ import {
   SquareIcon,
 } from "lucide-react"
 import { useTheme } from "next-themes"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { toast } from "sonner"
 
@@ -70,7 +80,8 @@ import {
   SessionLogStream,
   sessionLogStreamUrl,
 } from "./log-stream"
-import { sendSessionInput } from "./queries"
+import { paneFit, sameSize } from "./pane-fit"
+import { sendSessionInput, sendSessionResize } from "./queries"
 import { isLiveStatus } from "./session-display"
 import { writeDelta, writeResize, writeSnapshot } from "./terminal-sink"
 
@@ -104,6 +115,15 @@ const BASE_FONT_SIZE = 12
 const LINE_HEIGHT = 1.2
 /** Tallest the grid may get before the font shrinks to fit it in (`28rem`). */
 const MAX_SCREEN_HEIGHT = 448
+/**
+ * How long a frame has to stop moving before the pane is asked to match it.
+ *
+ * Dragging a panel's edge is a stream of sizes and every one of them would be
+ * a `resize-window` and a full repaint of the pane; what the pane is asked for
+ * is where the drag came to rest.
+ */
+const RESIZE_DEBOUNCE_MS = 200
+
 /**
  * How many times `scaleToFit` may measure and correct itself. Each pass is a
  * reflow, and a pass that measures exactly what the last one did stops on its
@@ -338,6 +358,46 @@ function TerminalView({
   const screenRef = useRef<HTMLElement | null>(null)
   const streamRef = useRef<SessionLogStream | null>(null)
   const [streamStatus, setStreamStatus] = useState<SessionLogStatus>("connecting")
+  /**
+   * The stream's status as the stream's own callbacks see it. The state above
+   * is for the status line; this is for deciding what a change *was*, which a
+   * callback created once cannot read off state it closed over.
+   */
+  const streamStatusRef = useRef<SessionLogStatus>("connecting")
+  /**
+   * The grid this frame last asked the pane for, and the timer carrying the
+   * next such request.
+   *
+   * The request is not repeated for a size already asked for — and in
+   * particular not made again because the pane came back at a different one.
+   * Two panels open on the same session each fit it to their own frame, the
+   * last one wins, and the loser scales its font to what it was given; a fit
+   * that answered the pane's new grid would have the two of them resizing it
+   * at each other for as long as both stayed open.
+   */
+  const requestedSizeRef = useRef<PaneSize | null>(null)
+  const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /**
+   * The session a fit may still be asked for, and whether it has a pane left
+   * to ask. A frame takes 200ms to settle and a session can end inside it, or
+   * the panel can move to another one — either way the fit waiting in the
+   * timer is about something that is no longer on screen.
+   *
+   * Kept, and cleared, in a *layout* effect. A passive one is too late: React
+   * schedules those, and a timer that came due while the change was being
+   * rendered runs before they are flushed — it would find a guard that still
+   * said the old session was live and ask for its pane. Layout effects run
+   * inside the commit, so there is no moment between the change and the
+   * cancellation for the timer to land in.
+   */
+  const fitTargetRef = useRef({ sessionId, live })
+  useLayoutEffect(() => {
+    fitTargetRef.current = { sessionId, live }
+    return () => {
+      if (resizeTimerRef.current !== null) clearTimeout(resizeTimerRef.current)
+      resizeTimerRef.current = null
+    }
+  }, [sessionId, live])
   const [error, setError] = useState<string | null>(null)
   /** Whether anything has been drawn yet; until then the frame is a placeholder. */
   const [attached, setAttached] = useState(false)
@@ -409,6 +469,99 @@ function TerminalView({
   useEffect(() => {
     scaleToFitRef.current = scaleToFit
   }, [scaleToFit])
+
+  /**
+   * Ask the pane for the grid this frame has room for, once the frame has
+   * stopped moving.
+   *
+   * Everything happens on the far side of the wait, measurement included. A
+   * frame mid-drag is a frame being measured over and over for a size that is
+   * about to change, and — the reason it *has* to wait — the numbers a fit
+   * reads are only true once the emulator has finished laying itself out. A
+   * grid that just changed, or a webfont that landed after the terminal
+   * opened, both leave a screen whose height belongs to the cells it had a
+   * moment ago; measured then, a row costs the wrong number of pixels and the
+   * pane is asked for a grid that does not fit the frame.
+   *
+   * The font is put back to {@link BASE_FONT_SIZE} before measuring, since
+   * that is the size the pane is meant to be drawn at: a font `scaleToFit`
+   * shrank while the last request was in flight measures the frame in smaller
+   * cells, and the grid that came back would be one the base font cannot fit.
+   * Everything else the measurement needs is in {@link paneFit} — including
+   * why the rows are not the fit addon's to propose.
+   *
+   * A size this frame has already asked for is not asked for again. That is
+   * what keeps two panels on one session from resizing it at each other:
+   * neither one's measurement changes because the pane's grid did, so neither
+   * answers the other's fit. What does change a measurement is the frame
+   * moving, or the emulator settling on cells of a different size — and both
+   * of those are worth another request.
+   *
+   * The request itself is fire-and-forget, like a keystroke: nothing here
+   * waits for it, nothing re-renders for it, and a refusal is not worth a
+   * toast — the terminal keeps working at the grid it has, scaled to the
+   * frame, and the next thing that moves the frame asks again.
+   */
+  const scheduleFit = useCallback(() => {
+    if (resizeTimerRef.current !== null) clearTimeout(resizeTimerRef.current)
+    resizeTimerRef.current = setTimeout(() => {
+      resizeTimerRef.current = null
+      const terminal = terminalRef.current
+      const fit = fitRef.current
+      const container = containerRef.current
+      // A session that ended while its frame was settling has no pane left to
+      // ask — the request would be a 409 for a grid nobody would draw at —
+      // and a panel that moved to another session would be asking about the
+      // wrong pane entirely. Both are dropped, and the font is left to fit
+      // whatever is on screen.
+      const target = fitTargetRef.current
+      if (!target.live || target.sessionId !== sessionId) return
+      if (!terminal || !fit || !container) return
+      if (terminal.options.fontSize !== BASE_FONT_SIZE) {
+        terminal.options.fontSize = BASE_FONT_SIZE
+      }
+      const size = paneFit({
+        cols: fit.proposeDimensions()?.cols,
+        rows: terminal.rows,
+        screenHeight: screenRef.current?.clientHeight ?? 0,
+        heightBudget: screenHeightBudget(expanded ? frameRef.current : null, container),
+      })
+      if (size && !sameSize(size, requestedSizeRef.current)) {
+        requestedSizeRef.current = size
+        sendSessionResize(sessionId, size).catch(() => {
+          // The pane stayed the size it was, which the stream already agrees
+          // with and the font already fits to. Nothing on screen is wrong, so
+          // nothing is said about it.
+        })
+      }
+      // The frame is still showing the grid it had, at a font just put back to
+      // the base size: whatever of it does not fit is scaled until the pane
+      // answers.
+      scaleToFitRef.current()
+    }, RESIZE_DEBOUNCE_MS)
+  }, [expanded, sessionId])
+
+  /**
+   * Fit the terminal to the frame it is in: the pane's own grid where there is
+   * a pane to ask, the font meanwhile.
+   *
+   * Both, because a resize is a round trip. The frame goes on showing the grid
+   * it has until the pane answers with the new one, and scaling covers exactly
+   * that gap — as it covers a pane sized by somebody else, and a session that
+   * has ended and cannot be asked at all.
+   */
+  const refit = useCallback(() => {
+    if (live) scheduleFit()
+    scaleToFit()
+  }, [live, scheduleFit, scaleToFit])
+
+  // Same reason as `scaleToFitRef`, for the emulator's and the stream's own
+  // callbacks: they are made once and the fit they reach has to be the
+  // current frame's.
+  const refitRef = useRef(refit)
+  useEffect(() => {
+    refitRef.current = refit
+  }, [refit])
 
   // The emulator itself: created once, and kept across daemon-URL changes so a
   // reconnect does not flash an empty box — and across the move between the
@@ -489,8 +642,16 @@ function TerminalView({
 
     // The grid arrives in the stream and applies whenever the parser reaches
     // it, so the emulator itself — not the message that caused it — is what
-    // says a new one is in effect and the font has to be scaled to it.
-    const resized = terminal.onResize(() => scaleToFitRef.current())
+    // says a new one is in effect and the terminal has to be fitted to it.
+    //
+    // Fitted, and not merely scaled: a grid change is also the moment the
+    // emulator's cells may settle on a size the last fit did not measure — a
+    // webfont that landed after the terminal opened is the usual way — and a
+    // fit measured against the wrong cell height asked for a grid that does
+    // not fit the frame. Measuring again cannot run away with itself, because
+    // a measurement that has not changed is not a request (see
+    // {@link scheduleFit}).
+    const resized = terminal.onResize(() => refitRef.current())
 
     // xterm focuses itself when its own screen is clicked; this covers the
     // padding around it, so the whole box is somewhere to start typing.
@@ -531,9 +692,9 @@ function TerminalView({
   useEffect(() => {
     const frame = frameRef.current
     if (!frame) return
-    // Also what re-scales the grid when the terminal is moved between the two
+    // Also what fits the pane when the terminal is moved between the two
     // frames: the emulator stays, and the room it has to fill is new.
-    scaleToFit()
+    refit()
     let size: { width: number; height: number } | null = null
     const observer = new ResizeObserver((entries) => {
       // The size comes with the notification, so deciding whether it is one
@@ -555,11 +716,11 @@ function TerminalView({
       const resized =
         measured.width !== previous.width || (expanded && measured.height !== previous.height)
       if (!resized) return
-      scaleToFit()
+      refit()
     })
     observer.observe(frame)
     return () => observer.disconnect()
-  }, [expanded, scaleToFit])
+  }, [expanded, refit])
 
   useEffect(() => {
     const terminal = terminalRef.current
@@ -615,6 +776,17 @@ function TerminalView({
       },
       onEnd: () => {},
       onStatus: (next, why) => {
+        // A stream that dropped and came back may be looking at a different
+        // pane — a session revived after a daemon restart is a new tmux
+        // window, at tmux's own 80×24 — so what this frame last asked for
+        // says nothing about what it is showing now, and the fit is made
+        // again. A reconnect is safe to react to for the same reason a
+        // `resize` event is not: nothing another viewer does causes one.
+        if (next === "live" && streamStatusRef.current === "reconnecting") {
+          requestedSizeRef.current = null
+          refitRef.current()
+        }
+        streamStatusRef.current = next
         setStreamStatus(next)
         if (why !== undefined) setError(why)
       },
@@ -624,6 +796,9 @@ function TerminalView({
     return () => {
       streamRef.current = null
       stream.stop()
+      // Another session, or another daemon, is another pane: whatever this
+      // frame asked the last one for says nothing about the next.
+      requestedSizeRef.current = null
     }
   }, [baseUrl, sessionId])
 

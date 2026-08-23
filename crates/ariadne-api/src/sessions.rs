@@ -61,6 +61,17 @@ pub struct SessionInputRequest {
     pub data: String,
 }
 
+/// Body of `POST /v1/sessions/{id}/resize`.
+///
+/// The grid a viewer wants the pane to draw at, in cells — what a terminal
+/// hands its pty when its window changes, and what `tmux attach` gives the
+/// pane it attaches to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct SessionResizeRequest {
+    pub cols: u16,
+    pub rows: u16,
+}
+
 /// Payload of the `snapshot` and `delta` events of
 /// `GET /v1/sessions/{id}/logs/stream`.
 ///
