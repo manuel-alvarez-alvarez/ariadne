@@ -22,11 +22,12 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use serde_json::json;
 
+use ariadne_api::messages::{MessageDto, MessageRecipientDto};
 use ariadne_api::profiles::ProfileDto;
 use ariadne_client::{Client, endpoint};
-use ariadne_core::AgentKind;
+use ariadne_core::{AgentKind, RecipientKind};
 
-use crate::output::{Format, print_json};
+use crate::output::{Format, local_time, print_json};
 
 /// `ariadne version` — client version always, daemon version when reachable.
 pub async fn version(client: &Client, format: Format) -> Result<()> {
@@ -205,6 +206,40 @@ pub fn confirm(question: &str, yes: bool) -> Result<()> {
     }
 }
 
+/// Whom a message addresses, spelled the way `--to` and the MCP `to` spell it:
+/// a profile's name, or `user`.
+///
+/// A profile the database no longer holds leaves its id: the message still
+/// addressed somebody, and the id is all that is left to name them.
+pub fn recipient_label(recipient: &MessageRecipientDto) -> String {
+    match recipient.kind {
+        RecipientKind::User => "user".to_string(),
+        RecipientKind::Profile => recipient
+            .profile_name
+            .clone()
+            .or_else(|| recipient.profile_id.clone())
+            .unwrap_or_else(|| "profile".to_string()),
+    }
+}
+
+/// One conversation message as `goal messages` and `task messages` print it:
+/// `[time] role: body`, with the addressee after the author when there is one.
+pub fn message_line(message: &MessageDto) -> String {
+    let author = match &message.recipient {
+        Some(recipient) => format!(
+            "{} → {}",
+            message.author_role.as_str(),
+            recipient_label(recipient)
+        ),
+        None => message.author_role.as_str().to_string(),
+    };
+    format!(
+        "[{}] {author}: {}",
+        local_time(&message.created_at),
+        message.body
+    )
+}
+
 /// Profile ids paired with the names they are known by.
 ///
 /// Profiles are name-addressable everywhere else in the CLI, so an inspect
@@ -294,6 +329,73 @@ mod tests {
     use super::*;
 
     use std::os::unix::fs::PermissionsExt;
+
+    use ariadne_core::AuthorRole;
+
+    fn message(recipient: Option<MessageRecipientDto>) -> MessageDto {
+        MessageDto {
+            id: "01MSG".into(),
+            goal_id: "01GOAL".into(),
+            task_id: Some("01TASK".into()),
+            author_role: AuthorRole::Engineer,
+            author_session_id: Some("01SESSION".into()),
+            recipient,
+            body: "rebased onto main".into(),
+            created_at: "not a time".into(),
+        }
+    }
+
+    fn profile_recipient(id: Option<&str>, name: Option<&str>) -> MessageRecipientDto {
+        MessageRecipientDto {
+            kind: RecipientKind::Profile,
+            profile_id: id.map(str::to_owned),
+            profile_name: name.map(str::to_owned),
+        }
+    }
+
+    /// The addressee reads as the word that would have addressed it, so what a
+    /// listing shows is what `--to` takes.
+    #[test]
+    fn a_recipient_reads_as_the_name_that_addresses_it() {
+        assert_eq!(
+            recipient_label(&profile_recipient(Some("01PROF"), Some("Reviewer"))),
+            "Reviewer"
+        );
+        assert_eq!(
+            recipient_label(&MessageRecipientDto {
+                kind: RecipientKind::User,
+                profile_id: None,
+                profile_name: None,
+            }),
+            "user"
+        );
+    }
+
+    /// A profile that is gone leaves no name, and the id still names somebody.
+    #[test]
+    fn a_nameless_profile_falls_back_to_its_id() {
+        assert_eq!(
+            recipient_label(&profile_recipient(Some("01PROF"), None)),
+            "01PROF"
+        );
+    }
+
+    /// An unaddressed message prints exactly as it always did; an addressed
+    /// one names its addressee after the author.
+    #[test]
+    fn only_an_addressed_message_names_a_recipient() {
+        assert_eq!(
+            message_line(&message(None)),
+            "[not a time] engineer: rebased onto main"
+        );
+        assert_eq!(
+            message_line(&message(Some(profile_recipient(
+                Some("01PROF"),
+                Some("Reviewer")
+            )))),
+            "[not a time] engineer → Reviewer: rebased onto main"
+        );
+    }
 
     fn write(path: &Path, mode: u32) {
         std::fs::write(path, "").unwrap();

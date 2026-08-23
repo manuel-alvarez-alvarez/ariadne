@@ -482,6 +482,39 @@ mod tests {
         assert!(msg.contains("completed"), "the refusal lists the real ones");
     }
 
+    /// `--to` is what addresses a message, and leaving it out is still the
+    /// unaddressed post it has always been.
+    #[test]
+    fn a_message_is_addressed_only_when_to_says_so() {
+        let goal_to = |args: &[&str]| {
+            let mut argv = vec!["ariadne", "goal", "msg", "01GOAL", "ping"];
+            argv.extend_from_slice(args);
+            let Command::Goal {
+                command: GoalCommand::Msg { to, .. },
+            } = parse(&argv).command
+            else {
+                panic!("goal msg");
+            };
+            to
+        };
+        assert_eq!(goal_to(&[]), None);
+        assert_eq!(goal_to(&["--to", "user"]).as_deref(), Some("user"));
+
+        let task_to = |args: &[&str]| {
+            let mut argv = vec!["ariadne", "task", "msg", "01TASK", "ping"];
+            argv.extend_from_slice(args);
+            let Command::Task {
+                command: TaskCommand::Msg { to, .. },
+            } = parse(&argv).command
+            else {
+                panic!("task msg");
+            };
+            to
+        };
+        assert_eq!(task_to(&[]), None);
+        assert_eq!(task_to(&["--to", "Engineer"]).as_deref(), Some("Engineer"));
+    }
+
     /// `session ls --role` names one of the three roles, and nothing else
     /// reaches the list to be filtered on.
     #[test]

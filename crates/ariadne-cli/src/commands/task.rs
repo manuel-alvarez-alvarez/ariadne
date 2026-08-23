@@ -14,7 +14,7 @@ use ariadne_api::tasks::{
 use ariadne_client::Client;
 use ariadne_core::TaskStatus;
 
-use super::{ProfileNames, confirm};
+use super::{ProfileNames, confirm, message_line};
 use crate::output::{
     Column, Format, UNCAPPED, local_time, note, print_json, print_kv, print_table,
 };
@@ -130,6 +130,11 @@ pub enum TaskCommand {
         id: String,
         /// Message body
         body: String,
+        /// Address the message: the task's engineer, one of its reviewers or
+        /// the goal's planner, by profile id or name, or "user" for the human.
+        /// An addressed recipient is woken to read it.
+        #[arg(long, value_name = "PROFILE|user", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_message_recipients))]
+        to: Option<String>,
     },
     /// Show a task's reviews
     Reviews {
@@ -342,12 +347,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                 Format::Json => print_json(&msgs)?,
                 Format::Table => {
                     for m in &msgs {
-                        println!(
-                            "[{}] {}: {}",
-                            local_time(&m.created_at),
-                            m.author_role.as_str(),
-                            m.body
-                        );
+                        println!("{}", message_line(m));
                     }
                     if msgs.is_empty() {
                         note("no messages yet");
@@ -355,11 +355,11 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                 }
             }
         }
-        TaskCommand::Msg { id, body } => {
+        TaskCommand::Msg { id, body, to } => {
             let m: MessageDto = client
                 .post_json(
                     &format!("/v1/tasks/{id}/messages"),
-                    &CreateMessageRequest { body, to: None },
+                    &CreateMessageRequest { body, to },
                 )
                 .await?;
             match format {

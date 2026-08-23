@@ -12,7 +12,7 @@ use ariadne_api::tasks::{TaskDto, TaskListQuery};
 use ariadne_client::Client;
 use ariadne_core::GoalStatus;
 
-use super::{ProfileNames, confirm};
+use super::{ProfileNames, confirm, message_line};
 use crate::output::{
     Column, Format, UNCAPPED, local_time, note, print_json, print_kv, print_table,
 };
@@ -119,6 +119,10 @@ pub enum GoalCommand {
         id: String,
         /// Message body
         body: String,
+        /// Address the message: the goal's planner, by profile id or name, or
+        /// "user" for the human. An addressed recipient is woken to read it.
+        #[arg(long, value_name = "PROFILE|user", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_message_recipients))]
+        to: Option<String>,
     },
     /// Attach to the goal's planner tmux session
     Attach {
@@ -287,12 +291,7 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                 Format::Json => print_json(&msgs)?,
                 Format::Table => {
                     for m in &msgs {
-                        println!(
-                            "[{}] {}: {}",
-                            local_time(&m.created_at),
-                            m.author_role.as_str(),
-                            m.body
-                        );
+                        println!("{}", message_line(m));
                     }
                     if msgs.is_empty() {
                         note("no messages yet");
@@ -300,11 +299,11 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                 }
             }
         }
-        GoalCommand::Msg { id, body } => {
+        GoalCommand::Msg { id, body, to } => {
             let m: MessageDto = client
                 .post_json(
                     &format!("/v1/goals/{id}/messages"),
-                    &CreateMessageRequest { body, to: None },
+                    &CreateMessageRequest { body, to },
                 )
                 .await?;
             match format {

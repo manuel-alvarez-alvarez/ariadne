@@ -15,10 +15,10 @@ use rmcp::service::{RequestContext, RoleServer};
 use rmcp::{ErrorData as McpError, ServiceExt, schemars, tool, tool_router};
 
 use ariadne_api::goals::FinalizePlanRequest;
-use ariadne_api::messages::CreateMessageRequest;
+use ariadne_api::messages::{CreateMessageRequest, MessageDto};
 use ariadne_api::reviews::CreateReviewRequest;
 use ariadne_api::tasks::{CreateTaskRequest, TransitionRequest, UpdateTaskRequest};
-use ariadne_client::Client;
+use ariadne_client::{Client, ClientError};
 use ariadne_core::{ReviewVerdict, TaskStatus};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -58,6 +58,11 @@ pub struct PostMessageReq {
     pub body: String,
     /// Task id; defaults to your own task (planner: goal-level thread).
     pub task_id: Option<String>,
+    /// Whom to address, waking them to read it: a profile name as your
+    /// briefing and `list_profiles` spell it, or "user" for the human. A task
+    /// thread addresses its engineer, its reviewers or the planner; a goal
+    /// thread only the planner. Leave it out to address the thread itself.
+    pub to: Option<String>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -129,8 +134,34 @@ pub struct VerdictReq {
 
 // ---------- helpers ----------
 
-fn to_mcp_err(e: impl std::fmt::Display) -> McpError {
-    McpError::internal_error(e.to_string(), None)
+/// The daemon's refusal, as the agent reads it.
+///
+/// A 4xx is the agent's own doing — an addressee nobody in the thread answers
+/// to, a transition its task cannot make — and the daemon already spelled out
+/// what would have worked, so it comes back as bad parameters carrying that
+/// sentence rather than as a server failure.
+fn to_mcp_err(e: ClientError) -> McpError {
+    match &e {
+        ClientError::Api { status, .. } if status.is_client_error() => {
+            McpError::invalid_params(e.to_string(), None)
+        }
+        _ => McpError::internal_error(e.to_string(), None),
+    }
+}
+
+/// One message as an agent reads it: the DTO's nested recipient flattened
+/// into the `to` that `post_message` takes, so what a listing shows is the
+/// word that addresses a reply back.
+fn addressed_message(message: &MessageDto) -> serde_json::Value {
+    serde_json::json!({
+        "id": message.id,
+        "task_id": message.task_id,
+        "author_role": message.author_role.as_str(),
+        "author_session_id": message.author_session_id,
+        "to": message.recipient.as_ref().map(super::recipient_label),
+        "body": message.body,
+        "created_at": message.created_at,
+    })
 }
 
 fn json_result(v: serde_json::Value) -> Result<CallToolResult, McpError> {
@@ -250,7 +281,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Read a task's conversation, for what the other agents and the user said. Without task_id, a planner reads the goal thread."
+        description = "Read a task's conversation, for what the other agents and the user said. Without task_id, a planner reads the goal thread. A message that addressed someone carries a `to`: the profile name it named, or \"user\"."
     )]
     async fn list_messages(
         &self,
@@ -260,11 +291,14 @@ impl AriadneMcp {
             Some(task) => format!("/v1/tasks/{task}/messages?limit=200"),
             None => format!("/v1/goals/{}/messages?limit=200", self.goal_id),
         };
-        json_result(self.get(&path).await?)
+        let messages: Vec<MessageDto> = self.get(&path).await?;
+        json_result(serde_json::Value::Array(
+            messages.iter().map(addressed_message).collect(),
+        ))
     }
 
     #[tool(
-        description = "Write into a task's conversation: the way to reach the other agents and the user. Without task_id, a planner posts to the goal thread."
+        description = "Write into a task's conversation: the way to reach the other agents and the user. Without task_id, a planner posts to the goal thread. Address one of them with `to` — a profile name (as your briefing and `list_profiles` spell it) or \"user\" — and that recipient is woken and notified; without `to` the message is left to the thread, read whenever someone next looks. A task thread addresses its engineer, its reviewers and the planner; a goal thread addresses the planner. Addressing anyone else is refused, naming who would have worked."
     )]
     async fn post_message(
         &self,
@@ -279,7 +313,7 @@ impl AriadneMcp {
                 &path,
                 &CreateMessageRequest {
                     body: req.body,
-                    to: None,
+                    to: req.to,
                 },
             )
             .await?,
@@ -557,4 +591,59 @@ pub async fn serve() -> Result<()> {
         .context("starting MCP stdio server")?;
     service.waiting().await.context("MCP server terminated")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use ariadne_api::messages::MessageRecipientDto;
+    use ariadne_core::{AuthorRole, RecipientKind};
+
+    fn message(recipient: Option<MessageRecipientDto>) -> MessageDto {
+        MessageDto {
+            id: "01MSG".into(),
+            goal_id: "01GOAL".into(),
+            task_id: Some("01TASK".into()),
+            author_role: AuthorRole::Reviewer,
+            author_session_id: Some("01SESSION".into()),
+            recipient,
+            body: "rebase first".into(),
+            created_at: "2026-01-01T00:00:00Z".into(),
+        }
+    }
+
+    /// An agent reads a thread to know who was asked; the addressee it reads
+    /// is spelled the way `post_message`'s `to` would address them back.
+    #[test]
+    fn a_listed_message_carries_the_word_that_addressed_it() {
+        let addressed = addressed_message(&message(Some(MessageRecipientDto {
+            kind: RecipientKind::Profile,
+            profile_id: Some("01PROF".into()),
+            profile_name: Some("Engineer".into()),
+        })));
+        assert_eq!(addressed["to"], serde_json::json!("Engineer"));
+        assert_eq!(addressed["body"], serde_json::json!("rebase first"));
+        assert_eq!(addressed["author_role"], serde_json::json!("reviewer"));
+
+        let to_the_thread = addressed_message(&message(None));
+        assert_eq!(to_the_thread["to"], serde_json::Value::Null);
+    }
+
+    /// The daemon refuses an addressee with the sentence that says which ones
+    /// would have worked; that sentence is the whole value of the failure, so
+    /// it has to reach the agent instead of a generic "call failed".
+    #[test]
+    fn a_refused_addressee_reaches_the_agent_in_the_daemons_words() {
+        let refusal =
+            "Planner takes no part in this thread; address one of: Engineer, Reviewer, user";
+        let err = to_mcp_err(ClientError::Api {
+            status: http::StatusCode::BAD_REQUEST,
+            code: "bad_request".into(),
+            message: refusal.into(),
+            details: None,
+        });
+        assert!(err.message.contains(refusal), "{}", err.message);
+        assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    }
 }
