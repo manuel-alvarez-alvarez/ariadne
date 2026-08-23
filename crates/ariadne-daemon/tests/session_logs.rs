@@ -24,6 +24,7 @@ use ariadne_daemon::gitwt::GitManager;
 use ariadne_daemon::http::{self, AppState};
 use ariadne_daemon::launcher::Launcher;
 use ariadne_daemon::logbuf::LogBuffer;
+use ariadne_daemon::logtail::MAX_CHUNK;
 use ariadne_daemon::tmux::{TmuxManager, TmuxSpawn};
 use ariadne_store::{AgentSession, NewGoal, NewProfile, NewRepository, NewSession, Store};
 
@@ -518,8 +519,10 @@ async fn a_terminal_status_ends_the_stream_even_while_output_keeps_coming() {
         .await
         .unwrap();
 
+    // Output is shipped as it is written now, so a pane writing every 50ms
+    // gets a delta every 50ms: the end is a liveness tick away, not a poll.
     let mut last = String::new();
-    for _ in 0..40 {
+    for _ in 0..60 {
         let (name, _) = parse(&next_sse_message(&mut body).await);
         last = name;
         if last == "end" {
@@ -699,7 +702,7 @@ async fn output_in_flight_when_the_pane_resizes_is_replaced_rather_than_reordere
     resized_pane.store(true, Ordering::SeqCst);
 
     let mut resized = false;
-    for _ in 0..20 {
+    for _ in 0..60 {
         let (name, _) = parse(&next_sse_message(&mut body).await);
         if name == "resize" {
             resized = true;
@@ -1225,6 +1228,178 @@ async fn a_half_written_character_still_reaches_the_client() {
     );
     let (name, _) = parse(&next_sse_message(&mut body).await);
     assert_eq!(name, "end");
+}
+
+/// A pane's writes, not a timer, are what move output along.
+///
+/// This is the whole of the change: an echoed keystroke used to wait out
+/// whatever was left of a 300 ms poll before it even left the daemon, which
+/// is what made typing in the web terminal feel like wading. The write is
+/// timed against the frame that carries it, several times over, because the
+/// one that lands during a liveness check is the interesting one — a typist
+/// hits that case too.
+#[tokio::test]
+async fn output_reaches_the_client_as_soon_as_it_is_written() {
+    let h = harness_with_stub_tmux().await;
+    let session = h.session("ariadne-prompt").await;
+    h.stub_pane("pane snapshot\n");
+    h.write_console_log(&session.id, "");
+
+    let mut body = h
+        .router
+        .clone()
+        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
+        .await
+        .unwrap()
+        .into_body();
+    let (name, _) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "resize");
+    let (name, _) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "snapshot");
+
+    let mut log = tokio::fs::OpenOptions::new()
+        .append(true)
+        .open(h.console_log(&session.id))
+        .await
+        .unwrap();
+    let mut latencies = Vec::new();
+    for i in 0..5 {
+        // Long enough apart that each one is a keystroke into a quiet pane
+        // rather than the tail of the burst before it.
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let written = Instant::now();
+        log.write_all(format!("echo {i}\n").as_bytes())
+            .await
+            .unwrap();
+        log.flush().await.unwrap();
+
+        let (name, payload) = parse(&next_sse_message(&mut body).await);
+        latencies.push(written.elapsed());
+        assert_eq!(name, "delta");
+        assert!(
+            payload["chunk"]
+                .as_str()
+                .is_some_and(|chunk| chunk.contains(&format!("echo {i}"))),
+            "the delta carries what was written: {payload}"
+        );
+    }
+    let worst = latencies.iter().max().copied().unwrap();
+    assert!(
+        worst < Duration::from_millis(50),
+        "output must reach the stream in well under the old poll: {latencies:?}"
+    );
+}
+
+/// One `delta` is written, buffered and parsed whole, so an agent that dumps
+/// a file must not turn into a single frame of whatever size it happened to
+/// write. The burst is split — and nothing about it is lost or reordered in
+/// the splitting, half-written characters included.
+#[tokio::test]
+async fn a_burst_bigger_than_one_frame_arrives_as_several_deltas() {
+    let h = harness_with_stub_tmux().await;
+    let session = h.session("ariadne-burst").await;
+    h.stub_pane("pane snapshot\n");
+    h.write_console_log(&session.id, "");
+
+    let mut body = h
+        .router
+        .clone()
+        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
+        .await
+        .unwrap()
+        .into_body();
+    let (name, _) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "resize");
+    let (name, _) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "snapshot");
+
+    // Two and a bit frames' worth in one write, with a multi-byte character
+    // every few bytes so that the cap is certain to fall inside one.
+    let burst = "ab│cd".repeat(MAX_CHUNK * 2 / 5);
+    assert!(burst.len() > MAX_CHUNK * 2);
+    let mut log = tokio::fs::OpenOptions::new()
+        .append(true)
+        .open(h.console_log(&session.id))
+        .await
+        .unwrap();
+    log.write_all(burst.as_bytes()).await.unwrap();
+    log.flush().await.unwrap();
+
+    let mut received = String::new();
+    let mut frames = 0;
+    while received.len() < burst.len() {
+        let (name, payload) = parse(&next_sse_message(&mut body).await);
+        assert_eq!(name, "delta");
+        let chunk = payload["chunk"].as_str().unwrap();
+        assert!(
+            chunk.len() <= MAX_CHUNK,
+            "no frame is bigger than the cap: {}",
+            chunk.len()
+        );
+        received.push_str(chunk);
+        frames += 1;
+    }
+    assert!(frames >= 3, "the burst was split, not sent whole: {frames}");
+    assert_eq!(
+        received, burst,
+        "and the frames concatenate back to what was appended"
+    );
+}
+
+/// The cap has to hold for output that is not text at all. A pane can emit
+/// bytes that are not valid UTF-8 — a binary file catted into it, a corrupted
+/// escape sequence — and each one decodes to a three-byte replacement
+/// character, so a cap counted in bytes *read* would let a frame out at three
+/// times the size it promises.
+#[tokio::test]
+async fn a_burst_of_invalid_bytes_is_capped_by_what_it_decodes_to() {
+    let h = harness_with_stub_tmux().await;
+    let session = h.session("ariadne-binary").await;
+    h.stub_pane("pane snapshot\n");
+    h.write_console_log(&session.id, "");
+
+    let mut body = h
+        .router
+        .clone()
+        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
+        .await
+        .unwrap()
+        .into_body();
+    let (name, _) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "resize");
+    let (name, _) = parse(&next_sse_message(&mut body).await);
+    assert_eq!(name, "snapshot");
+
+    // A cap's worth of bytes, none of them valid on its own.
+    let burst = vec![0xffu8; MAX_CHUNK];
+    let expected = String::from_utf8_lossy(&burst).into_owned();
+    let mut log = tokio::fs::OpenOptions::new()
+        .append(true)
+        .open(h.console_log(&session.id))
+        .await
+        .unwrap();
+    log.write_all(&burst).await.unwrap();
+    log.flush().await.unwrap();
+
+    let mut received = String::new();
+    let mut frames = 0;
+    while received.len() < expected.len() {
+        let (name, payload) = parse(&next_sse_message(&mut body).await);
+        assert_eq!(name, "delta");
+        let chunk = payload["chunk"].as_str().unwrap();
+        assert!(
+            chunk.len() <= MAX_CHUNK,
+            "no frame is bigger than the cap: {}",
+            chunk.len()
+        );
+        received.push_str(chunk);
+        frames += 1;
+    }
+    assert!(frames >= 3, "the decoded burst was split: {frames}");
+    assert_eq!(
+        received, expected,
+        "and the frames concatenate back to what the log decodes to"
+    );
 }
 
 /// The live path end to end: pane output shows up as deltas within a second

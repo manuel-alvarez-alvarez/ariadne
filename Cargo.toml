@@ -60,6 +60,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # can answer, and `ariadne doctor` must ask it without writing anything.
 rustix = { version = "1", features = ["fs", "process"] }
 ulid = { version = "3", features = ["serde"] }
+# Filesystem notifications: the console-log streamer is woken by the writes
+# themselves instead of polling for them (see `ariadne-daemon/src/logwatch.rs`).
+# kqueue rather than the default FSEvents on macOS: FSEvents does not report a
+# write to a file that is still open, and tmux `pipe-pane` holds the console
+# log open for the whole of a session.
+notify = { version = "8", default-features = false, features = ["macos_kqueue"] }
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "6"

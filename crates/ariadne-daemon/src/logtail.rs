@@ -12,6 +12,26 @@ use std::path::PathBuf;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
 use tracing::warn;
 
+/// The most one [`LogTail::read_new`] hands back.
+///
+/// An agent that dumps a large file, or a pane redrawing itself over and over
+/// while nobody reads it, can leave megabytes appended between two reads —
+/// and an SSE frame is written, buffered and parsed whole. Capping what a
+/// read yields bounds what one stream holds at a time and lets a client
+/// render a burst as it arrives instead of at the end of it. Nothing is
+/// dropped: the remainder is what the next read starts with, which
+/// [`LogTail::has_backlog`] reports so a caller can come straight back for
+/// it.
+///
+/// The cap is on the *decoded* output, not on the bytes read to produce it,
+/// because those are not the same length: lossy decoding turns every byte
+/// that is not valid UTF-8 into a three-byte replacement character, so a
+/// capped read of a binary file would otherwise yield three times the cap.
+/// It bounds one event's terminal output rather than the wire line carrying
+/// it — JSON escapes control bytes, which the terminal stream is full of, so
+/// the encoded `data:` line is a bounded multiple of this and not this.
+pub const MAX_CHUNK: usize = 256 * 1024;
+
 /// A cursor into one console log.
 pub struct LogTail {
     path: PathBuf,
@@ -20,6 +40,11 @@ pub struct LogTail {
     /// middle of one, and half a character is worth carrying rather than
     /// decoding into a replacement glyph.
     pending: Vec<u8>,
+    /// Decoded output the frame cap held back, to be handed out by the reads
+    /// that follow before anything new is read from the file.
+    carry: String,
+    /// Whether the file already holds bytes past where the last read stopped.
+    more: bool,
 }
 
 impl LogTail {
@@ -29,6 +54,8 @@ impl LogTail {
             path: path.into(),
             offset: 0,
             pending: Vec::new(),
+            carry: String::new(),
+            more: false,
         }
     }
 
@@ -53,24 +80,73 @@ impl LogTail {
             .unwrap_or(0)
     }
 
-    /// Drop everything before `offset`, half-read character included.
+    /// Drop everything before `offset`, half-read character and output the
+    /// frame cap held back included.
     pub fn skip_to(&mut self, offset: u64) {
         self.offset = offset;
         self.pending.clear();
+        self.carry.clear();
+        self.more = false;
     }
 
     /// Position back at the start of the file.
     pub fn rewind(&mut self) {
         self.offset = 0;
         self.pending.clear();
+        self.carry.clear();
+        self.more = false;
     }
 
-    /// Everything appended since the last read, decoded lossily. Empty when
-    /// the file is absent, unchanged, or unreadable.
+    /// Whether there is output to be had without waiting: held back by the
+    /// frame cap, or already in the file past where the last read stopped.
+    ///
+    /// Only what has been written already is counted, so a `false` says
+    /// nothing about what is appended next — it means "no reason to read
+    /// again this instant", not "the pane is quiet".
+    pub fn has_backlog(&self) -> bool {
+        self.more || !self.carry.is_empty()
+    }
+
+    /// What was appended since the last read, decoded lossily, up to
+    /// [`MAX_CHUNK`] of it. Empty when the file is absent, unchanged, or
+    /// unreadable; [`Self::has_backlog`] says whether the cap is what ended
+    /// it.
     pub async fn read_new(&mut self) -> String {
+        if self.carry.is_empty() {
+            self.fill().await;
+        }
+        self.take_frame()
+    }
+
+    /// Everything that is left, for when nothing more will ever be appended:
+    /// what the cap is holding back, the last unread bytes, and any
+    /// half-written character carried from an earlier read — that last one
+    /// decoded lossily this time. Nothing is held back.
+    pub async fn drain(&mut self) -> String {
+        let mut out = self.read_new().await;
+        // "Nothing is held back" outranks the frame cap here: this is the one
+        // read whose caller has no next one to come back on.
+        while self.has_backlog() {
+            out.push_str(&self.read_new().await);
+        }
+        if !self.pending.is_empty() {
+            let leftover = std::mem::take(&mut self.pending);
+            out.push_str(&String::from_utf8_lossy(&leftover));
+        }
+        out
+    }
+
+    /// Read the next stretch of the file into [`Self::carry`], decoded.
+    ///
+    /// Bounded twice over: at most a cap's worth of *bytes* is read, so that
+    /// a quiet stream never pays for a burst it did not ask for, and what
+    /// that decodes to is then handed out a frame at a time by
+    /// [`Self::take_frame`].
+    async fn fill(&mut self) {
+        self.more = false;
         let Ok(mut file) = tokio::fs::File::open(&self.path).await else {
             // Not there (yet): pipe-pane creates it as the session starts.
-            return String::new();
+            return;
         };
         let len = file.metadata().await.map(|m| m.len()).unwrap_or(0);
         if len < self.offset {
@@ -78,33 +154,44 @@ impl LogTail {
             self.rewind();
         }
         if len == self.offset {
-            return String::new();
+            return;
         }
         if let Err(e) = file.seek(SeekFrom::Start(self.offset)).await {
             warn!(path = %self.path.display(), error = %e, "seeking console log failed");
-            return String::new();
+            return;
         }
-        let mut buf = Vec::with_capacity((len - self.offset) as usize);
-        match file.read_to_end(&mut buf).await {
-            Ok(n) => self.offset += n as u64,
+        // A carried half-character is decoded with what follows it, so it
+        // counts against the same bound.
+        let want = (len - self.offset).min((MAX_CHUNK - self.pending.len()) as u64);
+        let mut buf = Vec::with_capacity(want as usize);
+        let read = match file.take(want).read_to_end(&mut buf).await {
+            Ok(n) => {
+                self.offset += n as u64;
+                n
+            }
             Err(e) => {
                 warn!(path = %self.path.display(), error = %e, "reading console log failed");
-                return String::new();
+                return;
             }
-        }
-        self.decode(buf)
+        };
+        // A read that came back with nothing — the file shrank under it, say
+        // — reports no backlog whatever the length said, so that a caller
+        // reading until there is none cannot be made to spin.
+        self.more = read > 0 && self.offset < len;
+        self.carry = self.decode(buf);
     }
 
-    /// Everything that is left, for when nothing more will ever be appended:
-    /// the last unread bytes plus any half-written character carried from an
-    /// earlier read, this time decoded lossily. Nothing is held back.
-    pub async fn drain(&mut self) -> String {
-        let mut out = self.read_new().await;
-        if !self.pending.is_empty() {
-            let leftover = std::mem::take(&mut self.pending);
-            out.push_str(&String::from_utf8_lossy(&leftover));
+    /// A frame's worth of what has been decoded, cut on a character boundary.
+    fn take_frame(&mut self) -> String {
+        if self.carry.len() <= MAX_CHUNK {
+            return std::mem::take(&mut self.carry);
         }
-        out
+        let mut end = MAX_CHUNK;
+        while !self.carry.is_char_boundary(end) {
+            end -= 1;
+        }
+        let rest = self.carry.split_off(end);
+        std::mem::replace(&mut self.carry, rest)
     }
 
     fn decode(&mut self, bytes: Vec<u8>) -> String {
@@ -261,6 +348,121 @@ mod tests {
 
         let mut tail = LogTail::new(&log);
         assert_eq!(tail.drain().await, "bye\n");
+    }
+
+    /// A burst bigger than a frame comes back in frames, in order, whole.
+    #[tokio::test]
+    async fn a_large_append_is_read_a_frame_at_a_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("console.log");
+        let burst: Vec<u8> = (0..MAX_CHUNK * 2 + 1_234)
+            .map(|i| b'a' + (i % 26) as u8)
+            .collect();
+        append(&log, &burst).await;
+
+        let mut tail = LogTail::new(&log);
+        let mut read = String::new();
+        let mut frames = 0;
+        loop {
+            let frame = tail.read_new().await;
+            if frame.is_empty() {
+                break;
+            }
+            assert!(
+                frame.len() <= MAX_CHUNK,
+                "no frame is bigger than the cap: {}",
+                frame.len()
+            );
+            frames += 1;
+            read.push_str(&frame);
+            if !tail.has_backlog() {
+                break;
+            }
+        }
+        assert_eq!(frames, 3);
+        assert_eq!(read.as_bytes(), burst.as_slice(), "in order and whole");
+        assert!(!tail.has_backlog(), "and nothing left behind");
+    }
+
+    /// The cap must not fall inside a character: the frame stops short and
+    /// the remainder joins the next one, exactly as a torn read does.
+    #[tokio::test]
+    async fn a_character_straddling_the_cap_survives() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("console.log");
+        // The frame's last byte falls inside a three-byte character.
+        let mut burst = vec![b'x'; MAX_CHUNK - 1];
+        burst.extend_from_slice("\u{2502}tail".as_bytes());
+        append(&log, &burst).await;
+
+        let mut tail = LogTail::new(&log);
+        let first = tail.read_new().await;
+        assert_eq!(
+            first.len(),
+            MAX_CHUNK - 1,
+            "the frame stops before the half-read character"
+        );
+        assert!(tail.has_backlog());
+        let second = tail.read_new().await;
+        assert_eq!(second, "\u{2502}tail");
+    }
+
+    /// Lossy decoding is not length-preserving: every byte that is not valid
+    /// UTF-8 becomes a three-byte replacement character, so a cap on the
+    /// bytes *read* would let a frame out at three times the size. The cap is
+    /// on what comes back.
+    #[tokio::test]
+    async fn invalid_bytes_cannot_inflate_a_frame_past_the_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("console.log");
+        // A cap's worth of bytes that are all invalid on their own: three
+        // caps' worth of replacement characters.
+        let burst = vec![0xffu8; MAX_CHUNK];
+        append(&log, &burst).await;
+
+        let mut tail = LogTail::new(&log);
+        let mut read = String::new();
+        let mut frames = 0;
+        loop {
+            let frame = tail.read_new().await;
+            if frame.is_empty() {
+                break;
+            }
+            assert!(
+                frame.len() <= MAX_CHUNK,
+                "no frame is bigger than the cap: {}",
+                frame.len()
+            );
+            frames += 1;
+            read.push_str(&frame);
+            if !tail.has_backlog() {
+                break;
+            }
+        }
+        assert!(
+            frames >= 3,
+            "one byte read decodes to three, so a capped read is three \
+             frames and a remainder: {frames}"
+        );
+        assert_eq!(
+            read,
+            String::from_utf8_lossy(&burst),
+            "and nothing lost or reordered in the splitting"
+        );
+    }
+
+    /// Nothing more is coming, so the cap gives way: a drain is the last read
+    /// its caller will make.
+    #[tokio::test]
+    async fn drain_flushes_more_than_one_frame() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("console.log");
+        let burst = vec![b'z'; MAX_CHUNK + 7];
+        append(&log, &burst).await;
+
+        let mut tail = LogTail::new(&log);
+        assert_eq!(tail.drain().await.len(), MAX_CHUNK + 7);
+        assert_eq!(tail.drain().await, "");
     }
 
     #[tokio::test]

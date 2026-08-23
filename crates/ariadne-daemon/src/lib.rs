@@ -11,6 +11,7 @@ pub mod http;
 pub mod launcher;
 pub mod logbuf;
 pub mod logtail;
+pub mod logwatch;
 pub mod opencode_plugin;
 pub mod scheduler;
 pub mod sleep;
