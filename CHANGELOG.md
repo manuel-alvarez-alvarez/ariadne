@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.0](https://github.com/manuel-alvarez-alvarez/ariadne/compare/v0.2.0...v0.3.0) (2026-08-23)
+
+
+### Features
+
+* **store:** spell out the squash commit's conventions in the merge prompt ([9a4fcf9](https://github.com/manuel-alvarez-alvarez/ariadne/commit/9a4fcf9065df45a44e824b1a32aa6f9d2619a813))
+
+
+### Bug Fixes
+
+* **daemon:** keep the machine awake through a lid close ([7a70a91](https://github.com/manuel-alvarez-alvarez/ariadne/commit/7a70a91f075dee644d429bb274a6488044fe534f))
+* **daemon:** stop agent sessions outliving their finished goal ([af3adc1](https://github.com/manuel-alvarez-alvarez/ariadne/commit/af3adc1daf67327a87bd141833169aba4fd2b0c9))
+* dispatch the release assets build from release-please ([63d80fc](https://github.com/manuel-alvarez-alvarez/ariadne/commit/63d80fc17bbe8bb00c1d18b27c1f0b1dc2869a50))
+
 ## [0.2.0](https://github.com/manuel-alvarez-alvarez/ariadne/compare/v0.1.0...v0.2.0) (2026-08-22)
 
 
