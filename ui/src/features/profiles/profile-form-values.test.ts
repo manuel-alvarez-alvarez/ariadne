@@ -29,7 +29,6 @@ import {
 const DEFAULTS: PromptFormValue[] = [
   { kind: "engineer_briefing", content: "Start the task." },
   { kind: "changes_requested", content: "Apply the review." },
-  { kind: "merge_instructions", content: "Merge it." },
 ]
 
 const PROFILE: ProfileDto = {

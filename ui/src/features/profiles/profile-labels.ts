@@ -59,9 +59,10 @@ export const PROMPT_KIND_LABELS: Record<PromptKind, string> = {
   planner_briefing: "Planner briefing",
   engineer_briefing: "Engineer briefing",
   changes_requested: "Changes requested",
-  merge_instructions: "Merge instructions",
   reviewer_briefing: "Reviewer briefing",
   reviewer_resume: "Reviewer resume",
+  integration_instructions: "Integration instructions",
+  integration_resume: "Integration resume",
 }
 
 /**
@@ -74,9 +75,10 @@ export const PROMPT_KINDS = [
   "planner_briefing",
   "engineer_briefing",
   "changes_requested",
-  "merge_instructions",
   "reviewer_briefing",
   "reviewer_resume",
+  "integration_instructions",
+  "integration_resume",
 ] as const satisfies readonly PromptKind[]
 
 /** When each briefing is sent, one line under the editor that holds it. */
@@ -84,9 +86,10 @@ export const PROMPT_KIND_HINTS: Record<PromptKind, string> = {
   planner_briefing: "Starts the planner on a goal.",
   engineer_briefing: "Starts the engineer on a task.",
   changes_requested: "Resumes the engineer with a reviewer's requested changes.",
-  merge_instructions: "Resumes the engineer once the task has enough approvals.",
   reviewer_briefing: "Starts a reviewer on a task under review.",
   reviewer_resume: "Resumes a reviewer after the engineer pushed changes.",
+  integration_instructions: "Starts the integrator on a task its reviewers approved.",
+  integration_resume: "Resumes the integrator on a task it sent back and got again.",
 }
 
 export function promptKindLabel(kind: PromptKind): string {

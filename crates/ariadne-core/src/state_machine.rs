@@ -196,7 +196,7 @@ impl std::str::FromStr for Actor {
 /// | under_review        | approved           | daemon               |
 /// | changes_requested   | in_progress        | daemon               |
 /// | approved            | integrating        | daemon               |
-/// | integrating         | merged             | engineer, integrator |
+/// | integrating         | merged             | integrator           |
 /// | integrating         | changes_requested  | integrator, daemon   |
 /// | any non-terminal    | cancelled          | user                 |
 /// | any non-terminal    | failed             | daemon               |
@@ -238,12 +238,12 @@ pub fn check_transition(
         (S::UnderReview, S::Approved) => &[A::Daemon],
         (S::ChangesRequested, S::InProgress) => &[A::Daemon],
         (S::Approved, S::Integrating) => &[A::Daemon],
-        // The engineer still merges its own task; the integrator that will
-        // take that over is already allowed to, and a later task drops the
-        // engineer from this edge.
-        (S::Integrating, S::Merged) => &[A::Engineer, A::Integrator],
-        // Sending an integrating task back to the engineer: a conflict, or a
-        // comment on the pull request. Unused until the integrator lands.
+        // Landing the change is the integrator's alone: the engineer's task
+        // ends at the approval that hands it over.
+        (S::Integrating, S::Merged) => &[A::Integrator],
+        // Sending an integrating task back to the engineer: a conflict the
+        // integrator will not resolve for it, or a comment on the pull
+        // request.
         (S::Integrating, S::ChangesRequested) => &[A::Integrator, A::Daemon],
         (S::Failed, S::Ready) => &[A::User],
         _ => return Err(TransitionError::IllegalTransition { from, to }),
@@ -282,7 +282,6 @@ mod tests {
         (S::UnderReview, S::Approved, A::Daemon),
         (S::ChangesRequested, S::InProgress, A::Daemon),
         (S::Approved, S::Integrating, A::Daemon),
-        (S::Integrating, S::Merged, A::Engineer),
         (S::Integrating, S::Merged, A::Integrator),
         (S::Integrating, S::ChangesRequested, A::Integrator),
         (S::Integrating, S::ChangesRequested, A::Daemon),

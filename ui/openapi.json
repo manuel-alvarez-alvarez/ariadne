@@ -1977,6 +1977,55 @@
         }
       }
     },
+    "/v1/tasks/{id}/return-to-engineer": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Hand an integrating task back to its engineer (integrator).",
+        "description": "The feedback is recorded as a change-request verdict on the round that was\napproved, so it reaches the engineer exactly the way a reviewer's does — in\nthe resume briefing, and in `get_reviews` beside the approvals it follows.",
+        "operationId": "return_to_engineer",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReturnToEngineerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "not an integrator session"
+          },
+          "409": {
+            "description": "the task is not being integrated"
+          }
+        }
+      }
+    },
     "/v1/tasks/{id}/reviews": {
       "get": {
         "tags": [
@@ -3268,9 +3317,10 @@
           "planner_briefing",
           "engineer_briefing",
           "changes_requested",
-          "merge_instructions",
           "reviewer_briefing",
-          "reviewer_resume"
+          "reviewer_resume",
+          "integration_instructions",
+          "integration_resume"
         ]
       },
       "RecipientKind": {
@@ -3327,6 +3377,26 @@
             "format": "int64",
             "description": "Events this connection lost. Informational: they cannot be recovered.",
             "minimum": 0
+          }
+        }
+      },
+      "ReturnToEngineerRequest": {
+        "type": "object",
+        "description": "The integrator handing an approved task back to its engineer: a rebase it\nwill not resolve, or a change the landing showed to be wrong. Recorded as a\nround of requested changes, which is how the engineer already reads\nfeedback.",
+        "required": [
+          "summary"
+        ],
+        "properties": {
+          "changes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What has to change, concretely: one entry per file or decision."
+          },
+          "summary": {
+            "type": "string",
+            "description": "Why the task is coming back, in one or two sentences."
           }
         }
       },

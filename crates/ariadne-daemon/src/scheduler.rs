@@ -541,9 +541,14 @@ impl Scheduler {
             return Ok(());
         }
 
-        // Reviewer sessions only belong to under_review.
+        // Reviewer sessions only belong to under_review, integrator ones to
+        // integrating: an agent whose part of the lifecycle has passed is not
+        // left running on the task.
         if task.status() != TaskStatus::UnderReview {
             self.kill_role_sessions(&task, Role::Reviewer).await;
+        }
+        if task.status() != TaskStatus::Integrating {
+            self.kill_role_sessions(&task, Role::Integrator).await;
         }
 
         match task.status() {
@@ -572,7 +577,7 @@ impl Scheduler {
                     .await?;
             }
             TaskStatus::InProgress => {
-                self.check_stall(&task).await?;
+                self.check_stall(&task, Role::Engineer).await?;
             }
             TaskStatus::UnderReview => {
                 let reviewers = self.store.list_task_reviewers(&task.id).await?;
@@ -696,16 +701,24 @@ impl Scheduler {
                     .store
                     .list_reviews(&task.id, Some(task.review_round))
                     .await?;
-                let feedback: Vec<(String, String)> = reviews
+                // Who asked, as the engineer reads it: the profile's own name
+                // and role, since a round can also be closed by the integrator
+                // sending the task back. The id is the fallback for a profile
+                // that has since been deleted.
+                let mut feedback: Vec<(String, String)> = Vec::new();
+                for review in reviews
                     .iter()
                     .filter(|r| r.verdict() == ReviewVerdict::RequestChanges)
-                    .map(|r| {
-                        (
-                            format!("reviewer {}", r.reviewer_profile_id),
-                            r.body.clone().unwrap_or_else(|| "(no details)".into()),
-                        )
-                    })
-                    .collect();
+                {
+                    let who = match self.store.get_profile(&review.reviewer_profile_id).await {
+                        Ok(profile) => format!("{} ({})", profile.name, profile.role),
+                        Err(_) => format!("reviewer {}", review.reviewer_profile_id),
+                    };
+                    feedback.push((
+                        who,
+                        review.body.clone().unwrap_or_else(|| "(no details)".into()),
+                    ));
+                }
                 info!(task = %task.id, "resuming engineer with review feedback");
                 let template = prompts::template_for(
                     &self.store,
@@ -725,24 +738,18 @@ impl Scheduler {
                     .await?;
             }
             TaskStatus::Approved => {
-                let repo = self.store.get_repository(&task.repo_id).await?;
-                info!(task = %task.id, "resuming engineer with merge instruction");
-                let template = prompts::template_for(
-                    &self.store,
-                    &task.engineer_profile_id,
-                    PromptKind::MergeInstructions,
-                )
-                .await;
-                self.launcher
-                    .resume_engineer(&task.id, &prompts::merge_briefing(&template, &task, &repo))
-                    .await?;
-                self.spawn_failures.remove(&task.id);
+                info!(task = %task.id, "approved: handing the task to its integrator");
                 self.store
                     .transition_task(&task.id, TaskStatus::Integrating, Actor::Daemon, None, None)
                     .await?;
+                // The integrator is started by the arm below, on the status it
+                // belongs to: one place decides what an integrating task wants,
+                // whether it got here from an approval or from a daemon that
+                // restarted halfway through one.
+                return Box::pin(self.reconcile_task(task_id)).await;
             }
             TaskStatus::Integrating => {
-                self.check_stall(&task).await?;
+                self.check_stall(&task, Role::Integrator).await?;
             }
             TaskStatus::Merged => {
                 // Post-merge cleanup (idempotent), then wake dependents.
@@ -811,10 +818,15 @@ impl Scheduler {
         }
     }
 
-    /// An engineer idle too long on an active task gets exactly one tmux
-    /// nudge per (status, round); if it stays idle, the task is flagged
-    /// stalled for the user (never an endless loop) and the session says why.
-    async fn check_stall(&mut self, task: &Task) -> anyhow::Result<()> {
+    /// The agent a task is waiting on, watched.
+    ///
+    /// `role` is whose turn it is: the engineer while the task is being
+    /// written, the integrator once it has been approved and is being landed.
+    /// A task with no live session of that role gets one started; one that is
+    /// idle too long gets exactly one tmux nudge per (status, round), and if it
+    /// stays idle the task is flagged stalled for the user (never an endless
+    /// loop) and the session says why.
+    async fn check_stall(&mut self, task: &Task, role: Role) -> anyhow::Result<()> {
         let sessions = self
             .store
             .list_sessions(SessionFilter {
@@ -823,45 +835,69 @@ impl Scheduler {
                 ..Default::default()
             })
             .await?;
-        let Some(engineer) = sessions.iter().find(|s| s.role() == Role::Engineer) else {
-            // No live engineer at all: respawn/resume path.
-            info!(task = %task.id, "no live engineer session, resuming");
-            if let Err(e) = self
-                .launcher
-                .resume_engineer(&task.id, "Your previous session ended: continue this task on the same branch in your worktree, and call `request_review` when the work is complete and verified.")
-                .await
-            {
-                // The task still wants an engineer and could not get one:
-                // the ended session is the thing the user has to look at.
-                self.flag_last_engineer_disconnected(task).await;
+        let Some(agent) = sessions.iter().find(|s| s.role() == role) else {
+            info!(task = %task.id, role = role.as_str(), "no live session for the role the task is waiting on, starting one");
+            if let Err(e) = self.start_role(task, role).await {
+                // The task still wants this agent and could not get one: the
+                // ended session is the thing the user has to look at.
+                self.flag_last_disconnected(task, role).await;
                 return Err(e);
             }
+            self.spawn_failures.remove(&task.id);
             return Ok(());
         };
-        let nudge = match task.status() {
-            TaskStatus::Integrating => {
-                "Your task is approved: merge it as the merge instructions say, then call `mark_merged` with the merge commit sha."
+        let nudge = match role {
+            Role::Integrator => {
+                "Land this task as the integration instructions say: rebase, squash, fast-forward the base and call `mark_merged` with the resulting sha — or, if the rebase conflicts, abort it and call `return_to_engineer` with the conflicting files."
             }
             _ => {
                 "Keep working on this task, and call `request_review` with a summary once the work is complete and verified."
             }
         };
         let stalled = self
-            .check_session_stall(engineer, (task.status.clone(), task.review_round), nudge)
+            .check_session_stall(agent, (task.status.clone(), task.review_round), nudge)
             .await?;
-        // The engineer is the one role whose stall has somewhere else to
-        // show: the task carries a flag of its own, next to the session's.
+        // Whoever owns the task right now is the one role whose stall has
+        // somewhere else to show: the task carries a flag of its own, next to
+        // the session's.
         if stalled && !task.is_stalled() {
-            warn!(task = %task.id, "task stalled, flagging for user attention");
+            warn!(task = %task.id, role = role.as_str(), "task stalled, flagging for user attention");
             self.store.set_task_stalled(&task.id, true).await?;
         }
         Ok(())
     }
 
-    /// Raise `disconnected` on the engineer session that was last on this
+    /// Put the agent the task is waiting on back on its feet: the same session
+    /// resumed where there is one to resume, a fresh spawn otherwise (both
+    /// launcher calls fall back to the spawn themselves).
+    async fn start_role(&mut self, task: &Task, role: Role) -> anyhow::Result<()> {
+        match role {
+            Role::Integrator => {
+                let repo = self.store.get_repository(&task.repo_id).await?;
+                let profile = self.launcher.integrator_profile(task).await?;
+                let template =
+                    prompts::template_for(&self.store, &profile.id, PromptKind::IntegrationResume)
+                        .await;
+                self.launcher
+                    .resume_integrator(
+                        &task.id,
+                        &prompts::integration_resume_briefing(&template, task, &repo),
+                    )
+                    .await?;
+            }
+            _ => {
+                self.launcher
+                    .resume_engineer(&task.id, "Your previous session ended: continue this task on the same branch in your worktree, and call `request_review` when the work is complete and verified.")
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Raise `disconnected` on the session of `role` that was last on this
     /// task, whatever state it ended in. Best effort: this runs while another
     /// failure is being reported, and adds nothing to it if it fails too.
-    async fn flag_last_engineer_disconnected(&self, task: &Task) {
+    async fn flag_last_disconnected(&self, task: &Task, role: Role) {
         let Ok(sessions) = self
             .store
             .list_sessions(SessionFilter {
@@ -872,8 +908,8 @@ impl Scheduler {
         else {
             return;
         };
-        if let Some(previous) = sessions.iter().rev().find(|s| s.role() == Role::Engineer) {
-            warn!(task = %task.id, session = %previous.id, "resuming the engineer failed, flagging it disconnected");
+        if let Some(previous) = sessions.iter().rev().find(|s| s.role() == role) {
+            warn!(task = %task.id, session = %previous.id, role = role.as_str(), "starting the agent failed, flagging its last session disconnected");
             let _ = self
                 .store
                 .set_session_attention(&previous.id, AttentionReason::Disconnected)

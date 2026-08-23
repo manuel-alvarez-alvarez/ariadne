@@ -55,17 +55,31 @@ const REVIEWER: ProfileDto = {
   role: "reviewer",
 }
 
+const INTEGRATOR: ProfileDto = {
+  ...ENGINEER,
+  id: "01JPROF000000000000000INT",
+  name: "Lander",
+  role: "integrator",
+}
+
 /** What the daemon holds, per role — the kinds it answers `GET .../prompts` with. */
 const STORED: Record<string, ProfilePromptDto[]> = {
   engineer: [
     { kind: "engineer_briefing", content: "Stored engineer briefing.", updated_at: STAMP },
     { kind: "changes_requested", content: "Stored changes requested.", updated_at: STAMP },
-    { kind: "merge_instructions", content: "Stored merge instructions.", updated_at: STAMP },
   ],
   planner: [{ kind: "planner_briefing", content: "Stored planner briefing.", updated_at: STAMP }],
   reviewer: [
     { kind: "reviewer_briefing", content: "Stored reviewer briefing.", updated_at: STAMP },
     { kind: "reviewer_resume", content: "Stored reviewer resume.", updated_at: STAMP },
+  ],
+  integrator: [
+    {
+      kind: "integration_instructions",
+      content: "Stored integration instructions.",
+      updated_at: STAMP,
+    },
+    { kind: "integration_resume", content: "Stored integration resume.", updated_at: STAMP },
   ],
 }
 
@@ -123,9 +137,10 @@ describe("ProfilePrompts", () => {
     expect((await shown("System prompt")).textContent).toBe("Stored system prompt.")
     expect((await shown("Engineer briefing")).textContent).toBe("Stored engineer briefing.")
     expect((await shown("Changes requested")).textContent).toBe("Stored changes requested.")
-    expect((await shown("Merge instructions")).textContent).toBe("Stored merge instructions.")
-    // A kind of another role is a kind the daemon never sent.
+    // A kind of another role is a kind the daemon never sent — the merge is
+    // the integrator's business now, not the engineer's.
     expect(screen.queryByLabelText("Reviewer briefing")).toBeNull()
+    expect(screen.queryByLabelText("Integration instructions")).toBeNull()
   })
 
   it("shows a planner its one briefing and none of the engineer's", async () => {
@@ -134,7 +149,7 @@ describe("ProfilePrompts", () => {
 
     expect((await shown("Planner briefing")).textContent).toBe("Stored planner briefing.")
     expect(screen.queryByLabelText("Engineer briefing")).toBeNull()
-    expect(screen.queryByLabelText("Merge instructions")).toBeNull()
+    expect(screen.queryByLabelText("Changes requested")).toBeNull()
   })
 
   it("shows a reviewer both of its briefings and none of the other roles'", async () => {
@@ -147,7 +162,18 @@ describe("ProfilePrompts", () => {
     expect(screen.queryByLabelText("Planner briefing")).toBeNull()
     expect(screen.queryByLabelText("Engineer briefing")).toBeNull()
     expect(screen.queryByLabelText("Changes requested")).toBeNull()
-    expect(screen.queryByLabelText("Merge instructions")).toBeNull()
+    expect(screen.queryByLabelText("Integration instructions")).toBeNull()
+  })
+
+  it("shows an integrator the briefings it lands a task with", async () => {
+    stubDaemon(INTEGRATOR)
+    renderPrompts(INTEGRATOR)
+
+    expect((await shown("Integration instructions")).textContent).toBe(
+      "Stored integration instructions.",
+    )
+    expect((await shown("Integration resume")).textContent).toBe("Stored integration resume.")
+    expect(screen.queryByLabelText("Engineer briefing")).toBeNull()
   })
 
   it("names each prompt and says when the daemon sends it", async () => {
@@ -169,7 +195,7 @@ describe("ProfilePrompts", () => {
 
   it("writes nothing to the daemon: reading the prompts is all it does", async () => {
     renderPrompts(ENGINEER)
-    await shown("Merge instructions")
+    await shown("Changes requested")
 
     expect(requests.every((one) => one.method === "GET")).toBe(true)
   })

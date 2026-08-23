@@ -17,7 +17,9 @@ use rmcp::{ErrorData as McpError, ServiceExt, schemars, tool, tool_router};
 use ariadne_api::goals::FinalizePlanRequest;
 use ariadne_api::messages::{CreateMessageRequest, MessageDto};
 use ariadne_api::reviews::CreateReviewRequest;
-use ariadne_api::tasks::{CreateTaskRequest, TransitionRequest, UpdateTaskRequest};
+use ariadne_api::tasks::{
+    CreateTaskRequest, ReturnToEngineerRequest, TransitionRequest, UpdateTaskRequest,
+};
 use ariadne_client::{Client, ClientError};
 use ariadne_core::{ReviewVerdict, TaskStatus};
 
@@ -26,6 +28,7 @@ enum McpRole {
     Planner,
     Engineer,
     Reviewer,
+    Integrator,
 }
 
 #[derive(Clone)]
@@ -127,6 +130,15 @@ pub struct MarkMergedReq {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
+pub struct ReturnToEngineerReq {
+    /// Why the task is coming back, in one or two sentences.
+    pub summary: String,
+    /// What has to change, concretely: one entry per file or decision.
+    pub changes: Vec<String>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
 pub struct VerdictReq {
     /// Reasoning / feedback accompanying the verdict.
     pub body: Option<String>,
@@ -178,6 +190,7 @@ impl AriadneMcp {
             "planner" => McpRole::Planner,
             "engineer" => McpRole::Engineer,
             "reviewer" => McpRole::Reviewer,
+            "integrator" => McpRole::Integrator,
             other => anyhow::bail!("unknown ARIADNE_ROLE: {other:?}"),
         };
         Ok(Self {
@@ -211,7 +224,6 @@ impl AriadneMcp {
                 "post_message",
                 "request_review",
                 "get_reviews",
-                "mark_merged",
             ],
             McpRole::Reviewer => &[
                 "get_task",
@@ -221,6 +233,14 @@ impl AriadneMcp {
                 "get_diff",
                 "approve",
                 "request_changes",
+            ],
+            McpRole::Integrator => &[
+                "get_task",
+                "get_diff",
+                "list_messages",
+                "post_message",
+                "mark_merged",
+                "return_to_engineer",
             ],
         }
     }
@@ -466,6 +486,8 @@ impl AriadneMcp {
         json_result(self.get(&format!("/v1/tasks/{task}/reviews")).await?)
     }
 
+    // ---- integrator ----
+
     #[tool(
         description = "Report the merge you have already made. The daemon checks the branch really is merged into its base before accepting the sha, so report it truthfully."
     )]
@@ -481,6 +503,26 @@ impl AriadneMcp {
                     to: TaskStatus::Merged,
                     reason: None,
                     merge_commit: Some(req.merge_commit),
+                },
+            )
+            .await?;
+        json_result(value)
+    }
+
+    #[tool(
+        description = "Hand the task back to its engineer instead of landing it: a rebase conflict you will not resolve, or something the landing showed to be wrong. The summary says what happened and `changes` names what has to change, file by file; both reach the engineer as a round of requested changes, exactly as a reviewer's would. Your turn ends here — the task comes back to you once the revision is approved."
+    )]
+    async fn return_to_engineer(
+        &self,
+        Parameters(req): Parameters<ReturnToEngineerReq>,
+    ) -> Result<CallToolResult, McpError> {
+        let task = self.own_task(None)?;
+        let value = self
+            .post(
+                &format!("/v1/tasks/{task}/return-to-engineer"),
+                &ReturnToEngineerRequest {
+                    summary: req.summary,
+                    changes: req.changes,
                 },
             )
             .await?;
@@ -532,6 +574,7 @@ impl ServerHandler for AriadneMcp {
                 McpRole::Planner => "planner",
                 McpRole::Engineer => "engineer",
                 McpRole::Reviewer => "reviewer",
+                McpRole::Integrator => "integrator",
             },
             self.session_id,
             self.goal_id,

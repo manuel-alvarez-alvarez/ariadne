@@ -47,8 +47,9 @@ pub enum ProfileCommand {
     /// Both are repeatable and take each kind once. `<kind>` is `system` for
     /// the profile's own system prompt, or one of the briefings its role owns
     /// (planner: planner_briefing; engineer: engineer_briefing,
-    /// changes_requested, merge_instructions; reviewer: reviewer_briefing,
-    /// reviewer_resume). Whatever is not given starts as the role default.
+    /// changes_requested; reviewer: reviewer_briefing, reviewer_resume;
+    /// integrator: integration_instructions, integration_resume). Whatever is
+    /// not given starts as the role default.
     ///
     /// A briefing may use only the `{placeholder}` tokens its kind fills in;
     /// one that names another is refused, with the allowed ones listed.
@@ -96,9 +97,10 @@ pub enum ProfileCommand {
     /// and `--prompt-file <kind>=<path>` flags `profile create` takes:
     /// `system` for the profile's own system prompt, or one of the briefings
     /// its role owns (planner: planner_briefing; engineer: engineer_briefing,
-    /// changes_requested, merge_instructions; reviewer: reviewer_briefing,
-    /// reviewer_resume). Both are repeatable and take each kind once; a
-    /// prompt nobody names is left exactly as it is.
+    /// changes_requested; reviewer: reviewer_briefing, reviewer_resume;
+    /// integrator: integration_instructions, integration_resume). Both are
+    /// repeatable and take each kind once; a prompt nobody names is left
+    /// exactly as it is.
     ///
     /// A briefing may use only the `{placeholder}` tokens its kind fills in;
     /// one that names another is refused, with the allowed ones listed.
@@ -155,9 +157,10 @@ pub enum ProfileCommand {
 /// `ariadne profile prompt ...` — one prompt at a time.
 ///
 /// The kind is one of the prompts the profile's role owns (planner:
-/// `planner_briefing`; engineer: `engineer_briefing`, `changes_requested`,
-/// `merge_instructions`; reviewer: `reviewer_briefing`, `reviewer_resume`), or
-/// `system` for the profile's own system prompt.
+/// `planner_briefing`; engineer: `engineer_briefing`, `changes_requested`;
+/// reviewer: `reviewer_briefing`, `reviewer_resume`; integrator:
+/// `integration_instructions`, `integration_resume`), or `system` for the
+/// profile's own system prompt.
 #[derive(Subcommand)]
 pub enum PromptCommand {
     /// Print a prompt's content raw, ready to be piped to a file
@@ -931,16 +934,15 @@ mod tests {
         assert_eq!(kinds(Role::Planner), ["system", "planner_briefing"]);
         assert_eq!(
             kinds(Role::Engineer),
-            [
-                "system",
-                "engineer_briefing",
-                "changes_requested",
-                "merge_instructions"
-            ]
+            ["system", "engineer_briefing", "changes_requested"]
         );
         assert_eq!(
             kinds(Role::Reviewer),
             ["system", "reviewer_briefing", "reviewer_resume"]
+        );
+        assert_eq!(
+            kinds(Role::Integrator),
+            ["system", "integration_instructions", "integration_resume"]
         );
     }
 
@@ -1006,12 +1008,12 @@ mod tests {
     fn the_reset_question_names_the_one_prompt_it_is_about_to_replace() {
         let q = reset_question(
             &profile(Role::Engineer),
-            &[PromptArg::Briefing(PromptKind::MergeInstructions)],
+            &[PromptArg::Briefing(PromptKind::ChangesRequested)],
             false,
         );
         assert_eq!(
             q,
-            "Reset the merge_instructions prompt of Engineer (01PROFILE) to the engineer default?"
+            "Reset the changes_requested prompt of Engineer (01PROFILE) to the engineer default?"
         );
     }
 
@@ -1023,7 +1025,7 @@ mod tests {
         let q = reset_question(&p, &owned(p.role), true);
         assert_eq!(
             q,
-            "Reset all 4 prompts of Engineer (01PROFILE) to the engineer defaults?"
+            "Reset all 3 prompts of Engineer (01PROFILE) to the engineer defaults?"
         );
     }
 
@@ -1032,8 +1034,8 @@ mod tests {
     #[test]
     fn the_prompt_flags_are_collected_in_the_order_the_profile_owns_them() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("merge.md");
-        std::fs::write(&path, "merge it\n").expect("write");
+        let path = dir.path().join("changes.md");
+        std::fs::write(&path, "fix it\n").expect("write");
         let collected = owned_prompts(
             Owner::Role(Role::Engineer),
             read_prompts(
@@ -1041,10 +1043,7 @@ mod tests {
                     assignment("engineer_briefing", "brief"),
                     assignment("system", "you are"),
                 ],
-                vec![assignment(
-                    "merge_instructions",
-                    &path.display().to_string(),
-                )],
+                vec![assignment("changes_requested", &path.display().to_string())],
             )
             .expect("read"),
         )
@@ -1058,8 +1057,8 @@ mod tests {
                     "brief".to_string()
                 ),
                 (
-                    PromptArg::Briefing(PromptKind::MergeInstructions),
-                    "merge it\n".to_string()
+                    PromptArg::Briefing(PromptKind::ChangesRequested),
+                    "fix it\n".to_string()
                 ),
             ]
         );
@@ -1171,9 +1170,7 @@ mod tests {
         );
         assert!(err.contains("(planner owns it)"), "{err}");
         assert!(
-            err.contains(
-                "their prompts are: system, engineer_briefing, changes_requested, merge_instructions"
-            ),
+            err.contains("their prompts are: system, engineer_briefing, changes_requested"),
             "{err}"
         );
     }

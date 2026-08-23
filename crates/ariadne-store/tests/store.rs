@@ -442,7 +442,7 @@ async fn task_happy_path_to_merged() {
         .transition_task(
             &t.id,
             TaskStatus::Merged,
-            Actor::Engineer,
+            Actor::Integrator,
             None,
             Some("abc123"),
         )
@@ -507,7 +507,7 @@ async fn illegal_transitions_are_rejected_and_unaudited() {
         .unwrap();
     assert!(matches!(
         store
-            .transition_task(&t.id, TaskStatus::Merged, Actor::Engineer, None, None)
+            .transition_task(&t.id, TaskStatus::Merged, Actor::Integrator, None, None)
             .await,
         Err(StoreError::Invalid(_))
     ));
@@ -591,7 +591,7 @@ async fn dependencies_gate_and_reject_cycles() {
         .transition_task(
             &t.id,
             TaskStatus::Merged,
-            Actor::Engineer,
+            Actor::Integrator,
             None,
             Some("sha"),
         )
@@ -1529,18 +1529,18 @@ async fn prompts_update_and_reset_to_their_defaults() {
     let engineer = store.get_profile_by_name("Engineer").await.unwrap();
 
     let updated = store
-        .update_profile_prompt(&engineer.id, PromptKind::MergeInstructions, "just merge it")
+        .update_profile_prompt(&engineer.id, PromptKind::ChangesRequested, "fix it")
         .await
         .unwrap();
-    assert_eq!(updated.content, "just merge it");
-    assert_eq!(updated.kind(), PromptKind::MergeInstructions);
+    assert_eq!(updated.content, "fix it");
+    assert_eq!(updated.kind(), PromptKind::ChangesRequested);
     assert_eq!(
         store
-            .get_profile_prompt(&engineer.id, PromptKind::MergeInstructions)
+            .get_profile_prompt(&engineer.id, PromptKind::ChangesRequested)
             .await
             .unwrap()
             .content,
-        "just merge it"
+        "fix it"
     );
     // Only the prompt that was written changed.
     assert_eq!(
@@ -1553,12 +1553,12 @@ async fn prompts_update_and_reset_to_their_defaults() {
     );
 
     let reset = store
-        .reset_profile_prompt(&engineer.id, PromptKind::MergeInstructions)
+        .reset_profile_prompt(&engineer.id, PromptKind::ChangesRequested)
         .await
         .unwrap();
     assert_eq!(
         reset.content,
-        default_prompt(Role::Engineer, PromptKind::MergeInstructions).unwrap()
+        default_prompt(Role::Engineer, PromptKind::ChangesRequested).unwrap()
     );
 
     // The system prompt resets the same way.
@@ -1632,13 +1632,14 @@ async fn a_template_naming_a_placeholder_its_kind_cannot_fill_in_is_refused() {
 
     // What renders as itself still saves: literal braces, JSON, no
     // placeholders at all.
+    let integrator = store.get_profile_by_name("Integrator").await.unwrap();
     for content in [
-        "Merge {branch} into {base_branch}, then answer {\"merged\": true}.",
+        "Land {branch} on {base_branch}, then answer {\"merged\": true}.",
         "Do it yourself.",
         "{unclosed and {branch}",
     ] {
         store
-            .update_profile_prompt(&engineer.id, PromptKind::MergeInstructions, content)
+            .update_profile_prompt(&integrator.id, PromptKind::IntegrationInstructions, content)
             .await
             .unwrap();
     }
@@ -1675,7 +1676,7 @@ async fn prompt_kinds_are_checked_against_the_profile_role() {
             .await
             .unwrap()
             .len(),
-        3
+        2
     );
 
     // Unknown profiles and unknown kinds are proper errors, not panics.

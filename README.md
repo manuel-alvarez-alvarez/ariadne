@@ -34,10 +34,13 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    `ariadne/task-<id>`, implements, commits and calls `request_review`.
 4. **Reviewers** spawn in read-only detached worktrees, inspect the diff and
    `approve` or `request_changes`. Change requests resume the engineer with
-   the feedback; enough approvals trigger the merge instruction.
-5. The engineer merges into the base branch and calls `mark_merged` — which
-   the daemon only accepts after verifying the merge with
-   `git merge-base --is-ancestor`. Worktrees are cleaned up, dependent tasks
+   the feedback; enough approvals hand the task to its integrator.
+5. The **integrator** takes the branch over in a worktree of its own — the
+   engineer's is released with it — rebases, squashes, fast-forwards the base
+   branch and calls `mark_merged`, which the daemon only accepts after
+   verifying the merge with `git merge-base --is-ancestor`. A rebase it will
+   not resolve goes back to the engineer as a round of requested changes
+   (`return_to_engineer`) instead. Worktrees are cleaned up, dependent tasks
    wake up, and the goal completes when everything is merged.
 
 Task lifecycle: `pending → ready → in_progress → under_review →

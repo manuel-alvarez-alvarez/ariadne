@@ -56,11 +56,10 @@ const DEFAULTS: RolePromptDefaultsDto = {
   prompts: [
     { kind: "engineer_briefing", content: "Default engineer briefing." },
     { kind: "changes_requested", content: "Default changes requested." },
-    { kind: "merge_instructions", content: "Default merge instructions." },
   ],
 }
 
-/** The planner's, which is one briefing rather than three. */
+/** The planner's, which is one briefing rather than two. */
 const PLANNER_DEFAULTS: RolePromptDefaultsDto = {
   role: "planner",
   system_prompt: "Default planner system prompt.",
@@ -71,7 +70,6 @@ const PLANNER_DEFAULTS: RolePromptDefaultsDto = {
 const STORED_PROMPTS: ProfilePromptDto[] = [
   { kind: "engineer_briefing", content: "Stored engineer briefing.", updated_at: STAMP },
   { kind: "changes_requested", content: "Default changes requested.", updated_at: STAMP },
-  { kind: "merge_instructions", content: "Default merge instructions.", updated_at: STAMP },
 ]
 
 /** A slice of the daemon's curated catalog, two agents wide. */
@@ -354,7 +352,7 @@ describe("the prompt editors", () => {
       expect(system.value).toBe(DEFAULTS.system_prompt)
     })
     expect((await expandPrompt(user, "Engineer briefing")).value).toBe("Default engineer briefing.")
-    expect(screen.getByRole("button", { name: "Expand Merge instructions" })).toBeDefined()
+    expect(screen.getByRole("button", { name: "Expand Changes requested" })).toBeDefined()
 
     await user.click(screen.getByRole("combobox", { name: "Role" }))
     await user.click(await screen.findByRole("option", { name: "Planner" }))
@@ -406,7 +404,6 @@ describe("the prompt editors", () => {
     ).toBe("Default changes requested. Again.")
     // Untouched prompts, and untouched profile fields, are not written at all.
     expect(requestsTo("PUT", `/v1/profiles/${PROFILE.id}/prompts/engineer_briefing`)).toEqual([])
-    expect(requestsTo("PUT", `/v1/profiles/${PROFILE.id}/prompts/merge_instructions`)).toEqual([])
     expect(requestsTo("PUT", `/v1/profiles/${PROFILE.id}`)).toEqual([])
   })
 
@@ -446,17 +443,17 @@ describe("the prompt editors", () => {
 
   it("keeps the dialog up when one write fails, and retries only what is left", async () => {
     const user = userEvent.setup()
-    stubDaemon({ promptFailure: "merge_instructions" })
+    stubDaemon({ promptFailure: "changes_requested" })
     renderDialog(PROFILE)
 
     await user.type(screen.getByLabelText("Name"), "-v2")
-    const merge = await expandPrompt(user, "Merge instructions")
-    await user.type(merge, " Fast-forward.")
+    const changes = await expandPrompt(user, "Changes requested")
+    await user.type(changes, " Again.")
     await user.click(screen.getByRole("button", { name: "Save changes" }))
 
     // The failure names the write that did not land, and the dialog stays up.
     const alert = await screen.findByRole("alert")
-    expect(alert.textContent).toContain("merge instructions")
+    expect(alert.textContent).toContain("changes requested")
     expect(screen.getByRole("button", { name: "Save changes" })).toBeDefined()
     expect(requestsTo("PUT", `/v1/profiles/${PROFILE.id}`)).toHaveLength(1)
 
@@ -464,7 +461,7 @@ describe("the prompt editors", () => {
 
     await waitFor(() => {
       expect(
-        requestsTo("PUT", `/v1/profiles/${PROFILE.id}/prompts/merge_instructions`),
+        requestsTo("PUT", `/v1/profiles/${PROFILE.id}/prompts/changes_requested`),
       ).toHaveLength(2)
     })
     // The profile itself already landed, so the retry leaves it alone.
