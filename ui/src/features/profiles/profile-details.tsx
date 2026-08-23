@@ -12,7 +12,6 @@ import { useQuery } from "@tanstack/react-query"
 import type { ReactNode } from "react"
 
 import type { ProfileDto } from "@/api"
-import { CopyableId } from "@/components/copyable-id"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { When } from "@/components/when"
 
@@ -40,14 +39,13 @@ export function ProfileDetails({ profile }: { profile: ProfileDto }) {
         <Detail label="Agent" unset={!profile.agent_kind} hint="first installed CLI, at spawn time">
           {agentKindLabel(profile.agent_kind)}
         </Detail>
-        <Detail label="Model" unset={!profile.model} hint="whatever the agent CLI uses">
+        <Detail
+          label="Model"
+          unset={!profile.model}
+          hint="whatever the agent CLI uses"
+          caption={catalogModel?.description}
+        >
           <span className="font-mono">{modelLabel(profile.model)}</span>
-          {catalogModel?.description ? (
-            <span className="ml-1.5 text-xs text-muted-foreground">{catalogModel.description}</span>
-          ) : null}
-        </Detail>
-        <Detail label="Id">
-          <CopyableId value={profile.id} label="profile id" className="text-xs" />
         </Detail>
         <Detail label="Created">
           <When at={profile.created_at} label="created" />
@@ -67,6 +65,7 @@ function Detail({
   children,
   unset = false,
   hint,
+  caption,
 }: {
   label: string
   children: ReactNode
@@ -74,10 +73,13 @@ function Detail({
   unset?: boolean
   /** What the daemon does instead, shown next to that word. */
   hint?: string
+  /** A blurb about the value, on its own wrapping line under it. */
+  caption?: string | null
 }) {
   // The value is truncated, so what the row says in full is only ever readable
   // in the hint — a `Tooltip` on a focusable `<dd>` rather than a `title=`,
-  // which a keyboard never opens.
+  // which a keyboard never opens. A `caption` is the opposite: prose rather
+  // than an identifier, so it gets its own line and wraps there in full.
   const value = (
     <>
       {unset ? <span className="text-muted-foreground italic">{children}</span> : children}
@@ -98,6 +100,7 @@ function Detail({
       ) : (
         <dd className="truncate text-sm">{value}</dd>
       )}
+      {caption ? <dd className="text-xs leading-snug text-muted-foreground">{caption}</dd> : null}
     </div>
   )
 }

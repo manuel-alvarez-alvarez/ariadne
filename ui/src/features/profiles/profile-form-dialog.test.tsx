@@ -237,6 +237,20 @@ describe("the model combobox", () => {
     })
   })
 
+  it("filters on the description too, not just the model id", async () => {
+    const user = userEvent.setup()
+    renderDialog(null)
+    const box = await modelBox()
+
+    await user.type(box, "deep analysis")
+    const options = await listbox()
+
+    await waitFor(() => {
+      expect(within(options).queryByText("claude-fable-5")).toBeNull()
+    })
+    expect(within(options).getByText("claude-opus-5")).toBeDefined()
+  })
+
   it("filters while typing and picks with the keyboard", async () => {
     const user = userEvent.setup()
     renderDialog(null)
