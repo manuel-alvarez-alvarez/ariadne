@@ -16,7 +16,12 @@ import type { AgentKind, PromptKind, Role } from "@/api"
 import { AGENT_KIND_LABELS, ROLE_LABELS } from "@/lib/labels"
 
 /** Roles, in the order the orchestration runs them. */
-export const ROLES = ["planner", "engineer", "reviewer"] as const satisfies readonly Role[]
+export const ROLES = [
+  "planner",
+  "engineer",
+  "reviewer",
+  "integrator",
+] as const satisfies readonly Role[]
 
 /** Agent CLIs, in the order the daemon probes them when resolving `auto`. */
 export const AGENT_KINDS = [

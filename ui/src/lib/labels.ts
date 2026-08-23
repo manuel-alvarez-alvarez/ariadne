@@ -17,6 +17,7 @@ export const ROLE_LABELS: Record<Role, string> = {
   planner: "Planner",
   engineer: "Engineer",
   reviewer: "Reviewer",
+  integrator: "Integrator",
 }
 
 /**

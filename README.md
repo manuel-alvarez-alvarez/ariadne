@@ -41,7 +41,7 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    wake up, and the goal completes when everything is merged.
 
 Task lifecycle: `pending → ready → in_progress → under_review →
-(changes_requested → in_progress …) → approved → merging → merged`, with
+(changes_requested → in_progress …) → approved → integrating → merged`, with
 `cancelled`/`failed` (retryable) escapes. Every transition is validated
 against a typed state machine and recorded in an audit table.
 

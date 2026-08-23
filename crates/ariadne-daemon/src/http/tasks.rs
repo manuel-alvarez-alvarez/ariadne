@@ -12,6 +12,7 @@ use ariadne_api::tasks::{
     UpdateTaskRequest,
 };
 use ariadne_core::{Actor, Role, TaskStatus};
+use ariadne_store::defaults::BUILTIN_PROFILES;
 use ariadne_store::{NewMessage, NewReview, NewTask, Store, Task, TaskFilter, TaskUpdate};
 
 use super::AppState;
@@ -42,6 +43,26 @@ async fn resolve_profiles(store: &Store, specs: &[String], role: Role) -> ApiRes
         ids.push(p.id);
     }
     Ok(ids)
+}
+
+/// The integrator a task is created with: the one named, or the built-in.
+///
+/// The built-in is looked up by id rather than required: deleting a built-in
+/// profile is allowed and permanent, and an install that deleted this one
+/// still creates tasks — they simply name no integrator, which is the shape
+/// every task had before the role existed.
+async fn resolve_integrator(store: &Store, spec: Option<&str>) -> ApiResult<Option<String>> {
+    if let Some(spec) = spec {
+        let spec = spec.to_string();
+        let mut ids =
+            resolve_profiles(store, std::slice::from_ref(&spec), Role::Integrator).await?;
+        return Ok(Some(ids.remove(0)));
+    }
+    let builtin = BUILTIN_PROFILES
+        .iter()
+        .find(|b| b.role == Role::Integrator)
+        .expect("a built-in integrator profile");
+    Ok(store.get_profile(builtin.id).await.ok().map(|p| p.id))
 }
 
 /// Create a task in a goal (planner via MCP, or the user).
@@ -94,6 +115,7 @@ pub async fn create(
     .await?
     .remove(0);
     let reviewers = resolve_profiles(&state.store, &req.reviewer_profiles, Role::Reviewer).await?;
+    let integrator = resolve_integrator(&state.store, req.integrator_profile.as_deref()).await?;
 
     let task = state
         .store
@@ -103,6 +125,7 @@ pub async fn create(
             title: req.title,
             description: req.description,
             engineer_profile_id: engineer,
+            integrator_profile_id: integrator,
             reviewer_profile_ids: reviewers,
             depends_on: req.depends_on,
         })

@@ -33,10 +33,13 @@ pub async fn work_is_active(store: &Store, session: &AgentSession) -> bool {
                     | TaskStatus::InProgress
                     | TaskStatus::ChangesRequested
                     | TaskStatus::Approved
-                    | TaskStatus::Merging
+                    | TaskStatus::Integrating
             ),
             None => false,
         },
+        // Nothing spawns an integrator session yet, so there is none to ask
+        // about; the lifecycle that creates them decides what it is owed.
+        Role::Integrator => false,
         // A reviewer is only owed to a round it has not voted in.
         Role::Reviewer => match task_of(store, session).await {
             Some(task) if task.status() == TaskStatus::UnderReview => store

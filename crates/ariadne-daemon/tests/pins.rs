@@ -179,6 +179,7 @@ async fn seeded(h: &Harness) -> Seeded {
             title: "Surfaces".into(),
             description: String::new(),
             engineer_profile_id: engineer.id.clone(),
+            integrator_profile_id: None,
             reviewer_profile_ids: vec![strict.id.clone(), auto.id.clone()],
             depends_on: vec![],
         })

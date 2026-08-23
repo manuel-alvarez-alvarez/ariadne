@@ -264,6 +264,12 @@ pub async fn debug_spawn(
             let profile = state.store.resolve_profile(&spec).await?;
             launcher.spawn_reviewer(&task, &profile.id).await
         }
+        // No lifecycle spawns one yet, and neither does this debug path.
+        Role::Integrator => {
+            return Err(ApiError::bad_request(
+                "integrator sessions cannot be spawned yet",
+            ));
+        }
     }
     .map_err(|e| ApiError::conflict(e.to_string()))?;
     Ok(Json(session_dto(session)))

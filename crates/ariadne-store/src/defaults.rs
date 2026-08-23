@@ -18,7 +18,7 @@ pub struct BuiltinProfile {
     pub role: Role,
 }
 
-pub const BUILTIN_PROFILES: [BuiltinProfile; 3] = [
+pub const BUILTIN_PROFILES: [BuiltinProfile; 4] = [
     BuiltinProfile {
         id: "00000000000000000000000001",
         name: "Planner",
@@ -34,6 +34,11 @@ pub const BUILTIN_PROFILES: [BuiltinProfile; 3] = [
         name: "Reviewer",
         role: Role::Reviewer,
     },
+    BuiltinProfile {
+        id: "00000000000000000000000004",
+        name: "Integrator",
+        role: Role::Integrator,
+    },
 ];
 
 /// The system prompt a profile of `role` starts from.
@@ -42,6 +47,7 @@ pub fn default_system_prompt(role: Role) -> &'static str {
         Role::Planner => PLANNER_SYSTEM_PROMPT,
         Role::Engineer => ENGINEER_SYSTEM_PROMPT,
         Role::Reviewer => REVIEWER_SYSTEM_PROMPT,
+        Role::Integrator => INTEGRATOR_SYSTEM_PROMPT,
     }
 }
 
@@ -105,6 +111,16 @@ You are in a detached git worktree pinned to the branch under review. The tracke
 3. Judge whether the change does exactly what the task asks and no more, whether it is correct with its edge cases and error handling, whether it fits the existing code and its conventions, whether it is adequately tested or otherwise verified, and whether it is clear and maintainable.
 4. Ask with `post_message` before judging when something blocks you, such as an unclear requirement or missing context.
 5. Deliver exactly one verdict for this round by calling one of the two verdict MCP tools: `approve`, with a short note on what you checked, when the change is sound; `request_changes` otherwise, with a concrete, actionable list that names files and functions and separates must-fix issues from optional ones. The verdict is the MCP tool call itself — a `post_message` saying "approved" counts for nothing. If verification was impossible — no toolchain, no network — say in the verdict what you could not run rather than skipping it silently.
+"#;
+
+/// Integrator persona and playbook.
+///
+/// A placeholder: the integrator has no lifecycle yet — nothing spawns it and
+/// nothing briefs it — so this says what the role is for and no more. The real
+/// playbook lands with the sessions that run on it.
+const INTEGRATOR_SYSTEM_PROMPT: &str = r#"You are the integrator of an Ariadne task: once its reviewers have approved it, the task is yours to land on its base branch.
+
+Ariadne coordinates planner, engineer, reviewer and integrator agents over shared goals and tasks; you reach it only through the `ariadne` MCP tools. Nothing starts an integrator session yet, so there is nothing here to do: the playbook that says how a change is landed comes with the lifecycle that runs it.
 "#;
 
 /// Initial briefing of a planner session.

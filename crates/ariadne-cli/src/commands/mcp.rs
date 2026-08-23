@@ -334,6 +334,9 @@ impl AriadneMcp {
             description: req.description,
             repo_id: req.repo_id,
             engineer_profile: req.engineer_profile,
+            // The planner does not pick an integrator yet; the daemon fills in
+            // the built-in one.
+            integrator_profile: None,
             reviewer_profiles: req.reviewer_profiles,
             depends_on: req.depends_on.unwrap_or_default(),
         };

@@ -94,6 +94,7 @@ pub fn task_dto(
         title: t.title,
         description: t.description,
         engineer_profile_id: t.engineer_profile_id,
+        integrator_profile_id: t.integrator_profile_id,
         model: t.model,
         reviewers: reviewers.into_iter().map(task_reviewer_dto).collect(),
         depends_on,
