@@ -225,3 +225,80 @@ pub(crate) fn check_role_kind(kind: PromptKind, role: Role, whose: &str) -> Resu
         ))
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::NewProfile;
+    use crate::defaults::default_prompt;
+
+    /// The merge instructions as they read before migration 0009 — what an
+    /// install seeded by an older Ariadne still has in its database.
+    const OLD_MERGE_INSTRUCTIONS: &str = r##"Your task has been approved. Merge it now, keeping the base branch's history linear — one commit per task, no merge commits:
+
+1. In your worktree, rebase onto the latest base: `git fetch . && git rebase {base_branch}` (resolve conflicts if any).
+2. Squash the branch into a single commit on top of the base: `git reset --soft {base_branch} && git commit -m "{task_title}" -m "<what changed and why>"`.
+3. Fast-forward the base branch from the primary checkout: `git -C {repo_path} merge --ff-only {branch}`. If it refuses because the base moved, go back to step 1.
+4. Call `mark_merged` with the resulting commit sha (`git -C {repo_path} rev-parse {base_branch}`)."##;
+
+    /// Migration 0009 rewrites the merge instructions of installs that never
+    /// touched them, and only those: it matches the old default byte for byte,
+    /// so an edited prompt — the whole point of prompts living in the database
+    /// — survives the upgrade.
+    #[tokio::test]
+    async fn the_migration_rewrites_only_unedited_merge_instructions() {
+        let store = Store::open_in_memory().await.unwrap();
+        let untouched = store.get_profile_by_name("Engineer").await.unwrap();
+        let edited = store
+            .create_profile(NewProfile {
+                name: "Engineer (mine)".into(),
+                role: Role::Engineer,
+                agent_kind: None,
+                model: None,
+                system_prompt: "You are an engineer.".into(),
+                prompts: vec![],
+            })
+            .await
+            .unwrap();
+
+        // Both profiles as an older install left them: one still on the old
+        // default, one on a prompt its user rewrote.
+        store
+            .write_prompt(
+                &untouched.id,
+                PromptKind::MergeInstructions,
+                OLD_MERGE_INSTRUCTIONS,
+            )
+            .await
+            .unwrap();
+        store
+            .write_prompt(&edited.id, PromptKind::MergeInstructions, "just merge it")
+            .await
+            .unwrap();
+
+        sqlx::raw_sql(include_str!(
+            "../migrations/0009_merge_instructions_commit_conventions.sql"
+        ))
+        .execute(store.w())
+        .await
+        .unwrap();
+
+        let content = async |id: &str| {
+            store
+                .get_profile_prompt(id, PromptKind::MergeInstructions)
+                .await
+                .unwrap()
+                .content
+        };
+        assert_eq!(
+            content(&untouched.id).await,
+            default_prompt(Role::Engineer, PromptKind::MergeInstructions).unwrap(),
+            "an unedited prompt is brought up to the new default"
+        );
+        assert_eq!(
+            content(&edited.id).await,
+            "just merge it",
+            "an edited prompt is left alone"
+        );
+    }
+}

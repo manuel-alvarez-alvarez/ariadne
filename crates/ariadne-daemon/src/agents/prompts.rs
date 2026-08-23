@@ -507,8 +507,18 @@ mod tests {
                  1. In your worktree, rebase onto the latest base: \
                  `git fetch . && git rebase {base}` (resolve conflicts if any).\n\
                  2. Squash the branch into a single commit on top of the base: \
-                 `git reset --soft {base} && git commit -m \"{title}\" \
-                 -m \"<what changed and why>\"`.\n\
+                 `git reset --soft {base} && git commit -m \"<type(scope): summary>\" \
+                 -m \"<what changed and why>\"`. That squash commit is the only \
+                 one landing on {base}, so its message must:\n\
+                 \x20  - follow Conventional Commits: a `type(scope): summary` \
+                 subject line derived from the task — the task title, \
+                 \"{title}\", is not necessarily one already — and a body \
+                 explaining what changed and why;\n\
+                 \x20  - carry no `Co-Authored-By`, `Generated with` or any other \
+                 authorship or tool trailer;\n\
+                 \x20  - leave signing to the repository's git configuration: sign \
+                 if git is configured to sign, do not pass `--no-gpg-sign` or \
+                 otherwise disable it, and do not force `-S` either.\n\
                  3. Fast-forward the base branch from the primary checkout: \
                  `git -C {repo} merge --ff-only {branch}`. If it refuses \
                  because the base moved, go back to step 1.\n\
