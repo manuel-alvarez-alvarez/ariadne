@@ -13,7 +13,13 @@ does all three from the commit history.
    push, so it is always the current pending release.
 3. Merging that PR makes release-please tag `vX.Y.Z` and publish a GitHub
    Release whose notes are the changelog entry. Attaching binaries to that
-   Release is a separate workflow, triggered by `release: published`.
+   Release is a separate workflow, `.github/workflows/release.yml`, which
+   release-please dispatches on the new tag (a Release it publishes with the
+   default `GITHUB_TOKEN` fires no `release: published` event of its own).
+   Running it on the tag rather than on `main` is what makes the build
+   provenance attestation name the tag as the origin of the assets; a rerun
+   started by hand should pick the tag in the ref dropdown for the same reason,
+   and warns if it does not.
 4. Not merging it costs nothing — commits accumulate into the same PR.
 
 ## Commit messages

@@ -1,12 +1,16 @@
 # Attaches the compiled artifacts to a published GitHub Release.
 #
 # release-please cuts the tag and publishes the release, then dispatches this
-# workflow with that tag — a release it publishes with the default
+# workflow *on that tag* — a release it publishes with the default
 # `GITHUB_TOKEN` fires no `release: published` event, so the trigger below
 # would never see it. That trigger stays for releases published by hand, which
-# do fire it. Either way this workflow builds every supported target on its
-# own native runner (no cross-compilation) and uploads the assets the
-# installer script downloads by name:
+# do fire it. Either way the run is anchored to the tag and never to main:
+# the sources, this workflow file and `github.ref` all come from the tag, so
+# the provenance attestation names the tag as the origin of the assets.
+#
+# This workflow builds every supported target on its own native runner (no
+# cross-compilation) and uploads the assets the installer script downloads by
+# name:
 #
 #   ariadne-<target>.tar.gz              the `ariadne` and `ariadned` binaries
 #   ariadne-desktop-<target>.app.tar.gz  Ariadne Desktop.app (macOS)
@@ -24,11 +28,13 @@ on:
   release:
     types: [published]
   # The path release-please takes, and reruns: point at an existing tag when a
-  # matrix leg failed or a runner image broke mid-release.
+  # matrix leg failed or a runner image broke mid-release. Run it *from* that
+  # tag — the ref dropdown, not main — or the assets are attested against the
+  # ref the run happened on.
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag to build assets for, e.g. v0.1.0
+        description: Release tag to build assets for, e.g. v0.1.0 — run this from that same tag
         required: true
         type: string
 
@@ -74,6 +80,17 @@ jobs:
     env:
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
+      # The checkout below pins the sources to the tag whatever ref the run was
+      # started on, but the attestation can only record `github.ref`. Say so
+      # loudly rather than publishing assets whose provenance points at main.
+      - name: Check the run is anchored to the release tag
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$REF" != "refs/tags/$TAG" ]; then
+            echo "::warning::this run is on $REF, so $TAG's assets will be attested as built from $REF; rerun it from refs/tags/$TAG"
+          fi
+
       - name: Check out the release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
