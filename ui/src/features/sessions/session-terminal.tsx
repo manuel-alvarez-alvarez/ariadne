@@ -26,10 +26,19 @@
  * the frame changes: the grid stays the pane's there too, and what the room
  * buys is a bigger font — which is why the height budget and the font ceiling
  * are per-frame (see {@link screenHeightBudget}) rather than the panel's
- * constants everywhere.
+ * constants everywhere. The emulator itself makes that trip: it is rendered
+ * into an element of its own that is *moved* between the two frames, so
+ * expanding costs a re-scale and nothing more — the same emulator, the same
+ * open stream, and no snapshot fetched again for output already on screen.
+ *
+ * Drawing goes through the GPU where there is one: `@xterm/addon-webgl` is
+ * fetched once the emulator is open and loaded into it, and the DOM renderer
+ * xterm starts with is what stays when it cannot be — no WebGL2 in this
+ * browser, no addon delivered, or a context the driver takes back later.
  */
 
 import { FitAddon } from "@xterm/addon-fit"
+import type { WebglAddon } from "@xterm/addon-webgl"
 import { type ITheme, Terminal } from "@xterm/xterm"
 import "@xterm/xterm/css/xterm.css"
 import {
@@ -43,6 +52,7 @@ import {
 } from "lucide-react"
 import { useTheme } from "next-themes"
 import { useCallback, useEffect, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import { toast } from "sonner"
 
 import type { SessionStatus } from "@/api"
@@ -94,6 +104,12 @@ const BASE_FONT_SIZE = 12
 const LINE_HEIGHT = 1.2
 /** Tallest the grid may get before the font shrinks to fit it in (`28rem`). */
 const MAX_SCREEN_HEIGHT = 448
+/**
+ * How many times `scaleToFit` may measure and correct itself. Each pass is a
+ * reflow, and a pass that measures exactly what the last one did stops on its
+ * own, so this is only the ceiling for a frame that keeps moving under it.
+ */
+const MAX_SCALE_PASSES = 4
 
 /**
  * The terminal cannot inherit the app's palette: ANSI colours have to be real
@@ -181,8 +197,32 @@ export function SessionTerminal({
    * and cost the terminal a repaint.
    */
   const focused = useRef(false)
+  /**
+   * The element the terminal is rendered into, made once and kept for as long
+   * as this component is on screen.
+   *
+   * The panel and the expanded dialog are two different places in the tree, so
+   * a terminal rendered in both is a different component in each: expanding
+   * would build a new emulator, open a new connection, and fetch a whole
+   * snapshot for output that is already on screen. Rendered through a portal
+   * into an element that is *appended* to whichever frame is showing, the move
+   * is a DOM move instead — the same nodes, the same React state, the same
+   * stream, in a different box.
+   */
+  const [host] = useState(createTerminalHost)
 
-  const view = (
+  /** Park the terminal in the frame that is showing it. */
+  const anchor = useCallback(
+    (node: HTMLDivElement | null) => {
+      // Appending an element that has a parent already moves it, subtree and
+      // all. Refs run once the new frame is in the document, so the emulator
+      // is never re-parented into a node that is not.
+      node?.append(host)
+    },
+    [host],
+  )
+
+  const view = createPortal(
     <TerminalView
       sessionId={sessionId}
       status={status}
@@ -193,17 +233,22 @@ export function SessionTerminal({
       onFocusChange={(next) => {
         focused.current = next
       }}
-    />
+    />,
+    host,
   )
 
-  // Moving between the two frames remounts the emulator, and with it the log
-  // stream. That is not a loss: every connection opens with a full snapshot,
-  // so the pane is redrawn as it is now rather than as it was when the panel
-  // first attached.
-  if (!expanded) return view
+  if (!expanded) {
+    return (
+      <>
+        {view}
+        <div ref={anchor} className="contents" />
+      </>
+    )
+  }
 
   return (
     <>
+      {view}
       {/* The panel keeps its place in the card rather than collapsing behind
           the dialog, and says where the terminal went. */}
       <EmptyState
@@ -238,11 +283,25 @@ export function SessionTerminal({
           className="h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] grid-rows-[minmax(0,1fr)] sm:max-w-[calc(100vw-2rem)]"
         >
           <DialogTitle className="sr-only">Terminal of the session</DialogTitle>
-          {view}
+          <div ref={anchor} className="contents" />
         </DialogContent>
       </Dialog>
     </>
   )
+}
+
+/**
+ * The element {@link SessionTerminal} renders the terminal into and moves
+ * between its two frames.
+ *
+ * `display: contents` keeps it out of the layout it is dropped into: what the
+ * frame lays out is the terminal itself, exactly as if it were the child it
+ * would otherwise have been.
+ */
+function createTerminalHost(): HTMLDivElement {
+  const host = document.createElement("div")
+  host.style.display = "contents"
+  return host
 }
 
 /**
@@ -275,6 +334,8 @@ function TerminalView({
   const containerRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
+  /** xterm's own screen: the element `scaleToFit` measures a row's cost on. */
+  const screenRef = useRef<HTMLElement | null>(null)
   const streamRef = useRef<SessionLogStream | null>(null)
   const [streamStatus, setStreamStatus] = useState<SessionLogStatus>("connecting")
   const [error, setError] = useState<string | null>(null)
@@ -300,6 +361,12 @@ function TerminalView({
    * by, and a pass or two settles it — the size is quantised, so the first
    * answer is rarely exact.
    *
+   * Every pass costs a reflow, since it reads back a layout the pass before it
+   * dirtied, so a pass is spent only where it can still learn something: both
+   * measurements are taken together and ahead of the one write, and a pass
+   * that measures exactly what the last one did stops instead of computing the
+   * same answer a third and fourth time.
+   *
    * What the grid may take, and how large the font may get doing it, are the
    * frame's to say: the panel caps both so the terminal stays one card among
    * others, and the expanded frame has a dialog's height to fill.
@@ -311,11 +378,18 @@ function TerminalView({
     if (!terminal || !fit || !container) return
     const budget = screenHeightBudget(expanded ? frameRef.current : null, container)
     const ceiling = expanded ? EXPANDED_MAX_FONT_SIZE : MAX_FONT_SIZE
-    for (let pass = 0; pass < 4; pass++) {
+    let measured: string | null = null
+    for (let pass = 0; pass < MAX_SCALE_PASSES; pass++) {
       const proposed = fit.proposeDimensions()
+      const height = screenRef.current?.clientHeight ?? 0
       if (!proposed || !Number.isFinite(proposed.cols)) return
+      // The same numbers as the pass before means the font it wrote changed
+      // nothing the frame can be measured by, and the scale below would only
+      // grow it again off a measurement that never followed.
+      const measurement = `${proposed.cols}x${height}`
+      if (measurement === measured) return
+      measured = measurement
       const current = terminal.options.fontSize ?? BASE_FONT_SIZE
-      const height = container.querySelector<HTMLElement>(".xterm-screen")?.clientHeight ?? 0
       // Whichever runs out first: the width there is, or the height the grid
       // may take before it is worth showing smaller.
       const scale = Math.min(
@@ -328,8 +402,18 @@ function TerminalView({
     }
   }, [expanded])
 
+  // The emulator outlives every frame it is scaled against — expanding moves
+  // it rather than rebuilding it — so its own listeners reach the current
+  // scaling through a ref instead of holding the one it was created with.
+  const scaleToFitRef = useRef(scaleToFit)
+  useEffect(() => {
+    scaleToFitRef.current = scaleToFit
+  }, [scaleToFit])
+
   // The emulator itself: created once, and kept across daemon-URL changes so a
-  // reconnect does not flash an empty box.
+  // reconnect does not flash an empty box — and across the move between the
+  // panel and the expanded dialog, which is why nothing this effect reads may
+  // change with the frame.
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
@@ -363,6 +447,38 @@ function TerminalView({
     terminal.open(container)
     terminalRef.current = terminal
     fitRef.current = fit
+    // Written by `open`, and the same element for as long as the emulator
+    // lives: looked up once rather than on every scaling pass.
+    screenRef.current = container.querySelector<HTMLElement>(".xterm-screen")
+
+    // The GPU renderer, when this browser has one to give. Fetched on demand
+    // rather than imported with the module, so a browser that cannot use it
+    // never downloads it — and the DOM renderer is already drawing by the time
+    // it lands, which is what makes every way of not getting one a fallback
+    // and not a failure.
+    let webgl: WebglAddon | null = null
+    let disposed = false
+    void (async () => {
+      if (!supportsWebgl()) return
+      try {
+        const { WebglAddon } = await import("@xterm/addon-webgl")
+        if (disposed) return
+        const addon = new WebglAddon()
+        terminal.loadAddon(addon)
+        webgl = addon
+        // The context can be taken back at any time — another tab exhausting
+        // the GPU, a driver reset — and xterm draws through the DOM again as
+        // soon as the addon is disposed. Which is the whole recovery: a new
+        // addon would ask the same driver for the same context.
+        addon.onContextLoss(() => {
+          webgl = null
+          addon.dispose()
+        })
+      } catch {
+        // No WebGL2 context for the addon, or no addon: the renderer xterm
+        // opened with is still drawing, and that is the fallback.
+      }
+    })()
 
     // Scrolled up into the history, the viewer stops seeing what the agent is
     // doing now; the frame offers a way back rather than leaving them there.
@@ -374,7 +490,7 @@ function TerminalView({
     // The grid arrives in the stream and applies whenever the parser reaches
     // it, so the emulator itself — not the message that caused it — is what
     // says a new one is in effect and the font has to be scaled to it.
-    const resized = terminal.onResize(() => scaleToFit())
+    const resized = terminal.onResize(() => scaleToFitRef.current())
 
     // xterm focuses itself when its own screen is clicked; this covers the
     // padding around it, so the whole box is somewhere to start typing.
@@ -394,6 +510,7 @@ function TerminalView({
     container.addEventListener("focusout", focusOut)
 
     return () => {
+      disposed = true
       container.removeEventListener("click", focusTerminal)
       container.removeEventListener("focusin", focusIn)
       container.removeEventListener("focusout", focusOut)
@@ -402,28 +519,42 @@ function TerminalView({
       resized.dispose()
       terminalRef.current = null
       fitRef.current = null
+      screenRef.current = null
+      // Before the terminal, which is what the addon draws for.
+      webgl?.dispose()
       terminal.dispose()
     }
-  }, [scaleToFit])
+  }, [])
 
   // Resizing the window, the panel or the sheet it sits in re-scales the same
   // grid to what the frame now is.
   useEffect(() => {
     const frame = frameRef.current
     if (!frame) return
+    // Also what re-scales the grid when the terminal is moved between the two
+    // frames: the emulator stays, and the room it has to fill is new.
     scaleToFit()
-    let width = frame.clientWidth
-    let height = frame.clientHeight
-    const observer = new ResizeObserver(() => {
+    let size: { width: number; height: number } | null = null
+    const observer = new ResizeObserver((entries) => {
+      // The size comes with the notification, so deciding whether it is one
+      // worth a fit costs nothing. Reading it back off the frame would force a
+      // layout on every notification instead — including the ones the font
+      // this observer just wrote is what caused.
+      const measured = entries[entries.length - 1]?.contentRect
+      if (!measured) return
+      const previous = size
+      size = { width: measured.width, height: measured.height }
+      // The first notification is the frame as the call above already scaled
+      // it to: a baseline, not a resize.
+      if (!previous) return
       // In the panel the frame's height follows the terminal's, which follows
       // the font, so reacting to it would be a loop: only a new width is a new
       // fit there. The expanded frame is given its height by the dialog and
       // keeps it whatever the font does, so a window that only got taller is a
       // new fit too.
-      const resized = frame.clientWidth !== width || (expanded && frame.clientHeight !== height)
+      const resized =
+        measured.width !== previous.width || (expanded && measured.height !== previous.height)
       if (!resized) return
-      width = frame.clientWidth
-      height = frame.clientHeight
       scaleToFit()
     })
     observer.observe(frame)
@@ -663,6 +794,25 @@ function screenHeightBudget(frame: HTMLElement | null, container: HTMLElement): 
   const padding =
     (Number.parseFloat(style.paddingTop) || 0) + (Number.parseFloat(style.paddingBottom) || 0)
   return Math.max(0, frame.clientHeight - padding)
+}
+
+/**
+ * Whether this browser can hand xterm a GPU renderer at all.
+ *
+ * Asked before the addon is fetched, so a browser that cannot run it never
+ * downloads it. The probe's context is given straight back: contexts are a
+ * scarce per-page resource, and one held open for a yes-or-no answer is one
+ * the renderer itself may then not get.
+ */
+function supportsWebgl(): boolean {
+  try {
+    const context = document.createElement("canvas").getContext("webgl2")
+    if (!context) return false
+    context.getExtension("WEBGL_lose_context")?.loseContext()
+    return true
+  } catch {
+    return false
+  }
 }
 
 function clamp(value: number, min: number, max: number): number {

@@ -265,7 +265,7 @@ it:
 
 - **Do not edit `package.json`.** Everything the screens need is already
   installed: CodeMirror 6 (including `@codemirror/merge` and
-  `@uiw/react-codemirror`), `@xterm/xterm` with the fit and web-links addons,
+  `@uiw/react-codemirror`), `@xterm/xterm` with the fit and WebGL addons,
   `react-markdown` + `remark-gfm`, and the shadcn/ui primitives listed in
   `src/components/ui/`. If something is genuinely missing, say so in the task
   thread rather than adding it.
