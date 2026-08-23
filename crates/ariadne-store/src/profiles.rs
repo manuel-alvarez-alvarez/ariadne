@@ -5,8 +5,9 @@ use std::collections::HashMap;
 use ariadne_core::id::new_id;
 use ariadne_core::{AgentKind, PromptKind, Role};
 
+use crate::defaults::BUILTIN_PROFILES;
 use crate::prompts::{check_placeholders, check_role_kind};
-use crate::{Change, Profile, Result, Store, StoreError, not_found, now};
+use crate::{Change, Profile, Result, Store, StoreError, Task, not_found, now};
 
 #[derive(Debug, Clone)]
 pub struct NewProfile {
@@ -104,6 +105,34 @@ impl Store {
             .fetch_optional(self.r())
             .await?
             .ok_or_else(|| not_found("profile", name))
+    }
+
+    /// The built-in Integrator profile, while it is still there.
+    ///
+    /// The one profile the daemon looks up by identity rather than by
+    /// assignment: a task created before the integrator existed names none, and
+    /// this is who lands it. `None` when the built-in was deleted — allowed,
+    /// and permanent — which leaves such a task with no integrator at all.
+    pub async fn builtin_integrator(&self) -> Option<Profile> {
+        let builtin = BUILTIN_PROFILES
+            .iter()
+            .find(|b| b.role == Role::Integrator)
+            .expect("a built-in integrator profile");
+        self.get_profile(builtin.id).await.ok()
+    }
+
+    /// The profile that lands `task`: the one it was created with, or the
+    /// built-in Integrator for a task that predates the column.
+    ///
+    /// Everything that asks who the integrator of a task is asks here — the
+    /// launcher that spawns the session, and the thread that has to be able to
+    /// address it — so that a legacy task cannot end up with an integrator
+    /// working on it that nobody can reach.
+    pub async fn task_integrator(&self, task: &Task) -> Result<Option<Profile>> {
+        match &task.integrator_profile_id {
+            Some(id) => self.get_profile(id).await.map(Some),
+            None => Ok(self.builtin_integrator().await),
+        }
     }
 
     /// Resolve a profile by id or by unique name (CLI convenience).

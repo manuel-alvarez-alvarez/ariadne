@@ -682,14 +682,14 @@ mod tests {
             "--prompt",
             "system=You are...",
             "--prompt-file",
-            "merge_instructions=/tmp/m.md",
+            "changes_requested=/tmp/c.md",
         ])
         .command
         else {
             panic!("profile update");
         };
         assert_eq!(pairs(prompts), ["system=You are..."]);
-        assert_eq!(pairs(prompt_files), ["merge_instructions=/tmp/m.md"]);
+        assert_eq!(pairs(prompt_files), ["changes_requested=/tmp/c.md"]);
     }
 
     /// The old bare `--prompt <text>` is gone: a value with no kind is a

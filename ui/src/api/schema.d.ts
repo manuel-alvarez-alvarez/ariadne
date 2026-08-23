@@ -777,6 +777,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/tasks/{id}/return-to-engineer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Hand an integrating task back to its engineer (integrator).
+         * @description The feedback is recorded as a change-request verdict on the round that was
+         *     approved, so it reaches the engineer exactly the way a reviewer's does — in
+         *     the resume briefing, and in `get_reviews` beside the approvals it follows.
+         */
+        post: operations["tasks_return_to_engineer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/tasks/{id}/reviews": {
         parameters: {
             query?: never;
@@ -1226,7 +1248,7 @@ export interface components {
          *     (see [`PromptKind::role`]).
          * @enum {string}
          */
-        PromptKind: "planner_briefing" | "engineer_briefing" | "changes_requested" | "merge_instructions" | "reviewer_briefing" | "reviewer_resume";
+        PromptKind: "planner_briefing" | "engineer_briefing" | "changes_requested" | "reviewer_briefing" | "reviewer_resume" | "integration_instructions" | "integration_resume";
         /**
          * @description Who a conversation message is addressed to: one agent profile, or the
          *     human user. Orthogonal to the author role, and optional — a message with
@@ -1257,6 +1279,18 @@ export interface components {
              * @description Events this connection lost. Informational: they cannot be recovered.
              */
             missed: number;
+        };
+        /**
+         * @description The integrator handing an approved task back to its engineer: a rebase it
+         *     will not resolve, or a change the landing showed to be wrong. Recorded as a
+         *     round of requested changes, which is how the engineer already reads
+         *     feedback.
+         */
+        ReturnToEngineerRequest: {
+            /** @description What has to change, concretely: one entry per file or decision. */
+            changes?: string[];
+            /** @description Why the task is coming back, in one or two sentences. */
+            summary: string;
         };
         ReviewDto: {
             body?: string | null;
@@ -2965,6 +2999,46 @@ export interface operations {
                     "application/json": components["schemas"]["TaskDto"];
                 };
             };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    tasks_return_to_engineer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description task id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReturnToEngineerRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskDto"];
+                };
+            };
+            /** @description not an integrator session */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the task is not being integrated */
             409: {
                 headers: {
                     [name: string]: unknown;

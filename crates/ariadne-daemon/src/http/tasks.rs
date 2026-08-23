@@ -8,11 +8,10 @@ use ariadne_api::Page;
 use ariadne_api::messages::{CreateMessageRequest, MessageDto};
 use ariadne_api::reviews::{CreateReviewRequest, ReviewDto};
 use ariadne_api::tasks::{
-    CreateTaskRequest, TaskDto, TaskListQuery, TaskTransitionDto, TransitionRequest,
-    UpdateTaskRequest,
+    CreateTaskRequest, ReturnToEngineerRequest, TaskDto, TaskListQuery, TaskTransitionDto,
+    TransitionRequest, UpdateTaskRequest,
 };
-use ariadne_core::{Actor, Role, TaskStatus};
-use ariadne_store::defaults::BUILTIN_PROFILES;
+use ariadne_core::{Actor, ReviewVerdict, Role, TaskStatus};
 use ariadne_store::{NewMessage, NewReview, NewTask, Store, Task, TaskFilter, TaskUpdate};
 
 use super::AppState;
@@ -58,11 +57,7 @@ async fn resolve_integrator(store: &Store, spec: Option<&str>) -> ApiResult<Opti
             resolve_profiles(store, std::slice::from_ref(&spec), Role::Integrator).await?;
         return Ok(Some(ids.remove(0)));
     }
-    let builtin = BUILTIN_PROFILES
-        .iter()
-        .find(|b| b.role == Role::Integrator)
-        .expect("a built-in integrator profile");
-    Ok(store.get_profile(builtin.id).await.ok().map(|p| p.id))
+    Ok(store.builtin_integrator().await.map(|p| p.id))
 }
 
 /// Create a task in a goal (planner via MCP, or the user).
@@ -455,6 +450,92 @@ pub async fn post_review(
         .await?;
     state.notify_scheduler(&id).await;
     Ok((StatusCode::CREATED, Json(review_dto(review))))
+}
+
+/// Hand an integrating task back to its engineer (integrator).
+///
+/// The feedback is recorded as a change-request verdict on the round that was
+/// approved, so it reaches the engineer exactly the way a reviewer's does — in
+/// the resume briefing, and in `get_reviews` beside the approvals it follows.
+#[utoipa::path(post, path = "/v1/tasks/{id}/return-to-engineer", tag = "tasks",
+    request_body = ReturnToEngineerRequest,
+    params(("id" = String, Path, description = "task id")),
+    responses(
+        (status = 200, body = TaskDto),
+        (status = 403, description = "not an integrator session"),
+        (status = 409, description = "the task is not being integrated")
+    ))]
+pub async fn return_to_engineer(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(req): Json<ReturnToEngineerRequest>,
+) -> ApiResult<Json<TaskDto>> {
+    let ctx = call_ctx(&state.store, &headers).await?;
+    ensure_task_scope(&ctx, &id)?;
+    let Some(session) = ctx
+        .session
+        .as_ref()
+        .filter(|s| s.role() == Role::Integrator)
+    else {
+        return Err(ApiError::forbidden(
+            "only the integrator of a task may send it back to its engineer",
+        ));
+    };
+    let task = state.store.get_task(&id).await?;
+    if task.status() != TaskStatus::Integrating {
+        return Err(ApiError::conflict(format!(
+            "task is {}, only a task being integrated can be sent back to its engineer",
+            task.status
+        )));
+    }
+
+    // The feedback is recorded before the transition, so that the engineer the
+    // scheduler resumes on it has it to read. A transition that then fails
+    // leaves a verdict on a round nobody is waiting on, which is inert — the
+    // next round is a new one.
+    state
+        .store
+        .create_review(NewReview {
+            task_id: id.clone(),
+            round: task.review_round,
+            reviewer_profile_id: session.profile_id.clone(),
+            session_id: Some(session.id.clone()),
+            verdict: ReviewVerdict::RequestChanges,
+            body: Some(feedback_body(&req)),
+        })
+        .await?;
+    let task = apply_transition(
+        &state,
+        &ctx,
+        &id,
+        TransitionRequest {
+            to: TaskStatus::ChangesRequested,
+            reason: Some(req.summary),
+            merge_commit: None,
+        },
+    )
+    .await?;
+    Ok(Json(to_dto(&state.store, task).await?))
+}
+
+/// The send-back as the engineer reads it: what happened, then the list of
+/// what to do about it.
+fn feedback_body(req: &ReturnToEngineerRequest) -> String {
+    let mut body = req.summary.trim().to_string();
+    if !req.changes.is_empty() {
+        if !body.is_empty() {
+            body.push_str("\n\n");
+        }
+        body.push_str(
+            &req.changes
+                .iter()
+                .map(|change| format!("- {}", change.trim()))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+    }
+    body
 }
 
 /// Diff of the task branch against its base (`git diff base...branch`), or,

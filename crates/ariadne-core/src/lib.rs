@@ -77,22 +77,26 @@ pub enum PromptKind {
     EngineerBriefing,
     /// Engineer resume briefing carrying the reviewers' change requests.
     ChangesRequested,
-    /// Engineer resume briefing telling an approved task to merge.
-    MergeInstructions,
     /// Initial briefing of a reviewer session.
     ReviewerBriefing,
     /// Reviewer resume briefing for a later round of the same task.
     ReviewerResume,
+    /// Initial briefing of an integrator session: how the approved change is
+    /// landed on its base branch.
+    IntegrationInstructions,
+    /// Integrator resume briefing for a later attempt at the same task.
+    IntegrationResume,
 }
 
 impl PromptKind {
-    pub const ALL: [PromptKind; 6] = [
+    pub const ALL: [PromptKind; 7] = [
         PromptKind::PlannerBriefing,
         PromptKind::EngineerBriefing,
         PromptKind::ChangesRequested,
-        PromptKind::MergeInstructions,
         PromptKind::ReviewerBriefing,
         PromptKind::ReviewerResume,
+        PromptKind::IntegrationInstructions,
+        PromptKind::IntegrationResume,
     ];
 
     pub fn as_str(&self) -> &'static str {
@@ -100,9 +104,10 @@ impl PromptKind {
             PromptKind::PlannerBriefing => "planner_briefing",
             PromptKind::EngineerBriefing => "engineer_briefing",
             PromptKind::ChangesRequested => "changes_requested",
-            PromptKind::MergeInstructions => "merge_instructions",
             PromptKind::ReviewerBriefing => "reviewer_briefing",
             PromptKind::ReviewerResume => "reviewer_resume",
+            PromptKind::IntegrationInstructions => "integration_instructions",
+            PromptKind::IntegrationResume => "integration_resume",
         }
     }
 
@@ -110,10 +115,9 @@ impl PromptKind {
     pub fn role(&self) -> Role {
         match self {
             PromptKind::PlannerBriefing => Role::Planner,
-            PromptKind::EngineerBriefing
-            | PromptKind::ChangesRequested
-            | PromptKind::MergeInstructions => Role::Engineer,
+            PromptKind::EngineerBriefing | PromptKind::ChangesRequested => Role::Engineer,
             PromptKind::ReviewerBriefing | PromptKind::ReviewerResume => Role::Reviewer,
+            PromptKind::IntegrationInstructions | PromptKind::IntegrationResume => Role::Integrator,
         }
     }
 
@@ -121,14 +125,12 @@ impl PromptKind {
     pub fn for_role(role: Role) -> &'static [PromptKind] {
         match role {
             Role::Planner => &[PromptKind::PlannerBriefing],
-            Role::Engineer => &[
-                PromptKind::EngineerBriefing,
-                PromptKind::ChangesRequested,
-                PromptKind::MergeInstructions,
-            ],
+            Role::Engineer => &[PromptKind::EngineerBriefing, PromptKind::ChangesRequested],
             Role::Reviewer => &[PromptKind::ReviewerBriefing, PromptKind::ReviewerResume],
-            // The integrator's briefings come with its lifecycle.
-            Role::Integrator => &[],
+            Role::Integrator => &[
+                PromptKind::IntegrationInstructions,
+                PromptKind::IntegrationResume,
+            ],
         }
     }
 
@@ -160,7 +162,6 @@ impl PromptKind {
                 "dependencies",
             ],
             PromptKind::ChangesRequested => &["feedback"],
-            PromptKind::MergeInstructions => &["base_branch", "repo_path", "branch", "task_title"],
             PromptKind::ReviewerBriefing => &[
                 "task_title",
                 "review_round",
@@ -175,6 +176,19 @@ impl PromptKind {
             // moved under it, and the goal and the repository are things it
             // already read last round.
             PromptKind::ReviewerResume => &["review_round", "task_title", "branch", "summary"],
+            PromptKind::IntegrationInstructions => &[
+                "task_title",
+                "task_description",
+                "goal_title",
+                "worktree_path",
+                "branch",
+                "base_branch",
+                "repo_path",
+            ],
+            // Fewer than the initial briefing, for the reviewer's reason: a
+            // resumed integrator is told what moved under it, and the task it
+            // is landing is one it has already read.
+            PromptKind::IntegrationResume => &["task_title", "branch", "base_branch", "repo_path"],
         }
     }
 
@@ -730,7 +744,7 @@ mod tests {
     #[test]
     fn a_template_may_use_none_of_its_placeholders() {
         assert_eq!(
-            PromptKind::MergeInstructions.validate_template("Merge it yourself."),
+            PromptKind::IntegrationInstructions.validate_template("Land it yourself."),
             Ok(())
         );
     }

@@ -101,6 +101,7 @@ impl AppState {
         tasks::transition, tasks::cancel, tasks::retry, tasks::list_transitions,
         tasks::list_messages, tasks::post_message,
         tasks::list_reviews, tasks::post_review, tasks::diff,
+        tasks::return_to_engineer,
         sessions::list, sessions::get, sessions::kill, sessions::resume,
         sessions::input, sessions::resize, sessions::logs,
         session_logs::logs_stream,
@@ -203,6 +204,10 @@ pub fn router(state: AppState) -> Router {
             get(tasks::list_reviews).post(tasks::post_review),
         )
         .route("/v1/tasks/{id}/diff", get(tasks::diff))
+        .route(
+            "/v1/tasks/{id}/return-to-engineer",
+            post(tasks::return_to_engineer),
+        )
         // sessions
         .route("/v1/sessions", get(sessions::list))
         .route("/v1/sessions/{id}", get(sessions::get))

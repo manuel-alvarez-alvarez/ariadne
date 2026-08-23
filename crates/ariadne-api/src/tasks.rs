@@ -88,6 +88,19 @@ pub struct TransitionRequest {
     pub merge_commit: Option<String>,
 }
 
+/// The integrator handing an approved task back to its engineer: a rebase it
+/// will not resolve, or a change the landing showed to be wrong. Recorded as a
+/// round of requested changes, which is how the engineer already reads
+/// feedback.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ReturnToEngineerRequest {
+    /// Why the task is coming back, in one or two sentences.
+    pub summary: String,
+    /// What has to change, concretely: one entry per file or decision.
+    #[serde(default)]
+    pub changes: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TaskTransitionDto {
     pub id: String,

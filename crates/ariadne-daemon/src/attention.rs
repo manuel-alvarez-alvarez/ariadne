@@ -25,21 +25,24 @@ pub async fn work_is_active(store: &Store, session: &AgentSession) -> bool {
             Ok(GoalStatus::Planning)
         ),
         // Every status the engineer is working in or about to be woken for;
-        // `pending` has no engineer yet, and `under_review` is not its turn.
+        // `pending` has no engineer yet, `under_review` is not its turn, and
+        // once the task is approved the integrator has it.
         Role::Engineer => match task_of(store, session).await {
             Some(task) => matches!(
                 task.status(),
-                TaskStatus::Ready
-                    | TaskStatus::InProgress
-                    | TaskStatus::ChangesRequested
-                    | TaskStatus::Approved
-                    | TaskStatus::Integrating
+                TaskStatus::Ready | TaskStatus::InProgress | TaskStatus::ChangesRequested
             ),
             None => false,
         },
-        // Nothing spawns an integrator session yet, so there is none to ask
-        // about; the lifecycle that creates them decides what it is owed.
-        Role::Integrator => false,
+        // The integrator's turn is the landing, and nothing else: a task sent
+        // back to the engineer is not the integrator's to wait on.
+        Role::Integrator => match task_of(store, session).await {
+            Some(task) => matches!(
+                task.status(),
+                TaskStatus::Approved | TaskStatus::Integrating
+            ),
+            None => false,
+        },
         // A reviewer is only owed to a round it has not voted in.
         Role::Reviewer => match task_of(store, session).await {
             Some(task) if task.status() == TaskStatus::UnderReview => store

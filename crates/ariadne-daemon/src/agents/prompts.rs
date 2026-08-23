@@ -199,15 +199,44 @@ pub fn changes_requested_briefing(template: &str, feedback: &[(String, String)])
     render(template, &[("feedback", &items)])
 }
 
-/// Resume prompt instructing the engineer to merge.
-pub fn merge_briefing(template: &str, task: &Task, repo: &Repository) -> String {
+/// Initial prompt for an integrator session: the approved task, and how the
+/// repository wants it landed.
+///
+/// `worktree_path` is the integrator's own, not the task's — the task row
+/// carries the engineer's, which by now has been released so that the branch
+/// can be checked out here instead.
+pub fn integration_briefing(
+    template: &str,
+    task: &Task,
+    goal: &Goal,
+    repo: &Repository,
+    worktree_path: &str,
+) -> String {
     render(
         template,
         &[
+            ("task_title", &task.title),
+            ("task_description", &task.description),
+            ("goal_title", &goal.title),
+            ("worktree_path", worktree_path),
+            ("branch", &task.branch),
             ("base_branch", &repo.base_branch),
             ("repo_path", &repo.path),
-            ("branch", &task.branch),
+        ],
+    )
+}
+
+/// Resume prompt for an integrator coming back to a task it already tried to
+/// land: after a send-back the engineer revised the branch, and after a daemon
+/// restart the base may have moved under it.
+pub fn integration_resume_briefing(template: &str, task: &Task, repo: &Repository) -> String {
+    render(
+        template,
+        &[
             ("task_title", &task.title),
+            ("branch", &task.branch),
+            ("base_branch", &repo.base_branch),
+            ("repo_path", &repo.path),
         ],
     )
 }
@@ -339,12 +368,17 @@ mod tests {
                     engineer_briefing(&template, &task, &goal, &repo, &[])
                 }
                 PromptKind::ChangesRequested => changes_requested_briefing(&template, &feedback),
-                PromptKind::MergeInstructions => merge_briefing(&template, &task, &repo),
                 PromptKind::ReviewerBriefing => {
                     reviewer_briefing(&template, &task, &goal, &repo, Some("done"))
                 }
                 PromptKind::ReviewerResume => {
                     reviewer_resume_briefing(&template, &task, Some("done"))
+                }
+                PromptKind::IntegrationInstructions => {
+                    integration_briefing(&template, &task, &goal, &repo, "/worktrees/task-int")
+                }
+                PromptKind::IntegrationResume => {
+                    integration_resume_briefing(&template, &task, &repo)
                 }
             };
             assert!(
@@ -502,12 +536,21 @@ mod tests {
         );
 
         let expected = format!(
-            "Your task has been approved. Merge it now, keeping the base \
-                 branch's history linear — one commit per task, no merge \
+            "# Integrate task: {title}\n\n{description}\n\n## Context\n\
+                 - Goal: {goal}\n- Worktree (your cwd): {worktree}\n\
+                 - Branch: {branch}\n- Base branch: {base} (repo {repo})\n\n\
+                 The reviewers approved this task. Land it on {base}, keeping \
+                 that branch's history linear — one commit per task, no merge \
                  commits:\n\n\
                  1. In your worktree, rebase onto the latest base: \
-                 `git fetch . && git rebase {base}` (resolve conflicts if any).\n\
-                 2. Squash the branch into a single commit on top of the base: \
+                 `git fetch . && git rebase {base}`.\n\
+                 2. If the rebase conflicts, do not resolve it yourself: \
+                 `git rebase --abort`, then call `return_to_engineer` with a \
+                 summary and a concrete list naming the conflicting files and \
+                 what has to be reconciled. That ends your turn — the task goes \
+                 back to the engineer, and you are woken again once the \
+                 revision is approved.\n\
+                 3. Squash the branch into a single commit on top of the base: \
                  `git reset --soft {base} && git commit -m \"<type(scope): summary>\" \
                  -m \"<what changed and why>\"`. That squash commit is the only \
                  one landing on {base}, so its message must:\n\
@@ -520,19 +563,50 @@ mod tests {
                  \x20  - leave signing to the repository's git configuration: sign \
                  if git is configured to sign, do not pass `--no-gpg-sign` or \
                  otherwise disable it, and do not force `-S` either.\n\
-                 3. Fast-forward the base branch from the primary checkout: \
+                 4. Fast-forward the base branch from the primary checkout: \
                  `git -C {repo} merge --ff-only {branch}`. If it refuses \
                  because the base moved, go back to step 1.\n\
-                 4. Call `mark_merged` with the resulting commit sha \
+                 5. Call `mark_merged` with the resulting commit sha \
                  (`git -C {repo} rev-parse {base}`).",
+            title = task.title,
+            description = task.description,
+            goal = goal.title,
+            worktree = "/worktrees/task-int",
             base = repo.base_branch,
             repo = repo.path,
             branch = task.branch,
-            title = task.title
         );
         assert_eq!(
-            merge_briefing(
-                default(Role::Engineer, PromptKind::MergeInstructions),
+            integration_briefing(
+                default(Role::Integrator, PromptKind::IntegrationInstructions),
+                &task,
+                &goal,
+                &repo,
+                "/worktrees/task-int",
+            ),
+            expected
+        );
+
+        let expected = format!(
+            "Pick the integration of \"{title}\" up again: the task is approved \
+                 and yours to land.\n\n\
+                 Your worktree is on {branch}, which has moved since you last \
+                 read it if the engineer revised the change. Rebase onto the \
+                 latest {base}, squash into one commit following the \
+                 repository's commit conventions, fast-forward the base from \
+                 the primary checkout ({repo}) and call `mark_merged` with the \
+                 resulting sha — the integration instructions you were briefed \
+                 with spell every step out. If the rebase conflicts again, \
+                 abort it and call `return_to_engineer` with the files that \
+                 conflicted and what has to be reconciled.",
+            title = task.title,
+            branch = task.branch,
+            base = repo.base_branch,
+            repo = repo.path,
+        );
+        assert_eq!(
+            integration_resume_briefing(
+                default(Role::Integrator, PromptKind::IntegrationResume),
                 &task,
                 &repo
             ),
