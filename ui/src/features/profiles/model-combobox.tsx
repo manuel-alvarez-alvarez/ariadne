@@ -186,7 +186,9 @@ export function ModelCombobox({
                         <div className="flex min-w-0 flex-col">
                           <span className="truncate font-mono text-[13px]">{model.id}</span>
                           {model.description ? (
-                            <span className="truncate text-xs text-muted-foreground">
+                            // Two lines, so a long blurb is readable without
+                            // one option taking over the list.
+                            <span className="line-clamp-2 text-xs leading-snug text-muted-foreground">
                               {model.description}
                             </span>
                           ) : null}

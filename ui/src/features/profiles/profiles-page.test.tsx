@@ -248,14 +248,27 @@ describe("ProfilesPage, expanded details", () => {
     const user = userEvent.setup()
     renderScreen()
 
-    // A stored model the catalog lists gets its description next to it.
+    // A stored model the catalog lists gets its description under it — a line
+    // of its own, so the blurb is not cut short by the model's own truncation.
     await user.click(await screen.findByRole("button", { name: "Pinned" }))
-    expect(await screen.findByText("Opus tier: deep analysis")).toBeDefined()
+    const blurb = await screen.findByText("Opus tier: deep analysis")
+    expect(blurb.closest("dd")?.textContent).toBe("Opus tier: deep analysis")
 
     // One the catalog does not — here, no model at all — shows only itself.
     await user.click(screen.getByRole("button", { name: "Pinned" }))
     await user.click(screen.getByRole("button", { name: "Builder" }))
     await screen.findByRole("button", { name: "Builder", expanded: true })
     expect(screen.queryByText("Opus tier: deep analysis")).toBeNull()
+  })
+
+  it("shows no raw profile id: the name is what a profile is named by", async () => {
+    const user = userEvent.setup()
+    renderScreen()
+
+    await user.click(await screen.findByRole("button", { name: "Pinned" }))
+    await screen.findByRole("button", { name: "Pinned", expanded: true })
+
+    expect(screen.queryByText(PINNED.id)).toBeNull()
+    expect(screen.queryByRole("button", { name: "Copy profile id" })).toBeNull()
   })
 })
