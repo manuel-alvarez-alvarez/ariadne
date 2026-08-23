@@ -10,6 +10,11 @@
  * post on a terminal task too (`http/tasks.rs post_message` checks only that
  * the task exists), where it waits in the thread like any `task msg` would.
  *
+ * The compose box may address anyone working the task — its engineer, its
+ * reviewers and the planner that wrote it — which is the set the daemon
+ * resolves `to` against (`http/recipients.rs`), read off the task and its goal
+ * so the picker offers nobody the daemon would refuse.
+ *
  * The card each message is drawn as is shared with the goal thread; what this
  * surface adds to it is the link to the session that posted the message.
  */
@@ -21,12 +26,27 @@ import { ErrorState } from "@/components/error-state"
 import { MessageCard } from "@/components/message-card"
 import { MessageComposer } from "@/components/message-composer"
 import { Skeleton } from "@/components/ui/skeleton"
-import { taskMessagesQueryOptions, usePostTaskMessage } from "./queries"
+import { goalQueryOptions } from "@/features/goals/queries"
+import { useAddressees } from "@/features/profiles/addressees"
+import { taskMessagesQueryOptions, taskQueryOptions, usePostTaskMessage } from "./queries"
 import { SessionLink } from "./task-sessions"
 
 export function TaskConversation({ taskId }: { taskId: string }) {
   const messages = useQuery(taskMessagesQueryOptions(taskId))
+  const task = useQuery(taskQueryOptions(taskId))
+  // The planner is the task's goal's, so who may be addressed is known only
+  // once the task itself is: until then the picker is one name shorter.
+  const goal = useQuery({
+    ...goalQueryOptions(task.data?.goal_id ?? ""),
+    enabled: Boolean(task.data),
+  })
   const post = usePostTaskMessage(taskId)
+  const addressees = useAddressees([
+    ...(task.data
+      ? [task.data.engineer_profile_id, ...task.data.reviewers.map((slot) => slot.profile_id)]
+      : []),
+    ...(goal.data ? [goal.data.planner_profile_id] : []),
+  ])
 
   return (
     <div className="flex flex-col gap-3">
@@ -70,6 +90,7 @@ export function TaskConversation({ taskId }: { taskId: string }) {
         post={post}
         label="Message the task conversation"
         placeholder="Write to the agents on this task…"
+        addressees={addressees}
       />
     </div>
   )

@@ -12,6 +12,7 @@ import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query
 import {
   api,
   type CacheSnapshot,
+  type CreateMessageRequest,
   type CreateTaskRequest,
   type MessageDto,
   optimisticStatus,
@@ -152,6 +153,10 @@ export function useUpdateTask(taskId: string) {
  * `POST /v1/tasks/{id}/messages` — the conversation tab's compose box, the
  * web's `ariadne task msg`.
  *
+ * The request is the whole `CreateMessageRequest`, body and optional addressee:
+ * the daemon resolves `to` against the task's participants and answers 400 if
+ * it names anyone else, which is the error the box draws.
+ *
  * The daemon answers with the created message, which is appended straight to
  * the cached thread: it is the newest by construction (ids are ordered and it
  * was just minted), so the send shows up without waiting for the
@@ -162,11 +167,11 @@ export function useUpdateTask(taskId: string) {
 export function usePostTaskMessage(taskId: string) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (body: string) =>
+    mutationFn: (message: CreateMessageRequest) =>
       unwrap(
         api().POST("/v1/tasks/{id}/messages", {
           params: { path: { id: taskId } },
-          body: { body },
+          body: message,
         }),
       ),
     onSuccess: (message) => {

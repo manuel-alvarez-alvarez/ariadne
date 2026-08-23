@@ -35,6 +35,7 @@ export type UpdateTaskRequest = Schemas["UpdateTaskRequest"]
 export type TransitionRequest = Schemas["TransitionRequest"]
 
 export type MessageDto = Schemas["MessageDto"]
+export type MessageRecipientDto = Schemas["MessageRecipientDto"]
 export type CreateMessageRequest = Schemas["CreateMessageRequest"]
 export type AuthorRole = Schemas["AuthorRole"]
 

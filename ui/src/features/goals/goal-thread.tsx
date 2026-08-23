@@ -9,6 +9,10 @@
  * post on a terminal goal too (`http/goals.rs post_message` checks only that
  * the goal exists), where it waits in the thread like any message would.
  *
+ * The compose box may address the goal's planner, and only it: that is who
+ * works in this thread (`http/recipients.rs`), and the engineers and reviewers
+ * are addressed in the task threads they work in instead.
+ *
  * Each message is the shared {@link MessageCard}, the same one the task thread
  * draws, and — as there — the session that posted it is a way into that
  * session: a planner message carries the `author_session_id` of the agent that
@@ -24,12 +28,15 @@ import { MessageCard } from "@/components/message-card"
 import { MessageComposer } from "@/components/message-composer"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
+import { useAddressees } from "@/features/profiles/addressees"
 import { SessionLink } from "@/features/tasks/task-sessions"
-import { goalMessagesQueryOptions, usePostGoalMessage } from "./queries"
+import { goalMessagesQueryOptions, goalQueryOptions, usePostGoalMessage } from "./queries"
 
 export function GoalThread({ goalId, className }: { goalId: string; className?: string }) {
   const messages = useQuery(goalMessagesQueryOptions(goalId))
+  const goal = useQuery(goalQueryOptions(goalId))
   const post = usePostGoalMessage(goalId)
+  const addressees = useAddressees(goal.data ? [goal.data.planner_profile_id] : [])
 
   return (
     <Card className={className}>
@@ -59,6 +66,7 @@ export function GoalThread({ goalId, className }: { goalId: string; className?: 
           post={post}
           label="Message the planner thread"
           placeholder="Write to the planner thread…"
+          addressees={addressees}
           // The box lives inside the card, so it is the card it has to cover.
           className="bg-card"
         />

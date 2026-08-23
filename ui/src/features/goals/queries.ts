@@ -24,6 +24,7 @@ import {
   api,
   type CacheSnapshot,
   type CreateGoalRequest,
+  type CreateMessageRequest,
   type GoalDto,
   type GoalStatus,
   type MessageDto,
@@ -119,6 +120,10 @@ export function plannerProfilesQueryOptions() {
 /**
  * `POST /v1/goals/{id}/messages` — the thread tab's compose box.
  *
+ * The request is the whole `CreateMessageRequest`, body and optional addressee:
+ * the daemon resolves `to` against the goal's participants and answers 400 if
+ * it names anyone else, which is the error the box draws.
+ *
  * The daemon answers with the created message, which is appended straight to
  * the cached thread: it is the newest by construction (ids are ordered and it
  * was just minted), so the send shows up without waiting for the
@@ -129,11 +134,11 @@ export function plannerProfilesQueryOptions() {
 export function usePostGoalMessage(goalId: string) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (body: string) =>
+    mutationFn: (message: CreateMessageRequest) =>
       unwrap(
         api().POST("/v1/goals/{id}/messages", {
           params: { path: { id: goalId } },
-          body: { body },
+          body: message,
         }),
       ),
     onSuccess: (message) => {
