@@ -76,7 +76,7 @@ describe("canEdit", () => {
       "under_review",
       "changes_requested",
       "approved",
-      "merging",
+      "integrating",
       "merged",
       "cancelled",
       "failed",

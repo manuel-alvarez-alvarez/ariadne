@@ -215,6 +215,9 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                         description,
                         repo_id,
                         engineer_profile: engineer,
+                        // Nothing names an integrator yet: the daemon fills in
+                        // the built-in one.
+                        integrator_profile: None,
                         reviewer_profiles: reviewers,
                         depends_on,
                     },
@@ -621,6 +624,7 @@ mod tests {
             description: String::new(),
             status: TaskStatus::InProgress,
             engineer_profile_id: "01ENG".into(),
+            integrator_profile_id: None,
             agent_kind: None,
             model: None,
             reviewers: vec![],

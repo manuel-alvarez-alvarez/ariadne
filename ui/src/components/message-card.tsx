@@ -9,7 +9,8 @@
  * One tint per role, from the status ramp in `index.css`: the planner keeps
  * the violet of a goal in planning, the engineer the accent of work in
  * progress, the reviewer the teal that the warm steps of the ramp are reserved
- * against — never those warm steps, which mean something is wrong.
+ * against, the integrator the green of the merge it is there to reach — never
+ * those warm steps, which mean something is wrong.
  *
  * A message may also name one addressee (`--to` on the CLI), which rides in the
  * same header as a second pill. Most messages have none — they are addressed to
@@ -37,6 +38,10 @@ const ROLE_TONES: Record<AuthorRole, { badge: string; card: string }> = {
   reviewer: {
     badge: "bg-status-ready-soft text-status-ready-fg",
     card: "border-status-ready/25",
+  },
+  integrator: {
+    badge: "bg-status-done-soft text-status-done-fg",
+    card: "border-status-done/25",
   },
   user: {
     badge: "bg-foreground/10 text-foreground",

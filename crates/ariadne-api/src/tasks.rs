@@ -14,6 +14,9 @@ pub struct TaskDto {
     pub description: String,
     pub status: TaskStatus,
     pub engineer_profile_id: String,
+    /// Profile that lands the task once it is approved. None for tasks
+    /// created before the integrator existed.
+    pub integrator_profile_id: Option<String>,
     /// Agent CLI the engineer runs on, pinned from the profile when the task
     /// was created; editing the profile afterwards leaves it alone. None =
     /// auto, resolved at spawn time to the first installed CLI.
@@ -58,6 +61,9 @@ pub struct CreateTaskRequest {
     pub repo_id: Option<String>,
     /// Engineer profile id or unique name.
     pub engineer_profile: String,
+    /// Integrator profile id or unique name; the built-in Integrator when
+    /// omitted.
+    pub integrator_profile: Option<String>,
     /// Reviewer profile ids or names, in review order. At least one.
     pub reviewer_profiles: Vec<String>,
     /// Task ids this task depends on.

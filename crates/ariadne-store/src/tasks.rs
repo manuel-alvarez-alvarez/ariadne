@@ -17,6 +17,9 @@ pub struct NewTask {
     pub title: String,
     pub description: String,
     pub engineer_profile_id: String,
+    /// Profile that lands the task once it is approved. None leaves the task
+    /// without one, the shape every task had before the integrator.
+    pub integrator_profile_id: Option<String>,
     pub reviewer_profile_ids: Vec<String>,
     pub depends_on: Vec<String>,
 }
@@ -83,9 +86,9 @@ impl Store {
 
         sqlx::query(
             "INSERT INTO tasks (id, goal_id, repo_id, title, description, status,
-                                engineer_profile_id, agent_kind, model, branch,
-                                created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)",
+                                engineer_profile_id, integrator_profile_id, agent_kind,
+                                model, branch, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&goal.id)
@@ -93,6 +96,7 @@ impl Store {
         .bind(&new.title)
         .bind(&new.description)
         .bind(&new.engineer_profile_id)
+        .bind(&new.integrator_profile_id)
         .bind(&engineer.agent_kind)
         .bind(&engineer.model)
         .bind(&branch)

@@ -26,7 +26,7 @@ export const OFF_BOARD_STATUSES = ["cancelled", "failed"] as const satisfies rea
 
 /**
  * The daemon statuses the UI folds into a primary one: `ready` is a phase of
- * `pending`, `changes_requested` and `merging` are phases of `in_progress`,
+ * `pending`, `changes_requested` and `integrating` are phases of `in_progress`,
  * `approved` is a phase of `under_review`. The raw status stays visible as a
  * sub-status badge.
  *
@@ -39,7 +39,7 @@ export const OFF_BOARD_STATUSES = ["cancelled", "failed"] as const satisfies rea
 const SUB_STATUS_OF = {
   ready: "pending",
   changes_requested: "in_progress",
-  merging: "in_progress",
+  integrating: "in_progress",
   approved: "under_review",
 } as const satisfies Partial<Record<TaskStatus, TaskStatus>>
 
@@ -48,12 +48,12 @@ export function primaryStatus(status: TaskStatus): TaskStatus {
   return (SUB_STATUS_OF as Partial<Record<TaskStatus, TaskStatus>>)[status] ?? status
 }
 
-/** The refining meta ("Merging", …) when `status` is a sub-status, else undefined. */
+/** The refining meta ("Integrating", …) when `status` is a sub-status, else undefined. */
 export function subStatus(status: TaskStatus): StatusMeta | undefined {
   return status in SUB_STATUS_OF ? TASK_STATUS_META[status] : undefined
 }
 
-/** "In progress · Merging" for a sub-status, the plain primary label otherwise. */
+/** "In progress · Integrating" for a sub-status, the plain primary label otherwise. */
 export function displayLabel(status: TaskStatus): string {
   const sub = subStatus(status)
   const primary = TASK_STATUS_META[primaryStatus(status)].label
@@ -116,9 +116,9 @@ export const TASK_STATUS_META: Record<TaskStatus, StatusMeta> = {
     badge: "bg-status-ready-soft text-status-ready-fg",
     dot: "bg-status-ready",
   },
-  merging: {
-    label: "Merging",
-    hint: "The engineer is merging into the base branch.",
+  integrating: {
+    label: "Integrating",
+    hint: "The approved change is being landed on the base branch.",
     badge: "bg-status-active-soft text-status-active-fg",
     dot: "bg-status-active",
   },
@@ -154,7 +154,7 @@ const ATTENTION_RANK = {
   approved: 1,
   changes_requested: 2,
   under_review: 3,
-  merging: 4,
+  integrating: 4,
   in_progress: 5,
   ready: 6,
   pending: 7,

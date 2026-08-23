@@ -169,20 +169,32 @@ impl Store {
     /// with nowhere to look.
     pub async fn delete_profile(&self, id: &str) -> Result<()> {
         self.get_profile(id).await?;
-        let (goals, tasks, reviews, sessions, messages): (i64, i64, i64, i64, i64) =
-            sqlx::query_as(
-                "SELECT (SELECT COUNT(*) FROM goals WHERE planner_profile_id = ?1),
-                        (SELECT COUNT(*) FROM tasks WHERE engineer_profile_id = ?1),
-                        (SELECT COUNT(*) FROM task_reviewers WHERE profile_id = ?1),
-                        (SELECT COUNT(*) FROM agent_sessions WHERE profile_id = ?1),
-                        (SELECT COUNT(*) FROM messages WHERE recipient_profile_id = ?1)",
-            )
-            .bind(id)
-            .fetch_one(self.r())
-            .await?;
+        let (goals, tasks, integrations, reviews, sessions, messages): (
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+        ) = sqlx::query_as(
+            "SELECT (SELECT COUNT(*) FROM goals WHERE planner_profile_id = ?1),
+                    (SELECT COUNT(*) FROM tasks WHERE engineer_profile_id = ?1),
+                    (SELECT COUNT(*) FROM tasks WHERE integrator_profile_id = ?1),
+                    (SELECT COUNT(*) FROM task_reviewers WHERE profile_id = ?1),
+                    (SELECT COUNT(*) FROM agent_sessions WHERE profile_id = ?1),
+                    (SELECT COUNT(*) FROM messages WHERE recipient_profile_id = ?1)",
+        )
+        .bind(id)
+        .fetch_one(self.r())
+        .await?;
         let holders = [
             (goals, "goal", "goals"),
             (tasks, "task", "tasks"),
+            (
+                integrations,
+                "task as its integrator",
+                "tasks as their integrator",
+            ),
             (reviews, "task as a reviewer", "tasks as a reviewer"),
             (sessions, "agent session", "agent sessions"),
             (

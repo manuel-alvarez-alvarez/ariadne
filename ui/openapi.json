@@ -1259,7 +1259,7 @@
           {
             "name": "role",
             "in": "path",
-            "description": "planner, engineer or reviewer",
+            "description": "planner, engineer, reviewer or integrator",
             "required": true,
             "schema": {
               "type": "string"
@@ -2255,6 +2255,7 @@
           "planner",
           "engineer",
           "reviewer",
+          "integrator",
           "user",
           "system"
         ]
@@ -2475,6 +2476,13 @@
           "engineer_profile": {
             "type": "string",
             "description": "Engineer profile id or unique name."
+          },
+          "integrator_profile": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Integrator profile id or unique name; the built-in Integrator when\nomitted."
           },
           "repo_id": {
             "type": [
@@ -3380,7 +3388,8 @@
         "enum": [
           "planner",
           "engineer",
-          "reviewer"
+          "reviewer",
+          "integrator"
         ]
       },
       "RolePromptDefaultsDto": {
@@ -3675,6 +3684,13 @@
           "id": {
             "type": "string"
           },
+          "integrator_profile_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Profile that lands the task once it is approved. None for tasks\ncreated before the integrator existed."
+          },
           "merge_commit": {
             "type": [
               "string",
@@ -3764,7 +3780,7 @@
           "under_review",
           "changes_requested",
           "approved",
-          "merging",
+          "integrating",
           "merged",
           "cancelled",
           "failed"

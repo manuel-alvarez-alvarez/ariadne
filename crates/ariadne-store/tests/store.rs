@@ -76,6 +76,7 @@ async fn seed_task(store: &Store, goal: &Goal, repo: &Repository, deps: Vec<Stri
             title: "task".into(),
             description: "do things".into(),
             engineer_profile_id: eng.id,
+            integrator_profile_id: None,
             reviewer_profile_ids: vec![rev.id],
             depends_on: deps,
         })
@@ -371,6 +372,7 @@ async fn a_goal_needs_repositories_that_exist() {
                 title: "task".into(),
                 description: "do things".into(),
                 engineer_profile_id: eng.id,
+                integrator_profile_id: None,
                 reviewer_profile_ids: vec![rev.id],
                 depends_on: vec![],
             })
@@ -433,7 +435,7 @@ async fn task_happy_path_to_merged() {
         .await
         .unwrap();
     let t = store
-        .transition_task(&t.id, TaskStatus::Merging, Actor::Daemon, None, None)
+        .transition_task(&t.id, TaskStatus::Integrating, Actor::Daemon, None, None)
         .await
         .unwrap();
     let t = store
@@ -500,7 +502,7 @@ async fn illegal_transitions_are_rejected_and_unaudited() {
         .await
         .unwrap();
     let t = store
-        .transition_task(&t.id, TaskStatus::Merging, Actor::Daemon, None, None)
+        .transition_task(&t.id, TaskStatus::Integrating, Actor::Daemon, None, None)
         .await
         .unwrap();
     assert!(matches!(
@@ -530,6 +532,7 @@ async fn max_tasks_is_enforced() {
             title: "too many".into(),
             description: "".into(),
             engineer_profile_id: eng.id,
+            integrator_profile_id: None,
             reviewer_profile_ids: vec![rev.id],
             depends_on: vec![],
         })
@@ -581,7 +584,7 @@ async fn dependencies_gate_and_reject_cycles() {
         .await
         .unwrap();
     let t = store
-        .transition_task(&t.id, TaskStatus::Merging, Actor::Daemon, None, None)
+        .transition_task(&t.id, TaskStatus::Integrating, Actor::Daemon, None, None)
         .await
         .unwrap();
     store
@@ -1404,6 +1407,7 @@ async fn a_fresh_database_is_seeded_with_the_built_in_profiles_and_their_prompts
         ("Planner", Role::Planner),
         ("Engineer", Role::Engineer),
         ("Reviewer", Role::Reviewer),
+        ("Integrator", Role::Integrator),
     ] {
         let p = store.get_profile_by_name(name).await.unwrap();
         assert_eq!(p.role(), role);
@@ -1439,6 +1443,8 @@ async fn a_fresh_database_is_seeded_with_the_built_in_profiles_and_their_prompts
             .contains("install the project's dependencies"),
         "reviewers are told to install dependencies and verify"
     );
+    let integrator = store.get_profile_by_name("Integrator").await.unwrap();
+    assert_eq!(integrator.id, "00000000000000000000000004");
 
     // User edits stick.
     let engineer = store.get_profile_by_name("Engineer").await.unwrap();
@@ -1925,6 +1931,7 @@ async fn creation_pins_the_agent_and_model_of_every_profile() {
             title: "task".into(),
             description: "do things".into(),
             engineer_profile_id: engineer.id.clone(),
+            integrator_profile_id: None,
             reviewer_profile_ids: vec![reviewer.id.clone()],
             depends_on: vec![],
         })
@@ -1997,6 +2004,7 @@ async fn auto_and_default_are_pinned_as_such() {
             title: "task".into(),
             description: "do things".into(),
             engineer_profile_id: engineer.id.clone(),
+            integrator_profile_id: None,
             reviewer_profile_ids: vec![reviewer.id.clone()],
             depends_on: vec![],
         })
@@ -2065,6 +2073,7 @@ async fn reassigned_reviewers_pin_the_profile_they_are_assigned_from() {
             title: "task".into(),
             description: "do things".into(),
             engineer_profile_id: engineer.id.clone(),
+            integrator_profile_id: None,
             reviewer_profile_ids: vec![first.id.clone()],
             depends_on: vec![],
         })
@@ -2238,4 +2247,188 @@ async fn a_pre_pinning_database_backfills_from_the_profiles_it_references() {
     let task = store.get_task("legacytask").await.unwrap();
     assert_eq!(task.agent_kind(), Some(AgentKind::Codex));
     assert_eq!(task.model.as_deref(), Some("gpt-5"));
+}
+
+/// A database written before the integrator existed: its `merging` task is
+/// `integrating` afterwards — in the row and in its audit trail — the built-in
+/// Integrator profile is there to be named, and the rebuilt tables keep what
+/// hung off them.
+#[tokio::test]
+async fn a_pre_integrator_database_renames_merging_and_gains_the_builtin() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("legacy.db");
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let pool = sqlx::SqlitePool::connect_with(options).await.unwrap();
+
+    let mut migrator = sqlx::migrate::Migrator::new(std::path::Path::new("./migrations"))
+        .await
+        .unwrap();
+    migrator.migrations = migrator
+        .migrations
+        .iter()
+        .filter(|m| m.version < 11)
+        .cloned()
+        .collect::<Vec<_>>()
+        .into();
+    migrator.run(&pool).await.unwrap();
+
+    for (id, name, role) in [
+        ("legacyplanner", "Legacy planner", "planner"),
+        ("legacyengineer", "Legacy engineer", "engineer"),
+        ("legacyreviewer", "Legacy reviewer", "reviewer"),
+    ] {
+        sqlx::query(
+            "INSERT INTO profiles (id, name, role, system_prompt, created_at, updated_at)
+             VALUES (?, ?, ?, 'sys', 't', 't')",
+        )
+        .bind(id)
+        .bind(name)
+        .bind(role)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO repositories (id, path, base_branch, created_at, updated_at)
+         VALUES ('legacyrepo', '/tmp/legacy-integrator', 'main', 't', 't')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO goals (id, title, description, planner_profile_id, created_at, updated_at)
+         VALUES ('legacygoal', 'Legacy goal', 'desc', 'legacyplanner', 't', 't')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO goal_repositories (goal_id, repository_id) VALUES (?, ?)")
+        .bind("legacygoal")
+        .bind("legacyrepo")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO tasks (id, goal_id, repo_id, title, description, status,
+                            engineer_profile_id, branch, created_at, updated_at)
+         VALUES ('legacytask', 'legacygoal', 'legacyrepo', 'Legacy task', 'd', 'merging',
+                 'legacyengineer', 'ariadne/task-legacytask', 't', 't')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO task_transitions (id, task_id, from_status, to_status, actor, created_at)
+         VALUES ('legacytrans', 'legacytask', 'approved', 'merging', 'daemon', 't')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    // Children of the rebuilt tables: dropping them with foreign keys on
+    // would cascade these away.
+    sqlx::query("INSERT INTO task_reviewers (task_id, profile_id, position) VALUES (?, ?, 0)")
+        .bind("legacytask")
+        .bind("legacyreviewer")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO messages (id, goal_id, task_id, author_role, body, created_at)
+         VALUES ('legacymsg', 'legacygoal', 'legacytask', 'engineer', 'hi', 't')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    pool.close().await;
+
+    // Opening the store runs the migration under test.
+    let store = Store::open(&path).await.unwrap();
+
+    let task = store.get_task("legacytask").await.unwrap();
+    assert_eq!(task.status(), TaskStatus::Integrating);
+    assert_eq!(
+        task.integrator_profile_id, None,
+        "a task created before the column names no integrator"
+    );
+    let transitions = store.list_task_transitions("legacytask").await.unwrap();
+    assert_eq!(transitions.len(), 1);
+    assert_eq!(transitions[0].to_status, "integrating");
+
+    // The built-in the seeding path could not reach, because this database
+    // already had profiles of its own.
+    let integrator = store.get_profile_by_name("Integrator").await.unwrap();
+    assert_eq!(integrator.role(), Role::Integrator);
+    assert_eq!(
+        integrator.system_prompt,
+        default_system_prompt(Role::Integrator),
+        "the seeded prompt is the default a reset would put back"
+    );
+    assert_eq!(
+        store
+            .list_profiles(Some(Role::Integrator))
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+
+    // The rebuilds kept what hung off the tables they replaced...
+    assert_eq!(
+        store.list_task_reviewers("legacytask").await.unwrap(),
+        vec!["legacyreviewer".to_string()]
+    );
+    assert_eq!(
+        store
+            .list_task_messages("legacytask", None, 10)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+
+    // The rebuilt CHECK is the new vocabulary's: `merging` is not a status the
+    // table will take back.
+    let raw = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+    assert!(
+        sqlx::query("UPDATE tasks SET status = 'merging' WHERE id = 'legacytask'")
+            .execute(&raw)
+            .await
+            .is_err()
+    );
+    // So is `integrator`, on every role and actor column that gained it.
+    for (sql, what) in [
+        (
+            "INSERT INTO profiles (id, name, role, system_prompt, created_at, updated_at)
+             VALUES ('newintegrator', 'Another integrator', 'integrator', 'sys', 't', 't')",
+            "profiles.role",
+        ),
+        (
+            "INSERT INTO task_transitions (id, task_id, from_status, to_status, actor, created_at)
+             VALUES ('newtrans', 'legacytask', 'integrating', 'merged', 'integrator', 't')",
+            "task_transitions.actor",
+        ),
+        (
+            "INSERT INTO messages (id, goal_id, task_id, author_role, body, created_at)
+             VALUES ('newmsg', 'legacygoal', 'legacytask', 'integrator', 'landed', 't')",
+            "messages.author_role",
+        ),
+    ] {
+        sqlx::query(sql)
+            .execute(&raw)
+            .await
+            .unwrap_or_else(|e| panic!("{what} refused an integrator: {e}"));
+    }
+    raw.close().await;
+
+    // Foreign keys are back on after the rebuilds, so the goal still cascades.
+    store.delete_goal("legacygoal").await.unwrap();
+    assert!(matches!(
+        store.get_task("legacytask").await,
+        Err(StoreError::NotFound { .. })
+    ));
 }

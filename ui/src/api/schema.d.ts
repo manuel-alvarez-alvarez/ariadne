@@ -874,7 +874,7 @@ export interface components {
          * @description Author of a conversation message.
          * @enum {string}
          */
-        AuthorRole: "planner" | "engineer" | "reviewer" | "user" | "system";
+        AuthorRole: "planner" | "engineer" | "reviewer" | "integrator" | "user" | "system";
         /** @description A binary as the daemon can — or cannot — find it. */
         BinaryDto: {
             agent_kind?: null | components["schemas"]["AgentKind"];
@@ -958,6 +958,11 @@ export interface components {
             description?: string;
             /** @description Engineer profile id or unique name. */
             engineer_profile: string;
+            /**
+             * @description Integrator profile id or unique name; the built-in Integrator when
+             *     omitted.
+             */
+            integrator_profile?: string | null;
             /**
              * @description Id of one of the goal's repositories; may be omitted when the goal
              *     works in exactly one.
@@ -1273,7 +1278,7 @@ export interface components {
          * @description The role an agent plays in the orchestration.
          * @enum {string}
          */
-        Role: "planner" | "engineer" | "reviewer";
+        Role: "planner" | "engineer" | "reviewer" | "integrator";
         /**
          * @description Response of `GET /v1/roles/{role}/prompt-defaults`: what a profile of that
          *     role is seeded with, read without creating or touching anything.
@@ -1385,6 +1390,11 @@ export interface components {
             engineer_profile_id: string;
             goal_id: string;
             id: string;
+            /**
+             * @description Profile that lands the task once it is approved. None for tasks
+             *     created before the integrator existed.
+             */
+            integrator_profile_id?: string | null;
             merge_commit?: string | null;
             /**
              * @description Model the engineer runs on, pinned like `agent_kind`. None = the agent
@@ -1420,7 +1430,7 @@ export interface components {
          * @description Task lifecycle status.
          * @enum {string}
          */
-        TaskStatus: "pending" | "ready" | "in_progress" | "under_review" | "changes_requested" | "approved" | "merging" | "merged" | "cancelled" | "failed";
+        TaskStatus: "pending" | "ready" | "in_progress" | "under_review" | "changes_requested" | "approved" | "integrating" | "merged" | "cancelled" | "failed";
         TaskTransitionDto: {
             actor: string;
             created_at: string;
@@ -2438,7 +2448,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description planner, engineer or reviewer */
+                /** @description planner, engineer, reviewer or integrator */
                 role: string;
             };
             cookie?: never;

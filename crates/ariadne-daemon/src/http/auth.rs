@@ -45,6 +45,7 @@ pub async fn call_ctx(store: &Store, headers: &HeaderMap) -> ApiResult<CallCtx> 
         Role::Planner => (Actor::Planner, AuthorRole::Planner),
         Role::Engineer => (Actor::Engineer, AuthorRole::Engineer),
         Role::Reviewer => (Actor::Reviewer, AuthorRole::Reviewer),
+        Role::Integrator => (Actor::Integrator, AuthorRole::Integrator),
     };
     Ok(CallCtx {
         actor,

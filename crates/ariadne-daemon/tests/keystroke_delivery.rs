@@ -279,6 +279,7 @@ impl Harness {
                 title: "task".into(),
                 description: "desc".into(),
                 engineer_profile_id: engineer.clone(),
+                integrator_profile_id: None,
                 reviewer_profile_ids: vec![reviewer],
                 depends_on: vec![],
             })

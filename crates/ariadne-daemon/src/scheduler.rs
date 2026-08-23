@@ -738,10 +738,10 @@ impl Scheduler {
                     .await?;
                 self.spawn_failures.remove(&task.id);
                 self.store
-                    .transition_task(&task.id, TaskStatus::Merging, Actor::Daemon, None, None)
+                    .transition_task(&task.id, TaskStatus::Integrating, Actor::Daemon, None, None)
                     .await?;
             }
-            TaskStatus::Merging => {
+            TaskStatus::Integrating => {
                 self.check_stall(&task).await?;
             }
             TaskStatus::Merged => {
@@ -839,7 +839,7 @@ impl Scheduler {
             return Ok(());
         };
         let nudge = match task.status() {
-            TaskStatus::Merging => {
+            TaskStatus::Integrating => {
                 "Your task is approved: merge it as the merge instructions say, then call `mark_merged` with the merge commit sha."
             }
             _ => {

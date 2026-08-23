@@ -26,16 +26,25 @@ pub enum Role {
     Planner,
     Engineer,
     Reviewer,
+    /// Takes an approved task over from the engineer and lands it on the base
+    /// branch.
+    Integrator,
 }
 
 impl Role {
-    pub const ALL: [Role; 3] = [Role::Planner, Role::Engineer, Role::Reviewer];
+    pub const ALL: [Role; 4] = [
+        Role::Planner,
+        Role::Engineer,
+        Role::Reviewer,
+        Role::Integrator,
+    ];
 
     pub fn as_str(&self) -> &'static str {
         match self {
             Role::Planner => "planner",
             Role::Engineer => "engineer",
             Role::Reviewer => "reviewer",
+            Role::Integrator => "integrator",
         }
     }
 }
@@ -118,6 +127,8 @@ impl PromptKind {
                 PromptKind::MergeInstructions,
             ],
             Role::Reviewer => &[PromptKind::ReviewerBriefing, PromptKind::ReviewerResume],
+            // The integrator's briefings come with its lifecycle.
+            Role::Integrator => &[],
         }
     }
 
@@ -554,15 +565,17 @@ pub enum AuthorRole {
     Planner,
     Engineer,
     Reviewer,
+    Integrator,
     User,
     System,
 }
 
 impl AuthorRole {
-    pub const ALL: [AuthorRole; 5] = [
+    pub const ALL: [AuthorRole; 6] = [
         AuthorRole::Planner,
         AuthorRole::Engineer,
         AuthorRole::Reviewer,
+        AuthorRole::Integrator,
         AuthorRole::User,
         AuthorRole::System,
     ];
@@ -572,6 +585,7 @@ impl AuthorRole {
             AuthorRole::Planner => "planner",
             AuthorRole::Engineer => "engineer",
             AuthorRole::Reviewer => "reviewer",
+            AuthorRole::Integrator => "integrator",
             AuthorRole::User => "user",
             AuthorRole::System => "system",
         }

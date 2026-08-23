@@ -789,7 +789,7 @@ impl Launcher {
                 let repos = self.store.list_goal_repositories(&previous.goal_id).await?;
                 PathBuf::from(&repos.first().context("goal has no repos")?.path)
             }
-            Role::Engineer | Role::Reviewer => PathBuf::from(
+            Role::Engineer | Role::Reviewer | Role::Integrator => PathBuf::from(
                 previous
                     .worktree_path
                     .clone()
