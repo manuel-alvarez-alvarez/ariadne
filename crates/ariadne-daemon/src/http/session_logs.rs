@@ -15,12 +15,17 @@ use ariadne_api::sessions::{SessionLogChunk, SessionLogEnd, SessionPaneSize};
 use super::AppState;
 use super::error::ApiResult;
 use crate::logtail::LogTail;
+use crate::logwatch::LogWatch;
 use crate::tmux::PaneGeometry;
 
-/// How often the console log is polled for new output.
-const POLL: Duration = Duration::from_millis(300);
-/// How often the session is checked for still being alive. Coarser than
-/// [`POLL`]: it forks a `tmux` process and hits the store.
+/// How long a resynchronisation that came to nothing waits before trying
+/// again. Nothing can be sent meanwhile, so it is the frozen terminal a
+/// viewer sits on — but every attempt forks `tmux` two or three times.
+const RETRY: Duration = Duration::from_millis(300);
+/// How often the session is checked for still being alive. It forks a `tmux`
+/// process and hits the store, so it is coarse — and it doubles as the
+/// ceiling on how long output can wait when the filesystem watcher misses a
+/// write or could not be established at all (see [`LogWatch::changed`]).
 const LIVENESS: Duration = Duration::from_secs(1);
 /// Pane lines in the opening snapshot — the same window as `/logs`.
 const SNAPSHOT_LINES: u32 = 1000;
@@ -55,6 +60,9 @@ struct Follower {
     session_id: String,
     tmux_session: String,
     log: LogTail,
+    /// What says the log has been written to, so the tail is read when there
+    /// is something to read rather than on a timer.
+    watch: LogWatch,
     phase: Phase,
     /// Ready to go out, in order: the `resize` and `snapshot` pair that opens
     /// the stream, and the one that starts it over after a pane resize.
@@ -146,6 +154,40 @@ impl Follower {
 
     fn due_for_liveness_check(&self) -> bool {
         self.checked_alive_at.elapsed() >= LIVENESS
+    }
+
+    /// Wait for the pane to write something, or for the next liveness check
+    /// to fall due — whichever comes first.
+    ///
+    /// The watcher is what makes this quick; the liveness deadline is what
+    /// makes it safe. A wake-up that never comes — no watch could be
+    /// established, a backend dropped an event — costs the output the rest of
+    /// the interval and nothing more, which is what the fixed poll this
+    /// replaced cost it every single time.
+    async fn wait_for_output(&mut self) {
+        let budget = (self.checked_alive_at + LIVENESS).saturating_duration_since(Instant::now());
+        self.watch.changed(budget).await;
+    }
+
+    /// Queue everything the log still holds, then `end`: what a pane confirmed
+    /// gone leaves behind, half-written characters included. Long output is
+    /// split over as many `delta` events as it takes rather than one frame of
+    /// whatever size the session happened to finish at.
+    async fn finish_with_last_output(&mut self) {
+        loop {
+            let chunk = self.log.read_new().await;
+            if !chunk.is_empty() {
+                self.queue.push_back(chunk_event("delta", &chunk));
+            }
+            if !self.log.has_backlog() {
+                break;
+            }
+        }
+        let last = self.log.drain().await;
+        if !last.is_empty() {
+            self.queue.push_back(chunk_event("delta", &last));
+        }
+        self.phase = Phase::Ending;
     }
 
     /// Put the client on the pane's current screen: a `resize`, then a
@@ -306,14 +348,14 @@ pub async fn logs_stream(
     Path(id): Path<String>,
 ) -> ApiResult<Sse<impl Stream<Item = Result<Event, Infallible>>>> {
     let session = state.store.get_session(&id).await?;
-    let log = LogTail::new(
-        state
-            .launcher
-            .cfg
-            .run_dir
-            .join(&session.id)
-            .join("console.log"),
-    );
+    let console_log = state
+        .launcher
+        .cfg
+        .run_dir
+        .join(&session.id)
+        .join("console.log");
+    let log = LogTail::new(&console_log);
+    let watch = LogWatch::new(&console_log);
 
     // Nothing is captured here. A screen and the grid it is described by have
     // to be one screen's, which takes measuring the pane on both sides of the
@@ -327,6 +369,7 @@ pub async fn logs_stream(
         session_id: session.id,
         tmux_session: session.tmux_session,
         log,
+        watch,
         phase: Phase::Resynchronising {
             since: Instant::now(),
         },
@@ -341,36 +384,25 @@ pub async fn logs_stream(
             }
             match f.phase {
                 Phase::Following => {
-                    tokio::time::sleep(POLL).await;
-                    let mut new = f.log.read_new().await;
-                    // Checked even when there is output to send: a pane that
-                    // writes on every poll must not keep a finished session's
-                    // stream open forever.
+                    // Asked before the wait rather than after it, and asked
+                    // even while output is streaming: a pane that writes on
+                    // every wake-up must not keep a finished session's stream
+                    // open forever, and the two or three `tmux` forks it takes
+                    // have no business sitting between output landing in the
+                    // log and the frame that carries it.
                     if f.due_for_liveness_check() {
                         match f.poll().await {
                             Pane::Gone => {
-                                // Whatever the session wrote on its way out,
-                                // half-written characters included.
-                                new.push_str(&f.log.drain().await);
-                                if new.is_empty() {
-                                    f.phase = Phase::Done;
-                                    return Some((Ok(end_event(&f.session_id)), f));
-                                }
-                                f.phase = Phase::Ending;
-                                return Some((Ok(chunk_event("delta", &new)), f));
+                                f.finish_with_last_output().await;
+                                continue;
                             }
-                            // The pane changed shape under us. `new` is
-                            // exactly the output that cannot be placed either
-                            // side of that, so it is dropped, and nothing
-                            // more goes out until there is a screen at the
-                            // new grid to replace the client's with.
                             // Either the pane changed shape, or it would not
                             // say. Both mean the same thing here: the grid
-                            // these bytes were drawn at is no longer known, so
-                            // they are dropped and nothing more goes out until
-                            // a screen and its grid have been read together.
-                            // Carrying on would be guessing that the pane that
-                            // stopped answering also stopped changing.
+                            // whatever it writes next is drawn at is no longer
+                            // known, so nothing goes out until a screen and
+                            // its grid have been read together. Carrying on
+                            // would be guessing that the pane that stopped
+                            // answering also stopped changing.
                             Pane::Unreadable => {
                                 f.phase = Phase::Resynchronising {
                                     since: Instant::now(),
@@ -386,6 +418,13 @@ pub async fn logs_stream(
                             Pane::Alive(_) => {}
                         }
                     }
+                    // A read that stopped at the frame cap left the rest of
+                    // the burst behind it, already written: there is nothing
+                    // to wait for.
+                    if !f.log.has_backlog() {
+                        f.wait_for_output().await;
+                    }
+                    let new = f.log.read_new().await;
                     if !new.is_empty() {
                         return Some((Ok(chunk_event("delta", &new)), f));
                     }
@@ -415,7 +454,7 @@ pub async fn logs_stream(
                             warn!(session = %f.session_id, "no coherent screen from the pane; closing the stream to resynchronise");
                             return None;
                         }
-                        tokio::time::sleep(POLL).await;
+                        tokio::time::sleep(RETRY).await;
                     }
                 },
                 Phase::Ending => {
