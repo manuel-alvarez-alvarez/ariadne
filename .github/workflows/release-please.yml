@@ -53,10 +53,17 @@ jobs:
       # its outputs unprefixed: `release_created` is set only on the runs that
       # actually published a Release, and `tag_name` is the tag it was cut
       # from — the tag release.yml checks out and uploads to.
+      #
+      # `--ref "$TAG"` runs release.yml *on the tag*, not on main: the run
+      # takes the workflow file from the tag as well as the sources, and
+      # `github.ref` — which is what the build provenance attestation records
+      # as the origin of the assets — is the tag ref rather than
+      # refs/heads/main. Without it a release cut today would be attested as
+      # having been built from whatever main happened to be.
       - name: Build the release assets
         if: steps.release.outputs.release_created == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ steps.release.outputs.tag_name }}
-        run: gh workflow run release.yml --field tag="$TAG"
+        run: gh workflow run release.yml --ref "$TAG" --field tag="$TAG"
