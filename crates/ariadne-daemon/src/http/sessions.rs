@@ -5,7 +5,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 
 use ariadne_api::sessions::{
-    SessionDto, SessionInputRequest, SessionListQuery, SessionLogsResponse,
+    SessionDto, SessionInputRequest, SessionListQuery, SessionLogsResponse, SessionResizeRequest,
 };
 use ariadne_store::SessionFilter;
 
@@ -124,6 +124,65 @@ pub async fn input(
         .launcher
         .tmux
         .send_raw(&session.tmux_session, req.data.as_bytes())
+        .await
+        .map_err(|e| ApiError::conflict(e.to_string()))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Largest grid a pane may be asked for, per side.
+///
+/// Nothing renders a terminal this big — it is a bound on nonsense, not a
+/// preference — but a pane is a real allocation per cell, so a viewer with a
+/// broken measurement must not be able to ask tmux for a million rows.
+const MAX_PANE_SIDE: u16 = 500;
+
+/// Resize a session's pane to the grid a viewer is showing it at.
+///
+/// The web terminal is not a tmux client, so nothing sizes the pane for it:
+/// left alone a detached session stays at tmux's 80×24 and a panel with room
+/// for far more shows a small pane in a large box. This is the attach a
+/// browser cannot make — the same `resize-window` a `tmux attach` performs —
+/// and the new grid comes back to every viewer through the log stream, which
+/// already notices a pane that changed size.
+///
+/// Several viewers each fit the pane to their own panel; the last one to ask
+/// wins, exactly as the last client to attach does in tmux.
+///
+/// Liveness is checked as it is for input: a finished session's status, and
+/// tmux itself, since a stale name may belong to a successor's pane by now.
+#[utoipa::path(post, path = "/v1/sessions/{id}/resize", tag = "sessions",
+    request_body = SessionResizeRequest,
+    params(("id" = String, Path, description = "session id")),
+    responses((status = 204, description = "Pane resized"),
+        (status = 400), (status = 404), (status = 409)))]
+pub async fn resize(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<SessionResizeRequest>,
+) -> ApiResult<StatusCode> {
+    if req.cols == 0 || req.rows == 0 || req.cols > MAX_PANE_SIDE || req.rows > MAX_PANE_SIDE {
+        return Err(ApiError::bad_request(format!(
+            "pane size {}x{} is out of range (1x1 to {MAX_PANE_SIDE}x{MAX_PANE_SIDE})",
+            req.cols, req.rows
+        )));
+    }
+    let session = state.store.get_session(&id).await?;
+    if !session.status().is_live() {
+        return Err(ApiError::conflict(format!(
+            "session {id} is {} and has no pane to resize",
+            session.status
+        )));
+    }
+    if !state.launcher.tmux.has_session(&session.tmux_session).await {
+        return Err(ApiError::conflict(format!(
+            "session {id} has no live pane ({})",
+            session.tmux_session
+        )));
+    }
+    state
+        .launcher
+        .tmux
+        .resize_window(&session.tmux_session, req.cols, req.rows)
         .await
         .map_err(|e| ApiError::conflict(e.to_string()))?;
     Ok(StatusCode::NO_CONTENT)

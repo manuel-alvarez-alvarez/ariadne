@@ -612,6 +612,37 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sessions/{id}/resize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resize a session's pane to the grid a viewer is showing it at.
+         * @description The web terminal is not a tmux client, so nothing sizes the pane for it:
+         *     left alone a detached session stays at tmux's 80×24 and a panel with room
+         *     for far more shows a small pane in a large box. This is the attach a
+         *     browser cannot make — the same `resize-window` a `tmux attach` performs —
+         *     and the new grid comes back to every viewer through the log stream, which
+         *     already notices a pane that changed size.
+         *
+         *     Several viewers each fit the pane to their own panel; the last one to ask
+         *     wins, exactly as the last client to attach does in tmux.
+         *
+         *     Liveness is checked as it is for input: a finished session's status, and
+         *     tmux itself, since a stale name may belong to a successor's pane by now.
+         */
+        post: operations["sessions_resize"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sessions/{id}/resume": {
         parameters: {
             query?: never;
@@ -1321,6 +1352,19 @@ export interface components {
          *     bytes at any other one has every repaint land on the wrong row.
          */
         SessionPaneSize: {
+            /** Format: int32 */
+            cols: number;
+            /** Format: int32 */
+            rows: number;
+        };
+        /**
+         * @description Body of `POST /v1/sessions/{id}/resize`.
+         *
+         *     The grid a viewer wants the pane to draw at, in cells — what a terminal
+         *     hands its pty when its window changes, and what `tmux attach` gives the
+         *     pane it attaches to.
+         */
+        SessionResizeRequest: {
             /** Format: int32 */
             cols: number;
             /** Format: int32 */
@@ -2595,6 +2639,49 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    sessions_resize: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description session id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SessionResizeRequest"];
+            };
+        };
+        responses: {
+            /** @description Pane resized */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
