@@ -275,8 +275,14 @@ impl AriadneMcp {
             None => format!("/v1/goals/{}/messages", self.goal_id),
         };
         json_result(
-            self.post(&path, &CreateMessageRequest { body: req.body })
-                .await?,
+            self.post(
+                &path,
+                &CreateMessageRequest {
+                    body: req.body,
+                    to: None,
+                },
+            )
+            .await?,
         )
     }
 
@@ -397,6 +403,7 @@ impl AriadneMcp {
             &format!("/v1/tasks/{task}/messages"),
             &CreateMessageRequest {
                 body: format!("Review requested: {}", req.summary),
+                to: None,
             },
         )
         .await?;

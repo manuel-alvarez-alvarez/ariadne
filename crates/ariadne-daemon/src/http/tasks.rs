@@ -16,8 +16,9 @@ use ariadne_store::{NewMessage, NewReview, NewTask, Store, Task, TaskFilter, Tas
 
 use super::AppState;
 use super::auth::{CallCtx, call_ctx, ensure_task_scope};
-use super::convert::{message_dto, review_dto, task_dto, transition_dto};
+use super::convert::{message_dto_of, message_dtos, review_dto, task_dto, transition_dto};
 use super::error::{ApiError, ApiResult};
+use super::recipients;
 
 async fn to_dto(store: &Store, task: Task) -> ApiResult<TaskDto> {
     let reviewers = store.list_task_reviewer_pins(&task.id).await?;
@@ -312,14 +313,17 @@ pub async fn list_messages(
         .store
         .list_task_messages(&id, page.after.as_deref(), page.limit())
         .await?;
-    Ok(Json(msgs.into_iter().map(message_dto).collect()))
+    Ok(Json(message_dtos(&state.store, msgs).await?))
 }
 
 /// Post into the task conversation.
 #[utoipa::path(post, path = "/v1/tasks/{id}/messages", tag = "tasks",
     request_body = CreateMessageRequest,
     params(("id" = String, Path, description = "task id")),
-    responses((status = 201, body = MessageDto)))]
+    responses(
+        (status = 201, body = MessageDto),
+        (status = 400, description = "unknown addressee, or one taking no part in the task")
+    ))]
 pub async fn post_message(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -329,6 +333,13 @@ pub async fn post_message(
     let ctx = call_ctx(&state.store, &headers).await?;
     ensure_task_scope(&ctx, &id)?;
     let task = state.store.get_task(&id).await?;
+    let recipient = match &req.to {
+        Some(to) => {
+            let participants = recipients::task_participants(&state.store, &task).await?;
+            Some(recipients::resolve(&state.store, to, &participants).await?)
+        }
+        None => None,
+    };
     let msg = state
         .store
         .create_message(NewMessage {
@@ -336,10 +347,14 @@ pub async fn post_message(
             task_id: Some(id),
             author_role: ctx.author_role,
             author_session_id: ctx.session.map(|s| s.id),
+            recipient,
             body: req.body,
         })
         .await?;
-    Ok((StatusCode::CREATED, Json(message_dto(msg))))
+    Ok((
+        StatusCode::CREATED,
+        Json(message_dto_of(&state.store, msg).await?),
+    ))
 }
 
 /// Reviews of a task.

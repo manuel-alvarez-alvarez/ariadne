@@ -7,7 +7,7 @@
       "name": "MIT OR Apache-2.0",
       "identifier": "MIT OR Apache-2.0"
     },
-    "version": "0.1.0"
+    "version": "0.3.0"
   },
   "paths": {
     "/v1/agents": {
@@ -590,6 +590,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "unknown addressee, or one taking no part in the goal"
           }
         }
       }
@@ -1550,6 +1553,7 @@
           "sessions"
         ],
         "summary": "Revive an ended session: new tmux, same agent conversation (resumed via\nthe stored internal session id). Returns the session to attach to, which\nis this one either way — relaunched under its own id and tmux name, or\nuntouched when its tmux turned out to be alive already.",
+        "description": "`409` when there is nothing to come back to: no stored agent id, a\nworktree that was cleaned up — or a goal that has finished, whose live\nsessions the scheduler takes down anyway.",
         "operationId": "resume",
         "parameters": [
           {
@@ -1886,6 +1890,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "unknown addressee, or one taking no part in the task"
           }
         }
       }
@@ -2297,6 +2304,14 @@
         "properties": {
           "body": {
             "type": "string"
+          },
+          "to": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Whom to address: a profile id or name, as tasks name their profiles, or\nthe literal `\"user\"`. Omitted leaves the message addressed to the\nthread. Only a participant of the thread may be addressed.",
+            "example": "reviewer-default"
           }
         }
       },
@@ -2998,12 +3013,49 @@
           "id": {
             "type": "string"
           },
+          "recipient": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MessageRecipientDto",
+                "description": "Whom the message addresses. None = the thread, addressed to nobody in\nparticular."
+              }
+            ]
+          },
           "task_id": {
             "type": [
               "string",
               "null"
             ],
             "description": "None = goal-level thread."
+          }
+        }
+      },
+      "MessageRecipientDto": {
+        "type": "object",
+        "description": "A message's addressee, resolved: an agent profile comes with its name, so a\nclient renders \"to Alice\" without a lookup of its own.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/RecipientKind"
+          },
+          "profile_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The addressed profile, set exactly when `kind` is `profile`."
+          },
+          "profile_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "That profile's name, unless the profile is gone."
           }
         }
       },
@@ -3166,6 +3218,14 @@
           "merge_instructions",
           "reviewer_briefing",
           "reviewer_resume"
+        ]
+      },
+      "RecipientKind": {
+        "type": "string",
+        "description": "Who a conversation message is addressed to: one agent profile, or the\nhuman user. Orthogonal to the author role, and optional — a message with\nno recipient is addressed to the thread rather than to anyone in it.",
+        "enum": [
+          "profile",
+          "user"
         ]
       },
       "RepositoryDto": {

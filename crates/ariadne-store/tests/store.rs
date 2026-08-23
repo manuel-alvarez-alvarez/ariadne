@@ -735,6 +735,7 @@ async fn messages_sessions_events_round_trip() {
             task_id: Some(task.id.clone()),
             author_role: AuthorRole::Engineer,
             author_session_id: Some(session.id.clone()),
+            recipient: None,
             body: "starting work".into(),
         })
         .await
@@ -770,6 +771,110 @@ async fn messages_sessions_events_round_trip() {
         .unwrap();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].kind, "post_tool_use");
+}
+
+/// A message can name who it is for: one profile, or the user. Saying nothing
+/// keeps it addressed to the thread, the way every message was before
+/// recipients existed, and whichever of the three it is survives the round
+/// trip through the list a thread is read with.
+#[tokio::test]
+async fn a_message_can_be_addressed_to_a_profile_or_to_the_user() {
+    let (store, _dir) = test_store().await;
+    let planner = seed_profile(&store, "planner", Role::Planner).await;
+    let (goal, repo) = seed_goal(&store, &planner, None).await;
+    let task = seed_task(&store, &goal, &repo, vec![]).await;
+    let engineer = Recipient::Profile(task.engineer_profile_id.clone());
+
+    for (recipient, body) in [
+        (Some(engineer.clone()), "over to you"),
+        (Some(Recipient::User), "a question for you"),
+        (None, "thinking out loud"),
+    ] {
+        store
+            .create_message(NewMessage {
+                goal_id: goal.id.clone(),
+                task_id: Some(task.id.clone()),
+                author_role: AuthorRole::Reviewer,
+                author_session_id: None,
+                recipient,
+                body: body.into(),
+            })
+            .await
+            .unwrap();
+    }
+
+    let msgs = store.list_task_messages(&task.id, None, 50).await.unwrap();
+    assert_eq!(
+        msgs.iter().map(Message::recipient).collect::<Vec<_>>(),
+        vec![Some(engineer.clone()), Some(Recipient::User), None]
+    );
+    // The columns behind the accessor: only a profile addressee carries an id.
+    assert_eq!(
+        (
+            msgs[0].recipient_kind.as_deref(),
+            msgs[0].recipient_profile_id.as_deref()
+        ),
+        (Some("profile"), Some(task.engineer_profile_id.as_str()))
+    );
+    assert_eq!(
+        (
+            msgs[1].recipient_kind.as_deref(),
+            msgs[1].recipient_profile_id.as_deref()
+        ),
+        (Some("user"), None)
+    );
+    assert_eq!(msgs[2].recipient_kind, None);
+
+    // The goal thread addresses the same way, and what create_message returns
+    // already carries the recipient it was given.
+    let msg = store
+        .create_message(NewMessage {
+            goal_id: goal.id.clone(),
+            task_id: None,
+            author_role: AuthorRole::User,
+            author_session_id: None,
+            recipient: Some(Recipient::Profile(planner.id.clone())),
+            body: "over to you, planner".into(),
+        })
+        .await
+        .unwrap();
+    let addressed_planner = Some(Recipient::Profile(planner.id.clone()));
+    assert_eq!(msg.recipient(), addressed_planner);
+    let goal_msgs = store.list_goal_messages(&goal.id, None, 50).await.unwrap();
+    assert_eq!(goal_msgs[0].recipient(), addressed_planner);
+}
+
+/// A profile someone addressed is a profile the database is holding on to:
+/// deleting it is refused the same way a profile in use by a goal or a task
+/// is, rather than leaving the message pointing at nothing.
+#[tokio::test]
+async fn a_profile_a_message_addresses_cannot_be_deleted() {
+    let (store, _dir) = test_store().await;
+    let planner = seed_profile(&store, "planner", Role::Planner).await;
+    let (goal, _repo) = seed_goal(&store, &planner, None).await;
+    // A profile nothing else references, so only the message can hold it.
+    let bystander = seed_profile(&store, "bystander", Role::Reviewer).await;
+
+    store
+        .create_message(NewMessage {
+            goal_id: goal.id.clone(),
+            task_id: None,
+            author_role: AuthorRole::User,
+            author_session_id: None,
+            recipient: Some(Recipient::Profile(bystander.id.clone())),
+            body: "a word with you".into(),
+        })
+        .await
+        .unwrap();
+
+    let err = store.delete_profile(&bystander.id).await.unwrap_err();
+    let StoreError::Conflict(message) = err else {
+        panic!("expected a conflict, got {err:?}");
+    };
+    assert!(
+        message.contains("1 message as its addressee"),
+        "the refusal says what holds the profile: {message}"
+    );
 }
 
 /// What a launch is dated for: asking whether *this* run of an agent has
@@ -1725,13 +1830,15 @@ async fn a_pre_repositories_database_migrates_its_goals_and_tasks() {
         store.list_task_reviewers("legacytask").await.unwrap(),
         vec!["legacyengineer".to_string()]
     );
+    let legacy_messages = store
+        .list_task_messages("legacytask", None, 10)
+        .await
+        .unwrap();
+    assert_eq!(legacy_messages.len(), 1);
     assert_eq!(
-        store
-            .list_task_messages("legacytask", None, 10)
-            .await
-            .unwrap()
-            .len(),
-        1
+        legacy_messages[0].recipient(),
+        None,
+        "a message written before recipients existed is addressed to the thread"
     );
 
     // A database that predates the agent configs is given them on the way up,

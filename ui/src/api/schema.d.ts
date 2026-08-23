@@ -626,6 +626,9 @@ export interface paths {
          *     the stored internal session id). Returns the session to attach to, which
          *     is this one either way — relaunched under its own id and tmux name, or
          *     untouched when its tmux turned out to be alive already.
+         * @description `409` when there is nothing to come back to: no stored agent id, a
+         *     worktree that was cleaned up — or a goal that has finished, whose live
+         *     sessions the scheduler takes down anyway.
          */
         post: operations["sessions_resume"];
         delete?: never;
@@ -877,6 +880,13 @@ export interface components {
         };
         CreateMessageRequest: {
             body: string;
+            /**
+             * @description Whom to address: a profile id or name, as tasks name their profiles, or
+             *     the literal `"user"`. Omitted leaves the message addressed to the
+             *     thread. Only a participant of the thread may be addressed.
+             * @example reviewer-default
+             */
+            to?: string | null;
         };
         CreateProfileRequest: {
             agent_kind?: null | components["schemas"]["AgentKind"];
@@ -1102,8 +1112,20 @@ export interface components {
             created_at: string;
             goal_id: string;
             id: string;
+            recipient?: null | components["schemas"]["MessageRecipientDto"];
             /** @description None = goal-level thread. */
             task_id?: string | null;
+        };
+        /**
+         * @description A message's addressee, resolved: an agent profile comes with its name, so a
+         *     client renders "to Alice" without a lookup of its own.
+         */
+        MessageRecipientDto: {
+            kind: components["schemas"]["RecipientKind"];
+            /** @description The addressed profile, set exactly when `kind` is `profile`. */
+            profile_id?: string | null;
+            /** @description That profile's name, unless the profile is gone. */
+            profile_name?: string | null;
         };
         /** @description One model an agent CLI can run, as served by `GET /v1/models`. */
         ModelDto: {
@@ -1169,6 +1191,13 @@ export interface components {
          * @enum {string}
          */
         PromptKind: "planner_briefing" | "engineer_briefing" | "changes_requested" | "merge_instructions" | "reviewer_briefing" | "reviewer_resume";
+        /**
+         * @description Who a conversation message is addressed to: one agent profile, or the
+         *     human user. Orthogonal to the author role, and optional — a message with
+         *     no recipient is addressed to the thread rather than to anyone in it.
+         * @enum {string}
+         */
+        RecipientKind: "profile" | "user";
         RepositoryDto: {
             base_branch: string;
             created_at: string;
@@ -1825,6 +1854,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["MessageDto"];
                 };
+            };
+            /** @description unknown addressee, or one taking no part in the goal */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -2802,6 +2838,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["MessageDto"];
                 };
+            };
+            /** @description unknown addressee, or one taking no part in the task */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
