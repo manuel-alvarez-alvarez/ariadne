@@ -588,6 +588,38 @@ impl std::str::FromStr for AuthorRole {
     }
 }
 
+/// Who a conversation message is addressed to: one agent profile, or the
+/// human user. Orthogonal to the author role, and optional — a message with
+/// no recipient is addressed to the thread rather than to anyone in it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum RecipientKind {
+    Profile,
+    User,
+}
+
+impl RecipientKind {
+    pub const ALL: [RecipientKind; 2] = [RecipientKind::Profile, RecipientKind::User];
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RecipientKind::Profile => "profile",
+            RecipientKind::User => "user",
+        }
+    }
+}
+
+impl std::str::FromStr for RecipientKind {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        RecipientKind::ALL
+            .into_iter()
+            .find(|v| v.as_str() == s)
+            .ok_or_else(|| format!("unknown recipient kind: {s}"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

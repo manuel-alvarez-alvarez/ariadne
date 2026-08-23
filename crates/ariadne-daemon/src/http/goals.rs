@@ -14,8 +14,9 @@ use ariadne_store::{NewGoal, NewMessage, SessionFilter};
 
 use super::AppState;
 use super::auth::call_ctx;
-use super::convert::{goal_dto, message_dto};
+use super::convert::{goal_dto, message_dto_of, message_dtos};
 use super::error::{ApiError, ApiResult};
+use super::recipients;
 
 #[derive(Debug, Default, Deserialize, IntoParams)]
 pub struct GoalListQuery {
@@ -236,6 +237,7 @@ pub async fn finalize(
             task_id: None,
             author_role: ctx.author_role,
             author_session_id: ctx.session.map(|s| s.id),
+            recipient: None,
             body: format!("Plan finalized: {}", req.summary),
         })
         .await?;
@@ -269,14 +271,17 @@ pub async fn list_messages(
         .store
         .list_goal_messages(&id, page.after.as_deref(), page.limit())
         .await?;
-    Ok(Json(msgs.into_iter().map(message_dto).collect()))
+    Ok(Json(message_dtos(&state.store, msgs).await?))
 }
 
 /// Post to the goal-level thread.
 #[utoipa::path(post, path = "/v1/goals/{id}/messages", tag = "goals",
     request_body = CreateMessageRequest,
     params(("id" = String, Path, description = "goal id")),
-    responses((status = 201, body = MessageDto)))]
+    responses(
+        (status = 201, body = MessageDto),
+        (status = 400, description = "unknown addressee, or one taking no part in the goal")
+    ))]
 pub async fn post_message(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -284,7 +289,14 @@ pub async fn post_message(
     Json(req): Json<CreateMessageRequest>,
 ) -> ApiResult<(StatusCode, Json<MessageDto>)> {
     let ctx = call_ctx(&state.store, &headers).await?;
-    state.store.get_goal(&id).await?;
+    let goal = state.store.get_goal(&id).await?;
+    let recipient = match &req.to {
+        Some(to) => {
+            let participants = recipients::goal_participants(&state.store, &goal).await?;
+            Some(recipients::resolve(&state.store, to, &participants).await?)
+        }
+        None => None,
+    };
     let msg = state
         .store
         .create_message(NewMessage {
@@ -292,10 +304,14 @@ pub async fn post_message(
             task_id: None,
             author_role: ctx.author_role,
             author_session_id: ctx.session.map(|s| s.id),
+            recipient,
             body: req.body,
         })
         .await?;
-    Ok((StatusCode::CREATED, Json(message_dto(msg))))
+    Ok((
+        StatusCode::CREATED,
+        Json(message_dto_of(&state.store, msg).await?),
+    ))
 }
 
 #[cfg(test)]

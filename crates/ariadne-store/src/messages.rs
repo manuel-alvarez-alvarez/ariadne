@@ -3,7 +3,7 @@
 use ariadne_core::AuthorRole;
 use ariadne_core::id::new_id;
 
-use crate::{Change, Message, Result, Store, now};
+use crate::{Change, Message, Recipient, Result, Store, now};
 
 #[derive(Debug, Clone)]
 pub struct NewMessage {
@@ -12,6 +12,9 @@ pub struct NewMessage {
     pub task_id: Option<String>,
     pub author_role: AuthorRole,
     pub author_session_id: Option<String>,
+    /// Whom the message addresses. None = the thread, addressed to nobody in
+    /// particular, which is what every message was before recipients existed.
+    pub recipient: Option<Recipient>,
     pub body: String,
 }
 
@@ -19,14 +22,17 @@ impl Store {
     pub async fn create_message(&self, new: NewMessage) -> Result<Message> {
         let id = new_id();
         sqlx::query(
-            "INSERT INTO messages (id, goal_id, task_id, author_role, author_session_id, body, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO messages (id, goal_id, task_id, author_role, author_session_id,
+                                   recipient_kind, recipient_profile_id, body, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&new.goal_id)
         .bind(&new.task_id)
         .bind(new.author_role.as_str())
         .bind(&new.author_session_id)
+        .bind(new.recipient.as_ref().map(|r| r.kind().as_str()))
+        .bind(new.recipient.as_ref().and_then(Recipient::profile_id))
         .bind(&new.body)
         .bind(now())
         .execute(self.w())

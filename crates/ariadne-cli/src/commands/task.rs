@@ -359,7 +359,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             let m: MessageDto = client
                 .post_json(
                     &format!("/v1/tasks/{id}/messages"),
-                    &CreateMessageRequest { body },
+                    &CreateMessageRequest { body, to: None },
                 )
                 .await?;
             match format {

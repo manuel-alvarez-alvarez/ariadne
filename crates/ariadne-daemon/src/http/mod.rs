@@ -10,6 +10,7 @@ mod goals;
 mod logs;
 mod models;
 mod profiles;
+mod recipients;
 mod repositories;
 mod session_logs;
 mod sessions;

@@ -1,15 +1,18 @@
 //! Store entity -> API DTO conversions.
 
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
+
 use ariadne_api::agents::AgentConfigDto;
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::goals::GoalDto;
-use ariadne_api::messages::MessageDto;
+use ariadne_api::messages::{MessageDto, MessageRecipientDto};
 use ariadne_api::profiles::{ProfileDto, ProfilePromptDto};
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::reviews::ReviewDto;
 use ariadne_api::sessions::SessionDto;
 use ariadne_api::tasks::{TaskDto, TaskReviewerDto, TaskTransitionDto};
-use ariadne_store as store;
+use ariadne_store::{self as store, Store, StoreError};
 
 pub fn profile_dto(p: store::Profile) -> ProfileDto {
     ProfileDto {
@@ -114,16 +117,59 @@ pub fn transition_dto(t: store::TaskTransition) -> TaskTransitionDto {
     }
 }
 
-pub fn message_dto(m: store::Message) -> MessageDto {
+/// `recipient_profile_name` is the name of the addressed profile, which the
+/// callers below load; it is ignored for a message addressed to the user or to
+/// nobody.
+pub fn message_dto(m: store::Message, recipient_profile_name: Option<String>) -> MessageDto {
+    let recipient = m.recipient().map(|r| MessageRecipientDto {
+        kind: r.kind(),
+        profile_id: r.profile_id().map(str::to_string),
+        profile_name: r.profile_id().and(recipient_profile_name),
+    });
     MessageDto {
         author_role: m.author_role(),
         id: m.id,
         goal_id: m.goal_id,
         task_id: m.task_id,
         author_session_id: m.author_session_id,
+        recipient,
         body: m.body,
         created_at: m.created_at,
     }
+}
+
+/// [`message_dto`] with the addressee's name loaded from the store.
+pub async fn message_dto_of(store: &Store, m: store::Message) -> Result<MessageDto, StoreError> {
+    let name = match &m.recipient_profile_id {
+        Some(id) => Some(store.get_profile(id).await?.name),
+        None => None,
+    };
+    Ok(message_dto(m, name))
+}
+
+/// A whole thread, resolving each addressed profile once however many of its
+/// messages name it.
+pub async fn message_dtos(
+    store: &Store,
+    msgs: Vec<store::Message>,
+) -> Result<Vec<MessageDto>, StoreError> {
+    let mut names: HashMap<String, String> = HashMap::new();
+    for id in msgs.iter().filter_map(|m| m.recipient_profile_id.clone()) {
+        if let Entry::Vacant(slot) = names.entry(id) {
+            let name = store.get_profile(slot.key()).await?.name;
+            slot.insert(name);
+        }
+    }
+    Ok(msgs
+        .into_iter()
+        .map(|m| {
+            let name = m
+                .recipient_profile_id
+                .as_ref()
+                .and_then(|id| names.get(id).cloned());
+            message_dto(m, name)
+        })
+        .collect())
 }
 
 pub fn review_dto(r: store::Review) -> ReviewDto {
