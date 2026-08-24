@@ -7,6 +7,12 @@
 //! sends it to read. A message for the human wakes nobody: it goes up the
 //! attention path instead, on the session of the agent that wrote it.
 //!
+//! The other half is what happens when the delivery does not work: a tmux
+//! that will not take the keystrokes and an agent that cannot be resumed are
+//! tried again, and once the passes are gone somebody is told — the addressee
+//! on its own session, or the author on theirs when the addressee has no
+//! session left at all. Nothing is ever quietly struck off.
+//!
 //! The whole path is exercised, from the HTTP handler both agents and the CLI
 //! post through to the keystrokes that come out the other end: the router is
 //! wired to a real scheduler, and `tmux` is a stub script whose sessions are
@@ -47,10 +53,27 @@ use ariadne_store::{
 /// read back, so this is not as generous as it looks.
 const TIMEOUT: Duration = Duration::from_secs(10);
 
+/// The same, for the one test that waits on a reconciliation tick rather than
+/// on an event: nothing re-posts a message in production, so a retry is the
+/// tick's to make and this is how long a tick can take to come round.
+const TICK_TIMEOUT: Duration = Duration::from_secs(40);
+
+/// How many passes one message is worth before the user is told it never
+/// arrived, mirroring the scheduler's `DELIVERY_ATTEMPTS`.
+const DELIVERY_ATTEMPTS: usize = 3;
+
 /// Wait for what a delivery was supposed to do, rather than guessing at how
 /// long one takes.
-async fn eventually(what: &str, mut check: impl AsyncFnMut() -> bool) {
-    let deadline = Instant::now() + TIMEOUT;
+async fn eventually(what: &str, check: impl AsyncFnMut() -> bool) {
+    eventually_within(TIMEOUT, what, check).await
+}
+
+async fn eventually_within(
+    timeout: Duration,
+    what: &str,
+    mut check: impl AsyncFnMut() -> bool,
+) {
+    let deadline = Instant::now() + timeout;
     loop {
         if check().await {
             return;
@@ -103,6 +126,10 @@ async fn harness() -> Harness {
 /// every `send-keys` it is handed — arguments and all, so the pasted bytes can
 /// be read back — and whose panes draw whatever is in `composer` (nothing,
 /// unless a test is about a message that stays in one).
+///
+/// While the `refusing` file is there it takes no keystrokes at all and notes
+/// what it turned away, which is what a machine briefly out of process slots
+/// looks like from the daemon's side.
 fn write_tmux_stub(dir: &Path) -> TmuxManager {
     use std::os::unix::fs::PermissionsExt;
 
@@ -122,13 +149,17 @@ fn write_tmux_stub(dir: &Path) -> TmuxManager {
          case \"$1\" in\n\
         \x20 has-session) grep -qx \"$target\" \"$alive\" || exit 1 ;;\n\
         \x20 display-message) grep -qx \"$target\" \"$alive\" || exit 1; echo '80x24 0,0' ;;\n\
-        \x20 send-keys) echo \"$@\" >> \"$sent\" ;;\n\
+        \x20 send-keys)\n\
+        \x20   if [ -f '{refusing}' ]; then echo \"$target\" >> '{refused}'; exit 1; fi\n\
+        \x20   echo \"$@\" >> \"$sent\" ;;\n\
         \x20 capture-pane) cat \"$composer\" 2>/dev/null ;;\n\
          esac\n\
          exit 0\n",
         alive = dir.join("alive").display(),
         sent = dir.join("send-keys.log").display(),
         composer = dir.join("composer").display(),
+        refusing = dir.join("refusing").display(),
+        refused = dir.join("refused.log").display(),
     );
     std::fs::write(&bin, script).unwrap();
     std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -358,6 +389,42 @@ impl Harness {
             );
         }
         String::from_utf8_lossy(&bytes).into_owned()
+    }
+
+    /// Stop the stub tmux taking any keystrokes, and start it again.
+    fn tmux_refuses(&self) {
+        std::fs::write(self.dir.path().join("refusing"), "").unwrap();
+    }
+
+    fn tmux_answers(&self) {
+        std::fs::remove_file(self.dir.path().join("refusing")).unwrap();
+    }
+
+    /// How many deliveries the stub tmux turned away.
+    fn refusals(&self) -> usize {
+        std::fs::read_to_string(self.dir.path().join("refused.log"))
+            .unwrap_or_default()
+            .lines()
+            .count()
+    }
+
+    /// Take a session's row out from under the daemon, the way deleting the
+    /// goal it belonged to would. Straight SQL: nothing an agent can call
+    /// does this, which is the point — it is the state the daemon has to cope
+    /// with, not one it is asked to produce.
+    async fn forget_session(&self, session: &AgentSession) {
+        let pool = sqlx::SqlitePool::connect(&format!(
+            "sqlite://{}",
+            self.dir.path().join("test.db").display()
+        ))
+        .await
+        .unwrap();
+        sqlx::query("DELETE FROM agent_sessions WHERE id = ?")
+            .bind(&session.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
     }
 
     /// How many `send-keys` this session's pane was handed, of any kind.
@@ -721,4 +788,210 @@ async fn an_unaddressed_message_wakes_nobody() {
         None,
         "and it raised nothing for the user"
     );
+}
+
+/// The planner takes part in every task thread, and its session is the goal's
+/// own — the task it is being written to has no session of the planner's in
+/// it, and looking for one there is how a message addressed to the planner
+/// used to wake nobody at all.
+#[tokio::test]
+async fn a_task_thread_message_addressed_to_the_planner_wakes_it() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    let planner = h
+        .session(&cast.goal, None, Role::Planner, &cast.planner)
+        .await;
+    let engineer = h
+        .session(&cast.goal, Some(&cast.task), Role::Engineer, &cast.engineer)
+        .await;
+    h.pane_exists(&planner);
+    h.pane_exists(&engineer);
+
+    h.post_to_task(
+        &cast.task,
+        "This task needs a second repository.",
+        Some("planner"),
+        Some(&engineer),
+    )
+    .await;
+
+    eventually("the planner to be nudged", async || {
+        h.pasted(&planner)
+            .contains("This task needs a second repository.")
+    })
+    .await;
+    let pasted = h.pasted(&planner);
+    assert!(
+        pasted.contains("New message from the engineer in your task conversation"),
+        "the sender and the thread are named: {pasted}"
+    );
+    assert_eq!(
+        h.keystrokes(&engineer),
+        0,
+        "and the agent that wrote it is not woken with its own message"
+    );
+}
+
+/// A tmux that would not take the keystrokes has said nothing about whether
+/// the agent is there to hear them: the message is not struck off for it. The
+/// reconciliation tick tries again — nothing re-posts a message in production,
+/// so this is the only thing that would — and the agent gets it once, whole.
+#[tokio::test]
+async fn a_delivery_tmux_refused_is_tried_again_on_a_later_tick() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    let engineer = h
+        .session(&cast.goal, Some(&cast.task), Role::Engineer, &cast.engineer)
+        .await;
+    h.pane_exists(&engineer);
+    h.tmux_refuses();
+
+    h.post_to_task(
+        &cast.task,
+        "The store already has that column.",
+        Some("engineer"),
+        None,
+    )
+    .await;
+    eventually("the delivery to be turned away", async || h.refusals() > 0).await;
+    assert_eq!(
+        h.pasted(&engineer),
+        "",
+        "nothing reached the pane on the pass that failed"
+    );
+
+    h.tmux_answers();
+
+    eventually_within(TICK_TIMEOUT, "the tick to try again", async || {
+        h.pasted(&engineer)
+            .contains("The store already has that column.")
+    })
+    .await;
+    assert_eq!(
+        h.pasted(&engineer)
+            .matches("The store already has that column.")
+            .count(),
+        1,
+        "and it arrives once, not once per attempt"
+    );
+    assert_eq!(
+        h.attention(&engineer).await,
+        None,
+        "a delivery that got there raises nothing"
+    );
+}
+
+/// The passes are not endless. An agent whose pane cannot be reached at all
+/// ends as a flag on its own session: whatever it was told, it never heard it,
+/// and only a person can do anything about that.
+#[tokio::test]
+async fn a_delivery_that_never_gets_through_raises_the_addressee() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    let engineer = h
+        .session(&cast.goal, Some(&cast.task), Role::Engineer, &cast.engineer)
+        .await;
+    h.pane_exists(&engineer);
+    h.tmux_refuses();
+
+    let message = h
+        .post_to_task(&cast.task, "Rebase before you merge.", Some("engineer"), None)
+        .await;
+
+    // The passes the tick would make, asked for without waiting a quarter of
+    // a minute for each: a message already in flight or already given up on
+    // is nobody's to deliver again, so the extra offers cost nothing.
+    eventually("the engineer to be raised", async || {
+        h.sched
+            .send(SchedEvent::MessagePosted(message.id.clone()))
+            .unwrap();
+        h.attention(&engineer).await == Some(AttentionReason::Stalled)
+    })
+    .await;
+    assert!(
+        h.refusals() >= DELIVERY_ATTEMPTS,
+        "it was tried every pass it was worth, not given up on the first: {}",
+        h.refusals()
+    );
+    assert!(
+        h.thread(&cast.task)
+            .await
+            .contains(&"Rebase before you merge.".to_string()),
+        "and the message is still in the thread for whoever comes to look"
+    );
+}
+
+/// An addressee whose session ended is resumed with the message — and when
+/// that resume cannot happen (here: the worktree it would come back in is
+/// gone), the message has reached nobody. The session says so, with the
+/// reason its pane has: there is none.
+#[tokio::test]
+async fn an_addressee_that_cannot_be_resumed_is_raised_for_the_user() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    let engineer = h
+        .session(&cast.goal, Some(&cast.task), Role::Engineer, &cast.engineer)
+        .await;
+    let engineer = h.ended(&engineer).await;
+    std::fs::remove_dir_all(engineer.worktree_path.as_ref().unwrap()).unwrap();
+
+    let message = h
+        .post_to_task(
+            &cast.task,
+            "Have another look at the error handling.",
+            Some("engineer"),
+            None,
+        )
+        .await;
+
+    eventually("the engineer to be raised", async || {
+        h.sched
+            .send(SchedEvent::MessagePosted(message.id.clone()))
+            .unwrap();
+        h.attention(&engineer).await == Some(AttentionReason::Disconnected)
+    })
+    .await;
+    assert!(
+        h.resume_argv(&engineer.id).is_none(),
+        "nothing was launched: there was nowhere to launch it"
+    );
+}
+
+/// The last resort. An addressee that had a session and no longer has one
+/// leaves nothing to flag — so the flag goes where the answer was going to be
+/// read: on the session of whoever asked, as the user's to deal with.
+#[tokio::test]
+async fn a_message_whose_addressee_lost_its_session_raises_its_author() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    let planner = h
+        .session(&cast.goal, None, Role::Planner, &cast.planner)
+        .await;
+    let engineer = h
+        .session(&cast.goal, Some(&cast.task), Role::Engineer, &cast.engineer)
+        .await;
+    h.pane_exists(&engineer);
+    h.pane_exists(&planner);
+    h.tmux_refuses();
+
+    let message = h
+        .post_to_task(
+            &cast.task,
+            "Which database should this write to?",
+            Some("engineer"),
+            Some(&planner),
+        )
+        .await;
+    eventually("the delivery to be turned away", async || h.refusals() > 0).await;
+    // And now the addressee is gone, the way a deleted goal takes its
+    // sessions with it, with the message still owed.
+    h.forget_session(&engineer).await;
+
+    eventually("the author to be raised for the user", async || {
+        h.sched
+            .send(SchedEvent::MessagePosted(message.id.clone()))
+            .unwrap();
+        h.attention(&planner).await == Some(AttentionReason::WaitingInput)
+    })
+    .await;
 }
