@@ -12,10 +12,7 @@ use std::str::FromStr;
 
 use ariadne_core::{PromptKind, Role};
 
-use crate::defaults::{
-    BUILTIN_PROFILES, default_prompt, default_prompt_for, default_prompts_for,
-    default_system_prompt_for,
-};
+use crate::defaults::{BUILTIN_PROFILES, default_prompt, default_prompts, default_system_prompt};
 use crate::{Change, Profile, ProfilePrompt, Result, Store, StoreError, not_found, now};
 
 /// Parse a prompt kind arriving from outside (an HTTP path, a CLI argument)
@@ -56,7 +53,7 @@ impl Store {
             .bind(builtin.id)
             .bind(builtin.name)
             .bind(builtin.role.as_str())
-            .bind(default_system_prompt_for(builtin.id, builtin.role))
+            .bind(default_system_prompt(builtin.role))
             .bind(&ts)
             .bind(&ts)
             .execute(&mut *tx)
@@ -68,8 +65,8 @@ impl Store {
     }
 
     /// Give a freshly created profile the prompts it starts from — its
-    /// role's, or the built-in set of its own where it has one — with
-    /// `overrides` replacing the default text of the kinds they name.
+    /// role's — with `overrides` replacing the default text of the kinds they
+    /// name.
     pub(crate) async fn insert_prompts(
         tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
         profile_id: &str,
@@ -77,7 +74,7 @@ impl Store {
         ts: &str,
         overrides: &HashMap<PromptKind, String>,
     ) -> Result<()> {
-        for (kind, default) in default_prompts_for(profile_id, role) {
+        for (kind, default) in default_prompts(role) {
             let content = overrides.get(&kind).map_or(default, String::as_str);
             sqlx::query(
                 "INSERT INTO profile_prompts (profile_id, kind, content, updated_at)
@@ -156,7 +153,7 @@ impl Store {
     pub async fn reset_system_prompt(&self, profile_id: &str) -> Result<Profile> {
         let profile = self.get_profile(profile_id).await?;
         sqlx::query("UPDATE profiles SET system_prompt = ?, updated_at = ? WHERE id = ?")
-            .bind(default_system_prompt_for(profile_id, profile.role()))
+            .bind(default_system_prompt(profile.role()))
             .bind(now())
             .bind(profile_id)
             .execute(self.w())
@@ -200,15 +197,14 @@ impl Store {
     }
 }
 
-/// The default text of `kind` for this profile — the built-in set it carries
-/// where it has one — or an error naming the role that owns the kind instead.
+/// The default text of `kind` for this profile, or an error naming the role
+/// that owns the kind instead.
 fn check_kind(profile: &Profile, kind: PromptKind) -> Result<&'static str> {
     check_role_kind(
         kind,
         profile.role(),
         &format!("{} ({})", profile.name, profile.role),
-    )?;
-    Ok(default_prompt_for(&profile.id, profile.role(), kind).expect("checked above"))
+    )
 }
 
 /// Reject a template using a `{placeholder}` its kind cannot fill in, with the
@@ -235,7 +231,7 @@ pub(crate) fn check_role_kind(kind: PromptKind, role: Role, whose: &str) -> Resu
 mod tests {
     use super::*;
     use crate::NewProfile;
-    use crate::defaults::{LOCAL_INTEGRATOR_ID, default_prompt, default_system_prompt};
+    use crate::defaults::INTEGRATOR_ID;
 
     /// The engineer's system prompt as it read before migration 0012 — what an
     /// install seeded by an older Ariadne still has in its database, merge step
@@ -305,13 +301,21 @@ Ariadne coordinates planner, engineer, reviewer and integrator agents over share
             .unwrap();
     }
 
-    /// The migration after it, which rewrites the same rows again: the
-    /// integrator's playbook gains the opening that says which repositories it
-    /// is for, and the profile gains the name that says the same. Replayed
-    /// together with 0012 because an install upgrading across both runs both,
-    /// and what it ends up with is today's default.
+    /// The migrations after it, which rewrite the same rows again: 0015 gives
+    /// the integrator's playbook the opening that says which repositories it
+    /// is for and the name that says the same, and 0016 merges the three of
+    /// them back into one. Replayed together with 0012 because an install
+    /// upgrading across all three runs all three, and what it ends up with is
+    /// today's default.
     async fn migrate_0015(store: &Store) {
         sqlx::raw_sql(include_str!("../migrations/0015_assigned_integrator.sql"))
+            .execute(store.w())
+            .await
+            .unwrap();
+    }
+
+    async fn migrate_0016(store: &Store) {
+        sqlx::raw_sql(include_str!("../migrations/0016_one_integrator.sql"))
             .execute(store.w())
             .await
             .unwrap();
@@ -325,11 +329,12 @@ Ariadne coordinates planner, engineer, reviewer and integrator agents over share
     async fn the_migration_hands_the_merge_duty_to_the_integrator() {
         let store = Store::open_in_memory().await.unwrap();
         let engineer = store.get_profile_by_name("Engineer").await.unwrap();
-        let integrator = store.get_profile(LOCAL_INTEGRATOR_ID).await.unwrap();
+        let integrator = store.get_profile(INTEGRATOR_ID).await.unwrap();
         as_an_older_install(&store, &[&engineer.id], &integrator.id).await;
 
         migrate_0012(&store).await;
         migrate_0015(&store).await;
+        migrate_0016(&store).await;
 
         assert_eq!(
             store.get_profile(&engineer.id).await.unwrap().system_prompt,
@@ -343,8 +348,8 @@ Ariadne coordinates planner, engineer, reviewer and integrator agents over share
             "the integrator's placeholder became its playbook"
         );
         assert_eq!(
-            landed.name, "Local Integrator",
-            "and 0015 renamed it beside the two forge ones"
+            landed.name, "Integrator",
+            "and 0015 renamed it beside the two forge ones, 0016 back again"
         );
         for kind in PromptKind::for_role(Role::Integrator) {
             assert_eq!(
@@ -373,7 +378,7 @@ Ariadne coordinates planner, engineer, reviewer and integrator agents over share
     #[tokio::test]
     async fn the_migration_leaves_an_edited_system_prompt_alone() {
         let store = Store::open_in_memory().await.unwrap();
-        let integrator = store.get_profile(LOCAL_INTEGRATOR_ID).await.unwrap();
+        let integrator = store.get_profile(INTEGRATOR_ID).await.unwrap();
         let mine = store
             .create_profile(NewProfile {
                 name: "Engineer (mine)".into(),
@@ -400,6 +405,7 @@ Ariadne coordinates planner, engineer, reviewer and integrator agents over share
 
         migrate_0012(&store).await;
         migrate_0015(&store).await;
+        migrate_0016(&store).await;
 
         assert_eq!(
             store.get_profile(&mine.id).await.unwrap().system_prompt,

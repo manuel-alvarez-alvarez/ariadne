@@ -209,7 +209,7 @@ impl Harness {
     }
 
     /// A goal on a real repository, active, with one task on it landed by the
-    /// built-in GitLab Integrator. Returns the task and the reviewer's id.
+    /// built-in Integrator. Returns the task and the reviewer's id.
     async fn task(&self) -> (Task, String) {
         let repo_path = self.repo_path();
         std::fs::create_dir_all(&repo_path).unwrap();
@@ -231,7 +231,7 @@ impl Harness {
 
         let engineer = self.profile("engineer", Role::Engineer).await;
         let reviewer = self.profile("reviewer", Role::Reviewer).await;
-        let integrator = self.gitlab_integrator().await;
+        let integrator = self.integrator().await;
         let planner = self.profile("planner", Role::Planner).await;
         let goal = self
             .store
@@ -267,16 +267,12 @@ impl Harness {
         (task, reviewer)
     }
 
-    /// The built-in GitLab Integrator itself — its prompts are what is under
-    /// test — pinned to an agent CLI so that the resume paths here are the
-    /// ones a real session takes (the internal session id a resume needs is
-    /// the Claude adapter's, chosen at spawn).
-    async fn gitlab_integrator(&self) -> String {
-        let profile = self
-            .store
-            .get_profile_by_name("GitLab Integrator")
-            .await
-            .unwrap();
+    /// The built-in Integrator itself — its prompts are what is under test —
+    /// pinned to an agent CLI so that the resume paths here are the ones a
+    /// real session takes (the internal session id a resume needs is the
+    /// Claude adapter's, chosen at spawn).
+    async fn integrator(&self) -> String {
+        let profile = self.store.get_profile_by_name("Integrator").await.unwrap();
         self.store
             .update_profile(
                 &profile.id,
@@ -542,11 +538,12 @@ async fn a_merge_request_is_watched_from_publication_to_its_merge() {
     let (task, reviewer) = h.task().await;
     let integrator = h.hand_to_the_integrator(&task, &reviewer).await;
 
-    // It was briefed to publish to GitLab, not to land and not to reach for
-    // `gh`.
+    // It was briefed with the merge-request half of the one integrator
+    // playbook: which of the three ways it lands this task is the
+    // repository's to answer, and the briefing carries all of them.
     let argv = h.launched_argv(&integrator.id);
     for expected in [
-        "Publish it as a merge request",
+        "Publish it as a pull request (GitHub) or a merge request (GitLab)",
         "glab auth status",
         "glab mr create",
         ".gitlab/merge_request_templates/",
@@ -555,7 +552,6 @@ async fn a_merge_request_is_watched_from_publication_to_its_merge() {
     ] {
         assert!(argv.contains(expected), "the briefing has no {expected}");
     }
-    assert!(!argv.contains("gh pr create"), "{argv}");
 
     // Nothing is asked of GitLab before there is a merge request to ask about.
     h.notify(&task.id);

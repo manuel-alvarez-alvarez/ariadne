@@ -31,8 +31,8 @@ use ariadne_daemon::logbuf::LogBuffer;
 use ariadne_daemon::tmux::TmuxManager;
 use ariadne_store::{NewProfile, NewRepository, Store};
 
-/// The id `ariadne_store::defaults` gives the built-in Local Integrator.
-const LOCAL_INTEGRATOR: &str = "00000000000000000000000004";
+/// The id `ariadne_store::defaults` gives the built-in Integrator.
+const INTEGRATOR: &str = "00000000000000000000000004";
 
 struct Harness {
     store: Store,
@@ -143,7 +143,7 @@ async fn a_task_cannot_be_created_without_an_integrator() {
     let (without_engineer, _) = h
         .send(create_task(
             &goal,
-            serde_json::json!({"title": "Do the thing", "integrator_profile": "Local Integrator",
+            serde_json::json!({"title": "Do the thing", "integrator_profile": "Integrator",
                                "reviewer_profiles": ["Reviewer"]}),
         ))
         .await;
@@ -162,13 +162,13 @@ async fn the_integrator_a_task_names_is_the_one_it_keeps() {
         &goal,
         serde_json::json!({"title": "Do the thing", "engineer_profile": "Engineer",
                            "reviewer_profiles": ["Reviewer"],
-                           "integrator_profile": "Local Integrator"}),
+                           "integrator_profile": "Integrator"}),
     );
     let task: TaskDto = h.json(request, StatusCode::CREATED).await;
 
-    assert_eq!(task.integrator_profile_id, LOCAL_INTEGRATOR);
+    assert_eq!(task.integrator_profile_id, INTEGRATOR);
     let stored = h.store.get_task(&task.id).await.unwrap();
-    assert_eq!(stored.integrator_profile_id, LOCAL_INTEGRATOR);
+    assert_eq!(stored.integrator_profile_id, INTEGRATOR);
     let read_back: TaskDto = h
         .json(
             Request::get(format!("/v1/tasks/{}", task.id))
@@ -183,7 +183,7 @@ async fn the_integrator_a_task_names_is_the_one_it_keeps() {
     // it: the refusal names what is holding it, like every other reference.
     let err: ErrorBody = h
         .json(
-            Request::delete(format!("/v1/profiles/{LOCAL_INTEGRATOR}"))
+            Request::delete(format!("/v1/profiles/{INTEGRATOR}"))
                 .body(Body::empty())
                 .unwrap(),
             StatusCode::CONFLICT,
@@ -254,31 +254,40 @@ async fn the_integrator_can_be_changed_before_the_task_starts() {
                 &goal,
                 serde_json::json!({"title": "Do the thing", "engineer_profile": "Engineer",
                                    "reviewer_profiles": ["Reviewer"],
-                                   "integrator_profile": "Local Integrator"}),
+                                   "integrator_profile": "Integrator"}),
             ),
             StatusCode::CREATED,
         )
         .await;
 
+    // One built-in integrator, so the other one to pick is a profile of the
+    // user's own.
+    let mine = h
+        .store
+        .create_profile(NewProfile {
+            name: "My Integrator".into(),
+            role: ariadne_core::Role::Integrator,
+            agent_kind: None,
+            model: None,
+            system_prompt: "You land things my way.".into(),
+            prompts: vec![],
+        })
+        .await
+        .unwrap();
     let patched: TaskDto = h
         .json(
             patch_json(
                 &format!("/v1/tasks/{}", task.id),
-                serde_json::json!({"integrator_profile": "GitHub Integrator"}),
+                serde_json::json!({"integrator_profile": "My Integrator"}),
             ),
             StatusCode::OK,
         )
         .await;
 
-    let github = h
-        .store
-        .get_profile_by_name("GitHub Integrator")
-        .await
-        .unwrap();
-    assert_eq!(patched.integrator_profile_id, github.id);
+    assert_eq!(patched.integrator_profile_id, mine.id);
     assert_eq!(patched.title, task.title, "nothing else moved");
     let stored = h.store.get_task(&task.id).await.unwrap();
-    assert_eq!(stored.integrator_profile_id, github.id);
+    assert_eq!(stored.integrator_profile_id, mine.id);
 }
 
 /// And a profile of another role is refused there too, with the same sentence
@@ -293,7 +302,7 @@ async fn a_profile_of_another_role_cannot_be_patched_in_as_the_integrator() {
                 &goal,
                 serde_json::json!({"title": "Do the thing", "engineer_profile": "Engineer",
                                    "reviewer_profiles": ["Reviewer"],
-                                   "integrator_profile": "Local Integrator"}),
+                                   "integrator_profile": "Integrator"}),
             ),
             StatusCode::CREATED,
         )

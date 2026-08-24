@@ -194,7 +194,7 @@ impl Harness {
     }
 
     /// A goal on a real repository, active, with one task on it landed by the
-    /// built-in GitHub Integrator. Returns the task and the reviewer's id.
+    /// built-in Integrator. Returns the task and the reviewer's id.
     async fn task(&self) -> (Task, String) {
         let repo_path = self.repo_path();
         std::fs::create_dir_all(&repo_path).unwrap();
@@ -216,7 +216,7 @@ impl Harness {
 
         let engineer = self.profile("engineer", Role::Engineer).await;
         let reviewer = self.profile("reviewer", Role::Reviewer).await;
-        let integrator = self.github_integrator().await;
+        let integrator = self.integrator().await;
         let planner = self.profile("planner", Role::Planner).await;
         let goal = self
             .store
@@ -252,16 +252,12 @@ impl Harness {
         (task, reviewer)
     }
 
-    /// The built-in GitHub Integrator itself — its prompts are what is under
-    /// test — pinned to an agent CLI so that the resume paths here are the
-    /// ones a real session takes (the internal session id a resume needs is
-    /// the Claude adapter's, chosen at spawn).
-    async fn github_integrator(&self) -> String {
-        let profile = self
-            .store
-            .get_profile_by_name("GitHub Integrator")
-            .await
-            .unwrap();
+    /// The built-in Integrator itself — its prompts are what is under test —
+    /// pinned to an agent CLI so that the resume paths here are the ones a
+    /// real session takes (the internal session id a resume needs is the
+    /// Claude adapter's, chosen at spawn).
+    async fn integrator(&self) -> String {
+        let profile = self.store.get_profile_by_name("Integrator").await.unwrap();
         self.store
             .update_profile(
                 &profile.id,

@@ -73,7 +73,7 @@ pub enum TaskCommand {
         /// Integrator profile id or name that lands the task once its
         /// reviewers approve it: onto the base branch with git, or as a pull
         /// request for a person to merge
-        #[arg(long, default_value = "Local Integrator", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::integrator_profiles))]
+        #[arg(long, default_value = "Integrator", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::integrator_profiles))]
         integrator: String,
         /// Reviewer profile id or name, in review order; repeatable
         #[arg(long = "reviewer", default_value = "Reviewer", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::reviewer_profiles))]
@@ -666,12 +666,12 @@ mod tests {
             None,
             None,
             vec![],
-            Some("GitHub Integrator".into()),
+            Some("My Integrator".into()),
             vec![],
             false,
         )
         .expect("body");
-        assert_eq!(req.integrator_profile.as_deref(), Some("GitHub Integrator"));
+        assert_eq!(req.integrator_profile.as_deref(), Some("My Integrator"));
         assert!(req.title.is_none());
         assert!(req.reviewer_profiles.is_none());
     }
@@ -731,7 +731,7 @@ mod tests {
     #[test]
     fn the_list_names_the_integrator_and_the_pull_request() {
         let profiles =
-            ProfileNames::from_pairs([("01INT".to_string(), "GitHub Integrator".to_string())]);
+            ProfileNames::from_pairs([("01INT".to_string(), "My Integrator".to_string())]);
         let t = TaskDto {
             status: TaskStatus::Integrating,
             pr_number: Some(12),
@@ -749,7 +749,7 @@ mod tests {
                 "integrating",
                 "0",
                 "-",
-                "GitHub Integrator (01INT)",
+                "My Integrator (01INT)",
                 "#12",
                 "ariadne/task-01TASK",
             ]
@@ -760,10 +760,9 @@ mod tests {
     /// engineer's does — one spelling for the list and the inspect block.
     #[test]
     fn the_integrator_is_named_the_way_the_engineer_is() {
-        let profiles =
-            ProfileNames::from_pairs([("01INT".to_string(), "Local Integrator".to_string())]);
+        let profiles = ProfileNames::from_pairs([("01INT".to_string(), "Integrator".to_string())]);
         let row = ls_row(&profiles, &dto());
-        assert_eq!(row[5], "Local Integrator (01INT)");
+        assert_eq!(row[5], "Integrator (01INT)");
         assert_eq!(row[6], "-", "and no pull request was ever opened for it");
         assert_eq!(integrator_label(&profiles, &dto()), row[5]);
     }

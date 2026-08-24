@@ -155,7 +155,7 @@ impl Harness {
                 title: "Plainly landed task".into(),
                 description: "landed by the built-in integrator".into(),
                 engineer_profile_id: cast.engineer.id.clone(),
-                integrator_profile_id: ariadne_store::defaults::LOCAL_INTEGRATOR_ID.into(),
+                integrator_profile_id: ariadne_store::defaults::INTEGRATOR_ID.into(),
                 reviewer_profile_ids: vec![cast.reviewer.id.clone()],
                 depends_on: vec![],
             })

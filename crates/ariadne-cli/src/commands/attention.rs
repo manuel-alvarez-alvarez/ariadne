@@ -371,7 +371,7 @@ mod tests {
             description: String::new(),
             status,
             engineer_profile_id: "01PROFILE".into(),
-            integrator_profile_id: ariadne_store::defaults::LOCAL_INTEGRATOR_ID.into(),
+            integrator_profile_id: ariadne_store::defaults::INTEGRATOR_ID.into(),
             agent_kind: None,
             model: None,
             reviewers: Vec::new(),
