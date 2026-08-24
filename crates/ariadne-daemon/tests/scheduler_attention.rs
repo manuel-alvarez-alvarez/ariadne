@@ -464,6 +464,15 @@ impl Harness {
         std::fs::write(self.dir.path().join("composer"), format!("> {text}\n")).unwrap();
     }
 
+    /// Whether the stub still has this pane: a killed session is struck off
+    /// the list of the living, as it is in tmux.
+    fn pane_is_alive(&self, session: &AgentSession) -> bool {
+        std::fs::read_to_string(self.dir.path().join("alive"))
+            .unwrap_or_default()
+            .lines()
+            .any(|name| name == session.tmux_session)
+    }
+
     /// How many `send-keys` this session's pane was handed.
     fn keystrokes(&self, session: &AgentSession) -> usize {
         std::fs::read_to_string(self.dir.path().join("send-keys.log"))
@@ -2033,4 +2042,91 @@ async fn an_idle_planner_is_let_go_once_the_goal_leaves_planning() {
         argv.contains("which of them owns the store?"),
         "and it is woken with what was said to it: {argv}"
     );
+}
+
+/// A pane with a delivery going into it is not a pane to kill, wedged or not:
+/// the paste and the Enters behind it would come back as a message nobody
+/// could be given, and the user would be told about a composer that was only
+/// ever interrupted. The relaunch waits for the pass after the delivery has
+/// settled — and then it happens, because a composer that took a paste says
+/// nothing about the turn the agent is stuck in.
+#[tokio::test]
+async fn a_wedged_agent_is_not_killed_while_a_message_is_going_into_its_pane() {
+    let h = harness().await;
+    let (goal, task, engineer, _reviewer) = h.active_goal_with_task().await;
+    h.advance(&task, TaskStatus::InProgress).await;
+    let session = h
+        .session(&goal, Some(&task), Role::Engineer, &engineer)
+        .await;
+    h.pane_exists(&session);
+    h.resumable(&task, &session).await;
+    // Past the flag and nowhere near the relaunch, so the first pass only
+    // raises it: what the relaunch has to wait for is set up after that.
+    h.wedged_for(&session, RUNNING_QUIET_FLAG_SECS + 60).await;
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    sched
+        .send(SchedEvent::TaskChanged(task.id.clone()))
+        .unwrap();
+    eventually("the wedged agent to be raised", async || {
+        h.attention(&session).await == Some(AttentionReason::Stalled)
+    })
+    .await;
+
+    // A composer that never lets go: the delivery spends its whole backoff in
+    // the pane, which is the window this is about.
+    h.composer_keeps("Use the other endpoint.");
+    let message = h
+        .store
+        .create_message(NewMessage {
+            goal_id: goal.id.clone(),
+            task_id: Some(task.id.clone()),
+            author_role: AuthorRole::User,
+            author_session_id: None,
+            recipient: Some(Recipient::Profile(engineer.clone())),
+            body: "Use the other endpoint.".into(),
+        })
+        .await
+        .unwrap();
+    sched.send(SchedEvent::MessagePosted(message.id)).unwrap();
+    eventually("the message to reach the pane", async || {
+        h.keystrokes(&session) > 0
+    })
+    .await;
+
+    // Now it is past the relaunch threshold too, and every pass while the
+    // pane is being typed into leaves it exactly where it is.
+    h.wedged_for(&session, RUNNING_QUIET_RESUME_SECS + 60).await;
+    let launched = h.launched_at(&session).await;
+    for _ in 0..6 {
+        sched
+            .send(SchedEvent::TaskChanged(task.id.clone()))
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(
+            h.pane_is_alive(&session),
+            "the pane was killed with a delivery going into it"
+        );
+        assert_eq!(
+            h.launched_at(&session).await,
+            launched,
+            "and the session was relaunched under the delivery"
+        );
+    }
+
+    // And once the delivery has settled, the wedge is still a wedge.
+    let deadline = std::time::Instant::now() + TIMEOUT;
+    loop {
+        sched
+            .send(SchedEvent::TaskChanged(task.id.clone()))
+            .unwrap();
+        if h.launched_at(&session).await != launched {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for the wedged agent to be relaunched"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }

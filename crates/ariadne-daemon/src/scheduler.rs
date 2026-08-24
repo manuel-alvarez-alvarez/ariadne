@@ -2065,6 +2065,20 @@ impl Scheduler {
         if quiet_secs < self.launcher.cfg.running_quiet_resume_secs as i64 {
             return Ok(());
         }
+        // A pane with a delivery going into it is not a pane to kill: the
+        // paste and the Enter behind it would come back as a message nobody
+        // could be given, and the user would be told about a composer that
+        // was only ever interrupted. It waits for the next pass, which is
+        // where a delivery that settles in between is answered for.
+        //
+        // A delivery that did land is not counted as activity, though — this
+        // is the one thing the idle stall beside it does differently. A
+        // composer that took a paste says the TUI is reading keystrokes, not
+        // that the turn it is wedged in has moved, and what the agent was
+        // told is in its thread for it to read when it comes back up.
+        if self.typing.contains(&session.id) {
+            return Ok(());
+        }
         // The flag did not move it either. The relaunch is spent out of a
         // budget for the same reason a spawn is: an agent that wedges, is put
         // back and wedges again is not one more relaunch away from working,
