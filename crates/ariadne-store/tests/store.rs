@@ -1478,15 +1478,25 @@ async fn a_task_is_stalled_while_one_of_its_agents_is() {
     store.clear_session_attention(&reviewer.id).await.unwrap();
     assert!(store.get_task(&task.id).await.unwrap().is_stalled());
 
-    // And the relaunch that puts the stuck one back on its feet ends it.
+    // The clear an agent's own event makes ends it, since an agent that is
+    // reporting again is not one that stopped working.
+    store.clear_agent_attention(&engineer.id).await.unwrap();
+    assert!(
+        !store.get_task(&task.id).await.unwrap().is_stalled(),
+        "an agent that is working again leaves no stall behind"
+    );
+
+    // And so does the relaunch that puts a stuck one back on its feet.
+    store
+        .set_session_attention(&engineer.id, AttentionReason::Stalled)
+        .await
+        .unwrap();
+    assert!(store.get_task(&task.id).await.unwrap().is_stalled());
     store
         .restart_session(&engineer.id, None, None)
         .await
         .unwrap();
-    assert!(
-        !store.get_task(&task.id).await.unwrap().is_stalled(),
-        "an agent that is running again leaves no stall behind"
-    );
+    assert!(!store.get_task(&task.id).await.unwrap().is_stalled());
 
     // A planner has no task to project onto, and says so on its own row.
     let alone = session("ariadne-test-plan", Role::Planner, planner.id.clone(), None)

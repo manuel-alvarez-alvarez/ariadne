@@ -218,6 +218,7 @@ impl Store {
             self.get_session(id).await?;
             return Ok(());
         }
+        self.sync_task_stall(id).await?;
         self.publish_session_update(id).await
     }
 
