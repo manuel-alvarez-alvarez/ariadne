@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 
 use ariadne_core::id::new_id;
-use ariadne_core::{Actor, TaskStatus, check_transition};
+use ariadne_core::{Actor, AttentionReason, TaskStatus, check_transition};
 
 use crate::{
     Change, NewReview, Result, Store, StoreError, Task, TaskReviewer, TaskTransition, not_found,
@@ -381,8 +381,8 @@ impl Store {
     /// The one and only way to change a task's status.
     ///
     /// Validates against the core state machine, applies side-column updates
-    /// (review round bump, merge commit, stalled reset) and writes the audit
-    /// row — all in one transaction.
+    /// (review round bump, merge commit) and writes the audit row — all in
+    /// one transaction.
     pub async fn transition_task(
         &self,
         id: &str,
@@ -444,9 +444,13 @@ impl Store {
             task.review_round
         };
 
+        // The stall is not reset here: it belongs to the agent that stopped
+        // working, and it comes down when that agent's own flag does — a
+        // status change is not by itself news about the session
+        // (`sync_task_stall`).
         sqlx::query(
             "UPDATE tasks SET status = ?, review_round = ?, merge_commit = COALESCE(?, merge_commit),
-                              stalled = 0, updated_at = ?
+                              updated_at = ?
              WHERE id = ?",
         )
         .bind(to.as_str())
@@ -745,15 +749,50 @@ impl Store {
         self.publish_task_update(task_id, n).await
     }
 
-    pub async fn set_task_stalled(&self, task_id: &str, stalled: bool) -> Result<()> {
-        let n = sqlx::query("UPDATE tasks SET stalled = ?, updated_at = ? WHERE id = ?")
-            .bind(stalled as i64)
-            .bind(now())
-            .bind(task_id)
-            .execute(self.w())
-            .await?
-            .rows_affected();
-        self.publish_task_update(task_id, n).await
+    /// Bring a task's stall into line with what its agents' own flags say.
+    ///
+    /// A stalled task *is* a task whose agent stopped working: one condition,
+    /// which used to be written down twice — on the session by the watchdog
+    /// that noticed, and on the task by the scheduler beside it — and so in
+    /// two places that could disagree about the same thing. The session's
+    /// attention is where it is decided; the task's column is this projection
+    /// of it, kept by every write that can change what a session's attention
+    /// says and by nothing else, so that the two cannot drift apart.
+    ///
+    /// A session with no task — a planner's — has nothing to project onto and
+    /// carries its stall on its own row alone.
+    pub(crate) async fn sync_task_stall(&self, session_id: &str) -> Result<()> {
+        let task_id: Option<String> =
+            sqlx::query_scalar("SELECT task_id FROM agent_sessions WHERE id = ?")
+                .bind(session_id)
+                .fetch_optional(self.r())
+                .await?
+                .flatten();
+        let Some(task_id) = task_id else {
+            return Ok(());
+        };
+        let stalled: bool = sqlx::query_scalar(
+            "SELECT EXISTS (
+                 SELECT 1 FROM agent_sessions WHERE task_id = ? AND attention_reason = ?
+             )",
+        )
+        .bind(&task_id)
+        .bind(AttentionReason::Stalled.as_str())
+        .fetch_one(self.r())
+        .await?;
+        // Only a change is written, so that a task nobody's stall moved is
+        // neither restamped nor announced to the watchers of its row.
+        let n = sqlx::query(
+            "UPDATE tasks SET stalled = ?, updated_at = ? WHERE id = ? AND stalled <> ?",
+        )
+        .bind(stalled as i64)
+        .bind(now())
+        .bind(&task_id)
+        .bind(stalled as i64)
+        .execute(self.w())
+        .await?
+        .rows_affected();
+        self.publish_task_update(&task_id, n).await
     }
 
     /// Announce a non-transitional task write, unless it matched no row.

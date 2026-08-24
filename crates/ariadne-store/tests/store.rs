@@ -1412,6 +1412,111 @@ async fn a_verdict_relayed_from_a_forge_has_no_profile_behind_it() {
     );
 }
 
+/// A stalled task is a task with a stalled agent on it: the flag on the
+/// session is where that is decided, and the task's own column is the
+/// projection of it, written by the attention change and by nothing else.
+#[tokio::test]
+async fn a_task_is_stalled_while_one_of_its_agents_is() {
+    let (store, _dir) = test_store().await;
+    let planner = seed_profile(&store, "planner", Role::Planner).await;
+    let (goal, repo) = seed_goal(&store, &planner, None).await;
+    let task = seed_task(&store, &goal, &repo, vec![]).await;
+    let session = |name: &str, role: Role, profile: String, of: Option<String>| {
+        store.create_session(NewSession {
+            goal_id: goal.id.clone(),
+            task_id: of,
+            role,
+            profile_id: profile,
+            agent_kind: AgentKind::ClaudeCode,
+            model: None,
+            tmux_session: name.into(),
+            worktree_path: Some("/tmp/wt".into()),
+            review_round: None,
+        })
+    };
+    let engineer = session(
+        "ariadne-test-eng",
+        Role::Engineer,
+        task.engineer_profile_id.clone(),
+        Some(task.id.clone()),
+    )
+    .await
+    .unwrap();
+    let reviewer = session(
+        "ariadne-test-rev",
+        Role::Reviewer,
+        planner.id.clone(),
+        Some(task.id.clone()),
+    )
+    .await
+    .unwrap();
+    assert!(!store.get_task(&task.id).await.unwrap().is_stalled());
+
+    store
+        .set_session_attention(&engineer.id, AttentionReason::Stalled)
+        .await
+        .unwrap();
+    assert!(
+        store.get_task(&task.id).await.unwrap().is_stalled(),
+        "the task says what its agent's flag says"
+    );
+
+    // A status change is not news about the agent, so it does not take the
+    // stall down behind its back.
+    store
+        .transition_task(&task.id, TaskStatus::Ready, Actor::Daemon, None, None)
+        .await
+        .unwrap();
+    assert!(store.get_task(&task.id).await.unwrap().is_stalled());
+
+    // A second agent stalling and unstalling changes nothing while the first
+    // one is still stuck.
+    store
+        .set_session_attention(&reviewer.id, AttentionReason::Stalled)
+        .await
+        .unwrap();
+    store.clear_session_attention(&reviewer.id).await.unwrap();
+    assert!(store.get_task(&task.id).await.unwrap().is_stalled());
+
+    // The clear an agent's own event makes ends it, since an agent that is
+    // reporting again is not one that stopped working.
+    store.clear_agent_attention(&engineer.id).await.unwrap();
+    assert!(
+        !store.get_task(&task.id).await.unwrap().is_stalled(),
+        "an agent that is working again leaves no stall behind"
+    );
+
+    // And so does the relaunch that puts a stuck one back on its feet.
+    store
+        .set_session_attention(&engineer.id, AttentionReason::Stalled)
+        .await
+        .unwrap();
+    assert!(store.get_task(&task.id).await.unwrap().is_stalled());
+    store
+        .restart_session(&engineer.id, None, None)
+        .await
+        .unwrap();
+    assert!(!store.get_task(&task.id).await.unwrap().is_stalled());
+
+    // A planner has no task to project onto, and says so on its own row.
+    let alone = session("ariadne-test-plan", Role::Planner, planner.id.clone(), None)
+        .await
+        .unwrap();
+    store
+        .set_session_attention(&alone.id, AttentionReason::Stalled)
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .get_session(&alone.id)
+            .await
+            .unwrap()
+            .attention_reason(),
+        Some(AttentionReason::Stalled)
+    );
+    assert!(!store.get_task(&task.id).await.unwrap().is_stalled());
+}
+
 /// A prompt is a dialog on the agent's terminal, so it cannot outlive the
 /// session it was raised on: retiring one takes `waiting_permission` /
 /// `waiting_input` down with it, and leaves every reason a session ends

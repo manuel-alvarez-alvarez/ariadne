@@ -6,7 +6,9 @@
 //! session's. A pane that disappears while its work is still going says so
 //! too, rather than ending quietly, and an agent that never started its turn
 //! at all — the instruction still sitting in its composer — is unstuck with a
-//! keystroke before the user is told about it.
+//! keystroke before the user is told about it — and one that did start its
+//! turn and then stopped reporting anything at all is raised and, if that
+//! changes nothing, killed and put back on its feet.
 //!
 //! None of it waits on the keystrokes themselves: typing into a pane settles
 //! for a second or two, and a pass with three agents to nudge sends all three
@@ -27,6 +29,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use ariadne_core::spawn_plan::SpawnPlanFile;
 use ariadne_core::{
     Actor, AgentKind, AttentionReason, AuthorRole, GoalStatus, ReviewVerdict, Role, SessionStatus,
     TaskStatus,
@@ -50,6 +53,11 @@ const LONG_SILENCE_SECS: i64 = 1_000;
 /// The first of those thresholds, for a test that wants the nudge and not the
 /// escalation behind it.
 const STALL_NUDGE_SECS: i64 = 300;
+/// The daemon's defaults for the third watchdog's two thresholds — the one
+/// that measures a running agent by what it has reported since its turn
+/// started (`running_quiet_flag_secs` / `running_quiet_resume_secs`).
+const RUNNING_QUIET_FLAG_SECS: i64 = 1_200;
+const RUNNING_QUIET_RESUME_SECS: i64 = 2_700;
 /// How long a test waits for a reconciliation to reach the store. Generous
 /// because some of what is waited on is not the daemon thinking: a nudge no
 /// composer will let go of spends several seconds of widening backoff before
@@ -125,7 +133,9 @@ async fn harness_with(spawns: Spawns) -> Harness {
 /// A `tmux` that has exactly the sessions a test wrote into `alive`, and that
 /// records the `send-keys` it is asked for so nudges can be counted. Its panes
 /// draw whatever a test wrote into `composer` — nothing, unless the test is
-/// about a nudge that stays in one.
+/// about a nudge that stays in one. A killed session stops being one of the
+/// living, as it does in tmux: what the daemon does next about an agent it
+/// has just killed depends on the pane really being gone.
 fn write_tmux_stub(dir: &Path) -> TmuxManager {
     use std::os::unix::fs::PermissionsExt;
 
@@ -145,6 +155,7 @@ fn write_tmux_stub(dir: &Path) -> TmuxManager {
          case \"$1\" in\n\
         \x20 has-session) grep -qx \"$target\" \"$alive\" || exit 1 ;;\n\
         \x20 display-message) grep -qx \"$target\" \"$alive\" || exit 1; echo '80x24 0,0' ;;\n\
+        \x20 kill-session) grep -vx \"$target\" \"$alive\" > \"$alive.tmp\"; mv \"$alive.tmp\" \"$alive\" ;;\n\
         \x20 send-keys) echo \"$target\" >> \"$sent\" ;;\n\
         \x20 capture-pane) cat \"$composer\" 2>/dev/null ;;\n\
          esac\n\
@@ -350,6 +361,57 @@ impl Harness {
         pool.close().await;
     }
 
+    /// An agent that started its turn and has reported nothing for `secs`:
+    /// running, one tool call to its name, and silent ever since. What a
+    /// wedged agent looks like from outside its pane, and what a working one
+    /// never looks like — every hook and plugin event stamps
+    /// `last_activity_at`.
+    async fn wedged_for(&self, session: &AgentSession, secs: i64) {
+        self.launched_ago(session, secs).await;
+        self.reports(session, "pre_tool_use").await;
+        self.backdate("last_activity_at", session, secs).await;
+    }
+
+    /// What a relaunch needs to find: an agent conversation to resume and a
+    /// tree to resume it in.
+    async fn resumable(&self, task: &Task, session: &AgentSession) {
+        let worktree = self.dir.path().join("wt");
+        std::fs::create_dir_all(&worktree).unwrap();
+        self.store
+            .set_task_worktree(&task.id, Some(&worktree.display().to_string()))
+            .await
+            .unwrap();
+        self.store
+            .set_session_internal_id(&session.id, "uuid-1234")
+            .await
+            .unwrap();
+    }
+
+    /// When this session's agent process was last started, which is what a
+    /// relaunch moves.
+    async fn launched_at(&self, session: &AgentSession) -> Option<String> {
+        self.store
+            .get_session(&session.id)
+            .await
+            .unwrap()
+            .launched_at
+    }
+
+    /// The argv of the last launch, as the launcher wrote it down for
+    /// `ariadne _spawn`.
+    fn spawn_argv(&self, session: &AgentSession) -> String {
+        let path = self
+            .launcher
+            .cfg
+            .run_dir
+            .join(&session.id)
+            .join("spawn.json");
+        let raw = std::fs::read_to_string(&path).unwrap_or_default();
+        SpawnPlanFile::from_json(&raw)
+            .map(|plan| plan.argv.join(" "))
+            .unwrap_or_default()
+    }
+
     /// One event reported by an agent, the way its hook or plugin would.
     async fn reports(&self, session: &AgentSession, kind: &str) {
         self.store
@@ -400,6 +462,15 @@ impl Harness {
     /// pasted into it is still there after the Enter, however many are sent.
     fn composer_keeps(&self, text: &str) {
         std::fs::write(self.dir.path().join("composer"), format!("> {text}\n")).unwrap();
+    }
+
+    /// Whether the stub still has this pane: a killed session is struck off
+    /// the list of the living, as it is in tmux.
+    fn pane_is_alive(&self, session: &AgentSession) -> bool {
+        std::fs::read_to_string(self.dir.path().join("alive"))
+            .unwrap_or_default()
+            .lines()
+            .any(|name| name == session.tmux_session)
     }
 
     /// How many `send-keys` this session's pane was handed.
@@ -525,7 +596,8 @@ async fn an_engineer_stall_flags_the_task_and_its_session() {
 /// A nudge that does not leave the composer is not a nudge. The pane keeps
 /// showing it however many Enters follow, so the session is raised for the
 /// user rather than counted as told — the flag says the agent is not moving,
-/// which is exactly what a message it never received leaves behind.
+/// which is exactly what a message it never received leaves behind, and the
+/// task it is not moving on says so with it.
 #[tokio::test]
 async fn a_nudge_that_never_submits_raises_the_session() {
     let h = harness().await;
@@ -556,8 +628,8 @@ async fn a_nudge_that_never_submits_raises_the_session() {
         "the paste was followed by more than one Enter"
     );
     assert!(
-        !h.store.get_task(&task.id).await.unwrap().is_stalled(),
-        "the task is not escalated for it: this is about the message, not the work"
+        h.store.get_task(&task.id).await.unwrap().is_stalled(),
+        "and the task says what its agent's flag says: a stall is recorded once"
     );
 }
 
@@ -1623,4 +1695,526 @@ async fn a_completed_goal_says_so_in_its_thread() {
     assert_eq!(thread[0].author_role(), AuthorRole::System);
     assert_eq!(thread[0].recipient(), None, "it wakes nobody");
     assert!(thread[0].body.contains(&goal.title), "{}", thread[0].body);
+}
+
+/// An agent that started its turn and then wedged inside it: a model stream
+/// that never ends, a subprocess that never returns, hooks that stopped
+/// firing. The session stays `running` and reports nothing, which no other
+/// watchdog looks at — the idle stall never measures a running session, and
+/// the turn did start, so the composer watchdog is finished with it.
+///
+/// The user first, because a person may know what the pane is doing; and if
+/// the flag changes nothing, the pane is killed and the same session put back
+/// on the conversation it was already having.
+#[tokio::test]
+async fn a_running_agent_that_stopped_reporting_is_flagged_and_then_relaunched() {
+    let h = harness().await;
+    let (goal, task, engineer, _reviewer) = h.active_goal_with_task().await;
+    h.advance(&task, TaskStatus::InProgress).await;
+    let session = h
+        .session(&goal, Some(&task), Role::Engineer, &engineer)
+        .await;
+    h.pane_exists(&session);
+    h.resumable(&task, &session).await;
+    h.wedged_for(&session, RUNNING_QUIET_FLAG_SECS + 60).await;
+    let launched = h.launched_at(&session).await;
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    sched
+        .send(SchedEvent::TaskChanged(task.id.clone()))
+        .unwrap();
+    eventually("the wedged agent to be raised", async || {
+        h.attention(&session).await == Some(AttentionReason::Stalled)
+    })
+    .await;
+    assert!(
+        h.store.get_task(&task.id).await.unwrap().is_stalled(),
+        "the task carries the stall of the agent that stopped working"
+    );
+    assert_eq!(
+        h.launched_at(&session).await,
+        launched,
+        "the flag comes first: nothing is relaunched at the first threshold"
+    );
+
+    // Still silent a threshold later, and the flag was not the answer.
+    h.wedged_for(&session, RUNNING_QUIET_RESUME_SECS + 60).await;
+    let launched = h.launched_at(&session).await;
+    sched
+        .send(SchedEvent::TaskChanged(task.id.clone()))
+        .unwrap();
+    eventually("the wedged agent to be relaunched", async || {
+        h.launched_at(&session).await != launched
+    })
+    .await;
+    let back = h.store.get_session(&session.id).await.unwrap();
+    assert_eq!(
+        back.status(),
+        SessionStatus::Running,
+        "the same session is on air again"
+    );
+    assert_eq!(
+        back.attention_reason(),
+        None,
+        "an agent that is running again needs nobody"
+    );
+    assert!(
+        !h.store.get_task(&task.id).await.unwrap().is_stalled(),
+        "and the task's stall goes with it"
+    );
+    assert_eq!(
+        h.store
+            .list_sessions(SessionFilter {
+                task_id: Some(task.id.clone()),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .len(),
+        1,
+        "the same session row, not a sibling beside it"
+    );
+    let argv = h.spawn_argv(&session);
+    assert!(
+        argv.contains("uuid-1234"),
+        "the relaunch resumes the conversation it was having: {argv}"
+    );
+    assert!(
+        argv.contains(&task.branch) && argv.contains("request_review"),
+        "and carries the resume its role is picked up with, rendered for this \
+         task: {argv}"
+    );
+}
+
+/// A turn that takes all afternoon is not a stall. What the thresholds
+/// measure is silence, not duration: an agent that keeps reporting keeps its
+/// own clock reset, however long the work in front of it runs.
+#[tokio::test]
+async fn a_running_agent_that_keeps_reporting_is_left_alone() {
+    let h = harness().await;
+    let (goal, task, engineer, reviewer) = h.active_goal_with_task().await;
+    h.advance(&task, TaskStatus::InProgress).await;
+    let session = h
+        .session(&goal, Some(&task), Role::Engineer, &engineer)
+        .await;
+    h.pane_exists(&session);
+    h.resumable(&task, &session).await;
+    // Launched long before both thresholds, and still saying so.
+    h.launched_ago(&session, RUNNING_QUIET_RESUME_SECS * 2)
+        .await;
+    h.reports(&session, "pre_tool_use").await;
+    h.store.touch_session(&session.id).await.unwrap();
+    let launched = h.launched_at(&session).await;
+    // A second task whose engineer really has gone quiet: what it gets says
+    // the pass the working one went through is over.
+    let control_task = h.extra_task(&goal, &engineer, &reviewer, "control").await;
+    h.advance(&control_task, TaskStatus::InProgress).await;
+    let control = h
+        .session(&goal, Some(&control_task), Role::Engineer, &engineer)
+        .await;
+    h.pane_exists(&control);
+    h.wedged_for(&control, RUNNING_QUIET_FLAG_SECS + 60).await;
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    sched
+        .send(SchedEvent::TaskChanged(task.id.clone()))
+        .unwrap();
+    sched
+        .send(SchedEvent::TaskChanged(control_task.id.clone()))
+        .unwrap();
+    eventually("the silent agent to be raised", async || {
+        h.attention(&control).await == Some(AttentionReason::Stalled)
+    })
+    .await;
+
+    assert_eq!(
+        h.attention(&session).await,
+        None,
+        "an agent that is reporting is not raised, however long its turn takes"
+    );
+    assert_eq!(
+        h.launched_at(&session).await,
+        launched,
+        "nor relaunched out from under the work it is doing"
+    );
+    assert!(
+        !h.store.get_task(&task.id).await.unwrap().is_stalled(),
+        "and its task is not stalled either"
+    );
+}
+
+/// An agent waiting on a person is blocked, not wedged: it is silent because
+/// the answer it needs is a human's, and killing its pane would throw away
+/// the dialog the user is about to answer.
+#[tokio::test]
+async fn a_running_agent_waiting_on_a_person_is_never_relaunched() {
+    let h = harness().await;
+    let (goal, task, engineer, reviewer) = h.active_goal_with_task().await;
+    h.advance(&task, TaskStatus::InProgress).await;
+    let blocked = h
+        .session(&goal, Some(&task), Role::Engineer, &engineer)
+        .await;
+    h.pane_exists(&blocked);
+    h.resumable(&task, &blocked).await;
+    h.wedged_for(&blocked, RUNNING_QUIET_RESUME_SECS + 60).await;
+    h.store
+        .set_session_attention(&blocked.id, AttentionReason::WaitingPermission)
+        .await
+        .unwrap();
+    // The other half of the same rule, on a task of its own: an agent that
+    // asked the user a question is waiting on the answer, not stuck.
+    let asked_task = h.extra_task(&goal, &engineer, &reviewer, "asked").await;
+    h.advance(&asked_task, TaskStatus::InProgress).await;
+    let asked = h
+        .session(&goal, Some(&asked_task), Role::Engineer, &engineer)
+        .await;
+    h.pane_exists(&asked);
+    h.wedged_for(&asked, RUNNING_QUIET_RESUME_SECS + 60).await;
+    h.store
+        .set_session_attention(&asked.id, AttentionReason::WaitingInput)
+        .await
+        .unwrap();
+    // And a third that is only wedged, whose relaunch says the passes are over.
+    let control_task = h.extra_task(&goal, &engineer, &reviewer, "control").await;
+    h.advance(&control_task, TaskStatus::InProgress).await;
+    let control = h
+        .session(&goal, Some(&control_task), Role::Engineer, &engineer)
+        .await;
+    h.pane_exists(&control);
+    h.wedged_for(&control, RUNNING_QUIET_FLAG_SECS + 60).await;
+
+    let launched = [h.launched_at(&blocked).await, h.launched_at(&asked).await];
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    for id in [&task.id, &asked_task.id, &control_task.id] {
+        sched.send(SchedEvent::TaskChanged(id.clone())).unwrap();
+    }
+    eventually("the wedged agent to be raised", async || {
+        h.attention(&control).await == Some(AttentionReason::Stalled)
+    })
+    .await;
+
+    for (session, reason, was) in [
+        (&blocked, AttentionReason::WaitingPermission, &launched[0]),
+        (&asked, AttentionReason::WaitingInput, &launched[1]),
+    ] {
+        assert_eq!(
+            h.attention(session).await,
+            Some(reason),
+            "what the agent is waiting for is not overwritten with a stall"
+        );
+        assert_eq!(
+            &h.launched_at(session).await,
+            was,
+            "and its pane is not killed out from under the dialog"
+        );
+    }
+}
+
+/// A relaunch is a remedy, not a loop. An agent that wedges again after every
+/// one of them is not one more relaunch away from working, so the same budget
+/// a spawn is given bounds this too, and the task ends failed rather than
+/// being restarted for ever.
+#[tokio::test]
+async fn an_agent_that_wedges_after_every_relaunch_fails_its_task() {
+    let h = harness().await;
+    let (goal, task, engineer, _reviewer) = h.active_goal_with_task().await;
+    h.advance(&task, TaskStatus::InProgress).await;
+    let session = h
+        .session(&goal, Some(&task), Role::Engineer, &engineer)
+        .await;
+    h.pane_exists(&session);
+    h.resumable(&task, &session).await;
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    // Two relaunches out of the budget of three, each one wedging again.
+    for relaunch in 1..=2 {
+        h.wedged_for(&session, RUNNING_QUIET_RESUME_SECS + 60).await;
+        let launched = h.launched_at(&session).await;
+        sched
+            .send(SchedEvent::TaskChanged(task.id.clone()))
+            .unwrap();
+        eventually(&format!("relaunch {relaunch}"), async || {
+            h.launched_at(&session).await != launched
+        })
+        .await;
+    }
+    assert_eq!(
+        h.store.get_task(&task.id).await.unwrap().status(),
+        TaskStatus::InProgress,
+        "a task whose agent is being put back on its feet is still going"
+    );
+
+    // And it wedges once more.
+    h.wedged_for(&session, RUNNING_QUIET_RESUME_SECS + 60).await;
+    let launched = h.launched_at(&session).await;
+    sched
+        .send(SchedEvent::TaskChanged(task.id.clone()))
+        .unwrap();
+    eventually("the task to be failed", async || {
+        h.store.get_task(&task.id).await.unwrap().status() == TaskStatus::Failed
+    })
+    .await;
+    assert_eq!(
+        h.launched_at(&session).await,
+        launched,
+        "the agent is not started a fourth time"
+    );
+    assert_eq!(
+        h.store.get_session(&session.id).await.unwrap().status(),
+        SessionStatus::Exited,
+        "and it is not left holding a pane under a failed task"
+    );
+    // A task nobody is coming back to is told to the user, whichever watchdog
+    // gave up on it.
+    eventually("the failure to reach the user", async || {
+        h.user_messages(&task).await.len() == 1
+    })
+    .await;
+    let told = h.user_messages(&task).await;
+    assert!(
+        told[0]
+            .body
+            .contains("stopped mid-turn after every relaunch"),
+        "the notice says what stopped it: {}",
+        told[0].body
+    );
+}
+
+/// The planner's work ends with the plan. Once the goal it planned is being
+/// worked on, an idle planner is an agent nobody is waiting on holding a pane
+/// and the machine's sleep inhibitor open until the last task lands, so it is
+/// let go — and being gone is what is expected of it, not a disconnect.
+///
+/// Gone, not unreachable: a task thread can still address its planner —
+/// whose session belongs to the goal rather than to that task — and the
+/// message is what brings the session back on the conversation it was
+/// having.
+#[tokio::test]
+async fn an_idle_planner_is_let_go_once_the_goal_leaves_planning() {
+    let h = harness().await;
+    let (goal, task, engineer, _reviewer) = h.active_goal_with_task().await;
+    // The planner's own cwd, which a revive needs to be there.
+    std::fs::create_dir_all(h.dir.path().join("repo")).unwrap();
+    let planner = h
+        .session(&goal, None, Role::Planner, &goal.planner_profile_id)
+        .await;
+    h.pane_exists(&planner);
+    h.store
+        .set_session_internal_id(&planner.id, "uuid-planner")
+        .await
+        .unwrap();
+    h.store
+        .set_session_status(&planner.id, SessionStatus::Idle)
+        .await
+        .unwrap();
+
+    // The first tick is immediate, and one reconciliation of the goal is all
+    // it takes.
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    eventually("the planner to be let go", async || {
+        h.store.get_session(&planner.id).await.unwrap().status() == SessionStatus::Exited
+    })
+    .await;
+    // Whatever the sweep beside it had to say would have been said by now.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        h.attention(&planner).await,
+        None,
+        "a planner that is done is expected to be gone, not reported disconnected"
+    );
+
+    // And the engineer of one of its tasks still reaches it, from a thread
+    // the planner has no session in: the ended session is revived on the
+    // agent conversation it was having, which is the whole reason it is ended
+    // rather than kept alive.
+    let engineer = h
+        .session(&goal, Some(&task), Role::Engineer, &engineer)
+        .await;
+    let message = h
+        .store
+        .create_message(NewMessage {
+            goal_id: goal.id.clone(),
+            task_id: Some(task.id.clone()),
+            author_role: AuthorRole::Engineer,
+            author_session_id: Some(engineer.id.clone()),
+            recipient: Some(Recipient::Profile(goal.planner_profile_id.clone())),
+            body: "Task three overlaps with task one; which of them owns the store?".into(),
+        })
+        .await
+        .unwrap();
+    sched.send(SchedEvent::MessagePosted(message.id)).unwrap();
+
+    eventually("the planner to be revived with the message", async || {
+        h.store.get_session(&planner.id).await.unwrap().status() != SessionStatus::Exited
+    })
+    .await;
+    let argv = h.spawn_argv(&planner);
+    assert!(
+        argv.contains("uuid-planner"),
+        "the same conversation is resumed: {argv}"
+    );
+    assert!(
+        argv.contains("which of them owns the store?"),
+        "and it is woken with what was said to it: {argv}"
+    );
+}
+
+/// A pane with a delivery going into it is not a pane to kill, wedged or not:
+/// the paste and the Enters behind it would come back as a message nobody
+/// could be given, and the user would be told about a composer that was only
+/// ever interrupted. The relaunch waits for the pass after the delivery has
+/// settled — and then it happens, because a composer that took a paste says
+/// nothing about the turn the agent is stuck in.
+#[tokio::test]
+async fn a_wedged_agent_is_not_killed_while_a_message_is_going_into_its_pane() {
+    let h = harness().await;
+    let (goal, task, engineer, _reviewer) = h.active_goal_with_task().await;
+    h.advance(&task, TaskStatus::InProgress).await;
+    let session = h
+        .session(&goal, Some(&task), Role::Engineer, &engineer)
+        .await;
+    h.pane_exists(&session);
+    h.resumable(&task, &session).await;
+    // Past the flag and nowhere near the relaunch, so the first pass only
+    // raises it: what the relaunch has to wait for is set up after that.
+    h.wedged_for(&session, RUNNING_QUIET_FLAG_SECS + 60).await;
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    sched
+        .send(SchedEvent::TaskChanged(task.id.clone()))
+        .unwrap();
+    eventually("the wedged agent to be raised", async || {
+        h.attention(&session).await == Some(AttentionReason::Stalled)
+    })
+    .await;
+
+    // A composer that never lets go: the delivery spends its whole backoff in
+    // the pane, which is the window this is about.
+    h.composer_keeps("Use the other endpoint.");
+    let message = h
+        .store
+        .create_message(NewMessage {
+            goal_id: goal.id.clone(),
+            task_id: Some(task.id.clone()),
+            author_role: AuthorRole::User,
+            author_session_id: None,
+            recipient: Some(Recipient::Profile(engineer.clone())),
+            body: "Use the other endpoint.".into(),
+        })
+        .await
+        .unwrap();
+    sched.send(SchedEvent::MessagePosted(message.id)).unwrap();
+    eventually("the message to reach the pane", async || {
+        h.keystrokes(&session) > 0
+    })
+    .await;
+
+    // Now it is past the relaunch threshold too, and every pass while the
+    // pane is being typed into leaves it exactly where it is.
+    h.wedged_for(&session, RUNNING_QUIET_RESUME_SECS + 60).await;
+    let launched = h.launched_at(&session).await;
+    for _ in 0..6 {
+        sched
+            .send(SchedEvent::TaskChanged(task.id.clone()))
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(
+            h.pane_is_alive(&session),
+            "the pane was killed with a delivery going into it"
+        );
+        assert_eq!(
+            h.launched_at(&session).await,
+            launched,
+            "and the session was relaunched under the delivery"
+        );
+    }
+
+    // And once the delivery has settled, the wedge is still a wedge.
+    let deadline = std::time::Instant::now() + TIMEOUT;
+    loop {
+        sched
+            .send(SchedEvent::TaskChanged(task.id.clone()))
+            .unwrap();
+        if h.launched_at(&session).await != launched {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for the wedged agent to be relaunched"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// A flag raised for the user is not an agent waiting on one. `waiting_user`
+/// says the user has something to do about this task — a message written to
+/// them, a request that is theirs to merge — and nothing about whether the
+/// agent is working, so it is neither overwritten with a stall nor taken as a
+/// reason to leave a wedged agent where it is.
+#[tokio::test]
+async fn a_wedged_agent_flagged_for_the_user_keeps_the_flag_and_is_relaunched() {
+    let h = harness().await;
+    let (goal, task, engineer, reviewer) = h.active_goal_with_task().await;
+    h.advance(&task, TaskStatus::InProgress).await;
+    let session = h
+        .session(&goal, Some(&task), Role::Engineer, &engineer)
+        .await;
+    h.pane_exists(&session);
+    h.resumable(&task, &session).await;
+    h.wedged_for(&session, RUNNING_QUIET_FLAG_SECS + 60).await;
+    h.store
+        .set_session_attention(&session.id, AttentionReason::WaitingUser)
+        .await
+        .unwrap();
+    // A second task's agent, wedged in the same way with nothing raised on
+    // it: its flag is what says the pass the first one went through is over.
+    let control_task = h.extra_task(&goal, &engineer, &reviewer, "control").await;
+    h.advance(&control_task, TaskStatus::InProgress).await;
+    let control = h
+        .session(&goal, Some(&control_task), Role::Engineer, &engineer)
+        .await;
+    h.pane_exists(&control);
+    h.wedged_for(&control, RUNNING_QUIET_FLAG_SECS + 60).await;
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    for id in [&task.id, &control_task.id] {
+        sched.send(SchedEvent::TaskChanged(id.clone())).unwrap();
+    }
+    eventually("the other wedged agent to be raised", async || {
+        h.attention(&control).await == Some(AttentionReason::Stalled)
+    })
+    .await;
+    assert_eq!(
+        h.attention(&session).await,
+        Some(AttentionReason::WaitingUser),
+        "what the user is owed is not overwritten with a stall"
+    );
+
+    // And the silence was measured all the same: a threshold later the agent
+    // is put back on its feet like any other — and what the user is owed
+    // comes back up with it, since a relaunch is not the user having merged
+    // the request or read the message.
+    h.wedged_for(&session, RUNNING_QUIET_RESUME_SECS + 60).await;
+    let launched = h.launched_at(&session).await;
+    sched
+        .send(SchedEvent::TaskChanged(task.id.clone()))
+        .unwrap();
+    eventually("the wedged agent to be relaunched", async || {
+        h.launched_at(&session).await != launched
+    })
+    .await;
+    eventually(
+        "the flag raised for the user to survive the relaunch",
+        async || h.attention(&session).await == Some(AttentionReason::WaitingUser),
+    )
+    .await;
+    assert_eq!(
+        h.store.get_session(&session.id).await.unwrap().status(),
+        SessionStatus::Running,
+        "on the agent that is running again, not on the row it was killed in"
+    );
+    assert!(
+        !h.store.get_task(&task.id).await.unwrap().is_stalled(),
+        "and what the user is owed is not the task stalling"
+    );
 }

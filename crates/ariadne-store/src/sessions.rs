@@ -188,6 +188,7 @@ impl Store {
             self.get_session(id).await?;
             return Ok(());
         }
+        self.sync_task_stall(id).await?;
         self.publish_session_update(id).await
     }
 
@@ -217,6 +218,7 @@ impl Store {
             self.get_session(id).await?;
             return Ok(());
         }
+        self.sync_task_stall(id).await?;
         self.publish_session_update(id).await
     }
 
@@ -235,6 +237,7 @@ impl Store {
             self.get_session(id).await?;
             return Ok(());
         }
+        self.sync_task_stall(id).await?;
         self.publish_session_update(id).await
     }
 
@@ -274,6 +277,7 @@ impl Store {
         if n == 0 {
             return Err(not_found("session", id));
         }
+        self.sync_task_stall(id).await?;
         let session = self.get_session(id).await?;
         self.publish(Change::SessionUpdated(session.clone()));
         Ok(session)

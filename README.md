@@ -343,6 +343,13 @@ glab_bin = "/opt/homebrew/bin/glab" # and the GitLab CLI merge requests are watc
 pr_poll_secs = 180                 # how often an integrating task's pull or merge
                                    # request is looked at (default); it moves when a
                                    # human reads it, so polling faster buys nothing
+running_quiet_flag_secs = 1200     # how long an agent may be mid-turn without
+                                   # reporting anything before it is raised for you
+                                   # (default); what it measures is silence, not how
+                                   # long the turn takes
+running_quiet_resume_secs = 2700   # and how long before its pane is killed and the
+                                   # same session put back on the conversation it was
+                                   # having (default)
 ```
 
 `ARIADNE_HOME` moves the whole home directory: daemon and CLI alike resolve
