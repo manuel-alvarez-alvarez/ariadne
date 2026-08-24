@@ -1017,7 +1017,11 @@ impl Launcher {
         // pane, and a relaunch on top of a live agent puts two of them on one
         // piece of work. A wrong "yes" costs a tick, and the caller asks
         // again.
-        if self.tmux.has_session_or_unknown(&previous.tmux_session).await {
+        if self
+            .tmux
+            .has_session_or_unknown(&previous.tmux_session)
+            .await
+        {
             // Already alive — attaching needs nothing from us.
             return Ok(previous);
         }

@@ -1727,12 +1727,7 @@ impl Scheduler {
     /// tries again on a widening backoff — seconds of waiting that the
     /// scheduler used to do inline, one agent at a time, while every other
     /// event queued behind it.
-    fn spawn_delivery(
-        &mut self,
-        session: &AgentSession,
-        text: String,
-        message_id: Option<String>,
-    ) {
+    fn spawn_delivery(&mut self, session: &AgentSession, text: String, message_id: Option<String>) {
         self.typing.insert(session.id.clone());
         let tmux = self.launcher.tmux.clone();
         let reports = self.reports.clone();

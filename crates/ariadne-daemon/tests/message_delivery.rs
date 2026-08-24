@@ -68,11 +68,7 @@ async fn eventually(what: &str, check: impl AsyncFnMut() -> bool) {
     eventually_within(TIMEOUT, what, check).await
 }
 
-async fn eventually_within(
-    timeout: Duration,
-    what: &str,
-    mut check: impl AsyncFnMut() -> bool,
-) {
+async fn eventually_within(timeout: Duration, what: &str, mut check: impl AsyncFnMut() -> bool) {
     let deadline = Instant::now() + timeout;
     loop {
         if check().await {
@@ -895,7 +891,12 @@ async fn a_delivery_that_never_gets_through_raises_the_addressee() {
     h.tmux_refuses();
 
     let message = h
-        .post_to_task(&cast.task, "Rebase before you merge.", Some("engineer"), None)
+        .post_to_task(
+            &cast.task,
+            "Rebase before you merge.",
+            Some("engineer"),
+            None,
+        )
         .await;
 
     // The passes the tick would make, asked for without waiting a quarter of
