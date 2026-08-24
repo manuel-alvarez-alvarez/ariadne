@@ -64,19 +64,20 @@ const REVIEWER: ProfileDto = {
   role: "reviewer",
 }
 
-/** The built-in Local Integrator: the one the form preselects, by its id. */
+/** The built-in Integrator: the one the form preselects, by its id. */
 const INTEGRATOR: ProfileDto = {
   ...ENGINEER,
   id: "00000000000000000000000004",
-  name: "Local Integrator",
+  name: "Integrator",
   role: "integrator",
 }
 
-/** Sorts ahead of it, so preselecting the local one cannot be an accident. */
-const GITHUB_INTEGRATOR: ProfileDto = {
+/** One the user made, sorting ahead of the built-in so preselecting the
+ * built-in cannot be an accident. */
+const CUSTOM_INTEGRATOR: ProfileDto = {
   ...ENGINEER,
-  id: "00000000000000000000000005",
-  name: "GitHub Integrator",
+  id: "01JPROF000000000000000INT",
+  name: "Fleet Lander",
   role: "integrator",
 }
 
@@ -125,7 +126,7 @@ function stubDaemon() {
         case "reviewer":
           return answer([REVIEWER])
         case "integrator":
-          return answer([GITHUB_INTEGRATOR, INTEGRATOR])
+          return answer([CUSTOM_INTEGRATOR, INTEGRATOR])
         default:
           return answer([ENGINEER])
       }
@@ -176,7 +177,7 @@ describe("dismissing the dialog", () => {
 
     // The preselects are what this is about: wait until they have happened.
     expect(await screen.findByText("Engineer")).toBeDefined()
-    expect(await screen.findByText("Local Integrator")).toBeDefined()
+    expect(await screen.findByText("Integrator")).toBeDefined()
     expect(await screen.findByText("Reviewer")).toBeDefined()
 
     await user.click(screen.getByRole("button", { name: "Cancel" }))
@@ -219,12 +220,12 @@ describe("dismissing the dialog", () => {
 })
 
 describe("the integrator assignment", () => {
-  it("preselects the built-in local integrator and sends it untouched", async () => {
+  it("preselects the built-in integrator and sends it untouched", async () => {
     const user = userEvent.setup()
     renderDialog(vi.fn())
 
-    // Not simply the first of the list — "GitHub Integrator" sorts ahead of it.
-    expect(await screen.findByText("Local Integrator")).toBeDefined()
+    // Not simply the first of the list — "Fleet Lander" sorts ahead of it.
+    expect(await screen.findByText("Integrator")).toBeDefined()
 
     await user.type(screen.getByLabelText("Title"), "Wire the strip")
     await user.click(screen.getByRole("button", { name: "Create task" }))
@@ -239,11 +240,11 @@ describe("the integrator assignment", () => {
 
     await user.type(screen.getByLabelText("Title"), "Wire the strip")
     await user.click(await screen.findByLabelText("Integrator profile"))
-    await user.click(await screen.findByRole("option", { name: "GitHub Integrator" }))
+    await user.click(await screen.findByRole("option", { name: "Fleet Lander" }))
     await user.click(screen.getByRole("button", { name: "Create task" }))
 
     await vi.waitFor(() => expect(writes).toEqual([`POST /v1/goals/${GOAL.id}/tasks`]))
-    expect(posted[0]).toMatchObject({ integrator_profile: GITHUB_INTEGRATOR.id })
+    expect(posted[0]).toMatchObject({ integrator_profile: CUSTOM_INTEGRATOR.id })
   })
 })
 
@@ -277,12 +278,12 @@ describe("editing a task that has not started", () => {
       if (request.method !== "GET") {
         writes.push(`${request.method} ${url.pathname}`)
         posted.push(await request.clone().json())
-        return answer({ ...TASK, integrator_profile_id: GITHUB_INTEGRATOR.id })
+        return answer({ ...TASK, integrator_profile_id: CUSTOM_INTEGRATOR.id })
       }
       if (url.pathname === "/v1/profiles") {
         return answer(
           url.searchParams.get("role") === "integrator"
-            ? [GITHUB_INTEGRATOR, INTEGRATOR]
+            ? [CUSTOM_INTEGRATOR, INTEGRATOR]
             : [REVIEWER],
         )
       }
@@ -292,13 +293,13 @@ describe("editing a task that has not started", () => {
     renderEdit()
 
     // The task's own integrator is what the picker starts on, not a default.
-    expect(await screen.findByText("Local Integrator")).toBeDefined()
+    expect(await screen.findByText("Integrator")).toBeDefined()
 
     await user.click(await screen.findByLabelText("Integrator profile"))
-    await user.click(await screen.findByRole("option", { name: "GitHub Integrator" }))
+    await user.click(await screen.findByRole("option", { name: "Fleet Lander" }))
     await user.click(screen.getByRole("button", { name: "Save changes" }))
 
     await vi.waitFor(() => expect(writes).toEqual([`PATCH /v1/tasks/${TASK.id}`]))
-    expect(posted[0]).toMatchObject({ integrator_profile: GITHUB_INTEGRATOR.id })
+    expect(posted[0]).toMatchObject({ integrator_profile: CUSTOM_INTEGRATOR.id })
   })
 })

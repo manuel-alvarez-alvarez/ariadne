@@ -98,13 +98,13 @@ function makeFormSchema(opts: { creating: boolean; requireRepo: boolean }) {
 type TaskFormValues = z.infer<ReturnType<typeof makeFormSchema>>
 
 /**
- * The built-in local integrator, `ariadne-store`'s `LOCAL_INTEGRATOR_ID`: the
- * one that lands a task with git alone, and what a task nobody assigned an
- * integrator to has always been landed by. Preselected by id rather than by
- * name, since there are several built-in integrators and a profile can be
- * renamed — this is the one that has to keep being found.
+ * The built-in integrator, `ariadne-store`'s `INTEGRATOR_ID`: the one that
+ * lands a task whichever way its repository is landed in, and what a task
+ * nobody assigned an integrator to has always been landed by. Preselected by
+ * id rather than by name, since a profile can be renamed — this is the one
+ * that has to keep being found.
  */
-const LOCAL_INTEGRATOR_ID = "00000000000000000000000004"
+const INTEGRATOR_ID = "00000000000000000000000004"
 
 const CREATE_DEFAULTS: TaskFormValues = {
   title: "",
@@ -250,7 +250,7 @@ function TaskFormDialog({
     [dependencyChoices],
   )
 
-  // The daemon ships built-in "Engineer", "Local Integrator" and "Reviewer"
+  // The daemon ships built-in "Engineer", "Integrator" and "Reviewer"
   // profiles; preselect them (or the only choice there is) so the common case
   // is one click, the same way the goal form preselects its planner. Create
   // only: an edited task already has all three.
@@ -266,8 +266,7 @@ function TaskFormDialog({
   useEffect(() => {
     if (!open || editing || !integratorOptions.length || selectedIntegrator) return
     const preferred =
-      integratorOptions.find((profile) => profile.id === LOCAL_INTEGRATOR_ID) ??
-      integratorOptions[0]
+      integratorOptions.find((profile) => profile.id === INTEGRATOR_ID) ?? integratorOptions[0]
     if (preferred) form.setValue("integrator_profile", preferred.id)
   }, [open, editing, integratorOptions, selectedIntegrator, form.setValue])
 

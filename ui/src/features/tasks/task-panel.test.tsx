@@ -38,9 +38,9 @@ afterEach(cleanup)
 const ENGINEER = "01JPROF0000000000000000ENG"
 const STRICT = "01JPROF0000000000000STRICT"
 const AUTO = "01JPROF00000000000000AUTO"
-const INTEGRATOR = "00000000000000000000000005"
+const INTEGRATOR = "01JPROF0000000000000000INT"
 
-/** Every profile as it stands *today* — all three edited since the task. */
+/** Every profile as it stands *today* — all four edited since the task. */
 const PROFILES: ProfileDto[] = [
   {
     id: ENGINEER,
@@ -74,7 +74,7 @@ const PROFILES: ProfileDto[] = [
   },
   {
     id: INTEGRATOR,
-    name: "GitHub Integrator",
+    name: "Lander",
     role: "integrator",
     agent_kind: "claude_code",
     model: "claude-opus-5",
@@ -165,7 +165,7 @@ it("shows the integrator as its profile stands, since nothing pinned it", () => 
 
   // Assigned at creation like the engineer, run only once the reviewers are
   // done — so there is no snapshot to prefer over the profile.
-  expect(fact("Integrator")).toBe("GitHub Integrator · Claude Code · claude-opus-5")
+  expect(fact("Integrator")).toBe("Lander · Claude Code · claude-opus-5")
 })
 
 it("links the pull request its integrator opened, by number", () => {
