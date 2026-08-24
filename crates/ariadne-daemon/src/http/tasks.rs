@@ -45,20 +45,11 @@ async fn resolve_profiles(store: &Store, specs: &[String], role: Role) -> ApiRes
     Ok(ids)
 }
 
-/// The integrator a task is created with: the one named, or the built-in.
-///
-/// The built-in is looked up by id rather than required: deleting a built-in
-/// profile is allowed and permanent, and an install that deleted this one
-/// still creates tasks — they simply name no integrator, which is the shape
-/// every task had before the role existed.
-async fn resolve_integrator(store: &Store, spec: Option<&str>) -> ApiResult<Option<String>> {
-    if let Some(spec) = spec {
-        let spec = spec.to_string();
-        let mut ids =
-            resolve_profiles(store, std::slice::from_ref(&spec), Role::Integrator).await?;
-        return Ok(Some(ids.remove(0)));
-    }
-    Ok(store.builtin_integrator().await.map(|p| p.id))
+/// Resolve one profile id-or-name, checking it has `role`: the shape every
+/// single-profile assignment takes.
+async fn resolve_profile(store: &Store, spec: &str, role: Role) -> ApiResult<String> {
+    let specs = [spec.to_string()];
+    Ok(resolve_profiles(store, &specs, role).await?.remove(0))
 }
 
 /// Create a task in a goal (planner via MCP, or the user).
@@ -103,15 +94,10 @@ pub async fn create(
         }
     };
 
-    let engineer = resolve_profiles(
-        &state.store,
-        std::slice::from_ref(&req.engineer_profile),
-        Role::Engineer,
-    )
-    .await?
-    .remove(0);
+    let engineer = resolve_profile(&state.store, &req.engineer_profile, Role::Engineer).await?;
     let reviewers = resolve_profiles(&state.store, &req.reviewer_profiles, Role::Reviewer).await?;
-    let integrator = resolve_integrator(&state.store, req.integrator_profile.as_deref()).await?;
+    let integrator =
+        resolve_profile(&state.store, &req.integrator_profile, Role::Integrator).await?;
 
     let task = state
         .store
@@ -185,6 +171,10 @@ pub async fn update(
         Some(specs) => Some(resolve_profiles(&state.store, specs, Role::Reviewer).await?),
         None => None,
     };
+    let integrator_profile_id = match &req.integrator_profile {
+        Some(spec) => Some(resolve_profile(&state.store, spec, Role::Integrator).await?),
+        None => None,
+    };
     let task = state
         .store
         .update_task(
@@ -193,6 +183,7 @@ pub async fn update(
                 title: req.title,
                 description: req.description,
                 reviewer_profile_ids,
+                integrator_profile_id,
             },
         )
         .await?;

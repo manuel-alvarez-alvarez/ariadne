@@ -1003,11 +1003,8 @@ export interface components {
             description?: string;
             /** @description Engineer profile id or unique name. */
             engineer_profile: string;
-            /**
-             * @description Integrator profile id or unique name; the built-in Integrator when
-             *     omitted.
-             */
-            integrator_profile?: string | null;
+            /** @description Integrator profile id or unique name. */
+            integrator_profile: string;
             /**
              * @description Id of one of the goal's repositories; may be omitted when the goal
              *     works in exactly one.
@@ -1460,10 +1457,10 @@ export interface components {
             goal_id: string;
             id: string;
             /**
-             * @description Profile that lands the task once it is approved. None for tasks
-             *     created before the integrator existed.
+             * @description Profile that lands the task once it is approved, assigned at creation
+             *     exactly as the engineer is.
              */
-            integrator_profile_id?: string | null;
+            integrator_profile_id: string;
             merge_commit?: string | null;
             /**
              * @description Model the engineer runs on, pinned like `agent_kind`. None = the agent
@@ -1564,6 +1561,11 @@ export interface components {
         UpdateTaskRequest: {
             depends_on?: string[] | null;
             description?: string | null;
+            /**
+             * @description Integrator profile id or unique name, replacing the one the task was
+             *     created with.
+             */
+            integrator_profile?: string | null;
             reviewer_profiles?: string[] | null;
             title?: string | null;
         };

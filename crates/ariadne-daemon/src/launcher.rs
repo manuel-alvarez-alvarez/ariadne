@@ -624,13 +624,7 @@ impl Launcher {
     /// [`Store::task_integrator`] is the resolution itself, shared with the
     /// thread that has to be able to address the session it starts.
     pub async fn integrator_profile(&self, task: &Task) -> Result<Profile> {
-        self.store.task_integrator(task).await?.ok_or_else(|| {
-            anyhow!(
-                "task {} names no integrator and the built-in Integrator profile is gone: \
-                 create an integrator profile and assign it to the task",
-                task.id
-            )
-        })
+        Ok(self.store.task_integrator(task).await?)
     }
 
     /// The GitHub CLI this daemon watches pull requests with, as configured.

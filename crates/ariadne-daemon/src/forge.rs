@@ -297,7 +297,7 @@ mod tests {
             description: "d".into(),
             status: "integrating".into(),
             engineer_profile_id: "e".into(),
-            integrator_profile_id: None,
+            integrator_profile_id: ariadne_store::defaults::LOCAL_INTEGRATOR_ID.into(),
             agent_kind: None,
             model: None,
             branch: "b".into(),

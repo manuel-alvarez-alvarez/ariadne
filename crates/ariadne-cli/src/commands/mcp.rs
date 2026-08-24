@@ -64,8 +64,9 @@ pub struct PostMessageReq {
     pub task_id: Option<String>,
     /// Whom to address, waking them to read it: a profile name as your
     /// briefing and `list_profiles` spell it, or "user" for the human. A task
-    /// thread addresses its engineer, its reviewers or the planner; a goal
-    /// thread only the planner. Leave it out to address the thread itself.
+    /// thread addresses its engineer, its reviewers, its integrator or the
+    /// planner; a goal thread only the planner. Leave it out to address the
+    /// thread itself.
     pub to: Option<String>,
 }
 
@@ -76,6 +77,8 @@ pub struct CreateTaskReq {
     pub description: String,
     /// Engineer profile id or name that will own the task.
     pub engineer_profile: String,
+    /// Integrator profile id or name that will integrate the task.
+    pub integrator_profile: String,
     /// Reviewer profile ids or names, in review order (at least one).
     pub reviewer_profiles: Vec<String>,
     /// Ids of tasks that must merge before this one starts.
@@ -91,6 +94,8 @@ pub struct UpdateTaskReq {
     pub title: Option<String>,
     pub description: Option<String>,
     pub reviewer_profiles: Option<Vec<String>>,
+    /// Integrator profile id or name that will integrate the task.
+    pub integrator_profile: Option<String>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -104,7 +109,7 @@ pub struct SetDependenciesReq {
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub struct ListProfilesReq {
-    /// Filter: planner | engineer | reviewer
+    /// Filter: planner | engineer | reviewer | integrator
     pub role: Option<String>,
 }
 
@@ -328,7 +333,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Write into a task's conversation: the way to reach the other agents and the user. Without task_id, a planner posts to the goal thread. Address one of them with `to` — a profile name (as your briefing and `list_profiles` spell it) or \"user\" — and that recipient is woken and notified; without `to` the message is left to the thread, read whenever someone next looks. A task thread addresses its engineer, its reviewers and the planner; a goal thread addresses the planner. Addressing anyone else is refused, naming who would have worked."
+        description = "Write into a task's conversation: the way to reach the other agents and the user. Without task_id, a planner posts to the goal thread. Address one of them with `to` — a profile name (as your briefing and `list_profiles` spell it) or \"user\" — and that recipient is woken and notified; without `to` the message is left to the thread, read whenever someone next looks. A task thread addresses its engineer, its reviewers, its integrator and the planner; a goal thread addresses the planner. Addressing anyone else is refused, naming who would have worked."
     )]
     async fn post_message(
         &self,
@@ -353,7 +358,7 @@ impl AriadneMcp {
     // ---- planner ----
 
     #[tool(
-        description = "Create one task in the goal, owned by one engineer profile and gated by at least one reviewer profile."
+        description = "Create one task in the goal, owned by one engineer profile, gated by at least one reviewer profile and landed by one integrator profile. Every profile says what it is for in its name and its system prompt, which `list_profiles` returns: pick the integrator that fits the repository the task works in, the way you pick the engineer."
     )]
     async fn create_task(
         &self,
@@ -364,9 +369,7 @@ impl AriadneMcp {
             description: req.description,
             repo_id: req.repo_id,
             engineer_profile: req.engineer_profile,
-            // The planner does not pick an integrator yet; the daemon fills in
-            // the built-in one.
-            integrator_profile: None,
+            integrator_profile: req.integrator_profile,
             reviewer_profiles: req.reviewer_profiles,
             depends_on: req.depends_on.unwrap_or_default(),
         };
@@ -388,7 +391,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Edit a task's title, description or reviewers. Only accepted while the task has not started."
+        description = "Edit a task's title, description, reviewers or integrator. Only accepted while the task has not started."
     )]
     async fn update_task(
         &self,
@@ -398,6 +401,7 @@ impl AriadneMcp {
             title: req.title,
             description: req.description,
             reviewer_profiles: req.reviewer_profiles,
+            integrator_profile: req.integrator_profile,
             depends_on: None,
         };
         let value = self
@@ -427,7 +431,9 @@ impl AriadneMcp {
         json_result(value)
     }
 
-    #[tool(description = "List the agent profiles a task can be assigned to.")]
+    #[tool(
+        description = "List the agent profiles a task can be assigned to, each with the name, model and system prompt that say what it is for. Filter by role with `role`: planner, engineer, reviewer or integrator."
+    )]
     async fn list_profiles(
         &self,
         Parameters(req): Parameters<ListProfilesReq>,

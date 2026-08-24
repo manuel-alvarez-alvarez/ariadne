@@ -1,9 +1,10 @@
-//! Which integrator a task is created with.
+//! Which integrator a task is created with, and changed to.
 //!
-//! The role has no lifecycle yet — nothing spawns an integrator session — so
-//! what there is to check is the vocabulary: `POST /v1/goals/{id}/tasks` takes
-//! an optional integrator profile, falls back to the built-in one, refuses a
-//! profile of another role, and the DTO says which one landed on the task.
+//! The vocabulary of the assignment, not the landing: `POST
+//! /v1/goals/{id}/tasks` requires an integrator profile exactly as it requires
+//! an engineer, refuses a profile of another role, and `PATCH /v1/tasks/{id}`
+//! reassigns it while the task has not started, the way it reassigns the
+//! reviewers.
 //!
 //! No tmux, no git, no agent CLI: nothing here launches anything.
 
@@ -30,8 +31,8 @@ use ariadne_daemon::logbuf::LogBuffer;
 use ariadne_daemon::tmux::TmuxManager;
 use ariadne_store::{NewProfile, NewRepository, Store};
 
-/// The id `ariadne_store::defaults` gives the built-in Integrator.
-const BUILTIN_INTEGRATOR: &str = "00000000000000000000000004";
+/// The id `ariadne_store::defaults` gives the built-in Local Integrator.
+const LOCAL_INTEGRATOR: &str = "00000000000000000000000004";
 
 struct Harness {
     store: Store,
@@ -106,6 +107,15 @@ fn create_task(goal: &GoalDto, body: serde_json::Value) -> Request<Body> {
     post_json(&format!("/v1/goals/{}/tasks", goal.id), body)
 }
 
+fn patch_json(uri: &str, body: serde_json::Value) -> Request<Body> {
+    Request::builder()
+        .method(Method::PATCH)
+        .uri(uri)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
 fn post_json(uri: &str, body: serde_json::Value) -> Request<Body> {
     Request::builder()
         .method(Method::POST)
@@ -115,30 +125,50 @@ fn post_json(uri: &str, body: serde_json::Value) -> Request<Body> {
         .unwrap()
 }
 
-/// Nothing names an integrator today — not the CLI, not the planner's
-/// `create_task` — so the built-in is what every task gets.
+/// The integrator is required, exactly as the engineer is: a `create_task`
+/// that leaves it out is refused the same way, rather than quietly landing on
+/// a default nobody chose.
 #[tokio::test]
-async fn a_task_created_without_an_integrator_gets_the_built_in_one() {
+async fn a_task_cannot_be_created_without_an_integrator() {
+    let h = harness().await;
+    let goal = h.goal().await;
+
+    let (without_integrator, _) = h
+        .send(create_task(
+            &goal,
+            serde_json::json!({"title": "Do the thing", "engineer_profile": "Engineer",
+                               "reviewer_profiles": ["Reviewer"]}),
+        ))
+        .await;
+    let (without_engineer, _) = h
+        .send(create_task(
+            &goal,
+            serde_json::json!({"title": "Do the thing", "integrator_profile": "Local Integrator",
+                               "reviewer_profiles": ["Reviewer"]}),
+        ))
+        .await;
+    assert_eq!(without_integrator, without_engineer);
+    assert!(without_integrator.is_client_error(), "{without_integrator}");
+}
+
+/// And the one it names is the one it keeps, on the row as well as in the
+/// answer to the create.
+#[tokio::test]
+async fn the_integrator_a_task_names_is_the_one_it_keeps() {
     let h = harness().await;
     let goal = h.goal().await;
 
     let request = create_task(
         &goal,
         serde_json::json!({"title": "Do the thing", "engineer_profile": "Engineer",
-                           "reviewer_profiles": ["Reviewer"]}),
+                           "reviewer_profiles": ["Reviewer"],
+                           "integrator_profile": "Local Integrator"}),
     );
     let task: TaskDto = h.json(request, StatusCode::CREATED).await;
 
-    assert_eq!(
-        task.integrator_profile_id.as_deref(),
-        Some(BUILTIN_INTEGRATOR)
-    );
-    // And it is on the row, not only in the answer to the create.
+    assert_eq!(task.integrator_profile_id, LOCAL_INTEGRATOR);
     let stored = h.store.get_task(&task.id).await.unwrap();
-    assert_eq!(
-        stored.integrator_profile_id.as_deref(),
-        Some(BUILTIN_INTEGRATOR)
-    );
+    assert_eq!(stored.integrator_profile_id, LOCAL_INTEGRATOR);
     let read_back: TaskDto = h
         .json(
             Request::get(format!("/v1/tasks/{}", task.id))
@@ -153,7 +183,7 @@ async fn a_task_created_without_an_integrator_gets_the_built_in_one() {
     // it: the refusal names what is holding it, like every other reference.
     let err: ErrorBody = h
         .json(
-            Request::delete(format!("/v1/profiles/{BUILTIN_INTEGRATOR}"))
+            Request::delete(format!("/v1/profiles/{LOCAL_INTEGRATOR}"))
                 .body(Body::empty())
                 .unwrap(),
             StatusCode::CONFLICT,
@@ -191,10 +221,7 @@ async fn a_named_integrator_is_the_one_the_task_keeps() {
     );
     let task: TaskDto = h.json(request, StatusCode::CREATED).await;
 
-    assert_eq!(
-        task.integrator_profile_id.as_deref(),
-        Some(mine.id.as_str())
-    );
+    assert_eq!(task.integrator_profile_id, mine.id);
 }
 
 /// A profile of another role is refused the way the engineer's and the
@@ -211,6 +238,76 @@ async fn a_profile_of_another_role_cannot_integrate() {
                            "integrator_profile": "Reviewer"}),
     );
     let err: ErrorBody = h.json(request, StatusCode::BAD_REQUEST).await;
+
+    assert!(err.error.message.contains("expected integrator"), "{err:?}");
+}
+
+/// The integrator of a task that has not started is reassignable, the way its
+/// reviewers are: the planner picked one, and the planner may pick another.
+#[tokio::test]
+async fn the_integrator_can_be_changed_before_the_task_starts() {
+    let h = harness().await;
+    let goal = h.goal().await;
+    let task: TaskDto = h
+        .json(
+            create_task(
+                &goal,
+                serde_json::json!({"title": "Do the thing", "engineer_profile": "Engineer",
+                                   "reviewer_profiles": ["Reviewer"],
+                                   "integrator_profile": "Local Integrator"}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+
+    let patched: TaskDto = h
+        .json(
+            patch_json(
+                &format!("/v1/tasks/{}", task.id),
+                serde_json::json!({"integrator_profile": "GitHub Integrator"}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+
+    let github = h
+        .store
+        .get_profile_by_name("GitHub Integrator")
+        .await
+        .unwrap();
+    assert_eq!(patched.integrator_profile_id, github.id);
+    assert_eq!(patched.title, task.title, "nothing else moved");
+    let stored = h.store.get_task(&task.id).await.unwrap();
+    assert_eq!(stored.integrator_profile_id, github.id);
+}
+
+/// And a profile of another role is refused there too, with the same sentence
+/// the create refuses it with.
+#[tokio::test]
+async fn a_profile_of_another_role_cannot_be_patched_in_as_the_integrator() {
+    let h = harness().await;
+    let goal = h.goal().await;
+    let task: TaskDto = h
+        .json(
+            create_task(
+                &goal,
+                serde_json::json!({"title": "Do the thing", "engineer_profile": "Engineer",
+                                   "reviewer_profiles": ["Reviewer"],
+                                   "integrator_profile": "Local Integrator"}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+
+    let err: ErrorBody = h
+        .json(
+            patch_json(
+                &format!("/v1/tasks/{}", task.id),
+                serde_json::json!({"integrator_profile": "Engineer"}),
+            ),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
 
     assert!(err.error.message.contains("expected integrator"), "{err:?}");
 }

@@ -25,6 +25,7 @@ const TASK: TaskDto = {
   branch: "ariadne/task-01jtask",
   depends_on: [],
   engineer_profile_id: "01JPROF0000000000000000AA",
+  integrator_profile_id: "01INTEGRATOR",
   repo_id: "01JREPO0000000000000000AA",
   review_round: 0,
   reviewers: [],

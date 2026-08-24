@@ -107,31 +107,25 @@ impl Store {
             .ok_or_else(|| not_found("profile", name))
     }
 
-    /// The built-in Integrator profile, while it is still there.
+    /// The built-in Local Integrator, while it is still there.
     ///
-    /// The one profile the daemon looks up by identity rather than by
-    /// assignment: a task created before the integrator existed names none, and
-    /// this is who lands it. The local one by name, since there are several
-    /// built-in integrators and landing a task with git alone is what a task
-    /// that asked for nothing in particular gets. `None` when the built-in was
-    /// deleted — allowed, and permanent — which leaves such a task with no
-    /// integrator at all.
+    /// The integrator that lands a task with git alone, and what a migrated
+    /// task that named none was backfilled with. Looked up by id rather than
+    /// by name because a profile can be renamed and there are three built-in
+    /// integrators to tell apart; `None` when it was deleted — allowed, and
+    /// permanent.
     pub async fn builtin_integrator(&self) -> Option<Profile> {
         self.get_profile(LOCAL_INTEGRATOR_ID).await.ok()
     }
 
-    /// The profile that lands `task`: the one it was created with, or the
-    /// built-in Integrator for a task that predates the column.
+    /// The profile that lands `task`, the one it was assigned at creation.
     ///
     /// Everything that asks who the integrator of a task is asks here — the
     /// launcher that spawns the session, and the thread that has to be able to
-    /// address it — so that a legacy task cannot end up with an integrator
-    /// working on it that nobody can reach.
-    pub async fn task_integrator(&self, task: &Task) -> Result<Option<Profile>> {
-        match &task.integrator_profile_id {
-            Some(id) => self.get_profile(id).await.map(Some),
-            None => Ok(self.builtin_integrator().await),
-        }
+    /// address it — so that the two can never disagree about who is landing
+    /// it.
+    pub async fn task_integrator(&self, task: &Task) -> Result<Profile> {
+        self.get_profile(&task.integrator_profile_id).await
     }
 
     /// Resolve a profile by id or by unique name (CLI convenience).

@@ -307,11 +307,7 @@ function TaskFacts({ task }: { task: TaskDto }) {
         {/* Assigned per task like the engineer, and read the same way — but
             unpinned: the integrator is picked up when the reviewers approve,
             so what its profile says now is what will run. */}
-        {task.integrator_profile_id ? (
-          <ProfileSummary profileId={task.integrator_profile_id} className="text-xs" />
-        ) : (
-          <Muted>none assigned — the built-in Integrator lands it</Muted>
-        )}
+        <ProfileSummary profileId={task.integrator_profile_id} className="text-xs" />
       </Fact>
       <Fact label="Depends on">
         <Dependencies ids={task.depends_on} />

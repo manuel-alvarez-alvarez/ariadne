@@ -168,12 +168,6 @@ it("shows the integrator as its profile stands, since nothing pinned it", () => 
   expect(fact("Integrator")).toBe("GitHub Integrator · Claude Code · claude-opus-5")
 })
 
-it("names who lands a task that predates the integrator", () => {
-  mount({ ...TASK, integrator_profile_id: null })
-
-  expect(fact("Integrator")).toBe("none assigned — the built-in Integrator lands it")
-})
-
 it("links the pull request its integrator opened, by number", () => {
   mount({
     ...TASK,

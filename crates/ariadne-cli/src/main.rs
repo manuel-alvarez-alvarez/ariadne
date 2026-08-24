@@ -532,11 +532,10 @@ mod tests {
         );
     }
 
-    /// The integrator is a per-task assignment like the engineer, so
-    /// `task create` names one — and names the built-in local one when the
-    /// caller does not, rather than leaving the field for the daemon to fill
-    /// in. A follow-up makes it required on the wire; this is what keeps the
-    /// terminal ahead of that.
+    /// The integrator is a per-task assignment like the engineer, and the
+    /// wire requires one, so `task create` always names it: the built-in
+    /// local one when the caller does not say, exactly as `--engineer`
+    /// defaults to the built-in Engineer.
     #[test]
     fn creating_a_task_always_names_an_integrator() {
         let integrator = |args: &[&str]| {
@@ -550,7 +549,7 @@ mod tests {
             };
             integrator
         };
-        assert_eq!(integrator(&[]), "Integrator");
+        assert_eq!(integrator(&[]), "Local Integrator");
         assert_eq!(
             integrator(&["--integrator", "GitHub Integrator"]),
             "GitHub Integrator"

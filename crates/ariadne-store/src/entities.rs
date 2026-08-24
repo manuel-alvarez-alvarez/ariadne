@@ -127,9 +127,9 @@ pub struct Task {
     pub description: String,
     pub status: String,
     pub engineer_profile_id: String,
-    /// Profile that lands this task once it is approved. None for tasks
-    /// created before the integrator existed.
-    pub integrator_profile_id: Option<String>,
+    /// Profile that lands this task once it is approved, assigned when the
+    /// task was created exactly as the engineer above it was.
+    pub integrator_profile_id: String,
     /// Agent CLI the engineer of this task runs on, snapshotted from the
     /// profile when the task was created. None = auto. Editing the profile
     /// afterwards leaves it alone.

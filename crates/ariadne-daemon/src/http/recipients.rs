@@ -30,13 +30,9 @@ pub async fn task_participants(store: &Store, task: &Task) -> Result<Vec<Profile
     for pin in store.list_task_reviewer_pins(&task.id).await? {
         participants.push(store.get_profile(&pin.profile_id).await?);
     }
-    // Whoever would land it, resolved the way the launcher resolves it: a task
-    // created before the integrator existed names none and is landed by the
-    // built-in, and an integrator working on a task has to be reachable in its
-    // thread whichever of the two it is.
-    if let Some(integrator) = store.task_integrator(task).await? {
-        participants.push(integrator);
-    }
+    // Whoever lands it, resolved the way the launcher resolves it, so that an
+    // integrator working on a task is reachable in its thread.
+    participants.push(store.task_integrator(task).await?);
     participants.push(store.get_profile(&goal.planner_profile_id).await?);
     Ok(participants)
 }
