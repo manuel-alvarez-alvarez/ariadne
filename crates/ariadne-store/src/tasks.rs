@@ -37,6 +37,79 @@ pub struct TaskFilter {
     pub status: Option<TaskStatus>,
 }
 
+/// How much of the title a branch name keeps, in characters. Long enough for
+/// a sentence of title, short enough that the name still reads at a glance in
+/// a `git branch` listing or on a pull request.
+const SLUG_MAX: usize = 40;
+
+/// How much of the task id rides at the end of a branch name. Six characters
+/// of a ULID's random tail: enough that two tasks with the same title never
+/// share a branch, short enough to read out.
+const ID_TAIL: usize = 6;
+
+/// The branch a task is created on: a slug of its title, then the tail of its
+/// id — `fix-the-integrator-briefing-real-fetch-r9jr7c`. The branch is what
+/// shows on the pull request the integrator opens, so it names the change and
+/// nothing else: no prefix, no `ariadne` anywhere in it.
+///
+/// Only ASCII letters and digits survive; every run of anything else becomes a
+/// single `-`, which keeps the result a valid git ref (`git check-ref-format
+/// --branch`) whatever the title was. A title with nothing to slug — one with
+/// no ASCII alphanumerics at all — falls back to `task-<tail>`.
+fn branch_name(title: &str, id: &str) -> String {
+    let tail = id_tail(id);
+    let slug = slug(title);
+    let head = if slug.is_empty() { "task" } else { &slug };
+    if tail.is_empty() {
+        head.to_string()
+    } else {
+        format!("{head}-{tail}")
+    }
+}
+
+/// The last [`ID_TAIL`] characters of an id, in the lowercase alphanumeric
+/// form a branch name can carry.
+fn id_tail(id: &str) -> String {
+    let id: String = id
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    id[id.len().saturating_sub(ID_TAIL)..].to_string()
+}
+
+/// A title as lowercase kebab-case, clipped to [`SLUG_MAX`] characters on a
+/// word boundary where there is one to clip on.
+fn slug(title: &str) -> String {
+    let mut slug = String::with_capacity(title.len());
+    for ch in title.chars() {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch.to_ascii_lowercase());
+        } else if !slug.is_empty() && !slug.ends_with('-') {
+            // Every run of anything else collapses into one separator, and a
+            // leading one never starts the slug.
+            slug.push('-');
+        }
+    }
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+
+    if slug.len() <= SLUG_MAX {
+        return slug;
+    }
+    // The slug is pure ASCII, so the budget is a byte index. Cutting there can
+    // land mid-word: back off to the last separator before it. A first word
+    // longer than the budget has none to back off to and is cut where it falls.
+    let cut = if slug.as_bytes()[SLUG_MAX] == b'-' {
+        SLUG_MAX
+    } else {
+        slug[..SLUG_MAX].rfind('-').unwrap_or(SLUG_MAX)
+    };
+    slug.truncate(cut);
+    slug
+}
+
 impl Store {
     /// Create a task in `pending`. Enforces the goal's `max_tasks`, validates
     /// reviewers are non-empty and deps belong to the same goal and are acyclic.
@@ -62,7 +135,7 @@ impl Store {
 
         let id = new_id();
         let ts = now();
-        let branch = format!("ariadne/task-{id}");
+        let branch = branch_name(&new.title, &id);
 
         let mut tx = self.w().begin().await?;
 
@@ -589,5 +662,105 @@ impl Store {
             });
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::process::Command;
+
+    use super::*;
+
+    const ID: &str = "01m0sktv47w6b8ze6xf4r9jr7c";
+
+    #[test]
+    fn branch_is_the_title_slugged_and_the_id_tail() {
+        assert_eq!(
+            branch_name("Fix the integrator briefing: real fetch/rebase", ID),
+            // 45 characters of slug is over the budget, and cutting at 40
+            // would land inside `rebase`, so the whole word goes.
+            "fix-the-integrator-briefing-real-fetch-r9jr7c"
+        );
+        assert_eq!(
+            branch_name("Add a health check", ID),
+            "add-a-health-check-r9jr7c"
+        );
+    }
+
+    #[test]
+    fn branch_collapses_everything_that_is_not_a_letter_or_a_digit() {
+        assert_eq!(
+            branch_name(r#"Don't break "feat/x"... v1.2"#, ID),
+            "don-t-break-feat-x-v1-2-r9jr7c"
+        );
+        assert_eq!(branch_name("  padded  ", ID), "padded-r9jr7c");
+        assert_eq!(
+            branch_name("-leading and trailing-", ID),
+            "leading-and-trailing-r9jr7c"
+        );
+        assert_eq!(branch_name("Grüße, cafétería", ID), "gr-e-caf-ter-a-r9jr7c");
+    }
+
+    #[test]
+    fn branch_falls_back_to_the_id_when_the_title_slugs_to_nothing() {
+        for title in ["", "   ", "!!!", "修复登录", "—"] {
+            assert_eq!(branch_name(title, ID), "task-r9jr7c", "title {title:?}");
+        }
+    }
+
+    #[test]
+    fn branch_clips_a_long_title_on_a_word_boundary() {
+        // Exactly the budget: nothing to clip.
+        let forty = "aaaa-bbbb-cccc-dddd-eeee-ffff-gggg-hhhhh";
+        assert_eq!(forty.len(), SLUG_MAX);
+        assert_eq!(slug(forty), forty);
+        // Over the budget, but the character at it is a separator: the words
+        // inside the budget are whole already, so none of them goes.
+        assert_eq!(slug(&format!("{forty}-iiii")), forty);
+        // A word straddling the budget goes entirely.
+        assert_eq!(
+            slug("aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii"),
+            "aaaa-bbbb-cccc-dddd-eeee-ffff-gggg-hhhh"
+        );
+        // A single word with no boundary to back off to is cut where it falls.
+        let long = "x".repeat(60);
+        assert_eq!(slug(&long), "x".repeat(40));
+        assert_eq!(branch_name(&long, ID), format!("{}-r9jr7c", "x".repeat(40)));
+    }
+
+    /// Whatever the title, git must take the name: the store hands it straight
+    /// to `git worktree add -b`, and a rejected ref would fail the task.
+    #[test]
+    fn every_branch_name_is_a_valid_git_ref() {
+        let titles = [
+            "Fix the integrator briefing: real fetch/rebase",
+            "",
+            "   ",
+            "!!!",
+            "修复登录",
+            "-leading dash",
+            "trailing dash-",
+            "...dots... and .lock",
+            "refs/heads/main",
+            "a//b",
+            "feature@{upstream}",
+            "back\\slash and ~tilde^ and :colon",
+            "question? star* bracket[",
+            "line\nbreak\tand\ttabs",
+            "@",
+            "HEAD",
+            &"x".repeat(200),
+        ];
+        for title in titles {
+            let branch = branch_name(title, ID);
+            let checked = Command::new("git")
+                .args(["check-ref-format", "--branch", &branch])
+                .output()
+                .expect("git must be on PATH to check ref formats");
+            assert!(
+                checked.status.success(),
+                "git rejected {branch:?} from title {title:?}"
+            );
+        }
     }
 }

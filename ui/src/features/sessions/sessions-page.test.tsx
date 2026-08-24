@@ -71,7 +71,7 @@ const TASK: TaskDto = {
   title: "Wire the sessions screen",
   description: "",
   status: "in_progress",
-  branch: "ariadne/task-01JTASK0000000000000000001",
+  branch: "wire-the-sessions-screen-000001",
   repo_id: "01JREPO0000000000000000001",
   stalled: false,
   engineer_profile_id: "01JPROF00000000000000ENGI",

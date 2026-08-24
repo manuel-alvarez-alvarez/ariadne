@@ -18,7 +18,7 @@ function task(id: string, status: TaskStatus, extra: Partial<TaskDto> = {}): Tas
     title: id,
     description: "",
     status,
-    branch: `ariadne/${id}`,
+    branch: `a-task-${id}`,
     repo_id: "r1",
     depends_on: [],
     engineer_profile_id: "p1",

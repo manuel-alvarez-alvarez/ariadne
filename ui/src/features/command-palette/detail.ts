@@ -1,9 +1,9 @@
 /**
  * How a row's secondary text is shaped so it never crowds out the row's name.
  *
- * The details are ids and branches: `ariadne/task-01m06j3y2rsx7j5t9b-command-
- * palette` is longer than the popup and it is the *end* of it — the slug, or
- * failing that the tail of the ulid — that says which branch it is. So the row
+ * The details are ids and branches: `render-prompts-from-the-database-r9jr7c`
+ * is longer than the popup and it is the *end* of it — the last words of the
+ * slug and the tail of the task id — that says which branch it is. So the row
  * gives up the middle: {@link splitDetail} cuts the text in two, and the head
  * is what CSS truncates while the tail keeps its width.
  */

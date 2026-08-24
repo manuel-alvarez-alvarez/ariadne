@@ -634,7 +634,7 @@ mod tests {
         let raw = r#"{"id":184919,"iid":3,"project_id":29,"title":"Draft: render the board",
             "state":"merged","created_at":"2026-08-20T09:10:11.000Z",
             "merged_at":"2026-08-24T10:00:00.000Z","closed_at":null,"target_branch":"main",
-            "source_branch":"ariadne/task-1","user_notes_count":2,"upvotes":0,"downvotes":0,
+            "source_branch":"render-the-board-x1y2z3","user_notes_count":2,"upvotes":0,"downvotes":0,
             "author":{"id":7,"username":"maria","name":"Maria"},"draft":false,"work_in_progress":false,
             "merge_status":"can_be_merged","detailed_merge_status":"mergeable",
             "sha":"9f1c2b7","merge_commit_sha":null,"squash_commit_sha":"5c81311ec8329",

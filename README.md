@@ -31,8 +31,10 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    integrator profile per task, with optional `depends_on` ordering), then
    calls `finalize_plan`.
 3. The scheduler takes over: when a task's dependencies are merged it becomes
-   `ready`, an **engineer** is spawned in a dedicated git worktree on branch
-   `ariadne/task-<id>`, implements, commits and calls `request_review`.
+   `ready`, an **engineer** is spawned in a dedicated git worktree on a branch
+   named after the task — its title slugged, plus a short tail of its id, as in
+   `fix-the-integrator-briefing-real-fetch-r9jr7c` — implements, commits and
+   calls `request_review`.
 4. **Reviewers** spawn in read-only detached worktrees, inspect the diff and
    `approve` or `request_changes`. Change requests resume the engineer with
    the feedback; enough approvals hand the task to its integrator.

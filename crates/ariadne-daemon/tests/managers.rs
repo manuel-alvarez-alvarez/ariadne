@@ -44,7 +44,7 @@ async fn git_worktree_lifecycle_and_merge_verification() {
 
     // Engineer worktree on a new branch.
     let wt = dir.path().join("wt-eng");
-    git.add_worktree(&repo, &wt, "ariadne/task-1", "main")
+    git.add_worktree(&repo, &wt, "fix-the-widget-aaa111", "main")
         .await
         .unwrap();
     assert!(wt.join("file.txt").exists());
@@ -58,7 +58,7 @@ async fn git_worktree_lifecycle_and_merge_verification() {
 
     // Reviewer worktree, detached at the branch tip.
     let wt_rev = dir.path().join("wt-rev");
-    git.add_detached_worktree(&repo, &wt_rev, "ariadne/task-1")
+    git.add_detached_worktree(&repo, &wt_rev, "fix-the-widget-aaa111")
         .await
         .unwrap();
     assert_eq!(
@@ -69,7 +69,10 @@ async fn git_worktree_lifecycle_and_merge_verification() {
     );
 
     // Diff base...branch shows the change.
-    let diff = git.diff(&repo, "main", "ariadne/task-1").await.unwrap();
+    let diff = git
+        .diff(&repo, "main", "fix-the-widget-aaa111")
+        .await
+        .unwrap();
     assert!(
         diff.contains("-v1") && diff.contains("+v2"),
         "unexpected diff: {diff}"
@@ -77,15 +80,15 @@ async fn git_worktree_lifecycle_and_merge_verification() {
 
     // Not merged yet.
     assert!(
-        !git.is_ancestor(&repo, "ariadne/task-1", "main")
+        !git.is_ancestor(&repo, "fix-the-widget-aaa111", "main")
             .await
             .unwrap()
     );
 
     // Merge in the primary checkout (what the engineer agent will do).
-    sh(&repo, "git merge -q --no-ff ariadne/task-1 -m merge").await;
+    sh(&repo, "git merge -q --no-ff fix-the-widget-aaa111 -m merge").await;
     assert!(
-        git.is_ancestor(&repo, "ariadne/task-1", "main")
+        git.is_ancestor(&repo, "fix-the-widget-aaa111", "main")
             .await
             .unwrap()
     );
@@ -93,16 +96,22 @@ async fn git_worktree_lifecycle_and_merge_verification() {
     // Cleanup: remove worktrees, delete branch.
     git.remove_worktree(&repo, &wt).await.unwrap();
     git.remove_worktree(&repo, &wt_rev).await.unwrap();
-    git.delete_branch(&repo, "ariadne/task-1").await.unwrap();
-    assert!(!git.branch_exists(&repo, "ariadne/task-1").await.unwrap());
+    git.delete_branch(&repo, "fix-the-widget-aaa111")
+        .await
+        .unwrap();
+    assert!(
+        !git.branch_exists(&repo, "fix-the-widget-aaa111")
+            .await
+            .unwrap()
+    );
 
     // A new commit lands after crash: re-adding a worktree for an existing
     // branch reuses it.
-    git.add_worktree(&repo, &wt, "ariadne/task-2", "main")
+    git.add_worktree(&repo, &wt, "fix-the-widget-bbb222", "main")
         .await
         .unwrap();
     git.remove_worktree(&repo, &wt).await.unwrap();
-    git.add_worktree(&repo, &wt, "ariadne/task-2", "main")
+    git.add_worktree(&repo, &wt, "fix-the-widget-bbb222", "main")
         .await
         .unwrap();
     git.remove_worktree(&repo, &wt).await.unwrap();
@@ -115,13 +124,13 @@ async fn reviewer_worktree_refresh_between_rounds() {
     let git = GitManager;
 
     let wt = dir.path().join("wt-eng");
-    git.add_worktree(&repo, &wt, "ariadne/task-1", "main")
+    git.add_worktree(&repo, &wt, "fix-the-widget-aaa111", "main")
         .await
         .unwrap();
     sh(&wt, "echo r1 > file.txt && git add . && git commit -qm r1").await;
 
     let wt_rev = dir.path().join("wt-rev");
-    git.add_detached_worktree(&repo, &wt_rev, "ariadne/task-1")
+    git.add_detached_worktree(&repo, &wt_rev, "fix-the-widget-aaa111")
         .await
         .unwrap();
     assert_eq!(
@@ -133,7 +142,7 @@ async fn reviewer_worktree_refresh_between_rounds() {
 
     // Round 2: engineer pushes more commits; reviewer worktree is refreshed.
     sh(&wt, "echo r2 > file.txt && git add . && git commit -qm r2").await;
-    git.checkout_detached(&wt_rev, "ariadne/task-1")
+    git.checkout_detached(&wt_rev, "fix-the-widget-aaa111")
         .await
         .unwrap();
     assert_eq!(

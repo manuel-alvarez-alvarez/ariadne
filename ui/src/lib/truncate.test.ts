@@ -3,23 +3,23 @@ import { describe, expect, it } from "vitest"
 import { middleTruncate } from "./truncate"
 
 describe("middleTruncate", () => {
-  it("keeps the slug of a task branch and offers the ULID prefix up", () => {
-    const { head, tail } = middleTruncate("ariadne/task-01k2ta9v7m1qz8xr4bd6hnpc3e/fix-login-flow")
-    expect(tail).toBe("/fix-login-flow")
-    expect(head).toBe("ariadne/task-01k2ta9v7m1qz8xr4bd6hnpc3e")
+  it("keeps the last segment of a worktree path and offers the rest up", () => {
+    const { head, tail } = middleTruncate("/Users/me/.ariadne/worktrees/nnqqbdx4/nwvfdf4v-eng")
+    expect(tail).toBe("/nwvfdf4v-eng")
+    expect(head).toBe("/Users/me/.ariadne/worktrees/nnqqbdx4")
   })
 
   it("cuts at the last separator, not the first", () => {
     expect(middleTruncate("/Users/me/.ariadne/worktrees/abc/eng").tail).toBe("/eng")
   })
 
-  it("keeps the end of a slugless branch, whose last segment is the id itself", () => {
-    // What the daemon names a task's branch when the task has no slug: the
-    // segment split would keep `/task-01m0…` and cut the half that identifies
-    // it, so the character split wins.
-    const { head, tail } = middleTruncate("ariadne/task-01m06j3g920ekbp7zbsjbcajyp")
-    expect(tail).toBe("sjbcajyp")
-    expect(head).toBe("ariadne/task-01m06j3g920ekbp7zb")
+  it("keeps the end of a task branch, where the id's tail identifies it", () => {
+    // A branch has no segment to split on at all, so the character split
+    // keeps the tail of the id — the half that tells two same-titled tasks
+    // apart — and offers the title up.
+    const { head, tail } = middleTruncate("fix-the-integrator-briefing-real-fetch-r9jr7c")
+    expect(tail).toBe("h-r9jr7c")
+    expect(head).toBe("fix-the-integrator-briefing-real-fetc")
   })
 
   it("keeps the last characters when there is no segment to keep", () => {
@@ -34,7 +34,7 @@ describe("middleTruncate", () => {
   })
 
   it("puts every character in one part or the other", () => {
-    for (const value of ["ariadne/task-01k2/slug", "abcdefghij", "a/", "/a", "//"]) {
+    for (const value of ["worktrees/nnqqbdx4/eng", "abcdefghij", "a/", "/a", "//"]) {
       const { head, tail } = middleTruncate(value)
       expect(head + tail).toBe(value)
     }

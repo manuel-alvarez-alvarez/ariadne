@@ -92,7 +92,7 @@ const CREATED = {
   title: "Wire the strip",
   description: "",
   status: "pending",
-  branch: "ariadne/task-01JTASK0000000000000000001",
+  branch: "wire-the-strip-000001",
   depends_on: [],
   engineer_profile_id: ENGINEER.id,
   integrator_profile_id: INTEGRATOR.id,

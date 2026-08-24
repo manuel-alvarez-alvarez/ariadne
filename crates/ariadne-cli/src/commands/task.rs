@@ -704,7 +704,7 @@ mod tests {
             model: None,
             reviewers: vec![],
             depends_on: vec![],
-            branch: "ariadne/task-01TASK".into(),
+            branch: "add-the-frobnicator-01task".into(),
             worktree_path: None,
             review_round: 0,
             stalled: false,
@@ -751,7 +751,7 @@ mod tests {
                 "-",
                 "My Integrator (01INT)",
                 "#12",
-                "ariadne/task-01TASK",
+                "add-the-frobnicator-01task",
             ]
         );
     }

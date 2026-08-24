@@ -91,7 +91,7 @@ const TASK: TaskDto = {
   title: "Surface the pins",
   description: "",
   status: "in_progress",
-  branch: "ariadne/task-01JTASK0000000000000000001",
+  branch: "surface-the-pins-000001",
   depends_on: [],
   engineer_profile_id: ENGINEER,
   integrator_profile_id: INTEGRATOR,
