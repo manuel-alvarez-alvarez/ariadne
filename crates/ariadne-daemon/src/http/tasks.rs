@@ -372,7 +372,7 @@ pub async fn record_pull_request(
     let announce = task.pr_url.as_deref() != Some(url);
     state.store.set_task_pull_request(&id, number, url).await?;
     if announce {
-        announce_pull_request(&state, &ctx, &task, number, url).await?;
+        announce_pull_request(&state, &task, number, url).await?;
     }
     // The scheduler starts watching it on the next reconciliation rather than
     // on the poll interval, so the first look is immediate.
@@ -396,13 +396,11 @@ pub async fn record_pull_request(
 /// earlier. Where a review *is* required the poll reads it as not approved and
 /// clears the flag again, so the approval, when it comes, is still announced.
 ///
-/// The attention flag is raised here and again by every poll of the request
-/// ([`crate::scheduler`]): raised here it is the integrator's own next event
-/// that takes it down — `post_tool_use` on a live session clears attention,
-/// and this runs mid-turn, one tool call before the turn ends.
+/// The notice travels as a message like every other one: the scheduler
+/// delivers it, and delivering one addressed to the user is what raises the
+/// attention flag the strip shows. Nothing is flagged beside the write here.
 async fn announce_pull_request(
     state: &AppState,
-    ctx: &CallCtx,
     task: &Task,
     number: i64,
     url: &str,
@@ -430,7 +428,7 @@ async fn announce_pull_request(
                  integrator in this thread once it is merged."
             .to_string(),
     };
-    state
+    let msg = state
         .store
         .create_message(NewMessage {
             goal_id: task.goal_id.clone(),
@@ -448,12 +446,7 @@ async fn announce_pull_request(
         .store
         .set_task_pr_approved_notified(&task.id, true)
         .await?;
-    if let Some(session) = &ctx.session {
-        state
-            .store
-            .set_session_attention(&session.id, AttentionReason::WaitingInput)
-            .await?;
-    }
+    state.notify_scheduler_message(&msg.id).await;
     Ok(())
 }
 

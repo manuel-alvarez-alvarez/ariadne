@@ -536,7 +536,18 @@ impl Harness {
         .await
     }
 
-    /// The messages of the task thread that are addressed to the user.
+    /// How many of the thread's messages an agent wrote naming `text` — the
+    /// count that says the daemon's notice is not doubled by one an agent was
+    /// briefed to write.
+    async fn agent_messages_naming(&self, task_id: &str, text: &str) -> usize {
+        self.thread_messages(task_id)
+            .await
+            .into_iter()
+            .filter(|m| m.author_session_id.is_some() && m.body.contains(text))
+            .count()
+    }
+
+    /// The messages of the task thread that are addressed to the user.    /// The messages of the task thread that are addressed to the user.
     async fn user_messages(&self, task_id: &str) -> Vec<MessageDto> {
         self.thread_messages(task_id)
             .await
@@ -670,7 +681,9 @@ async fn a_pull_request_is_watched_from_publication_to_its_merge() {
 
     // Recording it is what tells the user there is one, rather than anything
     // the agent has to remember to say: nothing in Ariadne merges a pull
-    // request, so the person who does hears about it as it is opened.
+    // request, so the person who does hears about it as it is opened. Once,
+    // and by the daemon — the briefing does not also ask the integrator to
+    // announce the URL.
     let opened = h.user_messages(&task.id).await;
     assert_eq!(opened.len(), 1);
     assert!(opened[0].body.contains(PR_URL), "{}", opened[0].body);
@@ -679,15 +692,23 @@ async fn a_pull_request_is_watched_from_publication_to_its_merge() {
         "{}",
         opened[0].body
     );
-    assert_eq!(
+    assert_eq!(h.agent_messages_naming(&task.id, PR_URL).await, 0);
+    assert!(
+        !h.launched_argv(&integrator.id)
+            .contains("`post_message` it to the task thread"),
+        "the briefing asks the integrator to announce the URL as well"
+    );
+    // The notice goes up on the attention strip the same way every message
+    // addressed to the user does: the scheduler delivers it.
+    eventually("the pull request to go up for the user", async || {
         h.store
             .get_session(&integrator.id)
             .await
             .unwrap()
-            .attention_reason(),
-        Some(AttentionReason::WaitingInput),
-        "and it goes up on the attention strip the user reads it from"
-    );
+            .attention_reason()
+            == Some(AttentionReason::WaitingUser)
+    })
+    .await;
     h.goes_idle(&integrator.id).await;
 
     // An untouched pull request wakes nobody: the integrator is left idle
@@ -727,46 +748,44 @@ async fn a_pull_request_is_watched_from_publication_to_its_merge() {
         "{}",
         notice[1].body
     );
-    assert_eq!(
+    eventually("the approval to go up for the user", async || {
         h.store
             .get_session(&integrator.id)
             .await
             .unwrap()
-            .attention_reason(),
-        Some(AttentionReason::WaitingInput),
-        "and it is on the attention strip the user reads it from"
-    );
+            .attention_reason()
+            == Some(AttentionReason::WaitingUser)
+    })
+    .await;
     // Polled again and again, it is still those two.
     for _ in 0..3 {
         h.notify(&task.id);
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert_eq!(h.user_messages(&task.id).await.len(), 2);
+    assert_eq!(h.agent_messages_naming(&task.id, PR_URL).await, 0);
 
-    // The message is said once; the flag is put back as often as it takes.
-    // An agent's own events take attention down as it works — which is what
-    // happened to every flag raised while the integrator was still publishing
-    // — so a poll that finds the request open, unmerged and nobody's but the
-    // user's raises it again.
+    // The flag is the user's to take down, and it stays down: the approval
+    // was announced once, and a poll that finds the same quiet, approved
+    // request is not a second announcement of it.
     h.store
         .clear_session_attention(&integrator.id)
         .await
         .unwrap();
-    h.notify(&task.id);
-    eventually("the attention flag to go back up", async || {
+    for _ in 0..3 {
+        h.notify(&task.id);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(
         h.store
             .get_session(&integrator.id)
             .await
             .unwrap()
-            .attention_reason()
-            == Some(AttentionReason::WaitingInput)
-    })
-    .await;
-    assert_eq!(
-        h.user_messages(&task.id).await.len(),
-        2,
-        "and no message goes with it"
+            .attention_reason(),
+        None,
+        "a quiet poll raised the approval the user had already dealt with"
     );
+    assert_eq!(h.user_messages(&task.id).await.len(), 2);
 
     // Merging is not the integrator's to claim while GitHub says otherwise.
     let branch_tip = out(&h.repo_path(), &format!("git rev-parse {}", task.branch));
@@ -1251,6 +1270,8 @@ async fn a_published_round_pushes_the_replies_and_addresses_the_user_twice() {
     )
     .await;
     h.goes_idle(&integrator.id).await;
+    // Two so far: the notice the daemon wrote when the request was opened,
+    // before this round began, and the replies the integrator just handed on.
     let told = h.user_messages(&task.id).await;
     assert_eq!(told.len(), 2, "{told:?}");
     assert!(told[1].body.contains(REPLIES), "{}", told[1].body);
@@ -1309,11 +1330,10 @@ async fn a_published_round_pushes_the_replies_and_addresses_the_user_twice() {
         )
         .await;
     assert_eq!(landed.status, TaskStatus::Merged);
-    assert_eq!(
-        h.user_messages(&task.id).await.len(),
-        3,
-        "the round addressed the user more than twice"
-    );
+    // The round itself addressed the user exactly twice — the replies and the
+    // approval — on top of the notice the publication wrote.
+    let told = h.user_messages(&task.id).await;
+    assert_eq!(told.len(), 3, "{told:?}");
 }
 
 /// The same on a daemon that restarted: a published request with comments

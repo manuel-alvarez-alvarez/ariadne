@@ -663,7 +663,7 @@ async fn a_message_for_the_user_raises_its_author_and_wakes_no_agent() {
     .await;
 
     eventually("the author to be raised for the user", async || {
-        h.attention(&engineer).await == Some(AttentionReason::WaitingInput)
+        h.attention(&engineer).await == Some(AttentionReason::WaitingUser)
     })
     .await;
     assert_eq!(

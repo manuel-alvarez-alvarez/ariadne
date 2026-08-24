@@ -707,6 +707,25 @@ async fn a_merge_request_is_watched_from_publication_to_its_merge() {
         "{}",
         opened[0].body
     );
+    // Said once, and by the daemon: the integrator's briefing does not ask it
+    // to announce the URL as well.
+    assert_eq!(
+        h.thread_messages(&task.id)
+            .await
+            .into_iter()
+            .filter(|m| m.author_session_id.is_some() && m.body.contains(MR_URL))
+            .count(),
+        0
+    );
+    eventually("the merge request to go up for the user", async || {
+        h.store
+            .get_session(&integrator.id)
+            .await
+            .unwrap()
+            .attention_reason()
+            == Some(AttentionReason::WaitingUser)
+    })
+    .await;
     h.goes_idle(&integrator.id).await;
 
     // An untouched merge request wakes nobody: the integrator is left idle
@@ -764,21 +783,35 @@ async fn a_merge_request_is_watched_from_publication_to_its_merge() {
         "{}",
         notice[1].body
     );
+    eventually("the approval to go up for the user", async || {
+        h.store
+            .get_session(&integrator.id)
+            .await
+            .unwrap()
+            .attention_reason()
+            == Some(AttentionReason::WaitingUser)
+    })
+    .await;
+    // Polled again and again, it is still those two — and the flag the user
+    // takes down stays down.
+    h.store
+        .clear_session_attention(&integrator.id)
+        .await
+        .unwrap();
+    for _ in 0..3 {
+        h.notify(&task.id);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(h.user_messages(&task.id).await.len(), 2);
     assert_eq!(
         h.store
             .get_session(&integrator.id)
             .await
             .unwrap()
             .attention_reason(),
-        Some(AttentionReason::WaitingInput),
-        "and it is on the attention strip the user reads it from"
+        None,
+        "a quiet poll raised the approval the user had already dealt with"
     );
-    // Polled again and again, it is still those two.
-    for _ in 0..3 {
-        h.notify(&task.id);
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    assert_eq!(h.user_messages(&task.id).await.len(), 2);
 
     // Merging is not the integrator's to claim while GitLab says otherwise.
     let branch_tip = out(&h.repo_path(), &format!("git rev-parse {}", task.branch));
@@ -933,6 +966,9 @@ async fn discussion_notes_reach_the_engineer_once_each() {
         "### maria requested changes on src/lane.rs:7",
         "> and this name is wrong",
         "request_review",
+        // Under the name of what the humans wrote on, never the integrator's:
+        // the round was relayed off GitLab, not written by an agent.
+        "### From Merge request !3 on GitLab",
     ] {
         assert!(
             argv.contains(quoted),
@@ -1251,6 +1287,8 @@ async fn a_published_round_pushes_the_replies_and_addresses_the_user_twice() {
     })
     .await;
     h.goes_idle(&integrator.id).await;
+    // Two so far: the notice the daemon wrote when the request was opened,
+    // before this round began, and the replies the integrator just handed on.
     let told = h.user_messages(&task.id).await;
     assert_eq!(told.len(), 2, "{told:?}");
     assert!(told[1].body.contains(REPLIES), "{}", told[1].body);
@@ -1307,11 +1345,9 @@ async fn a_published_round_pushes_the_replies_and_addresses_the_user_twice() {
         )
         .await;
     assert_eq!(landed.status, TaskStatus::Merged);
-    assert_eq!(
-        h.user_messages(&task.id).await.len(),
-        3,
-        "the round addressed the user more than twice"
-    );
+    // The round itself addressed the user exactly twice — the replies and the
+    // approval — on top of the notice the publication wrote.
+    assert_eq!(h.user_messages(&task.id).await.len(), 3);
 }
 
 /// The same on a daemon that restarted: a published request with notes

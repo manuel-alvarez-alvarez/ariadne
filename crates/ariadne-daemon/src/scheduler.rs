@@ -728,7 +728,7 @@ impl Scheduler {
                 // the briefing it is woken with.
                 let verdict_by: std::collections::HashSet<_> = reviews
                     .iter()
-                    .map(|r| r.reviewer_profile_id.clone())
+                    .filter_map(|r| r.reviewer_profile_id.clone())
                     .collect();
                 let pending: Vec<String> = reviewers
                     .into_iter()
@@ -1133,35 +1133,21 @@ impl Scheduler {
         // task being integrated keeps an agent on it, started here when a
         // restart or a send-back left none. That is what pushes the next
         // revision to the request, and what a merge is finished by.
-        let Some(integrator) = self.live_integrator(task, integrator).await? else {
+        if self.live_integrator(task, integrator).await?.is_none() {
             // A task back from the engineer, or a daemon that restarted: the
             // integrator is started with its resume briefing, which tells it
             // to update the review it already opened.
             return Ok(());
-        };
+        }
         match poll.state {
             // Handled above, every one of them the engineer's.
             PrState::Feedback(_) | PrState::Conflicting(_) | PrState::ChecksFailed(_) => {}
-            // A quiet review asks nothing of the integrator, and something of
-            // the user whenever nothing but a person stands between the
-            // request and its merge. They were told that once — when the
-            // request was opened, or when it was approved — but the flag they
-            // read it from does not stay up on its own: an agent's own events
-            // take attention back down as it works, and the integrator was
-            // still mid-turn when the request was recorded. So every poll
-            // raises it again for as long as the request is open and theirs:
-            // a no-op once it is up, and never on an integrator that is
-            // working rather than waiting.
-            PrState::Quiet => {
-                if poll.approved == Some(true)
-                    && task.pr_approved_notified()
-                    && integrator.status() == SessionStatus::Idle
-                {
-                    self.store
-                        .set_session_attention(&integrator.id, AttentionReason::WaitingInput)
-                        .await?;
-                }
-            }
+            // A quiet review asks nothing of anybody. The user was told once
+            // that the request is theirs — when it was opened, and again when
+            // it was approved — and the flag that went up with each of those
+            // is theirs to take down: no agent event clears a `waiting_user`,
+            // so there is nothing here to put back.
+            PrState::Quiet => {}
             PrState::Merged => {
                 info!(task = %task.id, pr = number, "the review was merged; waking the integrator to finish the task");
                 self.launcher
@@ -1171,8 +1157,7 @@ impl Scheduler {
             }
             PrState::Approved => {
                 info!(task = %task.id, pr = number, "the review is approved; telling the user it is theirs to merge");
-                self.notify_pull_request_approved(task, &integrator, watched)
-                    .await?;
+                self.notify_pull_request_approved(task, watched).await?;
             }
         }
         Ok(())
@@ -1451,15 +1436,15 @@ impl Scheduler {
     }
 
     /// Tell the user their pull request is ready to merge: a message in the
-    /// task thread addressed to them, and the flag that puts the integrator's
-    /// session on the attention strip they read it from.
+    /// task thread addressed to them, which the delivery path puts on the
+    /// attention strip they read it from.
     ///
     /// Once per approval — `pr_approved_notified` is what says it has been
-    /// done, and it is written before the flag so a failure repeats nothing.
+    /// done, and it is written before the message so a failure repeats
+    /// nothing.
     async fn notify_pull_request_approved(
-        &self,
+        &mut self,
         task: &Task,
-        integrator: &AgentSession,
         watched: &WatchedPr,
     ) -> anyhow::Result<()> {
         self.store
@@ -1467,7 +1452,8 @@ impl Scheduler {
             .await?;
         let noun = watched.forge.noun();
         let where_ = task.pr_url.clone().unwrap_or_else(|| watched.label());
-        self.store
+        let msg = self
+            .store
             .create_message(NewMessage {
                 goal_id: task.goal_id.clone(),
                 task_id: Some(task.id.clone()),
@@ -1482,9 +1468,7 @@ impl Scheduler {
                 ),
             })
             .await?;
-        self.store
-            .set_session_attention(&integrator.id, AttentionReason::WaitingInput)
-            .await?;
+        self.deliver_message(&msg.id).await;
         Ok(())
     }
 
@@ -1962,16 +1946,56 @@ impl Scheduler {
     /// attention path the UI strip and `ariadne attention` already show, on
     /// the session of the agent that wrote it — the session the user answers
     /// in, and the one place the message can be traced back to.
+    ///
+    /// This is the only place a message addressed to the user raises
+    /// anything, whoever wrote it: what the daemon says to the user — a pull
+    /// request opened, an approval, a task that ended — travels as a message
+    /// like everything else and goes up here, rather than beside a
+    /// `create_message` call with a flag of its own.
     async fn raise_for_user(&self, message: &Message) -> anyhow::Result<()> {
-        let Some(session_id) = &message.author_session_id else {
-            // The user wrote to the user: nobody is waiting on an answer.
-            return Ok(());
+        let session_id = match &message.author_session_id {
+            Some(session_id) => session_id.clone(),
+            // Written by the daemon rather than by an agent, so there is no
+            // author's session to point at: the flag goes on the agent the
+            // task is with, which is the row its attention is read from. A
+            // task with nothing running, and a notice in a goal's thread,
+            // raise nothing — the message waits where it was written.
+            None => match self.session_the_task_is_with(message).await? {
+                Some(session) => session.id,
+                None => {
+                    info!(message = %message.id, "message addressed to the user with no session to raise it on; it waits in the thread");
+                    return Ok(());
+                }
+            },
         };
-        info!(message = %message.id, session = %session_id, "message addressed to the user, raising its author for them");
+        info!(message = %message.id, session = %session_id, "message addressed to the user, raising it for them");
         self.store
-            .set_session_attention(session_id, AttentionReason::WaitingInput)
+            .set_session_attention(&session_id, AttentionReason::WaitingUser)
             .await?;
         Ok(())
+    }
+
+    /// The live session a task's own notices are raised on: its integrator
+    /// while one is landing it, its engineer otherwise, and the most recent of
+    /// either.
+    async fn session_the_task_is_with(
+        &self,
+        message: &Message,
+    ) -> anyhow::Result<Option<AgentSession>> {
+        let Some(task_id) = &message.task_id else {
+            return Ok(None);
+        };
+        let sessions = self
+            .store
+            .list_sessions(SessionFilter {
+                task_id: Some(task_id.clone()),
+                live_only: true,
+                ..Default::default()
+            })
+            .await?;
+        Ok([Role::Integrator, Role::Engineer]
+            .into_iter()
+            .find_map(|role| sessions.iter().rev().find(|s| s.role() == role).cloned()))
     }
 
     /// A message for an agent: typed into its pane if it has one, and
