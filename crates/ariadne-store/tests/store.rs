@@ -402,6 +402,38 @@ async fn a_repository_a_goal_holds_cannot_be_deleted() {
     store.delete_repository(&repo.id).await.unwrap();
 }
 
+/// A task branch reads like a contributor's: the title, slugged and clipped to
+/// a word boundary, with the tail of the id to tell two of them apart. Nothing
+/// in it says Ariadne — the integrator pushes this name to the remote.
+#[tokio::test]
+async fn task_branch_is_named_after_the_title() {
+    let (store, _dir) = test_store().await;
+    let planner = seed_profile(&store, "planner", Role::Planner).await;
+    let (goal, repo) = seed_goal(&store, &planner, None).await;
+    let eng = seed_profile(&store, "eng", Role::Engineer).await;
+    let rev = seed_profile(&store, "rev", Role::Reviewer).await;
+    let task = store
+        .create_task(NewTask {
+            goal_id: goal.id.clone(),
+            repo_id: repo.id.clone(),
+            title: "Fix the integrator briefing: real fetch/rebase".into(),
+            description: "d".into(),
+            engineer_profile_id: eng.id,
+            integrator_profile_id: INTEGRATOR_ID.into(),
+            reviewer_profile_ids: vec![rev.id],
+            depends_on: vec![],
+        })
+        .await
+        .unwrap();
+
+    let tail = &task.id[task.id.len() - 6..];
+    assert_eq!(
+        task.branch,
+        format!("fix-the-integrator-briefing-real-fetch-{tail}")
+    );
+    assert!(!task.branch.contains("ariadne"), "{}", task.branch);
+}
+
 #[tokio::test]
 async fn task_happy_path_to_merged() {
     let (store, _dir) = test_store().await;
@@ -409,7 +441,11 @@ async fn task_happy_path_to_merged() {
     let (goal, repo) = seed_goal(&store, &planner, None).await;
     let task = seed_task(&store, &goal, &repo, vec![]).await;
     assert_eq!(task.status(), TaskStatus::Pending);
-    assert_eq!(task.branch, format!("ariadne/task-{}", task.id));
+    // The branch is the title slugged plus the tail of the id, and nothing else.
+    assert_eq!(
+        task.branch,
+        format!("task-{}", &task.id[task.id.len() - 6..])
+    );
 
     let t = store
         .transition_task(&task.id, TaskStatus::Ready, Actor::Daemon, None, None)
@@ -2724,7 +2760,7 @@ async fn the_forge_integrators_are_merged_into_the_one_that_stays() {
         )
         .bind(task)
         .bind(integrator)
-        .bind(format!("ariadne/task-{task}"))
+        .bind(format!("forge-task-{task}"))
         .execute(&pool)
         .await
         .unwrap();
@@ -2948,7 +2984,7 @@ async fn a_pre_merge_install(
                             engineer_profile_id, integrator_profile_id, branch,
                             created_at, updated_at)
          VALUES ('ghtask', 'premergegoal', 'premergerepo', 'Task', 'd', 'integrating',
-                 'seededengineer', '00000000000000000000000005', 'ariadne/task-ghtask',
+                 'seededengineer', '00000000000000000000000005', 'task-ghtask',
                  't', 't')",
     )
     .execute(&pool)
