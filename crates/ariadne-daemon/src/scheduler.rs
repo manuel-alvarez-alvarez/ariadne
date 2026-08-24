@@ -15,7 +15,8 @@ use ariadne_core::{
     TaskStatus,
 };
 use ariadne_store::{
-    AgentSession, Message, NewMessage, NewReview, Recipient, SessionFilter, Store, Task, TaskFilter,
+    AgentSession, Message, NewMessage, NewReview, Recipient, Repository, SessionFilter, Store,
+    Task, TaskFilter,
 };
 
 use crate::agents::prompts;
@@ -1755,7 +1756,7 @@ fn pr_feedback_review(watched: &WatchedPr, feedback: &[Feedback]) -> String {
 fn published_revision_instruction(
     watched: &WatchedPr,
     task: &Task,
-    repo: &ariadne_store::Repository,
+    repo: &Repository,
     replies: Option<&str>,
 ) -> String {
     let label = watched.label();
@@ -1861,8 +1862,8 @@ mod tests {
         }
     }
 
-    fn repository() -> ariadne_store::Repository {
-        ariadne_store::Repository {
+    fn repository() -> Repository {
+        Repository {
             id: "R1".into(),
             path: "/repos/ariadne".into(),
             base_branch: "main".into(),
