@@ -27,6 +27,7 @@ pub struct Config {
     pub delete_merged_worktrees: bool,
     pub prevent_sleep: bool,
     pub gh_bin: String,
+    pub glab_bin: String,
     pub pr_poll_secs: u64,
 }
 
@@ -77,6 +78,7 @@ impl Config {
             delete_merged_worktrees: file.delete_merged_worktrees.unwrap_or(true),
             prevent_sleep: file.prevent_sleep.unwrap_or(true),
             gh_bin: file.gh_bin.unwrap_or_else(|| "gh".to_string()),
+            glab_bin: file.glab_bin.unwrap_or_else(|| "glab".to_string()),
             pr_poll_secs: file.pr_poll_secs.unwrap_or(DEFAULT_PR_POLL_SECS),
             root,
         };

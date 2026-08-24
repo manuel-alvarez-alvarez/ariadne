@@ -54,6 +54,11 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    on GitHub wakes the integrator to fast-forward the base branch and report
    the sha. That sha is verified against GitHub, so a squash- or rebase-merged
    pull request lands as cleanly as a fast-forward.
+7. The built-in **GitLab Integrator** does the same on GitLab: `glab mr
+   create` against the project's own merge request templates, and a daemon
+   that polls `glab` for the approval, the discussion notes and the merge.
+   Which of the two watches a task is the URL its integrator recorded, so a
+   repository on neither forge simply keeps the local Integrator's flow.
 
 Task lifecycle: `pending → ready → in_progress → under_review →
 (changes_requested → in_progress …) → approved → integrating → merged`, with
@@ -327,9 +332,11 @@ prevent_sleep = true               # hold a system sleep inhibition while any ag
                                    # out from under a working agent (default)
 gh_bin = "/opt/homebrew/bin/gh"    # the GitHub CLI pull requests are watched with
                                    # (default: "gh" on PATH)
-pr_poll_secs = 180                 # how often an integrating task's pull request is
-                                   # looked at (default); it moves when a human reads
-                                   # it, so polling faster buys nothing
+glab_bin = "/opt/homebrew/bin/glab" # and the GitLab CLI merge requests are watched
+                                   # with (default: "glab" on PATH)
+pr_poll_secs = 180                 # how often an integrating task's pull or merge
+                                   # request is looked at (default); it moves when a
+                                   # human reads it, so polling faster buys nothing
 ```
 
 `ARIADNE_HOME` moves the whole home directory: daemon and CLI alike resolve

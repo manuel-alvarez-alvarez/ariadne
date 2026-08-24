@@ -20,7 +20,9 @@ use ariadne_store::{
 
 use crate::agents::prompts;
 use crate::attention;
-use crate::gh::{self, PrState};
+use crate::forge::{self, Feedback, Forge, PrState, WatchedPr};
+use crate::gh;
+use crate::glab;
 use crate::launcher::Launcher;
 use crate::sleep::SleepInhibitor;
 
@@ -114,8 +116,8 @@ pub struct Scheduler {
     /// a transition changes `nudged`'s, which is what keeps it to one Enter
     /// and one flag per launch rather than one per tick.
     unstarted: HashMap<String, (String, Unstarted)>,
-    /// When each task's pull request was last looked at, by task id: what
-    /// keeps the polling to `pr_poll_secs` rather than to every tick and
+    /// When each task's pull or merge request was last looked at, by task
+    /// id: what keeps the polling to `pr_poll_secs` rather than to every tick and
     /// every event. In memory like the maps above — a daemon that restarts
     /// simply looks once immediately, which is what it wants to do anyway.
     pr_polled: HashMap<String, std::time::Instant>,
@@ -758,7 +760,7 @@ impl Scheduler {
                 // restarted halfway through one.
                 return Box::pin(self.reconcile_task(task_id)).await;
             }
-            TaskStatus::Integrating => match gh::watched_pull_request(&task) {
+            TaskStatus::Integrating => match forge::watched_pull_request(&task) {
                 // A published task is waiting on people, not on its
                 // integrator: the pull request is watched instead, and the
                 // idle agent that opened it is left alone rather than nudged
@@ -882,41 +884,40 @@ impl Scheduler {
         Ok(())
     }
 
-    /// Watch the pull request a task was published as, and wake whoever the
-    /// humans on it have given something to do.
+    /// Watch the pull or merge request a task was published as, and wake
+    /// whoever the humans on it have given something to do.
     ///
-    /// Nothing here is the integrator's to be nudged about: the pull request
-    /// moves when a person reads it, which is why the integrator ends its turn
-    /// after opening one and why this arm replaces the stall watch rather than
+    /// Nothing here is the integrator's to be nudged about: the review moves
+    /// when a person reads it, which is why the integrator ends its turn after
+    /// opening one and why this arm replaces the stall watch rather than
     /// running beside it. What it does instead is look every `pr_poll_secs`
-    /// and act on what `gh` says:
+    /// and act on what the forge's CLI says:
     ///
     /// - **merged**, and the integrator finishes the task locally;
     /// - **commented on**, and every comment nobody has relayed yet goes to
     ///   the engineer through the integrator's send-back;
     /// - **approved**, and the user is told once that it is theirs to merge.
     ///
+    /// The three read the same on either forge; which CLI answers for them is
+    /// [`Self::poll_forge`]'s to decide.
+    ///
     /// An integrator mid-turn is left to finish it: resuming an agent means
     /// relaunching its pane, and whatever it is doing on the branch right now
     /// is more current than a poll taken a moment ago. The next poll asks
     /// again.
-    async fn watch_pull_request(
-        &mut self,
-        task: &Task,
-        watched: &gh::WatchedPr,
-    ) -> anyhow::Result<()> {
+    async fn watch_pull_request(&mut self, task: &Task, watched: &WatchedPr) -> anyhow::Result<()> {
         let number = watched.number;
         let Some(integrator) = self.live_integrator(task).await? else {
             // A task back from the engineer, or a daemon that restarted: the
             // integrator is started with its resume briefing, which tells it
-            // to update the pull request it already opened.
+            // to update the review it already opened.
             return Ok(());
         };
         // The one watchdog that still applies: an agent whose instruction is
         // sitting unsubmitted in its composer has not started the turn this
         // arm woke it for, and no amount of polling will move it. The idle
         // half of the stall watch is what does not apply — an integrator with
-        // a pull request open is waiting on people, not stalling.
+        // a review open is waiting on people, not stalling.
         if integrator.status() == SessionStatus::Running {
             self.check_unstarted_turn(&integrator).await?;
         }
@@ -933,60 +934,41 @@ impl Scheduler {
 
         let repo = self.store.get_repository(&task.repo_id).await?;
         let repo_path = std::path::PathBuf::from(&repo.path);
-        // A `gh` that cannot answer — not installed, not authenticated, the
-        // network down — is not a reason to fail the task: the pull request is
-        // still there, and the next poll asks again.
-        let gh_cli = self.launcher.gh();
-        let pr = match gh_cli.pr_view(&repo_path, watched).await {
-            Ok(pr) => pr,
-            Err(e) => {
-                warn!(task = %task.id, pr = number, error = %format!("{e:#}"), "reading the pull request failed");
-                return Ok(());
-            }
-        };
-        // What was written on the diff rather than in the conversation, which
-        // is where most review feedback lives. Failing to read them is not
-        // worth dropping the poll for — the conversation may be carrying
-        // something too, and the next poll asks for both again.
-        let review_comments = match gh_cli.pr_review_comments(&repo_path, watched).await {
-            Ok(comments) => comments,
-            Err(e) => {
-                warn!(task = %task.id, pr = number, error = %format!("{e:#}"), "reading the pull request's review comments failed");
-                Vec::new()
-            }
+        let Some(poll) = self
+            .poll_forge(
+                &task.id,
+                &repo_path,
+                watched,
+                &task.pr_relayed_comments(),
+                task.pr_approved_notified(),
+            )
+            .await
+        else {
+            return Ok(());
         };
         // An approval that was dismissed or overtaken by a new review is one
-        // the user has to be told about again when it comes back.
-        let approved = pr
-            .review_decision
-            .as_deref()
-            .is_some_and(|d| d.eq_ignore_ascii_case("APPROVED"));
-        if !approved && task.pr_approved_notified() {
+        // the user has to be told about again when it comes back. A poll that
+        // could not tell is not one withdrawn, so it leaves the flag alone.
+        if poll.approved == Some(false) && task.pr_approved_notified() {
             self.store
                 .set_task_pr_approved_notified(&task.id, false)
                 .await?;
         }
-        let state = gh::poll_state(
-            &pr,
-            &review_comments,
-            &task.pr_relayed_comments(),
-            approved && task.pr_approved_notified(),
-        );
-        if state != PrState::Quiet && integrator.status() != SessionStatus::Idle {
-            info!(task = %task.id, pr = number, session = %integrator.id, "the pull request moved while its integrator is working; leaving it to finish");
+        if poll.state != PrState::Quiet && integrator.status() != SessionStatus::Idle {
+            info!(task = %task.id, pr = number, session = %integrator.id, "the review moved while its integrator is working; leaving it to finish");
             return Ok(());
         }
-        match state {
+        match poll.state {
             PrState::Quiet => {}
             PrState::Merged => {
-                info!(task = %task.id, pr = number, "the pull request was merged; waking the integrator to finish the task");
+                info!(task = %task.id, pr = number, "the review was merged; waking the integrator to finish the task");
                 self.launcher
-                    .resume_integrator(&task.id, &pr_merged_instruction(number, &repo.base_branch))
+                    .resume_integrator(&task.id, &pr_merged_instruction(watched, &repo.base_branch))
                     .await?;
                 self.spawn_failures.remove(&task.id);
             }
             PrState::Feedback(feedback) => {
-                info!(task = %task.id, pr = number, comments = feedback.len(), "the pull request was commented on; waking the integrator to relay it");
+                info!(task = %task.id, pr = number, comments = feedback.len(), "the review was commented on; waking the integrator to relay it");
                 // Spent before the attempt, like the stall nudge and the
                 // message delivery: what a comment relayed twice costs the
                 // engineer is a round of work it has already done, and a
@@ -996,17 +978,114 @@ impl Scheduler {
                     .add_task_pr_relayed_comments(&task.id, &ids)
                     .await?;
                 self.launcher
-                    .resume_integrator(&task.id, &pr_feedback_instruction(number, &feedback))
+                    .resume_integrator(&task.id, &pr_feedback_instruction(watched, &feedback))
                     .await?;
                 self.spawn_failures.remove(&task.id);
             }
             PrState::Approved => {
-                info!(task = %task.id, pr = number, "the pull request is approved; telling the user it is theirs to merge");
-                self.notify_pull_request_approved(task, &integrator, number)
+                info!(task = %task.id, pr = number, "the review is approved; telling the user it is theirs to merge");
+                self.notify_pull_request_approved(task, &integrator, watched)
                     .await?;
             }
         }
         Ok(())
+    }
+
+    /// One look at the review, through the CLI of the forge it is on.
+    ///
+    /// A CLI that cannot answer — not installed, not authenticated, the
+    /// network down — is not a reason to fail the task: the review is still
+    /// there, and the next poll asks again. That is the `None`.
+    ///
+    /// The two forges differ in how many reads one look takes and in nothing
+    /// else: GitHub keeps what was written on the diff away from the pull
+    /// request itself, and GitLab keeps the approvals away from the merge
+    /// request. Either way what comes back is the same reading.
+    async fn poll_forge(
+        &self,
+        task_id: &str,
+        repo_path: &std::path::Path,
+        watched: &WatchedPr,
+        relayed: &[String],
+        approved_notified: bool,
+    ) -> Option<Poll> {
+        let number = watched.number;
+        match watched.forge {
+            Forge::GitHub => {
+                let gh_cli = self.launcher.gh();
+                let pr = match gh_cli.pr_view(repo_path, watched).await {
+                    Ok(pr) => pr,
+                    Err(e) => {
+                        warn!(task = %task_id, pr = number, error = %format!("{e:#}"), "reading the pull request failed");
+                        return None;
+                    }
+                };
+                // What was written on the diff rather than in the
+                // conversation, which is where most review feedback lives.
+                // Failing to read them is not worth dropping the poll for —
+                // the conversation may be carrying something too, and the next
+                // poll asks for both again.
+                let review_comments = match gh_cli.pr_review_comments(repo_path, watched).await {
+                    Ok(comments) => comments,
+                    Err(e) => {
+                        warn!(task = %task_id, pr = number, error = %format!("{e:#}"), "reading the pull request's review comments failed");
+                        Vec::new()
+                    }
+                };
+                let approved = pr.is_approved();
+                Some(Poll {
+                    approved: Some(approved),
+                    state: gh::poll_state(
+                        &pr,
+                        &review_comments,
+                        relayed,
+                        approved && approved_notified,
+                    ),
+                })
+            }
+            Forge::GitLab => {
+                let glab_cli = self.launcher.glab();
+                let mr = match glab_cli.mr_view(repo_path, watched).await {
+                    Ok(mr) => mr,
+                    Err(e) => {
+                        warn!(task = %task_id, mr = number, error = %format!("{e:#}"), "reading the merge request failed");
+                        return None;
+                    }
+                };
+                // Approvals and discussions are their own resources on
+                // GitLab. One of them failing leaves the other still worth
+                // acting on, so the poll goes on with what it has — and an
+                // approval it could not read is reported as unknown rather
+                // than as withdrawn.
+                let (approvals, approved) = match glab_cli.mr_approvals(repo_path, watched).await {
+                    Ok(approvals) => {
+                        let approved = approvals.is_approved() && mr.is_open();
+                        (approvals, Some(approved))
+                    }
+                    Err(e) => {
+                        warn!(task = %task_id, mr = number, error = %format!("{e:#}"), "reading the merge request's approvals failed");
+                        (glab::Approvals::default(), None)
+                    }
+                };
+                let discussions = match glab_cli.mr_discussions(repo_path, watched).await {
+                    Ok(discussions) => discussions,
+                    Err(e) => {
+                        warn!(task = %task_id, mr = number, error = %format!("{e:#}"), "reading the merge request's discussions failed");
+                        Vec::new()
+                    }
+                };
+                Some(Poll {
+                    approved,
+                    state: glab::poll_state(
+                        &mr,
+                        &approvals,
+                        &discussions,
+                        relayed,
+                        approved.unwrap_or(false) && approved_notified,
+                    ),
+                })
+            }
+        }
     }
 
     /// The integrator working on this task, started if there is none.
@@ -1045,15 +1124,13 @@ impl Scheduler {
         &self,
         task: &Task,
         integrator: &AgentSession,
-        number: i64,
+        watched: &WatchedPr,
     ) -> anyhow::Result<()> {
         self.store
             .set_task_pr_approved_notified(&task.id, true)
             .await?;
-        let where_ = task
-            .pr_url
-            .clone()
-            .unwrap_or_else(|| format!("pull request #{number}"));
+        let noun = watched.forge.noun();
+        let where_ = task.pr_url.clone().unwrap_or_else(|| watched.label());
         self.store
             .create_message(NewMessage {
                 goal_id: task.goal_id.clone(),
@@ -1062,8 +1139,8 @@ impl Scheduler {
                 author_session_id: None,
                 recipient: Some(Recipient::User),
                 body: format!(
-                    "The pull request for \"{}\" is approved and ready for you to merge: {where_}\n\n\
-                     Merging it is yours to do — Ariadne watches the pull request and finishes \
+                    "The {noun} for \"{}\" is approved and ready for you to merge: {where_}\n\n\
+                     Merging it is yours to do — Ariadne watches the {noun} and finishes \
                      the task once you have.",
                     task.title,
                 ),
@@ -1407,14 +1484,23 @@ impl Scheduler {
     }
 }
 
-/// What the integrator is woken with when humans have written on the pull
-/// request: what they wrote, quoted, and what to do with it.
+/// What one poll of a review came back with.
+struct Poll {
+    /// Whether the forge says it is approved right now, or `None` when this
+    /// poll could not tell — an answer that never came is not an approval
+    /// withdrawn.
+    approved: Option<bool>,
+    state: PrState,
+}
+
+/// What the integrator is woken with when humans have written on the review:
+/// what they wrote, quoted, and what to do with it.
 ///
 /// Quoted rather than pointed at, for the reason a delivered message is
 /// quoted whole: an agent told only that there is something to go and read
 /// has been woken for nothing. What to do about it is in its own briefing —
 /// this says which of the situations it was briefed for has happened.
-fn pr_feedback_instruction(number: i64, feedback: &[gh::Feedback]) -> String {
+fn pr_feedback_instruction(watched: &WatchedPr, feedback: &[Feedback]) -> String {
     let quoted = feedback
         .iter()
         .map(|f| {
@@ -1429,25 +1515,35 @@ fn pr_feedback_instruction(number: i64, feedback: &[gh::Feedback]) -> String {
         .join("\n\n");
     let count = feedback.len();
     let plural = if count == 1 { "comment" } else { "comments" };
+    let label = watched.label();
+    let noun = watched.forge.noun();
+    // Where the rest of what was said is, in the words of the CLI the
+    // integrator has: an agent sent to read more is sent to the right place.
+    let reread = match watched.forge {
+        Forge::GitHub => "`gh pr view --comments` and the inline review threads",
+        Forge::GitLab => "`glab mr view --comments` and the discussion threads on the diff",
+    };
     format!(
-        "Pull request #{number} has {count} new {plural} nobody has relayed yet:\n\n\
+        "{label} has {count} new {plural} nobody has relayed yet:\n\n\
          {quoted}\n\n\
          Relay every one that asks for something to the engineer with `return_to_engineer`, \
          quoting the comment and naming who wrote it, as your integration instructions say. \
-         Read the pull request first if you need the code they are about — `gh pr view \
-         --comments` and the inline review threads — and write no code yourself. If none of \
-         them asks for a change at all — a bot notice, a thank-you — say so in the task thread \
-         with `post_message` instead of sending the task back. Either way that ends your turn."
+         Read the {noun} first if you need the code they are about — {reread} — and write no \
+         code yourself. If none of them asks for a change at all — a bot notice, a thank-you — \
+         say so in the task thread with `post_message` instead of sending the task back. Either \
+         way that ends your turn."
     )
 }
 
 /// And when it was merged: the task is finished off the branch it landed on.
-fn pr_merged_instruction(number: i64, base_branch: &str) -> String {
+fn pr_merged_instruction(watched: &WatchedPr, base_branch: &str) -> String {
+    let label = watched.label();
+    let forge = watched.forge.name();
     format!(
-        "Pull request #{number} has been merged on GitHub. Finish the task as your integration \
-         instructions say: fetch the remote in the primary checkout, fast-forward {base_branch} \
-         onto it, and call `mark_merged` with the sha it now points at. The daemon verifies the \
-         merge against GitHub itself, so report it truthfully."
+        "{label} has been merged on {forge}. Finish the task as your integration instructions \
+         say: fetch the remote in the primary checkout, fast-forward {base_branch} onto it, and \
+         call `mark_merged` with the sha it now points at. The daemon verifies the merge against \
+         {forge} itself, so report it truthfully."
     )
 }
 
@@ -1473,6 +1569,22 @@ fn delivery_text(message: &Message) -> String {
 mod tests {
     use super::*;
 
+    fn pull_request() -> WatchedPr {
+        WatchedPr {
+            forge: Forge::GitHub,
+            number: 12,
+            url: "https://github.com/owner/repo/pull/12".into(),
+        }
+    }
+
+    fn merge_request() -> WatchedPr {
+        WatchedPr {
+            forge: Forge::GitLab,
+            number: 12,
+            url: "https://gitlab.com/owner/repo/-/merge_requests/12".into(),
+        }
+    }
+
     /// The wake instruction is the whole of what the integrator knows when it
     /// comes back: every comment quoted with its author, and what to do about
     /// them in one readable paragraph — no run-on whitespace from a template
@@ -1480,15 +1592,15 @@ mod tests {
     #[test]
     fn the_wake_instruction_quotes_every_comment_it_was_woken_for() {
         let instruction = pr_feedback_instruction(
-            12,
+            &pull_request(),
             &[
-                gh::Feedback {
+                Feedback {
                     id: "C1".into(),
                     author: "maria".into(),
                     body: "why a new module?".into(),
                     blocking: false,
                 },
-                gh::Feedback {
+                Feedback {
                     id: "RC2".into(),
                     author: "jon".into(),
                     body: "src/board.rs: this allocates per row".into(),
@@ -1510,8 +1622,8 @@ mod tests {
         assert!(!instruction.contains("  "), "{instruction}");
 
         let one = pr_feedback_instruction(
-            12,
-            &[gh::Feedback {
+            &pull_request(),
+            &[Feedback {
                 id: "C1".into(),
                 author: "maria".into(),
                 body: "why?".into(),
@@ -1523,10 +1635,48 @@ mod tests {
 
     #[test]
     fn the_merge_instruction_names_the_branch_to_fast_forward() {
-        let instruction = pr_merged_instruction(12, "main");
+        let instruction = pr_merged_instruction(&pull_request(), "main");
         assert!(instruction.contains("#12 has been merged"), "{instruction}");
         assert!(instruction.contains("fast-forward main"), "{instruction}");
         assert!(instruction.contains("mark_merged"), "{instruction}");
         assert!(!instruction.contains("  "), "{instruction}");
+    }
+
+    /// The same two instructions on GitLab, in GitLab's own words: an agent
+    /// told to go and read more is told to read it with the CLI it has, and
+    /// `gh` is not that CLI.
+    #[test]
+    fn a_merge_request_is_named_and_reread_the_gitlab_way() {
+        let instruction = pr_feedback_instruction(
+            &merge_request(),
+            &[Feedback {
+                id: "N1".into(),
+                author: "maria".into(),
+                body: "src/board.rs: why a new module?".into(),
+                blocking: true,
+            }],
+        );
+        assert!(
+            instruction.contains("Merge request !12 has 1 new comment"),
+            "{instruction}"
+        );
+        assert!(
+            instruction.contains("### maria requested changes"),
+            "{instruction}"
+        );
+        assert!(instruction.contains("glab mr view"), "{instruction}");
+        assert!(!instruction.contains("gh pr view"), "{instruction}");
+        assert!(instruction.contains("return_to_engineer"), "{instruction}");
+        assert!(!instruction.contains("  "), "{instruction}");
+
+        let merged = pr_merged_instruction(&merge_request(), "main");
+        assert!(
+            merged.contains("Merge request !12 has been merged on GitLab"),
+            "{merged}"
+        );
+        assert!(merged.contains("fast-forward main"), "{merged}");
+        assert!(merged.contains("mark_merged"), "{merged}");
+        assert!(!merged.contains("GitHub"), "{merged}");
+        assert!(!merged.contains("  "), "{merged}");
     }
 }

@@ -17,8 +17,8 @@ pub struct BuiltinProfile {
     pub name: &'static str,
     pub role: Role,
     /// The prompts this one starts from, when its role's defaults are not the
-    /// playbook it runs. Two integrators share the role and land a task in
-    /// entirely different ways, so the GitHub one carries its own set and
+    /// playbook it runs. Three integrators share the role and land a task in
+    /// entirely different ways, so the forge ones carry their own sets and
     /// everybody else takes the role's.
     pub prompts: Option<&'static BuiltinPrompts>,
 }
@@ -35,7 +35,7 @@ pub struct BuiltinPrompts {
 /// no integrator of its own is landed by.
 pub const LOCAL_INTEGRATOR_ID: &str = "00000000000000000000000004";
 
-pub const BUILTIN_PROFILES: [BuiltinProfile; 5] = [
+pub const BUILTIN_PROFILES: [BuiltinProfile; 6] = [
     BuiltinProfile {
         id: "00000000000000000000000001",
         name: "Planner",
@@ -66,6 +66,12 @@ pub const BUILTIN_PROFILES: [BuiltinProfile; 5] = [
         role: Role::Integrator,
         prompts: Some(&GITHUB_INTEGRATOR_PROMPTS),
     },
+    BuiltinProfile {
+        id: "00000000000000000000000006",
+        name: "GitLab Integrator",
+        role: Role::Integrator,
+        prompts: Some(&GITLAB_INTEGRATOR_PROMPTS),
+    },
 ];
 
 /// The GitHub integrator's whole prompt set: the same role as the built-in
@@ -79,6 +85,20 @@ pub const GITHUB_INTEGRATOR_PROMPTS: BuiltinPrompts = BuiltinPrompts {
             GITHUB_INTEGRATION_INSTRUCTIONS,
         ),
         (PromptKind::IntegrationResume, GITHUB_INTEGRATION_RESUME),
+    ],
+};
+
+/// The GitLab integrator's whole prompt set: the GitHub one's playbook on the
+/// other forge — the change is published as a merge request, the humans on
+/// GitLab review and merge it, and `glab` is what it is all done through.
+pub const GITLAB_INTEGRATOR_PROMPTS: BuiltinPrompts = BuiltinPrompts {
+    system: GITLAB_INTEGRATOR_SYSTEM_PROMPT,
+    briefings: &[
+        (
+            PromptKind::IntegrationInstructions,
+            GITLAB_INTEGRATION_INSTRUCTIONS,
+        ),
+        (PromptKind::IntegrationResume, GITLAB_INTEGRATION_RESUME),
     ],
 };
 
@@ -229,6 +249,27 @@ You work in a git worktree of your own, checked out on the task branch; the brie
 
 Never merge the pull request yourself, never approve it, and never sit waiting for it: end your turn and let Ariadne wake you when it moves. Talk to the humans reviewing it through `post_message`, not by commenting on the pull request — a comment of yours would come back to you as feedback to relay."#;
 
+/// GitLab integrator persona and playbook.
+///
+/// The GitHub one's, on the other forge: the change is published as a merge
+/// request, the humans on GitLab review and merge it, and everything they say
+/// on it comes back through the engineer. Nothing here waits either — the
+/// daemon watches the merge request and wakes this agent when it moves.
+const GITLAB_INTEGRATOR_SYSTEM_PROMPT: &str = r#"You are the GitLab integrator of an Ariadne task: once its reviewers have approved it, the task is yours to publish as a merge request and to finish once a human has merged it. The engineer that wrote it is done with it, and you are the only agent touching the branch while you have it.
+
+Ariadne coordinates planner, engineer, reviewer and integrator agents over shared goals and tasks; you reach it only through the `ariadne` MCP tools: `post_message` to talk to the engineer, the reviewers, the planner and the user, `list_messages` to read the task's conversation. A message reaches one person in particular when you give `post_message` a `to` — a profile name as your briefing and `get_task` spell them, or "user" to ask the human — and that recipient is woken to read it; with no `to` it waits in the thread for whoever reads it next. Every operation named in backticks here or in your briefings — `get_diff`, `record_pull_request`, `return_to_engineer`, `mark_merged` and the rest — is a tool on that MCP server: invoke it as an MCP tool call, never as a shell command or a message. Work autonomously: do not wait for a human unless a message asks you to. A human may attach to this terminal at any time and type follow-ups.
+
+You work in a git worktree of your own, checked out on the task branch; the briefing names the branch, its base, the repository and the worktree path. The change in it is the engineer's: publish it as it stands and write no code of your own — a change that needs work goes back to the engineer instead. The primary checkout is yours to fast-forward once the merge request has been merged, and for nothing else.
+
+1. Read the task, its acceptance criteria and its conversation, so the merge request you open says what the change was for; `get_diff` shows what is being published.
+2. Check the repository can take a merge request at all: a GitLab remote — gitlab.com or the self-hosted instance the repository lives on — and a `glab` that is installed and authenticated for that host. If either is missing, land the task locally instead — rebase, squash, fast-forward the base, `mark_merged` — and say in the task thread that you did and which check failed.
+3. Otherwise rebase the task branch onto the latest base, push it, and open the merge request with `glab mr create` following the repository's own conventions. Report it with `record_pull_request`, post its URL to the task thread, and end your turn.
+4. If the rebase conflicts, do not resolve it: abort it and call `return_to_engineer` with a summary and a concrete list naming the conflicting files and what has to be reconciled. The task goes back to the engineer as a round of requested changes, and you are woken again once the reviewers have approved the revision.
+5. What humans say on the merge request is not yours to answer in code: relay every discussion note to the engineer with `return_to_engineer`, quoting it and naming who wrote it, exactly as you would a reviewer's change request. The revision comes back to you and is force-pushed to the same merge request — never a second one.
+6. Once a human has merged the merge request, finish the task: fetch the remote, fast-forward the local base branch onto it, and call `mark_merged` with the merge commit sha, which the daemon verifies itself. Report it truthfully.
+
+Never merge the merge request yourself, never approve it, and never sit waiting for it: end your turn and let Ariadne wake you when it moves. Talk to the humans reviewing it through `post_message`, not by commenting on the merge request — a comment of yours would come back to you as feedback to relay."#;
+
 /// Initial briefing of a planner session.
 const PLANNER_BRIEFING: &str = r#"# Goal: {goal_title}
 
@@ -348,6 +389,53 @@ Your worktree is on {branch}, which has moved since you last read it if the engi
 
 Either way end your turn afterwards — Ariadne watches the pull request and wakes you when it is commented on or merged. If the rebase conflicts, abort it and call `return_to_engineer` with the files that conflicted and what has to be reconciled. The repository is {repo_path}."#;
 
+/// Initial briefing of a GitLab integrator session.
+///
+/// The GitHub instructions' shape exactly, in `glab`'s commands and GitLab's
+/// own words: publish and stop, and the three ways the daemon wakes it again
+/// spelled out here because the wake instruction names the event and this is
+/// where what to do about it is written down.
+const GITLAB_INTEGRATION_INSTRUCTIONS: &str = r#"# Integrate task: {task_title}
+
+{task_description}
+
+## Context
+- Goal: {goal_title}
+- Worktree (your cwd): {worktree_path}
+- Branch: {branch}
+- Base branch: {base_branch} (repo {repo_path})
+
+The reviewers approved this task. Publish it as a merge request against {base_branch} and let a human merge it there.
+
+1. Check the repository can take one: `git -C {repo_path} remote -v` must name a GitLab remote — gitlab.com (`git@gitlab.com:group/project.git` or `https://gitlab.com/group/project.git`) or the self-hosted GitLab the repository lives on — and `glab auth status` must report an authenticated account for that same host. If either fails, land the task locally instead, keeping {base_branch}'s history linear: `git fetch . && git rebase {base_branch}` in your worktree, `git reset --soft {base_branch} && git commit` with a Conventional Commits subject and a body saying what changed and why, `git -C {repo_path} merge --ff-only {branch}`, then `mark_merged` with the resulting sha (`git -C {repo_path} rev-parse {base_branch}`). Say in the task thread with `post_message` that you landed it locally and which check failed. That ends the task.
+2. Rebase onto the latest base: `git fetch . && git rebase {base_branch}` in your worktree, and `git fetch <remote> {base_branch}` first if the remote is ahead of the local base.
+3. If the rebase conflicts, do not resolve it yourself: `git rebase --abort`, then call `return_to_engineer` with a summary and a concrete list naming the conflicting files and what has to be reconciled. That ends your turn — the task goes back to the engineer, and you are woken again once the revision is approved.
+4. Read the repository's conventions before writing anything: its merge request templates (`.gitlab/merge_request_templates/`, and the default one the project is configured with), `CONTRIBUTING.md`, `AGENTS.md`, and the commit subjects its own history uses. The merge request title follows those commit conventions — Conventional Commits where that is what the repository writes — and the description fills the template in where there is one, saying what changed and why. It carries no `Co-Authored-By`, `Generated with` or any other authorship or tool trailer.
+5. Push the branch and open the merge request:
+   - `git push -u <remote> {branch}`, adding `--force-with-lease` when the branch was pushed before and the rebase moved it;
+   - `glab mr create --source-branch {branch} --target-branch {base_branch} --title "<subject>" --description "<description>" --yes`, adding `--template <name>` when the project has templates and one of them fits.
+6. Report the merge request with `record_pull_request`, passing the URL `glab mr create` printed, and `post_message` that URL to the task thread. Then end your turn: do not poll the merge request, do not wait for it, do not merge or approve it. Ariadne watches it and wakes you when it moves.
+
+Ariadne wakes you again in three situations, and the instruction it wakes you with says which one:
+
+- **The merge request has comments.** Read them all — `glab mr view {branch} --comments`, and the discussion threads with `glab api projects/:fullpath/merge_requests/<iid>/discussions` — and relay every one of them to the engineer with `return_to_engineer`: the summary says the merge request was commented on, and `changes` carries one entry per note, quoting it and naming who wrote it and which file it is about. Answer nothing in code yourself. That ends your turn.
+- **The engineer's revision was approved and the task is yours again.** Rebase the updated branch onto the latest {base_branch} and force-push it to the same merge request (`git push --force-with-lease <remote> {branch}`); never open a second one. Then `post_message` to "user" saying the comments have been addressed and the merge request is ready to look at again, and end your turn.
+- **The merge request was merged.** Finish the task: `git -C {repo_path} fetch <remote>`, fast-forward the local base onto the remote's (`git -C {repo_path} merge --ff-only <remote>/{base_branch}`), and call `mark_merged` with the sha the merge landed as (`git -C {repo_path} rev-parse {base_branch}`)."#;
+
+/// Resume briefing of a GitLab integrator coming back to a task it already
+/// tried to publish: after a send-back the engineer revised it, and after a
+/// daemon restart the merge request may simply have moved. Either way the
+/// branch it read last time is stale, and the merge request that already
+/// exists is the one to update.
+const GITLAB_INTEGRATION_RESUME: &str = r#"Pick the integration of "{task_title}" up again: the task is approved and yours to publish.
+
+Your worktree is on {branch}, which has moved since you last read it if the engineer revised the change. Check whether the merge request already exists (`glab mr list --source-branch {branch} --all`):
+
+- If it does, rebase onto the latest {base_branch} and force-push {branch} to that same merge request with `--force-with-lease` — never open a second one — then `post_message` to "user" saying the merge request has been updated and is ready to look at again.
+- If it does not, open it exactly as the integration instructions you were briefed with say: the GitLab remote and `glab auth status` first, falling back to landing it locally if either is missing, then rebase, push, `glab mr create` following the repository's conventions, and `record_pull_request` with the URL.
+
+Either way end your turn afterwards — Ariadne watches the merge request and wakes you when it is commented on or merged. If the rebase conflicts, abort it and call `return_to_engineer` with the files that conflicted and what has to be reconciled. The repository is {repo_path}."#;
+
 /// Initial briefing of a reviewer session.
 const REVIEWER_BRIEFING: &str = r#"# Review task: {task_title} (round {review_round})
 
@@ -427,6 +515,60 @@ mod tests {
                     kind.as_str()
                 );
             }
+        }
+        // And every built-in that carries a set of its own, which is what a
+        // profile of that built-in actually starts from.
+        for builtin in BUILTIN_PROFILES {
+            for (kind, template) in default_prompts_for(builtin.id, builtin.role) {
+                assert_eq!(
+                    kind.validate_template(template),
+                    Ok(()),
+                    "{}'s default {} template",
+                    builtin.name,
+                    kind.as_str()
+                );
+            }
+        }
+    }
+
+    /// The two forge integrators publish to different forges and say so
+    /// throughout: an agent briefed with one of them is never told to reach
+    /// for the other's CLI.
+    #[test]
+    fn each_forge_integrator_names_only_its_own_cli() {
+        let all_of = |id: &str| {
+            std::iter::once(default_system_prompt_for(id, Role::Integrator))
+                .chain(default_prompts_for(id, Role::Integrator).map(|(_, text)| text))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let github = all_of("00000000000000000000000005");
+        let gitlab = all_of("00000000000000000000000006");
+
+        for gh in ["gh pr create", "gh auth status", "gh pr list"] {
+            assert!(github.contains(gh), "the GitHub integrator has no {gh}");
+            assert!(
+                !gitlab.contains(gh),
+                "the GitLab integrator reaches for {gh}"
+            );
+        }
+        for glab in ["glab mr create", "glab auth status", "glab mr list"] {
+            assert!(gitlab.contains(glab), "the GitLab integrator has no {glab}");
+            assert!(
+                !github.contains(glab),
+                "the GitHub integrator reaches for {glab}"
+            );
+        }
+        // And the ends of the workflow both of them carry.
+        for landing in [
+            "record_pull_request",
+            "return_to_engineer",
+            "mark_merged",
+            "land the task locally instead",
+            "--force-with-lease",
+        ] {
+            assert!(github.contains(landing), "GitHub has no {landing}");
+            assert!(gitlab.contains(landing), "GitLab has no {landing}");
         }
     }
 }
