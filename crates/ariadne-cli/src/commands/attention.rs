@@ -447,6 +447,26 @@ mod tests {
         assert_eq!(reason(TaskStatus::Merged, false), None);
     }
 
+    /// An integrating task is on its way out under its own power, pull
+    /// request or not: the daemon raises no reason of its own for one waiting
+    /// to be merged, and inventing one here from the bare status is exactly
+    /// the disagreement with the UI this list exists not to have. If the
+    /// integrator goes quiet, the stall is what says so.
+    #[test]
+    fn a_task_its_integrator_is_landing_is_left_alone() {
+        let published = |stalled| TaskDto {
+            pr_number: Some(12),
+            pr_url: Some("https://github.com/owner/repo/pull/12".into()),
+            ..task("01T", "01G", TaskStatus::Integrating, stalled)
+        };
+        assert_eq!(task_reason(&published(false)), None);
+        assert_eq!(task_reason(&published(true)), Some(Reason::Stalled));
+        assert_eq!(
+            task_reason(&task("01T", "01G", TaskStatus::Approved, false)),
+            None
+        );
+    }
+
     /// The reviewer has spoken and the daemon resumes the engineer itself, so
     /// the task waits on an agent — but a stall on top of it is still a stall.
     #[test]

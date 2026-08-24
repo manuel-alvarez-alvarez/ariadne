@@ -173,8 +173,8 @@ it("badges the lane header when a goal's planner is waiting", async () => {
   expect(badge.closest("a")).toBeNull()
 })
 
-/** The four pipeline columns, in order; `ready` is folded into the first. */
-it("lays the pipeline out in four columns", async () => {
+/** The five pipeline columns, in order; `ready` is folded into the first. */
+it("lays the pipeline out in five columns", async () => {
   stubDaemon({ tasks: [TASK] })
   renderBoard()
 
@@ -184,6 +184,7 @@ it("lays the pipeline out in four columns", async () => {
     "Pending",
     "In progress",
     "Under review",
+    "Integrating",
     "Merged",
   ])
 })
@@ -208,4 +209,24 @@ it("puts a ready task in the Pending column, badged with the status it is really
   // the sub-status badge is on the ready card and on nothing else.
   expect(within(cell as HTMLElement).getByText("Ready")).not.toBeNull()
   expect(screen.getAllByText("Ready")).toHaveLength(1)
+})
+
+it("puts an integrating task — and the approved one behind it — in the Integrating column", async () => {
+  const landing: TaskDto = { ...TASK, id: `${TASK.id}I`, title: "Rebasing onto main" }
+  landing.status = "integrating"
+  const approved: TaskDto = { ...TASK, id: `${TASK.id}A`, title: "Waiting for its integrator" }
+  approved.status = "approved"
+  stubDaemon({ tasks: [landing, approved] })
+  renderBoard()
+
+  const cell = (await screen.findByText(landing.title)).closest("a")?.parentElement?.parentElement
+  expect(cell).toBeDefined()
+  // Fourth cell of the lane's grid — the column the header row calls
+  // Integrating — and both tasks are in it.
+  expect([...(cell?.parentElement?.children ?? [])].indexOf(cell as Element)).toBe(3)
+  expect(cell?.textContent).toContain(approved.title)
+
+  // `approved` keeps saying what it really is, on the card and nowhere else.
+  expect(within(cell as HTMLElement).getByText("Approved")).not.toBeNull()
+  expect(screen.getAllByText("Approved")).toHaveLength(1)
 })

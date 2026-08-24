@@ -15,7 +15,12 @@
  */
 
 import { useQueries, useQuery } from "@tanstack/react-query"
-import { ChevronRightIcon, GitBranchIcon, GitCommitHorizontalIcon } from "lucide-react"
+import {
+  ChevronRightIcon,
+  GitBranchIcon,
+  GitCommitHorizontalIcon,
+  GitPullRequestIcon,
+} from "lucide-react"
 import { type ReactNode, useRef } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 
@@ -298,6 +303,16 @@ function TaskFacts({ task }: { task: TaskDto }) {
           <Muted>none assigned</Muted>
         )}
       </Fact>
+      <Fact label="Integrator">
+        {/* Assigned per task like the engineer, and read the same way — but
+            unpinned: the integrator is picked up when the reviewers approve,
+            so what its profile says now is what will run. */}
+        {task.integrator_profile_id ? (
+          <ProfileSummary profileId={task.integrator_profile_id} className="text-xs" />
+        ) : (
+          <Muted>none assigned — the built-in Integrator lands it</Muted>
+        )}
+      </Fact>
       <Fact label="Depends on">
         <Dependencies ids={task.depends_on} />
       </Fact>
@@ -316,6 +331,25 @@ function TaskFacts({ task }: { task: TaskDto }) {
           <Muted>not merged</Muted>
         )}
       </Fact>
+      {/* Only a task its integrator published has one, and only then is the
+          forge where the rest of its story is — a row saying "no pull request"
+          on every locally landed task would say nothing at all. */}
+      {task.pr_url ? (
+        <Fact label="Pull request">
+          <span className="flex min-w-0 items-center gap-1.5">
+            <GitPullRequestIcon className="size-3.5 shrink-0 text-muted-foreground" />
+            <a
+              href={task.pr_url}
+              target="_blank"
+              rel="noreferrer"
+              className="min-w-0 truncate text-xs underline-offset-3 hover:underline"
+              title={task.pr_url}
+            >
+              {task.pr_number ? `#${task.pr_number}` : task.pr_url}
+            </a>
+          </span>
+        </Fact>
+      ) : null}
     </dl>
   )
 }

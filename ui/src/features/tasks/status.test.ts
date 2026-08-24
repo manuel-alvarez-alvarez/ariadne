@@ -87,11 +87,26 @@ describe("canEdit", () => {
   })
 })
 
-describe("the ready fold", () => {
-  it("gives the board four columns, ready not among them", () => {
-    expect(BOARD_STATUSES).toEqual(["pending", "in_progress", "under_review", "merged"])
+describe("the board columns", () => {
+  it("is one column per pipeline stage, in pipeline order", () => {
+    expect(BOARD_STATUSES).toEqual([
+      "pending",
+      "in_progress",
+      "under_review",
+      "integrating",
+      "merged",
+    ])
   })
 
+  it("leaves the folded statuses out: they are badges, not columns", () => {
+    for (const folded of ["ready", "changes_requested", "approved"] as const) {
+      expect(BOARD_STATUSES).not.toContain(folded)
+      expect(subStatus(folded)).toBeDefined()
+    }
+  })
+})
+
+describe("the ready fold", () => {
   it("puts a ready task in the pending column, still saying it is ready", () => {
     expect(primaryStatus("ready")).toBe("pending")
     expect(subStatus("ready")?.label).toBe("Ready")
@@ -112,5 +127,41 @@ describe("the ready fold", () => {
     ].sort(compareByAttention)
 
     expect(ordered.map((t) => t.id)).toEqual(["waiting-for-an-engineer", "dependency-blocked"])
+  })
+})
+
+describe("the approved fold", () => {
+  it("puts an approved task in the Integrating column, still saying it is approved", () => {
+    // Forwards, not back: the reviewers are done with it and the integrator is
+    // the next thing to touch it.
+    expect(primaryStatus("approved")).toBe("integrating")
+    expect(subStatus("approved")?.label).toBe("Approved")
+    expect(displayLabel("approved")).toBe("Integrating · Approved")
+  })
+
+  it("gives integrating a column, and a label of its own", () => {
+    expect(primaryStatus("integrating")).toBe("integrating")
+    expect(subStatus("integrating")).toBeUndefined()
+    expect(displayLabel("integrating")).toBe("Integrating")
+  })
+
+  it("ranks an integrating task above everything the agents can finish alone", () => {
+    // A published pull request is the one thing on the board whose next step
+    // is a person's, so it sorts under nothing but a failure.
+    const ordered = [
+      task("under-review", "under_review"),
+      task("changes-requested", "changes_requested"),
+      task("integrating", "integrating"),
+      task("failed", "failed"),
+      task("approved", "approved"),
+    ].sort(compareByAttention)
+
+    expect(ordered.map((t) => t.id)).toEqual([
+      "failed",
+      "integrating",
+      "approved",
+      "changes-requested",
+      "under-review",
+    ])
   })
 })

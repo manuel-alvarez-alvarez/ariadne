@@ -39,6 +39,9 @@
   --color-status-review: var(--status-review);
   --color-status-review-fg: var(--status-review-fg);
   --color-status-review-soft: var(--status-review-soft);
+  --color-status-integrating: var(--status-integrating);
+  --color-status-integrating-fg: var(--status-integrating-fg);
+  --color-status-integrating-soft: var(--status-integrating-soft);
   --color-status-done: var(--status-done);
   --color-status-done-fg: var(--status-done-fg);
   --color-status-done-soft: var(--status-done-soft);
@@ -138,6 +141,9 @@
   --status-review: oklch(0.58 0.16 305);
   --status-review-fg: oklch(0.46 0.16 305);
   --status-review-soft: oklch(0.58 0.16 305 / 0.14);
+  --status-integrating: oklch(0.62 0.12 175);
+  --status-integrating-fg: oklch(0.45 0.1 175);
+  --status-integrating-soft: oklch(0.62 0.12 175 / 0.16);
   --status-done: oklch(0.62 0.13 155);
   --status-done-fg: oklch(0.45 0.11 155);
   --status-done-soft: oklch(0.62 0.13 155 / 0.16);
@@ -203,6 +209,9 @@
   --status-review: oklch(0.68 0.16 305);
   --status-review-fg: oklch(0.82 0.11 305);
   --status-review-soft: oklch(0.68 0.16 305 / 0.18);
+  --status-integrating: oklch(0.72 0.12 175);
+  --status-integrating-fg: oklch(0.84 0.1 175);
+  --status-integrating-soft: oklch(0.72 0.12 175 / 0.18);
   --status-done: oklch(0.7 0.14 155);
   --status-done-fg: oklch(0.84 0.11 155);
   --status-done-soft: oklch(0.7 0.14 155 / 0.18);

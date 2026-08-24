@@ -255,6 +255,14 @@ impl ProfileNames {
         Self(profiles.into_iter().map(|p| (p.id, p.name)).collect())
     }
 
+    /// The same map, built from pairs rather than from the daemon: what a
+    /// unit test over a block that names profiles needs, since there is no
+    /// daemon behind it.
+    #[cfg(test)]
+    pub fn from_pairs<I: IntoIterator<Item = (String, String)>>(pairs: I) -> Self {
+        Self(pairs.into_iter().collect())
+    }
+
     /// `Name (id)`, or the bare id when no profile answers to it.
     pub fn label(&self, id: &str) -> String {
         match self.0.get(id) {

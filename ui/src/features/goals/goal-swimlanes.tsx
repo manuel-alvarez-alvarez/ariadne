@@ -40,8 +40,20 @@ import { type BoardAttention, useBoardAttention } from "./attention"
 import { useCollapsedLanes } from "./collapsed-lanes"
 import { GOAL_STATUS_META } from "./status"
 
-/** One template for the header row and every lane, so the columns line up. */
-const COLUMNS_GRID = "grid grid-cols-[repeat(4,minmax(13rem,1fr))] gap-3"
+/**
+ * One template for the header row and every lane, so the columns line up: one
+ * per pipeline stage, and none of them narrower than a card is readable at.
+ */
+const COLUMNS_GRID = "grid grid-cols-[repeat(5,minmax(13rem,1fr))] gap-3"
+
+/**
+ * What the lanes are laid out at before the board gives up and scrolls: the
+ * grid's own floor (five 13rem columns and four 0.75rem gaps) plus the padding
+ * either side of a lane, rounded up. It sits on the block *inside* the
+ * scrollport, which is what makes a narrow window scroll the board rather than
+ * squeeze its columns past reading.
+ */
+const BOARD_WIDTH = "min-w-[72rem]"
 
 /**
  * The board's own scrollport: sticky only works against the box that scrolls.
@@ -103,7 +115,7 @@ export function GoalSwimlanes({ goals }: { goals: GoalDto[] }) {
           "overflow-auto focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none",
         )}
       >
-        <div className="min-w-[58rem]">
+        <div className={BOARD_WIDTH}>
           <div className={cn(COLUMNS_GRID, HEADER_ROW)}>
             {BOARD_STATUSES.map((status) => {
               const meta = TASK_STATUS_META[status]
@@ -300,7 +312,7 @@ export function BoardSkeleton() {
   return (
     <div className={BOARD_FRAME} aria-hidden>
       <div className={cn(BOARD_BOX, "overflow-hidden")}>
-        <div className="min-w-[58rem]">
+        <div className={BOARD_WIDTH}>
           <div className={cn(COLUMNS_GRID, "border-b bg-muted px-3 py-2")}>
             {BOARD_STATUSES.map((status) => (
               // Tinted against the header's own `bg-muted`, which a plain

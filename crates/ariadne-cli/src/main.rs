@@ -321,7 +321,7 @@ async fn run(cli: Cli) -> Result<ExitCode> {
 mod tests {
     use super::*;
 
-    use ariadne_core::{GoalStatus, Role};
+    use ariadne_core::{GoalStatus, Role, TaskStatus};
 
     /// clap's own consistency check over the whole tree, shadowed `--format`
     /// arguments included.
@@ -515,7 +515,7 @@ mod tests {
         assert_eq!(task_to(&["--to", "Engineer"]).as_deref(), Some("Engineer"));
     }
 
-    /// `session ls --role` names one of the three roles, and nothing else
+    /// `session ls --role` names one of the four roles, and nothing else
     /// reaches the list to be filtered on.
     #[test]
     fn listing_sessions_takes_one_real_role() {
@@ -530,6 +530,44 @@ mod tests {
             try_parse(&["ariadne", "session", "ls", "--role", "critic"]).is_err(),
             "an unknown role is a usage error"
         );
+    }
+
+    /// The integrator is a per-task assignment like the engineer, so
+    /// `task create` names one — and names the built-in local one when the
+    /// caller does not, rather than leaving the field for the daemon to fill
+    /// in. A follow-up makes it required on the wire; this is what keeps the
+    /// terminal ahead of that.
+    #[test]
+    fn creating_a_task_always_names_an_integrator() {
+        let integrator = |args: &[&str]| {
+            let mut argv = vec!["ariadne", "task", "create", "01GOAL", "--title", "t"];
+            argv.extend_from_slice(args);
+            let Command::Task {
+                command: TaskCommand::Create { integrator, .. },
+            } = parse(&argv).command
+            else {
+                panic!("task create");
+            };
+            integrator
+        };
+        assert_eq!(integrator(&[]), "Integrator");
+        assert_eq!(
+            integrator(&["--integrator", "GitHub Integrator"]),
+            "GitHub Integrator"
+        );
+    }
+
+    /// The status the board grew a column for is one the terminal can filter
+    /// on, spelled the way the wire spells it.
+    #[test]
+    fn tasks_can_be_listed_by_the_status_their_integrator_holds_them_in() {
+        let Command::Task {
+            command: TaskCommand::Ls { status, .. },
+        } = parse(&["ariadne", "task", "ls", "--status", "integrating"]).command
+        else {
+            panic!("task ls");
+        };
+        assert_eq!(status, Some(TaskStatus::Integrating));
     }
 
     /// `--host` was the documented spelling before `--endpoint`; scripts that
