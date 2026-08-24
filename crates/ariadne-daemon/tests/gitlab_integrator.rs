@@ -41,8 +41,8 @@ use ariadne_daemon::logbuf::LogBuffer;
 use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_daemon::tmux::TmuxManager;
 use ariadne_store::{
-    AgentSession, NewGoal, NewProfile, NewRepository, NewReview, NewTask, ProfileUpdate, ReviewAuthor,
-    SessionFilter, Store, Task,
+    AgentSession, NewGoal, NewProfile, NewRepository, NewReview, NewTask, ProfileUpdate,
+    ReviewAuthor, SessionFilter, Store, Task,
 };
 
 /// How long a test waits for the scheduler to reach a state. Generous
@@ -1213,9 +1213,9 @@ async fn discussion_notes_reach_the_engineer_once_each() {
 /// messages the user gets out of it, one from the integrator with the replies
 /// in it and one from the daemon when GitLab says the request is approved.
 ///
-/// Three in the thread altogether, the first being the notice the merge
-/// request was opened at all, which is written as it is recorded and belongs
-/// to no round.
+/// Four in the thread altogether: the notice the merge request was opened at
+/// all, which is written as it is recorded and belongs to no round, and the
+/// one the merge ends the task with.
 #[tokio::test]
 async fn a_published_round_pushes_the_replies_and_addresses_the_user_twice() {
     let h = harness().await;

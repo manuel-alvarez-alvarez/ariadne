@@ -1512,14 +1512,18 @@ async fn a_task_that_could_never_be_started_tells_the_user_it_failed() {
 
     let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
     eventually("the retry budget to run out", async || {
-        sched.send(SchedEvent::TaskChanged(task.id.clone())).unwrap();
+        sched
+            .send(SchedEvent::TaskChanged(task.id.clone()))
+            .unwrap();
         h.store.get_task(&task.id).await.unwrap().status() == TaskStatus::Failed
     })
     .await;
 
     // Said once, however many passes ask about a task that has already ended.
     for _ in 0..3 {
-        sched.send(SchedEvent::TaskChanged(task.id.clone())).unwrap();
+        sched
+            .send(SchedEvent::TaskChanged(task.id.clone()))
+            .unwrap();
     }
     eventually("the failure to reach the user", async || {
         h.user_messages(&task).await.len() == 1
@@ -1543,7 +1547,9 @@ async fn a_task_that_could_never_be_started_tells_the_user_it_failed() {
 async fn a_cancelled_goal_tells_the_user_of_every_task_it_took_with_it() {
     let h = cannot_spawn_harness().await;
     let (goal, task, engineer, reviewer) = h.active_goal_with_task().await;
-    let second = h.extra_task(&goal, &engineer, &reviewer, "the other one").await;
+    let second = h
+        .extra_task(&goal, &engineer, &reviewer, "the other one")
+        .await;
     h.store
         .set_goal_status(&goal.id, GoalStatus::Cancelled)
         .await
@@ -1551,7 +1557,9 @@ async fn a_cancelled_goal_tells_the_user_of_every_task_it_took_with_it() {
 
     let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
     for _ in 0..3 {
-        sched.send(SchedEvent::GoalChanged(goal.id.clone())).unwrap();
+        sched
+            .send(SchedEvent::GoalChanged(goal.id.clone()))
+            .unwrap();
     }
     for task in [&task, &second] {
         eventually("the task to be cancelled and said so", async || {
@@ -1597,7 +1605,9 @@ async fn a_completed_goal_says_so_in_its_thread() {
 
     let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
     for _ in 0..3 {
-        sched.send(SchedEvent::GoalChanged(goal.id.clone())).unwrap();
+        sched
+            .send(SchedEvent::GoalChanged(goal.id.clone()))
+            .unwrap();
     }
     eventually("the goal to be completed", async || {
         h.store.get_goal(&goal.id).await.unwrap().status() == GoalStatus::Completed

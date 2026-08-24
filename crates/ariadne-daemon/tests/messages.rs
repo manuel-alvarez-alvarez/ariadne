@@ -427,7 +427,10 @@ async fn a_cancelled_task_tells_the_user_it_ended_and_why() {
 
     let _: serde_json::Value = h
         .json(
-            post_json(&format!("/v1/tasks/{}/cancel", cast.task.id), serde_json::json!({})),
+            post_json(
+                &format!("/v1/tasks/{}/cancel", cast.task.id),
+                serde_json::json!({}),
+            ),
             StatusCode::OK,
         )
         .await;

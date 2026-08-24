@@ -1404,7 +1404,10 @@ async fn a_verdict_relayed_from_a_forge_has_no_profile_behind_it() {
         })
         .await;
     assert!(matches!(twice, Err(StoreError::Conflict(_))));
-    assert_eq!(store.list_reviews(&task.id, Some(1)).await.unwrap().len(), 2);
+    assert_eq!(
+        store.list_reviews(&task.id, Some(1)).await.unwrap().len(),
+        2
+    );
 }
 
 /// A prompt is a dialog on the agent's terminal, so it cannot outlive the

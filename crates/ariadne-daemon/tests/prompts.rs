@@ -290,7 +290,10 @@ async fn a_reviewer_is_briefed_with_the_summary_review_was_requested_with() {
         .await
         .unwrap();
     let argv = h.launched_argv(&session.id);
-    assert!(argv.contains(SUMMARY), "the briefing has no summary: {argv}");
+    assert!(
+        argv.contains(SUMMARY),
+        "the briefing has no summary: {argv}"
+    );
     assert!(
         !argv.contains(AFTERWARDS),
         "the briefing carries what the engineer said after requesting review: {argv}"

@@ -181,9 +181,10 @@ pub fn review_dto(r: store::Review) -> ReviewDto {
         id: r.id,
         task_id: r.task_id,
         round: r.round,
-        author_role: r.author_role.as_deref().map(|role| {
-            std::str::FromStr::from_str(role).expect("valid author role in db")
-        }),
+        author_role: r
+            .author_role
+            .as_deref()
+            .map(|role| std::str::FromStr::from_str(role).expect("valid author role in db")),
         reviewer_profile_id: r.reviewer_profile_id,
         session_id: r.session_id,
         body: r.body,

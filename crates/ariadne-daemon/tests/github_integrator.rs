@@ -41,8 +41,8 @@ use ariadne_daemon::logbuf::LogBuffer;
 use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_daemon::tmux::TmuxManager;
 use ariadne_store::{
-    AgentSession, NewGoal, NewProfile, NewRepository, NewReview, NewTask, ProfileUpdate, ReviewAuthor,
-    SessionFilter, Store, Task,
+    AgentSession, NewGoal, NewProfile, NewRepository, NewReview, NewTask, ProfileUpdate,
+    ReviewAuthor, SessionFilter, Store, Task,
 };
 
 /// How long a test waits for the scheduler to reach a state. Generous
@@ -547,7 +547,7 @@ impl Harness {
             .count()
     }
 
-    /// The messages of the task thread that are addressed to the user.    /// The messages of the task thread that are addressed to the user.
+    /// The messages of the task thread that are addressed to the user.
     async fn user_messages(&self, task_id: &str) -> Vec<MessageDto> {
         self.thread_messages(task_id)
             .await
@@ -1190,9 +1190,9 @@ async fn pull_request_comments_reach_the_engineer_once_each() {
 /// messages the user gets out of it, one from the integrator with the replies
 /// in it and one from the daemon when GitHub says the request is approved.
 ///
-/// Three in the thread altogether, the first being the notice the pull
-/// request was opened at all, which is written as it is recorded and belongs
-/// to no round.
+/// Four in the thread altogether: the notice the pull request was opened at
+/// all, which is written as it is recorded and belongs to no round, and the
+/// one the merge ends the task with.
 #[tokio::test]
 async fn a_published_round_pushes_the_replies_and_addresses_the_user_twice() {
     let h = harness().await;
