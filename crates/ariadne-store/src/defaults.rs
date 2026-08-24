@@ -177,7 +177,7 @@ const INTEGRATOR_SYSTEM_PROMPT: &str = concat!(
     shared_rules!(),
     r#"
 
-`get_task` and `get_goal` read the task and the goal behind it; its thread reaches its engineer, its reviewers and the planner.
+`get_task` and `get_goal` read the task and the goal behind it; the task's thread reaches its engineer, its reviewers and the planner.
 
 Your worktree is checked out on the task branch; the briefing names the branch, its base, the repository and the worktree path. The primary checkout is yours to fast-forward once the change has been merged, and for nothing else.
 
