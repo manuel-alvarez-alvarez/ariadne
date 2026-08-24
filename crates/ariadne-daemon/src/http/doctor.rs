@@ -26,9 +26,23 @@ use super::AppState;
 /// half-installed binary must not hang the report.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 
-/// The non-agent binaries a session needs, with the flag each prints its
-/// version for (tmux has never spelled it `--version`).
-const TOOLS: [(&str, &str); 2] = [("tmux", "-V"), ("git", "--version")];
+/// The non-agent binaries the daemon runs, with the flag each prints its
+/// version for (tmux has never spelled it `--version`) and whether it holds
+/// credentials worth asking about.
+///
+/// tmux and git are what a session is made of; `gh` and `glab` are how a
+/// published task is watched, and they are here because a forge CLI that is
+/// missing or signed out fails every poll of a pull request in a way nothing
+/// else in the system shows — the task simply sits there looking watched.
+const TOOLS: [(&str, &str, bool); 4] = [
+    ("tmux", "-V", false),
+    ("git", "--version", false),
+    ("gh", "--version", true),
+    ("glab", "--version", true),
+];
+
+/// What both forge CLIs answer "am I signed in?" with, by their exit status.
+const AUTH_STATUS: [&str; 2] = ["auth", "status"];
 
 /// What the daemon sees: its PATH, the binaries on it, and the state of the
 /// directories it works in.
@@ -40,12 +54,12 @@ pub async fn report(State(state): State<AppState>) -> Json<DaemonReportDto> {
     let agents = join_all(
         AgentKind::ALL
             .into_iter()
-            .map(|kind| probe(kind.binary(), "--version", Some(kind))),
+            .map(|kind| probe(kind.binary(), "--version", Some(kind), false)),
     );
     let tools = join_all(
         TOOLS
             .into_iter()
-            .map(|(name, flag)| probe(name, flag, None)),
+            .map(|(name, flag, authenticates)| probe(name, flag, None, authenticates)),
     );
     let (agents, tools) = tokio::join!(agents, tools);
 
@@ -61,22 +75,56 @@ pub async fn report(State(state): State<AppState>) -> Json<DaemonReportDto> {
     })
 }
 
-/// Find a binary on the daemon's PATH and ask it for its version.
+/// Find a binary on the daemon's PATH, ask it for its version, and — for the
+/// ones that sign in to anything — whether it is signed in.
 ///
 /// Fail-soft throughout: a binary that is missing, refuses to run or never
 /// answers is reported as such and stops nothing.
-async fn probe(name: &str, version_flag: &str, agent_kind: Option<AgentKind>) -> BinaryDto {
+async fn probe(
+    name: &str,
+    version_flag: &str,
+    agent_kind: Option<AgentKind>,
+    authenticates: bool,
+) -> BinaryDto {
     let path = which(name);
-    let version = match &path {
-        Some(path) => probe_version(path, version_flag).await,
-        None => None,
+    let (version, authenticated) = match &path {
+        Some(path) => tokio::join!(
+            probe_version(path, version_flag),
+            probe_auth(path, authenticates),
+        ),
+        None => (None, None),
     };
     BinaryDto {
         name: name.to_string(),
         agent_kind,
         path: path.map(|p| p.display().to_string()),
         version,
+        authenticated,
     }
+}
+
+/// Whether a forge CLI holds credentials, as it answers `auth status`.
+///
+/// The exit status is the whole answer — both CLIs write their account, host
+/// and token scopes to stderr, which is more than a report wants and none of
+/// it a thing to record — and a probe that timed out is no answer at all
+/// rather than a "no": a `gh` waiting on a network is not a `gh` signed out.
+async fn probe_auth(binary: &Path, authenticates: bool) -> Option<bool> {
+    if !authenticates {
+        return None;
+    }
+    let status = tokio::time::timeout(
+        PROBE_TIMEOUT,
+        tokio::process::Command::new(binary)
+            .args(AUTH_STATUS)
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .ok()?
+    .ok()?
+    .status;
+    Some(status.success())
 }
 
 /// First entry of `PATH` holding an executable of that name.
@@ -193,6 +241,38 @@ mod tests {
         assert!(!is_executable(&plain));
         std::fs::set_permissions(&plain, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert!(is_executable(&plain));
+    }
+
+    /// The only question about a forge CLI that the version does not answer:
+    /// an installed `gh` nobody signed in fails every poll of a pull request,
+    /// and looks from the outside exactly like one that works.
+    #[tokio::test]
+    async fn a_forge_cli_is_asked_whether_it_is_signed_in() {
+        let dir = tempfile::tempdir().unwrap();
+        let signed_in = dir.path().join("gh");
+        let signed_out = dir.path().join("glab");
+        std::fs::write(&signed_in, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::write(&signed_out, "#!/bin/sh\necho 'not logged in' >&2\nexit 1\n").unwrap();
+        for bin in [&signed_in, &signed_out] {
+            std::fs::set_permissions(bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        assert_eq!(asked(&signed_in).await, Some(true));
+        assert_eq!(asked(&signed_out).await, Some(false));
+        // And nothing at all is asked of a binary with nothing to sign in to.
+        assert_eq!(probe_auth(&signed_out, false).await, None);
+    }
+
+    /// The probe, asked until it answers: a spawn the machine was too busy to
+    /// finish inside [`PROBE_TIMEOUT`] answers `None`, which is the report
+    /// being careful rather than the CLI saying anything — and the answer this
+    /// test is about is the one it gives when it does run.
+    async fn asked(binary: &Path) -> Option<bool> {
+        for _ in 0..5 {
+            if let Some(answer) = probe_auth(binary, true).await {
+                return Some(answer);
+            }
+        }
+        None
     }
 
     /// A directory named like the binary is not the binary either.

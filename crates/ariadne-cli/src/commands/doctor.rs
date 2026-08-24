@@ -178,16 +178,40 @@ struct Local {
     name: String,
     path: Option<PathBuf>,
     version: Option<String>,
+    /// Whether it is signed in, for the forge CLIs that sign in to anything.
+    /// `None` for everything else, and for one that is not installed.
+    authenticated: Option<bool>,
 }
 
 impl Local {
     /// "claude 1.2.3 at /usr/local/bin/claude", as far as it is known.
     fn describe(&self) -> String {
         match (&self.path, &self.version) {
-            (Some(path), Some(version)) => format!("{version} at {}", path.display()),
-            (Some(path), None) => format!("{} (no version answer)", path.display()),
+            (Some(path), Some(version)) => {
+                format!(
+                    "{version} at {}{}",
+                    path.display(),
+                    signed_in(self.authenticated)
+                )
+            }
+            (Some(path), None) => format!(
+                "{} (no version answer){}",
+                path.display(),
+                signed_in(self.authenticated)
+            ),
             (None, _) => format!("{} not found on PATH", self.name),
         }
+    }
+}
+
+/// What a report says about credentials, for the binaries that have any: read
+/// beside the version, since "installed" and "usable" are not the same
+/// question for a forge CLI.
+fn signed_in(authenticated: Option<bool>) -> &'static str {
+    match authenticated {
+        Some(true) => ", signed in",
+        Some(false) => ", not signed in",
+        None => "",
     }
 }
 
@@ -203,12 +227,14 @@ async fn examine(client: &Client) -> Report {
     let config = home.as_deref().map(endpoint::parse_config);
 
     // Probes are processes: run them at once rather than three seconds apart.
-    let (claude, codex, opencode, tmux, git, ariadned) = tokio::join!(
-        probe(AgentKind::ClaudeCode.binary(), "--version"),
-        probe(AgentKind::Codex.binary(), "--version"),
-        probe(AgentKind::Opencode.binary(), "--version"),
-        probe("tmux", "-V"),
-        probe("git", "--version"),
+    let (claude, codex, opencode, tmux, git, gh, glab, ariadned) = tokio::join!(
+        probe(AgentKind::ClaudeCode.binary(), "--version", false),
+        probe(AgentKind::Codex.binary(), "--version", false),
+        probe(AgentKind::Opencode.binary(), "--version", false),
+        probe("tmux", "-V", false),
+        probe("git", "--version", false),
+        probe("gh", "--version", true),
+        probe("glab", "--version", true),
         probe_ariadned(),
     );
     let agents = vec![claude, codex, opencode];
@@ -244,7 +270,7 @@ async fn examine(client: &Client) -> Report {
                 "daemon",
                 daemon_checks(client, &health, version, home.as_deref()).await,
             ),
-            Section::new("tools", tool_checks(&[tmux, git])),
+            Section::new("tools", tool_checks(&[tmux, git], &[gh, glab])),
             Section::new(
                 "agents",
                 agent_checks(&agents, &flags, &available, &profiles),
@@ -281,20 +307,50 @@ fn unreachable_check(health: &Result<ariadne_api::HealthResponse, ClientError>) 
     }
 }
 
-/// Find a binary on PATH and ask it for its version, fail-soft: a missing
-/// binary, one that refuses to run, or one that never answers all leave the
-/// report standing.
-async fn probe(name: &str, version_flag: &str) -> Local {
+/// Find a binary on PATH and ask it for its version — and, for a forge CLI,
+/// whether it is signed in. Fail-soft: a missing binary, one that refuses to
+/// run, or one that never answers all leave the report standing.
+async fn probe(name: &str, version_flag: &str, authenticates: bool) -> Local {
     let path = super::which(name);
-    let version = match &path {
-        Some(path) => probe_version(path, version_flag).await,
-        None => None,
+    let (version, authenticated) = match &path {
+        Some(path) => {
+            let version = probe_version(path, version_flag).await;
+            let authenticated = match authenticates {
+                true => probe_auth(path).await,
+                false => None,
+            };
+            (version, authenticated)
+        }
+        None => (None, None),
     };
     Local {
         name: name.to_string(),
         path,
         version,
+        authenticated,
     }
+}
+
+/// Whether a forge CLI holds credentials, as it answers `auth status`.
+///
+/// The exit status is the whole answer — both CLIs write the account, host and
+/// token scopes to stderr, which is more than a report wants — and one that
+/// never answered is no answer rather than a "no": a `gh` waiting on a network
+/// is not a `gh` signed out, and reporting it as one would send somebody to
+/// sign in again for nothing.
+async fn probe_auth(binary: &Path) -> Option<bool> {
+    let status = tokio::time::timeout(
+        PROBE_TIMEOUT,
+        tokio::process::Command::new(binary)
+            .args(["auth", "status"])
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .ok()?
+    .ok()?
+    .status;
+    Some(status.success())
 }
 
 /// `ariadned` as `daemon start` would find it: next to this binary, else on
@@ -309,6 +365,7 @@ async fn probe_ariadned() -> Local {
         name: "ariadned".to_string(),
         path,
         version,
+        authenticated: None,
     }
 }
 
@@ -552,9 +609,13 @@ fn read_manifest(home: &Path) -> BTreeMap<String, String> {
         .collect()
 }
 
-/// tmux and git: without either, no session can be spawned at all.
-fn tool_checks(tools: &[Local]) -> Vec<Check> {
-    tools
+/// What this shell has of the two kinds of tool: tmux and git, without either
+/// of which no session can be spawned at all, and the forge CLIs, which only a
+/// task published to a forge needs — a missing `glab` is nothing to a user who
+/// never publishes to GitLab, and a `gh` that is installed and signed out is
+/// worth saying so about, since it is what watches a pull request.
+fn tool_checks(required: &[Local], forges: &[Local]) -> Vec<Check> {
+    let mut checks: Vec<Check> = required
         .iter()
         .map(|tool| match tool.path {
             Some(_) => Check::ok(tool.name.clone(), tool.describe()),
@@ -563,7 +624,40 @@ fn tool_checks(tools: &[Local]) -> Vec<Check> {
                 tool.name
             )),
         })
-        .collect()
+        .collect();
+    checks.extend(forges.iter().map(|forge| {
+        forge_check(
+            &forge.name,
+            forge.describe(),
+            forge.path.is_some(),
+            forge.authenticated,
+        )
+    }));
+    checks
+}
+
+/// One forge CLI, wherever it is being reported from: installed and signed in
+/// is the only state a published task can be watched in, and the other two are
+/// warnings rather than failures because a task landed locally needs neither.
+fn forge_check(name: &str, detail: String, present: bool, authenticated: Option<bool>) -> Check {
+    match (present, authenticated) {
+        (true, Some(false)) => Check::warn(name.to_string(), detail).hint(format!(
+            "run `{name} auth login` — Ariadne watches a published {} through it, \
+             and every poll of one fails while it is signed out",
+            match name {
+                "glab" => "merge request",
+                _ => "pull request",
+            }
+        )),
+        (true, _) => Check::ok(name.to_string(), detail),
+        (false, _) => Check::warn(name.to_string(), detail).hint(format!(
+            "install {name} to publish tasks to {} — not needed for tasks landed locally",
+            match name {
+                "glab" => "GitLab",
+                _ => "GitHub",
+            }
+        )),
+    }
 }
 
 /// The coding agents as this shell sees them, with the flags each is launched
@@ -852,6 +946,17 @@ fn daemon_env_checks(daemon: Option<&DaemonReportDto>, available: &Availability)
     }
 
     for tool in &daemon.tools {
+        // A forge CLI is judged by the same two questions wherever it is
+        // reported from, and neither of them stops a session being spawned.
+        if tool.authenticated.is_some() || matches!(tool.name.as_str(), "gh" | "glab") {
+            checks.push(forge_check(
+                &tool.name,
+                describe(tool),
+                tool.path.is_some(),
+                tool.authenticated,
+            ));
+            continue;
+        }
         checks.push(match tool.path {
             Some(_) => Check::ok(tool.name.clone(), describe(tool)),
             None => Check::fail(tool.name.clone(), describe(tool)).hint(format!(
@@ -891,9 +996,10 @@ fn daemon_env_checks(daemon: Option<&DaemonReportDto>, available: &Availability)
 
 /// A daemon-side binary in the same words as a local one.
 fn describe(binary: &BinaryDto) -> String {
+    let signed = signed_in(binary.authenticated);
     match (&binary.path, &binary.version) {
-        (Some(path), Some(version)) => format!("{version} at {path}"),
-        (Some(path), None) => format!("{path} (no version answer)"),
+        (Some(path), Some(version)) => format!("{version} at {path}{signed}"),
+        (Some(path), None) => format!("{path} (no version answer){signed}"),
         (None, _) => format!("{} not found on the daemon's PATH", binary.name),
     }
 }
@@ -946,6 +1052,8 @@ fn verdict(report: &Report) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use ariadne_api::doctor::PathStateDto;
 
     fn profile(name: &str, agent_kind: Option<AgentKind>) -> ProfileDto {
         ProfileDto {
@@ -1173,16 +1281,19 @@ mod tests {
                 name: "claude".into(),
                 path: Some("/bin/claude".into()),
                 version: Some("1.0".into()),
+                authenticated: None,
             },
             Local {
                 name: "codex".into(),
                 path: None,
                 version: None,
+                authenticated: None,
             },
             Local {
                 name: "opencode".into(),
                 path: None,
                 version: None,
+                authenticated: None,
             },
         ];
         let available = Availability::new(None, &agents);
@@ -1206,11 +1317,117 @@ mod tests {
                 name: (*name).into(),
                 path: None,
                 version: None,
+                authenticated: None,
             })
             .collect();
         let available = Availability::new(None, &agents);
         let checks = agent_checks(&agents, &[], &available, &[]);
         assert_eq!(checks.last().unwrap().status, Status::Fail);
+    }
+
+    fn local(name: &str, present: bool, authenticated: Option<bool>) -> Local {
+        Local {
+            name: name.into(),
+            path: present.then(|| PathBuf::from(format!("/bin/{name}"))),
+            version: present.then(|| "1.0".into()),
+            authenticated,
+        }
+    }
+
+    /// The forge CLIs are the two questions nothing else in the report asks:
+    /// installed, and signed in. Neither is a failure — a task landed locally
+    /// needs neither CLI — and both are worth a warning with the command that
+    /// fixes them, because a `gh` that is signed out watches a published pull
+    /// request by failing every poll of it silently.
+    #[test]
+    fn a_forge_cli_is_reported_on_being_installed_and_being_signed_in() {
+        let checks = tool_checks(
+            &[local("tmux", true, None), local("git", true, None)],
+            &[local("gh", true, Some(false)), local("glab", false, None)],
+        );
+        let by_name = |name: &str| {
+            checks
+                .iter()
+                .find(|c| c.name == name)
+                .unwrap_or_else(|| panic!("no {name} check"))
+        };
+        assert_eq!(by_name("tmux").status, Status::Ok);
+        // Installed and signed out: a warning that names the way out of it.
+        let gh = by_name("gh");
+        assert_eq!(gh.status, Status::Warn);
+        assert!(gh.detail.contains("not signed in"), "{gh:?}");
+        assert!(
+            gh.hint
+                .as_deref()
+                .is_some_and(|h| h.contains("gh auth login")),
+            "{gh:?}"
+        );
+        // Not installed at all: also a warning, and about GitLab.
+        let glab = by_name("glab");
+        assert_eq!(glab.status, Status::Warn);
+        assert!(
+            glab.hint.as_deref().is_some_and(|h| h.contains("GitLab")),
+            "{glab:?}"
+        );
+        // And signed in is nothing to report.
+        let checks = tool_checks(&[], &[local("gh", true, Some(true))]);
+        assert_eq!(checks[0].status, Status::Ok);
+        assert!(checks[0].detail.contains("signed in"), "{:?}", checks[0]);
+    }
+
+    /// The same two questions of the daemon's own environment, which is the
+    /// answer that decides: the daemon is what polls a published request, and
+    /// its PATH is not this shell's.
+    #[test]
+    fn the_daemon_report_is_read_for_the_forge_clis_too() {
+        let binary = |name: &str, path: Option<&str>, authenticated: Option<bool>| BinaryDto {
+            name: name.into(),
+            agent_kind: None,
+            path: path.map(str::to_string),
+            version: path.map(|_| "1.0".to_string()),
+            authenticated,
+        };
+        let daemon = DaemonReportDto {
+            version: "0.0.0".into(),
+            path: Some("/usr/bin".into()),
+            home: "/home/me/.ariadne".into(),
+            socket_path: "/home/me/.ariadne/ariadned.sock".into(),
+            agents: Vec::new(),
+            tools: vec![
+                binary("tmux", Some("/bin/tmux"), None),
+                binary("git", None, None),
+                binary("gh", Some("/bin/gh"), Some(false)),
+                binary("glab", None, None),
+            ],
+            db: PathStateDto {
+                path: "/home/me/.ariadne/ariadne.db".into(),
+                exists: true,
+                writable: true,
+            },
+            worktree_root: PathStateDto {
+                path: "/home/me/.ariadne/worktrees".into(),
+                exists: true,
+                writable: true,
+            },
+        };
+        let checks = daemon_env_checks(Some(&daemon), &Availability::default());
+        let by_name = |name: &str| {
+            checks
+                .iter()
+                .find(|c| c.name == name)
+                .unwrap_or_else(|| panic!("no {name} check"))
+        };
+        // Without git the daemon spawns nothing at all: that is a failure.
+        assert_eq!(by_name("git").status, Status::Fail);
+        // A forge CLI is never one, however it is missing.
+        assert_eq!(by_name("gh").status, Status::Warn);
+        assert!(by_name("gh").detail.contains("not signed in"));
+        assert_eq!(by_name("glab").status, Status::Warn);
+        assert!(
+            by_name("glab")
+                .detail
+                .contains("not found on the daemon's PATH")
+        );
     }
 
     /// A daemon that never answered still gets a section, and it is a failure

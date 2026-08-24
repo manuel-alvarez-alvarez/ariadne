@@ -924,6 +924,19 @@ export interface components {
         BinaryDto: {
             agent_kind?: null | components["schemas"]["AgentKind"];
             /**
+             * @description Whether it holds credentials for the service it speaks to, for the
+             *     binaries that hold any: `gh auth status` and `glab auth status`, asked
+             *     of the daemon's own environment because that is where the polling
+             *     runs. `None` for a binary with nothing to sign in to — tmux, git, the
+             *     agent CLIs — and for one that was not found to ask.
+             *
+             *     The distinction it exists for is the one that used to be invisible: a
+             *     `gh` that is installed and signed out answers every poll of a pull
+             *     request with a failure, and a task published to a forge is then
+             *     watched by nothing.
+             */
+            authenticated?: boolean | null;
+            /**
              * @description Executable name as it is looked up on PATH ("claude", "tmux").
              * @example claude
              */
@@ -1024,7 +1037,11 @@ export interface components {
             /** @description The daemon's `PATH`, the one every agent, tmux and git lookup uses. */
             path?: string | null;
             socket_path: string;
-            /** @description The other binaries a session needs: tmux and git. */
+            /**
+             * @description The other binaries the daemon runs: tmux and git, without which no
+             *     session can be spawned at all, and the forge CLIs `gh` and `glab`,
+             *     which are what a published task is watched through.
+             */
             tools: components["schemas"]["BinaryDto"][];
             /** @example 0.1.0 */
             version: string;

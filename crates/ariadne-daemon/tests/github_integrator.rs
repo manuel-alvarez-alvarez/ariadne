@@ -110,6 +110,13 @@ async fn harness() -> Harness {
 }
 
 /// A `tmux` with no sessions that records every command it is given.
+///
+/// Its panes are gone as far as `has-session` is concerned, which is what
+/// lets the liveness sweep retire the sessions a test has finished with. A
+/// test about an agent that is *working* wants the opposite — a pane that
+/// answers, so the session stays live for as long as the test needs it —
+/// and writes a `tmux-alive` file to say so (see
+/// [`Harness::tmux_keeps_sessions_alive`]).
 fn write_tmux_stub(dir: &Path) -> TmuxManager {
     use std::os::unix::fs::PermissionsExt;
 
@@ -118,10 +125,11 @@ fn write_tmux_stub(dir: &Path) -> TmuxManager {
         "#!/bin/sh\n\
          echo \"$@\" >> '{log}'\n\
          case \"$1\" in\n\
-         \x20 has-session) exit 1 ;;\n\
+         \x20 has-session) if [ -f '{alive}' ]; then exit 0; else exit 1; fi ;;\n\
          esac\n\
          exit 0\n",
         log = dir.join("tmux-commands.log").display(),
+        alive = dir.join("tmux-alive").display(),
     );
     std::fs::write(&bin, script).unwrap();
     std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -133,6 +141,13 @@ fn write_tmux_stub(dir: &Path) -> TmuxManager {
 /// request, which is what `gh` itself does about one: a failure on stderr;
 /// no review comments file means the empty answer a pull request nobody has
 /// written on the diff of gets.
+///
+/// The two reads fail apart from each other, because that is how they fail in
+/// life: `gh` is one binary, but a token that lost a scope, a rate limit or a
+/// repository nobody can read leaves half a poll answering and half of it
+/// failing. A `gh-fails` file is the whole CLI down — not installed, not
+/// signed in — and an `api-fails` file is only the read of the comments on
+/// the diff.
 fn write_gh_stub(dir: &Path) -> String {
     use std::os::unix::fs::PermissionsExt;
 
@@ -140,14 +155,18 @@ fn write_gh_stub(dir: &Path) -> String {
     let script = format!(
         "#!/bin/sh\n\
          echo \"$@\" >> '{log}'\n\
+         if [ -f '{down}' ]; then cat '{down}' >&2; exit 1; fi\n\
          case \"$*\" in\n\
          \x20 *'pr view'*)\n\
          \x20   if [ -f '{pr}' ]; then cat '{pr}'; else echo 'no pull requests found' >&2; exit 1; fi ;;\n\
          \x20 *api*)\n\
+         \x20   if [ -f '{api_down}' ]; then cat '{api_down}' >&2; exit 1; fi\n\
          \x20   if [ -f '{comments}' ]; then cat '{comments}'; else echo '[]'; fi ;;\n\
          esac\n\
          exit 0\n",
         log = dir.join("gh-commands.log").display(),
+        down = dir.join("gh-fails").display(),
+        api_down = dir.join("api-fails").display(),
         pr = dir.join("pr.json").display(),
         comments = dir.join("review-comments.json").display(),
     );
@@ -325,9 +344,41 @@ impl Harness {
         std::fs::write(self.dir.path().join("review-comments.json"), pages).unwrap();
     }
 
+    /// Keep every session's pane answering `has-session`, so the liveness
+    /// sweep leaves the sessions where they are: what a test about an agent
+    /// mid-turn needs, since a session the sweep has retired is no longer one
+    /// anything has to work around.
+    fn tmux_keeps_sessions_alive(&self) {
+        std::fs::write(self.dir.path().join("tmux-alive"), "").unwrap();
+    }
+
     /// Everything `gh` has been asked, one invocation per line.
     fn gh_log(&self) -> String {
         std::fs::read_to_string(self.dir.path().join("gh-commands.log")).unwrap_or_default()
+    }
+
+    /// What `gh` fails with from now on, whole (`gh-fails`) or only for the
+    /// comments on the diff (`api-fails`); `None` puts it back on its feet.
+    fn gh_fails(&self, file: &str, error: Option<&str>) {
+        let path = self.dir.path().join(file);
+        match error {
+            Some(error) => std::fs::write(&path, error).unwrap(),
+            None => {
+                std::fs::remove_file(&path).ok();
+            }
+        }
+    }
+
+    /// Poll the request once and wait for the poll to have happened, rather
+    /// than for what it decided: what a failing poll decides is nothing, and
+    /// there is no state to wait on.
+    async fn poll(&self, task_id: &str) {
+        let before = self.gh_log().matches("pr view").count();
+        self.notify(task_id);
+        eventually("the pull request to be polled", async || {
+            self.gh_log().matches("pr view").count() > before
+        })
+        .await;
     }
 
     async fn status(&self, task_id: &str) -> TaskStatus {
@@ -1340,6 +1391,375 @@ async fn a_published_round_pushes_the_replies_and_addresses_the_user_twice() {
     .await;
     let told = h.user_messages(&task.id).await;
     assert!(told[3].body.contains(&squash), "{}", told[3].body);
+}
+
+/// A pull request somebody closed without merging it: the end of the task,
+/// said once to the user, with the branch left where a retry can pick it up.
+///
+/// Read as quiet — as it was — this was the shape of a task that hung for
+/// ever: `integrating`, polled every few minutes, with no stall watch running
+/// (the watch replaces it) and nothing said to anybody.
+#[tokio::test]
+async fn a_pull_request_closed_unmerged_fails_the_task_and_tells_the_user() {
+    let h = harness().await;
+    let (task, reviewer) = h.task().await;
+    let integrator = h.hand_to_the_integrator(&task, &reviewer).await;
+    let _: TaskDto = h
+        .json(
+            as_session(
+                &format!("/v1/tasks/{}/pull-request", task.id),
+                &integrator.id,
+                serde_json::json!({"url": PR_URL}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    h.goes_idle(&integrator.id).await;
+    let opened = h.user_messages(&task.id).await.len();
+
+    // Closed on GitHub, unmerged: one poll is all it takes.
+    let mut closed = open_pull_request();
+    closed["state"] = "CLOSED".into();
+    closed["comments"] = serde_json::json!([{
+        "id": "C1", "author": {"login": "maria"}, "body": "not this way",
+    }]);
+    h.pull_request(closed);
+    h.notify(&task.id);
+    eventually("the task to be failed", async || {
+        h.status(&task.id).await == TaskStatus::Failed
+    })
+    .await;
+
+    // The user is told what became of it, once, with the URL and both ways
+    // out of it — and the comment on the closed request is not relayed to
+    // anybody: there is no revision left to ask for.
+    let told = h.user_messages(&task.id).await;
+    assert_eq!(told.len(), opened + 1, "{told:?}");
+    let notice = &told[opened].body;
+    assert!(notice.contains(PR_URL), "{notice}");
+    assert!(
+        notice.contains("Pull request #12") && notice.contains("closed without being merged"),
+        "{notice}"
+    );
+    assert!(
+        notice.contains("Retry it") && notice.contains("cancel it"),
+        "{notice}"
+    );
+    assert!(
+        h.sessions(&task.id, Role::Engineer)
+            .await
+            .iter()
+            .all(|s| s.status() != SessionStatus::Running),
+        "the engineer was sent back to a request nobody will merge"
+    );
+
+    // The agents on it are stood down the way a finished task stands them
+    // down, and the reason is on the audit trail.
+    eventually("the integrator session to end", async || {
+        !h.store
+            .get_session(&integrator.id)
+            .await
+            .unwrap()
+            .status()
+            .is_live()
+    })
+    .await;
+    let audit = h.store.list_task_transitions(&task.id).await.unwrap();
+    let last = audit.last().unwrap();
+    assert_eq!(last.to_status, "failed");
+    assert!(
+        last.reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("Pull request #12"),
+        "{last:?}"
+    );
+
+    // Polled again and again, it stays failed and says nothing more: a failed
+    // task is not polled at all.
+    for _ in 0..3 {
+        h.notify(&task.id);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(h.status(&task.id).await, TaskStatus::Failed);
+    assert_eq!(h.user_messages(&task.id).await.len(), opened + 1);
+
+    // Retried, it starts over on the same branch — and with no memory of the
+    // request that was closed, so its next integrator publishes afresh rather
+    // than pushing at a request nobody will merge.
+    let retried: TaskDto = h
+        .json(
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/v1/tasks/{}/retry", task.id))
+                .body(Body::empty())
+                .unwrap(),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(retried.status, TaskStatus::Ready);
+    assert_eq!(retried.pr_url, None);
+    assert_eq!(retried.pr_number, None);
+    eventually(
+        "a fresh engineer to be spawned on the same branch",
+        async || {
+            h.status(&task.id).await == TaskStatus::InProgress
+                && h.live_session(&task.id, Role::Engineer).await.is_some()
+        },
+    )
+    .await;
+    assert_eq!(
+        h.store.get_task(&task.id).await.unwrap().branch,
+        task.branch,
+        "the retry took the work off its branch"
+    );
+    // And nothing polls GitHub for it any more.
+    let polls = h.gh_log().matches("pr view").count();
+    for _ in 0..3 {
+        h.notify(&task.id);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(h.gh_log().matches("pr view").count(), polls);
+}
+
+/// The same, with the integrator still mid-turn.
+///
+/// Every other thing a poll says is left for a working agent to finish, on
+/// the grounds that what it is doing right now is more current than the poll
+/// — and a closed request is the one answer that cannot be: there is nothing
+/// left for the turn to push to. A task that waited for its integrator to
+/// come back before it could be failed is a task nobody hears has ended.
+#[tokio::test]
+async fn a_closed_pull_request_ends_the_task_even_mid_turn() {
+    let h = harness().await;
+    h.tmux_keeps_sessions_alive();
+    let (task, reviewer) = h.task().await;
+    let integrator = h.hand_to_the_integrator(&task, &reviewer).await;
+    let _: TaskDto = h
+        .json(
+            as_session(
+                &format!("/v1/tasks/{}/pull-request", task.id),
+                &integrator.id,
+                serde_json::json!({"url": PR_URL}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    // No `goes_idle`: the integrator is working, exactly as it is for the
+    // whole turn in which it opens the request and reports it — and its pane
+    // answers, so it stays that way rather than being retired out from under
+    // the poll.
+    assert_eq!(
+        h.store.get_session(&integrator.id).await.unwrap().status(),
+        SessionStatus::Running
+    );
+    let opened = h.user_messages(&task.id).await.len();
+
+    let mut closed = open_pull_request();
+    closed["state"] = "CLOSED".into();
+    h.pull_request(closed);
+    h.notify(&task.id);
+    eventually("the task to be failed", async || {
+        h.status(&task.id).await == TaskStatus::Failed
+    })
+    .await;
+    let told = h.user_messages(&task.id).await;
+    assert_eq!(told.len(), opened + 1, "{told:?}");
+    assert!(told[opened].body.contains(PR_URL), "{told:?}");
+    eventually("the working integrator to be stood down", async || {
+        !h.store
+            .get_session(&integrator.id)
+            .await
+            .unwrap()
+            .status()
+            .is_live()
+    })
+    .await;
+}
+
+/// A `gh` that cannot read the pull request at all: the failure nobody could
+/// see, because a watch that reads nothing looks exactly like a watch on a
+/// request nobody is touching.
+#[tokio::test]
+async fn a_gh_that_cannot_read_the_request_is_reported_once_and_recovers() {
+    let h = harness().await;
+    let (task, reviewer) = h.task().await;
+    let integrator = h.hand_to_the_integrator(&task, &reviewer).await;
+    let _: TaskDto = h
+        .json(
+            as_session(
+                &format!("/v1/tasks/{}/pull-request", task.id),
+                &integrator.id,
+                serde_json::json!({"url": PR_URL}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    h.goes_idle(&integrator.id).await;
+    h.store
+        .clear_session_attention(&integrator.id)
+        .await
+        .unwrap();
+    let opened = h.user_messages(&task.id).await.len();
+
+    // Signed out, and every poll fails the same way. The first of them says
+    // nothing: a forge has bad minutes, and one failed poll is not a broken
+    // watch.
+    h.gh_fails(
+        "gh-fails",
+        Some("gh: To get started with GitHub CLI, please run: gh auth login"),
+    );
+    let before = h.gh_log().matches("pr view").count();
+    h.poll(&task.id).await;
+    assert_eq!(
+        h.user_messages(&task.id).await.len(),
+        opened,
+        "one bad minute is not news"
+    );
+
+    // A run of them is: the user is told, once, with the CLI and what it
+    // said, and the task goes up on the strip they read such things from.
+    while h.user_messages(&task.id).await.len() == opened {
+        h.poll(&task.id).await;
+    }
+    assert!(
+        h.gh_log().matches("pr view").count() - before >= 5,
+        "the user was told about the first poll that failed"
+    );
+    let told = h.user_messages(&task.id).await;
+    assert_eq!(told.len(), opened + 1, "{told:?}");
+    let notice = &told[opened].body;
+    assert!(notice.contains("`gh`"), "{notice}");
+    assert!(
+        notice.contains("gh auth login"),
+        "the error is quoted: {notice}"
+    );
+    assert!(notice.contains(PR_URL), "{notice}");
+    eventually("the integrator session to carry the failure", async || {
+        h.store
+            .get_session(&integrator.id)
+            .await
+            .unwrap()
+            .attention_reason()
+            == Some(AttentionReason::AgentError)
+    })
+    .await;
+
+    // However long it goes on, it is said once.
+    for _ in 0..3 {
+        h.poll(&task.id).await;
+    }
+    assert_eq!(h.user_messages(&task.id).await.len(), opened + 1);
+    assert_eq!(h.status(&task.id).await, TaskStatus::Integrating);
+
+    // Signed in again: the next poll that reads the request says so, once,
+    // and takes the flag back down.
+    h.pull_request(open_pull_request());
+    h.gh_fails("gh-fails", None);
+    h.poll(&task.id).await;
+    eventually("the user to be told it works again", async || {
+        h.user_messages(&task.id).await.len() > opened + 1
+    })
+    .await;
+    let told = h.user_messages(&task.id).await;
+    assert_eq!(told.len(), opened + 2, "{told:?}");
+    assert!(told[opened + 1].body.contains("again"), "{told:?}");
+    assert_eq!(
+        h.store
+            .get_session(&integrator.id)
+            .await
+            .unwrap()
+            .attention_reason(),
+        None
+    );
+    // And a watch that works again says nothing more about it.
+    for _ in 0..3 {
+        h.poll(&task.id).await;
+    }
+    assert_eq!(h.user_messages(&task.id).await.len(), opened + 2);
+}
+
+/// Half a poll is not a quiet pull request: `gh pr view` answers, the read of
+/// the comments on the diff does not, and what comes back must not be acted
+/// on as though the request had nothing on it.
+#[tokio::test]
+async fn a_poll_that_could_only_be_half_read_decides_nothing() {
+    let h = harness().await;
+    let (task, reviewer) = h.task().await;
+    let integrator = h.hand_to_the_integrator(&task, &reviewer).await;
+    let _: TaskDto = h
+        .json(
+            as_session(
+                &format!("/v1/tasks/{}/pull-request", task.id),
+                &integrator.id,
+                serde_json::json!({"url": PR_URL}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    h.goes_idle(&integrator.id).await;
+    let opened = h.user_messages(&task.id).await.len();
+    // Recording the request told the user it was theirs, which is the flag a
+    // poll of a request that still wants a review takes back down.
+    assert!(
+        h.store
+            .get_task(&task.id)
+            .await
+            .unwrap()
+            .pr_approved_notified()
+    );
+
+    // The pull request reads fine and its review comments do not. A poll like
+    // that must not clear anything: the half it could not read is exactly
+    // where a comment would have been.
+    h.pull_request(open_pull_request());
+    h.gh_fails(
+        "api-fails",
+        Some("gh: HTTP 403: Resource not accessible by integration"),
+    );
+    h.poll(&task.id).await;
+    assert!(
+        h.store
+            .get_task(&task.id)
+            .await
+            .unwrap()
+            .pr_approved_notified(),
+        "half an answer withdrew the approval the user was told about"
+    );
+    assert_eq!(h.user_messages(&task.id).await.len(), opened);
+
+    // It counts as a failed poll like any other, so a run of them is
+    // reported — naming the CLI, not the pull request's silence. The
+    // approval the user was told about survives every one of them.
+    while h.user_messages(&task.id).await.len() == opened {
+        h.poll(&task.id).await;
+        assert!(
+            h.store
+                .get_task(&task.id)
+                .await
+                .unwrap()
+                .pr_approved_notified()
+        );
+    }
+    let told = h.user_messages(&task.id).await;
+    assert_eq!(told.len(), opened + 1, "{told:?}");
+    assert!(told[opened].body.contains("`gh`"), "{told:?}");
+
+    // Reading both halves again: the poll decides, and a request that still
+    // wants a review takes the flag back down.
+    h.gh_fails("api-fails", None);
+    h.poll(&task.id).await;
+    eventually(
+        "the approval flag to be cleared by a whole answer",
+        async || {
+            !h.store
+                .get_task(&task.id)
+                .await
+                .unwrap()
+                .pr_approved_notified()
+        },
+    )
+    .await;
 }
 
 /// The same on a daemon that restarted: a published request with comments

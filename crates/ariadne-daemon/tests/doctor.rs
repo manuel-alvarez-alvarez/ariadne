@@ -94,15 +94,33 @@ async fn every_agent_kind_is_reported() {
     }
 }
 
-/// tmux and git are what a session is made of, so they are reported beside
-/// the agents rather than left to the caller to ask about.
+/// tmux and git are what a session is made of, and `gh` and `glab` are what a
+/// published task is watched through, so all four are reported beside the
+/// agents rather than left to the caller to ask about. A forge CLI that is
+/// missing or signed out fails every poll of a pull request, and there is
+/// nowhere else that shows.
 #[tokio::test]
-async fn tmux_and_git_are_reported_as_tools() {
+async fn the_tools_a_session_and_a_published_task_need_are_reported() {
     let (router, _cfg, _dir) = harness().await;
     let report = report(&router).await;
     let names: Vec<&str> = report.tools.iter().map(|t| t.name.as_str()).collect();
-    assert_eq!(names, ["tmux", "git"]);
+    assert_eq!(names, ["tmux", "git", "gh", "glab"]);
     assert!(report.tools.iter().all(|t| t.agent_kind.is_none()));
+
+    // Which of them are installed on the machine running the tests is not
+    // this test's business; that each is asked the questions that apply to it
+    // is. Only the forge CLIs have credentials, and only one that was found
+    // can be asked about them.
+    for tool in &report.tools {
+        let forge = matches!(tool.name.as_str(), "gh" | "glab");
+        if !forge || tool.path.is_none() {
+            assert_eq!(tool.authenticated, None, "{tool:?}");
+        }
+    }
+    assert!(
+        report.agents.iter().all(|a| a.authenticated.is_none()),
+        "an agent CLI signs in to nothing this can ask about"
+    );
 }
 
 /// The paths are this daemon's own, not the ambient home's — a report about

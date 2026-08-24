@@ -22,7 +22,9 @@ pub struct DaemonReportDto {
     pub socket_path: String,
     /// One entry per [`AgentKind`], in `AgentKind::ALL` order.
     pub agents: Vec<BinaryDto>,
-    /// The other binaries a session needs: tmux and git.
+    /// The other binaries the daemon runs: tmux and git, without which no
+    /// session can be spawned at all, and the forge CLIs `gh` and `glab`,
+    /// which are what a published task is watched through.
     pub tools: Vec<BinaryDto>,
     pub db: PathStateDto,
     pub worktree_root: PathStateDto,
@@ -41,6 +43,17 @@ pub struct BinaryDto {
     /// First line of its version output, when it answered in time. A binary
     /// that is found but does not answer keeps its path and no version.
     pub version: Option<String>,
+    /// Whether it holds credentials for the service it speaks to, for the
+    /// binaries that hold any: `gh auth status` and `glab auth status`, asked
+    /// of the daemon's own environment because that is where the polling
+    /// runs. `None` for a binary with nothing to sign in to — tmux, git, the
+    /// agent CLIs — and for one that was not found to ask.
+    ///
+    /// The distinction it exists for is the one that used to be invisible: a
+    /// `gh` that is installed and signed out answers every poll of a pull
+    /// request with a failure, and a task published to a forge is then
+    /// watched by nothing.
+    pub authenticated: Option<bool>,
 }
 
 /// A file or directory the daemon depends on.

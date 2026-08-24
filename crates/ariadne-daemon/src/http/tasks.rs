@@ -242,6 +242,20 @@ pub(crate) async fn apply_transition(
     if let Some(msg) = notify::task_ended(&state.store, &task, req.reason.as_deref()).await? {
         state.notify_scheduler_message(&msg.id).await;
     }
+    // A task going back to `ready` is a task starting over, and the only way
+    // there is a retry of a failed one. Whatever it was published as is not
+    // its request any more — a pull request closed unmerged is what fails a
+    // published task in the first place — so the record goes with the retry:
+    // its next integrator opens a fresh one rather than pushing a revision at
+    // a request nobody will merge, and no poll watches a review that is over.
+    // A no-op for the tasks that were never published, which is most of them.
+    let task = match req.to == TaskStatus::Ready {
+        true => {
+            state.store.clear_task_pull_request(task_id).await?;
+            state.store.get_task(task_id).await?
+        }
+        false => task,
+    };
     state.notify_scheduler(task_id).await;
     Ok(task)
 }
