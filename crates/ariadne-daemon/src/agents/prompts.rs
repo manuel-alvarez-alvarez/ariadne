@@ -393,11 +393,18 @@ mod tests {
         }
     }
 
-    /// The defaults in the database say what the daemon used to say in code:
-    /// an untouched engineer profile briefs its agent byte for byte as the
-    /// hardcoded `format!` did.
+    /// One kind's rendering: what its briefing produced, and the values it was
+    /// given, name by name.
+    type Rendering<'a> = (PromptKind, String, Vec<(&'a str, &'a str)>);
+
+    /// Every default briefing is its own template with this task's values put
+    /// in: what an untouched profile briefs its agent with is the text the
+    /// store ships, placeholder for placeholder, so a template edited by
+    /// mistake is caught here rather than in a live session. The prose itself
+    /// is the store's to state — spelling it out again here would only pin a
+    /// copy of it.
     #[test]
-    fn the_default_engineer_briefing_is_what_the_hardcoded_one_was() {
+    fn every_default_briefing_is_its_template_with_the_values_put_in() {
         let (task, goal, repo) = (task(), goal(), repo());
         let deps = vec![Task {
             title: "Store: per-profile prompts".into(),
@@ -405,116 +412,11 @@ mod tests {
             branch: "ariadne/task-01depxxxxxxxxxxxxxxxxxxxxx".into(),
             ..task.clone()
         }];
-        let rendered = engineer_briefing(
-            default(Role::Engineer, PromptKind::EngineerBriefing),
-            &task,
-            &goal,
-            &repo,
-            &deps,
-        );
         let dep_lines = deps
             .iter()
             .map(|d| format!("- {} ({}, branch {})", d.title, d.status, d.branch))
             .collect::<Vec<_>>()
             .join("\n");
-        let expected = format!(
-            "# Task: {}\n\n{}\n\n## Context\n- Goal: {}\n- Worktree (your cwd): {}\n\
-             - Branch: {}\n- Base branch: {} (repo {})\n- Merged dependencies:\n{}\n\n\
-             Implement the task on this branch, commit as you go, and call \
-             `request_review` with a summary when complete.",
-            task.title,
-            task.description,
-            goal.title,
-            task.worktree_path.as_deref().unwrap(),
-            task.branch,
-            repo.base_branch,
-            repo.path,
-            dep_lines
-        );
-        assert_eq!(rendered, expected);
-    }
-
-    #[test]
-    fn the_default_reviewer_resume_briefing_is_what_the_hardcoded_one_was() {
-        let task = task();
-        let rendered = reviewer_resume_briefing(
-            default(Role::Reviewer, PromptKind::ReviewerResume),
-            &task,
-            Some("I rewrote the thing."),
-        );
-        let expected = format!(
-            "The engineer revised the change: this is review round {round} of \"{title}\".\n\n\
-             Your worktree has been moved to the new tip of {branch}, so the diff you \
-             read last round is out of date. Fetch it again with `get_diff`, review the \
-             change as it stands now — checking whether the feedback you gave was \
-             addressed — and submit exactly one verdict for round {round}: `approve` or \
-             `request_changes`.\n\n\
-             ## Engineer's summary of this revision\n{summary}",
-            round = task.review_round,
-            title = task.title,
-            branch = task.branch,
-            summary = "I rewrote the thing."
-        );
-        assert_eq!(rendered, expected);
-    }
-
-    /// The other four defaults, against the same `format!`s the daemon
-    /// carried, so a template edited by mistake is caught here rather than in
-    /// a live session. The integrator's two outgrew being written out twice,
-    /// so they are checked against the substitution they owe instead.
-    #[test]
-    fn the_other_defaults_are_what_the_hardcoded_ones_were() {
-        let (task, goal, repo) = (task(), goal(), repo());
-
-        let repos = vec![repo.clone()];
-        let repo_lines = format!("- {} (base branch: {})", repo.path, repo.base_branch);
-        let expected = format!(
-            "# Goal: {}\n\n{}\n\n## Repositories\n{}\n\n## Constraints\n\
-             - Maximum number of tasks: {}\n- Approvals required per task: {}\n\n\
-             Discuss this goal with the user in this terminal, then break it into \
-             tasks with `create_task`. Call `finalize_plan` when the user agrees \
-             the plan is done.",
-            goal.title,
-            goal.description,
-            repo_lines,
-            goal.max_tasks.unwrap(),
-            goal.required_approvals
-        );
-        assert_eq!(
-            planner_briefing(
-                default(Role::Planner, PromptKind::PlannerBriefing),
-                &goal,
-                &repos
-            ),
-            expected
-        );
-
-        let expected = format!(
-            "# Review task: {} (round {})\n\n{}\n\n## Context\n- Goal: {}\n\
-                 - Branch under review: {} (base: {})\n- Repo: {}\n\
-                 - Engineer's summary: {}\n\n\
-                 Review the change with `get_diff` and the code around it, then submit \
-                 exactly one verdict: `approve` or `request_changes`.",
-            task.title,
-            task.review_round,
-            task.description,
-            goal.title,
-            task.branch,
-            repo.base_branch,
-            repo.path,
-            "(none provided)"
-        );
-        assert_eq!(
-            reviewer_briefing(
-                default(Role::Reviewer, PromptKind::ReviewerBriefing),
-                &task,
-                &goal,
-                &repo,
-                None
-            ),
-            expected
-        );
-
         let feedback = vec![
             (
                 "reviewer 01a".to_string(),
@@ -527,23 +429,11 @@ mod tests {
             .map(|(who, body)| format!("### From {who}\n{body}"))
             .collect::<Vec<_>>()
             .join("\n\n");
-        let expected = format!(
-            "Reviewers requested changes on your task.\n\n{items}\n\n\
-             Apply the requested changes on the same branch, commit, and call \
-             `request_review` again with an updated summary."
-        );
-        assert_eq!(
-            changes_requested_briefing(
-                default(Role::Engineer, PromptKind::ChangesRequested),
-                &feedback
-            ),
-            expected
-        );
+        let repo_line = format!("- {} (base branch: {})", repo.path, repo.base_branch);
+        let round = task.review_round.to_string();
 
-        // The integrator's two are the same rendering against a template far
-        // too long to spell out twice, so what is checked is the substitution
-        // itself: every placeholder its kind names filled in with this task's
-        // own values, and no token left behind.
+        // The values every kind is rendered with, and what the briefing that
+        // owns it renders.
         let filled = |template: &str, pairs: &[(&str, &str)]| {
             let mut text = template.to_string();
             for (name, value) in pairs {
@@ -551,14 +441,94 @@ mod tests {
             }
             text
         };
-        let instructions = default(Role::Integrator, PromptKind::IntegrationInstructions);
-        let rendered =
-            integration_briefing(instructions, &task, &goal, &repo, "/worktrees/task-int");
-        assert_eq!(
-            rendered,
-            filled(
-                instructions,
-                &[
+        let cases: Vec<Rendering> = vec![
+            (
+                PromptKind::PlannerBriefing,
+                planner_briefing(
+                    default(Role::Planner, PromptKind::PlannerBriefing),
+                    &goal,
+                    std::slice::from_ref(&repo),
+                ),
+                vec![
+                    ("goal_title", &goal.title),
+                    ("goal_description", &goal.description),
+                    ("repositories", &repo_line),
+                    ("max_tasks", "4"),
+                    ("required_approvals", "2"),
+                ],
+            ),
+            (
+                PromptKind::EngineerBriefing,
+                engineer_briefing(
+                    default(Role::Engineer, PromptKind::EngineerBriefing),
+                    &task,
+                    &goal,
+                    &repo,
+                    &deps,
+                ),
+                vec![
+                    ("task_title", &task.title),
+                    ("task_description", &task.description),
+                    ("goal_title", &goal.title),
+                    ("worktree_path", task.worktree_path.as_deref().unwrap()),
+                    ("branch", &task.branch),
+                    ("base_branch", &repo.base_branch),
+                    ("repo_path", &repo.path),
+                    ("dependencies", &dep_lines),
+                ],
+            ),
+            (
+                PromptKind::ChangesRequested,
+                changes_requested_briefing(
+                    default(Role::Engineer, PromptKind::ChangesRequested),
+                    &feedback,
+                ),
+                vec![("feedback", &items)],
+            ),
+            (
+                PromptKind::ReviewerBriefing,
+                reviewer_briefing(
+                    default(Role::Reviewer, PromptKind::ReviewerBriefing),
+                    &task,
+                    &goal,
+                    &repo,
+                    None,
+                ),
+                vec![
+                    ("task_title", &task.title),
+                    ("review_round", &round),
+                    ("task_description", &task.description),
+                    ("goal_title", &goal.title),
+                    ("branch", &task.branch),
+                    ("base_branch", &repo.base_branch),
+                    ("repo_path", &repo.path),
+                    ("summary", "(none provided)"),
+                ],
+            ),
+            (
+                PromptKind::ReviewerResume,
+                reviewer_resume_briefing(
+                    default(Role::Reviewer, PromptKind::ReviewerResume),
+                    &task,
+                    Some("I rewrote the thing."),
+                ),
+                vec![
+                    ("review_round", &round),
+                    ("task_title", &task.title),
+                    ("branch", &task.branch),
+                    ("summary", "I rewrote the thing."),
+                ],
+            ),
+            (
+                PromptKind::IntegrationInstructions,
+                integration_briefing(
+                    default(Role::Integrator, PromptKind::IntegrationInstructions),
+                    &task,
+                    &goal,
+                    &repo,
+                    "/worktrees/task-int",
+                ),
+                vec![
                     ("task_title", &task.title),
                     ("task_description", &task.description),
                     ("goal_title", &goal.title),
@@ -566,23 +536,102 @@ mod tests {
                     ("branch", &task.branch),
                     ("base_branch", &repo.base_branch),
                     ("repo_path", &repo.path),
-                ]
-            )
-        );
-        assert!(rendered.starts_with(&format!("# Integrate task: {}", task.title)));
-
-        let resume = default(Role::Integrator, PromptKind::IntegrationResume);
-        assert_eq!(
-            integration_resume_briefing(resume, &task, &repo),
-            filled(
-                resume,
-                &[
+                ],
+            ),
+            (
+                PromptKind::IntegrationResume,
+                integration_resume_briefing(
+                    default(Role::Integrator, PromptKind::IntegrationResume),
+                    &task,
+                    &repo,
+                ),
+                vec![
                     ("task_title", &task.title),
                     ("branch", &task.branch),
                     ("base_branch", &repo.base_branch),
                     ("repo_path", &repo.path),
-                ]
-            )
+                ],
+            ),
+        ];
+
+        for (kind, rendered, values) in cases {
+            let template = default(kind.role(), kind);
+            assert_eq!(
+                rendered,
+                filled(template, &values),
+                "the default {} briefing, substituted",
+                kind.as_str()
+            );
+            assert!(
+                !rendered.contains('{'),
+                "the {} briefing left a placeholder unfilled: {rendered}",
+                kind.as_str()
+            );
+        }
+    }
+
+    /// And the values themselves are the ones the daemon builds: the lists it
+    /// formats, the headings a briefing opens on, and the stand-in for a
+    /// summary an engineer never wrote.
+    #[test]
+    fn the_briefings_carry_the_values_the_daemon_builds() {
+        let (task, goal, repo) = (task(), goal(), repo());
+        let deps = vec![Task {
+            title: "Store: per-profile prompts".into(),
+            status: "merged".into(),
+            branch: "ariadne/task-01depxxxxxxxxxxxxxxxxxxxxx".into(),
+            ..task.clone()
+        }];
+        let engineer = engineer_briefing(
+            default(Role::Engineer, PromptKind::EngineerBriefing),
+            &task,
+            &goal,
+            &repo,
+            &deps,
+        );
+        assert!(engineer.starts_with(&format!("# Task: {}", task.title)));
+        assert!(
+            engineer.contains(&format!(
+                "- {} ({}, branch {})",
+                deps[0].title, deps[0].status, deps[0].branch
+            )),
+            "{engineer}"
+        );
+
+        let reviewer = reviewer_briefing(
+            default(Role::Reviewer, PromptKind::ReviewerBriefing),
+            &task,
+            &goal,
+            &repo,
+            None,
+        );
+        assert!(reviewer.starts_with(&format!(
+            "# Review task: {} (round {})",
+            task.title, task.review_round
+        )));
+        assert!(reviewer.contains("- Engineer's summary: (none provided)"));
+
+        let feedback = vec![("reviewer 01a".to_string(), "Split it.".to_string())];
+        let changes = changes_requested_briefing(
+            default(Role::Engineer, PromptKind::ChangesRequested),
+            &feedback,
+        );
+        assert!(
+            changes.contains("### From reviewer 01a\nSplit it."),
+            "{changes}"
+        );
+
+        let integration = integration_briefing(
+            default(Role::Integrator, PromptKind::IntegrationInstructions),
+            &task,
+            &goal,
+            &repo,
+            "/worktrees/task-int",
+        );
+        assert!(integration.starts_with(&format!("# Integrate task: {}", task.title)));
+        assert!(
+            integration.contains("- Worktree (your cwd): /worktrees/task-int"),
+            "the integrator's own worktree, not the engineer's: {integration}"
         );
     }
 
