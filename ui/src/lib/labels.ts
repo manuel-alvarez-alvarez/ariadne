@@ -21,13 +21,15 @@ export const ROLE_LABELS: Record<Role, string> = {
 }
 
 /**
- * A message author is a role plus the two speakers that run no session: the
- * person at the keyboard, and the daemon itself.
+ * A message author is a role plus the three speakers that run no session: the
+ * person at the keyboard, the daemon itself, and the forge whose reviewers it
+ * relays off a published pull or merge request.
  */
 export const AUTHOR_ROLE_LABELS: Record<AuthorRole, string> = {
   ...ROLE_LABELS,
   user: "You",
   system: "System",
+  forge: "Forge",
 }
 
 export const AGENT_KIND_LABELS: Record<AgentKind, string> = {

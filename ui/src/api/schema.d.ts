@@ -914,12 +914,12 @@ export interface components {
          *     progress until someone looks at it.
          * @enum {string}
          */
-        AttentionReason: "waiting_permission" | "waiting_input" | "agent_error" | "disconnected" | "stalled";
+        AttentionReason: "waiting_permission" | "waiting_input" | "waiting_user" | "agent_error" | "disconnected" | "stalled";
         /**
          * @description Author of a conversation message.
          * @enum {string}
          */
-        AuthorRole: "planner" | "engineer" | "reviewer" | "integrator" | "user" | "system";
+        AuthorRole: "planner" | "engineer" | "reviewer" | "integrator" | "user" | "system" | "forge";
         /** @description A binary as the daemon can — or cannot — find it. */
         BinaryDto: {
             agent_kind?: null | components["schemas"]["AgentKind"];
@@ -1325,10 +1325,15 @@ export interface components {
             summary: string;
         };
         ReviewDto: {
+            author_role?: null | components["schemas"]["AuthorRole"];
             body?: string | null;
             created_at: string;
             id: string;
-            reviewer_profile_id: string;
+            /**
+             * @description The task profile whose verdict this is. None exactly when
+             *     `author_role` names an author that is nobody's profile.
+             */
+            reviewer_profile_id?: string | null;
             /** Format: int64 */
             round: number;
             session_id?: string | null;
