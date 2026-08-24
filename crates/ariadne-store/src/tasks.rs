@@ -7,7 +7,8 @@ use ariadne_core::id::new_id;
 use ariadne_core::{Actor, TaskStatus, check_transition};
 
 use crate::{
-    Change, Result, Store, StoreError, Task, TaskReviewer, TaskTransition, not_found, now,
+    Change, NewReview, Result, Store, StoreError, Task, TaskReviewer, TaskTransition, not_found,
+    now,
 };
 
 #[derive(Debug, Clone)]
@@ -624,6 +625,33 @@ impl Store {
         self.publish_task_update(task_id, n).await
     }
 
+    /// Forget the pull request a task was published as, and everything
+    /// remembered about it.
+    ///
+    /// A published task is one with a request recorded on it: that is what
+    /// makes the daemon poll a forge, and what makes its integrator push a
+    /// revision to a request rather than open one. A task that is starting
+    /// over — retried after the request it was published as was closed
+    /// unmerged — is not that task any more, and leaving the record on it
+    /// would send the next integrator to push at a request nobody will merge.
+    ///
+    /// The counterpart of [`Store::set_task_pull_request`]'s reset: recording
+    /// a *different* request drops the same bookkeeping, for the same reason.
+    pub async fn clear_task_pull_request(&self, task_id: &str) -> Result<()> {
+        let n = sqlx::query(
+            "UPDATE tasks
+             SET pr_number = NULL, pr_url = NULL, pr_relayed_comments = NULL,
+                 pr_approved_notified = 0, updated_at = ?
+             WHERE id = ? AND (pr_number IS NOT NULL OR pr_url IS NOT NULL)",
+        )
+        .bind(now())
+        .bind(task_id)
+        .execute(self.w())
+        .await?
+        .rows_affected();
+        self.publish_task_update(task_id, n).await
+    }
+
     /// Mark what a poll of the pull request has handed to the engineer as
     /// relayed — a comment, a failing check, a conflict with the base —
     /// adding to whatever was relayed before: what keeps the daemon from
@@ -646,6 +674,66 @@ impl Store {
                 .await?
                 .rows_affected();
         self.publish_task_update(task_id, n).await
+    }
+
+    /// Hand a round of what a published request said to the engineer — the
+    /// comments on it, a branch that no longer merges, a check that failed —
+    /// in one write or in none.
+    ///
+    /// Three records make one send-back: the review row the engineer is
+    /// resumed with, the ids that keep any of it from being relayed into a
+    /// second round, and the transition that wakes it. Written one after
+    /// another, a daemon that failed halfway left the task in a state no
+    /// later poll could repair — the ids marked relayed with no round
+    /// carrying them, or a second round of the same failure — so they are one
+    /// transaction, and a failure leaves the task exactly as the next poll
+    /// expects to find it: still `integrating`, with nothing relayed.
+    ///
+    /// `relayed_ids` are added to whatever was relayed before, the way
+    /// [`Store::add_task_pr_relayed_comments`] adds them; `reason` is the
+    /// transition's own audit line. Returns the task as it now stands.
+    pub async fn relay_pull_request_feedback(
+        &self,
+        review: NewReview,
+        relayed_ids: &[String],
+        reason: &str,
+    ) -> Result<Task> {
+        let mut tx = self.w().begin().await?;
+        let task = Self::get_task_in_tx(&mut tx, &review.task_id).await?;
+        let created = Self::insert_review_in_tx(&mut tx, &review).await?;
+
+        let mut relayed = task.pr_relayed_comments();
+        for id in relayed_ids {
+            if !relayed.contains(id) {
+                relayed.push(id.clone());
+            }
+        }
+        let json = serde_json::to_string(&relayed).unwrap_or_else(|_| "[]".into());
+        sqlx::query("UPDATE tasks SET pr_relayed_comments = ?, updated_at = ? WHERE id = ?")
+            .bind(&json)
+            .bind(now())
+            .bind(&task.id)
+            .execute(&mut *tx)
+            .await?;
+
+        let transition = Self::transition_in_tx(
+            &mut tx,
+            &task,
+            TaskStatus::ChangesRequested,
+            Actor::Daemon,
+            Some(reason),
+            None,
+        )
+        .await?;
+        tx.commit().await?;
+
+        let task = self.get_task(&review.task_id).await?;
+        self.publish(Change::ReviewCreated(created));
+        self.publish(Change::TaskUpdated {
+            task: task.clone(),
+            transition: Some(transition),
+        });
+        Ok(task)
     }
 
     /// Whether the user has been told this pull request is theirs: set when

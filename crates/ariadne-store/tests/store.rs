@@ -3408,6 +3408,134 @@ async fn a_task_remembers_the_pull_request_it_was_published_as() {
     assert!(!replaced.pr_approved_notified());
 }
 
+/// A published task that is retried starts over, and the request it was
+/// published as does not come with it: the poll that would watch a request
+/// nobody will merge, and the integrator that would push a revision at one,
+/// both read the record this clears.
+#[tokio::test]
+async fn a_task_can_be_told_to_forget_the_request_it_was_published_as() {
+    let (store, _dir) = test_store().await;
+    let planner = seed_profile(&store, "planner", Role::Planner).await;
+    let (goal, repo) = seed_goal(&store, &planner, None).await;
+    let task = seed_task(&store, &goal, &repo, vec![]).await;
+
+    store
+        .set_task_pull_request(&task.id, 12, "https://github.com/ariadne/ariadne/pull/12")
+        .await
+        .unwrap();
+    store
+        .add_task_pr_relayed_comments(&task.id, &["C1".into()])
+        .await
+        .unwrap();
+    store
+        .set_task_pr_approved_notified(&task.id, true)
+        .await
+        .unwrap();
+
+    store.clear_task_pull_request(&task.id).await.unwrap();
+    let cleared = store.get_task(&task.id).await.unwrap();
+    assert_eq!(cleared.pr_number, None);
+    assert_eq!(cleared.pr_url, None);
+    assert!(cleared.pr_relayed_comments().is_empty());
+    assert!(!cleared.pr_approved_notified());
+    // And a task that was never published is left exactly as it was.
+    store.clear_task_pull_request(&task.id).await.unwrap();
+    assert_eq!(store.get_task(&task.id).await.unwrap().pr_url, None);
+}
+
+/// A round of comments from a published request reaches the engineer as one
+/// write or as none of one.
+///
+/// Three records make the send-back: the review row the engineer is resumed
+/// with, the ids that keep a comment out of a second round, and the
+/// transition that wakes it. Written one at a time, a failure in the middle
+/// left a task no later poll could put right — so a failing transition must
+/// leave no review row and no relayed ids behind, and a retry must not be
+/// able to write the round twice.
+#[tokio::test]
+async fn a_round_of_pull_request_feedback_is_relayed_whole_or_not_at_all() {
+    let (store, _dir) = test_store().await;
+    let planner = seed_profile(&store, "planner", Role::Planner).await;
+    let (goal, repo) = seed_goal(&store, &planner, None).await;
+    let task = seed_task(&store, &goal, &repo, vec![]).await;
+    let feedback = |body: &str| NewReview {
+        task_id: task.id.clone(),
+        round: 1,
+        author: ReviewAuthor::Role(AuthorRole::Forge),
+        session_id: None,
+        verdict: ReviewVerdict::RequestChanges,
+        body: Some(body.to_string()),
+    };
+
+    // A task that is not being integrated cannot be sent back to its
+    // engineer, and the review row and the ids go down with the refusal:
+    // this is the failure in the middle, from the other end.
+    assert!(matches!(
+        store
+            .relay_pull_request_feedback(feedback("too early"), &["C1".into()], "commented on")
+            .await,
+        Err(StoreError::Transition(_))
+    ));
+    let untouched = store.get_task(&task.id).await.unwrap();
+    assert_eq!(untouched.status(), TaskStatus::Pending);
+    assert!(untouched.pr_relayed_comments().is_empty());
+    assert!(store.list_reviews(&task.id, None).await.unwrap().is_empty());
+
+    // Walked to a published task being integrated, the same call writes all
+    // three at once.
+    for (to, actor) in [
+        (TaskStatus::Ready, Actor::Daemon),
+        (TaskStatus::InProgress, Actor::Daemon),
+        (TaskStatus::UnderReview, Actor::Engineer),
+        (TaskStatus::Approved, Actor::Daemon),
+        (TaskStatus::Integrating, Actor::Daemon),
+    ] {
+        store
+            .transition_task(&task.id, to, actor, None, None)
+            .await
+            .unwrap();
+    }
+    let relayed = store
+        .relay_pull_request_feedback(
+            feedback("jon asked for a split"),
+            &["C1".into(), "R1".into()],
+            "Pull request #12 was commented on",
+        )
+        .await
+        .unwrap();
+    assert_eq!(relayed.status(), TaskStatus::ChangesRequested);
+    assert_eq!(
+        relayed.pr_relayed_comments(),
+        vec!["C1".to_string(), "R1".into()]
+    );
+    let reviews = store.list_reviews(&task.id, Some(1)).await.unwrap();
+    assert_eq!(reviews.len(), 1);
+    assert_eq!(reviews[0].verdict(), ReviewVerdict::RequestChanges);
+    assert_eq!(
+        store.list_task_transitions(&task.id).await.unwrap().len(),
+        6,
+        "the refused relay audited nothing"
+    );
+
+    // And the same comments relayed again — a poll that read them twice —
+    // write nothing: the task has left `integrating`, so there is no second
+    // round to put them in.
+    assert!(
+        store
+            .relay_pull_request_feedback(feedback("again"), &["C1".into()], "commented on")
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        store.list_reviews(&task.id, Some(1)).await.unwrap().len(),
+        1
+    );
+    assert_eq!(
+        store.get_task(&task.id).await.unwrap().status(),
+        TaskStatus::ChangesRequested
+    );
+}
+
 /// The eleven defaults as they stood before the rewrite: what an install on
 /// the previous release holds on the profiles it never edited — the four
 /// system prompts and the integrator's two briefings as migrations 0012, 0015

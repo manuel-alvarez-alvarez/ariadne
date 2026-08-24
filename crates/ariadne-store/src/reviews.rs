@@ -22,6 +22,21 @@ impl Store {
     /// `Conflict`: one verdict per reviewer per round, and one relay of what
     /// a published request says per round.
     pub async fn create_review(&self, new: NewReview) -> Result<Review> {
+        let mut tx = self.w().begin().await?;
+        let review = Self::insert_review_in_tx(&mut tx, &new).await?;
+        tx.commit().await?;
+        self.publish(Change::ReviewCreated(review.clone()));
+        Ok(review)
+    }
+
+    /// Write one verdict inside the caller's transaction and read back the row
+    /// it became, so a verdict that belongs with other writes commits with
+    /// them — see [`Store::relay_pull_request_feedback`]. Announcing it is the
+    /// caller's, after the commit: a row nobody has committed is not news.
+    pub(crate) async fn insert_review_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        new: &NewReview,
+    ) -> Result<Review> {
         let id = new_id();
         let (profile_id, author_role) = match &new.author {
             ReviewAuthor::Profile(profile_id) => (Some(profile_id.as_str()), None),
@@ -40,7 +55,7 @@ impl Store {
         .bind(new.verdict.as_str())
         .bind(&new.body)
         .bind(now())
-        .execute(self.w())
+        .execute(&mut **tx)
         .await
         .map_err(|e| match e {
             sqlx::Error::Database(ref db) if db.is_unique_violation() => StoreError::Conflict(
@@ -56,12 +71,12 @@ impl Store {
             ),
             other => StoreError::Db(other),
         })?;
-        let review = sqlx::query_as::<_, Review>("SELECT * FROM reviews WHERE id = ?")
-            .bind(&id)
-            .fetch_one(self.r())
-            .await?;
-        self.publish(Change::ReviewCreated(review.clone()));
-        Ok(review)
+        Ok(
+            sqlx::query_as::<_, Review>("SELECT * FROM reviews WHERE id = ?")
+                .bind(&id)
+                .fetch_one(&mut **tx)
+                .await?,
+        )
     }
 
     pub async fn list_reviews(&self, task_id: &str, round: Option<i64>) -> Result<Vec<Review>> {
