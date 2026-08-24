@@ -186,6 +186,11 @@ pub struct Scheduler {
     /// a transition changes `nudged`'s, which is what keeps it to one Enter
     /// and one flag per launch rather than one per tick.
     unstarted: HashMap<String, (String, Unstarted)>,
+    /// Relaunches spent on a session that wedged mid-turn, by session id.
+    /// In memory like the maps above, and bounded by [`SPAWN_RETRY_BUDGET`]
+    /// like a task's spawn attempts are: an agent that wedges again after
+    /// every relaunch is not one more relaunch away from working.
+    wedged: HashMap<String, u32>,
     /// When each task's pull or merge request was last looked at, by task
     /// id: what keeps the polling to `pr_poll_secs` rather than to every tick and
     /// every event. In memory like the maps above — a daemon that restarts
@@ -243,6 +248,7 @@ pub fn start(
         spawn_failures: HashMap::new(),
         nudged: HashMap::new(),
         unstarted: HashMap::new(),
+        wedged: HashMap::new(),
         pr_polled: HashMap::new(),
         poll_failures: HashMap::new(),
         delivered: HashSet::new(),
@@ -1086,16 +1092,17 @@ impl Scheduler {
         // started to be killed. Starting one is what the tail of this does,
         // once the poll has said the task is still the integrator's.
         let integrator = self.integrator_session(task).await?;
-        // The one watchdog that still applies: an agent whose instruction is
-        // sitting unsubmitted in its composer has not started the turn this
-        // arm woke it for, and no amount of polling will move it. The idle
-        // half of the stall watch is what does not apply — an integrator with
-        // a review open is waiting on people, not stalling.
+        // The watchdogs that still apply: an integrator mid-turn can be stuck
+        // holding an unsubmitted instruction or wedged inside the turn it did
+        // start, and no amount of polling will move either. The idle half of
+        // the stall watch is what does not apply — an integrator with a
+        // review open is waiting on people, not stalling.
         if let Some(running) = integrator
             .as_ref()
             .filter(|s| s.status() == SessionStatus::Running)
         {
-            self.check_unstarted_turn(running).await?;
+            let resume = self.resume_text(task, Role::Integrator).await?;
+            self.check_running_session(running, &resume).await?;
         }
         let interval = std::time::Duration::from_secs(self.launcher.cfg.pr_poll_secs);
         let now = std::time::Instant::now();
@@ -1846,14 +1853,14 @@ impl Scheduler {
     /// remedies. An idle agent finished a turn and stopped: it is measured
     /// against the stall thresholds below — a single nudge at
     /// [`STALL_NUDGE_SECS`], and at [`STALL_FLAG_SECS`] the session is raised
-    /// for the user. A running one
-    /// that never started a turn is stuck holding its instruction, and what
-    /// that needs is a keystroke rather than another message — see
-    /// [`Self::check_unstarted_turn`], which has thresholds of its own and
-    /// nothing to say about the task.
+    /// for the user. A running one is in a turn, and whether that turn ever
+    /// started decides which of the two watchdogs behind
+    /// [`Self::check_running_session`] it belongs to; neither of them types
+    /// another message into a pane that is already holding one.
     ///
     /// `key` is the situation the nudge is spent on — the status and round the
-    /// agent was idle in — so moving on earns a fresh one.
+    /// agent was idle in — so moving on earns a fresh one, and `nudge` is
+    /// both what it is nudged with and what it is revived with if it wedges.
     async fn check_session_stall(
         &mut self,
         session: &AgentSession,
@@ -1861,8 +1868,7 @@ impl Scheduler {
         nudge: &str,
     ) -> anyhow::Result<()> {
         if session.status() == SessionStatus::Running {
-            self.check_unstarted_turn(session).await?;
-            return Ok(());
+            return self.check_running_session(session, nudge).await;
         }
         if session.status() != SessionStatus::Idle {
             return Ok(());
@@ -1905,7 +1911,7 @@ impl Scheduler {
             // A pane already being typed into is being nudged by that: this
             // one waits for the next pass rather than interleaving with it.
             if self.typing.contains(&session.id) {
-                return Ok(false);
+                return Ok(());
             }
             info!(session = %session.id, role = %session.role, idle_secs, "nudging idle agent");
             // Spent as the delivery goes out, and off the loop: a pane that
@@ -1915,6 +1921,165 @@ impl Scheduler {
             self.nudged.insert(session.id.clone(), key);
             self.spawn_delivery(session, nudge.to_string(), None);
         }
+        Ok(())
+    }
+
+    /// The watchdogs a running agent is under, and which of them has it.
+    ///
+    /// A launched agent that is doing nothing is doing one of two things, and
+    /// the turn tells them apart: one that never started it is holding its
+    /// instruction in a composer nobody submitted, and a keystroke is what
+    /// that wants ([`Self::check_unstarted_turn`]); one that started it and
+    /// then went quiet is wedged inside it, and only a relaunch gets it out
+    /// ([`Self::check_running_quiet`]). Every running session is under
+    /// exactly one of them, which is the point of asking here rather than in
+    /// either.
+    ///
+    /// `revival` is what a planner or a reviewer is put back on its feet
+    /// with; an engineer and an integrator have a resume of their own.
+    async fn check_running_session(
+        &mut self,
+        session: &AgentSession,
+        revival: &str,
+    ) -> anyhow::Result<()> {
+        if self.turn_started(session).await? {
+            self.check_running_quiet(session, revival).await
+        } else {
+            self.check_unstarted_turn(session).await
+        }
+    }
+
+    /// Whether this launch of the agent got as far as a turn.
+    ///
+    /// Read off what the session reported since it was launched, and only
+    /// [`TURN_ACTIVITY`] counts — a launch nobody dated says nothing either
+    /// way, and is answered as no turn for the watchdog that knows what to do
+    /// about a launch it cannot measure.
+    async fn turn_started(&self, session: &AgentSession) -> anyhow::Result<bool> {
+        let Some(launched) = &session.launched_at else {
+            return Ok(false);
+        };
+        Ok(self
+            .store
+            .session_reported_since(&session.id, launched, &TURN_ACTIVITY)
+            .await?)
+    }
+
+    /// One agent that started its turn and stopped moving inside it: the
+    /// user at `running_quiet_flag_secs`, and a relaunch at
+    /// `running_quiet_resume_secs` (both daemon config, beside
+    /// `pr_poll_secs`).
+    ///
+    /// A model stream that never ends, a subprocess that never returns, hooks
+    /// that stopped firing: from outside the pane they look alike, and they
+    /// all look like work. The session is `running`, so the idle stall never
+    /// measures it; the turn started, so the watchdog for an unsubmitted
+    /// composer is finished with it. Until this one, the only thing that
+    /// rescued such a session was its pane dying.
+    ///
+    /// What it measures is not how long the turn has taken — a single tool
+    /// call may run for an hour — but how long the agent has said nothing
+    /// about it. Every hook and every plugin event stamps `last_activity_at`,
+    /// so an agent that is working keeps its own clock reset however slowly
+    /// it works, and a wedged one is exactly the one that cannot.
+    ///
+    /// The remedy is the user's choice: the flag first, because a person may
+    /// know what the pane is doing, and then the pane is killed and the same
+    /// session put back on the conversation it was already having — there is
+    /// nothing to type into a turn that is not reading its composer.
+    async fn check_running_quiet(
+        &mut self,
+        session: &AgentSession,
+        revival: &str,
+    ) -> anyhow::Result<()> {
+        // Blocked rather than wedged, for the reasons the watchdog below
+        // spells out: an agent waiting on a person is waiting on the one
+        // decision the daemon must not make for it, and one that reported an
+        // error has already said something more useful than a stall would.
+        if matches!(
+            session.attention_reason(),
+            Some(
+                AttentionReason::WaitingPermission
+                    | AttentionReason::WaitingInput
+                    | AttentionReason::AgentError
+            )
+        ) {
+            return Ok(());
+        }
+        let Some(last) = &session.last_activity_at else {
+            return Ok(());
+        };
+        let Ok(last) = chrono::DateTime::parse_from_rfc3339(last) else {
+            return Ok(());
+        };
+        let quiet_secs = (chrono::Utc::now() - last.with_timezone(&chrono::Utc)).num_seconds();
+        if quiet_secs < self.launcher.cfg.running_quiet_flag_secs as i64 {
+            return Ok(());
+        }
+        if session.attention_reason() != Some(AttentionReason::Stalled) {
+            warn!(session = %session.id, role = %session.role, quiet_secs, "the agent's turn has reported nothing, flagging for user attention");
+        }
+        self.store
+            .set_session_attention(&session.id, AttentionReason::Stalled)
+            .await?;
+        if quiet_secs < self.launcher.cfg.running_quiet_resume_secs as i64 {
+            return Ok(());
+        }
+        // The flag did not move it either. The relaunch is spent out of a
+        // budget for the same reason a spawn is: an agent that wedges, is put
+        // back and wedges again is not one more relaunch away from working,
+        // and a task whose agent will not run is failed rather than restarted
+        // for ever. A planner has no task to fail — its own flag is what is
+        // left, and it stands.
+        let spent = self.wedged.entry(session.id.clone()).or_default();
+        *spent += 1;
+        let spent = *spent;
+        if spent >= SPAWN_RETRY_BUDGET {
+            warn!(session = %session.id, role = %session.role, relaunches = spent - 1, "the agent wedged again after every relaunch");
+            if let Some(task_id) = session.task_id.clone() {
+                if let Err(e) = self.launcher.kill_session(&session.id).await {
+                    warn!(session = %session.id, error = %e, "killing the wedged session failed");
+                }
+                self.store
+                    .transition_task(
+                        &task_id,
+                        TaskStatus::Failed,
+                        Actor::Daemon,
+                        Some("its agent wedged mid-turn after every relaunch"),
+                        None,
+                    )
+                    .await?;
+            }
+            return Ok(());
+        }
+        info!(session = %session.id, role = %session.role, quiet_secs, relaunch = spent, "the agent has been silent mid-turn, relaunching it");
+        self.relaunch_wedged(session, revival).await
+    }
+
+    /// Put a wedged agent back on its feet: the pane killed, and the same
+    /// session row relaunched on the agent conversation it was already having.
+    ///
+    /// An engineer and an integrator are started the way a task with no live
+    /// agent of their role is started — [`Self::start_role`], which is where
+    /// what each of them is resumed with lives, the instruction for a
+    /// published request included. A planner and a reviewer have no such
+    /// path: they are revived with what the nudge would have carried, through
+    /// the same `revive_session` a message addressed to a dead agent takes.
+    async fn relaunch_wedged(
+        &mut self,
+        session: &AgentSession,
+        revival: &str,
+    ) -> anyhow::Result<()> {
+        self.launcher.kill_session(&session.id).await?;
+        if let Some(task_id) = session.task_id.clone()
+            && matches!(session.role(), Role::Engineer | Role::Integrator)
+        {
+            let task = self.store.get_task(&task_id).await?;
+            return self.start_role(&task, session.role()).await;
+        }
+        self.launcher
+            .revive_session(&session.id, Some(revival))
+            .await?;
         Ok(())
     }
 

@@ -31,6 +31,8 @@ pub struct Config {
     pub glab_bin: String,
     pub pr_poll_secs: u64,
     pub typed_input_window: Duration,
+    pub running_quiet_flag_secs: u64,
+    pub running_quiet_resume_secs: u64,
 }
 
 /// How often an integrating task's pull request is polled by default: a few
@@ -46,6 +48,16 @@ const DEFAULT_PR_POLL_SECS: u64 = 180;
 /// on it. There is no `config.toml` key behind it: nothing about it is the
 /// user's to choose.
 const DEFAULT_TYPED_INPUT_WINDOW: Duration = Duration::from_secs(120);
+/// How long a running agent may report nothing before the user is told about
+/// it: twenty minutes, which is long enough for the slowest turn an agent
+/// takes between two things worth reporting and short enough that a wedged
+/// one is not left there for the afternoon.
+const DEFAULT_RUNNING_QUIET_FLAG_SECS: u64 = 1_200;
+
+/// And how long before that agent is relaunched: three quarters of an hour,
+/// which is the flag plus enough of a wait for a person to have looked at it
+/// first.
+const DEFAULT_RUNNING_QUIET_RESUME_SECS: u64 = 2_700;
 
 /// Default `ariadne` CLI: sibling of the running ariadned, else PATH lookup.
 fn default_cli_bin() -> String {
@@ -93,6 +105,12 @@ impl Config {
             glab_bin: file.glab_bin.unwrap_or_else(|| "glab".to_string()),
             pr_poll_secs: file.pr_poll_secs.unwrap_or(DEFAULT_PR_POLL_SECS),
             typed_input_window: DEFAULT_TYPED_INPUT_WINDOW,
+            running_quiet_flag_secs: file
+                .running_quiet_flag_secs
+                .unwrap_or(DEFAULT_RUNNING_QUIET_FLAG_SECS),
+            running_quiet_resume_secs: file
+                .running_quiet_resume_secs
+                .unwrap_or(DEFAULT_RUNNING_QUIET_RESUME_SECS),
             root,
         };
 
@@ -101,5 +119,38 @@ impl Config {
         }
 
         Ok(config)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A home with `config.toml` in it, written from `toml`.
+    fn home_with(toml: &str) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("home")).unwrap();
+        std::fs::write(dir.path().join("home/config.toml"), toml).unwrap();
+        dir
+    }
+
+    #[test]
+    fn the_watchdog_thresholds_default_to_twenty_and_forty_five_minutes() {
+        let dir = home_with("");
+        let config = Config::load(Some(dir.path().join("home"))).unwrap();
+        assert_eq!(config.running_quiet_flag_secs, 1_200);
+        assert_eq!(config.running_quiet_resume_secs, 2_700);
+    }
+
+    #[test]
+    fn the_watchdog_thresholds_are_read_from_the_config_file() {
+        let dir = home_with("running_quiet_flag_secs = 60\nrunning_quiet_resume_secs = 120\n");
+        let config = Config::load(Some(dir.path().join("home"))).unwrap();
+        assert_eq!(config.running_quiet_flag_secs, 60);
+        assert_eq!(config.running_quiet_resume_secs, 120);
+        assert_eq!(
+            config.pr_poll_secs, DEFAULT_PR_POLL_SECS,
+            "and what the file does not say keeps its default"
+        );
     }
 }
