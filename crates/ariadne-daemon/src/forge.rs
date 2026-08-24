@@ -424,6 +424,29 @@ mod tests {
         assert_eq!(poll_state(false, vec![], false, false), PrState::Quiet);
     }
 
+    /// Where a comment on the diff hangs, as the engineer is told it: the
+    /// line where the forge still knows one, the file alone where the diff
+    /// has moved out from under the comment, and nothing at all for what was
+    /// written on the conversation rather than on the code.
+    #[test]
+    fn a_comment_on_the_diff_is_placed_by_its_file_and_line() {
+        assert_eq!(
+            location(Some("src/board.rs"), Some(42)),
+            Some("src/board.rs:42".to_string())
+        );
+        assert_eq!(
+            location(Some("src/board.rs"), None),
+            Some("src/board.rs".to_string())
+        );
+        assert_eq!(
+            location(Some("src/board.rs"), Some(0)),
+            Some("src/board.rs".to_string()),
+            "a line the forge answered with a zero for is no line"
+        );
+        assert_eq!(location(None, Some(42)), None);
+        assert_eq!(location(Some("  "), Some(42)), None);
+    }
+
     /// And the filter that keeps a comment to one relay: an empty one is not
     /// feedback, and neither is one already handed over.
     #[test]
