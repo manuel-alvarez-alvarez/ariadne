@@ -983,6 +983,7 @@ async fn pull_request_comments_reach_the_engineer_once_each() {
     let engineer = h.live_session(&task.id, Role::Engineer).await.unwrap();
     let argv = h.launched_argv(&engineer.id);
     for quoted in [
+        "4 new comments on ",
         "#### maria commented",
         "> why a new module?",
         "#### jon requested changes",

@@ -1005,6 +1005,7 @@ async fn discussion_notes_reach_the_engineer_once_each() {
     let argv = h.launched_argv(&engineer.id);
     for quoted in [
         MR_URL,
+        "3 new comments on ",
         "#### maria commented",
         "> why a new module?",
         // The notes on the diff, both pages of them, each naming the file and
