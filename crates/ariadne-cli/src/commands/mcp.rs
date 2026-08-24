@@ -250,6 +250,7 @@ impl AriadneMcp {
             ],
             McpRole::Integrator => &[
                 "get_task",
+                "get_goal",
                 "get_diff",
                 "list_messages",
                 "post_message",
@@ -707,6 +708,38 @@ mod tests {
 
         let to_the_thread = addressed_message(&message(None));
         assert_eq!(to_the_thread["to"], serde_json::Value::Null);
+    }
+
+    fn server(role: McpRole) -> AriadneMcp {
+        AriadneMcp {
+            client: std::sync::Arc::new(Client::from_env()),
+            role,
+            session_id: "01SESSION".into(),
+            goal_id: "01GOAL".into(),
+            task_id: Some("01TASK".into()),
+            tool_router: AriadneMcp::tool_router(),
+        }
+    }
+
+    /// The integrator lands a task it did not write, so the goal behind it is
+    /// as much context as the task itself — and every other role already
+    /// reads both. A tool it is not allowed is a tool it never sees, so the
+    /// omission was invisible from inside the session.
+    #[test]
+    fn the_integrator_reads_the_goal_its_task_belongs_to() {
+        let integrator = server(McpRole::Integrator).allowed_tools();
+        for reading in ["get_task", "get_goal"] {
+            assert!(
+                integrator.contains(&reading),
+                "the integrator cannot {reading}: {integrator:?}"
+            );
+        }
+        for role in [McpRole::Planner, McpRole::Engineer, McpRole::Reviewer] {
+            assert!(
+                server(role.clone()).allowed_tools().contains(&"get_goal"),
+                "{role:?} cannot get_goal"
+            );
+        }
     }
 
     /// The daemon refuses an addressee with the sentence that says which ones

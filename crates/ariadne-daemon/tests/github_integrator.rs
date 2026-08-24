@@ -804,8 +804,9 @@ async fn pull_request_comments_reach_the_engineer_once_each() {
     assert!(argv.contains("why a new module?"), "{argv}");
 
     // Revised and approved again, the integrator gets the task back with the
-    // resume briefing that tells it to force-push to the pull request it
-    // already opened.
+    // resume briefing that tells it to merge the base into the branch and
+    // push it to the pull request it already opened, never rewriting what the
+    // humans reading it have already seen.
     let worktree = PathBuf::from(
         h.store
             .get_task(&task.id)
@@ -828,8 +829,9 @@ async fn pull_request_comments_reach_the_engineer_once_each() {
     })
     .await;
     let argv = h.launched_argv(&integrator.id);
-    assert!(argv.contains("force-push"), "{argv}");
-    assert!(argv.contains("never open a second one"), "{argv}");
+    assert!(argv.contains("git merge --no-edit <remote>/main"), "{argv}");
+    assert!(argv.contains("never open a second"), "{argv}");
+    assert!(!argv.contains("--force"), "{argv}");
     assert_eq!(
         h.sessions(&task.id, Role::Integrator).await.len(),
         1,
