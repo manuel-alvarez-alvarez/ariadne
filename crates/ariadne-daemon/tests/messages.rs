@@ -23,7 +23,7 @@ use tower::ServiceExt;
 
 use ariadne_api::error::ErrorBody;
 use ariadne_api::messages::MessageDto;
-use ariadne_core::{AgentKind, RecipientKind, Role};
+use ariadne_core::{AgentKind, AuthorRole, RecipientKind, Role};
 use ariadne_daemon::config::Config;
 use ariadne_daemon::gitwt::GitManager;
 use ariadne_daemon::http::{self, AppState};
@@ -414,5 +414,42 @@ async fn an_unknown_addressee_is_refused_naming_the_ones_that_would_work() {
         message,
         "no profile has the id or name nobody; address one of: \
          engineer, reviewer, integrator, planner, user"
+    );
+}
+
+/// A task the user cancels says so in its own thread, addressed to them: an
+/// ending is the one moment there is no agent left to notice it.
+#[tokio::test]
+async fn a_cancelled_task_tells_the_user_it_ended_and_why() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    let uri = format!("/v1/tasks/{}/messages", cast.task.id);
+
+    let _: serde_json::Value = h
+        .json(
+            post_json(
+                &format!("/v1/tasks/{}/cancel", cast.task.id),
+                serde_json::json!({}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+
+    let thread: Vec<MessageDto> = h.json(get(&uri), StatusCode::OK).await;
+    let told: Vec<&MessageDto> = thread
+        .iter()
+        .filter(|m| {
+            m.recipient
+                .as_ref()
+                .is_some_and(|r| r.kind == RecipientKind::User)
+        })
+        .collect();
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert_eq!(told[0].author_role, AuthorRole::System);
+    assert!(told[0].body.contains(&cast.task.title), "{}", told[0].body);
+    assert!(
+        told[0].body.contains("cancelled by user"),
+        "the notice does not carry the reason: {}",
+        told[0].body
     );
 }

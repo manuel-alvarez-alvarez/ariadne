@@ -191,6 +191,35 @@ impl Store {
         self.publish_session_update(id).await
     }
 
+    /// The clear an agent's own event makes: every reason but the one raised
+    /// for the user.
+    ///
+    /// An agent that is working again is not waiting on a permission prompt
+    /// or on an answer, and says so by working — but `waiting_user` was never
+    /// its flag. Nobody raised it on the agent's behalf and the agent getting
+    /// on with something else is not the user having merged the request or
+    /// read the message, so it stays up until the user acts or the work it is
+    /// about stops being this session's ([`Store::clear_session_attention`],
+    /// which the sweep calls, drops it like any other).
+    pub async fn clear_agent_attention(&self, id: &str) -> Result<()> {
+        let n = sqlx::query(
+            "UPDATE agent_sessions
+                SET attention_reason = NULL, attention_since = NULL
+              WHERE id = ? AND attention_reason IS NOT NULL
+                AND attention_reason <> ?",
+        )
+        .bind(id)
+        .bind(AttentionReason::WaitingUser.as_str())
+        .execute(self.w())
+        .await?
+        .rows_affected();
+        if n == 0 {
+            self.get_session(id).await?;
+            return Ok(());
+        }
+        self.publish_session_update(id).await
+    }
+
     /// Drop any attention flag from a session (the agent moved on).
     pub async fn clear_session_attention(&self, id: &str) -> Result<()> {
         let n = sqlx::query(

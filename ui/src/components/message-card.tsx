@@ -51,6 +51,13 @@ const ROLE_TONES: Record<AuthorRole, { badge: string; card: string }> = {
     badge: "bg-muted text-muted-foreground",
     card: "border-border",
   },
+  // What people wrote on a published request: not an agent of ours, and not
+  // the daemon speaking either, so it takes the neutral tint rather than one
+  // of the role colours.
+  forge: {
+    badge: "bg-muted text-muted-foreground",
+    card: "border-border",
+  },
 }
 
 /**

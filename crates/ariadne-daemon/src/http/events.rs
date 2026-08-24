@@ -78,7 +78,11 @@ pub async fn ingest(
     // running-mapped event on a live session clears it — going idle is
     // exactly when a permission prompt or a question is waiting, so
     // idle/exit must leave the flag be, and a stray event on an ended
-    // session must not wipe the reason it ended needing attention.
+    // session must not wipe the reason it ended needing attention. And what
+    // it clears is the agent's own flags: a `waiting_user` is not one of them
+    // (`clear_agent_attention`), or the daemon telling the user their pull
+    // request is theirs to merge would be undone by the next tool call of the
+    // agent that happened to be running at the time.
     //
     // Raising it asks one thing more: whether anybody is still waiting on
     // this agent. A reviewer's approval dialog after it has voted, or a
@@ -97,7 +101,7 @@ pub async fn ingest(
                 .await?;
         }
     } else if session.status().is_live() && status == Some(ariadne_core::SessionStatus::Running) {
-        state.store.clear_session_attention(&session.id).await?;
+        state.store.clear_agent_attention(&session.id).await?;
     }
 
     state.store.touch_session(&session.id).await?;

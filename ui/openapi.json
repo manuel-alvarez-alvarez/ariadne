@@ -2344,6 +2344,7 @@
         "enum": [
           "waiting_permission",
           "waiting_input",
+          "waiting_user",
           "agent_error",
           "disconnected",
           "stalled"
@@ -2358,7 +2359,8 @@
           "reviewer",
           "integrator",
           "user",
-          "system"
+          "system",
+          "forge"
         ]
       },
       "BinaryDto": {
@@ -3469,11 +3471,21 @@
           "id",
           "task_id",
           "round",
-          "reviewer_profile_id",
           "verdict",
           "created_at"
         ],
         "properties": {
+          "author_role": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AuthorRole",
+                "description": "The role that wrote it where no profile did: `forge`, for what the\npeople reading a published request wrote and the daemon relayed."
+              }
+            ]
+          },
           "body": {
             "type": [
               "string",
@@ -3487,7 +3499,11 @@
             "type": "string"
           },
           "reviewer_profile_id": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The task profile whose verdict this is. None exactly when\n`author_role` names an author that is nobody's profile."
           },
           "round": {
             "type": "integer",

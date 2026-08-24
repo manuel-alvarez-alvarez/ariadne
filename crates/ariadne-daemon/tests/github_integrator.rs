@@ -42,7 +42,7 @@ use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_daemon::tmux::TmuxManager;
 use ariadne_store::{
     AgentSession, NewGoal, NewProfile, NewRepository, NewReview, NewTask, ProfileUpdate,
-    SessionFilter, Store, Task,
+    ReviewAuthor, SessionFilter, Store, Task,
 };
 
 /// How long a test waits for the scheduler to reach a state. Generous
@@ -60,6 +60,11 @@ const PR_URL: &str = "https://github.com/ariadne/ariadne/pull/12";
 const REPLIES: &str = "Reply to @jon on src/board.rs:42: it allocates once per lane now.\n\
                        Reply to @maria on src/lane.rs:7: renamed to `lane_index`.\n\
                        Reply to @maria: the module stays — it is what makes the lane testable.";
+
+/// And what it writes next, once the review is requested: a message in the
+/// same thread by the same author, which nothing downstream may hand on as
+/// the summary of the round.
+const AFTERWARDS: &str = "Thanks — I will watch for anything else on the request.";
 
 struct Harness {
     store: Store,
@@ -403,8 +408,13 @@ impl Harness {
     }
 
     /// The engineer's `request_review`, made the way its MCP tool makes it:
-    /// the summary is posted to the thread first — which is where everything
-    /// downstream reads it — and then the task goes up for review.
+    /// the summary goes into the thread for whoever is reading it, and onto
+    /// the transition, which is the round's own record of it and where
+    /// everything downstream reads it from.
+    ///
+    /// Then the engineer says something else, as one answering a question in
+    /// its thread does — the message that must not be mistaken for the
+    /// summary of the round.
     async fn request_review(&self, task_id: &str, engineer: &str, summary: &str) {
         let _: MessageDto = self
             .json(
@@ -424,6 +434,16 @@ impl Harness {
                     serde_json::json!({"to": "under_review", "reason": summary}),
                 ),
                 StatusCode::OK,
+            )
+            .await;
+        let _: MessageDto = self
+            .json(
+                as_session(
+                    &format!("/v1/tasks/{task_id}/messages"),
+                    engineer,
+                    serde_json::json!({"body": AFTERWARDS}),
+                ),
+                StatusCode::CREATED,
             )
             .await;
     }
@@ -495,7 +515,7 @@ impl Harness {
             .create_review(NewReview {
                 task_id: task.id.clone(),
                 round: task.review_round,
-                reviewer_profile_id: reviewer.to_string(),
+                author: ReviewAuthor::Profile(reviewer.to_string()),
                 session_id: None,
                 verdict: ReviewVerdict::Approve,
                 body: Some("looks right".into()),
@@ -514,6 +534,17 @@ impl Harness {
             StatusCode::OK,
         )
         .await
+    }
+
+    /// How many of the thread's messages an agent wrote naming `text` — the
+    /// count that says the daemon's notice is not doubled by one an agent was
+    /// briefed to write.
+    async fn agent_messages_naming(&self, task_id: &str, text: &str) -> usize {
+        self.thread_messages(task_id)
+            .await
+            .into_iter()
+            .filter(|m| m.author_session_id.is_some() && m.body.contains(text))
+            .count()
     }
 
     /// The messages of the task thread that are addressed to the user.
@@ -650,7 +681,9 @@ async fn a_pull_request_is_watched_from_publication_to_its_merge() {
 
     // Recording it is what tells the user there is one, rather than anything
     // the agent has to remember to say: nothing in Ariadne merges a pull
-    // request, so the person who does hears about it as it is opened.
+    // request, so the person who does hears about it as it is opened. Once,
+    // and by the daemon — the briefing does not also ask the integrator to
+    // announce the URL.
     let opened = h.user_messages(&task.id).await;
     assert_eq!(opened.len(), 1);
     assert!(opened[0].body.contains(PR_URL), "{}", opened[0].body);
@@ -659,15 +692,23 @@ async fn a_pull_request_is_watched_from_publication_to_its_merge() {
         "{}",
         opened[0].body
     );
-    assert_eq!(
+    assert_eq!(h.agent_messages_naming(&task.id, PR_URL).await, 0);
+    assert!(
+        !h.launched_argv(&integrator.id)
+            .contains("`post_message` it to the task thread"),
+        "the briefing asks the integrator to announce the URL as well"
+    );
+    // The notice goes up on the attention strip the same way every message
+    // addressed to the user does: the scheduler delivers it.
+    eventually("the pull request to go up for the user", async || {
         h.store
             .get_session(&integrator.id)
             .await
             .unwrap()
-            .attention_reason(),
-        Some(AttentionReason::WaitingInput),
-        "and it goes up on the attention strip the user reads it from"
-    );
+            .attention_reason()
+            == Some(AttentionReason::WaitingUser)
+    })
+    .await;
     h.goes_idle(&integrator.id).await;
 
     // An untouched pull request wakes nobody: the integrator is left idle
@@ -707,46 +748,44 @@ async fn a_pull_request_is_watched_from_publication_to_its_merge() {
         "{}",
         notice[1].body
     );
-    assert_eq!(
+    eventually("the approval to go up for the user", async || {
         h.store
             .get_session(&integrator.id)
             .await
             .unwrap()
-            .attention_reason(),
-        Some(AttentionReason::WaitingInput),
-        "and it is on the attention strip the user reads it from"
-    );
+            .attention_reason()
+            == Some(AttentionReason::WaitingUser)
+    })
+    .await;
     // Polled again and again, it is still those two.
     for _ in 0..3 {
         h.notify(&task.id);
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert_eq!(h.user_messages(&task.id).await.len(), 2);
+    assert_eq!(h.agent_messages_naming(&task.id, PR_URL).await, 0);
 
-    // The message is said once; the flag is put back as often as it takes.
-    // An agent's own events take attention down as it works — which is what
-    // happened to every flag raised while the integrator was still publishing
-    // — so a poll that finds the request open, unmerged and nobody's but the
-    // user's raises it again.
+    // The flag is the user's to take down, and it stays down: the approval
+    // was announced once, and a poll that finds the same quiet, approved
+    // request is not a second announcement of it.
     h.store
         .clear_session_attention(&integrator.id)
         .await
         .unwrap();
-    h.notify(&task.id);
-    eventually("the attention flag to go back up", async || {
+    for _ in 0..3 {
+        h.notify(&task.id);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(
         h.store
             .get_session(&integrator.id)
             .await
             .unwrap()
-            .attention_reason()
-            == Some(AttentionReason::WaitingInput)
-    })
-    .await;
-    assert_eq!(
-        h.user_messages(&task.id).await.len(),
-        2,
-        "and no message goes with it"
+            .attention_reason(),
+        None,
+        "a quiet poll raised the approval the user had already dealt with"
     );
+    assert_eq!(h.user_messages(&task.id).await.len(), 2);
 
     // Merging is not the integrator's to claim while GitHub says otherwise.
     let branch_tip = out(&h.repo_path(), &format!("git rev-parse {}", task.branch));
@@ -906,12 +945,19 @@ async fn pull_request_comments_reach_the_engineer_once_each() {
         "### maria commented on src/lane.rs:7",
         "> and this name is wrong",
         "request_review",
+        // Under the name of what the humans wrote on, never the integrator's:
+        // the round was relayed off GitHub, not written by an agent.
+        "### From Pull request #12 on GitHub",
     ] {
         assert!(
             argv.contains(quoted),
             "the briefing has no {quoted}: {argv}"
         );
     }
+    assert!(
+        !argv.contains("From Integrator"),
+        "the humans' comments wear the integrator's name: {argv}"
+    );
 
     // The daemon took the task off its integrator itself, saying why.
     let sent_back_by_the_daemon = h
@@ -941,6 +987,11 @@ async fn pull_request_comments_reach_the_engineer_once_each() {
         .collect();
     assert_eq!(sent_back.len(), 1, "one send-back for one poll");
     assert_eq!(sent_back[0].session_id, None);
+    assert_eq!(
+        sent_back[0].reviewer_profile_id, None,
+        "the relay was recorded under a profile's name"
+    );
+    assert_eq!(sent_back[0].author_role.as_deref(), Some("forge"));
     let body = sent_back[0].body.clone().unwrap();
     for quoted in [
         PR_URL,
@@ -1051,10 +1102,11 @@ async fn pull_request_comments_reach_the_engineer_once_each() {
         "the round wanted a review row of its own"
     );
     assert!(
-        h.thread_messages(&task.id).await.iter().any(|m| m
+        !h.thread_messages(&task.id).await.iter().any(|m| m
             .body
             .contains("is published, so the humans reviewing it are this round's reviewers")),
-        "the task's conversation does not say why the round was approved"
+        "the reason the round was approved is written twice: once as the \
+         transition's own and once into the thread"
     );
 
     // And what the integrator was woken with: push the revision to the same
@@ -1138,9 +1190,9 @@ async fn pull_request_comments_reach_the_engineer_once_each() {
 /// messages the user gets out of it, one from the integrator with the replies
 /// in it and one from the daemon when GitHub says the request is approved.
 ///
-/// Three in the thread altogether, the first being the notice the pull
-/// request was opened at all, which is written as it is recorded and belongs
-/// to no round.
+/// Four in the thread altogether: the notice the pull request was opened at
+/// all, which is written as it is recorded and belongs to no round, and the
+/// one the merge ends the task with.
 #[tokio::test]
 async fn a_published_round_pushes_the_replies_and_addresses_the_user_twice() {
     let h = harness().await;
@@ -1219,6 +1271,8 @@ async fn a_published_round_pushes_the_replies_and_addresses_the_user_twice() {
     )
     .await;
     h.goes_idle(&integrator.id).await;
+    // Two so far: the notice the daemon wrote when the request was opened,
+    // before this round began, and the replies the integrator just handed on.
     let told = h.user_messages(&task.id).await;
     assert_eq!(told.len(), 2, "{told:?}");
     assert!(told[1].body.contains(REPLIES), "{}", told[1].body);
@@ -1277,11 +1331,15 @@ async fn a_published_round_pushes_the_replies_and_addresses_the_user_twice() {
         )
         .await;
     assert_eq!(landed.status, TaskStatus::Merged);
-    assert_eq!(
-        h.user_messages(&task.id).await.len(),
-        3,
-        "the round addressed the user more than twice"
-    );
+    // The round itself addressed the user exactly twice — the replies and the
+    // approval — on top of the notice the publication wrote. The merge adds
+    // the last one: a task that ended says so, naming what it landed as.
+    eventually("the user to be told the task is merged", async || {
+        h.user_messages(&task.id).await.len() == 4
+    })
+    .await;
+    let told = h.user_messages(&task.id).await;
+    assert!(told[3].body.contains(&squash), "{}", told[3].body);
 }
 
 /// The same on a daemon that restarted: a published request with comments

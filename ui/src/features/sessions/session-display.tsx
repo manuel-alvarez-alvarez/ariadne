@@ -90,7 +90,7 @@ interface SessionAttentionMeta {
  * The warm half of the ramp throughout — every one of these is something gone
  * wrong or something waiting — with the one that ended the agent's work
  * (`agent_error`) and the one that lost it (`disconnected`) on the danger
- * step, and the three it can still be talked out of on the warn step.
+ * step, and the four it can still be talked out of on the warn step.
  *
  * `crates/ariadne-cli/src/commands/attention.rs` spells the same reasons for
  * the terminal; the wording there is these labels, lowercased.
@@ -105,6 +105,12 @@ export const SESSION_ATTENTION_META: Record<SessionAttention, SessionAttentionMe
   waiting_input: {
     label: "Waiting for input",
     hint: "The agent asked a question and is idle until it is answered.",
+    badge: "bg-status-warn-soft text-status-warn-fg",
+    border: "border-status-warn/40",
+  },
+  waiting_user: {
+    label: "Waiting for you",
+    hint: "Something only you can do: a message addressed to you, or a published request that is yours to merge.",
     badge: "bg-status-warn-soft text-status-warn-fg",
     border: "border-status-warn/40",
   },

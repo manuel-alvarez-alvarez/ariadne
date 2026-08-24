@@ -15,6 +15,7 @@ pub mod launcher;
 pub mod logbuf;
 pub mod logtail;
 pub mod logwatch;
+pub mod notify;
 pub mod opencode_plugin;
 pub mod scheduler;
 pub mod sleep;

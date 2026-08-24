@@ -15,8 +15,8 @@ use ariadne_core::{
     TaskStatus,
 };
 use ariadne_store::{
-    AgentSession, Message, NewMessage, NewReview, Recipient, Repository, SessionFilter, Store,
-    Task, TaskFilter,
+    AgentSession, Message, NewMessage, NewReview, Recipient, Repository, ReviewAuthor,
+    SessionFilter, Store, Task, TaskFilter,
 };
 
 use crate::agents::prompts;
@@ -25,6 +25,7 @@ use crate::forge::{self, Conflict, FailedCheck, Feedback, Forge, PrState, Watche
 use crate::gh;
 use crate::glab;
 use crate::launcher::Launcher;
+use crate::notify;
 use crate::sleep::SleepInhibitor;
 
 /// Events that wake the scheduler for a scoped reconciliation.
@@ -490,9 +491,16 @@ impl Scheduler {
                     && tasks.iter().any(|t| t.status() == TaskStatus::Merged);
                 if all_merged {
                     info!(goal = %goal.id, "all tasks merged, goal completed");
-                    self.store
+                    let goal = self
+                        .store
                         .set_goal_status(&goal.id, GoalStatus::Completed)
                         .await?;
+                    // Before the planner is killed with the rest, so that the
+                    // thread it was held in says how it ended rather than
+                    // simply stopping.
+                    if let Err(e) = notify::goal_completed(&self.store, &goal).await {
+                        warn!(goal = %goal.id, error = %e, "writing the goal's last message failed");
+                    }
                     self.kill_goal_sessions(&goal.id).await;
                 }
             }
@@ -508,7 +516,7 @@ impl Scheduler {
                     .await?
                 {
                     if !task.status().is_terminal() && task.status() != TaskStatus::Failed {
-                        let _ = self
+                        let cancelled = self
                             .store
                             .transition_task(
                                 &task.id,
@@ -518,6 +526,9 @@ impl Scheduler {
                                 None,
                             )
                             .await;
+                        if let Ok(task) = cancelled {
+                            self.announce_ending(&task, Some("goal cancelled")).await;
+                        }
                     }
                     let _ = self.launcher.cleanup_task(&task.id, false, false).await;
                 }
@@ -578,16 +589,20 @@ impl Scheduler {
         *failures += 1;
         if *failures >= SPAWN_RETRY_BUDGET {
             warn!(task = %task_id, failures, "retry budget exhausted, failing task");
-            let _ = self
+            let reason = "the agent could not be started";
+            if let Ok(task) = self
                 .store
                 .transition_task(
                     task_id,
                     TaskStatus::Failed,
                     Actor::Daemon,
-                    Some("spawn retry budget exhausted"),
+                    Some(reason),
                     None,
                 )
-                .await;
+                .await
+            {
+                self.announce_ending(&task, Some(reason)).await;
+            }
             self.spawn_failures.remove(task_id);
         }
     }
@@ -728,7 +743,7 @@ impl Scheduler {
                 // the briefing it is woken with.
                 let verdict_by: std::collections::HashSet<_> = reviews
                     .iter()
-                    .map(|r| r.reviewer_profile_id.clone())
+                    .filter_map(|r| r.reviewer_profile_id.clone())
                     .collect();
                 let pending: Vec<String> = reviewers
                     .into_iter()
@@ -737,7 +752,7 @@ impl Scheduler {
                 if pending.is_empty() {
                     return Ok(());
                 }
-                let summary = self.launcher.engineer_summary(&task.id).await?;
+                let summary = self.store.review_summary(&task.id).await?;
                 for profile_id in pending {
                     let live = self
                         .store
@@ -810,15 +825,31 @@ impl Scheduler {
                 // Who asked, as the engineer reads it: the profile's own name
                 // and role, since a round can also be closed by the integrator
                 // sending the task back. The id is the fallback for a profile
-                // that has since been deleted.
+                // that has since been deleted. A round the daemon relayed from
+                // a published request has no profile behind it at all — it is
+                // named after the request the humans wrote on, whose comments
+                // carry their own names inside it.
                 let mut feedback: Vec<(String, String)> = Vec::new();
                 for review in reviews
                     .iter()
                     .filter(|r| r.verdict() == ReviewVerdict::RequestChanges)
                 {
-                    let who = match self.store.get_profile(&review.reviewer_profile_id).await {
-                        Ok(profile) => format!("{} ({})", profile.name, profile.role),
-                        Err(_) => format!("reviewer {}", review.reviewer_profile_id),
+                    let who = match review.author() {
+                        ReviewAuthor::Profile(profile_id) => {
+                            match self.store.get_profile(&profile_id).await {
+                                Ok(profile) => format!("{} ({})", profile.name, profile.role),
+                                Err(_) => format!("reviewer {profile_id}"),
+                            }
+                        }
+                        ReviewAuthor::Role(AuthorRole::Forge) => {
+                            match forge::watched_pull_request(&task) {
+                                Some(watched) => {
+                                    format!("{} on {}", watched.label(), watched.forge.name())
+                                }
+                                None => "the published request".to_string(),
+                            }
+                        }
+                        ReviewAuthor::Role(role) => role.as_str().to_string(),
                     };
                     feedback.push((
                         who,
@@ -845,6 +876,26 @@ impl Scheduler {
             }
             TaskStatus::Approved => {
                 info!(task = %task.id, "approved: handing the task to its integrator");
+                // The engineer is about to lose its worktree and its session
+                // with it — the integrator checks the branch out. A line in
+                // the thread is what it costs to have that happen to an agent
+                // that was told why: addressed to nobody, so nothing is woken
+                // for it.
+                let _ = self
+                    .store
+                    .create_message(NewMessage {
+                        goal_id: task.goal_id.clone(),
+                        task_id: Some(task.id.clone()),
+                        author_role: AuthorRole::System,
+                        author_session_id: None,
+                        recipient: None,
+                        body: format!(
+                            "Round {} of \"{}\" is approved. Its integrator takes the \
+                             branch from here, and the engineer's worktree with it.",
+                            task.review_round, task.title,
+                        ),
+                    })
+                    .await;
                 self.store
                     .transition_task(&task.id, TaskStatus::Integrating, Actor::Daemon, None, None)
                     .await?;
@@ -1117,35 +1168,21 @@ impl Scheduler {
         // task being integrated keeps an agent on it, started here when a
         // restart or a send-back left none. That is what pushes the next
         // revision to the request, and what a merge is finished by.
-        let Some(integrator) = self.live_integrator(task, integrator).await? else {
+        if self.live_integrator(task, integrator).await?.is_none() {
             // A task back from the engineer, or a daemon that restarted: the
             // integrator is started with its resume briefing, which tells it
             // to update the review it already opened.
             return Ok(());
-        };
+        }
         match poll.state {
             // Handled above, every one of them the engineer's.
             PrState::Feedback(_) | PrState::Conflicting(_) | PrState::ChecksFailed(_) => {}
-            // A quiet review asks nothing of the integrator, and something of
-            // the user whenever nothing but a person stands between the
-            // request and its merge. They were told that once — when the
-            // request was opened, or when it was approved — but the flag they
-            // read it from does not stay up on its own: an agent's own events
-            // take attention back down as it works, and the integrator was
-            // still mid-turn when the request was recorded. So every poll
-            // raises it again for as long as the request is open and theirs:
-            // a no-op once it is up, and never on an integrator that is
-            // working rather than waiting.
-            PrState::Quiet => {
-                if poll.approved == Some(true)
-                    && task.pr_approved_notified()
-                    && integrator.status() == SessionStatus::Idle
-                {
-                    self.store
-                        .set_session_attention(&integrator.id, AttentionReason::WaitingInput)
-                        .await?;
-                }
-            }
+            // A quiet review asks nothing of anybody. The user was told once
+            // that the request is theirs — when it was opened, and again when
+            // it was approved — and the flag that went up with each of those
+            // is theirs to take down: no agent event clears a `waiting_user`,
+            // so there is nothing here to put back.
+            PrState::Quiet => {}
             PrState::Merged => {
                 info!(task = %task.id, pr = number, "the review was merged; waking the integrator to finish the task");
                 self.launcher
@@ -1155,8 +1192,7 @@ impl Scheduler {
             }
             PrState::Approved => {
                 info!(task = %task.id, pr = number, "the review is approved; telling the user it is theirs to merge");
-                self.notify_pull_request_approved(task, &integrator, watched)
-                    .await?;
+                self.notify_pull_request_approved(task, watched).await?;
             }
         }
         Ok(())
@@ -1168,13 +1204,11 @@ impl Scheduler {
     /// The daemon polled the comments and has them in hand: relaying them
     /// through the integrator would be a turn spent copying them from one
     /// forge into the other end of the same database, and a turn is a place
-    /// a relay can go wrong. So the send-back is written here, in the rows
-    /// `return_to_engineer` writes for the integrator's own send-backs — a
-    /// change request on the round the pull request was published from,
-    /// attributed to the integrator profile that published it — and the
-    /// engineer is resumed with it by the `changes_requested` arm like any
-    /// other round of feedback. Its worktree is checked out again as it
-    /// resumes, which is what releases the integrator's hold on the branch.
+    /// a relay can go wrong. So the send-back is written by the daemon itself
+    /// ([`Self::relay_to_engineer`]), and the engineer is resumed with it by
+    /// the `changes_requested` arm like any other round of feedback. Its
+    /// worktree is checked out again as it resumes, which is what releases
+    /// the integrator's hold on the branch.
     ///
     /// The order is the send-back's: the feedback is recorded before the
     /// transition, so the engineer the scheduler resumes on it has it to
@@ -1203,6 +1237,13 @@ impl Scheduler {
     /// `ids` are what the poll read it from, remembered on the task so that
     /// the same comment, the same conflict and the same failing check are one
     /// round of changes rather than one per poll.
+    ///
+    /// The row is one of the ones `return_to_engineer` writes for the
+    /// integrator's own send-backs — a change request on the round the
+    /// request was published from — but under the forge's own name rather
+    /// than any profile's: what it carries is what the people reading the
+    /// request wrote, or what their checks said, and no agent of ours has
+    /// read a word of it.
     async fn relay_to_engineer(
         &mut self,
         task: &Task,
@@ -1214,7 +1255,7 @@ impl Scheduler {
             .create_review(NewReview {
                 task_id: task.id.clone(),
                 round: task.review_round,
-                reviewer_profile_id: task.integrator_profile_id.clone(),
+                author: ReviewAuthor::Role(AuthorRole::Forge),
                 session_id: None,
                 verdict: ReviewVerdict::RequestChanges,
                 body: Some(body),
@@ -1246,10 +1287,9 @@ impl Scheduler {
     /// is waiting for — so the round is closed here instead, with no reviewer
     /// started and no review row wanted.
     ///
-    /// It is written down twice, because the two records are read by
-    /// different people: the transition's own reason is the audit entry, and
-    /// the message is what a human scrolling the task's conversation sees.
-    /// Neither addresses anybody — the round is decided, not announced.
+    /// Written down once, on the transition that closes the round: the round
+    /// was decided, not announced, and the reason a transition carries is
+    /// what both the audit and the task's history tab read it from.
     async fn approve_published_revision(
         &self,
         task: &Task,
@@ -1257,23 +1297,6 @@ impl Scheduler {
     ) -> anyhow::Result<()> {
         let label = watched.label();
         info!(task = %task.id, pr = watched.number, round = task.review_round, "the revision answers a published request: approving it without an internal review round");
-        self.store
-            .create_message(NewMessage {
-                goal_id: task.goal_id.clone(),
-                task_id: Some(task.id.clone()),
-                author_role: AuthorRole::System,
-                author_session_id: None,
-                recipient: None,
-                body: format!(
-                    "{label} ({url}) is published, so the humans reviewing it are this \
-                     round's reviewers: round {round} is approved without an internal \
-                     review, and the integrator pushes the revision to the request with \
-                     the engineer's replies.",
-                    url = watched.url,
-                    round = task.review_round,
-                ),
-            })
-            .await?;
         self.store
             .transition_task(
                 &task.id,
@@ -1434,15 +1457,15 @@ impl Scheduler {
     }
 
     /// Tell the user their pull request is ready to merge: a message in the
-    /// task thread addressed to them, and the flag that puts the integrator's
-    /// session on the attention strip they read it from.
+    /// task thread addressed to them, which the delivery path puts on the
+    /// attention strip they read it from.
     ///
     /// Once per approval — `pr_approved_notified` is what says it has been
-    /// done, and it is written before the flag so a failure repeats nothing.
+    /// done, and it is written before the message so a failure repeats
+    /// nothing.
     async fn notify_pull_request_approved(
-        &self,
+        &mut self,
         task: &Task,
-        integrator: &AgentSession,
         watched: &WatchedPr,
     ) -> anyhow::Result<()> {
         self.store
@@ -1450,7 +1473,8 @@ impl Scheduler {
             .await?;
         let noun = watched.forge.noun();
         let where_ = task.pr_url.clone().unwrap_or_else(|| watched.label());
-        self.store
+        let msg = self
+            .store
             .create_message(NewMessage {
                 goal_id: task.goal_id.clone(),
                 task_id: Some(task.id.clone()),
@@ -1465,9 +1489,7 @@ impl Scheduler {
                 ),
             })
             .await?;
-        self.store
-            .set_session_attention(&integrator.id, AttentionReason::WaitingInput)
-            .await?;
+        self.deliver_message(&msg.id).await;
         Ok(())
     }
 
@@ -1489,7 +1511,7 @@ impl Scheduler {
                         &watched,
                         task,
                         &repo,
-                        self.launcher.engineer_summary(&task.id).await?.as_deref(),
+                        self.store.review_summary(&task.id).await?.as_deref(),
                     ),
                     None => {
                         let profile = self.launcher.integrator_profile(task).await?;
@@ -1941,20 +1963,76 @@ impl Scheduler {
         Ok(())
     }
 
+    /// Tell the user a task the daemon itself ended is over, and deliver it
+    /// the way the HTTP path delivers its own.
+    ///
+    /// Best effort on both halves: a notice that cannot be written is not a
+    /// reason to leave the transition half-made, and the ending is in the
+    /// task's status either way.
+    async fn announce_ending(&mut self, task: &Task, reason: Option<&str>) {
+        match notify::task_ended(&self.store, task, reason).await {
+            Ok(Some(message)) => self.deliver_message(&message.id).await,
+            Ok(None) => {}
+            Err(e) => {
+                warn!(task = %task.id, error = %e, "telling the user the task ended failed")
+            }
+        }
+    }
+
     /// A message for the human, which no agent is woken for: it goes up the
     /// attention path the UI strip and `ariadne attention` already show, on
     /// the session of the agent that wrote it — the session the user answers
     /// in, and the one place the message can be traced back to.
+    ///
+    /// This is the only place a message addressed to the user raises
+    /// anything, whoever wrote it: what the daemon says to the user — a pull
+    /// request opened, an approval, a task that ended — travels as a message
+    /// like everything else and goes up here, rather than beside a
+    /// `create_message` call with a flag of its own.
     async fn raise_for_user(&self, message: &Message) -> anyhow::Result<()> {
-        let Some(session_id) = &message.author_session_id else {
-            // The user wrote to the user: nobody is waiting on an answer.
-            return Ok(());
+        let session_id = match &message.author_session_id {
+            Some(session_id) => session_id.clone(),
+            // Written by the daemon rather than by an agent, so there is no
+            // author's session to point at: the flag goes on the agent the
+            // task is with, which is the row its attention is read from. A
+            // task with nothing running, and a notice in a goal's thread,
+            // raise nothing — the message waits where it was written.
+            None => match self.session_the_task_is_with(message).await? {
+                Some(session) => session.id,
+                None => {
+                    info!(message = %message.id, "message addressed to the user with no session to raise it on; it waits in the thread");
+                    return Ok(());
+                }
+            },
         };
-        info!(message = %message.id, session = %session_id, "message addressed to the user, raising its author for them");
+        info!(message = %message.id, session = %session_id, "message addressed to the user, raising it for them");
         self.store
-            .set_session_attention(session_id, AttentionReason::WaitingInput)
+            .set_session_attention(&session_id, AttentionReason::WaitingUser)
             .await?;
         Ok(())
+    }
+
+    /// The live session a task's own notices are raised on: its integrator
+    /// while one is landing it, its engineer otherwise, and the most recent of
+    /// either.
+    async fn session_the_task_is_with(
+        &self,
+        message: &Message,
+    ) -> anyhow::Result<Option<AgentSession>> {
+        let Some(task_id) = &message.task_id else {
+            return Ok(None);
+        };
+        let sessions = self
+            .store
+            .list_sessions(SessionFilter {
+                task_id: Some(task_id.clone()),
+                live_only: true,
+                ..Default::default()
+            })
+            .await?;
+        Ok([Role::Integrator, Role::Engineer]
+            .into_iter()
+            .find_map(|role| sessions.iter().rev().find(|s| s.role() == role).cloned()))
     }
 
     /// A message for an agent: typed into its pane if it has one, and

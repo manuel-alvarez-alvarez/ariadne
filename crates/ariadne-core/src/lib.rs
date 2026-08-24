@@ -490,6 +490,12 @@ pub enum AttentionReason {
     WaitingPermission,
     /// The agent asked the user something and is idle until answered.
     WaitingInput,
+    /// Something addressed to the user that no agent can do for them:
+    /// a message written to them, a published request that is theirs to
+    /// merge. Raised on the session the work is with, since that is the row
+    /// the task's attention is read from — but not by that agent and not the
+    /// agent's to take down, which is what tells it apart from the two above.
+    WaitingUser,
     /// The agent reported an error (API error, crash, `session.error`).
     AgentError,
     /// Tmux session or agent process gone while its work is still active.
@@ -499,9 +505,10 @@ pub enum AttentionReason {
 }
 
 impl AttentionReason {
-    pub const ALL: [AttentionReason; 5] = [
+    pub const ALL: [AttentionReason; 6] = [
         AttentionReason::WaitingPermission,
         AttentionReason::WaitingInput,
+        AttentionReason::WaitingUser,
         AttentionReason::AgentError,
         AttentionReason::Disconnected,
         AttentionReason::Stalled,
@@ -512,8 +519,8 @@ impl AttentionReason {
     /// Only a live session can be sitting on one: a permission prompt and a
     /// question are things somebody types an answer into, and a pane that is
     /// gone has neither. The other reasons are the ones a session ends
-    /// *carrying* — an error it reported, a disconnect, a stall — and they
-    /// stay true after the agent has stopped.
+    /// *carrying* — an error it reported, a disconnect, a stall, something
+    /// left for the user — and they stay true after the agent has stopped.
     pub fn is_prompt(&self) -> bool {
         matches!(
             self,
@@ -525,6 +532,7 @@ impl AttentionReason {
         match self {
             AttentionReason::WaitingPermission => "waiting_permission",
             AttentionReason::WaitingInput => "waiting_input",
+            AttentionReason::WaitingUser => "waiting_user",
             AttentionReason::AgentError => "agent_error",
             AttentionReason::Disconnected => "disconnected",
             AttentionReason::Stalled => "stalled",
@@ -582,16 +590,22 @@ pub enum AuthorRole {
     Integrator,
     User,
     System,
+    /// The forge a task was published to: what the people reading a pull or
+    /// merge request wrote there, relayed by the daemon. Not an Ariadne agent
+    /// and not one of the task's profiles — the humans on the request, under
+    /// the name of the thing they wrote on.
+    Forge,
 }
 
 impl AuthorRole {
-    pub const ALL: [AuthorRole; 6] = [
+    pub const ALL: [AuthorRole; 7] = [
         AuthorRole::Planner,
         AuthorRole::Engineer,
         AuthorRole::Reviewer,
         AuthorRole::Integrator,
         AuthorRole::User,
         AuthorRole::System,
+        AuthorRole::Forge,
     ];
 
     pub fn as_str(&self) -> &'static str {
@@ -602,6 +616,7 @@ impl AuthorRole {
             AuthorRole::Integrator => "integrator",
             AuthorRole::User => "user",
             AuthorRole::System => "system",
+            AuthorRole::Forge => "forge",
         }
     }
 }

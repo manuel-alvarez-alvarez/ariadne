@@ -11,9 +11,9 @@ use ariadne_api::tasks::{
     CreateTaskRequest, RecordPullRequestRequest, ReturnToEngineerRequest, TaskDto, TaskListQuery,
     TaskTransitionDto, TransitionRequest, UpdateTaskRequest,
 };
-use ariadne_core::{Actor, AttentionReason, AuthorRole, ReviewVerdict, Role, TaskStatus};
+use ariadne_core::{Actor, AuthorRole, ReviewVerdict, Role, TaskStatus};
 use ariadne_store::{
-    NewMessage, NewReview, NewTask, Recipient, Store, Task, TaskFilter, TaskUpdate,
+    NewMessage, NewReview, NewTask, Recipient, ReviewAuthor, Store, Task, TaskFilter, TaskUpdate,
 };
 
 use super::AppState;
@@ -22,6 +22,7 @@ use super::convert::{message_dto_of, message_dtos, review_dto, task_dto, transit
 use super::error::{ApiError, ApiResult};
 use super::recipients;
 use crate::forge::{self, Forge};
+use crate::notify;
 
 async fn to_dto(store: &Store, task: Task) -> ApiResult<TaskDto> {
     let reviewers = store.list_task_reviewer_pins(&task.id).await?;
@@ -235,6 +236,12 @@ pub(crate) async fn apply_transition(
             req.merge_commit.as_deref(),
         )
         .await?;
+    // A task that ended is told to the user here, where every transition a
+    // person or an agent asks for goes through: `notify::task_ended` writes
+    // nothing for the statuses that are not endings.
+    if let Some(msg) = notify::task_ended(&state.store, &task, req.reason.as_deref()).await? {
+        state.notify_scheduler_message(&msg.id).await;
+    }
     state.notify_scheduler(task_id).await;
     Ok(task)
 }
@@ -372,7 +379,7 @@ pub async fn record_pull_request(
     let announce = task.pr_url.as_deref() != Some(url);
     state.store.set_task_pull_request(&id, number, url).await?;
     if announce {
-        announce_pull_request(&state, &ctx, &task, number, url).await?;
+        announce_pull_request(&state, &task, number, url).await?;
     }
     // The scheduler starts watching it on the next reconciliation rather than
     // on the poll interval, so the first look is immediate.
@@ -396,13 +403,11 @@ pub async fn record_pull_request(
 /// earlier. Where a review *is* required the poll reads it as not approved and
 /// clears the flag again, so the approval, when it comes, is still announced.
 ///
-/// The attention flag is raised here and again by every poll of the request
-/// ([`crate::scheduler`]): raised here it is the integrator's own next event
-/// that takes it down — `post_tool_use` on a live session clears attention,
-/// and this runs mid-turn, one tool call before the turn ends.
+/// The notice travels as a message like every other one: the scheduler
+/// delivers it, and delivering one addressed to the user is what raises the
+/// attention flag the strip shows. Nothing is flagged beside the write here.
 async fn announce_pull_request(
     state: &AppState,
-    ctx: &CallCtx,
     task: &Task,
     number: i64,
     url: &str,
@@ -430,7 +435,7 @@ async fn announce_pull_request(
                  integrator in this thread once it is merged."
             .to_string(),
     };
-    state
+    let msg = state
         .store
         .create_message(NewMessage {
             goal_id: task.goal_id.clone(),
@@ -448,12 +453,7 @@ async fn announce_pull_request(
         .store
         .set_task_pr_approved_notified(&task.id, true)
         .await?;
-    if let Some(session) = &ctx.session {
-        state
-            .store
-            .set_session_attention(&session.id, AttentionReason::WaitingInput)
-            .await?;
-    }
+    state.notify_scheduler_message(&msg.id).await;
     Ok(())
 }
 
@@ -641,7 +641,7 @@ pub async fn post_review(
         .create_review(NewReview {
             task_id: id.clone(),
             round: task.review_round,
-            reviewer_profile_id,
+            author: ReviewAuthor::Profile(reviewer_profile_id),
             session_id: ctx.session.map(|s| s.id),
             verdict: req.verdict,
             body: req.body,
@@ -698,7 +698,7 @@ pub async fn return_to_engineer(
         .create_review(NewReview {
             task_id: id.clone(),
             round: task.review_round,
-            reviewer_profile_id: session.profile_id.clone(),
+            author: ReviewAuthor::Profile(session.profile_id.clone()),
             session_id: Some(session.id.clone()),
             verdict: ReviewVerdict::RequestChanges,
             body: Some(feedback_body(&req)),

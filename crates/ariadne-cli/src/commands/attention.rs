@@ -56,6 +56,7 @@ enum Reason {
     Stalled,
     WaitingPermission,
     WaitingInput,
+    WaitingUser,
     AgentError,
     Disconnected,
 }
@@ -68,6 +69,7 @@ impl Reason {
             Reason::Stalled => "stalled",
             Reason::WaitingPermission => "waiting for permission",
             Reason::WaitingInput => "waiting for input",
+            Reason::WaitingUser => "waiting for you",
             Reason::AgentError => "agent error",
             Reason::Disconnected => "disconnected",
         }
@@ -95,6 +97,7 @@ impl From<AttentionReason> for Reason {
         match reason {
             AttentionReason::WaitingPermission => Reason::WaitingPermission,
             AttentionReason::WaitingInput => Reason::WaitingInput,
+            AttentionReason::WaitingUser => Reason::WaitingUser,
             AttentionReason::AgentError => Reason::AgentError,
             AttentionReason::Disconnected => Reason::Disconnected,
             AttentionReason::Stalled => Reason::Stalled,
@@ -488,6 +491,7 @@ mod tests {
                 Reason::WaitingPermission,
             ),
             (AttentionReason::WaitingInput, Reason::WaitingInput),
+            (AttentionReason::WaitingUser, Reason::WaitingUser),
             (AttentionReason::AgentError, Reason::AgentError),
             (AttentionReason::Disconnected, Reason::Disconnected),
             (AttentionReason::Stalled, Reason::Stalled),
@@ -670,6 +674,7 @@ mod tests {
         let flags = [
             (AttentionReason::WaitingPermission, "waiting for permission"),
             (AttentionReason::WaitingInput, "waiting for input"),
+            (AttentionReason::WaitingUser, "waiting for you"),
             (AttentionReason::AgentError, "agent error"),
             (AttentionReason::Disconnected, "disconnected"),
             (AttentionReason::Stalled, "stalled"),
