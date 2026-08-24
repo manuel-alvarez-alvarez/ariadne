@@ -1557,7 +1557,7 @@ fn delivery_text(message: &Message) -> String {
     };
     format!(
         "New message from the {author} in {thread}:\n\n{body}\n\n\
-         Read the rest with the `list_messages` MCP tool; answer with `post_message`.",
+         Read the rest with `list_messages`, answer with `post_message` — both MCP tools.",
         author = message.author_role().as_str(),
         body = message.body,
     )
@@ -1580,6 +1580,20 @@ mod tests {
             forge: Forge::GitLab,
             number: 12,
             url: "https://gitlab.com/owner/repo/-/merge_requests/12".into(),
+        }
+    }
+
+    fn delivery_message() -> Message {
+        Message {
+            id: "M1".into(),
+            goal_id: "G1".into(),
+            task_id: Some("T1".into()),
+            author_role: "planner".into(),
+            author_session_id: None,
+            recipient_kind: None,
+            recipient_profile_id: None,
+            body: "the scope grew: drop the second forge".into(),
+            created_at: "2026-01-01T00:00:00Z".into(),
         }
     }
 
@@ -1631,6 +1645,36 @@ mod tests {
             }],
         );
         assert!(one.contains("1 new comment to relay"), "{one}");
+    }
+
+    /// The delivery nudge carries the message itself, not a pointer to go
+    /// and read it, and names both tools it hands the woken agent as the MCP
+    /// tool calls they are.
+    #[test]
+    fn the_delivery_nudge_quotes_the_message_and_names_its_mcp_tools() {
+        let text = delivery_text(&delivery_message());
+        assert!(
+            text.contains("New message from the planner in your task conversation"),
+            "{text}"
+        );
+        assert!(
+            text.contains("the scope grew: drop the second forge"),
+            "{text}"
+        );
+        assert!(
+            text.contains("`list_messages`, answer with `post_message` — both MCP tools"),
+            "{text}"
+        );
+        assert!(!text.contains("  "), "{text}");
+
+        let planning = delivery_text(&Message {
+            task_id: None,
+            ..delivery_message()
+        });
+        assert!(
+            planning.contains("in the goal's planning thread"),
+            "{planning}"
+        );
     }
 
     #[test]
