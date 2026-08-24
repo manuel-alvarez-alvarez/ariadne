@@ -148,9 +148,10 @@ pub struct Task {
     pub pr_number: Option<i64>,
     /// Its URL, as the forge spells it; what says which forge it is on.
     pub pr_url: Option<String>,
-    /// Ids of the pull request comments already relayed to the engineer, as a
-    /// JSON array: what keeps a comment from being relayed twice as the
-    /// daemon polls.
+    /// Ids of what the pull request has already handed to the engineer — its
+    /// comments, its failing checks, its conflict with the base — as a JSON
+    /// array: what keeps one of them from being relayed twice as the daemon
+    /// polls.
     pub pr_relayed_comments: Option<String>,
     /// Whether the user has been told the pull request is approved and ready
     /// for them to merge, so they are told once rather than every poll.
@@ -166,8 +167,8 @@ impl Task {
     pub fn is_stalled(&self) -> bool {
         self.stalled != 0
     }
-    /// The comment ids already relayed to the engineer. Unreadable JSON reads
-    /// as none relayed: a comment repeated is better than one never delivered.
+    /// The ids already relayed to the engineer. Unreadable JSON reads as none
+    /// relayed: a comment repeated is better than one never delivered.
     pub fn pr_relayed_comments(&self) -> Vec<String> {
         self.pr_relayed_comments
             .as_deref()

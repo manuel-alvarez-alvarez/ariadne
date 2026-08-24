@@ -603,9 +603,10 @@ impl Store {
         self.publish_task_update(task_id, n).await
     }
 
-    /// Mark pull request comments as relayed to the engineer, adding to
-    /// whatever was relayed before: what keeps the daemon from relaying one
-    /// comment twice as it polls.
+    /// Mark what a poll of the pull request has handed to the engineer as
+    /// relayed — a comment, a failing check, a conflict with the base —
+    /// adding to whatever was relayed before: what keeps the daemon from
+    /// relaying the same one twice as it polls.
     pub async fn add_task_pr_relayed_comments(&self, task_id: &str, ids: &[String]) -> Result<()> {
         let task = self.get_task(task_id).await?;
         let mut relayed = task.pr_relayed_comments();
