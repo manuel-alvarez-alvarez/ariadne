@@ -1961,13 +1961,14 @@ async fn an_agent_that_wedges_after_every_relaunch_fails_its_task() {
 /// and the machine's sleep inhibitor open until the last task lands, so it is
 /// let go — and being gone is what is expected of it, not a disconnect.
 ///
-/// Gone, not unreachable: a task thread can still address its planner, and
-/// the message is what brings the session back on the conversation it was
+/// Gone, not unreachable: a task thread can still address its planner —
+/// whose session belongs to the goal rather than to that task — and the
+/// message is what brings the session back on the conversation it was
 /// having.
 #[tokio::test]
 async fn an_idle_planner_is_let_go_once_the_goal_leaves_planning() {
     let h = harness().await;
-    let (goal, _task, _engineer, _reviewer) = h.active_goal_with_task().await;
+    let (goal, task, engineer, _reviewer) = h.active_goal_with_task().await;
     // The planner's own cwd, which a revive needs to be there.
     std::fs::create_dir_all(h.dir.path().join("repo")).unwrap();
     let planner = h
@@ -1998,16 +1999,20 @@ async fn an_idle_planner_is_let_go_once_the_goal_leaves_planning() {
         "a planner that is done is expected to be gone, not reported disconnected"
     );
 
-    // And a message addressed to it still reaches it: the ended session is
-    // revived on the agent conversation it was having, which is the whole
-    // reason it is ended rather than kept alive.
+    // And the engineer of one of its tasks still reaches it, from a thread
+    // the planner has no session in: the ended session is revived on the
+    // agent conversation it was having, which is the whole reason it is ended
+    // rather than kept alive.
+    let engineer = h
+        .session(&goal, Some(&task), Role::Engineer, &engineer)
+        .await;
     let message = h
         .store
         .create_message(NewMessage {
             goal_id: goal.id.clone(),
-            task_id: None,
-            author_role: AuthorRole::User,
-            author_session_id: None,
+            task_id: Some(task.id.clone()),
+            author_role: AuthorRole::Engineer,
+            author_session_id: Some(engineer.id.clone()),
             recipient: Some(Recipient::Profile(goal.planner_profile_id.clone())),
             body: "Task three overlaps with task one; which of them owns the store?".into(),
         })
