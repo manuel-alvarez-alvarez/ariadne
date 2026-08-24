@@ -338,9 +338,9 @@ const INTEGRATION_RESUME: &str = r#"Pick the integration of "{task_title}" up ag
 
 Check what is open before you touch anything — `gh pr list --head {branch} --state all` on GitHub, `glab mr list --source-branch {branch} --all` on GitLab — then go on from your integration instructions: an open {noun} is the one to update, never a second one, and with none open the task is landed the way they say. Then end your turn.
 
-The engineer's summary of this revision is below. Where a {noun} is open it is its replies to the people reading it, and the one message you `post_message` to "user" carries it verbatim, so they can answer on the {noun} themselves.
+The summary below is the engineer's own account of this revision. Where a {noun} is open it is its replies to the people reading it, and the one message you `post_message` to "user" carries it verbatim, so they can answer on the {noun} themselves.
 
-## The engineer's summary, as it wrote it
+## The engineer's summary
 
 {summary}"#;
 
