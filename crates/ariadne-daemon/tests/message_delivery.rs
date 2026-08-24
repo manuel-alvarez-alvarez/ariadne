@@ -370,17 +370,19 @@ impl Harness {
     }
 
     /// The argv of the last launch of `session_id`, where a resumed agent's
-    /// instruction rides.
-    fn resume_argv(&self, session_id: &str) -> String {
+    /// instruction rides, or `None` while the launch has yet to write its
+    /// plan: the session is marked live the moment the resume starts, a while
+    /// before the spawn plan reaches the disk, so this is something to wait
+    /// for rather than to read once.
+    fn resume_argv(&self, session_id: &str) -> Option<String> {
         let path = self
             .launcher
             .cfg
             .run_dir
             .join(session_id)
             .join("spawn.json");
-        let raw = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
-        SpawnPlanFile::from_json(&raw).unwrap().argv.join(" ")
+        let raw = std::fs::read_to_string(&path).ok()?;
+        Some(SpawnPlanFile::from_json(&raw).unwrap().argv.join(" "))
     }
 
     async fn attention(&self, session: &AgentSession) -> Option<AttentionReason> {
@@ -463,15 +465,10 @@ async fn an_addressed_agent_whose_session_ended_is_resumed_with_the_message() {
     .await;
 
     eventually("the engineer to be resumed", async || {
-        h.store
-            .get_session(&engineer.id)
-            .await
-            .unwrap()
-            .status()
-            .is_live()
+        h.resume_argv(&engineer.id).is_some()
     })
     .await;
-    let argv = h.resume_argv(&engineer.id);
+    let argv = h.resume_argv(&engineer.id).unwrap();
     assert!(
         argv.contains("--resume uuid-1234"),
         "the same conversation, not a fresh one: {argv}"
