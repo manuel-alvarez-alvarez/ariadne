@@ -1004,8 +1004,10 @@ impl Scheduler {
     /// written, the integrator once it has been approved and is being landed.
     /// A task with no live session of that role gets one started; one that is
     /// idle too long gets exactly one tmux nudge per (status, round), and if it
-    /// stays idle the task is flagged stalled for the user (never an endless
-    /// loop) and the session says why.
+    /// stays idle its session is flagged for the user (never an endless loop).
+    /// The task shows that stall too, but nothing here writes it: the flag on
+    /// the session is the record of it, and the task's own column is the
+    /// store's projection of that (`sync_task_stall`).
     async fn check_stall(&mut self, task: &Task, role: Role) -> anyhow::Result<()> {
         let sessions = self
             .store
@@ -1030,17 +1032,8 @@ impl Scheduler {
         // gone quiet with the work still in front of it and one whose session
         // ended are in the same situation, and there is one text for it.
         let nudge = self.resume_text(task, role).await?;
-        let stalled = self
-            .check_session_stall(agent, (task.status.clone(), task.review_round), &nudge)
-            .await?;
-        // Whoever owns the task right now is the one role whose stall has
-        // somewhere else to show: the task carries a flag of its own, next to
-        // the session's.
-        if stalled && !task.is_stalled() {
-            warn!(task = %task.id, role = role.as_str(), "task stalled, flagging for user attention");
-            self.store.set_task_stalled(&task.id, true).await?;
-        }
-        Ok(())
+        self.check_session_stall(agent, (task.status.clone(), task.review_round), &nudge)
+            .await
     }
 
     /// Watch the pull or merge request a task was published as, and wake
@@ -1853,8 +1846,7 @@ impl Scheduler {
     /// remedies. An idle agent finished a turn and stopped: it is measured
     /// against the stall thresholds below — a single nudge at
     /// [`STALL_NUDGE_SECS`], and at [`STALL_FLAG_SECS`] the session is raised
-    /// for the user. Returns whether it crossed that second threshold, which
-    /// is all the caller needs to decide about the work itself. A running one
+    /// for the user. A running one
     /// that never started a turn is stuck holding its instruction, and what
     /// that needs is a keystroke rather than another message — see
     /// [`Self::check_unstarted_turn`], which has thresholds of its own and
@@ -1867,13 +1859,13 @@ impl Scheduler {
         session: &AgentSession,
         key: (String, i64),
         nudge: &str,
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<()> {
         if session.status() == SessionStatus::Running {
             self.check_unstarted_turn(session).await?;
-            return Ok(false);
+            return Ok(());
         }
         if session.status() != SessionStatus::Idle {
-            return Ok(false);
+            return Ok(());
         }
         // An agent waiting on a person is not stalled, it is blocked, and the
         // attention entry already says so. Nudging it would type into whatever
@@ -1883,13 +1875,13 @@ impl Scheduler {
             session.attention_reason(),
             Some(AttentionReason::WaitingPermission | AttentionReason::WaitingInput)
         ) {
-            return Ok(false);
+            return Ok(());
         }
         let Some(last) = &session.last_activity_at else {
-            return Ok(false);
+            return Ok(());
         };
         let Ok(last) = chrono::DateTime::parse_from_rfc3339(last) else {
-            return Ok(false);
+            return Ok(());
         };
         // A confirmed delivery is the freshest thing that happened to this
         // agent, and it is a nudge in its own right: whichever of the two is
@@ -1907,7 +1899,7 @@ impl Scheduler {
             self.store
                 .set_session_attention(&session.id, AttentionReason::Stalled)
                 .await?;
-            return Ok(true);
+            return Ok(());
         }
         if idle_secs >= STALL_NUDGE_SECS && !already_nudged {
             // A pane already being typed into is being nudged by that: this
@@ -1923,7 +1915,7 @@ impl Scheduler {
             self.nudged.insert(session.id.clone(), key);
             self.spawn_delivery(session, nudge.to_string(), None);
         }
-        Ok(false)
+        Ok(())
     }
 
     /// One launched agent that never started its turn: an Enter at

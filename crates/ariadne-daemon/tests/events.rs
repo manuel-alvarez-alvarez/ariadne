@@ -447,7 +447,10 @@ async fn sse_stream_task_filter_excludes_other_tasks() {
         .set_goal_status(&goal.id, GoalStatus::Cancelled)
         .await
         .unwrap();
-    h.store.set_task_stalled(&task.id, true).await.unwrap();
+    h.store
+        .set_task_worktree(&task.id, Some("/tmp/wt"))
+        .await
+        .unwrap();
 
     let message = next_sse_message(&mut body).await;
     assert!(
@@ -459,7 +462,7 @@ async fn sse_stream_task_filter_excludes_other_tasks() {
         .find_map(|l| l.strip_prefix("data: "))
         .unwrap();
     let payload: serde_json::Value = serde_json::from_str(data).unwrap();
-    assert_eq!(payload["task"]["stalled"], true);
+    assert_eq!(payload["task"]["worktree_path"], "/tmp/wt");
 }
 
 #[tokio::test]
