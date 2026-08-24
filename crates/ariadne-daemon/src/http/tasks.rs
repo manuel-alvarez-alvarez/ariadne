@@ -22,6 +22,7 @@ use super::convert::{message_dto_of, message_dtos, review_dto, task_dto, transit
 use super::error::{ApiError, ApiResult};
 use super::recipients;
 use crate::forge::{self, Forge};
+use crate::notify;
 
 async fn to_dto(store: &Store, task: Task) -> ApiResult<TaskDto> {
     let reviewers = store.list_task_reviewer_pins(&task.id).await?;
@@ -235,6 +236,12 @@ pub(crate) async fn apply_transition(
             req.merge_commit.as_deref(),
         )
         .await?;
+    // A task that ended is told to the user here, where every transition a
+    // person or an agent asks for goes through: `notify::task_ended` writes
+    // nothing for the statuses that are not endings.
+    if let Some(msg) = notify::task_ended(&state.store, &task, req.reason.as_deref()).await? {
+        state.notify_scheduler_message(&msg.id).await;
+    }
     state.notify_scheduler(task_id).await;
     Ok(task)
 }

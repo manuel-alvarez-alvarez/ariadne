@@ -1346,8 +1346,14 @@ async fn a_published_round_pushes_the_replies_and_addresses_the_user_twice() {
         .await;
     assert_eq!(landed.status, TaskStatus::Merged);
     // The round itself addressed the user exactly twice — the replies and the
-    // approval — on top of the notice the publication wrote.
-    assert_eq!(h.user_messages(&task.id).await.len(), 3);
+    // approval — on top of the notice the publication wrote. The merge adds
+    // the last one: a task that ended says so, naming what it landed as.
+    eventually("the user to be told the task is merged", async || {
+        h.user_messages(&task.id).await.len() == 4
+    })
+    .await;
+    let told = h.user_messages(&task.id).await;
+    assert!(told[3].body.contains(&squash), "{}", told[3].body);
 }
 
 /// The same on a daemon that restarted: a published request with notes

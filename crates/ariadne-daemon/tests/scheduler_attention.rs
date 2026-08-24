@@ -37,7 +37,8 @@ use ariadne_daemon::launcher::Launcher;
 use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_daemon::tmux::{TmuxManager, session_name};
 use ariadne_store::{
-    AgentSession, Goal, NewAgentEvent, NewGoal, NewMessage, NewProfile, NewRepository, NewReview,
+    AgentSession, Goal, Message, NewAgentEvent, NewGoal, NewMessage, NewProfile, NewRepository,
+    NewReview,
     NewSession, NewTask, Recipient, ReviewAuthor, SessionFilter, Store, Task,
 };
 
@@ -417,6 +418,17 @@ impl Harness {
             .await
             .unwrap()
             .attention_reason()
+    }
+
+    /// What a task's thread said to the user, in the order it was said.
+    async fn user_messages(&self, task: &Task) -> Vec<Message> {
+        self.store
+            .list_task_messages(&task.id, None, 100)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|m| m.recipient() == Some(Recipient::User))
+            .collect()
     }
 }
 
@@ -1488,4 +1500,116 @@ async fn a_delivered_message_stands_in_for_the_stall_nudge() {
         !h.store.get_task(&task.id).await.unwrap().is_stalled(),
         "nor was its task"
     );
+}
+
+/// A task nothing could be started for is a task nobody is coming back to:
+/// the retry budget runs out, and the user is told once, in the task's own
+/// thread, what stopped it.
+#[tokio::test]
+async fn a_task_that_could_never_be_started_tells_the_user_it_failed() {
+    let h = cannot_spawn_harness().await;
+    let (_goal, task, _engineer, _reviewer) = h.active_goal_with_task().await;
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    eventually("the retry budget to run out", async || {
+        sched.send(SchedEvent::TaskChanged(task.id.clone())).unwrap();
+        h.store.get_task(&task.id).await.unwrap().status() == TaskStatus::Failed
+    })
+    .await;
+
+    // Said once, however many passes ask about a task that has already ended.
+    for _ in 0..3 {
+        sched.send(SchedEvent::TaskChanged(task.id.clone())).unwrap();
+    }
+    eventually("the failure to reach the user", async || {
+        h.user_messages(&task).await.len() == 1
+    })
+    .await;
+    let told = h.user_messages(&task).await;
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert_eq!(told[0].author_role(), AuthorRole::System);
+    assert!(told[0].body.contains(&task.title), "{}", told[0].body);
+    assert!(
+        told[0].body.contains("the agent could not be started"),
+        "the notice does not say what stopped it: {}",
+        told[0].body
+    );
+}
+
+/// A goal the user cancelled takes its tasks with it, and every one of them
+/// says so where it happened: a cancelled task is not a task that quietly
+/// stopped.
+#[tokio::test]
+async fn a_cancelled_goal_tells_the_user_of_every_task_it_took_with_it() {
+    let h = cannot_spawn_harness().await;
+    let (goal, task, engineer, reviewer) = h.active_goal_with_task().await;
+    let second = h.extra_task(&goal, &engineer, &reviewer, "the other one").await;
+    h.store
+        .set_goal_status(&goal.id, GoalStatus::Cancelled)
+        .await
+        .unwrap();
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    for _ in 0..3 {
+        sched.send(SchedEvent::GoalChanged(goal.id.clone())).unwrap();
+    }
+    for task in [&task, &second] {
+        eventually("the task to be cancelled and said so", async || {
+            h.store.get_task(&task.id).await.unwrap().status() == TaskStatus::Cancelled
+                && !h.user_messages(task).await.is_empty()
+        })
+        .await;
+        let told = h.user_messages(task).await;
+        assert_eq!(told.len(), 1, "{told:?}");
+        assert!(told[0].body.contains(&task.title), "{}", told[0].body);
+        assert!(told[0].body.contains("goal cancelled"), "{}", told[0].body);
+    }
+}
+
+/// And a goal whose tasks all landed ends in its own thread rather than in
+/// the killing of its planner.
+#[tokio::test]
+async fn a_completed_goal_says_so_in_its_thread() {
+    let h = harness().await;
+    let (goal, task, _engineer, _reviewer) = h.active_goal_with_task().await;
+    for (status, actor) in [
+        (TaskStatus::Ready, Actor::Daemon),
+        (TaskStatus::InProgress, Actor::Daemon),
+        (TaskStatus::UnderReview, Actor::Engineer),
+        (TaskStatus::Approved, Actor::Daemon),
+        (TaskStatus::Integrating, Actor::Daemon),
+    ] {
+        h.store
+            .transition_task(&task.id, status, actor, None, None)
+            .await
+            .unwrap();
+    }
+    h.store
+        .transition_task(
+            &task.id,
+            TaskStatus::Merged,
+            Actor::Integrator,
+            None,
+            Some("cafe1234"),
+        )
+        .await
+        .unwrap();
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    for _ in 0..3 {
+        sched.send(SchedEvent::GoalChanged(goal.id.clone())).unwrap();
+    }
+    eventually("the goal to be completed", async || {
+        h.store.get_goal(&goal.id).await.unwrap().status() == GoalStatus::Completed
+    })
+    .await;
+    let thread = h
+        .store
+        .list_goal_messages(&goal.id, None, 100)
+        .await
+        .unwrap();
+    assert_eq!(thread.len(), 1, "{thread:?}");
+    assert_eq!(thread[0].author_role(), AuthorRole::System);
+    assert_eq!(thread[0].recipient(), None, "it wakes nobody");
+    assert!(thread[0].body.contains(&goal.title), "{}", thread[0].body);
 }

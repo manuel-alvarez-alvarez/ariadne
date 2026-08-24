@@ -25,6 +25,7 @@ use crate::forge::{self, Conflict, FailedCheck, Feedback, Forge, PrState, Watche
 use crate::gh;
 use crate::glab;
 use crate::launcher::Launcher;
+use crate::notify;
 use crate::sleep::SleepInhibitor;
 
 /// Events that wake the scheduler for a scoped reconciliation.
@@ -490,9 +491,16 @@ impl Scheduler {
                     && tasks.iter().any(|t| t.status() == TaskStatus::Merged);
                 if all_merged {
                     info!(goal = %goal.id, "all tasks merged, goal completed");
-                    self.store
+                    let goal = self
+                        .store
                         .set_goal_status(&goal.id, GoalStatus::Completed)
                         .await?;
+                    // Before the planner is killed with the rest, so that the
+                    // thread it was held in says how it ended rather than
+                    // simply stopping.
+                    if let Err(e) = notify::goal_completed(&self.store, &goal).await {
+                        warn!(goal = %goal.id, error = %e, "writing the goal's last message failed");
+                    }
                     self.kill_goal_sessions(&goal.id).await;
                 }
             }
@@ -508,7 +516,7 @@ impl Scheduler {
                     .await?
                 {
                     if !task.status().is_terminal() && task.status() != TaskStatus::Failed {
-                        let _ = self
+                        let cancelled = self
                             .store
                             .transition_task(
                                 &task.id,
@@ -518,6 +526,9 @@ impl Scheduler {
                                 None,
                             )
                             .await;
+                        if let Ok(task) = cancelled {
+                            self.announce_ending(&task, Some("goal cancelled")).await;
+                        }
                     }
                     let _ = self.launcher.cleanup_task(&task.id, false, false).await;
                 }
@@ -578,16 +589,20 @@ impl Scheduler {
         *failures += 1;
         if *failures >= SPAWN_RETRY_BUDGET {
             warn!(task = %task_id, failures, "retry budget exhausted, failing task");
-            let _ = self
+            let reason = "the agent could not be started";
+            if let Ok(task) = self
                 .store
                 .transition_task(
                     task_id,
                     TaskStatus::Failed,
                     Actor::Daemon,
-                    Some("spawn retry budget exhausted"),
+                    Some(reason),
                     None,
                 )
-                .await;
+                .await
+            {
+                self.announce_ending(&task, Some(reason)).await;
+            }
             self.spawn_failures.remove(task_id);
         }
     }
@@ -861,6 +876,26 @@ impl Scheduler {
             }
             TaskStatus::Approved => {
                 info!(task = %task.id, "approved: handing the task to its integrator");
+                // The engineer is about to lose its worktree and its session
+                // with it — the integrator checks the branch out. A line in
+                // the thread is what it costs to have that happen to an agent
+                // that was told why: addressed to nobody, so nothing is woken
+                // for it.
+                let _ = self
+                    .store
+                    .create_message(NewMessage {
+                        goal_id: task.goal_id.clone(),
+                        task_id: Some(task.id.clone()),
+                        author_role: AuthorRole::System,
+                        author_session_id: None,
+                        recipient: None,
+                        body: format!(
+                            "Round {} of \"{}\" is approved. Its integrator takes the \
+                             branch from here, and the engineer's worktree with it.",
+                            task.review_round, task.title,
+                        ),
+                    })
+                    .await;
                 self.store
                     .transition_task(&task.id, TaskStatus::Integrating, Actor::Daemon, None, None)
                     .await?;
@@ -1940,6 +1975,22 @@ impl Scheduler {
             .set_session_attention(&session.id, reason)
             .await?;
         Ok(())
+    }
+
+    /// Tell the user a task the daemon itself ended is over, and deliver it
+    /// the way the HTTP path delivers its own.
+    ///
+    /// Best effort on both halves: a notice that cannot be written is not a
+    /// reason to leave the transition half-made, and the ending is in the
+    /// task's status either way.
+    async fn announce_ending(&mut self, task: &Task, reason: Option<&str>) {
+        match notify::task_ended(&self.store, task, reason).await {
+            Ok(Some(message)) => self.deliver_message(&message.id).await,
+            Ok(None) => {}
+            Err(e) => {
+                warn!(task = %task.id, error = %e, "telling the user the task ended failed")
+            }
+        }
     }
 
     /// A message for the human, which no agent is woken for: it goes up the
