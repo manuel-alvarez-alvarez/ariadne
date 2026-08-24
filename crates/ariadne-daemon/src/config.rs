@@ -6,6 +6,7 @@
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 
@@ -29,11 +30,22 @@ pub struct Config {
     pub gh_bin: String,
     pub glab_bin: String,
     pub pr_poll_secs: u64,
+    pub typed_input_window: Duration,
 }
 
 /// How often an integrating task's pull request is polled by default: a few
 /// minutes, because what moves it is a human reading a diff.
 const DEFAULT_PR_POLL_SECS: u64 = 180;
+
+/// How long a freshly launched pane is watched for a TUI to type a resume
+/// instruction into (see `Launcher::deliver_typed_input`): two minutes,
+/// because a slow CLI start draws its first frame well after the spawn.
+///
+/// Resolved here rather than written as a constant where it is used so that a
+/// test can watch a pane that never draws without spending two real minutes
+/// on it. There is no `config.toml` key behind it: nothing about it is the
+/// user's to choose.
+const DEFAULT_TYPED_INPUT_WINDOW: Duration = Duration::from_secs(120);
 
 /// Default `ariadne` CLI: sibling of the running ariadned, else PATH lookup.
 fn default_cli_bin() -> String {
@@ -80,6 +92,7 @@ impl Config {
             gh_bin: file.gh_bin.unwrap_or_else(|| "gh".to_string()),
             glab_bin: file.glab_bin.unwrap_or_else(|| "glab".to_string()),
             pr_poll_secs: file.pr_poll_secs.unwrap_or(DEFAULT_PR_POLL_SECS),
+            typed_input_window: DEFAULT_TYPED_INPUT_WINDOW,
             root,
         };
 

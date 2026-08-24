@@ -41,10 +41,66 @@ pub enum SchedEvent {
     MessagePosted(String),
 }
 
+/// What one keystroke delivery came to, reported back to the loop that asked
+/// for it.
+///
+/// Typing into a pane takes seconds — a paste, an Enter, and the pane read
+/// back to see whether the composer let go of it — so it happens in a task of
+/// its own and the loop hears about it here. A tick that has three agents to
+/// nudge waits on none of them.
+#[derive(Debug)]
+struct DeliveryReport {
+    /// The message it carried, or `None` for a stall nudge, which is no
+    /// message and nobody's to retry.
+    message_id: Option<String>,
+    /// The session whose pane it went into.
+    session_id: String,
+    outcome: DeliveryOutcome,
+}
+
+/// How a delivery ended: exactly one of confirmed, worth another pass, or
+/// given up on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeliveryOutcome {
+    /// The composer let go of it: the agent has it.
+    Confirmed,
+    /// Typed in and never submitted — the pane is there, and whoever is in
+    /// front of it is not listening.
+    Unsubmitted,
+    /// tmux would not take it at all, which says nothing about the agent.
+    Refused,
+}
+
+/// What one pass at waking an addressee came to.
+enum Wake {
+    /// Going into its pane now; the report says how that ended.
+    InFlight,
+    /// The agent has it: a resumed session comes back to it as its
+    /// instruction.
+    Delivered,
+    /// Nothing to deliver: the agent is being woken for what it said itself,
+    /// or it is sitting on a dialog nobody but the user may answer — and it
+    /// is there to read the thread once it has been.
+    Nothing,
+    /// Its pane is busy with another delivery; a later tick tries again
+    /// without spending an attempt on it.
+    Busy,
+    /// This pass could not, with the session to raise for the user once the
+    /// attempts are gone — `None` when the addressee has no session at all,
+    /// whether it has yet to have one or has lost the one it had.
+    Failed(Option<String>),
+}
+
 /// How often the full reconciliation tick runs.
 const TICK_SECS: u64 = 15;
 /// Spawn attempts per task before it is failed.
 const SPAWN_RETRY_BUDGET: u32 = 3;
+/// Passes one addressed message is worth before the user is told it never
+/// arrived. A tmux that would not take it says nothing about whether the
+/// agent is there to hear it, so the message is not spent on the attempt —
+/// but neither is it retried for ever, or nobody would ever hear that it is
+/// stuck.
+const DELIVERY_ATTEMPTS: u32 = 3;
 /// Idle time after which an agent with work in front of it gets one nudge.
 const STALL_NUDGE_SECS: i64 = 300;
 /// Idle time after which the stall is raised for the user (post-nudge).
@@ -122,11 +178,27 @@ pub struct Scheduler {
     /// every event. In memory like the maps above — a daemon that restarts
     /// simply looks once immediately, which is what it wants to do anyway.
     pr_polled: HashMap<String, std::time::Instant>,
-    /// Messages already delivered to their addressee, by message id. In
+    /// Messages the addressee is *confirmed* to have, by message id. In
     /// memory like the two maps above, and for the same reason: what it
     /// prevents is typing one message into a pane twice, which is only ever
     /// at stake while the daemon that saw it posted is still running.
     delivered: HashSet<String>,
+    /// What every message not yet confirmed has spent trying, by message id:
+    /// a delivery tmux would not take is tried again on later ticks up to
+    /// [`DELIVERY_ATTEMPTS`], and one that has spent them all is given up on
+    /// — the user has been told, and nothing is typed for it again.
+    attempts: HashMap<String, u32>,
+    /// Sessions with a delivery going into their pane right now, by session
+    /// id: two pastes into one composer at once would interleave into
+    /// something neither of them said.
+    typing: HashSet<String>,
+    /// When each session was last confirmed to have been handed something,
+    /// by session id. A delivery is a nudge, and a better one — the agent has
+    /// just been told what to do — so the stall watch counts idle time from
+    /// here as well as from what the agent itself last reported.
+    delivered_at: HashMap<String, chrono::DateTime<chrono::Utc>>,
+    /// Where a delivery that ran off the loop reports back to.
+    reports: mpsc::UnboundedSender<DeliveryReport>,
     /// Held while any session is live, so the machine does not idle-sleep
     /// out from under a working agent.
     sleep: SleepInhibitor,
@@ -141,6 +213,10 @@ pub fn start(
     prevent_sleep: bool,
 ) -> mpsc::UnboundedSender<SchedEvent> {
     let (tx, mut rx) = mpsc::unbounded_channel();
+    // Deliveries report on a channel of their own rather than on the event
+    // one, so the loop still ends when the daemon drops the sender it was
+    // given: the scheduler holds this one for as long as it lives.
+    let (reports, mut settled) = mpsc::unbounded_channel();
     let mut scheduler = Scheduler {
         store,
         launcher,
@@ -149,6 +225,10 @@ pub fn start(
         unstarted: HashMap::new(),
         pr_polled: HashMap::new(),
         delivered: HashSet::new(),
+        attempts: HashMap::new(),
+        typing: HashSet::new(),
+        delivered_at: HashMap::new(),
+        reports,
         sleep: SleepInhibitor::new(),
         prevent_sleep,
     };
@@ -164,6 +244,7 @@ pub fn start(
                     Some(SchedEvent::MessagePosted(id)) => scheduler.deliver_message(&id).await,
                     None => break, // daemon shutting down
                 },
+                Some(report) = settled.recv() => scheduler.delivery_settled(report).await,
                 _ = tick.tick() => scheduler.reconcile_all().await,
             }
         }
@@ -180,6 +261,7 @@ impl Scheduler {
             self.sleep.set_active(self.prevent_sleep && live > 0);
         }
         self.stale_attention_sweep().await;
+        self.retry_deliveries().await;
         let goals = match self.store.list_goals(&[]).await {
             Ok(goals) => goals,
             Err(e) => {
@@ -1435,7 +1517,15 @@ impl Scheduler {
         let Ok(last) = chrono::DateTime::parse_from_rfc3339(last) else {
             return Ok(false);
         };
-        let idle_secs = (chrono::Utc::now() - last.with_timezone(&chrono::Utc)).num_seconds();
+        // A confirmed delivery is the freshest thing that happened to this
+        // agent, and it is a nudge in its own right: whichever of the two is
+        // later is what the idle time is counted from, so an agent told
+        // something a moment ago is not asked why it has stopped.
+        let mut since = last.with_timezone(&chrono::Utc);
+        if let Some(delivered) = self.delivered_at.get(&session.id) {
+            since = since.max(*delivered);
+        }
+        let idle_secs = (chrono::Utc::now() - since).num_seconds();
         let already_nudged = self.nudged.get(&session.id) == Some(&key);
 
         if idle_secs >= STALL_FLAG_SECS && already_nudged {
@@ -1446,22 +1536,18 @@ impl Scheduler {
             return Ok(true);
         }
         if idle_secs >= STALL_NUDGE_SECS && !already_nudged {
-            info!(session = %session.id, role = %session.role, idle_secs, "nudging idle agent");
-            // The nudge counts as spent either way: a pane that would not take
-            // it this pass will not take it the next one, and the user is told
-            // instead.
-            let delivered = self
-                .launcher
-                .tmux
-                .send_submitted(&session.tmux_session, nudge)
-                .await?;
-            self.nudged.insert(session.id.clone(), key);
-            if !delivered {
-                warn!(session = %session.id, role = %session.role, "the nudge stayed in the agent's composer, flagging for user attention");
-                self.store
-                    .set_session_attention(&session.id, AttentionReason::Stalled)
-                    .await?;
+            // A pane already being typed into is being nudged by that: this
+            // one waits for the next pass rather than interleaving with it.
+            if self.typing.contains(&session.id) {
+                return Ok(false);
             }
+            info!(session = %session.id, role = %session.role, idle_secs, "nudging idle agent");
+            // Spent as the delivery goes out, and off the loop: a pane that
+            // takes the nudge and will not submit it is raised for the user
+            // rather than nudged again, and one tmux would not take at all
+            // gives the nudge back — see [`Self::delivery_settled`].
+            self.nudged.insert(session.id.clone(), key);
+            self.spawn_delivery(session, nudge.to_string(), None);
         }
         Ok(false)
     }
@@ -1559,23 +1645,235 @@ impl Scheduler {
         }
     }
 
+    /// One pass at an addressed message, which ends in exactly one of three
+    /// places: the agent has it, another tick tries again, or the user is
+    /// told nobody ever got it.
+    ///
+    /// What is never spent is the attempt itself. A message struck off before
+    /// it was typed — because that is when the daemon happened to look — is a
+    /// message nobody ever receives and nobody is told about, so the only
+    /// things that stop a message being tried again are a confirmation and
+    /// running out of [`DELIVERY_ATTEMPTS`].
     async fn deliver(&mut self, message_id: &str) -> anyhow::Result<()> {
+        if self.delivered.contains(message_id) || self.given_up_on(message_id) {
+            return Ok(());
+        }
         let message = self.store.get_message(message_id).await?;
         let Some(recipient) = message.recipient() else {
             return Ok(());
         };
-        // One delivery per message, however often the event is seen: the tick
-        // resweeps everything, and a second pass would type the same message
-        // into the pane again. Spent before the attempt rather than after it,
-        // like the stall nudge — whatever comes of this one, repeating it is
-        // not the remedy.
-        if !self.delivered.insert(message.id.clone()) {
+        match recipient {
+            Recipient::User => {
+                self.raise_for_user(&message).await?;
+                self.delivered.insert(message.id.clone());
+                Ok(())
+            }
+            Recipient::Profile(profile_id) => {
+                match self.wake_profile(&message, &profile_id).await? {
+                    // The report it comes back with says what became of it.
+                    Wake::InFlight => Ok(()),
+                    Wake::Delivered => {
+                        self.attempts.remove(&message.id);
+                        self.delivered.insert(message.id.clone());
+                        Ok(())
+                    }
+                    Wake::Nothing => {
+                        self.attempts.remove(&message.id);
+                        Ok(())
+                    }
+                    // Nothing was tried, so nothing was spent: the message
+                    // stays on the list the tick works through.
+                    Wake::Busy => {
+                        self.attempts.entry(message.id.clone()).or_insert(0);
+                        Ok(())
+                    }
+                    Wake::Failed(session_id) => {
+                        self.delivery_failed(&message.id, session_id.as_deref())
+                            .await
+                    }
+                }
+            }
+        }
+    }
+
+    /// Whether this message has spent everything it was worth and the user
+    /// has been told: nothing is typed for it again.
+    fn given_up_on(&self, message_id: &str) -> bool {
+        self.attempts
+            .get(message_id)
+            .is_some_and(|spent| *spent >= DELIVERY_ATTEMPTS)
+    }
+
+    /// Every message still owed a delivery, offered another pass.
+    ///
+    /// This is what makes "tried again on a later tick" true: a tmux that
+    /// would not take a message has said nothing about whether the agent is
+    /// there to hear it, so the message waits here and every tick asks again
+    /// until it goes through or the attempts run out.
+    async fn retry_deliveries(&mut self) {
+        let owed: Vec<String> = self
+            .attempts
+            .iter()
+            .filter(|(_, spent)| **spent < DELIVERY_ATTEMPTS)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for message_id in owed {
+            self.deliver_message(&message_id).await;
+        }
+    }
+
+    /// Type `text` into a session's pane in a task of its own, which reports
+    /// back what came of it.
+    ///
+    /// Off the loop because [`TmuxManager::send_submitted`] is slow by
+    /// design: it lets a paste settle, presses Enter, reads the pane back and
+    /// tries again on a widening backoff — seconds of waiting that the
+    /// scheduler used to do inline, one agent at a time, while every other
+    /// event queued behind it.
+    fn spawn_delivery(&mut self, session: &AgentSession, text: String, message_id: Option<String>) {
+        self.typing.insert(session.id.clone());
+        let tmux = self.launcher.tmux.clone();
+        let reports = self.reports.clone();
+        let pane = session.tmux_session.clone();
+        let session_id = session.id.clone();
+        tokio::spawn(async move {
+            let outcome = match tmux.send_submitted(&pane, &text).await {
+                Ok(true) => DeliveryOutcome::Confirmed,
+                Ok(false) => DeliveryOutcome::Unsubmitted,
+                Err(e) => {
+                    warn!(session = %session_id, error = %format!("{e:#}"), "typing into the agent's pane failed");
+                    DeliveryOutcome::Refused
+                }
+            };
+            let _ = reports.send(DeliveryReport {
+                message_id,
+                session_id,
+                outcome,
+            });
+        });
+    }
+
+    /// A delivery has come back: the one place that may call a message
+    /// arrived, and the one that decides what an agent that never heard it
+    /// costs.
+    async fn delivery_settled(&mut self, report: DeliveryReport) {
+        self.typing.remove(&report.session_id);
+        match report.outcome {
+            DeliveryOutcome::Confirmed => {
+                // Only a message. A nudge that went in is a nudge spent —
+                // what follows one nobody acts on is the user, and a nudge
+                // that gave itself back would ask for ever and tell nobody.
+                if let Some(message_id) = &report.message_id {
+                    info!(message = %message_id, session = %report.session_id, "the addressed agent has the message");
+                    self.attempts.remove(message_id);
+                    self.delivered.insert(message_id.clone());
+                    // This agent has just been told what to do: the idle
+                    // clock starts again here and the nudge that may have
+                    // been spent comes back, so that nothing tells it to get
+                    // on with what it was asked to do a moment ago.
+                    self.nudged.remove(&report.session_id);
+                    self.delivered_at
+                        .insert(report.session_id.clone(), chrono::Utc::now());
+                }
+            }
+            DeliveryOutcome::Unsubmitted => {
+                warn!(session = %report.session_id, message = ?report.message_id, "what was typed stayed in the agent's composer, flagging for user attention");
+                // Not tried again: a pane that would not submit it this pass
+                // will not submit it the next, and a second paste would leave
+                // the composer holding the same thing twice.
+                if let Some(message_id) = report.message_id {
+                    self.attempts.insert(message_id, DELIVERY_ATTEMPTS);
+                }
+                if let Err(e) = self
+                    .store
+                    .set_session_attention(&report.session_id, AttentionReason::Stalled)
+                    .await
+                {
+                    warn!(session = %report.session_id, error = %e, "flagging the session failed");
+                }
+            }
+            DeliveryOutcome::Refused => match report.message_id {
+                Some(message_id) => {
+                    if let Err(e) = self
+                        .delivery_failed(&message_id, Some(&report.session_id))
+                        .await
+                    {
+                        warn!(message = %message_id, error = %format!("{e:#}"), "giving up on the message failed");
+                    }
+                }
+                // Nothing was typed, so the nudge is unspent rather than
+                // lost: the next pass over this session sends it again.
+                None => {
+                    self.nudged.remove(&report.session_id);
+                }
+            },
+        }
+        // The pane is free again, so whatever was waiting for it goes in now
+        // rather than at the next tick — unless tmux is the thing that
+        // refused, in which case asking it again this second only spends the
+        // attempts of everything queued behind it.
+        if report.outcome != DeliveryOutcome::Refused {
+            self.retry_deliveries().await;
+        }
+    }
+
+    /// One pass that could not deliver: another tick tries again, and once
+    /// the passes are gone the user is told rather than the message being
+    /// left with nobody.
+    async fn delivery_failed(
+        &mut self,
+        message_id: &str,
+        session_id: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let spent = {
+            let spent = self.attempts.entry(message_id.to_string()).or_insert(0);
+            *spent += 1;
+            *spent
+        };
+        if spent < DELIVERY_ATTEMPTS {
+            info!(message = %message_id, spent, "the message did not reach its agent; trying again on a later tick");
             return Ok(());
         }
-        match recipient {
-            Recipient::User => self.raise_for_user(&message).await,
-            Recipient::Profile(profile_id) => self.wake_profile(&message, &profile_id).await,
-        }
+        let message = self.store.get_message(message_id).await?;
+        self.give_up(&message, session_id).await
+    }
+
+    /// A message that will not be delivered, put where the user will see it:
+    /// on the addressee's session — stalled while its pane is still there,
+    /// disconnected once it is gone — and, when the addressee has no session
+    /// of its own to flag, on the session of whoever wrote it, which is the
+    /// pane they are watching for an answer. The message itself stays in the
+    /// thread either way; what is raised is that nobody came for it.
+    async fn give_up(&self, message: &Message, session_id: Option<&str>) -> anyhow::Result<()> {
+        let session = match session_id {
+            Some(id) => self.store.get_session(id).await.ok(),
+            None => None,
+        };
+        let Some(session) = session else {
+            let Some(author) = &message.author_session_id else {
+                warn!(message = %message.id, "the message reached nobody, and there is nobody to tell");
+                return Ok(());
+            };
+            warn!(message = %message.id, session = %author, "the message reached nobody; raising its author for the user");
+            self.store
+                .set_session_attention(author, AttentionReason::WaitingInput)
+                .await?;
+            return Ok(());
+        };
+        let reason = match self
+            .launcher
+            .tmux
+            .has_session_checked(&session.tmux_session)
+            .await
+        {
+            Ok(false) => AttentionReason::Disconnected,
+            _ => AttentionReason::Stalled,
+        };
+        warn!(message = %message.id, session = %session.id, reason = reason.as_str(), "the message never reached the agent, flagging for user attention");
+        self.store
+            .set_session_attention(&session.id, reason)
+            .await?;
+        Ok(())
     }
 
     /// A message for the human, which no agent is woken for: it goes up the
@@ -1594,32 +1892,59 @@ impl Scheduler {
         Ok(())
     }
 
-    /// A message for an agent: nudged into its pane if it has one, and
+    /// A message for an agent: typed into its pane if it has one, and
     /// otherwise resumed with the message as its instruction.
     ///
-    /// An addressee with no session to deliver to at all — a reviewer between
-    /// rounds, an engineer whose task has not started — is not a failure and
-    /// not a message lost: it stays in the thread, and the briefings send
-    /// every agent to read the conversation when it next starts.
-    async fn wake_profile(&self, message: &Message, profile_id: &str) -> anyhow::Result<()> {
+    /// An addressee with no session to deliver to — a reviewer between
+    /// rounds, an engineer whose task has not started, one whose session went
+    /// away — is not a message lost: it keeps its place in the thread, and
+    /// the briefings send every agent to read the conversation when it next
+    /// starts. It is not a message delivered either, though, so it is a pass
+    /// like any other: the later ticks find the session once it exists, and
+    /// when they run out with nobody there the author is told rather than
+    /// left waiting on an answer that is not coming.
+    ///
+    /// What comes back is one of [`Wake`]; the caller keeps the count of what
+    /// a message has spent, since only it knows how many passes have been
+    /// made at this one.
+    async fn wake_profile(&mut self, message: &Message, profile_id: &str) -> anyhow::Result<Wake> {
         let Some(session) = self.recipient_session(message, profile_id).await? else {
-            info!(message = %message.id, profile = %profile_id, "nobody to wake for this message; it waits in the thread");
-            return Ok(());
+            info!(message = %message.id, profile = %profile_id, "nobody to wake for this message yet; it waits in the thread");
+            return Ok(Wake::Failed(None));
         };
         // An agent does not need waking for what it said itself.
         if message.author_session_id.as_deref() == Some(session.id.as_str()) {
-            return Ok(());
+            return Ok(Wake::Nothing);
         }
         let text = delivery_text(message);
-        if !self.launcher.tmux.has_session(&session.tmux_session).await {
-            info!(message = %message.id, session = %session.id, role = %session.role, "resuming the addressed agent with the message");
-            // Nothing to resume from (no agent id yet, a working directory
-            // that is gone) reads the same way as no session at all: the
-            // message keeps its place in the thread and is read from there.
-            if let Err(e) = self.launcher.revive_session(&session.id, Some(&text)).await {
-                info!(message = %message.id, session = %session.id, error = %format!("{e:#}"), "the addressed agent could not be resumed; the message waits in the thread");
+        // Asked rather than assumed, the way the spawn guards ask: a tmux
+        // that cannot be reached has said nothing about the pane, and an
+        // agent relaunched on top of a live one is two agents on one task.
+        match self
+            .launcher
+            .tmux
+            .has_session_checked(&session.tmux_session)
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => {
+                info!(message = %message.id, session = %session.id, role = %session.role, "resuming the addressed agent with the message");
+                return match self.launcher.revive_session(&session.id, Some(&text)).await {
+                    Ok(_) => Ok(Wake::Delivered),
+                    // Nothing to resume from (no agent id yet, a working
+                    // directory that is gone) is worth another pass, and then
+                    // the user: a message whose agent cannot be brought back
+                    // is one nobody will ever answer.
+                    Err(e) => {
+                        info!(message = %message.id, session = %session.id, error = %format!("{e:#}"), "the addressed agent could not be resumed");
+                        Ok(Wake::Failed(Some(session.id)))
+                    }
+                };
             }
-            return Ok(());
+            Err(e) => {
+                warn!(message = %message.id, session = %session.id, error = %format!("{e:#}"), "tmux cannot say whether the addressed agent still has a pane");
+                return Ok(Wake::Failed(Some(session.id)));
+            }
         }
         // An agent sitting on a dialog is not typed into: what a pane holding
         // a permission prompt does with the Enter behind a paste is answer it,
@@ -1631,29 +1956,30 @@ impl Scheduler {
             Some(AttentionReason::WaitingPermission | AttentionReason::WaitingInput)
         ) {
             info!(message = %message.id, session = %session.id, "the addressed agent is waiting on the user; the message waits in the thread");
-            return Ok(());
+            return Ok(Wake::Nothing);
+        }
+        if self.typing.contains(&session.id) {
+            return Ok(Wake::Busy);
         }
         info!(message = %message.id, session = %session.id, role = %session.role, "nudging the addressed agent with the message");
-        let delivered = self
-            .launcher
-            .tmux
-            .send_submitted(&session.tmux_session, &text)
-            .await?;
-        if !delivered {
-            warn!(message = %message.id, session = %session.id, "the message stayed in the agent's composer, flagging for user attention");
-            self.store
-                .set_session_attention(&session.id, AttentionReason::Stalled)
-                .await?;
-        }
-        Ok(())
+        self.spawn_delivery(&session, text, Some(message.id.clone()));
+        Ok(Wake::InFlight)
     }
 
     /// The session a message's addressee works in, the most recent one first.
     ///
-    /// A task message looks in that task. A goal-thread one looks at the
-    /// goal's own sessions — the ones with no task — because that is where
-    /// the planner runs, and the planner is the only agent a goal thread can
-    /// address; filtering by goal alone would reach into its tasks.
+    /// A goal-thread message looks at the goal's own sessions — the ones with
+    /// no task — because that is where the planner runs, and the planner is
+    /// the only agent a goal thread can address; filtering by goal alone
+    /// would reach into its tasks.
+    ///
+    /// A task message looks in that task, and then — for the planner alone —
+    /// at the goal's own sessions. Every task thread can address the planner
+    /// that wrote it (see `http::recipients`), and the planner works at the
+    /// goal level: filtering by task alone would find no session for it and
+    /// wake nobody at all. Everyone else a task thread addresses works in
+    /// that task, so a session of theirs outside it is somebody else's
+    /// conversation and is not typed into for this one.
     async fn recipient_session(
         &self,
         message: &Message,
@@ -1663,13 +1989,26 @@ impl Scheduler {
             .store
             .list_sessions(SessionFilter {
                 goal_id: Some(message.goal_id.clone()),
-                task_id: message.task_id.clone(),
                 ..Default::default()
             })
             .await?;
-        Ok(sessions.into_iter().rev().find(|s| {
-            s.profile_id == profile_id && (message.task_id.is_some() || s.task_id.is_none())
-        }))
+        let mut at_goal = None;
+        for session in sessions.into_iter().rev() {
+            if session.profile_id != profile_id {
+                continue;
+            }
+            match &session.task_id {
+                Some(_) if session.task_id == message.task_id => return Ok(Some(session)),
+                None if at_goal.is_none() && session.role() == Role::Planner => {
+                    at_goal = Some(session)
+                }
+                _ => {}
+            }
+        }
+        // Which leaves the goal's own planner, reached from the task thread
+        // that addressed it — and, for a goal thread, the only session it was
+        // ever allowed to reach.
+        Ok(at_goal)
     }
 }
 

@@ -204,7 +204,12 @@ async fn harness() -> Harness {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(dir.path().join("test.db")).await.unwrap();
     let bus = ariadne_daemon::bus::start(store.clone());
-    let cfg = Arc::new(Config::load(Some(dir.path().join("home"))).unwrap());
+    let mut config = Config::load(Some(dir.path().join("home"))).unwrap();
+    // Two seconds of looking for a TUI rather than two minutes: the tests
+    // that type into one find it on the first look, and the one about the
+    // window running out is only about it running out.
+    config.typed_input_window = Duration::from_secs(2);
+    let cfg = Arc::new(config);
     let launcher = Arc::new(Launcher {
         cfg,
         store: store.clone(),
@@ -344,4 +349,34 @@ impl Harness {
             .unwrap()
             .attention_reason()
     }
+}
+
+/// The same story again with nothing to type into. A pane that never draws a
+/// TUI is watched for the whole window and then given up on — and giving up
+/// is a delivery that did not happen, so it ends where every other way of not
+/// delivering this one does: on the session, for the user.
+///
+/// The window is the harness's short one; what it is worth in production is
+/// `Config::typed_input_window`, and nothing here depends on which.
+#[tokio::test]
+async fn a_pane_that_never_draws_raises_the_session_when_the_window_runs_out() {
+    let h = harness().await;
+    let (task, session) = h.opencode_engineer().await;
+    // No composer written at all: every look at the pane comes back empty,
+    // which is what a TUI that never started looks like.
+
+    h.launcher
+        .resume_engineer(&task.id, INSTRUCTION)
+        .await
+        .unwrap();
+
+    eventually("the session to be raised", async || {
+        h.attention(&session).await == Some(AttentionReason::Stalled)
+    })
+    .await;
+    assert_eq!(
+        h.enters(),
+        0,
+        "and nothing was typed at a pane that was never ready for it"
+    );
 }
