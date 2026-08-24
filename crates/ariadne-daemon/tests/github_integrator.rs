@@ -1440,13 +1440,12 @@ async fn a_pull_request_closed_unmerged_fails_the_task_and_tells_the_user() {
     // The agents on it are stood down the way a finished task stands them
     // down, and the reason is on the audit trail.
     eventually("the integrator session to end", async || {
-        h.store
+        !h.store
             .get_session(&integrator.id)
             .await
             .unwrap()
             .status()
             .is_live()
-            == false
     })
     .await;
     let audit = h.store.list_task_transitions(&task.id).await.unwrap();

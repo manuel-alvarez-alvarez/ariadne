@@ -2381,6 +2381,13 @@
               }
             ]
           },
+          "authenticated": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether it holds credentials for the service it speaks to, for the\nbinaries that hold any: `gh auth status` and `glab auth status`, asked\nof the daemon's own environment because that is where the polling\nruns. `None` for a binary with nothing to sign in to — tmux, git, the\nagent CLIs — and for one that was not found to ask.\n\nThe distinction it exists for is the one that used to be invisible: a\n`gh` that is installed and signed out answers every poll of a pull\nrequest with a failure, and a task published to a forge is then\nwatched by nothing."
+          },
           "name": {
             "type": "string",
             "description": "Executable name as it is looked up on PATH (\"claude\", \"tmux\").",
@@ -2646,7 +2653,7 @@
             "items": {
               "$ref": "#/components/schemas/BinaryDto"
             },
-            "description": "The other binaries a session needs: tmux and git."
+            "description": "The other binaries the daemon runs: tmux and git, without which no\nsession can be spawned at all, and the forge CLIs `gh` and `glab`,\nwhich are what a published task is watched through."
           },
           "version": {
             "type": "string",
