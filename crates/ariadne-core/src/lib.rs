@@ -59,9 +59,11 @@ impl std::str::FromStr for Role {
     }
 }
 
-/// A prompt a profile owns beside its system prompt: the briefing an agent of
-/// that role is started or resumed with. Each kind belongs to exactly one role
-/// (see [`PromptKind::role`]).
+/// A prompt a profile owns beside its system prompt: one of the texts an
+/// agent of that role is started, resumed or nudged with. Every text Ariadne
+/// puts in front of an agent is one of these, and each kind belongs to the
+/// role — or, for [`PromptKind::MessageDelivery`], the roles — that receive it
+/// (see [`PromptKind::roles`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(
@@ -73,63 +75,120 @@ impl std::str::FromStr for Role {
 pub enum PromptKind {
     /// Initial briefing of a planner session.
     PlannerBriefing,
+    /// What a planner that has stopped planning is nudged with.
+    PlannerResume,
     /// Initial briefing of an engineer session.
     EngineerBriefing,
-    /// Engineer resume briefing carrying the reviewers' change requests.
+    /// What an engineer with unfinished work in front of it is picked up
+    /// with: the session that ended and is started again, and the one that is
+    /// merely sitting idle.
+    EngineerResume,
+    /// Engineer resume briefing carrying a round of requested changes,
+    /// whether the reviewers wrote them or the people on a published request
+    /// did.
     ChangesRequested,
     /// Initial briefing of a reviewer session.
     ReviewerBriefing,
-    /// Reviewer resume briefing for a later round of the same task.
+    /// What a reviewer that owes a verdict is picked up with: a later round of
+    /// the same task, and a round it has gone quiet in.
     ReviewerResume,
     /// Initial briefing of an integrator session: how the approved change is
     /// landed on its base branch.
     IntegrationInstructions,
-    /// Integrator resume briefing for a later attempt at the same task.
+    /// What an integrator holding an unlanded task is picked up with: a task
+    /// whose landing nobody has started, and a published request the engineer
+    /// has just answered.
     IntegrationResume,
+    /// What the integrator of a published request is woken with once a human
+    /// has merged it.
+    IntegrationMerged,
+    /// The notice an agent of any role is woken with when a message in its
+    /// thread addresses it.
+    MessageDelivery,
 }
 
 impl PromptKind {
-    pub const ALL: [PromptKind; 7] = [
+    pub const ALL: [PromptKind; 11] = [
         PromptKind::PlannerBriefing,
+        PromptKind::PlannerResume,
         PromptKind::EngineerBriefing,
+        PromptKind::EngineerResume,
         PromptKind::ChangesRequested,
         PromptKind::ReviewerBriefing,
         PromptKind::ReviewerResume,
         PromptKind::IntegrationInstructions,
         PromptKind::IntegrationResume,
+        PromptKind::IntegrationMerged,
+        PromptKind::MessageDelivery,
     ];
 
     pub fn as_str(&self) -> &'static str {
         match self {
             PromptKind::PlannerBriefing => "planner_briefing",
+            PromptKind::PlannerResume => "planner_resume",
             PromptKind::EngineerBriefing => "engineer_briefing",
+            PromptKind::EngineerResume => "engineer_resume",
             PromptKind::ChangesRequested => "changes_requested",
             PromptKind::ReviewerBriefing => "reviewer_briefing",
             PromptKind::ReviewerResume => "reviewer_resume",
             PromptKind::IntegrationInstructions => "integration_instructions",
             PromptKind::IntegrationResume => "integration_resume",
+            PromptKind::IntegrationMerged => "integration_merged",
+            PromptKind::MessageDelivery => "message_delivery",
         }
     }
 
-    /// The role whose profiles own this prompt.
-    pub fn role(&self) -> Role {
+    /// The roles whose profiles own this prompt.
+    ///
+    /// One for every kind that briefs a role through its own lifecycle, and
+    /// all four for [`PromptKind::MessageDelivery`]: an addressed message
+    /// reaches whoever it names, so every role owns the notice it is woken
+    /// with and can word it its own way.
+    pub fn roles(&self) -> &'static [Role] {
         match self {
-            PromptKind::PlannerBriefing => Role::Planner,
-            PromptKind::EngineerBriefing | PromptKind::ChangesRequested => Role::Engineer,
-            PromptKind::ReviewerBriefing | PromptKind::ReviewerResume => Role::Reviewer,
-            PromptKind::IntegrationInstructions | PromptKind::IntegrationResume => Role::Integrator,
+            PromptKind::PlannerBriefing | PromptKind::PlannerResume => &[Role::Planner],
+            PromptKind::EngineerBriefing
+            | PromptKind::EngineerResume
+            | PromptKind::ChangesRequested => &[Role::Engineer],
+            PromptKind::ReviewerBriefing | PromptKind::ReviewerResume => &[Role::Reviewer],
+            PromptKind::IntegrationInstructions
+            | PromptKind::IntegrationResume
+            | PromptKind::IntegrationMerged => &[Role::Integrator],
+            PromptKind::MessageDelivery => &Role::ALL,
         }
     }
 
-    /// The prompts a profile of `role` owns, in briefing order.
+    /// Whether a profile of `role` owns this prompt.
+    pub fn owned_by(&self, role: Role) -> bool {
+        self.roles().contains(&role)
+    }
+
+    /// The prompts a profile of `role` owns, in briefing order: what starts a
+    /// session first, what picks it up again after, and the message notice
+    /// every role shares last.
     pub fn for_role(role: Role) -> &'static [PromptKind] {
         match role {
-            Role::Planner => &[PromptKind::PlannerBriefing],
-            Role::Engineer => &[PromptKind::EngineerBriefing, PromptKind::ChangesRequested],
-            Role::Reviewer => &[PromptKind::ReviewerBriefing, PromptKind::ReviewerResume],
+            Role::Planner => &[
+                PromptKind::PlannerBriefing,
+                PromptKind::PlannerResume,
+                PromptKind::MessageDelivery,
+            ],
+            Role::Engineer => &[
+                PromptKind::EngineerBriefing,
+                PromptKind::EngineerResume,
+                PromptKind::ChangesRequested,
+                PromptKind::MessageDelivery,
+            ],
+            Role::Reviewer => &[
+                PromptKind::ReviewerBriefing,
+                PromptKind::ReviewerResume,
+                PromptKind::MessageDelivery,
+            ],
             Role::Integrator => &[
                 PromptKind::IntegrationInstructions,
                 PromptKind::IntegrationResume,
+                PromptKind::IntegrationMerged,
+                PromptKind::MessageDelivery,
             ],
         }
     }
@@ -151,6 +210,9 @@ impl PromptKind {
                 "max_tasks",
                 "required_approvals",
             ],
+            // A nudge says what is waiting and nothing else: the planner it
+            // reaches has read the goal already.
+            PromptKind::PlannerResume => &["goal_title"],
             PromptKind::EngineerBriefing => &[
                 "task_title",
                 "task_description",
@@ -161,6 +223,7 @@ impl PromptKind {
                 "repo_path",
                 "dependencies",
             ],
+            PromptKind::EngineerResume => &["task_title", "branch"],
             PromptKind::ChangesRequested => &["feedback"],
             PromptKind::ReviewerBriefing => &[
                 "task_title",
@@ -185,10 +248,25 @@ impl PromptKind {
                 "base_branch",
                 "repo_path",
             ],
-            // Fewer than the initial briefing, for the reviewer's reason: a
-            // resumed integrator is told what moved under it, and the task it
-            // is landing is one it has already read.
-            PromptKind::IntegrationResume => &["task_title", "branch", "base_branch", "repo_path"],
+            // Fewer than the initial briefing, for the reviewer's reason, plus
+            // the two values that say what has happened since: `request` is
+            // the pull or merge request Ariadne has recorded for this task (or
+            // that there is none yet), and `summary` the engineer's own words
+            // about the revision — its replies to the people reading a
+            // published request.
+            PromptKind::IntegrationResume => &[
+                "task_title",
+                "branch",
+                "base_branch",
+                "repo_path",
+                "request",
+                "noun",
+                "summary",
+            ],
+            PromptKind::IntegrationMerged => {
+                &["task_title", "request", "forge", "base_branch", "repo_path"]
+            }
+            PromptKind::MessageDelivery => &["author", "thread", "body"],
         }
     }
 
@@ -666,6 +744,58 @@ impl std::str::FromStr for RecipientKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every kind is owned by at least one role, is listed among that role's
+    /// prompts, and is reachable from `ALL` by the name it is stored under:
+    /// the three lists are one set read three ways, and a kind missing from
+    /// any of them is a prompt nobody can edit.
+    #[test]
+    fn every_kind_is_owned_listed_and_named() {
+        use std::str::FromStr;
+
+        for kind in PromptKind::ALL {
+            let roles = kind.roles();
+            assert!(!roles.is_empty(), "{} belongs to no role", kind.as_str());
+            for role in roles {
+                assert!(kind.owned_by(*role));
+                assert!(
+                    PromptKind::for_role(*role).contains(&kind),
+                    "{} is not among the {} prompts",
+                    kind.as_str(),
+                    role.as_str()
+                );
+            }
+            for role in Role::ALL.into_iter().filter(|r| !roles.contains(r)) {
+                assert!(!kind.owned_by(role));
+                assert!(!PromptKind::for_role(role).contains(&kind));
+            }
+            assert_eq!(PromptKind::from_str(kind.as_str()), Ok(kind));
+        }
+        for role in Role::ALL {
+            for kind in PromptKind::for_role(role) {
+                assert!(
+                    PromptKind::ALL.contains(kind),
+                    "{} is not in ALL",
+                    kind.as_str()
+                );
+            }
+        }
+    }
+
+    /// The one notice every role receives: a message addressed to an agent
+    /// reaches whichever role it names, so all four own the text they are
+    /// woken with.
+    #[test]
+    fn the_message_notice_belongs_to_every_role() {
+        assert_eq!(PromptKind::MessageDelivery.roles(), &Role::ALL);
+        for role in Role::ALL {
+            assert!(
+                PromptKind::for_role(role).contains(&PromptKind::MessageDelivery),
+                "{} has no message notice",
+                role.as_str()
+            );
+        }
+    }
 
     /// The names a kind's briefing builder passes are the names its template
     /// may use — no more, and none missing.

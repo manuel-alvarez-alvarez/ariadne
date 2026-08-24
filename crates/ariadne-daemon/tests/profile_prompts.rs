@@ -151,9 +151,9 @@ async fn a_profile_lists_the_prompts_of_its_role_in_briefing_order() {
     }
 }
 
-/// A planner has one prompt, and it is not the engineer's.
+/// A planner lists the prompts a planner owns, and none of the engineer's.
 #[tokio::test]
-async fn a_planner_lists_only_its_own_prompt() {
+async fn a_planner_lists_only_its_own_prompts() {
     let h = harness().await;
     let planner = h.profile("plan", Role::Planner).await;
 
@@ -161,8 +161,14 @@ async fn a_planner_lists_only_its_own_prompt() {
         .json(get(&format!("/v1/profiles/{}/prompts", planner.id)))
         .await;
 
-    assert_eq!(prompts.len(), 1);
-    assert_eq!(prompts[0].kind, PromptKind::PlannerBriefing);
+    assert_eq!(
+        prompts.iter().map(|p| p.kind).collect::<Vec<_>>(),
+        PromptKind::for_role(Role::Planner).to_vec()
+    );
+    assert!(
+        !prompts.iter().any(|p| p.kind == PromptKind::EngineerResume),
+        "a planner was given the engineer's resume"
+    );
 }
 
 /// Dropping placeholders, keeping literal braces, saying almost nothing: what

@@ -219,10 +219,15 @@ pub(crate) fn check_placeholders(kind: PromptKind, content: &str) -> Result<()> 
 /// role that owns the kind instead. `whose` names the profile in the message.
 pub(crate) fn check_role_kind(kind: PromptKind, role: Role, whose: &str) -> Result<&'static str> {
     default_prompt(role, kind).ok_or_else(|| {
+        let owners = kind
+            .roles()
+            .iter()
+            .map(|r| r.as_str())
+            .collect::<Vec<_>>()
+            .join("/");
         StoreError::Invalid(format!(
-            "prompt {} belongs to a {} profile, not to {whose}",
+            "prompt {} belongs to a {owners} profile, not to {whose}",
             kind.as_str(),
-            kind.role().as_str(),
         ))
     })
 }
@@ -369,9 +374,15 @@ Ariadne coordinates planner, engineer, reviewer and integrator agents over share
             landed.name, "Integrator",
             "and 0015 renamed it beside the two forge ones, 0016 back again"
         );
-        for kind in PromptKind::for_role(Role::Integrator) {
+        // The two briefings the integrator's lifecycle needed at the time;
+        // the wake instruction and the message notice it owns today are
+        // migration 0021's, replayed nowhere here.
+        for kind in [
+            PromptKind::IntegrationInstructions,
+            PromptKind::IntegrationResume,
+        ] {
             let written = store
-                .get_profile_prompt(&integrator.id, *kind)
+                .get_profile_prompt(&integrator.id, kind)
                 .await
                 .unwrap()
                 .content;

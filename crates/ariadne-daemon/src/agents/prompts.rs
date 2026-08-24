@@ -15,8 +15,10 @@
 //! briefings below pass.
 
 use ariadne_core::PromptKind;
-use ariadne_store::defaults::default_prompt;
-use ariadne_store::{Goal, Profile, Repository, Store, Task};
+use ariadne_store::defaults::default_prompt_text;
+use ariadne_store::{Goal, Message, Profile, Repository, Store, Task};
+
+use crate::forge::WatchedPr;
 
 /// The profile's own text for `kind`, falling back to the built-in default
 /// when there is no row to read (deleted by hand, or a profile that predates
@@ -34,7 +36,7 @@ pub async fn template_for(store: &Store, profile_id: &str, kind: PromptKind) -> 
                 error = %e,
                 "no stored prompt for this profile; using the built-in default"
             );
-            default_prompt(kind.role(), kind).unwrap_or_default().into()
+            default_prompt_text(kind).into()
         }
     }
 }
@@ -113,6 +115,11 @@ pub fn planner_briefing(template: &str, goal: &Goal, repos: &[Repository]) -> St
     )
 }
 
+/// What a planner that has stopped planning is nudged with.
+pub fn planner_resume_briefing(template: &str, goal: &Goal) -> String {
+    render(template, &[("goal_title", &goal.title)])
+}
+
 /// Initial prompt for an engineer session.
 pub fn engineer_briefing(
     template: &str,
@@ -147,6 +154,16 @@ pub fn engineer_briefing(
     )
 }
 
+/// What an engineer holding unfinished work is picked up with: the session
+/// that ended and is started again, and the one that has gone quiet with the
+/// task still open. Both want the same thing said, so both say it here.
+pub fn engineer_resume_briefing(template: &str, task: &Task) -> String {
+    render(
+        template,
+        &[("task_title", &task.title), ("branch", &task.branch)],
+    )
+}
+
 /// Initial prompt for a reviewer session.
 pub fn reviewer_briefing(
     template: &str,
@@ -171,11 +188,12 @@ pub fn reviewer_briefing(
     )
 }
 
-/// Resume prompt for a reviewer coming back to a task it already reviewed.
+/// What a reviewer that owes a verdict is picked up with: a later round of a
+/// task it already reviewed, and a round it has gone quiet in.
 ///
-/// Its worktree moved under it while it was away, so the first thing it is
-/// told is that what it read last round is stale — and which round the verdict
-/// it now owes belongs to, since reviews are recorded per round.
+/// Its worktree may have moved under it while it was away, so what it is told
+/// is that the diff it read may be stale — and which round the verdict it now
+/// owes belongs to, since reviews are recorded per round.
 pub fn reviewer_resume_briefing(template: &str, task: &Task, summary: Option<&str>) -> String {
     let round = task.review_round.to_string();
     render(
@@ -189,7 +207,11 @@ pub fn reviewer_resume_briefing(template: &str, task: &Task, summary: Option<&st
     )
 }
 
-/// Resume prompt for an engineer after change requests.
+/// Resume prompt for an engineer with a round of requested changes.
+///
+/// `feedback` is one entry per source, each a heading naming who asked and
+/// what they wrote: the reviewers of the round, or the people reading a
+/// published request, whose comments the daemon relays itself.
 pub fn changes_requested_briefing(template: &str, feedback: &[(String, String)]) -> String {
     let items = feedback
         .iter()
@@ -226,10 +248,24 @@ pub fn integration_briefing(
     )
 }
 
-/// Resume prompt for an integrator coming back to a task it already tried to
-/// land: after a send-back the engineer revised the branch, and after a daemon
-/// restart the base may have moved under it.
-pub fn integration_resume_briefing(template: &str, task: &Task, repo: &Repository) -> String {
+/// What an integrator holding an unlanded task is picked up with, in both
+/// situations there are: a task whose landing nobody has started — after a
+/// send-back the engineer revised the branch, after a daemon restart the base
+/// may have moved under it — and a published request whose revision the
+/// engineer has just answered.
+///
+/// `request` is what Ariadne has recorded for the task, named the way the
+/// forge names it; `summary` the engineer's own account of the revision,
+/// which on a published request is its replies to the people reading it and
+/// travels through byte for byte — its indentation, its blank lines and its
+/// trailing newline are part of what those people are answered with.
+pub fn integration_resume_briefing(
+    template: &str,
+    task: &Task,
+    repo: &Repository,
+    request: Option<&WatchedPr>,
+    summary: Option<&str>,
+) -> String {
     render(
         template,
         &[
@@ -237,13 +273,74 @@ pub fn integration_resume_briefing(template: &str, task: &Task, repo: &Repositor
             ("branch", &task.branch),
             ("base_branch", &repo.base_branch),
             ("repo_path", &repo.path),
+            ("request", &recorded_request(request)),
+            (
+                "noun",
+                request.map_or("pull or merge request", |r| r.forge.noun()),
+            ),
+            ("summary", revision_summary(summary)),
         ],
     )
 }
 
+/// What the integrator is woken with once a human has merged the request it
+/// published.
+pub fn integration_merged_briefing(
+    template: &str,
+    task: &Task,
+    repo: &Repository,
+    request: &WatchedPr,
+) -> String {
+    render(
+        template,
+        &[
+            ("task_title", &task.title),
+            ("request", &request.label()),
+            ("forge", request.forge.name()),
+            ("base_branch", &repo.base_branch),
+            ("repo_path", &repo.path),
+        ],
+    )
+}
+
+/// What an agent of any role is woken with when a message addresses it: who
+/// wrote, what they wrote, and which conversation it is in.
+pub fn message_delivery(template: &str, message: &Message) -> String {
+    let thread = match message.task_id {
+        Some(_) => "your task conversation",
+        None => "the goal's planning thread",
+    };
+    render(
+        template,
+        &[
+            ("author", message.author_role().as_str()),
+            ("thread", thread),
+            ("body", &message.body),
+        ],
+    )
+}
+
+/// The pull or merge request Ariadne has on record for a task, as the
+/// integrator reads it — or that there is none to update yet.
+fn recorded_request(request: Option<&WatchedPr>) -> String {
+    match request {
+        Some(r) => format!("{} ({})", r.label(), r.url),
+        None => "no pull or merge request for it yet".to_string(),
+    }
+}
+
+/// The engineer's account of the revision, or the stand-in for one it never
+/// wrote. Only the emptiness check reads a trimmed copy: what goes into the
+/// briefing is the summary itself.
+fn revision_summary(summary: Option<&str>) -> &str {
+    summary
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or("(the engineer left no summary of this revision)")
+}
+
 #[cfg(test)]
 mod tests {
-    use ariadne_core::Role;
+    use crate::forge::Forge;
 
     use super::*;
 
@@ -300,8 +397,30 @@ mod tests {
         }
     }
 
-    fn default(role: Role, kind: PromptKind) -> &'static str {
-        default_prompt(role, kind).expect("the role owns the kind")
+    fn request() -> WatchedPr {
+        WatchedPr {
+            forge: crate::forge::Forge::GitHub,
+            number: 12,
+            url: "https://github.com/owner/repo/pull/12".into(),
+        }
+    }
+
+    fn message() -> Message {
+        Message {
+            id: "01messagexxxxxxxxxxxxxxxxx".into(),
+            goal_id: "01goalxxxxxxxxxxxxxxxxxxxx".into(),
+            task_id: Some("01taskxxxxxxxxxxxxxxxxxxxx".into()),
+            author_role: "planner".into(),
+            author_session_id: None,
+            recipient_kind: None,
+            recipient_profile_id: None,
+            body: "the scope grew: drop the second forge".into(),
+            created_at: "2026-01-01T00:00:00Z".into(),
+        }
+    }
+
+    fn default(kind: PromptKind) -> &'static str {
+        default_prompt_text(kind)
     }
 
     #[test]
@@ -368,9 +487,11 @@ mod tests {
                 PromptKind::PlannerBriefing => {
                     planner_briefing(&template, &goal, std::slice::from_ref(&repo))
                 }
+                PromptKind::PlannerResume => planner_resume_briefing(&template, &goal),
                 PromptKind::EngineerBriefing => {
                     engineer_briefing(&template, &task, &goal, &repo, &[])
                 }
+                PromptKind::EngineerResume => engineer_resume_briefing(&template, &task),
                 PromptKind::ChangesRequested => changes_requested_briefing(&template, &feedback),
                 PromptKind::ReviewerBriefing => {
                     reviewer_briefing(&template, &task, &goal, &repo, Some("done"))
@@ -381,9 +502,17 @@ mod tests {
                 PromptKind::IntegrationInstructions => {
                     integration_briefing(&template, &task, &goal, &repo, "/worktrees/task-int")
                 }
-                PromptKind::IntegrationResume => {
-                    integration_resume_briefing(&template, &task, &repo)
+                PromptKind::IntegrationResume => integration_resume_briefing(
+                    &template,
+                    &task,
+                    &repo,
+                    Some(&request()),
+                    Some("done"),
+                ),
+                PromptKind::IntegrationMerged => {
+                    integration_merged_briefing(&template, &task, &repo, &request())
                 }
+                PromptKind::MessageDelivery => message_delivery(&template, &message()),
             };
             assert!(
                 !rendered.contains('{'),
@@ -431,6 +560,9 @@ mod tests {
             .join("\n\n");
         let repo_line = format!("- {} (base branch: {})", repo.path, repo.base_branch);
         let round = task.review_round.to_string();
+        let label = request().label();
+        let recorded = format!("{label} ({})", request().url);
+        let message = message();
 
         // The values every kind is rendered with, and what the briefing that
         // owns it renders.
@@ -445,7 +577,7 @@ mod tests {
             (
                 PromptKind::PlannerBriefing,
                 planner_briefing(
-                    default(Role::Planner, PromptKind::PlannerBriefing),
+                    default(PromptKind::PlannerBriefing),
                     &goal,
                     std::slice::from_ref(&repo),
                 ),
@@ -458,9 +590,14 @@ mod tests {
                 ],
             ),
             (
+                PromptKind::PlannerResume,
+                planner_resume_briefing(default(PromptKind::PlannerResume), &goal),
+                vec![("goal_title", &goal.title)],
+            ),
+            (
                 PromptKind::EngineerBriefing,
                 engineer_briefing(
-                    default(Role::Engineer, PromptKind::EngineerBriefing),
+                    default(PromptKind::EngineerBriefing),
                     &task,
                     &goal,
                     &repo,
@@ -478,17 +615,19 @@ mod tests {
                 ],
             ),
             (
+                PromptKind::EngineerResume,
+                engineer_resume_briefing(default(PromptKind::EngineerResume), &task),
+                vec![("task_title", &task.title), ("branch", &task.branch)],
+            ),
+            (
                 PromptKind::ChangesRequested,
-                changes_requested_briefing(
-                    default(Role::Engineer, PromptKind::ChangesRequested),
-                    &feedback,
-                ),
+                changes_requested_briefing(default(PromptKind::ChangesRequested), &feedback),
                 vec![("feedback", &items)],
             ),
             (
                 PromptKind::ReviewerBriefing,
                 reviewer_briefing(
-                    default(Role::Reviewer, PromptKind::ReviewerBriefing),
+                    default(PromptKind::ReviewerBriefing),
                     &task,
                     &goal,
                     &repo,
@@ -508,7 +647,7 @@ mod tests {
             (
                 PromptKind::ReviewerResume,
                 reviewer_resume_briefing(
-                    default(Role::Reviewer, PromptKind::ReviewerResume),
+                    default(PromptKind::ReviewerResume),
                     &task,
                     Some("I rewrote the thing."),
                 ),
@@ -522,7 +661,7 @@ mod tests {
             (
                 PromptKind::IntegrationInstructions,
                 integration_briefing(
-                    default(Role::Integrator, PromptKind::IntegrationInstructions),
+                    default(PromptKind::IntegrationInstructions),
                     &task,
                     &goal,
                     &repo,
@@ -541,21 +680,51 @@ mod tests {
             (
                 PromptKind::IntegrationResume,
                 integration_resume_briefing(
-                    default(Role::Integrator, PromptKind::IntegrationResume),
+                    default(PromptKind::IntegrationResume),
                     &task,
                     &repo,
+                    Some(&request()),
+                    Some("I answered them all."),
                 ),
                 vec![
                     ("task_title", &task.title),
                     ("branch", &task.branch),
                     ("base_branch", &repo.base_branch),
                     ("repo_path", &repo.path),
+                    ("request", &recorded),
+                    ("noun", "pull request"),
+                    ("summary", "I answered them all."),
+                ],
+            ),
+            (
+                PromptKind::IntegrationMerged,
+                integration_merged_briefing(
+                    default(PromptKind::IntegrationMerged),
+                    &task,
+                    &repo,
+                    &request(),
+                ),
+                vec![
+                    ("task_title", &task.title),
+                    ("request", &label),
+                    ("forge", "GitHub"),
+                    ("base_branch", &repo.base_branch),
+                    ("repo_path", &repo.path),
+                ],
+            ),
+            (
+                PromptKind::MessageDelivery,
+                message_delivery(default(PromptKind::MessageDelivery), &message),
+                vec![
+                    ("author", "planner"),
+                    ("thread", "your task conversation"),
+                    ("body", &message.body),
                 ],
             ),
         ];
 
         for (kind, rendered, values) in cases {
-            let template = default(kind.role(), kind);
+            let template = default(kind);
             assert_eq!(
                 rendered,
                 filled(template, &values),
@@ -583,7 +752,7 @@ mod tests {
             ..task.clone()
         }];
         let engineer = engineer_briefing(
-            default(Role::Engineer, PromptKind::EngineerBriefing),
+            default(PromptKind::EngineerBriefing),
             &task,
             &goal,
             &repo,
@@ -599,7 +768,7 @@ mod tests {
         );
 
         let reviewer = reviewer_briefing(
-            default(Role::Reviewer, PromptKind::ReviewerBriefing),
+            default(PromptKind::ReviewerBriefing),
             &task,
             &goal,
             &repo,
@@ -612,17 +781,14 @@ mod tests {
         assert!(reviewer.contains("- Engineer's summary: (none provided)"));
 
         let feedback = vec![("reviewer 01a".to_string(), "Split it.".to_string())];
-        let changes = changes_requested_briefing(
-            default(Role::Engineer, PromptKind::ChangesRequested),
-            &feedback,
-        );
+        let changes = changes_requested_briefing(default(PromptKind::ChangesRequested), &feedback);
         assert!(
             changes.contains("### From reviewer 01a\nSplit it."),
             "{changes}"
         );
 
         let integration = integration_briefing(
-            default(Role::Integrator, PromptKind::IntegrationInstructions),
+            default(PromptKind::IntegrationInstructions),
             &task,
             &goal,
             &repo,
@@ -632,6 +798,153 @@ mod tests {
         assert!(
             integration.contains("- Worktree (your cwd): /worktrees/task-int"),
             "the integrator's own worktree, not the engineer's: {integration}"
+        );
+    }
+
+    /// The integrator's resume renders in both situations it covers: a
+    /// published request whose revision the engineer has answered, and a task
+    /// nobody has published yet.
+    ///
+    /// The replies travel through byte for byte — an agent that lays them out
+    /// is not reformatted on the way — and neither reading rewrites a commit
+    /// people are already looking at.
+    #[test]
+    fn the_integration_resume_carries_the_request_and_the_replies_verbatim() {
+        const REPLIES: &str = "Reply to @maria on src/board.rs:42: it allocates once now.\n\
+                               Reply to @jon: the module stays, and here is why.";
+        let (task, repo) = (task(), repo());
+        let template = default(PromptKind::IntegrationResume);
+        let published =
+            integration_resume_briefing(template, &task, &repo, Some(&request()), Some(REPLIES));
+        assert!(published.contains("Pull request #12"), "{published}");
+        assert!(
+            published.contains("https://github.com/owner/repo/pull/12"),
+            "{published}"
+        );
+        assert!(published.contains("never a second one"), "{published}");
+        assert!(
+            published.contains("`post_message` to \"user\""),
+            "{published}"
+        );
+        assert!(published.ends_with(REPLIES), "{published:?}");
+        // The commits on a published request stay where they are, and no
+        // wording here suggests otherwise.
+        for never in ["rebase", "--force", "--amend"] {
+            assert!(!published.contains(never), "{never}: {published}");
+        }
+        assert!(!published.contains("  "), "{published}");
+
+        // Verbatim to the byte: blank lines, indentation, trailing newline.
+        let laid_out = "\n  1. @maria: it allocates once now.\n\n  2. @jon: the module stays.\n";
+        let kept =
+            integration_resume_briefing(template, &task, &repo, Some(&request()), Some(laid_out));
+        assert!(
+            kept.ends_with(laid_out),
+            "the replies were reflowed on the way in: {kept:?}"
+        );
+
+        // A merge request is a merge request, in GitLab's own word for it.
+        let gitlab = WatchedPr {
+            forge: Forge::GitLab,
+            number: 12,
+            url: "https://gitlab.com/owner/repo/-/merge_requests/12".into(),
+        };
+        let merge_request =
+            integration_resume_briefing(template, &task, &repo, Some(&gitlab), Some(REPLIES));
+        assert!(
+            merge_request
+                .contains("Merge request !12 (https://gitlab.com/owner/repo/-/merge_requests/12)"),
+            "{merge_request}"
+        );
+        assert!(!merge_request.contains("pull request"), "{merge_request}");
+
+        // And with nothing published yet, the same text says so and names
+        // neither forge's noun over the other.
+        let unpublished = integration_resume_briefing(template, &task, &repo, None, None);
+        assert!(
+            unpublished.contains("no pull or merge request for it yet"),
+            "{unpublished}"
+        );
+        assert!(unpublished.contains("gh pr list --head"), "{unpublished}");
+        assert!(
+            unpublished.contains("glab mr list --source-branch"),
+            "{unpublished}"
+        );
+        assert!(
+            unpublished.ends_with("(the engineer left no summary of this revision)"),
+            "{unpublished}"
+        );
+        let blank =
+            integration_resume_briefing(template, &task, &repo, Some(&request()), Some("  \n "));
+        assert!(blank.contains("left no summary"), "{blank}");
+    }
+
+    /// The merged instruction names the request, the forge that verifies it
+    /// and the branch the task is finished off.
+    #[test]
+    fn the_merged_instruction_names_the_forge_and_the_branch() {
+        let instruction = integration_merged_briefing(
+            default(PromptKind::IntegrationMerged),
+            &task(),
+            &repo(),
+            &request(),
+        );
+        assert!(
+            instruction.contains("Pull request #12 was merged on GitHub"),
+            "{instruction}"
+        );
+        assert!(instruction.contains("off main"), "{instruction}");
+        assert!(instruction.contains("mark_merged"), "{instruction}");
+        assert!(!instruction.contains("  "), "{instruction}");
+
+        let gitlab = integration_merged_briefing(
+            default(PromptKind::IntegrationMerged),
+            &task(),
+            &repo(),
+            &WatchedPr {
+                forge: Forge::GitLab,
+                number: 3,
+                url: "https://gitlab.com/owner/repo/-/merge_requests/3".into(),
+            },
+        );
+        assert!(
+            gitlab.contains("Merge request !3 was merged on GitLab"),
+            "{gitlab}"
+        );
+        assert!(!gitlab.contains("GitHub"), "{gitlab}");
+    }
+
+    /// The notice a woken agent reads carries the message itself, not a
+    /// pointer to go and read it, and names both tools it hands the agent as
+    /// the MCP tool calls they are.
+    #[test]
+    fn the_delivery_notice_quotes_the_message_and_names_its_tools() {
+        let template = default(PromptKind::MessageDelivery);
+        let text = message_delivery(template, &message());
+        assert!(
+            text.contains("New message from the planner in your task conversation"),
+            "{text}"
+        );
+        assert!(
+            text.contains("the scope grew: drop the second forge"),
+            "{text}"
+        );
+        assert!(
+            text.contains("`list_messages`, answer with `post_message` — both MCP tools"),
+            "{text}"
+        );
+        assert!(!text.contains("  "), "{text}");
+
+        let planning = message_delivery(
+            template,
+            &Message {
+                task_id: None,
+                ..message()
+            },
+        );
+        assert!(
+            planning.contains("in the goal's planning thread"),
+            "{planning}"
         );
     }
 
@@ -651,7 +964,7 @@ mod tests {
             ..repo()
         };
         let briefing = planner_briefing(
-            default(Role::Planner, PromptKind::PlannerBriefing),
+            default(PromptKind::PlannerBriefing),
             &goal(),
             &[described, blank, repo()],
         );
@@ -679,7 +992,7 @@ mod tests {
             ..task()
         };
         let briefing = engineer_briefing(
-            default(Role::Engineer, PromptKind::EngineerBriefing),
+            default(PromptKind::EngineerBriefing),
             &task,
             &goal,
             &repo,

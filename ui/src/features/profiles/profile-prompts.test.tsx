@@ -66,7 +66,9 @@ const INTEGRATOR: ProfileDto = {
 const STORED: Record<string, ProfilePromptDto[]> = {
   engineer: [
     { kind: "engineer_briefing", content: "Stored engineer briefing.", updated_at: STAMP },
+    { kind: "engineer_resume", content: "Stored engineer resume.", updated_at: STAMP },
     { kind: "changes_requested", content: "Stored changes requested.", updated_at: STAMP },
+    { kind: "message_delivery", content: "Stored message delivery.", updated_at: STAMP },
   ],
   planner: [{ kind: "planner_briefing", content: "Stored planner briefing.", updated_at: STAMP }],
   reviewer: [
@@ -136,7 +138,10 @@ describe("ProfilePrompts", () => {
 
     expect((await shown("System prompt")).textContent).toBe("Stored system prompt.")
     expect((await shown("Engineer briefing")).textContent).toBe("Stored engineer briefing.")
+    expect((await shown("Engineer resume")).textContent).toBe("Stored engineer resume.")
     expect((await shown("Changes requested")).textContent).toBe("Stored changes requested.")
+    // The notice every role is woken with for a message addressed to it.
+    expect((await shown("Message delivery")).textContent).toBe("Stored message delivery.")
     // A kind of another role is a kind the daemon never sent — the merge is
     // the integrator's business now, not the engineer's.
     expect(screen.queryByLabelText("Reviewer briefing")).toBeNull()

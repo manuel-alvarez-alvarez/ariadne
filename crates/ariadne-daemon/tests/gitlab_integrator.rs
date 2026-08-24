@@ -936,7 +936,7 @@ async fn a_merge_request_is_watched_from_publication_to_its_merge() {
     .await;
     let argv = h.launched_argv(&integrator.id);
     assert!(argv.contains("mark_merged"), "{argv}");
-    assert!(argv.contains("fast-forward main"), "{argv}");
+    assert!(argv.contains("off main"), "{argv}");
 
     // And the sha it reports is accepted, though no ancestor check would have.
     let landed: TaskDto = h
@@ -1005,15 +1005,14 @@ async fn discussion_notes_reach_the_engineer_once_each() {
     let argv = h.launched_argv(&engineer.id);
     for quoted in [
         MR_URL,
-        "Merge request !3",
-        "3 new comments",
-        "### maria commented",
+        "3 new comments on ",
+        "#### maria commented",
         "> why a new module?",
         // The notes on the diff, both pages of them, each naming the file and
         // line it hangs on.
-        "### jon requested changes on src/board.rs:42",
+        "#### jon requested changes on src/board.rs:42",
         "> this allocates per row",
-        "### maria requested changes on src/lane.rs:7",
+        "#### maria requested changes on src/lane.rs:7",
         "> and this name is wrong",
         "request_review",
         // Under the name of what the humans wrote on, never the integrator's:
@@ -1067,9 +1066,11 @@ async fn discussion_notes_reach_the_engineer_once_each() {
         "the relay was recorded under a profile's name"
     );
     assert_eq!(sent_back[0].author_role.as_deref(), Some("forge"));
+    // The notes themselves, and nothing else: what to do about them is the
+    // engineer's briefing to say, not this row's.
     let body = sent_back[0].body.clone().unwrap();
+    assert!(!body.contains("request_review"), "{body}");
     for quoted in [
-        MR_URL,
         "why a new module?",
         "this allocates per row",
         "and this name is wrong",
@@ -1178,15 +1179,18 @@ async fn discussion_notes_reach_the_engineer_once_each() {
          transition's own and once into the thread"
     );
 
-    // And what the integrator was woken with: push the revision to the same
-    // merge request, the one way a published branch may be updated, and hand
-    // the engineer's replies to the user.
+    // And what the integrator was woken with: the merge request it published,
+    // the one way a published branch may be updated — its integration
+    // instructions', which this points back at rather than restating — and
+    // the engineer's replies to hand to the user. In GitLab's own word for
+    // the thing throughout.
     let instruction = h.resume_instruction(&integrator.id);
     for expected in [
         MR_URL,
         REPLIES,
-        "git merge --no-edit <remote>/main",
-        &format!("git push <remote> {}", task.branch),
+        "Merge request !3",
+        "an open merge request",
+        "your integration instructions",
         "`post_message` to \"user\"",
         "never a second one",
     ] {
@@ -1195,7 +1199,7 @@ async fn discussion_notes_reach_the_engineer_once_each() {
             "the instruction has no {expected}: {instruction}"
         );
     }
-    for never in ["rebase", "--force", "--amend"] {
+    for never in ["rebase", "--force", "--amend", "pull request"] {
         assert!(
             !instruction.contains(never),
             "the instruction rewrites what is published with {never}: {instruction}"
@@ -1666,10 +1670,11 @@ async fn a_published_round_pushes_the_replies_and_addresses_the_user_twice() {
     // before this round began, and the replies the integrator just handed on.
     let told = h.user_messages(&task.id).await;
     assert_eq!(told.len(), 2, "{told:?}");
+    assert!(told[0].body.contains("is open for"), "{}", told[0].body);
     assert!(told[1].body.contains(REPLIES), "{}", told[1].body);
 
     // GitLab says it is approved: the daemon tells the user once, and that is
-    // the second and last thing it hears about this round.
+    // the last thing it hears about this round.
     h.approvals(&["maria"]);
     h.notify(&task.id);
     eventually("the user to be told it is theirs to merge", async || {

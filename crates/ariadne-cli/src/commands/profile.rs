@@ -286,6 +286,17 @@ fn every_kind() -> impl Iterator<Item = PromptArg> {
         .chain(PromptKind::ALL.iter().map(|k| PromptArg::Briefing(*k)))
 }
 
+/// The roles a prompt kind belongs to, as an error names them: one for every
+/// kind that briefs a role through its own lifecycle, and all four for the
+/// notice an addressed agent is woken with.
+fn owners(kind: PromptKind) -> String {
+    kind.roles()
+        .iter()
+        .map(|role| role.as_str())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 /// Every prompt a profile of `role` owns: its system prompt first — the one an
 /// agent of any role always runs on — then the briefings in briefing order.
 fn owned(role: Role) -> Vec<PromptArg> {
@@ -322,10 +333,10 @@ impl Owner<'_> {
             // Whatever the role, it runs on a system prompt.
             return Ok(arg);
         };
-        if kind.role() == self.role() {
+        if kind.owned_by(self.role()) {
             return Ok(arg);
         }
-        let (owner, kind) = (kind.role().as_str(), kind.as_str());
+        let (owner, kind) = (owners(kind), kind.as_str());
         let prompts = spelled(owned(self.role()).into_iter());
         match self {
             Owner::Role(role) => bail!(
@@ -939,18 +950,43 @@ mod tests {
 
     #[test]
     fn a_profile_owns_its_system_prompt_and_the_briefings_of_its_role() {
-        assert_eq!(kinds(Role::Planner), ["system", "planner_briefing"]);
+        assert_eq!(
+            kinds(Role::Planner),
+            [
+                "system",
+                "planner_briefing",
+                "planner_resume",
+                "message_delivery"
+            ]
+        );
         assert_eq!(
             kinds(Role::Engineer),
-            ["system", "engineer_briefing", "changes_requested"]
+            [
+                "system",
+                "engineer_briefing",
+                "engineer_resume",
+                "changes_requested",
+                "message_delivery"
+            ]
         );
         assert_eq!(
             kinds(Role::Reviewer),
-            ["system", "reviewer_briefing", "reviewer_resume"]
+            [
+                "system",
+                "reviewer_briefing",
+                "reviewer_resume",
+                "message_delivery"
+            ]
         );
         assert_eq!(
             kinds(Role::Integrator),
-            ["system", "integration_instructions", "integration_resume"]
+            [
+                "system",
+                "integration_instructions",
+                "integration_resume",
+                "integration_merged",
+                "message_delivery"
+            ]
         );
     }
 
@@ -1008,7 +1044,9 @@ mod tests {
     fn the_role_briefings_are_owned_by_their_own_role() {
         for kind in PromptKind::ALL {
             let arg = PromptArg::Briefing(kind);
-            assert!(owned_by(&profile(kind.role()), arg).is_ok(), "{kind:?}");
+            for role in kind.roles() {
+                assert!(owned_by(&profile(*role), arg).is_ok(), "{kind:?}");
+            }
         }
     }
 
@@ -1033,7 +1071,7 @@ mod tests {
         let q = reset_question(&p, &owned(p.role), true);
         assert_eq!(
             q,
-            "Reset all 3 prompts of Engineer (01PROFILE) to the engineer defaults?"
+            "Reset all 5 prompts of Engineer (01PROFILE) to the engineer defaults?"
         );
     }
 
@@ -1178,7 +1216,9 @@ mod tests {
         );
         assert!(err.contains("(planner owns it)"), "{err}");
         assert!(
-            err.contains("their prompts are: system, engineer_briefing, changes_requested"),
+            err.contains(
+                "their prompts are: system, engineer_briefing, engineer_resume, changes_requested"
+            ),
             "{err}"
         );
     }

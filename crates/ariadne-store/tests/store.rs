@@ -4,7 +4,9 @@ use ariadne_core::{
     Actor, AgentKind, AttentionReason, AuthorRole, GoalStatus, PromptKind, ReviewVerdict, Role,
     SessionStatus, TaskStatus,
 };
-use ariadne_store::defaults::{INTEGRATOR_ID, default_prompt, default_system_prompt};
+use ariadne_store::defaults::{
+    INTEGRATOR_ID, default_prompt, default_prompt_text, default_system_prompt,
+};
 use ariadne_store::*;
 
 async fn test_store() -> (Store, tempfile::TempDir) {
@@ -1906,7 +1908,7 @@ async fn prompt_kinds_are_checked_against_the_profile_role() {
             .await
             .unwrap()
             .len(),
-        2
+        PromptKind::for_role(Role::Engineer).len()
     );
 
     // Unknown profiles and unknown kinds are proper errors, not panics.
@@ -1934,7 +1936,7 @@ async fn deleting_a_profile_takes_its_prompts_with_it() {
     let profile = seed_profile(&store, "planner-x", Role::Planner).await;
     assert_eq!(
         store.list_profile_prompts(&profile.id).await.unwrap().len(),
-        1
+        PromptKind::for_role(Role::Planner).len()
     );
 
     store.delete_profile(&profile.id).await.unwrap();
@@ -3709,7 +3711,32 @@ fn previous_prompt(kind: PromptKind) -> &'static str {
         PromptKind::ReviewerResume => previous_release::REVIEWER_RESUME,
         PromptKind::IntegrationInstructions => previous_release::INTEGRATION_INSTRUCTIONS,
         PromptKind::IntegrationResume => previous_release::INTEGRATION_RESUME,
+        later => unreachable!("{} postdates this release", later.as_str()),
     }
+}
+
+/// The kinds a profile of `role` owned before migration 0025 made every text
+/// an agent receives a template: the rows a database seeded by an earlier
+/// release actually holds, and so the ones the migration tests below seed and
+/// compare. The four it adds are seeded by the migration itself, which is
+/// what [`a_pre_0025_database_gains_the_texts_the_daemon_used_to_carry`]
+/// checks.
+fn kinds_before_0025(role: Role) -> Vec<PromptKind> {
+    PromptKind::for_role(role)
+        .iter()
+        .copied()
+        .filter(|kind| !kinds_of_0025().contains(kind))
+        .collect()
+}
+
+/// The four kinds migration 0025 adds.
+fn kinds_of_0025() -> [PromptKind; 4] {
+    [
+        PromptKind::PlannerResume,
+        PromptKind::EngineerResume,
+        PromptKind::IntegrationMerged,
+        PromptKind::MessageDelivery,
+    ]
 }
 
 /// A profile of the previous release, holding the eleven prompts that release
@@ -3737,14 +3764,14 @@ async fn seed_previous_profile(
     .execute(pool)
     .await
     .unwrap();
-    for kind in PromptKind::for_role(role) {
+    for kind in kinds_before_0025(role) {
         sqlx::query(
             "INSERT INTO profile_prompts (profile_id, kind, content, updated_at)
              VALUES (?, ?, ?, 't')",
         )
         .bind(id)
         .bind(kind.as_str())
-        .bind(seeded(previous_prompt(*kind)))
+        .bind(seeded(previous_prompt(kind)))
         .execute(pool)
         .await
         .unwrap();
@@ -3827,14 +3854,14 @@ async fn a_pre_rewrite_database_moves_onto_the_rewritten_prompts() {
         format!("{}\n{EDIT}", previous_system_prompt(Role::Reviewer)),
         "the system prompt its user rewrote"
     );
-    for kind in PromptKind::for_role(Role::Reviewer) {
+    for kind in kinds_before_0025(Role::Reviewer) {
         assert_eq!(
             store
-                .get_profile_prompt("minereviewer", *kind)
+                .get_profile_prompt("minereviewer", kind)
                 .await
                 .unwrap()
                 .content,
-            format!("{}\n{EDIT}", previous_prompt(*kind)),
+            format!("{}\n{EDIT}", previous_prompt(kind)),
             "the {} briefing its user rewrote",
             kind.as_str()
         );
@@ -3870,22 +3897,24 @@ async fn the_integrator_is_briefed_to_merge_a_published_branch_and_to_name_no_ag
         "the playbook still forces a push"
     );
 
+    // Both rules are stated in the briefing that spells the procedure out,
+    // and in exactly that one: the resume and the wake instructions point
+    // back at it rather than restating it, so there is one place either rule
+    // can go stale in.
+    let mut merging = Vec::new();
+    let mut disclosure = Vec::new();
     for kind in PromptKind::for_role(Role::Integrator) {
         let briefing = store
             .get_profile_prompt(&integrator.id, *kind)
             .await
             .unwrap()
             .content;
-        assert!(
-            briefing.contains(MERGE_THE_BASE_IN),
-            "the {} briefing updates a published branch some other way",
-            kind.as_str()
-        );
-        assert!(
-            briefing.contains(NO_DISCLOSURE),
-            "the {} briefing does not forbid saying what wrote the change",
-            kind.as_str()
-        );
+        if briefing.contains(MERGE_THE_BASE_IN) {
+            merging.push(kind.as_str());
+        }
+        if briefing.contains(NO_DISCLOSURE) {
+            disclosure.push(kind.as_str());
+        }
         for rewriting in ["--force-with-lease", "--force"] {
             assert!(
                 !briefing.contains(rewriting),
@@ -3894,6 +3923,16 @@ async fn the_integrator_is_briefed_to_merge_a_published_branch_and_to_name_no_ag
             );
         }
     }
+    assert_eq!(
+        merging,
+        ["integration_instructions"],
+        "the one way a published branch is updated is stated in {merging:?}"
+    );
+    assert_eq!(
+        disclosure,
+        ["integration_instructions"],
+        "what may never be written on the forge is stated in {disclosure:?}"
+    );
 
     // And the rebase it does run, before anything is published, names the
     // remote it fetched instead of the `git fetch .` that fetched nothing.
@@ -4137,14 +4176,14 @@ async fn a_pre_0018_database_moves_onto_the_rewritten_integrator_procedure() {
         .execute(&pool)
         .await
         .unwrap();
-        for kind in PromptKind::for_role(Role::Integrator) {
+        for kind in kinds_before_0025(Role::Integrator) {
             sqlx::query(
                 "INSERT INTO profile_prompts (profile_id, kind, content, updated_at)
                  VALUES (?, ?, ?, 't')",
             )
             .bind(id)
             .bind(kind.as_str())
-            .bind(seeded(release_0017_prompt(*kind)))
+            .bind(seeded(release_0017_prompt(kind)))
             .execute(&pool)
             .await
             .unwrap();
@@ -4189,14 +4228,14 @@ async fn a_pre_0018_database_moves_onto_the_rewritten_integrator_procedure() {
         format!("{}\n{EDIT}", release_0017::INTEGRATOR_SYSTEM_PROMPT),
         "the playbook its user rewrote"
     );
-    for kind in PromptKind::for_role(Role::Integrator) {
+    for kind in kinds_before_0025(Role::Integrator) {
         assert_eq!(
             store
-                .get_profile_prompt("mineintegrator", *kind)
+                .get_profile_prompt("mineintegrator", kind)
                 .await
                 .unwrap()
                 .content,
-            format!("{}\n{EDIT}", release_0017_prompt(*kind)),
+            format!("{}\n{EDIT}", release_0017_prompt(kind)),
             "the {} briefing its user rewrote",
             kind.as_str()
         );
@@ -4323,14 +4362,14 @@ async fn a_pre_0019_database_stops_briefing_the_integrator_to_relay_comments() {
         .execute(&pool)
         .await
         .unwrap();
-        for kind in PromptKind::for_role(Role::Integrator) {
+        for kind in kinds_before_0025(Role::Integrator) {
             sqlx::query(
                 "INSERT INTO profile_prompts (profile_id, kind, content, updated_at)
                  VALUES (?, ?, ?, 't')",
             )
             .bind(id)
             .bind(kind.as_str())
-            .bind(seeded(release_0018_prompt(*kind)))
+            .bind(seeded(release_0018_prompt(kind)))
             .execute(&pool)
             .await
             .unwrap();
@@ -4375,14 +4414,14 @@ async fn a_pre_0019_database_stops_briefing_the_integrator_to_relay_comments() {
         format!("{}\n{EDIT}", release_0018::INTEGRATOR_SYSTEM_PROMPT),
         "the playbook its user rewrote"
     );
-    for kind in PromptKind::for_role(Role::Integrator) {
+    for kind in kinds_before_0025(Role::Integrator) {
         assert_eq!(
             store
-                .get_profile_prompt("mineintegrator", *kind)
+                .get_profile_prompt("mineintegrator", kind)
                 .await
                 .unwrap()
                 .content,
-            format!("{}\n{EDIT}", release_0018_prompt(*kind)),
+            format!("{}\n{EDIT}", release_0018_prompt(kind)),
             "the {} briefing its user rewrote",
             kind.as_str()
         );
@@ -4459,7 +4498,7 @@ fn release_0019_system_prompt(role: Role) -> String {
 fn release_0019_prompt(kind: PromptKind) -> String {
     match kind {
         PromptKind::IntegrationInstructions => release_0019::INTEGRATION_INSTRUCTIONS.to_string(),
-        other => default_prompt(other.role(), other).unwrap().to_string(),
+        other => default_prompt_text(other).to_string(),
     }
 }
 
@@ -4509,14 +4548,14 @@ async fn a_pre_0020_database_moves_onto_the_published_request_texts() {
         .execute(&pool)
         .await
         .unwrap();
-        for kind in PromptKind::for_role(role) {
+        for kind in kinds_before_0025(role) {
             sqlx::query(
                 "INSERT INTO profile_prompts (profile_id, kind, content, updated_at)
                  VALUES (?, ?, ?, 't')",
             )
             .bind(id)
             .bind(kind.as_str())
-            .bind(seeded(release_0019_prompt(*kind)))
+            .bind(seeded(release_0019_prompt(kind)))
             .execute(&pool)
             .await
             .unwrap();
@@ -4570,10 +4609,10 @@ async fn a_pre_0020_database_moves_onto_the_published_request_texts() {
             "the {} playbook its user rewrote",
             role.as_str()
         );
-        for kind in PromptKind::for_role(role) {
+        for kind in kinds_before_0025(role) {
             assert_eq!(
-                store.get_profile_prompt(id, *kind).await.unwrap().content,
-                format!("{}\n{EDIT}", release_0019_prompt(*kind)),
+                store.get_profile_prompt(id, kind).await.unwrap().content,
+                format!("{}\n{EDIT}", release_0019_prompt(kind)),
                 "the {} briefing its user rewrote",
                 kind.as_str()
             );
@@ -4641,6 +4680,48 @@ Whichever way you land it:
 - Never merge a published pull or merge request, never approve one, never sit waiting: end your turn and let Ariadne wake you when it moves.
 - Talk to the humans reviewing it through `post_message`, never by commenting on the request — Ariadne reads what is written on it as the reviewers' feedback and sends it to the engineer, your own comment included.
 - Report truthfully what you landed or published, and which check failed when one did."##;
+
+    /// The three briefings migration 0025 rewrites, as the releases before it
+    /// seeded them: `changes_requested` and `reviewer_resume` are what
+    /// migration 0017 wrote, `integration_resume` what 0019 did. Nothing
+    /// since has touched any of the three — 0021 rewrote the system prompts
+    /// and 0022 the integration instructions — so this is what an install
+    /// upgrading to 0025 holds.
+    pub const CHANGES_REQUESTED: &str = r##"Reviewers requested changes on your task.
+
+{feedback}
+
+Apply them on the same branch, commit, and call `request_review` again, saying how each point was addressed."##;
+
+    pub const REVIEWER_RESUME: &str = r##"The engineer revised the change: this is review round {review_round} of "{task_title}".
+
+Your worktree has moved to the new tip of {branch}: last round's diff is stale. Fetch it again with `get_diff`, review the change as it stands — checking whether your feedback was addressed — and submit exactly one verdict for round {review_round}: `approve` or `request_changes`.
+
+## Engineer's summary of this revision
+{summary}"##;
+
+    pub const INTEGRATION_RESUME: &str = r##"Pick the integration of "{task_title}" up again: it is approved and yours to land, in {repo_path}. Your worktree is on {branch}, which has moved if the engineer revised the change.
+
+Check first whether it was already published — `gh pr list --head {branch} --state all` on GitHub, `glab mr list --source-branch {branch} --all` on GitLab.
+
+- If a pull or merge request exists, update that one and never open a second, exactly as your integration instructions say a published request is updated: `git fetch <remote> {base_branch} && git merge --no-edit <remote>/{base_branch}`, then a plain `git push <remote> {branch}`, never forced and never rewriting a commit it already shows. Then `post_message` to "user" that it is updated and ready to look at again.
+- If none does, land the task as your integration instructions say, from the forge check (`gh auth status` / `glab auth status`) onward: publish it and `record_pull_request` the URL, or, with no forge to publish to, rebase, squash by the repository's commit conventions, fast-forward the base from the primary checkout and `mark_merged` with the resulting sha.
+
+Whatever you write for the forge or for the commit that lands reads as a human contributor's work: no `Co-Authored-By`, `Generated with` or other authorship or tool trailer and no mention of Ariadne, agents, models or tooling.
+
+End your turn afterwards: Ariadne watches a published request and wakes you when a human merges it; what they write on it in the meantime goes to the engineer, not to you. If the rebase or the merge conflicts, abort it and `return_to_engineer` with the conflicting files and what to reconcile."##;
+}
+
+/// Every prompt of `role` as the release before 0025 seeded it: the three
+/// texts it rewrites, and this release's own default for the rest, which the
+/// migration must leave exactly where they are.
+fn release_0024_prompt(kind: PromptKind) -> &'static str {
+    match kind {
+        PromptKind::ChangesRequested => release_0020::CHANGES_REQUESTED,
+        PromptKind::ReviewerResume => release_0020::REVIEWER_RESUME,
+        PromptKind::IntegrationResume => release_0020::INTEGRATION_RESUME,
+        other => default_prompt_text(other),
+    }
 }
 
 /// The system prompt of `role` as the release before 0021 seeded it.
@@ -4699,14 +4780,14 @@ async fn a_pre_0021_database_moves_onto_the_shared_rules() {
         .execute(&pool)
         .await
         .unwrap();
-        for kind in PromptKind::for_role(role) {
+        for kind in kinds_before_0025(role) {
             sqlx::query(
                 "INSERT INTO profile_prompts (profile_id, kind, content, updated_at)
                  VALUES (?, ?, ?, 't')",
             )
             .bind(id)
             .bind(kind.as_str())
-            .bind(default_prompt(role, *kind).unwrap())
+            .bind(default_prompt(role, kind).unwrap())
             .execute(&pool)
             .await
             .unwrap();
@@ -4760,6 +4841,141 @@ async fn a_pre_0021_database_moves_onto_the_shared_rules() {
             format!("{}\n{EDIT}", release_0020_system_prompt(role)),
             "the {} playbook its user rewrote",
             role.as_str()
+        );
+    }
+}
+
+/// An install holding what migration 0024 left behind: 0025 moves the three
+/// rewritten briefings onto their new text byte for byte, writes the four
+/// kinds the daemon used to carry as string literals into every profile that
+/// owns one, and leaves a profile whose user rewrote a briefing exactly as it
+/// is — with the new kinds beside it, at their defaults, since they are texts
+/// that profile never had a say in.
+#[tokio::test]
+async fn a_pre_0025_database_gains_the_texts_the_daemon_used_to_carry() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("one-prompt-system.db");
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let pool = sqlx::SqlitePool::connect_with(options).await.unwrap();
+    let mut migrator = sqlx::migrate::Migrator::new(std::path::Path::new("./migrations"))
+        .await
+        .unwrap();
+    migrator.migrations = migrator
+        .migrations
+        .iter()
+        .filter(|m| m.version < 25)
+        .cloned()
+        .collect::<Vec<_>>()
+        .into();
+    migrator.run(&pool).await.unwrap();
+
+    const EDIT: &str = "And never touch the lockfile.";
+    let seed = async |id: &str, name: &str, role: Role, edit: Option<&str>| {
+        let seeded = |text: &str| match edit {
+            Some(edit) => format!("{text}\n{edit}"),
+            None => text.to_string(),
+        };
+        sqlx::query(
+            "INSERT INTO profiles (id, name, role, system_prompt, created_at, updated_at)
+             VALUES (?, ?, ?, ?, 't', 't')",
+        )
+        .bind(id)
+        .bind(name)
+        .bind(role.as_str())
+        .bind(seeded(default_system_prompt(role)))
+        .execute(&pool)
+        .await
+        .unwrap();
+        for kind in kinds_before_0025(role) {
+            sqlx::query(
+                "INSERT INTO profile_prompts (profile_id, kind, content, updated_at)
+                 VALUES (?, ?, ?, 't')",
+            )
+            .bind(id)
+            .bind(kind.as_str())
+            .bind(seeded(release_0024_prompt(kind)))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    const SEEDED: [(&str, &str, Role); 4] = [
+        ("seededplanner", "Planner", Role::Planner),
+        ("seededengineer", "Engineer", Role::Engineer),
+        ("seededreviewer", "Reviewer", Role::Reviewer),
+        ("seededintegrator", "Integrator", Role::Integrator),
+    ];
+    for (id, name, role) in SEEDED {
+        seed(id, name, role, None).await;
+    }
+    seed("mineengineer", "My Engineer", Role::Engineer, Some(EDIT)).await;
+    seed(
+        "mineintegrator",
+        "My Integrator",
+        Role::Integrator,
+        Some(EDIT),
+    )
+    .await;
+    pool.close().await;
+
+    // Opening the store runs the migration under test.
+    let store = Store::open(&path).await.unwrap();
+
+    // An untouched profile ends up on today's defaults, every kind of them —
+    // the three rewritten and the four that had no row at all.
+    for (id, _, role) in SEEDED {
+        for kind in PromptKind::for_role(role) {
+            assert_eq!(
+                store.get_profile_prompt(id, *kind).await.unwrap().content,
+                default_prompt(role, *kind).unwrap(),
+                "the {} briefing of the seeded {}",
+                kind.as_str(),
+                role.as_str()
+            );
+        }
+    }
+
+    // A profile its user wrote keeps every word of it...
+    for (id, role) in [
+        ("mineengineer", Role::Engineer),
+        ("mineintegrator", Role::Integrator),
+    ] {
+        for kind in kinds_before_0025(role) {
+            assert_eq!(
+                store.get_profile_prompt(id, kind).await.unwrap().content,
+                format!("{}\n{EDIT}", release_0024_prompt(kind)),
+                "the {} briefing its user rewrote",
+                kind.as_str()
+            );
+        }
+        // ...and is seeded with the kinds it never had, at their defaults.
+        for kind in kinds_of_0025().into_iter().filter(|k| k.owned_by(role)) {
+            assert_eq!(
+                store.get_profile_prompt(id, kind).await.unwrap().content,
+                default_prompt(role, kind).unwrap(),
+                "the {} briefing it was seeded with",
+                kind.as_str()
+            );
+        }
+    }
+
+    // And every role got the notice an addressed agent is woken with.
+    for (id, _, role) in SEEDED {
+        assert!(
+            PromptKind::MessageDelivery.owned_by(role),
+            "{} owns no message notice",
+            role.as_str()
+        );
+        assert_eq!(
+            store
+                .get_profile_prompt(id, PromptKind::MessageDelivery)
+                .await
+                .unwrap()
+                .content,
+            default_prompt_text(PromptKind::MessageDelivery)
         );
     }
 }

@@ -239,11 +239,15 @@ pub fn prompt_kinds() -> Vec<CompletionCandidate> {
     let mut out = vec![
         CompletionCandidate::new("system").help(Some("the profile's own system prompt".into())),
     ];
-    out.extend(
-        ariadne_core::PromptKind::ALL
-            .into_iter()
-            .map(|kind| candidate(kind.as_str(), format!("{} profiles", kind.role().as_str()))),
-    );
+    out.extend(ariadne_core::PromptKind::ALL.into_iter().map(|kind| {
+        let owners = kind
+            .roles()
+            .iter()
+            .map(|role| role.as_str())
+            .collect::<Vec<_>>()
+            .join("/");
+        candidate(kind.as_str(), format!("{owners} profiles"))
+    }));
     out
 }
 
