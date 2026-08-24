@@ -14,8 +14,9 @@ use rmcp::model::*;
 use rmcp::service::{RequestContext, RoleServer};
 use rmcp::{ErrorData as McpError, ServiceExt, schemars, tool, tool_router};
 
-use ariadne_api::goals::FinalizePlanRequest;
+use ariadne_api::goals::{FinalizePlanRequest, GoalDto};
 use ariadne_api::messages::{CreateMessageRequest, MessageDto};
+use ariadne_api::profiles::ProfileDto;
 use ariadne_api::reviews::CreateReviewRequest;
 use ariadne_api::tasks::{
     CreateTaskRequest, RecordPullRequestRequest, ReturnToEngineerRequest, TransitionRequest,
@@ -62,11 +63,8 @@ pub struct PostMessageReq {
     pub body: String,
     /// Task id; defaults to your own task (planner: goal-level thread).
     pub task_id: Option<String>,
-    /// Whom to address, waking them to read it: a profile name as your
-    /// briefing and `list_profiles` spell it, or "user" for the human. A task
-    /// thread addresses its engineer, its reviewers, its integrator or the
-    /// planner; a goal thread only the planner. Leave it out to address the
-    /// thread itself.
+    /// Whom to address, waking them, as your system prompt spells it; leave
+    /// it out to address the thread itself.
     pub to: Option<String>,
 }
 
@@ -190,6 +188,52 @@ fn addressed_message(message: &MessageDto) -> serde_json::Value {
     })
 }
 
+/// One task as an agent reads it: every profile it names spelled by name
+/// beside its id, since a name is what `post_message`'s `to` takes and an id
+/// is not something a prompt can teach anyone to read.
+///
+/// The planner is one of them: it takes part in every task thread without
+/// being a field of the task, so it is looked up from the goal and named
+/// here too.
+fn named_participants(
+    mut task: serde_json::Value,
+    planner_profile_id: &str,
+    profiles: &[ProfileDto],
+) -> serde_json::Value {
+    let name_of = |id: &str| {
+        profiles
+            .iter()
+            .find(|p| p.id == id)
+            .map(|p| serde_json::Value::String(p.name.clone()))
+    };
+    let Some(fields) = task.as_object_mut() else {
+        return task;
+    };
+    for (id, name) in [
+        ("engineer_profile_id", "engineer_profile_name"),
+        ("integrator_profile_id", "integrator_profile_name"),
+    ] {
+        if let Some(named) = fields.get(id).and_then(|v| v.as_str()).and_then(name_of) {
+            fields.insert(name.to_string(), named);
+        }
+    }
+    if let Some(named) = name_of(planner_profile_id) {
+        fields.insert("planner_profile_name".to_string(), named);
+    }
+    if let Some(reviewers) = fields.get_mut("reviewers").and_then(|v| v.as_array_mut()) {
+        for slot in reviewers.iter_mut().filter_map(|r| r.as_object_mut()) {
+            if let Some(named) = slot
+                .get("profile_id")
+                .and_then(|v| v.as_str())
+                .and_then(name_of)
+            {
+                slot.insert("profile_name".to_string(), named);
+            }
+        }
+    }
+    task
+}
+
 fn json_result(v: serde_json::Value) -> Result<CallToolResult, McpError> {
     Ok(CallToolResult::success(vec![ContentBlock::text(
         serde_json::to_string_pretty(&v).unwrap_or_else(|_| v.to_string()),
@@ -300,13 +344,26 @@ impl AriadneMcp {
 
 #[tool_router]
 impl AriadneMcp {
-    #[tool(description = "Read a task: status, branch, engineer, reviewers, dependencies.")]
+    #[tool(
+        description = "Read a task: status, branch, dependencies, and the profile names of its engineer, its reviewers, its integrator and the planner — the names `post_message` addresses them by."
+    )]
     async fn get_task(
         &self,
         Parameters(req): Parameters<TaskIdOpt>,
     ) -> Result<CallToolResult, McpError> {
-        let task = self.own_task(req.task_id)?;
-        json_result(self.get(&format!("/v1/tasks/{task}")).await?)
+        let id = self.own_task(req.task_id)?;
+        let task: serde_json::Value = self.get(&format!("/v1/tasks/{id}")).await?;
+        let goal_id = task
+            .get("goal_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&self.goal_id);
+        let goal: GoalDto = self.get(&format!("/v1/goals/{goal_id}")).await?;
+        let profiles: Vec<ProfileDto> = self.get("/v1/profiles").await?;
+        json_result(named_participants(
+            task,
+            &goal.planner_profile_id,
+            &profiles,
+        ))
     }
 
     #[tool(
@@ -317,7 +374,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Read a task's conversation, for what the other agents and the user said. Without task_id, a planner reads the goal thread. A message that addressed someone carries a `to`: the profile name it named, or \"user\"."
+        description = "Read a task's conversation, for what the other agents and the user said. Without task_id, a planner reads the goal thread. A message that addressed someone carries the `to` it named."
     )]
     async fn list_messages(
         &self,
@@ -334,7 +391,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Write into a task's conversation: the way to reach the other agents and the user. Without task_id, a planner posts to the goal thread. Address one of them with `to` — a profile name (as your briefing and `list_profiles` spell it) or \"user\" — and that recipient is woken and notified; without `to` the message is left to the thread, read whenever someone next looks. A task thread addresses its engineer, its reviewers, its integrator and the planner; a goal thread addresses the planner. Addressing anyone else is refused, naming who would have worked."
+        description = "Write into a task's conversation, the way to reach the other agents and the user: `to` addresses one of them as your system prompt spells it, and without task_id a planner posts to the goal thread instead."
     )]
     async fn post_message(
         &self,
@@ -577,7 +634,9 @@ impl AriadneMcp {
         Ok(CallToolResult::success(vec![ContentBlock::text(diff)]))
     }
 
-    #[tool(description = "Approve the change under review, as this round's single verdict.")]
+    #[tool(
+        description = "Approve the change under review; the body is the note that goes with it."
+    )]
     async fn approve(
         &self,
         Parameters(req): Parameters<VerdictReq>,
@@ -586,7 +645,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Request changes on the change under review, as this round's single verdict: name the files and functions that must change."
+        description = "Request changes on the change under review; the body is the feedback the engineer is resumed with."
     )]
     async fn request_changes(
         &self,
@@ -678,7 +737,7 @@ mod tests {
     use super::*;
 
     use ariadne_api::messages::MessageRecipientDto;
-    use ariadne_core::{AuthorRole, RecipientKind};
+    use ariadne_core::{AuthorRole, RecipientKind, Role};
 
     fn message(recipient: Option<MessageRecipientDto>) -> MessageDto {
         MessageDto {
@@ -708,6 +767,73 @@ mod tests {
 
         let to_the_thread = addressed_message(&message(None));
         assert_eq!(to_the_thread["to"], serde_json::Value::Null);
+    }
+
+    fn profile(id: &str, name: &str, role: Role) -> ProfileDto {
+        ProfileDto {
+            id: id.into(),
+            name: name.into(),
+            role,
+            agent_kind: None,
+            model: None,
+            system_prompt: String::new(),
+            created_at: "2026-01-01T00:00:00Z".into(),
+            updated_at: "2026-01-01T00:00:00Z".into(),
+        }
+    }
+
+    /// The prompts tell every agent to address the others by profile name, so
+    /// the task it reads has to spell them: its engineer, every reviewer
+    /// slot, the integrator that lands it and the planner that wrote it, none
+    /// of which the task row itself names.
+    #[test]
+    fn a_read_task_names_everyone_a_message_can_be_addressed_to() {
+        let named = named_participants(
+            serde_json::json!({
+                "id": "01TASK",
+                "engineer_profile_id": "01ENG",
+                "integrator_profile_id": "01INT",
+                "reviewers": [{"profile_id": "01REV"}],
+            }),
+            "01PLAN",
+            &[
+                profile("01ENG", "Engineer", Role::Engineer),
+                profile("01REV", "Reviewer", Role::Reviewer),
+                profile("01INT", "Integrator", Role::Integrator),
+                profile("01PLAN", "Planner", Role::Planner),
+            ],
+        );
+        assert_eq!(
+            named["engineer_profile_name"],
+            serde_json::json!("Engineer")
+        );
+        assert_eq!(
+            named["integrator_profile_name"],
+            serde_json::json!("Integrator")
+        );
+        assert_eq!(named["planner_profile_name"], serde_json::json!("Planner"));
+        assert_eq!(
+            named["reviewers"][0]["profile_name"],
+            serde_json::json!("Reviewer")
+        );
+        // The ids it was read with are still there, and so is everything else.
+        assert_eq!(named["engineer_profile_id"], serde_json::json!("01ENG"));
+        assert_eq!(named["id"], serde_json::json!("01TASK"));
+    }
+
+    /// A profile the task names and the daemon no longer has — deleted since
+    /// the task was created — leaves the task readable, with the id it always
+    /// carried and no name beside it.
+    #[test]
+    fn a_profile_that_is_gone_leaves_the_task_readable() {
+        let named = named_participants(
+            serde_json::json!({"engineer_profile_id": "01GONE", "reviewers": []}),
+            "01PLAN",
+            &[],
+        );
+        assert_eq!(named["engineer_profile_id"], serde_json::json!("01GONE"));
+        assert!(named.get("engineer_profile_name").is_none(), "{named}");
+        assert!(named.get("planner_profile_name").is_none(), "{named}");
     }
 
     fn server(role: McpRole) -> AriadneMcp {

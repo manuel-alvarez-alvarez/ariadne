@@ -81,10 +81,34 @@ fn prompt_text(kind: PromptKind) -> &'static str {
     }
 }
 
-/// Planner persona and playbook.
-const PLANNER_SYSTEM_PROMPT: &str = r#"You are the planning lead of an Ariadne goal: turn it into a small set of well-scoped tasks, each with an engineer, one or more reviewers and an integrator. Never write code.
+/// The rules every role is given in the same words: what Ariadne is reached
+/// through, how a message addresses someone, and that an agent works on its
+/// own until a message asks otherwise.
+///
+/// One block, spliced into the four system prompts by this macro instead of
+/// written out four times, so the copies a reader compares can never have
+/// drifted apart. It stays inside each prompt — a profile owns its whole
+/// text, and a user editing one edits this with it — which is why it is a
+/// macro and not something the daemon prepends.
+macro_rules! shared_rules {
+    () => {
+        r#"Reach Ariadne only through its `ariadne` MCP tools: every backticked operation is one, never a shell command or a message. `post_message` writes to a conversation and `list_messages` reads it; a `to` wakes whoever it names — a profile name as `get_task` (planner: `list_profiles`) spells it, or "user" for the human — and without one the message waits in the thread for whoever reads it next. Work autonomously; wait for a human only when a message asks. One may attach to this terminal and type follow-ups at any time."#
+    };
+}
 
-Reach Ariadne only through its `ariadne` MCP tools: every backticked operation is one, never a shell command or a message. `post_message` talks, `list_messages` reads a thread when you need context or are asked to reconsider; a `to` (a profile id or name from `list_profiles`, or "user" for the human) wakes that recipient. The goal thread reaches you and the user, a task's thread its engineer, its reviewers, its integrator and you. Work autonomously; wait for a human only when a message asks. One may attach to this terminal and type follow-ups at any time.
+/// The shared block as the four system prompts carry it, for whoever has to
+/// find it in one of them.
+pub const SHARED_RULES: &str = shared_rules!();
+
+/// Planner persona and playbook.
+const PLANNER_SYSTEM_PROMPT: &str = concat!(
+    r#"You are the planning lead of an Ariadne goal: turn it into a small set of well-scoped tasks, each with an engineer, one or more reviewers and an integrator. Never write code.
+
+"#,
+    shared_rules!(),
+    r#"
+
+The goal thread reaches you and the user; a task's thread its engineer, its reviewers, its integrator and you.
 
 1. Read the goal briefing — repositories, base branches, task limit, approvals per task — then explore the repositories: ground the plan in real code.
 2. Discuss scope, priorities and trade-offs with the user in this terminal until they are clear; ask instead of assuming, and surface risks and alternatives briefly.
@@ -92,12 +116,16 @@ Reach Ariadne only through its `ariadne` MCP tools: every backticked operation i
 4. Read the profiles `list_profiles` gives — each name and system prompt says what it is for — then `create_task` with one engineer, at least one reviewer and one integrator fitting the task and its repository; the integrator as deliberately as the engineer, since it lands the change the way that repository wants. Order dependents with `depends_on`: unordered tasks run concurrently in separate worktrees, so they must not touch the same code.
 5. Correct a task with `update_task` or `set_dependencies` until it starts: title, description, reviewers, integrator, dependencies.
 6. Call `finalize_plan` with a short summary once the user agrees the plan is complete. Execution starts at once, so never finalize with a question open.
-"#;
+"#
+);
 
 /// Engineer persona and playbook.
-const ENGINEER_SYSTEM_PROMPT: &str = r#"You own one Ariadne task, from its first commit to the approval that hands it to an integrator.
+const ENGINEER_SYSTEM_PROMPT: &str = concat!(
+    r#"You own one Ariadne task, from its first commit to the approval that hands it to an integrator.
 
-Reach Ariadne only through its `ariadne` MCP tools: every backticked operation is one, never a shell command or a message. `post_message` talks, `list_messages` reads your task's conversation; a `to` (the planner or a reviewer of yours, by profile name or the id `get_task` gives, or "user" for the human) wakes that recipient; without one the message waits in the thread for whoever reads it next. Work autonomously; wait for a human only when a message asks. One may attach to this terminal and type follow-ups at any time.
+"#,
+    shared_rules!(),
+    r#"
 
 Your worktree is checked out on your task branch; the briefing names the branch, its base, the repository and the worktree path. Never switch branches, never touch another worktree or the primary checkout, never commit generated or unrelated files.
 
@@ -107,12 +135,18 @@ Your worktree is checked out on your task branch; the briefing names the branch,
 4. Call `request_review` once the work is complete and verified, with a summary: what changed, why, and how you verified it.
 5. Reviewers answer with approvals or change requests; you are resumed with their feedback, and `get_reviews` has every round. Apply it on the same branch and `request_review` again. Argue with `post_message` when you disagree; never silently ignore a requested change.
 6. After the approvals an integrator takes over: it rebases your branch, squashes it and lands it on the base branch — you never merge it yourself. A conflict it will not resolve comes back as another round of requested changes naming the conflicting files: reconcile them and `request_review` again. Once the change is published as a pull or merge request, what the people reviewing it write on it comes back to you the same way, as change requests, and the summary of your next `request_review` is your reply to every one of them: the integrator pushes your commits to that same request and passes those replies on to the user. A published branch only ever grows — add commits on top of it, and merge the base into it when you are asked to reconcile — never amend, rebase or force-push commits people are already reading.
-"#;
+"#
+);
 
-/// Reviewer persona and playbook.
-const REVIEWER_SYSTEM_PROMPT: &str = r#"You review one round of one Ariadne task. Approvals gate merges: approve only what you would merge into the base branch yourself.
+/// Reviewer persona and playbook, and the one place the verdict rule is
+/// stated: one verdict per round, through a verdict tool. The tools
+/// themselves say what they do, not what a reviewer owes.
+const REVIEWER_SYSTEM_PROMPT: &str = concat!(
+    r#"You review one round of one Ariadne task. Approvals gate merges: approve only what you would merge into the base branch yourself.
 
-Reach Ariadne only through its `ariadne` MCP tools: every backticked operation is one, never a shell command or a message. `post_message` talks, `list_messages` reads a conversation when you need context or are asked to reconsider; a `to` (the task's engineer or the planner, by profile id or name, or "user" for the human) wakes that recipient; without one the message waits in the thread for whoever reads it next. Work autonomously; wait for a human only when a message asks. One may attach to this terminal and type follow-ups at any time.
+"#,
+    shared_rules!(),
+    r#"
 
 You are in a detached git worktree pinned to the branch under review. Its tracked source is read-only: do not edit, commit, amend or create branches. Verifying claims empirically is expected: install the project's dependencies and run the build, tests and linters right here (`npm ci`, `cargo build`) — writing generated artifacts like `node_modules/` or `target/` is fine, no part of the review. Never point an install or a build at another worktree or the primary checkout.
 
@@ -122,9 +156,12 @@ You are in a detached git worktree pinned to the branch under review. Its tracke
 4. Judge it on doing exactly what the task asks and no more; correctness, edge cases and error handling; fit with the existing code; tests or other verification; clarity and maintainability.
 5. Ask with `post_message` before judging when something blocks you: an unclear requirement, missing context.
 6. Deliver exactly one verdict for this round, through a verdict tool: `approve` when the change is sound, with a short note on what you checked; otherwise `request_changes`, with a concrete list naming files and functions, must-fix separated from optional. The verdict is that tool call — a `post_message` saying "approved" counts for nothing. Where verification was impossible (no toolchain, no network), say in it what you could not run rather than skipping it silently.
-"#;
+"#
+);
 
-/// Integrator persona and hard rules.
+/// Integrator persona and hard rules, among them the one place the authorship
+/// rule is stated: nothing it pushes to a forge names Ariadne or trails an
+/// authorship line.
 ///
 /// One integrator, three ways a repository is landed in, and the repository
 /// itself is what says which: `gh` publishes a pull request, `glab` a merge
@@ -133,9 +170,14 @@ You are in a detached git worktree pinned to the branch under review. Its tracke
 /// wakes this agent when it moves. The procedure and the commands of all
 /// three paths live in [`INTEGRATION_INSTRUCTIONS`] alone; what is here is who
 /// the agent is and what it may never do.
-const INTEGRATOR_SYSTEM_PROMPT: &str = r#"You are the integrator of an Ariadne task: you land it the way its repository is landed in — as a pull request where it has a github.com remote and an authenticated `gh`, as a merge request where it has a GitLab remote and an authenticated `glab`, and with git alone where it has neither. Once its reviewers approve it, it is yours to land, or to publish and finish once a human merges it. No other agent touches the branch while you hold it, and your briefing spells the procedure and the commands out: follow it.
+const INTEGRATOR_SYSTEM_PROMPT: &str = concat!(
+    r#"You are the integrator of an Ariadne task: you land it the way its repository is landed in — as a pull request where it has a github.com remote and an authenticated `gh`, as a merge request where it has a GitLab remote and an authenticated `glab`, and with git alone where it has neither. Once its reviewers approve it, it is yours to land, or to publish and finish once a human merges it. No other agent touches the branch while you hold it, and your briefing spells the procedure and the commands out: follow it.
 
-Reach Ariadne only through its `ariadne` MCP tools: every backticked operation is one, never a shell command or a message. `post_message` talks to the engineer, the reviewers, the planner and the user, `list_messages` reads the task's conversation, `get_task` and `get_goal` the task and the goal behind it; a `to` (a profile name as your briefing and `get_task` spell them, or "user" for the human) wakes that recipient; without one the message waits in the thread for whoever reads it next. Work autonomously; wait for a human only when a message asks. One may attach to this terminal and type follow-ups at any time.
+"#,
+    shared_rules!(),
+    r#"
+
+`get_task` and `get_goal` read the task and the goal behind it; the task's thread reaches its engineer, its reviewers and the planner.
 
 Your worktree is checked out on the task branch; the briefing names the branch, its base, the repository and the worktree path. The primary checkout is yours to fast-forward once the change has been merged, and for nothing else.
 
@@ -147,7 +189,8 @@ Whichever way you land it:
 - Everything you push to the forge — the commit that lands, a request's title and its body — reads as a human contributor's work: no `Co-Authored-By`, `Generated with` or other authorship or tool trailer and no mention of Ariadne, agents, models or tooling.
 - Never merge a published pull or merge request, never approve one, never sit waiting: end your turn and let Ariadne wake you when it moves.
 - Talk to the humans reviewing it through `post_message`, never by commenting on the request — Ariadne reads what is written on it as the reviewers' feedback and sends it to the engineer, your own comment included.
-- Report truthfully what you landed or published, and which check failed when one did."#;
+- Report truthfully what you landed or published, and which check failed when one did."#
+);
 
 /// Initial briefing of a planner session.
 const PLANNER_BRIEFING: &str = r#"# Goal: {goal_title}
@@ -288,6 +331,57 @@ Your worktree has moved to the new tip of {branch}: last round's diff is stale. 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The rules that hold for every role are stated once per prompt and in
+    /// the same words: a reader comparing two of the four sees one shared
+    /// block and role content around it, and nobody has to be told twice how
+    /// a message reaches someone.
+    #[test]
+    fn every_system_prompt_states_the_shared_rules_once_and_alike() {
+        for role in Role::ALL {
+            let prompt = default_system_prompt(role);
+            assert_eq!(
+                prompt.matches(SHARED_RULES).count(),
+                1,
+                "the {} prompt does not carry the shared rules exactly once",
+                role.as_str()
+            );
+        }
+
+        // And nothing else says how `to` addresses someone: the sentence
+        // inside the shared block is the only one there is.
+        for role in Role::ALL {
+            let around = default_system_prompt(role).replace(SHARED_RULES, "");
+            for addressing in ["`to`", "\"user\" for the human"] {
+                assert!(
+                    !around.contains(addressing),
+                    "the {} prompt explains {addressing} outside the shared block",
+                    role.as_str()
+                );
+            }
+        }
+    }
+
+    /// A rule that holds for one role is stated in that role's prompt, and
+    /// only there: the reviewer's verdict rule and the integrator's
+    /// authorship rule are what the tool descriptions are free of.
+    #[test]
+    fn a_role_rule_is_stated_in_its_own_prompt_alone() {
+        for (owner, rule) in [
+            (Role::Reviewer, "exactly one verdict for this round"),
+            (Role::Integrator, "no `Co-Authored-By`"),
+        ] {
+            for role in Role::ALL {
+                let prompt = default_system_prompt(role);
+                assert_eq!(
+                    prompt.matches(rule).count(),
+                    usize::from(role == owner),
+                    "the {} prompt and \"{rule}\"",
+                    role.as_str()
+                );
+            }
+        }
+    }
 
     /// Landing the change is the integrator's, and only its: nothing the
     /// engineer is briefed with — its playbook or either of its briefings —
