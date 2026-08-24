@@ -27,8 +27,9 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    the **planner** in tmux; `ariadne goal attach` drops you into the
    conversation.
 2. The planner discusses the breakdown with you, creates tasks through the
-   Ariadne MCP tools (assigning an engineer profile and reviewer profiles per
-   task, with optional `depends_on` ordering), then calls `finalize_plan`.
+   Ariadne MCP tools (assigning an engineer profile, reviewer profiles and an
+   integrator profile per task, with optional `depends_on` ordering), then
+   calls `finalize_plan`.
 3. The scheduler takes over: when a task's dependencies are merged it becomes
    `ready`, an **engineer** is spawned in a dedicated git worktree on branch
    `ariadne/task-<id>`, implements, commits and calls `request_review`.
@@ -36,8 +37,8 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    `approve` or `request_changes`. Change requests resume the engineer with
    the feedback; enough approvals hand the task to its integrator.
 5. The **integrator** takes the branch over in a worktree of its own — the
-   engineer's is released with it — and lands it. The built-in **Integrator**
-   does it locally: rebase, squash, fast-forward the base branch and
+   engineer's is released with it — and lands it. The built-in **Local
+   Integrator** does it locally: rebase, squash, fast-forward the base branch and
    `mark_merged`, which the daemon only accepts after verifying the merge with
    `git merge-base --is-ancestor`. A rebase it will not resolve goes back to
    the engineer as a round of requested changes (`return_to_engineer`)
@@ -58,7 +59,7 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    create` against the project's own merge request templates, and a daemon
    that polls `glab` for the approval, the discussion notes and the merge.
    Which of the two watches a task is the URL its integrator recorded, so a
-   repository on neither forge simply keeps the local Integrator's flow.
+   repository on neither forge simply keeps the Local Integrator's flow.
 
 Task lifecycle: `pending → ready → in_progress → under_review →
 (changes_requested → in_progress …) → approved → integrating → merged`, with

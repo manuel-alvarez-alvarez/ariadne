@@ -283,7 +283,7 @@ mod tests {
             description: "Read them from `profile_prompts`.".into(),
             status: "in_progress".into(),
             engineer_profile_id: "01engineerxxxxxxxxxxxxxxxx".into(),
-            integrator_profile_id: None,
+            integrator_profile_id: ariadne_store::defaults::LOCAL_INTEGRATOR_ID.into(),
             agent_kind: None,
             model: None,
             branch: "ariadne/task-01taskxxxxxxxxxxxxxxxxxxxx".into(),

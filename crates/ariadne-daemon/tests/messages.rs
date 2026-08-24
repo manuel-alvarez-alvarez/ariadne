@@ -129,7 +129,7 @@ impl Harness {
                 title: "Task".into(),
                 description: "do things".into(),
                 engineer_profile_id: engineer.id.clone(),
-                integrator_profile_id: Some(integrator.id.clone()),
+                integrator_profile_id: integrator.id.clone(),
                 reviewer_profile_ids: vec![reviewer.id.clone()],
                 depends_on: vec![],
             })
@@ -145,17 +145,17 @@ impl Harness {
         }
     }
 
-    /// A second task on the same goal with no integrator named: the shape
-    /// every task has that was created before the column existed.
-    async fn task_without_an_integrator(&self, cast: &Cast) -> Task {
+    /// A second task on the same goal, landed by the built-in Local
+    /// Integrator rather than by the cast's own one.
+    async fn task_on_the_builtin_integrator(&self, cast: &Cast) -> Task {
         self.store
             .create_task(NewTask {
                 goal_id: cast.goal.id.clone(),
                 repo_id: cast.task.repo_id.clone(),
-                title: "Legacy task".into(),
-                description: "created before the integrator".into(),
+                title: "Plainly landed task".into(),
+                description: "landed by the built-in integrator".into(),
                 engineer_profile_id: cast.engineer.id.clone(),
-                integrator_profile_id: None,
+                integrator_profile_id: ariadne_store::defaults::LOCAL_INTEGRATOR_ID.into(),
                 reviewer_profile_ids: vec![cast.reviewer.id.clone()],
                 depends_on: vec![],
             })
@@ -326,16 +326,16 @@ async fn a_task_thread_refuses_a_profile_that_takes_no_part_in_it() {
     );
 }
 
-/// A task created before the integrator existed names none, and is landed by
-/// the built-in Integrator all the same — so that is who its thread addresses.
-/// An integrator session working on a task nobody can reach would be one whose
-/// questions and send-backs go nowhere.
+/// Whichever integrator a task was assigned, its thread addresses that one —
+/// the built-in Local Integrator included. An integrator session working on a
+/// task nobody can reach would be one whose questions and send-backs go
+/// nowhere.
 #[tokio::test]
-async fn a_task_that_names_no_integrator_addresses_the_built_in_one() {
+async fn a_task_on_the_built_in_integrator_addresses_it() {
     let h = harness().await;
     let cast = h.cast().await;
-    let legacy = h.task_without_an_integrator(&cast).await;
-    let uri = format!("/v1/tasks/{}/messages", legacy.id);
+    let plain = h.task_on_the_builtin_integrator(&cast).await;
+    let uri = format!("/v1/tasks/{}/messages", plain.id);
     let builtin = h.store.builtin_integrator().await.expect("the built-in");
 
     let to_integrator = h

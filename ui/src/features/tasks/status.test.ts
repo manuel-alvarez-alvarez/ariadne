@@ -22,6 +22,7 @@ function task(id: string, status: TaskStatus, extra: Partial<TaskDto> = {}): Tas
     repo_id: "r1",
     depends_on: [],
     engineer_profile_id: "p1",
+    integrator_profile_id: "01INTEGRATOR",
     reviewers: [],
     review_round: 0,
     stalled: false,

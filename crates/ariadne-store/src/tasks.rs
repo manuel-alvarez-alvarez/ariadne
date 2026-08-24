@@ -17,9 +17,8 @@ pub struct NewTask {
     pub title: String,
     pub description: String,
     pub engineer_profile_id: String,
-    /// Profile that lands the task once it is approved. None leaves the task
-    /// without one, the shape every task had before the integrator.
-    pub integrator_profile_id: Option<String>,
+    /// Profile that lands the task once it is approved.
+    pub integrator_profile_id: String,
     pub reviewer_profile_ids: Vec<String>,
     pub depends_on: Vec<String>,
 }
@@ -29,6 +28,7 @@ pub struct TaskUpdate {
     pub title: Option<String>,
     pub description: Option<String>,
     pub reviewer_profile_ids: Option<Vec<String>>,
+    pub integrator_profile_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -263,13 +263,24 @@ impl Store {
         }
         let title = update.title.unwrap_or(task.title);
         let description = update.description.unwrap_or(task.description);
-        sqlx::query("UPDATE tasks SET title = ?, description = ?, updated_at = ? WHERE id = ?")
-            .bind(&title)
-            .bind(&description)
-            .bind(now())
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
+        // The integrator is reassignable while the task has not started, the
+        // way the reviewers below are: nothing of it is pinned onto the task,
+        // so the swap is the id and nothing else.
+        let integrator = update
+            .integrator_profile_id
+            .unwrap_or(task.integrator_profile_id);
+        sqlx::query(
+            "UPDATE tasks SET title = ?, description = ?, integrator_profile_id = ?,
+                              updated_at = ?
+             WHERE id = ?",
+        )
+        .bind(&title)
+        .bind(&description)
+        .bind(&integrator)
+        .bind(now())
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
         if let Some(reviewers) = update.reviewer_profile_ids {
             if reviewers.is_empty() {
                 return Err(StoreError::Invalid(

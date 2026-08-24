@@ -9,9 +9,10 @@
  * open are its own doing rather than the user's, so a glance at the dialog
  * must still close it with nothing asked.
  *
- * The integrator is checked because the request may not lean on the daemon's
- * implicit default: what the picker shows has to be what is sent, whether the
- * user touched it or not.
+ * The integrator is checked in both modes: the daemon requires one on create,
+ * so what the picker shows has to be what is sent whether the user touched it
+ * or not, and it is reassignable while the task waits, so the edit form offers
+ * it beside the reviewers.
  */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
@@ -21,7 +22,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { GoalDto, ProfileDto } from "@/api"
 
-import { CreateTaskDialog } from "./task-form-dialog"
+import { CreateTaskDialog, EditTaskDialog } from "./task-form-dialog"
 
 /** Hoisted for the reason the other dialog tests give: the client takes its
  * `fetch` when `@/api` is imported, so a later stub is one it never sees. */
@@ -63,15 +64,15 @@ const REVIEWER: ProfileDto = {
   role: "reviewer",
 }
 
-/** The built-in local integrator: the one the form preselects, by its id. */
+/** The built-in Local Integrator: the one the form preselects, by its id. */
 const INTEGRATOR: ProfileDto = {
   ...ENGINEER,
   id: "00000000000000000000000004",
-  name: "Integrator",
+  name: "Local Integrator",
   role: "integrator",
 }
 
-/** Sorts first of the two, so preselecting the local one cannot be an accident. */
+/** Sorts ahead of it, so preselecting the local one cannot be an accident. */
 const GITHUB_INTEGRATOR: ProfileDto = {
   ...ENGINEER,
   id: "00000000000000000000000005",
@@ -93,6 +94,7 @@ const CREATED = {
   branch: "ariadne/task-01JTASK0000000000000000001",
   depends_on: [],
   engineer_profile_id: ENGINEER.id,
+  integrator_profile_id: INTEGRATOR.id,
   reviewers: [],
   review_round: 0,
   stalled: false,
@@ -174,7 +176,7 @@ describe("dismissing the dialog", () => {
 
     // The preselects are what this is about: wait until they have happened.
     expect(await screen.findByText("Engineer")).toBeDefined()
-    expect(await screen.findByText("Integrator")).toBeDefined()
+    expect(await screen.findByText("Local Integrator")).toBeDefined()
     expect(await screen.findByText("Reviewer")).toBeDefined()
 
     await user.click(screen.getByRole("button", { name: "Cancel" }))
@@ -222,7 +224,7 @@ describe("the integrator assignment", () => {
     renderDialog(vi.fn())
 
     // Not simply the first of the list — "GitHub Integrator" sorts ahead of it.
-    expect(await screen.findByText("Integrator")).toBeDefined()
+    expect(await screen.findByText("Local Integrator")).toBeDefined()
 
     await user.type(screen.getByLabelText("Title"), "Wire the strip")
     await user.click(screen.getByRole("button", { name: "Create task" }))
@@ -241,6 +243,62 @@ describe("the integrator assignment", () => {
     await user.click(screen.getByRole("button", { name: "Create task" }))
 
     await vi.waitFor(() => expect(writes).toEqual([`POST /v1/goals/${GOAL.id}/tasks`]))
+    expect(posted[0]).toMatchObject({ integrator_profile: GITHUB_INTEGRATOR.id })
+  })
+})
+
+describe("editing a task that has not started", () => {
+  const TASK = {
+    ...CREATED,
+    reviewers: [{ profile_id: REVIEWER.id, agent_kind: null, model: null }],
+  }
+
+  function renderEdit() {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    })
+    return render(
+      <QueryClientProvider client={queryClient}>
+        <EditTaskDialog task={TASK as never} open onOpenChange={vi.fn()} />
+      </QueryClientProvider>,
+    )
+  }
+
+  it("offers the integrator beside the reviewers and patches the new one", async () => {
+    const user = userEvent.setup()
+    daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(String(input), init)
+      const url = new URL(request.url)
+      const answer = (payload: unknown) =>
+        new Response(JSON.stringify(payload), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+      if (request.method !== "GET") {
+        writes.push(`${request.method} ${url.pathname}`)
+        posted.push(await request.clone().json())
+        return answer({ ...TASK, integrator_profile_id: GITHUB_INTEGRATOR.id })
+      }
+      if (url.pathname === "/v1/profiles") {
+        return answer(
+          url.searchParams.get("role") === "integrator"
+            ? [GITHUB_INTEGRATOR, INTEGRATOR]
+            : [REVIEWER],
+        )
+      }
+      if (url.pathname === "/v1/tasks") return answer([])
+      return new Response("not stubbed", { status: 404 })
+    })
+    renderEdit()
+
+    // The task's own integrator is what the picker starts on, not a default.
+    expect(await screen.findByText("Local Integrator")).toBeDefined()
+
+    await user.click(await screen.findByLabelText("Integrator profile"))
+    await user.click(await screen.findByRole("option", { name: "GitHub Integrator" }))
+    await user.click(screen.getByRole("button", { name: "Save changes" }))
+
+    await vi.waitFor(() => expect(writes).toEqual([`PATCH /v1/tasks/${TASK.id}`]))
     expect(posted[0]).toMatchObject({ integrator_profile: GITHUB_INTEGRATOR.id })
   })
 })

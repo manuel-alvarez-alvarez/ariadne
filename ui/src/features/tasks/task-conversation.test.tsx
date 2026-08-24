@@ -66,6 +66,7 @@ const TASK: TaskDto = {
   branch: "ariadne/task-01TASK",
   depends_on: [],
   engineer_profile_id: "01ENGINEER",
+  integrator_profile_id: "01INTEGRATOR",
   reviewers: [{ profile_id: "01REVIEWER", agent_kind: null, model: null }],
   review_round: 0,
   stalled: false,

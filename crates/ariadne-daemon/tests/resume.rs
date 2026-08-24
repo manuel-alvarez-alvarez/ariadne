@@ -130,7 +130,7 @@ impl Harness {
                 title: "task".into(),
                 description: "do things".into(),
                 engineer_profile_id: engineer.clone(),
-                integrator_profile_id: None,
+                integrator_profile_id: ariadne_store::defaults::LOCAL_INTEGRATOR_ID.into(),
                 reviewer_profile_ids: vec![reviewer],
                 depends_on: vec![],
             })
@@ -239,7 +239,7 @@ impl Harness {
                 title: "task".into(),
                 description: "do things".into(),
                 engineer_profile_id: engineer,
-                integrator_profile_id: None,
+                integrator_profile_id: ariadne_store::defaults::LOCAL_INTEGRATOR_ID.into(),
                 reviewer_profile_ids: vec![reviewer.clone()],
                 depends_on: vec![],
             })

@@ -73,7 +73,7 @@ pub enum TaskCommand {
         /// Integrator profile id or name that lands the task once its
         /// reviewers approve it: onto the base branch with git, or as a pull
         /// request for a person to merge
-        #[arg(long, default_value = "Integrator", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::integrator_profiles))]
+        #[arg(long, default_value = "Local Integrator", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::integrator_profiles))]
         integrator: String,
         /// Reviewer profile id or name, in review order; repeatable
         #[arg(long = "reviewer", default_value = "Reviewer", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::reviewer_profiles))]
@@ -88,9 +88,9 @@ pub enum TaskCommand {
     },
     /// Edit a task that has not started yet
     ///
-    /// Title, description, reviewers and dependencies, while the task is
-    /// still pending or ready — once an engineer is on it the daemon refuses
-    /// the edit. Every flag left out keeps what the task already has;
+    /// Title, description, reviewers, integrator and dependencies, while the
+    /// task is still pending or ready — once an engineer is on it the daemon
+    /// refuses the edit. Every flag left out keeps what the task already has;
     /// `--reviewer` and `--depends-on` replace the whole list they name.
     Update {
         /// Task id
@@ -106,6 +106,10 @@ pub enum TaskCommand {
         /// replaces the task's reviewers rather than adding to them
         #[arg(long = "reviewer", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::reviewer_profiles))]
         reviewers: Vec<String>,
+        /// Integrator profile id or name that lands the task once its
+        /// reviewers approve it, replacing the one it was created with
+        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::integrator_profiles))]
+        integrator: Option<String>,
         /// Id of a task that must merge first; repeatable, and replaces the
         /// task's dependencies rather than adding to them
         #[arg(long = "depends-on", conflicts_with = "clear_depends_on", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
@@ -232,7 +236,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                         description,
                         repo_id,
                         engineer_profile: engineer,
-                        integrator_profile: Some(integrator),
+                        integrator_profile: integrator,
                         reviewer_profiles: reviewers,
                         depends_on,
                     },
@@ -248,10 +252,18 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             title,
             description,
             reviewers,
+            integrator,
             depends_on,
             clear_depends_on,
         } => {
-            let body = update_request(title, description, reviewers, depends_on, clear_depends_on)?;
+            let body = update_request(
+                title,
+                description,
+                reviewers,
+                integrator,
+                depends_on,
+                clear_depends_on,
+            )?;
             let t: TaskDto = client.patch_json(&format!("/v1/tasks/{id}"), &body).await?;
             match format {
                 Format::Json => print_json(&t)?,
@@ -493,15 +505,9 @@ fn ls_row(profiles: &ProfileNames, t: &TaskDto) -> Vec<String> {
 ///
 /// Assigned like the engineer, but pinned to nothing: an integrator is only
 /// started once the reviewers have approved, so what runs is what its profile
-/// says then, and there is no snapshot to prefer. A task created before the
-/// column names none and is landed by the built-in Integrator
-/// (`Store::task_integrator`), which is what the fallback says rather than
-/// leaving the cell blank as if nobody would.
+/// says then, and there is no snapshot to prefer.
 fn integrator_label(profiles: &ProfileNames, t: &TaskDto) -> String {
-    match &t.integrator_profile_id {
-        Some(id) => profiles.label(id),
-        None => "- (built-in Integrator)".into(),
-    }
+    profiles.label(&t.integrator_profile_id)
 }
 
 /// What `task cancel` asks before the work is thrown away: cancelling is
@@ -530,6 +536,7 @@ fn update_request(
     title: Option<String>,
     description: Option<String>,
     reviewers: Vec<String>,
+    integrator: Option<String>,
     depends_on: Vec<String>,
     clear_depends_on: bool,
 ) -> Result<UpdateTaskRequest> {
@@ -537,6 +544,7 @@ fn update_request(
         title,
         description,
         reviewer_profiles: (!reviewers.is_empty()).then_some(reviewers),
+        integrator_profile: integrator,
         depends_on: match (clear_depends_on, depends_on.is_empty()) {
             (true, _) => Some(Vec::new()),
             (false, true) => None,
@@ -548,9 +556,13 @@ fn update_request(
     if req.title.is_none()
         && req.description.is_none()
         && req.reviewer_profiles.is_none()
+        && req.integrator_profile.is_none()
         && req.depends_on.is_none()
     {
-        bail!("nothing to update — pass --title, --description, --reviewer or --depends-on");
+        bail!(
+            "nothing to update — pass --title, --description, --reviewer, \
+             --integrator or --depends-on"
+        );
     }
     Ok(req)
 }
@@ -616,10 +628,12 @@ mod tests {
     /// an empty list and wipe what the task has.
     #[test]
     fn a_flag_that_was_not_given_is_left_alone() {
-        let req = update_request(Some("new".into()), None, vec![], vec![], false).expect("body");
+        let req =
+            update_request(Some("new".into()), None, vec![], None, vec![], false).expect("body");
         assert_eq!(req.title.as_deref(), Some("new"));
         assert!(req.description.is_none());
         assert!(req.reviewer_profiles.is_none());
+        assert!(req.integrator_profile.is_none());
         assert!(req.depends_on.is_none());
     }
 
@@ -629,6 +643,7 @@ mod tests {
             None,
             None,
             vec!["Reviewer".into(), "rev-strict".into()],
+            None,
             vec!["01TASK".into()],
             false,
         )
@@ -643,16 +658,34 @@ mod tests {
         );
     }
 
+    /// The integrator is reassignable while the task has not started, the way
+    /// the reviewers are, so `--integrator` alone is an update worth sending.
+    #[test]
+    fn the_integrator_can_be_reassigned_on_its_own() {
+        let req = update_request(
+            None,
+            None,
+            vec![],
+            Some("GitHub Integrator".into()),
+            vec![],
+            false,
+        )
+        .expect("body");
+        assert_eq!(req.integrator_profile.as_deref(), Some("GitHub Integrator"));
+        assert!(req.title.is_none());
+        assert!(req.reviewer_profiles.is_none());
+    }
+
     /// The one thing the repeatable flag cannot say on its own.
     #[test]
     fn clearing_the_dependencies_sends_an_empty_list() {
-        let req = update_request(None, None, vec![], vec![], true).expect("body");
+        let req = update_request(None, None, vec![], None, vec![], true).expect("body");
         assert_eq!(req.depends_on.as_deref(), Some([].as_slice()));
     }
 
     #[test]
     fn an_update_with_no_flags_is_refused_before_it_is_sent() {
-        let err = update_request(None, None, vec![], vec![], false).expect_err("no-op");
+        let err = update_request(None, None, vec![], None, vec![], false).expect_err("no-op");
         assert!(err.to_string().starts_with("nothing to update"), "{err}");
     }
 
@@ -666,7 +699,7 @@ mod tests {
             description: String::new(),
             status: TaskStatus::InProgress,
             engineer_profile_id: "01ENG".into(),
-            integrator_profile_id: None,
+            integrator_profile_id: "01INT".into(),
             agent_kind: None,
             model: None,
             reviewers: vec![],
@@ -701,7 +734,6 @@ mod tests {
             ProfileNames::from_pairs([("01INT".to_string(), "GitHub Integrator".to_string())]);
         let t = TaskDto {
             status: TaskStatus::Integrating,
-            integrator_profile_id: Some("01INT".into()),
             pr_number: Some(12),
             pr_url: Some("https://github.com/owner/repo/pull/12".into()),
             ..dto()
@@ -724,15 +756,15 @@ mod tests {
         );
     }
 
-    /// A task created before the column names no integrator, and is landed by
-    /// the built-in — which the cell says, rather than reading as "nobody".
+    /// Every task names an integrator, and the cell names it the way the
+    /// engineer's does — one spelling for the list and the inspect block.
     #[test]
-    fn a_task_that_names_no_integrator_says_who_lands_it_anyway() {
-        let profiles = ProfileNames::from_pairs([]);
+    fn the_integrator_is_named_the_way_the_engineer_is() {
+        let profiles =
+            ProfileNames::from_pairs([("01INT".to_string(), "Local Integrator".to_string())]);
         let row = ls_row(&profiles, &dto());
-        assert_eq!(row[5], "- (built-in Integrator)");
+        assert_eq!(row[5], "Local Integrator (01INT)");
         assert_eq!(row[6], "-", "and no pull request was ever opened for it");
-        // The same words in the inspect block: one spelling for both.
         assert_eq!(integrator_label(&profiles, &dto()), row[5]);
     }
 
@@ -741,7 +773,7 @@ mod tests {
     #[test]
     fn an_unresolvable_integrator_is_left_as_its_id() {
         let t = TaskDto {
-            integrator_profile_id: Some("01GONE".into()),
+            integrator_profile_id: "01GONE".into(),
             ..dto()
         };
         assert_eq!(

@@ -235,7 +235,7 @@ pub(crate) fn check_role_kind(kind: PromptKind, role: Role, whose: &str) -> Resu
 mod tests {
     use super::*;
     use crate::NewProfile;
-    use crate::defaults::{default_prompt, default_system_prompt};
+    use crate::defaults::{LOCAL_INTEGRATOR_ID, default_prompt, default_system_prompt};
 
     /// The engineer's system prompt as it read before migration 0012 — what an
     /// install seeded by an older Ariadne still has in its database, merge step
@@ -305,6 +305,18 @@ Ariadne coordinates planner, engineer, reviewer and integrator agents over share
             .unwrap();
     }
 
+    /// The migration after it, which rewrites the same rows again: the
+    /// integrator's playbook gains the opening that says which repositories it
+    /// is for, and the profile gains the name that says the same. Replayed
+    /// together with 0012 because an install upgrading across both runs both,
+    /// and what it ends up with is today's default.
+    async fn migrate_0015(store: &Store) {
+        sqlx::raw_sql(include_str!("../migrations/0015_assigned_integrator.sql"))
+            .execute(store.w())
+            .await
+            .unwrap();
+    }
+
     /// Migration 0012 moves the merge duty across the roles of an install that
     /// already exists: the engineer's playbook loses it, the integrator's
     /// placeholder becomes the real one, the briefings its lifecycle needs are
@@ -313,24 +325,26 @@ Ariadne coordinates planner, engineer, reviewer and integrator agents over share
     async fn the_migration_hands_the_merge_duty_to_the_integrator() {
         let store = Store::open_in_memory().await.unwrap();
         let engineer = store.get_profile_by_name("Engineer").await.unwrap();
-        let integrator = store.get_profile_by_name("Integrator").await.unwrap();
+        let integrator = store.get_profile(LOCAL_INTEGRATOR_ID).await.unwrap();
         as_an_older_install(&store, &[&engineer.id], &integrator.id).await;
 
         migrate_0012(&store).await;
+        migrate_0015(&store).await;
 
         assert_eq!(
             store.get_profile(&engineer.id).await.unwrap().system_prompt,
             default_system_prompt(Role::Engineer),
             "the engineer's playbook no longer ends in a merge"
         );
+        let landed = store.get_profile(&integrator.id).await.unwrap();
         assert_eq!(
-            store
-                .get_profile(&integrator.id)
-                .await
-                .unwrap()
-                .system_prompt,
+            landed.system_prompt,
             default_system_prompt(Role::Integrator),
             "the integrator's placeholder became its playbook"
+        );
+        assert_eq!(
+            landed.name, "Local Integrator",
+            "and 0015 renamed it beside the two forge ones"
         );
         for kind in PromptKind::for_role(Role::Integrator) {
             assert_eq!(
@@ -359,7 +373,7 @@ Ariadne coordinates planner, engineer, reviewer and integrator agents over share
     #[tokio::test]
     async fn the_migration_leaves_an_edited_system_prompt_alone() {
         let store = Store::open_in_memory().await.unwrap();
-        let integrator = store.get_profile_by_name("Integrator").await.unwrap();
+        let integrator = store.get_profile(LOCAL_INTEGRATOR_ID).await.unwrap();
         let mine = store
             .create_profile(NewProfile {
                 name: "Engineer (mine)".into(),
@@ -385,6 +399,7 @@ Ariadne coordinates planner, engineer, reviewer and integrator agents over share
         .unwrap();
 
         migrate_0012(&store).await;
+        migrate_0015(&store).await;
 
         assert_eq!(
             store.get_profile(&mine.id).await.unwrap().system_prompt,

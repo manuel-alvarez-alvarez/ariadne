@@ -14,14 +14,11 @@
  * multi-select. Dependencies get the same rows for the same look, though
  * their order carries no meaning. On edit both replace the task's lists.
  *
- * The engineer, the integrator and the repo can only be chosen at creation —
- * `PATCH /v1/tasks/{id}` carries none of them — so edit mode leaves those
- * fields out; the task panel's facts card keeps showing what they are.
- *
- * The integrator is sent explicitly, never left out: the daemon does fill in
- * the built-in one for a request that omits it, but that default is the
- * daemon's answer to a task nobody assigned, not this form's — the form has a
- * picker, so what the picker says is what goes on the wire.
+ * The engineer and the repo can only be chosen at creation — `PATCH
+ * /v1/tasks/{id}` carries neither — so edit mode leaves those fields out; the
+ * task panel's facts card keeps showing what they are. The integrator is not
+ * one of them: nothing of it is pinned onto the task, so it is reassignable
+ * while the task waits, exactly as the reviewers are.
  */
 
 import { zodResolver } from "@hookform/resolvers/zod"
@@ -66,17 +63,15 @@ import { taskListQueryOptions, useCreateTask, useUpdateTask } from "./queries"
 /**
  * One schema for both modes. The repo is required only when the goal has more
  * than one (with a single repo the daemon infers it and the field is not even
- * shown), and the two profiles fixed at creation only on create — edit mode
- * neither shows nor sends any of the three.
+ * shown), and the engineer only on create — edit mode neither shows nor sends
+ * it. The integrator is required in both, the way the daemon requires it.
  */
 function makeFormSchema(opts: { creating: boolean; requireRepo: boolean }) {
   return z.object({
     title: z.string().trim().min(1, "Give the task a title."),
     description: z.string(),
     engineer_profile: opts.creating ? z.string().min(1, "Choose an engineer profile.") : z.string(),
-    integrator_profile: opts.creating
-      ? z.string().min(1, "Choose an integrator profile.")
-      : z.string(),
+    integrator_profile: z.string().min(1, "Choose an integrator profile."),
     reviewers: z
       .array(z.object({ profile: z.string().min(1, "Choose a reviewer profile.") }))
       .min(1, "A task needs at least one reviewer.")
@@ -166,10 +161,7 @@ function TaskFormDialog({
 }) {
   const goalId = goal?.id ?? editing?.goal_id ?? ""
   const engineers = useQuery({ ...profilesQueryOptions("engineer"), enabled: open && !editing })
-  const integrators = useQuery({
-    ...profilesQueryOptions("integrator"),
-    enabled: open && !editing,
-  })
+  const integrators = useQuery({ ...profilesQueryOptions("integrator"), enabled: open })
   const reviewers = useQuery({ ...profilesQueryOptions("reviewer"), enabled: open })
   // The dependency choices are the goal's own tasks — the same query the Tasks
   // tab behind this dialog holds, so it is usually already cached.
@@ -191,7 +183,7 @@ function TaskFormDialog({
             title: editing.title,
             description: editing.description,
             engineer_profile: editing.engineer_profile_id,
-            integrator_profile: editing.integrator_profile_id ?? "",
+            integrator_profile: editing.integrator_profile_id,
             reviewers: editing.reviewers.map((reviewer) => ({ profile: reviewer.profile_id })),
             repo_id: "",
             depends_on: editing.depends_on.map((task) => ({ task })),
@@ -258,7 +250,7 @@ function TaskFormDialog({
     [dependencyChoices],
   )
 
-  // The daemon ships built-in "Engineer", "Integrator" and "Reviewer"
+  // The daemon ships built-in "Engineer", "Local Integrator" and "Reviewer"
   // profiles; preselect them (or the only choice there is) so the common case
   // is one click, the same way the goal form preselects its planner. Create
   // only: an edited task already has all three.
@@ -306,6 +298,7 @@ function TaskFormDialog({
           title: values.title.trim(),
           description: values.description,
           reviewer_profiles: values.reviewers.map((row) => row.profile),
+          integrator_profile: values.integrator_profile,
           depends_on: dependsOn,
         }
         const task = await updateTask.mutateAsync(body)
@@ -341,8 +334,7 @@ function TaskFormDialog({
               {editing ? (
                 <>
                   Editable while the task is still waiting; reviewers and dependencies replace the
-                  current lists. The engineer, the integrator and the repository are fixed at
-                  creation.
+                  current lists. The engineer and the repository are fixed at creation.
                 </>
               ) : (
                 <>
@@ -405,39 +397,37 @@ function TaskFormDialog({
             </Field>
           ) : null}
 
-          {!editing ? (
-            <Field data-invalid={form.formState.errors.integrator_profile ? "" : undefined}>
-              <FieldLabel htmlFor="task-integrator">Integrator profile</FieldLabel>
-              <Controller
-                control={form.control}
-                name="integrator_profile"
-                render={({ field }) => (
-                  <Select
-                    value={field.value || null}
-                    onValueChange={(value) => field.onChange(value ?? "")}
-                    disabled={!integratorOptions.length}
-                    items={integratorItems}
-                  >
-                    <SelectTrigger id="task-integrator" className="w-full">
-                      <SelectValue placeholder={profilePlaceholder(integrators, "integrator")} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {integratorOptions.map((profile) => (
-                        <SelectItem key={profile.id} value={profile.id}>
-                          {profile.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-              />
-              <FieldDescription>
-                Who lands the task once its reviewers approve it: onto the base branch with git, or
-                as a pull request for a person to merge.
-              </FieldDescription>
-              <FieldError>{form.formState.errors.integrator_profile?.message}</FieldError>
-            </Field>
-          ) : null}
+          <Field data-invalid={form.formState.errors.integrator_profile ? "" : undefined}>
+            <FieldLabel htmlFor="task-integrator">Integrator profile</FieldLabel>
+            <Controller
+              control={form.control}
+              name="integrator_profile"
+              render={({ field }) => (
+                <Select
+                  value={field.value || null}
+                  onValueChange={(value) => field.onChange(value ?? "")}
+                  disabled={!integratorOptions.length}
+                  items={integratorItems}
+                >
+                  <SelectTrigger id="task-integrator" className="w-full">
+                    <SelectValue placeholder={profilePlaceholder(integrators, "integrator")} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {integratorOptions.map((profile) => (
+                      <SelectItem key={profile.id} value={profile.id}>
+                        {profile.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            />
+            <FieldDescription>
+              Who lands the task once its reviewers approve it: onto the base branch with git, or as
+              a pull request for a person to merge.
+            </FieldDescription>
+            <FieldError>{form.formState.errors.integrator_profile?.message}</FieldError>
+          </Field>
 
           <Field>
             <FieldLabel>Reviewer profiles</FieldLabel>

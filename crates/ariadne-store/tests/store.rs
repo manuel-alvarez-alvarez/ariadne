@@ -5,7 +5,8 @@ use ariadne_core::{
     SessionStatus, TaskStatus,
 };
 use ariadne_store::defaults::{
-    default_prompt, default_prompt_for, default_system_prompt, default_system_prompt_for,
+    LOCAL_INTEGRATOR_ID, default_prompt, default_prompt_for, default_system_prompt,
+    default_system_prompt_for,
 };
 use ariadne_store::*;
 
@@ -78,7 +79,7 @@ async fn seed_task(store: &Store, goal: &Goal, repo: &Repository, deps: Vec<Stri
             title: "task".into(),
             description: "do things".into(),
             engineer_profile_id: eng.id,
-            integrator_profile_id: None,
+            integrator_profile_id: LOCAL_INTEGRATOR_ID.into(),
             reviewer_profile_ids: vec![rev.id],
             depends_on: deps,
         })
@@ -374,7 +375,7 @@ async fn a_goal_needs_repositories_that_exist() {
                 title: "task".into(),
                 description: "do things".into(),
                 engineer_profile_id: eng.id,
-                integrator_profile_id: None,
+                integrator_profile_id: LOCAL_INTEGRATOR_ID.into(),
                 reviewer_profile_ids: vec![rev.id],
                 depends_on: vec![],
             })
@@ -534,7 +535,7 @@ async fn max_tasks_is_enforced() {
             title: "too many".into(),
             description: "".into(),
             engineer_profile_id: eng.id,
-            integrator_profile_id: None,
+            integrator_profile_id: LOCAL_INTEGRATOR_ID.into(),
             reviewer_profile_ids: vec![rev.id],
             depends_on: vec![],
         })
@@ -1409,7 +1410,7 @@ async fn a_fresh_database_is_seeded_with_the_built_in_profiles_and_their_prompts
         ("Planner", Role::Planner),
         ("Engineer", Role::Engineer),
         ("Reviewer", Role::Reviewer),
-        ("Integrator", Role::Integrator),
+        ("Local Integrator", Role::Integrator),
     ] {
         let p = store.get_profile_by_name(name).await.unwrap();
         assert_eq!(p.role(), role);
@@ -1445,7 +1446,7 @@ async fn a_fresh_database_is_seeded_with_the_built_in_profiles_and_their_prompts
             .contains("install the project's dependencies"),
         "reviewers are told to install dependencies and verify"
     );
-    let integrator = store.get_profile_by_name("Integrator").await.unwrap();
+    let integrator = store.get_profile_by_name("Local Integrator").await.unwrap();
     assert_eq!(integrator.id, "00000000000000000000000004");
 
     // User edits stick.
@@ -1634,7 +1635,7 @@ async fn a_template_naming_a_placeholder_its_kind_cannot_fill_in_is_refused() {
 
     // What renders as itself still saves: literal braces, JSON, no
     // placeholders at all.
-    let integrator = store.get_profile_by_name("Integrator").await.unwrap();
+    let integrator = store.get_profile_by_name("Local Integrator").await.unwrap();
     for content in [
         "Land {branch} on {base_branch}, then answer {\"merged\": true}.",
         "Do it yourself.",
@@ -1934,7 +1935,7 @@ async fn creation_pins_the_agent_and_model_of_every_profile() {
             title: "task".into(),
             description: "do things".into(),
             engineer_profile_id: engineer.id.clone(),
-            integrator_profile_id: None,
+            integrator_profile_id: LOCAL_INTEGRATOR_ID.into(),
             reviewer_profile_ids: vec![reviewer.id.clone()],
             depends_on: vec![],
         })
@@ -2007,7 +2008,7 @@ async fn auto_and_default_are_pinned_as_such() {
             title: "task".into(),
             description: "do things".into(),
             engineer_profile_id: engineer.id.clone(),
-            integrator_profile_id: None,
+            integrator_profile_id: LOCAL_INTEGRATOR_ID.into(),
             reviewer_profile_ids: vec![reviewer.id.clone()],
             depends_on: vec![],
         })
@@ -2076,7 +2077,7 @@ async fn reassigned_reviewers_pin_the_profile_they_are_assigned_from() {
             title: "task".into(),
             description: "do things".into(),
             engineer_profile_id: engineer.id.clone(),
-            integrator_profile_id: None,
+            integrator_profile_id: LOCAL_INTEGRATOR_ID.into(),
             reviewer_profile_ids: vec![first.id.clone()],
             depends_on: vec![],
         })
@@ -2353,8 +2354,8 @@ async fn a_pre_integrator_database_renames_merging_and_gains_the_builtin() {
     let task = store.get_task("legacytask").await.unwrap();
     assert_eq!(task.status(), TaskStatus::Integrating);
     assert_eq!(
-        task.integrator_profile_id, None,
-        "a task created before the column names no integrator"
+        task.integrator_profile_id, LOCAL_INTEGRATOR_ID,
+        "a task created before the column is backfilled with the Local Integrator"
     );
     let transitions = store.list_task_transitions("legacytask").await.unwrap();
     assert_eq!(transitions.len(), 1);
@@ -2362,7 +2363,8 @@ async fn a_pre_integrator_database_renames_merging_and_gains_the_builtin() {
 
     // The built-in the seeding path could not reach, because this database
     // already had profiles of its own.
-    let integrator = store.get_profile_by_name("Integrator").await.unwrap();
+    let integrator = store.get_profile_by_name("Local Integrator").await.unwrap();
+    assert_eq!(integrator.id, LOCAL_INTEGRATOR_ID);
     assert_eq!(integrator.role(), Role::Integrator);
     assert_eq!(
         integrator.system_prompt,
@@ -2415,6 +2417,20 @@ async fn a_pre_integrator_database_renames_merging_and_gains_the_builtin() {
         1
     );
 
+    // And the column the backfill filled in will not go back to NULL: every
+    // task names an integrator, the way every task names an engineer.
+    let raw = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+    assert!(
+        sqlx::query("UPDATE tasks SET integrator_profile_id = NULL WHERE id = 'legacytask'")
+            .execute(&raw)
+            .await
+            .is_err(),
+        "tasks.integrator_profile_id is NOT NULL"
+    );
+    raw.close().await;
+
     // The rebuilt CHECK is the new vocabulary's: `merging` is not a status the
     // table will take back.
     let raw = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
@@ -2466,7 +2482,7 @@ async fn a_pre_integrator_database_renames_merging_and_gains_the_builtin() {
 async fn the_github_integrator_is_seeded_with_the_prompts_of_its_own() {
     let (store, _dir) = test_store().await;
 
-    let local = store.get_profile_by_name("Integrator").await.unwrap();
+    let local = store.get_profile_by_name("Local Integrator").await.unwrap();
     let github = store
         .get_profile_by_name("GitHub Integrator")
         .await
@@ -2477,7 +2493,7 @@ async fn the_github_integrator_is_seeded_with_the_prompts_of_its_own() {
         github.system_prompt.contains("pull request"),
         "the GitHub playbook publishes rather than lands"
     );
-    // The task that names no integrator is still landed by the local one.
+    // The local one is what the CLI and the web form default to.
     assert_eq!(store.builtin_integrator().await.unwrap().id, local.id);
 
     let instructions = store
@@ -2557,7 +2573,7 @@ async fn the_github_integrator_is_seeded_with_the_prompts_of_its_own() {
 async fn the_gitlab_integrator_is_seeded_with_the_prompts_of_its_own() {
     let (store, _dir) = test_store().await;
 
-    let local = store.get_profile_by_name("Integrator").await.unwrap();
+    let local = store.get_profile_by_name("Local Integrator").await.unwrap();
     let github = store
         .get_profile_by_name("GitHub Integrator")
         .await
@@ -2579,7 +2595,7 @@ async fn the_gitlab_integrator_is_seeded_with_the_prompts_of_its_own() {
         gitlab.system_prompt.contains("merge request"),
         "the GitLab playbook publishes rather than lands"
     );
-    // And the task that names no integrator is still landed by the local one.
+    // And the local one is still what a default assignment resolves to.
     assert_eq!(store.builtin_integrator().await.unwrap().id, local.id);
 
     // The whole of the workflow the task asks it to carry, in the briefing it

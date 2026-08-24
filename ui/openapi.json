@@ -2561,6 +2561,7 @@
         "required": [
           "title",
           "engineer_profile",
+          "integrator_profile",
           "reviewer_profiles"
         ],
         "properties": {
@@ -2579,11 +2580,8 @@
             "description": "Engineer profile id or unique name."
           },
           "integrator_profile": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Integrator profile id or unique name; the built-in Integrator when\nomitted."
+            "type": "string",
+            "description": "Integrator profile id or unique name."
           },
           "repo_id": {
             "type": [
@@ -3774,6 +3772,7 @@
           "description",
           "status",
           "engineer_profile_id",
+          "integrator_profile_id",
           "reviewers",
           "depends_on",
           "branch",
@@ -3820,11 +3819,8 @@
             "type": "string"
           },
           "integrator_profile_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Profile that lands the task once it is approved. None for tasks\ncreated before the integrator existed."
+            "type": "string",
+            "description": "Profile that lands the task once it is approved, assigned at creation\nexactly as the engineer is."
           },
           "merge_commit": {
             "type": [
@@ -4118,6 +4114,13 @@
               "string",
               "null"
             ]
+          },
+          "integrator_profile": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Integrator profile id or unique name, replacing the one the task was\ncreated with."
           },
           "reviewer_profiles": {
             "type": [

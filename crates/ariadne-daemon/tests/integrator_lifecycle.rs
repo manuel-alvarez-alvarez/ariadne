@@ -222,7 +222,7 @@ impl Harness {
                 title: title.into(),
                 description: "Do the thing.".into(),
                 engineer_profile_id: engineer,
-                integrator_profile_id: Some(integrator),
+                integrator_profile_id: integrator,
                 reviewer_profile_ids: vec![reviewer.clone()],
                 depends_on: depends_on.to_vec(),
             })
