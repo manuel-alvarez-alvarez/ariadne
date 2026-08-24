@@ -15,6 +15,7 @@ use crate::agents::{SpawnCtx, SpawnPlan, adapter_for, detect_first_available, pr
 use crate::config::Config;
 use crate::gh::GhCli;
 use crate::gitwt::GitManager;
+use crate::glab::GlabCli;
 use crate::tmux::{TmuxManager, TmuxSpawn, session_name, tail};
 
 pub struct Launcher {
@@ -638,6 +639,12 @@ impl Launcher {
     /// nothing else, and the one thing a test wants to swap is that name.
     pub fn gh(&self) -> GhCli {
         GhCli::new(&self.cfg.gh_bin)
+    }
+
+    /// And the GitLab CLI merge requests are watched with, for the same
+    /// reason and in the same way.
+    pub fn glab(&self) -> GlabCli {
+        GlabCli::new(&self.cfg.glab_bin)
     }
 
     /// The reviewer's detached worktree, pinned at the branch tip: created on

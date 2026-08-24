@@ -56,6 +56,9 @@ pub struct FileConfig {
     /// Path to the GitHub CLI the daemon watches pull requests with
     /// (default: "gh" on PATH).
     pub gh_bin: Option<String>,
+    /// Path to the GitLab CLI the daemon watches merge requests with
+    /// (default: "glab" on PATH).
+    pub glab_bin: Option<String>,
     /// How often an integrating task's pull request is looked at, in seconds
     /// (default 180). It is reviewed by humans, so polling it faster buys
     /// nothing but API calls.

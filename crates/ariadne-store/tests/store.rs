@@ -2369,29 +2369,28 @@ async fn a_pre_integrator_database_renames_merging_and_gains_the_builtin() {
         default_system_prompt(Role::Integrator),
         "the seeded prompt is the default a reset would put back"
     );
-    // And beside it the GitHub one migration 0013 adds, with the whole PR
-    // workflow in the prompts it starts from.
-    let github = store
-        .get_profile_by_name("GitHub Integrator")
-        .await
-        .unwrap();
-    assert_eq!(github.role(), Role::Integrator);
-    assert_eq!(
-        github.system_prompt,
-        default_system_prompt_for(&github.id, Role::Integrator),
-        "the migration seeded exactly the prompt a reset would put back"
-    );
-    for kind in PromptKind::for_role(Role::Integrator) {
+    // And beside it the two forge ones migrations 0013 and 0014 add, with the
+    // whole publish-and-watch workflow in the prompts they start from.
+    for name in ["GitHub Integrator", "GitLab Integrator"] {
+        let forge = store.get_profile_by_name(name).await.unwrap();
+        assert_eq!(forge.role(), Role::Integrator);
         assert_eq!(
-            store
-                .get_profile_prompt(&github.id, *kind)
-                .await
-                .unwrap()
-                .content,
-            default_prompt_for(&github.id, Role::Integrator, *kind).unwrap(),
-            "the {} briefing the migration wrote",
-            kind.as_str()
+            forge.system_prompt,
+            default_system_prompt_for(&forge.id, Role::Integrator),
+            "the migration seeded exactly the prompt a reset would put back"
         );
+        for kind in PromptKind::for_role(Role::Integrator) {
+            assert_eq!(
+                store
+                    .get_profile_prompt(&forge.id, *kind)
+                    .await
+                    .unwrap()
+                    .content,
+                default_prompt_for(&forge.id, Role::Integrator, *kind).unwrap(),
+                "the {} briefing the migration wrote for {name}",
+                kind.as_str()
+            );
+        }
     }
     assert_eq!(
         store
@@ -2399,7 +2398,7 @@ async fn a_pre_integrator_database_renames_merging_and_gains_the_builtin() {
             .await
             .unwrap()
             .len(),
-        2
+        3
     );
 
     // The rebuilds kept what hung off the tables they replaced...
@@ -2548,6 +2547,110 @@ async fn the_github_integrator_is_seeded_with_the_prompts_of_its_own() {
             .unwrap()
             .content,
         default_prompt(Role::Integrator, PromptKind::IntegrationInstructions).unwrap()
+    );
+}
+
+/// And the third of them, on the other forge: the same publish-and-watch
+/// playbook driven by `glab` rather than by `gh`, seeded into a fresh
+/// database with prompts of its own.
+#[tokio::test]
+async fn the_gitlab_integrator_is_seeded_with_the_prompts_of_its_own() {
+    let (store, _dir) = test_store().await;
+
+    let local = store.get_profile_by_name("Integrator").await.unwrap();
+    let github = store
+        .get_profile_by_name("GitHub Integrator")
+        .await
+        .unwrap();
+    let gitlab = store
+        .get_profile_by_name("GitLab Integrator")
+        .await
+        .unwrap();
+    assert_eq!(gitlab.id, "00000000000000000000000006");
+    assert_eq!(gitlab.role(), Role::Integrator);
+    assert_eq!(
+        (gitlab.agent_kind(), gitlab.model.as_deref()),
+        (None, None),
+        "on the auto-resolved agent CLI, like every other built-in"
+    );
+    assert_ne!(gitlab.system_prompt, local.system_prompt);
+    assert_ne!(gitlab.system_prompt, github.system_prompt);
+    assert!(
+        gitlab.system_prompt.contains("merge request"),
+        "the GitLab playbook publishes rather than lands"
+    );
+    // And the task that names no integrator is still landed by the local one.
+    assert_eq!(store.builtin_integrator().await.unwrap().id, local.id);
+
+    // The whole of the workflow the task asks it to carry, in the briefing it
+    // is started with.
+    let instructions = store
+        .get_profile_prompt(&gitlab.id, PromptKind::IntegrationInstructions)
+        .await
+        .unwrap();
+    for step in [
+        "glab auth status",
+        "land the task locally instead",
+        "git rebase {base_branch}",
+        "git push -u <remote> {branch}",
+        "glab mr create",
+        ".gitlab/merge_request_templates/",
+        "return_to_engineer",
+        "record_pull_request",
+        "mark_merged",
+    ] {
+        assert!(
+            instructions.content.contains(step),
+            "the GitLab briefing has no {step}: {}",
+            instructions.content
+        );
+    }
+    assert!(
+        !instructions.content.contains("gh pr create"),
+        "and none of the GitHub one's commands"
+    );
+    assert_eq!(
+        instructions.content,
+        default_prompt_for(
+            &gitlab.id,
+            Role::Integrator,
+            PromptKind::IntegrationInstructions
+        )
+        .unwrap()
+    );
+
+    // Edited and reset, it comes back to the prompt it was seeded with —
+    // GitLab's, not the role's and not the GitHub one's.
+    store
+        .update_profile_prompt(
+            &gitlab.id,
+            PromptKind::IntegrationResume,
+            "Do it however you like.",
+        )
+        .await
+        .unwrap();
+    let reset = store
+        .reset_profile_prompt(&gitlab.id, PromptKind::IntegrationResume)
+        .await
+        .unwrap();
+    assert!(reset.content.contains("glab mr list"), "{}", reset.content);
+    store
+        .update_profile(
+            &gitlab.id,
+            ProfileUpdate {
+                system_prompt: Some("You are whatever.".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .reset_system_prompt(&gitlab.id)
+            .await
+            .unwrap()
+            .system_prompt,
+        default_system_prompt_for(&gitlab.id, Role::Integrator)
     );
 }
 

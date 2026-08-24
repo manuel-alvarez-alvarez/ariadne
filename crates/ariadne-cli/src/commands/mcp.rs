@@ -132,7 +132,8 @@ pub struct MarkMergedReq {
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub struct RecordPullRequestReq {
-    /// URL of the pull request, as `gh pr create` printed it.
+    /// URL of the pull request, as `gh pr create` or `glab mr create`
+    /// printed it.
     pub url: String,
 }
 
@@ -519,7 +520,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Report the pull request you opened for this task, by the URL `gh pr create` printed. Ariadne watches it from there — it wakes you when the pull request is commented on or merged, and tells the user when it is approved and ready for them to merge — so report it as soon as it exists and then end your turn instead of waiting on it."
+        description = "Report the pull request or merge request you opened for this task, by the URL `gh pr create` or `glab mr create` printed. Ariadne watches it from there — it wakes you when the pull request is commented on or merged, and tells the user when it is approved and ready for them to merge — so report it as soon as it exists and then end your turn instead of waiting on it."
     )]
     async fn record_pull_request(
         &self,
