@@ -565,10 +565,22 @@ async fn a_merge_request_is_watched_from_publication_to_its_merge() {
     let published = h.publish(&task, &integrator.id).await;
     assert_eq!(published.pr_number, Some(3));
     assert_eq!(published.pr_url.as_deref(), Some(MR_URL));
+
+    // Recording it is what tells the user there is one, in the forge's own
+    // vocabulary: nothing in Ariadne merges a merge request either.
+    let opened = h.user_messages(&task.id).await;
+    assert_eq!(opened.len(), 1);
+    assert!(opened[0].body.contains(MR_URL), "{}", opened[0].body);
+    assert!(
+        opened[0].body.contains("Merge request !3 is open"),
+        "{}",
+        opened[0].body
+    );
     h.goes_idle(&integrator.id).await;
 
     // An untouched merge request wakes nobody: the integrator is left idle
-    // rather than nudged for not having landed anything.
+    // rather than nudged for not having landed anything, and the approval it
+    // is still waiting on is not news to tell the user twice.
     h.merge_request(open_merge_request());
     h.notify(&task.id);
     // The discussions are the last of the three reads one poll takes, so a
@@ -594,7 +606,7 @@ async fn a_merge_request_is_watched_from_publication_to_its_merge() {
         "{log}"
     );
     assert_eq!(h.gh_log(), "", "a GitLab task never asks the GitHub CLI");
-    assert!(h.user_messages(&task.id).await.is_empty());
+    assert_eq!(h.user_messages(&task.id).await.len(), 1);
     assert!(
         !h.store.get_task(&task.id).await.unwrap().is_stalled(),
         "an integrator waiting on humans is not a stalled task"
@@ -605,21 +617,21 @@ async fn a_merge_request_is_watched_from_publication_to_its_merge() {
     h.notify(&task.id);
     eventually(
         "the user to be told the merge request is ready",
-        async || !h.user_messages(&task.id).await.is_empty(),
+        async || h.user_messages(&task.id).await.len() > 1,
     )
     .await;
     let notice = h.user_messages(&task.id).await;
-    assert_eq!(notice.len(), 1);
-    assert!(notice[0].body.contains(MR_URL), "{}", notice[0].body);
+    assert_eq!(notice.len(), 2);
+    assert!(notice[1].body.contains(MR_URL), "{}", notice[1].body);
     assert!(
-        notice[0].body.contains("The merge request for"),
+        notice[1].body.contains("The merge request for"),
         "{}",
-        notice[0].body
+        notice[1].body
     );
     assert!(
-        notice[0].body.contains("ready for you to merge"),
+        notice[1].body.contains("ready for you to merge"),
         "{}",
-        notice[0].body
+        notice[1].body
     );
     assert_eq!(
         h.store
@@ -630,12 +642,12 @@ async fn a_merge_request_is_watched_from_publication_to_its_merge() {
         Some(AttentionReason::WaitingInput),
         "and it is on the attention strip the user reads it from"
     );
-    // Polled again and again, it is still one message.
+    // Polled again and again, it is still those two.
     for _ in 0..3 {
         h.notify(&task.id);
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    assert_eq!(h.user_messages(&task.id).await.len(), 1);
+    assert_eq!(h.user_messages(&task.id).await.len(), 2);
 
     // Merging is not the integrator's to claim while GitLab says otherwise.
     let branch_tip = out(&h.repo_path(), &format!("git rev-parse {}", task.branch));
@@ -1073,10 +1085,11 @@ async fn a_self_hosted_merge_request_is_watched_on_its_own_host() {
     h.merge_request(mr);
     h.approvals(&["maria"]);
     h.notify(&task.id);
-    eventually(
-        "the user to be told the merge request is ready",
-        async || !h.user_messages(&task.id).await.is_empty(),
-    )
+    // The discussions are the last of the three reads one poll takes, so a
+    // log carrying them is a poll that finished.
+    eventually("the merge request to be polled", async || {
+        h.glab_log().contains("discussions")
+    })
     .await;
 
     let log = h.glab_log();
@@ -1085,8 +1098,12 @@ async fn a_self_hosted_merge_request_is_watched_on_its_own_host() {
         "{log}"
     );
     assert!(log.contains("--hostname git.example.com"), "{log}");
+    // Told once, as it was recorded: a project whose approvals are already in
+    // has nothing left to announce, and the notice already points at it.
+    let notice = h.user_messages(&task.id).await;
+    assert_eq!(notice.len(), 1);
     assert!(
-        h.user_messages(&task.id).await[0].body.contains(url),
+        notice[0].body.contains(url),
         "the URL the user is pointed at is the one that was recorded"
     );
     assert_eq!(h.gh_log(), "");

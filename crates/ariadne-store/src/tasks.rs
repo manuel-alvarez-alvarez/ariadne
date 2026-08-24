@@ -626,9 +626,17 @@ impl Store {
         self.publish_task_update(task_id, n).await
     }
 
-    /// Whether the user has been told the pull request is approved: set when
-    /// they are told, cleared when the approval goes away again, so a second
-    /// approval is announced and a poll that changes nothing is not.
+    /// Whether the user has been told this pull request is theirs: set when
+    /// they are told, cleared when whatever made it theirs goes away again, so
+    /// a second approval is announced and a poll that changes nothing is not.
+    ///
+    /// Two tellings set it, because they are the same news at different
+    /// moments. One is the approval, announced as a poll reads it. The other
+    /// is the request being opened at all — on a repository that gates
+    /// nothing there is no approval coming, and the notice that goes out with
+    /// the recorded URL is the whole of it. Where a review *is* required the
+    /// first poll reads the request as unapproved and clears this again, and
+    /// the approval is announced when it arrives.
     pub async fn set_task_pr_approved_notified(&self, task_id: &str, notified: bool) -> Result<()> {
         let n =
             sqlx::query("UPDATE tasks SET pr_approved_notified = ?, updated_at = ? WHERE id = ?")

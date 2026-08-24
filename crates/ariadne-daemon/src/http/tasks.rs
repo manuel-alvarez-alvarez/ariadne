@@ -11,8 +11,10 @@ use ariadne_api::tasks::{
     CreateTaskRequest, RecordPullRequestRequest, ReturnToEngineerRequest, TaskDto, TaskListQuery,
     TaskTransitionDto, TransitionRequest, UpdateTaskRequest,
 };
-use ariadne_core::{Actor, ReviewVerdict, Role, TaskStatus};
-use ariadne_store::{NewMessage, NewReview, NewTask, Store, Task, TaskFilter, TaskUpdate};
+use ariadne_core::{Actor, AttentionReason, AuthorRole, ReviewVerdict, Role, TaskStatus};
+use ariadne_store::{
+    NewMessage, NewReview, NewTask, Recipient, Store, Task, TaskFilter, TaskUpdate,
+};
 
 use super::AppState;
 use super::auth::{CallCtx, call_ctx, ensure_task_scope};
@@ -367,12 +369,92 @@ pub async fn record_pull_request(
              or https://gitlab.com/owner/repo/-/merge_requests/12"
         )));
     };
+    let announce = task.pr_url.as_deref() != Some(url);
     state.store.set_task_pull_request(&id, number, url).await?;
+    if announce {
+        announce_pull_request(&state, &ctx, &task, number, url).await?;
+    }
     // The scheduler starts watching it on the next reconciliation rather than
     // on the poll interval, so the first look is immediate.
     state.notify_scheduler(&id).await;
     let task = state.store.get_task(&id).await?;
     Ok(Json(to_dto(&state.store, task).await?))
+}
+
+/// Tell the user a pull request was opened for them, as the request itself is
+/// recorded rather than as something an agent has to remember to say.
+///
+/// A published task is the user's from here: nothing in Ariadne merges it, and
+/// until this the only trace of one was whatever the integrator happened to
+/// write into the thread, addressed to nobody and so waking nobody.
+///
+/// Announced once per request — a re-reported URL is the same request, and
+/// [`Store::set_task_pull_request`] is idempotent for exactly that reason. The
+/// announcement counts as the telling that `pr_approved_notified` records: on
+/// a repository that gates nothing the first poll reads the request as
+/// approved from the moment it exists, and this is that same news a moment
+/// earlier. Where a review *is* required the poll reads it as not approved and
+/// clears the flag again, so the approval, when it comes, is still announced.
+///
+/// The attention flag is raised here and again by every poll of the request
+/// ([`crate::scheduler`]): raised here it is the integrator's own next event
+/// that takes it down — `post_tool_use` on a live session clears attention,
+/// and this runs mid-turn, one tool call before the turn ends.
+async fn announce_pull_request(
+    state: &AppState,
+    ctx: &CallCtx,
+    task: &Task,
+    number: i64,
+    url: &str,
+) -> ApiResult<()> {
+    let watched = forge::forge_of(url);
+    let label = match watched {
+        Some(forge) => forge::WatchedPr {
+            forge,
+            number,
+            url: url.to_string(),
+        }
+        .label(),
+        // A forge with no watcher has no vocabulary of its own here either.
+        None => format!("Pull request #{number}"),
+    };
+    // A forge Ariadne cannot poll is one nothing will ever say more about, so
+    // the notice says so rather than promising a watch there is none of.
+    let from_here = match watched {
+        Some(forge) => format!(
+            "It is yours from here — Ariadne watches the {}, relays what is said on it \
+             and finishes the task once it is merged.",
+            forge.noun()
+        ),
+        None => "It is yours from here. Ariadne does not watch this forge, so tell the \
+                 integrator in this thread once it is merged."
+            .to_string(),
+    };
+    state
+        .store
+        .create_message(NewMessage {
+            goal_id: task.goal_id.clone(),
+            task_id: Some(task.id.clone()),
+            author_role: AuthorRole::System,
+            author_session_id: None,
+            recipient: Some(Recipient::User),
+            body: format!(
+                "{label} is open for \"{}\": {url}\n\n{from_here}",
+                task.title
+            ),
+        })
+        .await?;
+    state
+        .store
+        .set_task_pr_approved_notified(&task.id, true)
+        .await?;
+    if let Some(session) = &ctx.session {
+        state
+            .store
+            .set_session_attention(&session.id, AttentionReason::WaitingInput)
+            .await?;
+    }
+    Ok(())
 }
 
 /// Cancel a task (user).

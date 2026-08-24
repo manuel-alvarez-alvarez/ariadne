@@ -528,10 +528,32 @@ async fn a_pull_request_is_watched_from_publication_to_its_merge() {
         .await;
     assert_eq!(published.pr_number, Some(12));
     assert_eq!(published.pr_url.as_deref(), Some(PR_URL));
+
+    // Recording it is what tells the user there is one, rather than anything
+    // the agent has to remember to say: nothing in Ariadne merges a pull
+    // request, so the person who does hears about it as it is opened.
+    let opened = h.user_messages(&task.id).await;
+    assert_eq!(opened.len(), 1);
+    assert!(opened[0].body.contains(PR_URL), "{}", opened[0].body);
+    assert!(
+        opened[0].body.contains("Pull request #12 is open"),
+        "{}",
+        opened[0].body
+    );
+    assert_eq!(
+        h.store
+            .get_session(&integrator.id)
+            .await
+            .unwrap()
+            .attention_reason(),
+        Some(AttentionReason::WaitingInput),
+        "and it goes up on the attention strip the user reads it from"
+    );
     h.goes_idle(&integrator.id).await;
 
     // An untouched pull request wakes nobody: the integrator is left idle
-    // rather than nudged for not having landed anything.
+    // rather than nudged for not having landed anything, and the review it
+    // is still waiting on is not news to tell the user twice.
     h.pull_request(open_pull_request());
     h.notify(&task.id);
     eventually("the pull request to be polled", async || {
@@ -539,7 +561,7 @@ async fn a_pull_request_is_watched_from_publication_to_its_merge() {
         h.gh_log().contains(&format!("pr view {PR_URL}"))
     })
     .await;
-    assert!(h.user_messages(&task.id).await.is_empty());
+    assert_eq!(h.user_messages(&task.id).await.len(), 1);
     assert!(
         !h.store.get_task(&task.id).await.unwrap().is_stalled(),
         "an integrator waiting on humans is not a stalled task"
@@ -555,16 +577,16 @@ async fn a_pull_request_is_watched_from_publication_to_its_merge() {
     h.notify(&task.id);
     eventually(
         "the user to be told the pull request is ready",
-        async || !h.user_messages(&task.id).await.is_empty(),
+        async || h.user_messages(&task.id).await.len() > 1,
     )
     .await;
     let notice = h.user_messages(&task.id).await;
-    assert_eq!(notice.len(), 1);
-    assert!(notice[0].body.contains(PR_URL), "{}", notice[0].body);
+    assert_eq!(notice.len(), 2);
+    assert!(notice[1].body.contains(PR_URL), "{}", notice[1].body);
     assert!(
-        notice[0].body.contains("ready for you to merge"),
+        notice[1].body.contains("ready for you to merge"),
         "{}",
-        notice[0].body
+        notice[1].body
     );
     assert_eq!(
         h.store
@@ -575,12 +597,37 @@ async fn a_pull_request_is_watched_from_publication_to_its_merge() {
         Some(AttentionReason::WaitingInput),
         "and it is on the attention strip the user reads it from"
     );
-    // Polled again and again, it is still one message.
+    // Polled again and again, it is still those two.
     for _ in 0..3 {
         h.notify(&task.id);
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    assert_eq!(h.user_messages(&task.id).await.len(), 1);
+    assert_eq!(h.user_messages(&task.id).await.len(), 2);
+
+    // The message is said once; the flag is put back as often as it takes.
+    // An agent's own events take attention down as it works — which is what
+    // happened to every flag raised while the integrator was still publishing
+    // — so a poll that finds the request open, unmerged and nobody's but the
+    // user's raises it again.
+    h.store
+        .clear_session_attention(&integrator.id)
+        .await
+        .unwrap();
+    h.notify(&task.id);
+    eventually("the attention flag to go back up", async || {
+        h.store
+            .get_session(&integrator.id)
+            .await
+            .unwrap()
+            .attention_reason()
+            == Some(AttentionReason::WaitingInput)
+    })
+    .await;
+    assert_eq!(
+        h.user_messages(&task.id).await.len(),
+        2,
+        "and no message goes with it"
+    );
 
     // Merging is not the integrator's to claim while GitHub says otherwise.
     let branch_tip = out(&h.repo_path(), &format!("git rev-parse {}", task.branch));
@@ -1020,6 +1067,25 @@ async fn a_pull_request_on_another_forge_is_recorded_but_not_watched() {
         .await;
     assert_eq!(published.pr_number, Some(3));
 
+    // Told about all the same, and told the truth: a forge with no watcher
+    // is one nothing will say any more about, so the notice asks for the
+    // merge to be reported here rather than promising a watch there is none
+    // of.
+    let notice = h.user_messages(&task.id).await;
+    assert_eq!(notice.len(), 1);
+    assert!(
+        notice[0]
+            .body
+            .contains("https://codeberg.org/ariadne/ariadne/pulls/3"),
+        "{}",
+        notice[0].body
+    );
+    assert!(
+        notice[0].body.contains("does not watch this forge"),
+        "{}",
+        notice[0].body
+    );
+
     // An approval nobody is watching for is an approval nobody is told about.
     let mut approved = open_pull_request();
     approved["reviewDecision"] = "APPROVED".into();
@@ -1029,7 +1095,7 @@ async fn a_pull_request_on_another_forge_is_recorded_but_not_watched() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert_eq!(h.gh_log(), "");
-    assert!(h.user_messages(&task.id).await.is_empty());
+    assert_eq!(h.user_messages(&task.id).await.len(), 1);
 
     // And a URL that names no pull request at all is refused outright.
     let (status, body) = h
