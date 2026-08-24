@@ -256,10 +256,23 @@ mod tests {
         for bin in [&signed_in, &signed_out] {
             std::fs::set_permissions(bin, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
-        assert_eq!(probe_auth(&signed_in, true).await, Some(true));
-        assert_eq!(probe_auth(&signed_out, true).await, Some(false));
+        assert_eq!(asked(&signed_in).await, Some(true));
+        assert_eq!(asked(&signed_out).await, Some(false));
         // And nothing at all is asked of a binary with nothing to sign in to.
         assert_eq!(probe_auth(&signed_out, false).await, None);
+    }
+
+    /// The probe, asked until it answers: a spawn the machine was too busy to
+    /// finish inside [`PROBE_TIMEOUT`] answers `None`, which is the report
+    /// being careful rather than the CLI saying anything — and the answer this
+    /// test is about is the one it gives when it does run.
+    async fn asked(binary: &Path) -> Option<bool> {
+        for _ in 0..5 {
+            if let Some(answer) = probe_auth(binary, true).await {
+                return Some(answer);
+            }
+        }
+        None
     }
 
     /// A directory named like the binary is not the binary either.
