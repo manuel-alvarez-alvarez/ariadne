@@ -760,6 +760,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/tasks/{id}/pull-request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record the pull request an integrator opened for a task.
+         * @description The daemon watches what it is told here, and only here: the URL travels as
+         *     a tool call rather than as a sentence in the conversation, so that a
+         *     pull request is either being watched or was never reported — never
+         *     half-known from a message somebody has to parse.
+         */
+        post: operations["tasks_record_pull_request"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/tasks/{id}/retry": {
         parameters: {
             query?: never;
@@ -1256,6 +1279,18 @@ export interface components {
          * @enum {string}
          */
         RecipientKind: "profile" | "user";
+        /**
+         * @description The integrator reporting the pull request it opened for a task, so the
+         *     daemon can watch it: read off `gh pr create`'s output rather than out of
+         *     the conversation.
+         */
+        RecordPullRequestRequest: {
+            /**
+             * @description The pull request's URL, e.g. `https://github.com/owner/repo/pull/12`.
+             *     The number is taken from it, so the two can never disagree.
+             */
+            url: string;
+        };
         RepositoryDto: {
             base_branch: string;
             created_at: string;
@@ -1435,6 +1470,14 @@ export interface components {
              *     CLI's own default.
              */
             model?: string | null;
+            /**
+             * Format: int64
+             * @description Number of the pull request the task was published as, once its
+             *     integrator has reported one; None for a task landed locally.
+             */
+            pr_number?: number | null;
+            /** @description Its URL, as the forge spells it. */
+            pr_url?: string | null;
             /** @description Id of the repository the task works in, one of its goal's. */
             repo_id: string;
             /** Format: int64 */
@@ -2972,6 +3015,53 @@ export interface operations {
             };
             /** @description unknown addressee, or one taking no part in the task */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    tasks_record_pull_request: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description task id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecordPullRequestRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskDto"];
+                };
+            };
+            /** @description not a pull request URL */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description not an integrator session */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description the task is not being integrated */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

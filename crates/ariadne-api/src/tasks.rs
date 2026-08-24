@@ -34,6 +34,11 @@ pub struct TaskDto {
     /// Set when the agent went idle without advancing the task.
     pub stalled: bool,
     pub merge_commit: Option<String>,
+    /// Number of the pull request the task was published as, once its
+    /// integrator has reported one; None for a task landed locally.
+    pub pr_number: Option<i64>,
+    /// Its URL, as the forge spells it.
+    pub pr_url: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -99,6 +104,16 @@ pub struct ReturnToEngineerRequest {
     /// What has to change, concretely: one entry per file or decision.
     #[serde(default)]
     pub changes: Vec<String>,
+}
+
+/// The integrator reporting the pull request it opened for a task, so the
+/// daemon can watch it: read off `gh pr create`'s output rather than out of
+/// the conversation.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RecordPullRequestRequest {
+    /// The pull request's URL, e.g. `https://github.com/owner/repo/pull/12`.
+    /// The number is taken from it, so the two can never disagree.
+    pub url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

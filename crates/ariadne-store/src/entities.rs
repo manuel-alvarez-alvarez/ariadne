@@ -142,6 +142,19 @@ pub struct Task {
     pub review_round: i64,
     pub stalled: i64,
     pub merge_commit: Option<String>,
+    /// Number of the pull request this task was published as, once its
+    /// integrator has reported one. None while there is none — every task
+    /// landed locally, and every task before the integrator opened one.
+    pub pr_number: Option<i64>,
+    /// Its URL, as the forge spells it; what says which forge it is on.
+    pub pr_url: Option<String>,
+    /// Ids of the pull request comments already relayed to the engineer, as a
+    /// JSON array: what keeps a comment from being relayed twice as the
+    /// daemon polls.
+    pub pr_relayed_comments: Option<String>,
+    /// Whether the user has been told the pull request is approved and ready
+    /// for them to merge, so they are told once rather than every poll.
+    pub pr_approved_notified: i64,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -152,6 +165,17 @@ impl Task {
     }
     pub fn is_stalled(&self) -> bool {
         self.stalled != 0
+    }
+    /// The comment ids already relayed to the engineer. Unreadable JSON reads
+    /// as none relayed: a comment repeated is better than one never delivered.
+    pub fn pr_relayed_comments(&self) -> Vec<String> {
+        self.pr_relayed_comments
+            .as_deref()
+            .and_then(|raw| serde_json::from_str(raw).ok())
+            .unwrap_or_default()
+    }
+    pub fn pr_approved_notified(&self) -> bool {
+        self.pr_approved_notified != 0
     }
     pub fn agent_kind(&self) -> Option<AgentKind> {
         self.agent_kind

@@ -8,8 +8,8 @@ use ariadne_api::Page;
 use ariadne_api::messages::{CreateMessageRequest, MessageDto};
 use ariadne_api::reviews::{CreateReviewRequest, ReviewDto};
 use ariadne_api::tasks::{
-    CreateTaskRequest, ReturnToEngineerRequest, TaskDto, TaskListQuery, TaskTransitionDto,
-    TransitionRequest, UpdateTaskRequest,
+    CreateTaskRequest, RecordPullRequestRequest, ReturnToEngineerRequest, TaskDto, TaskListQuery,
+    TaskTransitionDto, TransitionRequest, UpdateTaskRequest,
 };
 use ariadne_core::{Actor, ReviewVerdict, Role, TaskStatus};
 use ariadne_store::{NewMessage, NewReview, NewTask, Store, Task, TaskFilter, TaskUpdate};
@@ -19,6 +19,7 @@ use super::auth::{CallCtx, call_ctx, ensure_task_scope};
 use super::convert::{message_dto_of, message_dtos, review_dto, task_dto, transition_dto};
 use super::error::{ApiError, ApiResult};
 use super::recipients;
+use crate::gh;
 
 async fn to_dto(store: &Store, task: Task) -> ApiResult<TaskDto> {
     let reviewers = store.list_task_reviewer_pins(&task.id).await?;
@@ -225,24 +226,11 @@ pub(crate) async fn apply_transition(
     task_id: &str,
     req: TransitionRequest,
 ) -> ApiResult<Task> {
-    // `merged` is never taken on faith: the branch must actually be an
-    // ancestor of the base branch in the repo.
+    // `merged` is never taken on faith.
     if req.to == TaskStatus::Merged {
         let task = state.store.get_task(task_id).await?;
         let repo = state.store.get_repository(&task.repo_id).await?;
-        let repo_path = std::path::PathBuf::from(&repo.path);
-        let merged = state
-            .launcher
-            .git
-            .is_ancestor(&repo_path, &task.branch, &repo.base_branch)
-            .await
-            .map_err(|e| ApiError::conflict(e.to_string()))?;
-        if !merged {
-            return Err(ApiError::conflict(format!(
-                "merge not verified: {} is not an ancestor of {} in {}",
-                task.branch, repo.base_branch, repo.path
-            )));
-        }
+        verify_merged(state, &task, &repo, req.merge_commit.as_deref()).await?;
     }
     let task = state
         .store
@@ -256,6 +244,130 @@ pub(crate) async fn apply_transition(
         .await?;
     state.notify_scheduler(task_id).await;
     Ok(task)
+}
+
+/// Prove the task really was landed, the way it was landed.
+///
+/// Locally that is the branch being an ancestor of the base: rebase, squash
+/// and fast-forward leave the branch tip *as* the base tip. A pull request
+/// leaves no such thing — GitHub's squash and rebase merges write a commit
+/// nobody's branch points at — so what is checked there is GitHub's own
+/// answer, plus the local base having caught up with it: a task whose branch
+/// merged on the forge is only finished here once the checkout says so too.
+async fn verify_merged(
+    state: &AppState,
+    task: &Task,
+    repo: &ariadne_store::Repository,
+    reported: Option<&str>,
+) -> ApiResult<()> {
+    let repo_path = std::path::PathBuf::from(&repo.path);
+    let Some(watched) = gh::watched_pull_request(task) else {
+        let merged = state
+            .launcher
+            .git
+            .is_ancestor(&repo_path, &task.branch, &repo.base_branch)
+            .await
+            .map_err(|e| ApiError::conflict(e.to_string()))?;
+        if !merged {
+            return Err(ApiError::conflict(format!(
+                "merge not verified: {} is not an ancestor of {} in {}",
+                task.branch, repo.base_branch, repo.path
+            )));
+        }
+        return Ok(());
+    };
+
+    let number = watched.number;
+    let pr = state
+        .launcher
+        .gh()
+        .pr_view(&repo_path, &watched)
+        .await
+        .map_err(|e| ApiError::conflict(format!("merge not verified: {e:#}")))?;
+    if !pr.state.eq_ignore_ascii_case("MERGED") && pr.merged_at.is_none() {
+        return Err(ApiError::conflict(format!(
+            "merge not verified: pull request #{number} is {}, not merged",
+            pr.state
+        )));
+    }
+    // Merged there, but the task is landed here: both the sha being reported
+    // and the commit GitHub says the merge landed as have to be on the local
+    // base branch, which is what says the checkout has caught up with the
+    // remote. Everything the integrator is told to do — fetch, fast-forward,
+    // report `git rev-parse <base>` — makes both true at once.
+    let mut contained = Vec::new();
+    contained.extend(reported.map(str::to_string));
+    contained.extend(pr.merge_commit.as_ref().map(|c| c.oid.clone()));
+    for commit in contained {
+        let caught_up = state
+            .launcher
+            .git
+            .is_ancestor(&repo_path, &commit, &repo.base_branch)
+            .await
+            .map_err(|e| ApiError::conflict(e.to_string()))?;
+        if !caught_up {
+            return Err(ApiError::conflict(format!(
+                "merge not verified: pull request #{number} landed as {commit}, which {} in {} \
+                 does not contain yet — fetch the remote and fast-forward it first",
+                repo.base_branch, repo.path
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Record the pull request an integrator opened for a task.
+///
+/// The daemon watches what it is told here, and only here: the URL travels as
+/// a tool call rather than as a sentence in the conversation, so that a
+/// pull request is either being watched or was never reported — never
+/// half-known from a message somebody has to parse.
+#[utoipa::path(post, path = "/v1/tasks/{id}/pull-request", tag = "tasks",
+    request_body = RecordPullRequestRequest,
+    params(("id" = String, Path, description = "task id")),
+    responses(
+        (status = 200, body = TaskDto),
+        (status = 400, description = "not a pull request URL"),
+        (status = 403, description = "not an integrator session"),
+        (status = 409, description = "the task is not being integrated")
+    ))]
+pub async fn record_pull_request(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(req): Json<RecordPullRequestRequest>,
+) -> ApiResult<Json<TaskDto>> {
+    let ctx = call_ctx(&state.store, &headers).await?;
+    ensure_task_scope(&ctx, &id)?;
+    if !ctx
+        .session
+        .as_ref()
+        .is_some_and(|s| s.role() == Role::Integrator)
+    {
+        return Err(ApiError::forbidden(
+            "only the integrator of a task may record its pull request",
+        ));
+    }
+    let task = state.store.get_task(&id).await?;
+    if task.status() != TaskStatus::Integrating {
+        return Err(ApiError::conflict(format!(
+            "task is {}, a pull request belongs to a task being integrated",
+            task.status
+        )));
+    }
+    let url = req.url.trim();
+    let Some(number) = gh::pull_request_number(url) else {
+        return Err(ApiError::bad_request(format!(
+            "{url} is not a pull request URL: pass the one `gh pr create` printed, \
+             e.g. https://github.com/owner/repo/pull/12"
+        )));
+    };
+    state.store.set_task_pull_request(&id, number, url).await?;
+    // The scheduler starts watching it on the next reconciliation rather than
+    // on the poll interval, so the first look is immediate.
+    state.notify_scheduler(&id).await;
+    let task = state.store.get_task(&id).await?;
+    Ok(Json(to_dto(&state.store, task).await?))
 }
 
 /// Cancel a task (user).

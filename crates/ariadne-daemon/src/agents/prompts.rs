@@ -291,6 +291,10 @@ mod tests {
             review_round: 3,
             stalled: 0,
             merge_commit: None,
+            pr_number: None,
+            pr_url: None,
+            pr_relayed_comments: None,
+            pr_approved_notified: 0,
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:00Z".into(),
         }

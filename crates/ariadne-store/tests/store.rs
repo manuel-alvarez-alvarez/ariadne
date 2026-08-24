@@ -4,7 +4,9 @@ use ariadne_core::{
     Actor, AgentKind, AttentionReason, AuthorRole, GoalStatus, PromptKind, ReviewVerdict, Role,
     SessionStatus, TaskStatus,
 };
-use ariadne_store::defaults::{default_prompt, default_system_prompt};
+use ariadne_store::defaults::{
+    default_prompt, default_prompt_for, default_system_prompt, default_system_prompt_for,
+};
 use ariadne_store::*;
 
 async fn test_store() -> (Store, tempfile::TempDir) {
@@ -2367,13 +2369,37 @@ async fn a_pre_integrator_database_renames_merging_and_gains_the_builtin() {
         default_system_prompt(Role::Integrator),
         "the seeded prompt is the default a reset would put back"
     );
+    // And beside it the GitHub one migration 0013 adds, with the whole PR
+    // workflow in the prompts it starts from.
+    let github = store
+        .get_profile_by_name("GitHub Integrator")
+        .await
+        .unwrap();
+    assert_eq!(github.role(), Role::Integrator);
+    assert_eq!(
+        github.system_prompt,
+        default_system_prompt_for(&github.id, Role::Integrator),
+        "the migration seeded exactly the prompt a reset would put back"
+    );
+    for kind in PromptKind::for_role(Role::Integrator) {
+        assert_eq!(
+            store
+                .get_profile_prompt(&github.id, *kind)
+                .await
+                .unwrap()
+                .content,
+            default_prompt_for(&github.id, Role::Integrator, *kind).unwrap(),
+            "the {} briefing the migration wrote",
+            kind.as_str()
+        );
+    }
     assert_eq!(
         store
             .list_profiles(Some(Role::Integrator))
             .await
             .unwrap()
             .len(),
-        1
+        2
     );
 
     // The rebuilds kept what hung off the tables they replaced...
@@ -2432,4 +2458,160 @@ async fn a_pre_integrator_database_renames_merging_and_gains_the_builtin() {
         store.get_task("legacytask").await,
         Err(StoreError::NotFound { .. })
     ));
+}
+
+/// Two built-in integrators, one role, and a whole playbook between them: the
+/// GitHub one is seeded with prompts of its own, and putting one back to
+/// "the default" gives it the GitHub default rather than the local one.
+#[tokio::test]
+async fn the_github_integrator_is_seeded_with_the_prompts_of_its_own() {
+    let (store, _dir) = test_store().await;
+
+    let local = store.get_profile_by_name("Integrator").await.unwrap();
+    let github = store
+        .get_profile_by_name("GitHub Integrator")
+        .await
+        .unwrap();
+    assert_eq!(github.role(), Role::Integrator);
+    assert_ne!(github.system_prompt, local.system_prompt);
+    assert!(
+        github.system_prompt.contains("pull request"),
+        "the GitHub playbook publishes rather than lands"
+    );
+    // The task that names no integrator is still landed by the local one.
+    assert_eq!(store.builtin_integrator().await.unwrap().id, local.id);
+
+    let instructions = store
+        .get_profile_prompt(&github.id, PromptKind::IntegrationInstructions)
+        .await
+        .unwrap();
+    assert!(
+        instructions.content.contains("gh pr create"),
+        "{}",
+        instructions.content
+    );
+    assert_eq!(
+        instructions.content,
+        default_prompt_for(
+            &github.id,
+            Role::Integrator,
+            PromptKind::IntegrationInstructions
+        )
+        .unwrap()
+    );
+    assert_ne!(
+        instructions.content,
+        default_prompt(Role::Integrator, PromptKind::IntegrationInstructions).unwrap(),
+        "and not the local integrator's, which the role default still is"
+    );
+
+    // Edited and reset, it comes back to the prompt it was seeded with.
+    store
+        .update_profile_prompt(
+            &github.id,
+            PromptKind::IntegrationResume,
+            "Do it however you like.",
+        )
+        .await
+        .unwrap();
+    let reset = store
+        .reset_profile_prompt(&github.id, PromptKind::IntegrationResume)
+        .await
+        .unwrap();
+    assert!(reset.content.contains("force-push"), "{}", reset.content);
+    store
+        .update_profile(
+            &github.id,
+            ProfileUpdate {
+                system_prompt: Some("You are whatever.".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .reset_system_prompt(&github.id)
+            .await
+            .unwrap()
+            .system_prompt,
+        default_system_prompt_for(&github.id, Role::Integrator)
+    );
+
+    // A profile someone creates for themselves still starts from its role's
+    // defaults: the GitHub set belongs to that one built-in.
+    let mine = seed_profile(&store, "my integrator", Role::Integrator).await;
+    assert_eq!(
+        store
+            .get_profile_prompt(&mine.id, PromptKind::IntegrationInstructions)
+            .await
+            .unwrap()
+            .content,
+        default_prompt(Role::Integrator, PromptKind::IntegrationInstructions).unwrap()
+    );
+}
+
+/// What the daemon remembers of a published task between polls: the pull
+/// request itself, the comments already relayed to the engineer, and whether
+/// the user has been told it is theirs to merge.
+#[tokio::test]
+async fn a_task_remembers_the_pull_request_it_was_published_as() {
+    let (store, _dir) = test_store().await;
+    let planner = seed_profile(&store, "planner", Role::Planner).await;
+    let (goal, repo) = seed_goal(&store, &planner, None).await;
+    let task = seed_task(&store, &goal, &repo, vec![]).await;
+
+    let fresh = store.get_task(&task.id).await.unwrap();
+    assert_eq!(fresh.pr_number, None);
+    assert_eq!(fresh.pr_url, None);
+    assert!(fresh.pr_relayed_comments().is_empty());
+    assert!(!fresh.pr_approved_notified());
+
+    let url = "https://github.com/ariadne/ariadne/pull/12";
+    store
+        .set_task_pull_request(&task.id, 12, url)
+        .await
+        .unwrap();
+    store
+        .add_task_pr_relayed_comments(&task.id, &["C1".into(), "R1".into()])
+        .await
+        .unwrap();
+    // Relaying more adds to them, and a comment counted twice is still one.
+    store
+        .add_task_pr_relayed_comments(&task.id, &["R1".into(), "C2".into()])
+        .await
+        .unwrap();
+    store
+        .set_task_pr_approved_notified(&task.id, true)
+        .await
+        .unwrap();
+    let published = store.get_task(&task.id).await.unwrap();
+    assert_eq!(published.pr_number, Some(12));
+    assert_eq!(published.pr_url.as_deref(), Some(url));
+    assert_eq!(
+        published.pr_relayed_comments(),
+        vec!["C1".to_string(), "R1".into(), "C2".into()]
+    );
+    assert!(published.pr_approved_notified());
+
+    // Re-reporting the same pull request — a resumed integrator does — keeps
+    // everything remembered about it.
+    store
+        .set_task_pull_request(&task.id, 12, url)
+        .await
+        .unwrap();
+    let again = store.get_task(&task.id).await.unwrap();
+    assert_eq!(again.pr_relayed_comments().len(), 3);
+    assert!(again.pr_approved_notified());
+
+    // A different one is a different review: nothing of the old one carries.
+    let other = "https://github.com/ariadne/ariadne/pull/13";
+    store
+        .set_task_pull_request(&task.id, 13, other)
+        .await
+        .unwrap();
+    let replaced = store.get_task(&task.id).await.unwrap();
+    assert_eq!(replaced.pr_number, Some(13));
+    assert!(replaced.pr_relayed_comments().is_empty());
+    assert!(!replaced.pr_approved_notified());
 }

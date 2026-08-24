@@ -16,30 +16,80 @@ pub struct BuiltinProfile {
     pub id: &'static str,
     pub name: &'static str,
     pub role: Role,
+    /// The prompts this one starts from, when its role's defaults are not the
+    /// playbook it runs. Two integrators share the role and land a task in
+    /// entirely different ways, so the GitHub one carries its own set and
+    /// everybody else takes the role's.
+    pub prompts: Option<&'static BuiltinPrompts>,
 }
 
-pub const BUILTIN_PROFILES: [BuiltinProfile; 4] = [
+/// A built-in's own prompt set: the system prompt, and the briefings of its
+/// role by kind. A kind the role owns but this set omits falls back to the
+/// role default, so a set only says what it does differently.
+pub struct BuiltinPrompts {
+    pub system: &'static str,
+    pub briefings: &'static [(PromptKind, &'static str)],
+}
+
+/// The integrator that lands a task with nothing but git: the one a task with
+/// no integrator of its own is landed by.
+pub const LOCAL_INTEGRATOR_ID: &str = "00000000000000000000000004";
+
+pub const BUILTIN_PROFILES: [BuiltinProfile; 5] = [
     BuiltinProfile {
         id: "00000000000000000000000001",
         name: "Planner",
         role: Role::Planner,
+        prompts: None,
     },
     BuiltinProfile {
         id: "00000000000000000000000002",
         name: "Engineer",
         role: Role::Engineer,
+        prompts: None,
     },
     BuiltinProfile {
         id: "00000000000000000000000003",
         name: "Reviewer",
         role: Role::Reviewer,
+        prompts: None,
     },
     BuiltinProfile {
-        id: "00000000000000000000000004",
+        id: LOCAL_INTEGRATOR_ID,
         name: "Integrator",
         role: Role::Integrator,
+        prompts: None,
+    },
+    BuiltinProfile {
+        id: "00000000000000000000000005",
+        name: "GitHub Integrator",
+        role: Role::Integrator,
+        prompts: Some(&GITHUB_INTEGRATOR_PROMPTS),
     },
 ];
+
+/// The GitHub integrator's whole prompt set: the same role as the built-in
+/// Integrator, and none of its playbook — the change is published as a pull
+/// request and the humans on GitHub merge it.
+pub const GITHUB_INTEGRATOR_PROMPTS: BuiltinPrompts = BuiltinPrompts {
+    system: GITHUB_INTEGRATOR_SYSTEM_PROMPT,
+    briefings: &[
+        (
+            PromptKind::IntegrationInstructions,
+            GITHUB_INTEGRATION_INSTRUCTIONS,
+        ),
+        (PromptKind::IntegrationResume, GITHUB_INTEGRATION_RESUME),
+    ],
+};
+
+/// The prompts a profile starts from: its role's, unless it is a built-in
+/// carrying a set of its own.
+fn builtin_prompts(profile_id: &str) -> Option<&'static BuiltinPrompts> {
+    BUILTIN_PROFILES
+        .iter()
+        .find(|b| b.id == profile_id)
+        .and_then(|b| b.prompts)
+}
 
 /// The system prompt a profile of `role` starts from.
 pub fn default_system_prompt(role: Role) -> &'static str {
@@ -51,10 +101,26 @@ pub fn default_system_prompt(role: Role) -> &'static str {
     }
 }
 
+/// The system prompt the profile `profile_id` starts from: its role's, or the
+/// one its built-in carries instead.
+pub fn default_system_prompt_for(profile_id: &str, role: Role) -> &'static str {
+    builtin_prompts(profile_id).map_or_else(|| default_system_prompt(role), |p| p.system)
+}
+
 /// The default text of `kind`, or `None` when a profile of `role` does not own
 /// that kind of prompt.
 pub fn default_prompt(role: Role, kind: PromptKind) -> Option<&'static str> {
     (kind.role() == role).then(|| prompt_text(kind))
+}
+
+/// The same for one profile, whose built-in set — where it has one — answers
+/// ahead of its role.
+pub fn default_prompt_for(profile_id: &str, role: Role, kind: PromptKind) -> Option<&'static str> {
+    default_prompt(role, kind).map(|role_default| {
+        builtin_prompts(profile_id)
+            .and_then(|p| p.briefings.iter().find(|(k, _)| *k == kind))
+            .map_or(role_default, |(_, text)| *text)
+    })
 }
 
 /// Every prompt a profile of `role` starts with, in briefing order.
@@ -62,6 +128,20 @@ pub fn default_prompts(role: Role) -> impl Iterator<Item = (PromptKind, &'static
     PromptKind::for_role(role)
         .iter()
         .map(|kind| (*kind, prompt_text(*kind)))
+}
+
+/// Every prompt one profile starts with, in briefing order.
+pub fn default_prompts_for(
+    profile_id: &str,
+    role: Role,
+) -> impl Iterator<Item = (PromptKind, &'static str)> {
+    let id = profile_id.to_string();
+    PromptKind::for_role(role).iter().map(move |kind| {
+        (
+            *kind,
+            default_prompt_for(&id, role, *kind).unwrap_or_else(|| prompt_text(*kind)),
+        )
+    })
 }
 
 fn prompt_text(kind: PromptKind) -> &'static str {
@@ -126,6 +206,28 @@ You work in a git worktree of your own, checked out on the task branch; the brie
 3. If the rebase conflicts, do not resolve it: abort it and call the `return_to_engineer` MCP tool with a summary and a concrete list naming the conflicting files and what has to be reconciled. The task goes back to the engineer as a round of requested changes, and you are woken again once the reviewers have approved the revision.
 4. Otherwise squash the branch into one commit whose message follows the repository's commit conventions, fast-forward the base branch from the primary checkout, and call the `mark_merged` MCP tool with the real commit sha, which the daemon verifies itself. Report it truthfully.
 "#;
+
+/// GitHub integrator persona and playbook.
+///
+/// The same role as the integrator above and a different ending: the change
+/// is published as a pull request, the humans on GitHub review and merge it,
+/// and everything they say on it comes back through the engineer. Which is
+/// why nothing here waits — the daemon watches the pull request and wakes
+/// this agent when it moves.
+const GITHUB_INTEGRATOR_SYSTEM_PROMPT: &str = r#"You are the GitHub integrator of an Ariadne task: once its reviewers have approved it, the task is yours to publish as a pull request and to finish once a human has merged it. The engineer that wrote it is done with it, and you are the only agent touching the branch while you have it.
+
+Ariadne coordinates planner, engineer, reviewer and integrator agents over shared goals and tasks; you reach it only through the `ariadne` MCP tools: `post_message` to talk to the engineer, the reviewers, the planner and the user, `list_messages` to read the task's conversation. A message reaches one person in particular when you give `post_message` a `to` — a profile name as your briefing and `get_task` spell them, or "user" to ask the human — and that recipient is woken to read it; with no `to` it waits in the thread for whoever reads it next. Every operation named in backticks here or in your briefings — `get_diff`, `record_pull_request`, `return_to_engineer`, `mark_merged` and the rest — is a tool on that MCP server: invoke it as an MCP tool call, never as a shell command or a message. Work autonomously: do not wait for a human unless a message asks you to. A human may attach to this terminal at any time and type follow-ups.
+
+You work in a git worktree of your own, checked out on the task branch; the briefing names the branch, its base, the repository and the worktree path. The change in it is the engineer's: publish it as it stands and write no code of your own — a change that needs work goes back to the engineer instead. The primary checkout is yours to fast-forward once the pull request has been merged, and for nothing else.
+
+1. Read the task, its acceptance criteria and its conversation, so the pull request you open says what the change was for; `get_diff` shows what is being published.
+2. Check the repository can take a pull request at all: a github.com remote, and a `gh` that is installed and authenticated for it. If either is missing, land the task locally instead — rebase, squash, fast-forward the base, `mark_merged` — and say in the task thread that you did and which check failed.
+3. Otherwise rebase the task branch onto the latest base, push it, and open the pull request with `gh pr create` following the repository's own conventions. Report it with `record_pull_request`, post its URL to the task thread, and end your turn.
+4. If the rebase conflicts, do not resolve it: abort it and call `return_to_engineer` with a summary and a concrete list naming the conflicting files and what has to be reconciled. The task goes back to the engineer as a round of requested changes, and you are woken again once the reviewers have approved the revision.
+5. What humans say on the pull request is not yours to answer in code: relay every comment to the engineer with `return_to_engineer`, quoting it and naming who wrote it, exactly as you would a reviewer's change request. The revision comes back to you and is force-pushed to the same pull request — never a second one.
+6. Once a human has merged the pull request, finish the task: fetch the remote, fast-forward the local base branch onto it, and call `mark_merged` with the merge commit sha, which the daemon verifies itself. Report it truthfully.
+
+Never merge the pull request yourself, never approve it, and never sit waiting for it: end your turn and let Ariadne wake you when it moves. Talk to the humans reviewing it through `post_message`, not by commenting on the pull request — a comment of yours would come back to you as feedback to relay."#;
 
 /// Initial briefing of a planner session.
 const PLANNER_BRIEFING: &str = r#"# Goal: {goal_title}
@@ -197,6 +299,54 @@ The reviewers approved this task. Land it on {base_branch}, keeping that branch'
 const INTEGRATION_RESUME: &str = r#"Pick the integration of "{task_title}" up again: the task is approved and yours to land.
 
 Your worktree is on {branch}, which has moved since you last read it if the engineer revised the change. Rebase onto the latest {base_branch}, squash into one commit following the repository's commit conventions, fast-forward the base from the primary checkout ({repo_path}) and call `mark_merged` with the resulting sha — the integration instructions you were briefed with spell every step out. If the rebase conflicts again, abort it and call `return_to_engineer` with the files that conflicted and what has to be reconciled."#;
+
+/// Initial briefing of a GitHub integrator session.
+///
+/// Publish and stop: everything after `gh pr create` happens on GitHub, at
+/// human speed, and an agent left waiting on it is an agent stalling. The
+/// steps for the three ways the daemon wakes it again — comments, an approved
+/// revision, the merge — are here too, since the wake instruction names the
+/// event and this is where what to do about it is written down.
+const GITHUB_INTEGRATION_INSTRUCTIONS: &str = r#"# Integrate task: {task_title}
+
+{task_description}
+
+## Context
+- Goal: {goal_title}
+- Worktree (your cwd): {worktree_path}
+- Branch: {branch}
+- Base branch: {base_branch} (repo {repo_path})
+
+The reviewers approved this task. Publish it as a pull request against {base_branch} and let a human merge it there.
+
+1. Check the repository can take one: `git -C {repo_path} remote -v` must name a github.com remote (`git@github.com:owner/repo.git` or `https://github.com/owner/repo.git`), and `gh auth status` must report an authenticated account for github.com. If either fails, land the task locally instead, keeping {base_branch}'s history linear: `git fetch . && git rebase {base_branch}` in your worktree, `git reset --soft {base_branch} && git commit` with a Conventional Commits subject and a body saying what changed and why, `git -C {repo_path} merge --ff-only {branch}`, then `mark_merged` with the resulting sha (`git -C {repo_path} rev-parse {base_branch}`). Say in the task thread with `post_message` that you landed it locally and which check failed. That ends the task.
+2. Rebase onto the latest base: `git fetch . && git rebase {base_branch}` in your worktree, and `git fetch <remote> {base_branch}` first if the remote is ahead of the local base.
+3. If the rebase conflicts, do not resolve it yourself: `git rebase --abort`, then call `return_to_engineer` with a summary and a concrete list naming the conflicting files and what has to be reconciled. That ends your turn — the task goes back to the engineer, and you are woken again once the revision is approved.
+4. Read the repository's conventions before writing anything: its pull request template (`.github/PULL_REQUEST_TEMPLATE.md`, or the directory of them), `CONTRIBUTING.md`, `AGENTS.md`, and the commit subjects its own history uses. The pull request title follows those commit conventions — Conventional Commits where that is what the repository writes — and the body fills the template in where there is one, saying what changed and why. It carries no `Co-Authored-By`, `Generated with` or any other authorship or tool trailer.
+5. Push the branch and open the pull request:
+   - `git push -u <remote> {branch}`, adding `--force-with-lease` when the branch was pushed before and the rebase moved it;
+   - `gh pr create --base {base_branch} --head {branch} --title "<subject>" --body "<body>"`.
+6. Report the pull request with `record_pull_request`, passing the URL `gh pr create` printed, and `post_message` that URL to the task thread. Then end your turn: do not poll the pull request, do not wait for it, do not merge or approve it. Ariadne watches it and wakes you when it moves.
+
+Ariadne wakes you again in three situations, and the instruction it wakes you with says which one:
+
+- **The pull request has comments.** Read them all — `gh pr view {branch} --comments`, and the inline review threads with `gh api repos/<owner>/<repo>/pulls/<number>/comments` — and relay every one of them to the engineer with `return_to_engineer`: the summary says the pull request was commented on, and `changes` carries one entry per comment, quoting it and naming who wrote it and which file it is about. Answer nothing in code yourself. That ends your turn.
+- **The engineer's revision was approved and the task is yours again.** Rebase the updated branch onto the latest {base_branch} and force-push it to the same pull request (`git push --force-with-lease <remote> {branch}`); never open a second one. Then `post_message` to "user" saying the comments have been addressed and the pull request is ready to look at again, and end your turn.
+- **The pull request was merged.** Finish the task: `git -C {repo_path} fetch <remote>`, fast-forward the local base onto the remote's (`git -C {repo_path} merge --ff-only <remote>/{base_branch}`), and call `mark_merged` with the sha the merge landed as (`git -C {repo_path} rev-parse {base_branch}`)."#;
+
+/// Resume briefing of a GitHub integrator coming back to a task it already
+/// tried to publish: after a send-back the engineer revised it, and after a
+/// daemon restart the pull request may simply have moved. Either way the
+/// branch it read last time is stale, and the pull request that already
+/// exists is the one to update.
+const GITHUB_INTEGRATION_RESUME: &str = r#"Pick the integration of "{task_title}" up again: the task is approved and yours to publish.
+
+Your worktree is on {branch}, which has moved since you last read it if the engineer revised the change. Check whether the pull request already exists (`gh pr list --head {branch} --state all`):
+
+- If it does, rebase onto the latest {base_branch} and force-push {branch} to that same pull request with `--force-with-lease` — never open a second one — then `post_message` to "user" saying the pull request has been updated and is ready to look at again.
+- If it does not, open it exactly as the integration instructions you were briefed with say: the github.com remote and `gh auth status` first, falling back to landing it locally if either is missing, then rebase, push, `gh pr create` following the repository's conventions, and `record_pull_request` with the URL.
+
+Either way end your turn afterwards — Ariadne watches the pull request and wakes you when it is commented on or merged. If the rebase conflicts, abort it and call `return_to_engineer` with the files that conflicted and what has to be reconciled. The repository is {repo_path}."#;
 
 /// Initial briefing of a reviewer session.
 const REVIEWER_BRIEFING: &str = r#"# Review task: {task_title} (round {review_round})

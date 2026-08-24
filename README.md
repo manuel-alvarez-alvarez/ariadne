@@ -36,12 +36,24 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    `approve` or `request_changes`. Change requests resume the engineer with
    the feedback; enough approvals hand the task to its integrator.
 5. The **integrator** takes the branch over in a worktree of its own — the
-   engineer's is released with it — rebases, squashes, fast-forwards the base
-   branch and calls `mark_merged`, which the daemon only accepts after
-   verifying the merge with `git merge-base --is-ancestor`. A rebase it will
-   not resolve goes back to the engineer as a round of requested changes
-   (`return_to_engineer`) instead. Worktrees are cleaned up, dependent tasks
-   wake up, and the goal completes when everything is merged.
+   engineer's is released with it — and lands it. The built-in **Integrator**
+   does it locally: rebase, squash, fast-forward the base branch and
+   `mark_merged`, which the daemon only accepts after verifying the merge with
+   `git merge-base --is-ancestor`. A rebase it will not resolve goes back to
+   the engineer as a round of requested changes (`return_to_engineer`)
+   instead. Worktrees are cleaned up, dependent tasks wake up, and the goal
+   completes when everything is merged.
+6. The built-in **GitHub Integrator** publishes instead: it rebases, pushes
+   and opens a pull request with `gh pr create` following the repository's
+   conventions, reports the URL with `record_pull_request` and ends its turn
+   (falling back to the local flow when there is no github.com remote or no
+   authenticated `gh`). From there the daemon polls `gh pr view` every
+   `pr_poll_secs` — an approval is announced to you once, comments come back
+   to the engineer through `return_to_engineer` exactly once each and the
+   revision is force-pushed to the same pull request, and the merge you make
+   on GitHub wakes the integrator to fast-forward the base branch and report
+   the sha. That sha is verified against GitHub, so a squash- or rebase-merged
+   pull request lands as cleanly as a fast-forward.
 
 Task lifecycle: `pending → ready → in_progress → under_review →
 (changes_requested → in_progress …) → approved → integrating → merged`, with
@@ -313,6 +325,11 @@ delete_merged_branches = true      # only applies when worktrees are deleted too
 prevent_sleep = true               # hold a system sleep inhibition while any agent
                                    # session is live, so the box does not idle-sleep
                                    # out from under a working agent (default)
+gh_bin = "/opt/homebrew/bin/gh"    # the GitHub CLI pull requests are watched with
+                                   # (default: "gh" on PATH)
+pr_poll_secs = 180                 # how often an integrating task's pull request is
+                                   # looked at (default); it moves when a human reads
+                                   # it, so polling faster buys nothing
 ```
 
 `ARIADNE_HOME` moves the whole home directory: daemon and CLI alike resolve

@@ -11,12 +11,16 @@ use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 use ariadne_core::{
-    Actor, AttentionReason, GoalStatus, PromptKind, ReviewVerdict, Role, SessionStatus, TaskStatus,
+    Actor, AttentionReason, AuthorRole, GoalStatus, PromptKind, ReviewVerdict, Role, SessionStatus,
+    TaskStatus,
 };
-use ariadne_store::{AgentSession, Message, Recipient, SessionFilter, Store, Task, TaskFilter};
+use ariadne_store::{
+    AgentSession, Message, NewMessage, Recipient, SessionFilter, Store, Task, TaskFilter,
+};
 
 use crate::agents::prompts;
 use crate::attention;
+use crate::gh::{self, PrState};
 use crate::launcher::Launcher;
 use crate::sleep::SleepInhibitor;
 
@@ -110,6 +114,11 @@ pub struct Scheduler {
     /// a transition changes `nudged`'s, which is what keeps it to one Enter
     /// and one flag per launch rather than one per tick.
     unstarted: HashMap<String, (String, Unstarted)>,
+    /// When each task's pull request was last looked at, by task id: what
+    /// keeps the polling to `pr_poll_secs` rather than to every tick and
+    /// every event. In memory like the maps above — a daemon that restarts
+    /// simply looks once immediately, which is what it wants to do anyway.
+    pr_polled: HashMap<String, std::time::Instant>,
     /// Messages already delivered to their addressee, by message id. In
     /// memory like the two maps above, and for the same reason: what it
     /// prevents is typing one message into a pane twice, which is only ever
@@ -135,6 +144,7 @@ pub fn start(
         spawn_failures: HashMap::new(),
         nudged: HashMap::new(),
         unstarted: HashMap::new(),
+        pr_polled: HashMap::new(),
         delivered: HashSet::new(),
         sleep: SleepInhibitor::new(),
         prevent_sleep,
@@ -748,9 +758,14 @@ impl Scheduler {
                 // restarted halfway through one.
                 return Box::pin(self.reconcile_task(task_id)).await;
             }
-            TaskStatus::Integrating => {
-                self.check_stall(&task, Role::Integrator).await?;
-            }
+            TaskStatus::Integrating => match gh::watched_pull_request(&task) {
+                // A published task is waiting on people, not on its
+                // integrator: the pull request is watched instead, and the
+                // idle agent that opened it is left alone rather than nudged
+                // for not having landed anything.
+                Some(pr) => self.watch_pull_request(&task, &pr).await?,
+                None => self.check_stall(&task, Role::Integrator).await?,
+            },
             TaskStatus::Merged => {
                 // Post-merge cleanup (idempotent), then wake dependents.
                 // Worktrees and the branch go by default; set
@@ -864,6 +879,199 @@ impl Scheduler {
             warn!(task = %task.id, role = role.as_str(), "task stalled, flagging for user attention");
             self.store.set_task_stalled(&task.id, true).await?;
         }
+        Ok(())
+    }
+
+    /// Watch the pull request a task was published as, and wake whoever the
+    /// humans on it have given something to do.
+    ///
+    /// Nothing here is the integrator's to be nudged about: the pull request
+    /// moves when a person reads it, which is why the integrator ends its turn
+    /// after opening one and why this arm replaces the stall watch rather than
+    /// running beside it. What it does instead is look every `pr_poll_secs`
+    /// and act on what `gh` says:
+    ///
+    /// - **merged**, and the integrator finishes the task locally;
+    /// - **commented on**, and every comment nobody has relayed yet goes to
+    ///   the engineer through the integrator's send-back;
+    /// - **approved**, and the user is told once that it is theirs to merge.
+    ///
+    /// An integrator mid-turn is left to finish it: resuming an agent means
+    /// relaunching its pane, and whatever it is doing on the branch right now
+    /// is more current than a poll taken a moment ago. The next poll asks
+    /// again.
+    async fn watch_pull_request(
+        &mut self,
+        task: &Task,
+        watched: &gh::WatchedPr,
+    ) -> anyhow::Result<()> {
+        let number = watched.number;
+        let Some(integrator) = self.live_integrator(task).await? else {
+            // A task back from the engineer, or a daemon that restarted: the
+            // integrator is started with its resume briefing, which tells it
+            // to update the pull request it already opened.
+            return Ok(());
+        };
+        // The one watchdog that still applies: an agent whose instruction is
+        // sitting unsubmitted in its composer has not started the turn this
+        // arm woke it for, and no amount of polling will move it. The idle
+        // half of the stall watch is what does not apply — an integrator with
+        // a pull request open is waiting on people, not stalling.
+        if integrator.status() == SessionStatus::Running {
+            self.check_unstarted_turn(&integrator).await?;
+        }
+        let interval = std::time::Duration::from_secs(self.launcher.cfg.pr_poll_secs);
+        let now = std::time::Instant::now();
+        if self
+            .pr_polled
+            .get(&task.id)
+            .is_some_and(|last| now.duration_since(*last) < interval)
+        {
+            return Ok(());
+        }
+        self.pr_polled.insert(task.id.clone(), now);
+
+        let repo = self.store.get_repository(&task.repo_id).await?;
+        let repo_path = std::path::PathBuf::from(&repo.path);
+        // A `gh` that cannot answer — not installed, not authenticated, the
+        // network down — is not a reason to fail the task: the pull request is
+        // still there, and the next poll asks again.
+        let gh_cli = self.launcher.gh();
+        let pr = match gh_cli.pr_view(&repo_path, watched).await {
+            Ok(pr) => pr,
+            Err(e) => {
+                warn!(task = %task.id, pr = number, error = %format!("{e:#}"), "reading the pull request failed");
+                return Ok(());
+            }
+        };
+        // What was written on the diff rather than in the conversation, which
+        // is where most review feedback lives. Failing to read them is not
+        // worth dropping the poll for — the conversation may be carrying
+        // something too, and the next poll asks for both again.
+        let review_comments = match gh_cli.pr_review_comments(&repo_path, watched).await {
+            Ok(comments) => comments,
+            Err(e) => {
+                warn!(task = %task.id, pr = number, error = %format!("{e:#}"), "reading the pull request's review comments failed");
+                Vec::new()
+            }
+        };
+        // An approval that was dismissed or overtaken by a new review is one
+        // the user has to be told about again when it comes back.
+        let approved = pr
+            .review_decision
+            .as_deref()
+            .is_some_and(|d| d.eq_ignore_ascii_case("APPROVED"));
+        if !approved && task.pr_approved_notified() {
+            self.store
+                .set_task_pr_approved_notified(&task.id, false)
+                .await?;
+        }
+        let state = gh::poll_state(
+            &pr,
+            &review_comments,
+            &task.pr_relayed_comments(),
+            approved && task.pr_approved_notified(),
+        );
+        if state != PrState::Quiet && integrator.status() != SessionStatus::Idle {
+            info!(task = %task.id, pr = number, session = %integrator.id, "the pull request moved while its integrator is working; leaving it to finish");
+            return Ok(());
+        }
+        match state {
+            PrState::Quiet => {}
+            PrState::Merged => {
+                info!(task = %task.id, pr = number, "the pull request was merged; waking the integrator to finish the task");
+                self.launcher
+                    .resume_integrator(&task.id, &pr_merged_instruction(number, &repo.base_branch))
+                    .await?;
+                self.spawn_failures.remove(&task.id);
+            }
+            PrState::Feedback(feedback) => {
+                info!(task = %task.id, pr = number, comments = feedback.len(), "the pull request was commented on; waking the integrator to relay it");
+                // Spent before the attempt, like the stall nudge and the
+                // message delivery: what a comment relayed twice costs the
+                // engineer is a round of work it has already done, and a
+                // resume that fails will not go better for being repeated.
+                let ids: Vec<String> = feedback.iter().map(|f| f.id.clone()).collect();
+                self.store
+                    .add_task_pr_relayed_comments(&task.id, &ids)
+                    .await?;
+                self.launcher
+                    .resume_integrator(&task.id, &pr_feedback_instruction(number, &feedback))
+                    .await?;
+                self.spawn_failures.remove(&task.id);
+            }
+            PrState::Approved => {
+                info!(task = %task.id, pr = number, "the pull request is approved; telling the user it is theirs to merge");
+                self.notify_pull_request_approved(task, &integrator, number)
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The integrator working on this task, started if there is none.
+    ///
+    /// `None` means one was just started and there is nothing else to decide
+    /// this pass: an agent resuming is about to read the branch and the pull
+    /// request for itself.
+    async fn live_integrator(&mut self, task: &Task) -> anyhow::Result<Option<AgentSession>> {
+        let sessions = self
+            .store
+            .list_sessions(SessionFilter {
+                task_id: Some(task.id.clone()),
+                live_only: true,
+                ..Default::default()
+            })
+            .await?;
+        if let Some(integrator) = sessions.into_iter().find(|s| s.role() == Role::Integrator) {
+            return Ok(Some(integrator));
+        }
+        info!(task = %task.id, "no live integrator for a task with a pull request, starting one");
+        if let Err(e) = self.start_role(task, Role::Integrator).await {
+            self.flag_last_disconnected(task, Role::Integrator).await;
+            return Err(e);
+        }
+        self.spawn_failures.remove(&task.id);
+        Ok(None)
+    }
+
+    /// Tell the user their pull request is ready to merge: a message in the
+    /// task thread addressed to them, and the flag that puts the integrator's
+    /// session on the attention strip they read it from.
+    ///
+    /// Once per approval — `pr_approved_notified` is what says it has been
+    /// done, and it is written before the flag so a failure repeats nothing.
+    async fn notify_pull_request_approved(
+        &self,
+        task: &Task,
+        integrator: &AgentSession,
+        number: i64,
+    ) -> anyhow::Result<()> {
+        self.store
+            .set_task_pr_approved_notified(&task.id, true)
+            .await?;
+        let where_ = task
+            .pr_url
+            .clone()
+            .unwrap_or_else(|| format!("pull request #{number}"));
+        self.store
+            .create_message(NewMessage {
+                goal_id: task.goal_id.clone(),
+                task_id: Some(task.id.clone()),
+                author_role: AuthorRole::System,
+                author_session_id: None,
+                recipient: Some(Recipient::User),
+                body: format!(
+                    "The pull request for \"{}\" is approved and ready for you to merge: {where_}\n\n\
+                     Merging it is yours to do — Ariadne watches the pull request and finishes \
+                     the task once you have.",
+                    task.title,
+                ),
+            })
+            .await?;
+        self.store
+            .set_session_attention(&integrator.id, AttentionReason::WaitingInput)
+            .await?;
         Ok(())
     }
 
@@ -1199,6 +1407,50 @@ impl Scheduler {
     }
 }
 
+/// What the integrator is woken with when humans have written on the pull
+/// request: what they wrote, quoted, and what to do with it.
+///
+/// Quoted rather than pointed at, for the reason a delivered message is
+/// quoted whole: an agent told only that there is something to go and read
+/// has been woken for nothing. What to do about it is in its own briefing —
+/// this says which of the situations it was briefed for has happened.
+fn pr_feedback_instruction(number: i64, feedback: &[gh::Feedback]) -> String {
+    let quoted = feedback
+        .iter()
+        .map(|f| {
+            let what = if f.blocking {
+                "requested changes"
+            } else {
+                "commented"
+            };
+            format!("### {} {what}\n{}", f.author, f.body.trim())
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let count = feedback.len();
+    let plural = if count == 1 { "comment" } else { "comments" };
+    format!(
+        "Pull request #{number} has {count} new {plural} nobody has relayed yet:\n\n\
+         {quoted}\n\n\
+         Relay every one that asks for something to the engineer with `return_to_engineer`, \
+         quoting the comment and naming who wrote it, as your integration instructions say. \
+         Read the pull request first if you need the code they are about — `gh pr view \
+         --comments` and the inline review threads — and write no code yourself. If none of \
+         them asks for a change at all — a bot notice, a thank-you — say so in the task thread \
+         with `post_message` instead of sending the task back. Either way that ends your turn."
+    )
+}
+
+/// And when it was merged: the task is finished off the branch it landed on.
+fn pr_merged_instruction(number: i64, base_branch: &str) -> String {
+    format!(
+        "Pull request #{number} has been merged on GitHub. Finish the task as your integration \
+         instructions say: fetch the remote in the primary checkout, fast-forward {base_branch} \
+         onto it, and call `mark_merged` with the sha it now points at. The daemon verifies the \
+         merge against GitHub itself, so report it truthfully."
+    )
+}
+
 /// What the woken agent is told: who wrote, what they wrote, and where to
 /// answer. The message is quoted whole — an agent asked to go and look it up
 /// before it knows what it says has been woken for nothing — with the pointer
@@ -1215,4 +1467,66 @@ fn delivery_text(message: &Message) -> String {
         author = message.author_role().as_str(),
         body = message.body,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The wake instruction is the whole of what the integrator knows when it
+    /// comes back: every comment quoted with its author, and what to do about
+    /// them in one readable paragraph — no run-on whitespace from a template
+    /// that got folded wrong.
+    #[test]
+    fn the_wake_instruction_quotes_every_comment_it_was_woken_for() {
+        let instruction = pr_feedback_instruction(
+            12,
+            &[
+                gh::Feedback {
+                    id: "C1".into(),
+                    author: "maria".into(),
+                    body: "why a new module?".into(),
+                    blocking: false,
+                },
+                gh::Feedback {
+                    id: "RC2".into(),
+                    author: "jon".into(),
+                    body: "src/board.rs: this allocates per row".into(),
+                    blocking: true,
+                },
+            ],
+        );
+        assert!(instruction.contains("2 new comments"), "{instruction}");
+        assert!(instruction.contains("### maria commented"), "{instruction}");
+        assert!(
+            instruction.contains("### jon requested changes"),
+            "{instruction}"
+        );
+        assert!(
+            instruction.contains("src/board.rs: this allocates per row"),
+            "{instruction}"
+        );
+        assert!(instruction.contains("return_to_engineer"), "{instruction}");
+        assert!(!instruction.contains("  "), "{instruction}");
+
+        let one = pr_feedback_instruction(
+            12,
+            &[gh::Feedback {
+                id: "C1".into(),
+                author: "maria".into(),
+                body: "why?".into(),
+                blocking: false,
+            }],
+        );
+        assert!(one.contains("1 new comment nobody"), "{one}");
+    }
+
+    #[test]
+    fn the_merge_instruction_names_the_branch_to_fast_forward() {
+        let instruction = pr_merged_instruction(12, "main");
+        assert!(instruction.contains("#12 has been merged"), "{instruction}");
+        assert!(instruction.contains("fast-forward main"), "{instruction}");
+        assert!(instruction.contains("mark_merged"), "{instruction}");
+        assert!(!instruction.contains("  "), "{instruction}");
+    }
 }

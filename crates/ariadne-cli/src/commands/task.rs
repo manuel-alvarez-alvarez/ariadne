@@ -634,6 +634,8 @@ mod tests {
             review_round: 0,
             stalled: false,
             merge_commit: None,
+            pr_number: None,
+            pr_url: None,
             created_at: "2026-08-17T08:00:00Z".into(),
             updated_at: "2026-08-17T08:00:00Z".into(),
         };

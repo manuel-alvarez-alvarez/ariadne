@@ -491,6 +491,72 @@ impl Store {
         self.publish_task_update(task_id, n).await
     }
 
+    /// Record the pull request a task was published as, in full: the number
+    /// the daemon polls with and the URL that says which forge it is on.
+    ///
+    /// Idempotent by construction — the integrator reports the pull request it
+    /// opened, and re-reporting the same one writes the same row. Recording a
+    /// *different* pull request resets the bookkeeping with it: the comments
+    /// relayed and the approval announced belonged to the old one.
+    pub async fn set_task_pull_request(&self, task_id: &str, number: i64, url: &str) -> Result<()> {
+        let task = self.get_task(task_id).await?;
+        let same = task.pr_url.as_deref() == Some(url);
+        let n = sqlx::query(
+            "UPDATE tasks
+             SET pr_number = ?, pr_url = ?, pr_relayed_comments = ?,
+                 pr_approved_notified = ?, updated_at = ?
+             WHERE id = ?",
+        )
+        .bind(number)
+        .bind(url)
+        .bind(same.then(|| task.pr_relayed_comments.clone()).flatten())
+        .bind(i64::from(same && task.pr_approved_notified()))
+        .bind(now())
+        .bind(task_id)
+        .execute(self.w())
+        .await?
+        .rows_affected();
+        self.publish_task_update(task_id, n).await
+    }
+
+    /// Mark pull request comments as relayed to the engineer, adding to
+    /// whatever was relayed before: what keeps the daemon from relaying one
+    /// comment twice as it polls.
+    pub async fn add_task_pr_relayed_comments(&self, task_id: &str, ids: &[String]) -> Result<()> {
+        let task = self.get_task(task_id).await?;
+        let mut relayed = task.pr_relayed_comments();
+        for id in ids {
+            if !relayed.contains(id) {
+                relayed.push(id.clone());
+            }
+        }
+        let json = serde_json::to_string(&relayed).unwrap_or_else(|_| "[]".into());
+        let n =
+            sqlx::query("UPDATE tasks SET pr_relayed_comments = ?, updated_at = ? WHERE id = ?")
+                .bind(&json)
+                .bind(now())
+                .bind(task_id)
+                .execute(self.w())
+                .await?
+                .rows_affected();
+        self.publish_task_update(task_id, n).await
+    }
+
+    /// Whether the user has been told the pull request is approved: set when
+    /// they are told, cleared when the approval goes away again, so a second
+    /// approval is announced and a poll that changes nothing is not.
+    pub async fn set_task_pr_approved_notified(&self, task_id: &str, notified: bool) -> Result<()> {
+        let n =
+            sqlx::query("UPDATE tasks SET pr_approved_notified = ?, updated_at = ? WHERE id = ?")
+                .bind(notified as i64)
+                .bind(now())
+                .bind(task_id)
+                .execute(self.w())
+                .await?
+                .rows_affected();
+        self.publish_task_update(task_id, n).await
+    }
+
     pub async fn set_task_stalled(&self, task_id: &str, stalled: bool) -> Result<()> {
         let n = sqlx::query("UPDATE tasks SET stalled = ?, updated_at = ? WHERE id = ?")
             .bind(stalled as i64)

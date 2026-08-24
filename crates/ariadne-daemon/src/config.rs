@@ -26,7 +26,13 @@ pub struct Config {
     pub delete_merged_branches: bool,
     pub delete_merged_worktrees: bool,
     pub prevent_sleep: bool,
+    pub gh_bin: String,
+    pub pr_poll_secs: u64,
 }
+
+/// How often an integrating task's pull request is polled by default: a few
+/// minutes, because what moves it is a human reading a diff.
+const DEFAULT_PR_POLL_SECS: u64 = 180;
 
 /// Default `ariadne` CLI: sibling of the running ariadned, else PATH lookup.
 fn default_cli_bin() -> String {
@@ -70,6 +76,8 @@ impl Config {
             delete_merged_branches: file.delete_merged_branches.unwrap_or(true),
             delete_merged_worktrees: file.delete_merged_worktrees.unwrap_or(true),
             prevent_sleep: file.prevent_sleep.unwrap_or(true),
+            gh_bin: file.gh_bin.unwrap_or_else(|| "gh".to_string()),
+            pr_poll_secs: file.pr_poll_secs.unwrap_or(DEFAULT_PR_POLL_SECS),
             root,
         };
 

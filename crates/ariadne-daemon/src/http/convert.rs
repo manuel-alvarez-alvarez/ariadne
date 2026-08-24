@@ -102,6 +102,8 @@ pub fn task_dto(
         worktree_path: t.worktree_path,
         review_round: t.review_round,
         merge_commit: t.merge_commit,
+        pr_number: t.pr_number,
+        pr_url: t.pr_url,
         created_at: t.created_at,
         updated_at: t.updated_at,
     }
