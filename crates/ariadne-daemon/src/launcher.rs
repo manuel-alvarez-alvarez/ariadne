@@ -175,16 +175,18 @@ impl Launcher {
     /// the TUI took it rather than left it sitting in its composer. When it
     /// cannot be confirmed the session is raised for the user: a resumed
     /// agent that never heard its instruction sits there doing nothing, and
-    /// this is the only place that knows it. The watch window matches the
-    /// trust watcher's two minutes, and a pane that never draws in it ends
-    /// the same way: giving up is a delivery that did not happen, so it is
-    /// raised rather than logged. Delivery is attempted once; a session that
-    /// goes away has nobody left to be waiting on it.
+    /// this is the only place that knows it. The watch window is
+    /// `typed_input_window`, the trust watcher's two minutes, and a pane that
+    /// never draws anything in it ends the same way: giving up is a delivery
+    /// that did not happen, so it is raised rather than logged. Delivery is
+    /// attempted once; a session that goes away has nobody left waiting on
+    /// it.
     fn deliver_typed_input(&self, session_id: String, tmux_session: String, input: String) {
         let tmux = self.tmux.clone();
         let store = self.store.clone();
+        let deadline = std::time::Instant::now() + self.cfg.typed_input_window;
         tokio::spawn(async move {
-            for _ in 0..240 {
+            while std::time::Instant::now() < deadline {
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 if !tmux.has_session(&tmux_session).await {
                     return;
