@@ -488,12 +488,15 @@ impl Scheduler {
                 // stall, which is the only place a goal still in planning has
                 // to say that nothing is happening.
                 for planner in planners {
-                    self.check_session_stall(
-                        &planner,
-                        (goal.status.clone(), 0),
-                        "Keep planning this goal: create the tasks it still needs with `create_task`, or call `finalize_plan` once the user agrees the plan is complete.",
+                    let template = prompts::template_for(
+                        &self.store,
+                        &planner.profile_id,
+                        PromptKind::PlannerResume,
                     )
-                    .await?;
+                    .await;
+                    let nudge = prompts::planner_resume_briefing(&template, &goal);
+                    self.check_session_stall(&planner, (goal.status.clone(), 0), &nudge)
+                        .await?;
                 }
             }
             GoalStatus::Active => {
@@ -799,6 +802,15 @@ impl Scheduler {
                             break;
                         }
                     }
+                    // One text for either way this reviewer is picked up:
+                    // the verdict the round is waiting on and the diff that
+                    // may have moved under it are what it is told whether its
+                    // session is being started again or merely nudged.
+                    let template =
+                        prompts::template_for(&self.store, &profile_id, PromptKind::ReviewerResume)
+                            .await;
+                    let resume =
+                        prompts::reviewer_resume_briefing(&template, &task, summary.as_deref());
                     // A reviewer with no verdict yet is the round's only
                     // reason to still be open, so an idle one is watched the
                     // same way an engineer is. Reviewers that already voted
@@ -809,29 +821,15 @@ impl Scheduler {
                         self.check_session_stall(
                             &reviewer,
                             (task.status.clone(), task.review_round),
-                            "Finish reviewing this round and submit your verdict with `approve` or `request_changes`.",
+                            &resume,
                         )
                         .await?;
                     } else {
                         info!(task = %task.id, reviewer = %profile_id, round = task.review_round, "starting reviewer");
                         // Resumes the reviewer's earlier session when there is
                         // one, spawns a first for it otherwise.
-                        let template = prompts::template_for(
-                            &self.store,
-                            &profile_id,
-                            PromptKind::ReviewerResume,
-                        )
-                        .await;
                         self.launcher
-                            .resume_reviewer(
-                                &task.id,
-                                &profile_id,
-                                &prompts::reviewer_resume_briefing(
-                                    &template,
-                                    &task,
-                                    summary.as_deref(),
-                                ),
-                            )
+                            .resume_reviewer(&task.id, &profile_id, &resume)
                             .await?;
                         self.spawn_failures.remove(&task.id);
                     }
@@ -1028,16 +1026,12 @@ impl Scheduler {
             self.spawn_failures.remove(&task.id);
             return Ok(());
         };
-        let nudge = match role {
-            Role::Integrator => {
-                "Land this task as the integration instructions say: rebase, squash, fast-forward the base and call `mark_merged` with the resulting sha — or, if the rebase conflicts, abort it and call `return_to_engineer` with the conflicting files."
-            }
-            _ => {
-                "Keep working on this task, and call `request_review` with a summary once the work is complete and verified."
-            }
-        };
+        // The same words it would be started again with: an agent that has
+        // gone quiet with the work still in front of it and one whose session
+        // ended are in the same situation, and there is one text for it.
+        let nudge = self.resume_text(task, role).await?;
         let stalled = self
-            .check_session_stall(agent, (task.status.clone(), task.review_round), nudge)
+            .check_session_stall(agent, (task.status.clone(), task.review_round), &nudge)
             .await?;
         // Whoever owns the task right now is the one role whose stall has
         // somewhere else to show: the task carries a flag of its own, next to
@@ -1258,8 +1252,14 @@ impl Scheduler {
             PrState::Quiet => {}
             PrState::Merged => {
                 info!(task = %task.id, pr = number, "the review was merged; waking the integrator to finish the task");
+                let profile = self.launcher.integrator_profile(task).await?;
+                let template =
+                    prompts::template_for(&self.store, &profile.id, PromptKind::IntegrationMerged)
+                        .await;
+                let instruction =
+                    prompts::integration_merged_briefing(&template, task, &repo, watched);
                 self.launcher
-                    .resume_integrator(&task.id, &pr_merged_instruction(watched, &repo.base_branch))
+                    .resume_integrator(&task.id, &instruction)
                     .await?;
                 self.spawn_failures.remove(&task.id);
             }
@@ -1480,7 +1480,7 @@ impl Scheduler {
         let ids: Vec<String> = feedback.iter().map(|f| f.id.clone()).collect();
         self.relay_to_engineer(
             task,
-            pr_feedback_review(watched, feedback),
+            forge_feedback(feedback),
             &ids,
             &format!("{} was commented on", watched.label()),
         )
@@ -1767,44 +1767,61 @@ impl Scheduler {
     /// resumed where there is one to resume, a fresh spawn otherwise (both
     /// launcher calls fall back to the spawn themselves).
     async fn start_role(&mut self, task: &Task, role: Role) -> anyhow::Result<()> {
+        let instruction = self.resume_text(task, role).await?;
         match role {
             Role::Integrator => {
-                let repo = self.store.get_repository(&task.repo_id).await?;
-                // A published task is never picked up from scratch: the
-                // request is open, the branch carries a revision the engineer
-                // wrote for the people reading it, and both what to do with
-                // it and what to tell them are the daemon's to say. The
-                // stored resume briefing is for the other case — a task whose
-                // landing nobody has started yet.
-                let instruction = match forge::watched_pull_request(task) {
-                    Some(watched) => published_revision_instruction(
-                        &watched,
-                        task,
-                        &repo,
-                        self.store.review_summary(&task.id).await?.as_deref(),
-                    ),
-                    None => {
-                        let profile = self.launcher.integrator_profile(task).await?;
-                        let template = prompts::template_for(
-                            &self.store,
-                            &profile.id,
-                            PromptKind::IntegrationResume,
-                        )
-                        .await;
-                        prompts::integration_resume_briefing(&template, task, &repo)
-                    }
-                };
                 self.launcher
                     .resume_integrator(&task.id, &instruction)
                     .await?;
             }
             _ => {
                 self.launcher
-                    .resume_engineer(&task.id, "Your previous session ended: continue this task on the same branch in your worktree, and call `request_review` when the work is complete and verified.")
+                    .resume_engineer(&task.id, &instruction)
                     .await?;
             }
         }
         Ok(())
+    }
+
+    /// What the agent a task is waiting on is picked up with, whether its
+    /// session ended or it merely went quiet: its profile's resume template,
+    /// rendered.
+    ///
+    /// The integrator's carries what has happened to the task since it last
+    /// looked — the request Ariadne has on record, and the engineer's own
+    /// account of the revision, which on a published request is its replies to
+    /// the people reading it. There is nothing to compose here: what the two
+    /// situations have in common is what the template says, and what tells
+    /// them apart is the two values.
+    ///
+    /// Every other role a task waits on is its engineer, which is the arm the
+    /// callers below reach through [`Self::start_role`].
+    async fn resume_text(&self, task: &Task, role: Role) -> anyhow::Result<String> {
+        match role {
+            Role::Integrator => {
+                let repo = self.store.get_repository(&task.repo_id).await?;
+                let profile = self.launcher.integrator_profile(task).await?;
+                let template =
+                    prompts::template_for(&self.store, &profile.id, PromptKind::IntegrationResume)
+                        .await;
+                Ok(prompts::integration_resume_briefing(
+                    &template,
+                    task,
+                    &repo,
+                    forge::watched_pull_request(task).as_ref(),
+                    self.store.review_summary(&task.id).await?.as_deref(),
+                ))
+            }
+            _ => {
+                let template = prompts::template_for(
+                    &self.store,
+                    &task.engineer_profile_id,
+                    PromptKind::EngineerResume,
+                )
+                .await;
+                Ok(prompts::engineer_resume_briefing(&template, task))
+            }
+        }
     }
 
     /// Raise `disconnected` on the session of `role` that was last on this
@@ -2329,7 +2346,9 @@ impl Scheduler {
         if message.author_session_id.as_deref() == Some(session.id.as_str()) {
             return Ok(Wake::Nothing);
         }
-        let text = delivery_text(message);
+        let template =
+            prompts::template_for(&self.store, profile_id, PromptKind::MessageDelivery).await;
+        let text = prompts::message_delivery(&template, message);
         // Asked rather than assumed, the way the spawn guards ask: a tmux
         // that cannot be reached has said nothing about the pane, and an
         // agent relaunched on top of a live one is two agents on one task.
@@ -2451,8 +2470,7 @@ struct Poll {
     failure: Option<String>,
 }
 
-/// What the humans wrote on the review, as the round of requested changes the
-/// engineer is sent back with.
+/// What the humans wrote on the review, quoted for the engineer.
 ///
 /// Quoted verbatim rather than pointed at, for the reason a delivered message
 /// is quoted whole: an agent sent to go and read what it was woken for has
@@ -2461,11 +2479,13 @@ struct Poll {
 /// entry carries who wrote it, and where on the diff it hangs when that is
 /// where it was written.
 ///
-/// What to do with them is spelled out here rather than in the engineer's
-/// briefing, because it is particular to a published request: the commits
-/// people are reading stay where they are, and the answer to each comment
-/// goes into the summary the engineer hands back.
-fn pr_feedback_review(watched: &WatchedPr, feedback: &[Feedback]) -> String {
+/// This is the round's feedback and nothing else: what to do about it is the
+/// engineer's `changes_requested` briefing to say, which renders this under a
+/// heading naming the people it came from. How many of them there are opens
+/// it, since an engineer answering every one of them is owed the number.
+fn forge_feedback(feedback: &[Feedback]) -> String {
+    let count = feedback.len();
+    let plural = if count == 1 { "comment" } else { "comments" };
     let quoted = feedback
         .iter()
         .map(|f| {
@@ -2485,26 +2505,11 @@ fn pr_feedback_review(watched: &WatchedPr, feedback: &[Feedback]) -> String {
                 .map(|line| format!("> {line}").trim_end().to_string())
                 .collect::<Vec<_>>()
                 .join("\n");
-            format!("### {} {what}{at}\n{body}", f.author)
+            format!("#### {} {what}{at}\n{body}", f.author)
         })
         .collect::<Vec<_>>()
         .join("\n\n");
-    let count = feedback.len();
-    let plural = if count == 1 { "comment" } else { "comments" };
-    let label = watched.label();
-    let noun = watched.forge.noun();
-    format!(
-        "{label} ({url}) has {count} new {plural} from the humans reviewing it:\n\n\
-         {quoted}\n\n\
-         Every one of them is yours to answer: change the code where it asks for a change, and \
-         where it does not — a question, a suggestion you disagree with — say why the code stays \
-         as it is. The {noun} is published and people are reading the commits on it, so add new \
-         commits on top of them: no `commit --amend`, no rebase, no forced push over what they \
-         have already seen. Then call `request_review` with a summary that replies to every \
-         comment above, naming its author the way this does — that summary is what they are \
-         answered with.",
-        url = watched.url,
-    )
+    format!("{count} new {plural}:\n\n{quoted}")
 }
 
 /// The rule every send-back on a published request carries: the commits
@@ -2598,87 +2603,6 @@ fn pr_conflict_review(watched: &WatchedPr, base: &str) -> String {
     )
 }
 
-/// What the integrator is woken with when the engineer has answered the
-/// people reading a published request.
-///
-/// Two things have to reach the request, and only one of them is a commit:
-/// the revision, which is pushed, and the answers, which are the engineer's
-/// words and are quoted here whole so that the agent has nothing to compose
-/// and nothing to look up. It writes them to the user — one message, so the
-/// user can paste the replies onto the request themselves — because the
-/// daemon has no account on the forge to answer with.
-///
-/// The instruction is built here rather than stored as a briefing template
-/// because the engineer's summary is not a value a briefing kind can name:
-/// the resume the store holds is for the task whose landing nobody has
-/// started yet, and lengthening its placeholder list for one situation would
-/// leave the other rendering a token it has nothing to fill in.
-fn published_revision_instruction(
-    watched: &WatchedPr,
-    task: &Task,
-    repo: &Repository,
-    replies: Option<&str>,
-) -> String {
-    let label = watched.label();
-    let noun = watched.forge.noun();
-    let base = &repo.base_branch;
-    let branch = &task.branch;
-    // Whatever the engineer wrote, byte for byte: the emptiness check reads a
-    // trimmed copy, and what goes into the instruction is the summary itself —
-    // its indentation, its blank lines and its trailing newline are part of
-    // what the people on the request are being answered with.
-    let replies = replies
-        .filter(|r| !r.trim().is_empty())
-        .unwrap_or("(the engineer left no summary of this revision)");
-    format!(
-        "The engineer has answered the people reviewing {label} ({url}), and the branch is \
-         yours again. Push the revision to that same {noun} — never a second one — and hand \
-         their answers on.\n\n\
-         1. Bring {branch} up to date in your worktree: `git fetch <remote> {base} && \
-         git merge --no-edit <remote>/{base}`, then a plain `git push <remote> {branch}`, \
-         never forced and never rewriting a commit the {noun} already shows. The merge \
-         commit is fine: the forge squashes the {noun} when it merges it. If the merge \
-         conflicts, do not resolve it: name the files with `git diff --name-only \
-         --diff-filter=U`, then `git merge --abort` and `return_to_engineer` with them and \
-         what to reconcile, which ends your turn.\n\
-         2. Then `post_message` to \"user\" — one message, carrying {url} and the engineer's \
-         replies below verbatim, one per comment — so they can answer on the {noun} \
-         themselves. Then end your turn: Ariadne watches the {noun} and wakes you when it \
-         moves.\n\n\
-         The engineer's replies, as it wrote them:\n\n{replies}",
-        url = watched.url,
-    )
-}
-
-/// And when it was merged: the task is finished off the branch it landed on.
-fn pr_merged_instruction(watched: &WatchedPr, base_branch: &str) -> String {
-    let label = watched.label();
-    let forge = watched.forge.name();
-    format!(
-        "{label} was merged on {forge}. Finish the task: fetch the remote in the primary \
-         checkout, fast-forward {base_branch} onto it, and call the `mark_merged` MCP tool with \
-         the sha it now points at. The daemon verifies the merge against {forge}, so report it \
-         truthfully."
-    )
-}
-
-/// What the woken agent is told: who wrote, what they wrote, and where to
-/// answer. The message is quoted whole — an agent asked to go and look it up
-/// before it knows what it says has been woken for nothing — with the pointer
-/// there for the rest of the thread.
-fn delivery_text(message: &Message) -> String {
-    let thread = match message.task_id {
-        Some(_) => "your task conversation",
-        None => "the goal's planning thread",
-    };
-    format!(
-        "New message from the {author} in {thread}:\n\n{body}\n\n\
-         Read the rest with `list_messages`, answer with `post_message` — both MCP tools.",
-        author = message.author_role().as_str(),
-        body = message.body,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2699,32 +2623,6 @@ mod tests {
         }
     }
 
-    fn published_task() -> Task {
-        Task {
-            id: "T1".into(),
-            goal_id: "G1".into(),
-            repo_id: "R1".into(),
-            title: "Render the board".into(),
-            description: "Do the thing.".into(),
-            status: "under_review".into(),
-            engineer_profile_id: "E1".into(),
-            integrator_profile_id: ariadne_store::defaults::INTEGRATOR_ID.into(),
-            agent_kind: None,
-            model: None,
-            branch: "ariadne/task-t1".into(),
-            worktree_path: None,
-            review_round: 2,
-            stalled: 0,
-            merge_commit: None,
-            pr_number: Some(12),
-            pr_url: Some("https://github.com/owner/repo/pull/12".into()),
-            pr_relayed_comments: None,
-            pr_approved_notified: 0,
-            created_at: "2026-01-01T00:00:00Z".into(),
-            updated_at: "2026-01-01T00:00:00Z".into(),
-        }
-    }
-
     fn repository() -> Repository {
         Repository {
             id: "R1".into(),
@@ -2736,83 +2634,58 @@ mod tests {
         }
     }
 
-    fn delivery_message() -> Message {
-        Message {
-            id: "M1".into(),
-            goal_id: "G1".into(),
-            task_id: Some("T1".into()),
-            author_role: "planner".into(),
-            author_session_id: None,
-            recipient_kind: None,
-            recipient_profile_id: None,
-            body: "the scope grew: drop the second forge".into(),
-            created_at: "2026-01-01T00:00:00Z".into(),
-        }
-    }
-
-    /// The send-back is the whole of what the engineer reads: every comment
-    /// quoted verbatim with its author and, where it hangs on the diff, its
-    /// file and line — and what to do about them in one readable paragraph,
-    /// with no run-on whitespace from a template that got folded wrong.
+    /// The comments the daemon relays are the round's feedback, quoted: every
+    /// one of them verbatim with its author and, where it hangs on the diff,
+    /// its file and line. What to do about them is the engineer's
+    /// `changes_requested` briefing to say, so none of it is here.
     #[test]
     fn the_send_back_quotes_every_comment_that_was_written_on_the_review() {
-        let review = pr_feedback_review(
-            &pull_request(),
-            &[
-                Feedback {
-                    id: "C1".into(),
-                    author: "maria".into(),
-                    body: "why a new module?".into(),
-                    file: None,
-                    blocking: false,
-                },
-                Feedback {
-                    id: "RC2".into(),
-                    author: "jon".into(),
-                    body: "this allocates per row\n\nand the row is hot".into(),
-                    file: Some("src/board.rs:42".into()),
-                    blocking: true,
-                },
-            ],
-        );
-        assert!(review.contains("Pull request #12"), "{review}");
+        let feedback = forge_feedback(&[
+            Feedback {
+                id: "C1".into(),
+                author: "maria".into(),
+                body: "why a new module?".into(),
+                file: None,
+                blocking: false,
+            },
+            Feedback {
+                id: "RC2".into(),
+                author: "jon".into(),
+                body: "this allocates per row\n\nand the row is hot".into(),
+                file: Some("src/board.rs:42".into()),
+                blocking: true,
+            },
+        ]);
+        assert!(feedback.starts_with("2 new comments:\n\n"), "{feedback}");
         assert!(
-            review.contains("https://github.com/owner/repo/pull/12"),
-            "{review}"
-        );
-        assert!(review.contains("2 new comments"), "{review}");
-        assert!(
-            review.contains("### maria commented\n> why a new module?"),
-            "{review}"
+            feedback.contains("#### maria commented\n> why a new module?"),
+            "{feedback}"
         );
         assert!(
-            review.contains("### jon requested changes on src/board.rs:42"),
-            "{review}"
+            feedback.contains("#### jon requested changes on src/board.rs:42"),
+            "{feedback}"
         );
         // Verbatim, every line of it, and the empty line between them is a
         // quote too rather than the end of the quotation.
         assert!(
-            review.contains("> this allocates per row\n>\n> and the row is hot"),
-            "{review}"
+            feedback.contains("> this allocates per row\n>\n> and the row is hot"),
+            "{feedback}"
         );
-        // What to do with them, and nothing about relaying anything: no agent
-        // stands between the comments and the engineer any more.
-        assert!(review.contains("`request_review`"), "{review}");
-        assert!(review.contains("no `commit --amend`"), "{review}");
-        assert!(!review.contains("return_to_engineer"), "{review}");
-        assert!(!review.contains("  "), "{review}");
+        // The instructions are the briefing's: nothing here tells the engineer
+        // what to do, and nothing here says the word twice.
+        for instruction in ["request_review", "commit --amend", "return_to_engineer"] {
+            assert!(!feedback.contains(instruction), "{feedback}");
+        }
+        assert!(!feedback.contains("  "), "{feedback}");
 
-        let one = pr_feedback_review(
-            &pull_request(),
-            &[Feedback {
-                id: "C1".into(),
-                author: "maria".into(),
-                body: "why?".into(),
-                file: None,
-                blocking: false,
-            }],
-        );
-        assert!(one.contains("1 new comment from the humans"), "{one}");
+        let one = forge_feedback(&[Feedback {
+            id: "C1".into(),
+            author: "maria".into(),
+            body: "why?".into(),
+            file: None,
+            blocking: false,
+        }]);
+        assert!(one.starts_with("1 new comment:\n\n"), "{one}");
     }
 
     /// The same for what the forge says is failing rather than what a person
@@ -2908,171 +2781,49 @@ mod tests {
         );
     }
 
-    /// The delivery nudge carries the message itself, not a pointer to go
-    /// and read it, and names both tools it hands the woken agent as the MCP
-    /// tool calls they are.
+    /// The same on GitLab, in GitLab's own words: what the daemon quotes off
+    /// a merge request is the merge request's, and the two send-backs the
+    /// forge itself raises say so too.
     #[test]
-    fn the_delivery_nudge_quotes_the_message_and_names_its_mcp_tools() {
-        let text = delivery_text(&delivery_message());
+    fn a_merge_request_is_quoted_and_sent_back_the_gitlab_way() {
+        let feedback = forge_feedback(&[Feedback {
+            id: "N1".into(),
+            author: "maria".into(),
+            body: "why a new module?".into(),
+            file: Some("src/board.rs:7".into()),
+            blocking: true,
+        }]);
+        assert!(feedback.starts_with("1 new comment:\n\n"), "{feedback}");
         assert!(
-            text.contains("New message from the planner in your task conversation"),
-            "{text}"
+            feedback.contains("#### maria requested changes on src/board.rs:7"),
+            "{feedback}"
         );
-        assert!(
-            text.contains("the scope grew: drop the second forge"),
-            "{text}"
-        );
-        assert!(
-            text.contains("`list_messages`, answer with `post_message` — both MCP tools"),
-            "{text}"
-        );
-        assert!(!text.contains("  "), "{text}");
+        assert!(!feedback.contains("  "), "{feedback}");
 
-        let planning = delivery_text(&Message {
-            task_id: None,
-            ..delivery_message()
-        });
+        let conflict = pr_conflict_review(&merge_request(), "main");
         assert!(
-            planning.contains("in the goal's planning thread"),
-            "{planning}"
+            conflict.contains(
+                "Merge request !12 (https://gitlab.com/owner/repo/-/merge_requests/12) no longer merges into main"
+            ),
+            "{conflict}"
         );
-    }
+        assert!(!conflict.contains("pull request"), "{conflict}");
+        assert!(!conflict.contains("  "), "{conflict}");
 
-    /// The revision instruction carries both things the request is waiting
-    /// for: the commits, pushed the one way a published branch may be
-    /// updated, and the engineer's answers, quoted whole for the user to put
-    /// on the request.
-    #[test]
-    fn the_revision_instruction_pushes_the_branch_and_quotes_the_replies() {
-        const REPLIES: &str = "Reply to @maria on src/board.rs:42: it allocates once now.\n\
-                               Reply to @jon: the module stays, and here is why.";
-        let instruction = published_revision_instruction(
-            &pull_request(),
-            &published_task(),
-            &repository(),
-            Some(REPLIES),
-        );
-        assert!(instruction.contains("Pull request #12"), "{instruction}");
-        assert!(
-            instruction.contains("https://github.com/owner/repo/pull/12"),
-            "{instruction}"
-        );
-        // The one way a published branch is brought up to date, on the branch
-        // and the base it names.
-        assert!(
-            instruction.contains("git merge --no-edit <remote>/main"),
-            "{instruction}"
-        );
-        assert!(
-            instruction.contains("git push <remote> ariadne/task-t1"),
-            "{instruction}"
-        );
-        assert!(instruction.contains("never a second one"), "{instruction}");
-        assert!(instruction.contains("git merge --abort"), "{instruction}");
-        assert!(instruction.contains("return_to_engineer"), "{instruction}");
-        // And never the ways that rewrite what people are already reading.
-        for never in ["rebase", "--force", "--amend"] {
-            assert!(!instruction.contains(never), "{never}: {instruction}");
-        }
-        // The replies verbatim, and who to give them to.
-        assert!(instruction.contains(REPLIES), "{instruction}");
-        assert!(
-            instruction.contains("`post_message` to \"user\""),
-            "{instruction}"
-        );
-        assert!(!instruction.contains("  "), "{instruction}");
-
-        // Verbatim to the byte: an agent that lays its replies out is not
-        // reformatted on the way through, blank lines, indentation, trailing
-        // newline and all.
-        let laid_out = "\n  1. @maria: it allocates once now.\n\n  2. @jon: the module stays.\n";
-        let kept = published_revision_instruction(
-            &pull_request(),
-            &published_task(),
-            &repository(),
-            Some(laid_out),
-        );
-        assert!(
-            kept.ends_with(laid_out),
-            "the replies were reflowed on the way in: {kept:?}"
-        );
-
-        // A revision with nothing said about it still pushes.
-        let silent =
-            published_revision_instruction(&pull_request(), &published_task(), &repository(), None);
-        assert!(silent.contains("left no summary"), "{silent}");
-        let blank = published_revision_instruction(
-            &pull_request(),
-            &published_task(),
-            &repository(),
-            Some("  \n "),
-        );
-        assert!(blank.contains("left no summary"), "{blank}");
-    }
-
-    #[test]
-    fn the_merge_instruction_names_the_branch_to_fast_forward() {
-        let instruction = pr_merged_instruction(&pull_request(), "main");
-        assert!(instruction.contains("#12 was merged"), "{instruction}");
-        assert!(instruction.contains("fast-forward main"), "{instruction}");
-        assert!(instruction.contains("mark_merged"), "{instruction}");
-        assert!(!instruction.contains("  "), "{instruction}");
-    }
-
-    /// The same two instructions on GitLab, in GitLab's own words: an agent
-    /// told to go and read more is told to read it with the CLI it has, and
-    /// `gh` is not that CLI.
-    #[test]
-    fn a_merge_request_is_named_and_reread_the_gitlab_way() {
-        let review = pr_feedback_review(
+        let checks = pr_checks_review(
             &merge_request(),
-            &[Feedback {
-                id: "N1".into(),
-                author: "maria".into(),
-                body: "why a new module?".into(),
-                file: Some("src/board.rs:7".into()),
-                blocking: true,
+            &[FailedCheck {
+                id: "test:failed".into(),
+                name: "test".into(),
+                conclusion: "failed".into(),
+                url: None,
             }],
         );
         assert!(
-            review.contains("Merge request !12 (https://gitlab.com/owner/repo/-/merge_requests/12) has 1 new comment"),
-            "{review}"
+            checks.contains("Merge request !12 (https://gitlab.com/owner/repo/-/merge_requests/12) has 1 failing check"),
+            "{checks}"
         );
-        assert!(
-            review.contains("### maria requested changes on src/board.rs:7"),
-            "{review}"
-        );
-        assert!(
-            review.contains("The merge request is published"),
-            "{review}"
-        );
-        assert!(!review.contains("pull request"), "{review}");
-        assert!(!review.contains("  "), "{review}");
-
-        let revision = published_revision_instruction(
-            &merge_request(),
-            &published_task(),
-            &repository(),
-            Some("Reply to @maria: fixed."),
-        );
-        assert!(
-            revision.contains(
-                "reviewing Merge request !12 (https://gitlab.com/owner/repo/-/merge_requests/12)"
-            ),
-            "{revision}"
-        );
-        assert!(revision.contains("same merge request"), "{revision}");
-        assert!(!revision.contains("pull request"), "{revision}");
-        assert!(!revision.contains("  "), "{revision}");
-
-        let merged = pr_merged_instruction(&merge_request(), "main");
-        assert!(
-            merged.contains("Merge request !12 was merged on GitLab"),
-            "{merged}"
-        );
-        assert!(merged.contains("fast-forward main"), "{merged}");
-        assert!(merged.contains("mark_merged"), "{merged}");
-        assert!(!merged.contains("GitHub"), "{merged}");
-        assert!(!merged.contains("  "), "{merged}");
+        assert!(!checks.contains("pull request"), "{checks}");
+        assert!(!checks.contains("  "), "{checks}");
     }
 }
