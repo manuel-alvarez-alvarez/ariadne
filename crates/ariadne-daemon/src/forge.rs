@@ -9,7 +9,9 @@
 //! That dispatch is [`forge_of`], and around it is what the two watchers have
 //! in common: what one poll of either says has to happen next ([`PrState`]),
 //! what a human wrote on either that the engineer has not been told about yet
-//! ([`Feedback`]), and what either says became of the branch ([`Landing`]).
+//! ([`Feedback`]), what either says about the branch itself — whether it
+//! still merges and whether its checks pass ([`Health`]) — and what either
+//! says became of the branch ([`Landing`]).
 //!
 //! A URL on neither forge is recorded on the task like any other and simply
 //! never polled — the integrator that publishes to one brings its own way of
@@ -165,11 +167,97 @@ pub struct Feedback {
     pub blocking: bool,
 }
 
+/// One check the forge reports as failed on the branch: a GitHub check run
+/// or commit status, a GitLab pipeline.
+///
+/// A red branch is the engineer's, so it travels the way a comment does —
+/// named, placed, and remembered by an id so that polling it again is not a
+/// second round of the same failure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FailedCheck {
+    /// The id it is remembered by. It carries the commit the check ran on, so
+    /// that the same failure is relayed once and a failure on the revision
+    /// that was supposed to fix it is relayed again.
+    pub id: String,
+    /// What the forge calls it: the check run's name, the status context, the
+    /// pipeline.
+    pub name: String,
+    /// The verdict the forge spells it with — `FAILURE`, `failed` — for the
+    /// engineer to recognize it by on the request itself.
+    pub conclusion: String,
+    /// Where to read it, when the forge answered with somewhere.
+    pub url: Option<String>,
+}
+
+/// The branch and the base no longer merge, as the forge reports it.
+///
+/// Only the engineer can reconcile that: the integrator hits it during its
+/// own merge, and one asleep — waiting on the humans reading the request —
+/// would never hit it at all, so the poll is what notices.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Conflict {
+    /// The id it is remembered by, carrying the commit it was read on: a
+    /// conflict the engineer answered with a merge is a new head, and a
+    /// conflict that comes back on it is news again.
+    pub id: String,
+    /// The branch it conflicts with, as the forge names it. Neither forge
+    /// names the conflicting files on the request itself, so the base branch
+    /// is what the engineer is given to merge in and reconcile against.
+    pub base: Option<String>,
+}
+
+/// What the forge says about the branch itself, beside what people wrote on
+/// it: whether it still merges into its base, and how its checks stand.
+///
+/// Every field is what the forge answered, not what a poll has already
+/// relayed: an approval is held back for a red branch however long ago its
+/// failure reached the engineer.
+///
+/// The three answers a check can give are kept apart, because they are asked
+/// for two different things. Failing is somebody's to fix, and goes to the
+/// engineer. Still running is nobody's — there is nothing to fix and nothing
+/// to say — but it is not a request anybody can merge either, so it holds the
+/// notice back and the next poll asks again. Passing, or nothing to ask about
+/// at all, is what lets the approval through.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Health {
+    /// The conflict with the base, where the forge reports one. `None` is
+    /// "no conflict this poll could see" — a mergeability the forge answered
+    /// as unknown, or did not answer at all, is not a conflict.
+    pub conflict: Option<Conflict>,
+    /// The checks the forge reports as failed. Empty is "nothing failing this
+    /// poll could see": a check still running, cancelled or reported with a
+    /// verdict this does not know is not a failure.
+    pub failed_checks: Vec<FailedCheck>,
+    /// Whether the forge is still working a check out: one queued or in
+    /// progress on GitHub, a pipeline created, pending, running or waiting for
+    /// a runner on GitLab. Not a failure, and nobody is told about it — it is
+    /// simply not an answer yet.
+    pub checks_pending: bool,
+}
+
+impl Health {
+    /// Whether nothing at all stands between the request and its merge: no
+    /// conflict, no failing check, and none still to come.
+    ///
+    /// This is what an approval is announced over, and the reason a check
+    /// that has not finished counts: "approved and ready for you to merge" is
+    /// a thing to send a person to, and a request whose build is still
+    /// running is not ready however approved it is. Nothing is said about the
+    /// wait — the next poll either finds it green and says so, or finds it red
+    /// and sends it to the engineer.
+    pub fn is_ready(&self) -> bool {
+        self.conflict.is_none() && self.failed_checks.is_empty() && !self.checks_pending
+    }
+}
+
 /// What one poll of a pull or merge request says has to happen next.
 ///
 /// In the order they are read: a merged review is finished with whatever else
-/// it also says, feedback comes before an approval because relaying it is what
-/// moves the task, and an approval is announced once.
+/// it also says, feedback comes before everything unmerged because relaying it
+/// is what moves the task, a branch that does not merge or does not build is
+/// the engineer's before it is anybody's, and an approval is announced once —
+/// and only over a branch none of that is true of.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PrState {
     /// Nothing anybody has to be woken for.
@@ -178,19 +266,37 @@ pub enum PrState {
     Merged,
     /// Comments and change requests nobody has relayed yet.
     Feedback(Vec<Feedback>),
-    /// Approved and waiting for a human to press the button.
+    /// The branch no longer merges into its base, and nobody has been told.
+    Conflicting(Conflict),
+    /// Checks the forge reports as failed that nobody has relayed yet.
+    ChecksFailed(Vec<FailedCheck>),
+    /// Approved, green, conflict-free, and waiting for a human to press the
+    /// button.
     Approved,
 }
 
-/// Read one poll, out of the three things either forge answers with.
+/// Read one poll, out of everything either forge answers with.
 ///
 /// `approved_notified` is whether the user has already been told this one is
 /// ready to merge, and `feedback` is only what has not reached the engineer
 /// (see [`unrelayed`]) — both come off the task, so a daemon that restarts
 /// mid-review picks up where it left off rather than repeating itself.
+/// `health` is what the forge said about the branch and `relayed` the ids
+/// already handed over, which is the same bookkeeping the comments use: a
+/// failure is announced once, and holds the approval back for as long as it
+/// lasts whether or not it was announced this poll. A check the forge has not
+/// finished holds it back too, without being announced to anybody (see
+/// [`Health`]).
+///
+/// A conflict is read before the checks it is likely to have caused: GitLab
+/// runs the pipeline on the merge result, and telling an engineer its build
+/// is red when what is red is a merge that no longer applies sends it after
+/// the wrong thing.
 pub fn poll_state(
     merged: bool,
     feedback: Vec<Feedback>,
+    health: &Health,
+    relayed: &[String],
     approved: bool,
     approved_notified: bool,
 ) -> PrState {
@@ -200,7 +306,23 @@ pub fn poll_state(
     if !feedback.is_empty() {
         return PrState::Feedback(feedback);
     }
-    if approved && !approved_notified {
+    if let Some(conflict) = health
+        .conflict
+        .as_ref()
+        .filter(|c| !relayed.contains(&c.id))
+    {
+        return PrState::Conflicting(conflict.clone());
+    }
+    let failed: Vec<FailedCheck> = health
+        .failed_checks
+        .iter()
+        .filter(|c| !relayed.contains(&c.id))
+        .cloned()
+        .collect();
+    if !failed.is_empty() {
+        return PrState::ChecksFailed(failed);
+    }
+    if approved && !approved_notified && health.is_ready() {
         return PrState::Approved;
     }
     PrState::Quiet
@@ -213,6 +335,25 @@ pub fn unrelayed(all: impl IntoIterator<Item = Feedback>, relayed: &[String]) ->
         .filter(|f| !f.id.is_empty() && !f.body.trim().is_empty())
         .filter(|f| !relayed.contains(&f.id))
         .collect()
+}
+
+/// The id a failing check is remembered by: the commit it ran on and the name
+/// the forge calls it, which is the pair that says whether this is the same
+/// failure as last poll's.
+///
+/// The commit is what makes a fix relayable: an engineer that answered a red
+/// build pushes, the head moves, and the build that fails on the new head is
+/// news the way the first one was. A forge that answered with no head at all
+/// leaves the name to key it, which is one relay for as long as the failure
+/// lasts — the poll after the fix is a fresh read either way.
+pub fn check_id(head: Option<&str>, name: &str) -> String {
+    format!("CHK{}:{name}", head.unwrap_or_default())
+}
+
+/// The same for the conflict with the base, which is one per commit: the
+/// engineer answers it by merging the base in, and that is a new head.
+pub fn conflict_id(head: Option<&str>) -> String {
+    format!("MRG{}", head.unwrap_or_default())
 }
 
 /// The author of a comment, or the placeholder for one the forge answered
@@ -414,14 +555,202 @@ mod tests {
                 blocking: false,
             }]
         };
-        assert_eq!(poll_state(true, comment(), true, false), PrState::Merged);
+        let green = Health::default();
         assert_eq!(
-            poll_state(false, comment(), true, false),
+            poll_state(true, comment(), &green, &[], true, false),
+            PrState::Merged
+        );
+        assert_eq!(
+            poll_state(false, comment(), &green, &[], true, false),
             PrState::Feedback(comment())
         );
-        assert_eq!(poll_state(false, vec![], true, false), PrState::Approved);
-        assert_eq!(poll_state(false, vec![], true, true), PrState::Quiet);
-        assert_eq!(poll_state(false, vec![], false, false), PrState::Quiet);
+        assert_eq!(
+            poll_state(false, vec![], &green, &[], true, false),
+            PrState::Approved
+        );
+        assert_eq!(
+            poll_state(false, vec![], &green, &[], true, true),
+            PrState::Quiet
+        );
+        assert_eq!(
+            poll_state(false, vec![], &green, &[], false, false),
+            PrState::Quiet
+        );
+    }
+
+    /// The whole order, in one table: merged over everything, then what people
+    /// wrote, then the branch not merging, then the branch not building, then
+    /// the approval — which is only ever read over a branch none of the rest
+    /// is true of.
+    #[test]
+    fn a_poll_is_read_in_one_order_whatever_else_is_true_of_it() {
+        let comment = || {
+            vec![Feedback {
+                id: "C1".into(),
+                author: "maria".into(),
+                body: "why?".into(),
+                file: None,
+                blocking: false,
+            }]
+        };
+        let conflict = || Conflict {
+            id: "MRGabc".into(),
+            base: Some("main".into()),
+        };
+        let red = || {
+            vec![FailedCheck {
+                id: "CHKabc:build".into(),
+                name: "build".into(),
+                conclusion: "FAILURE".into(),
+                url: Some("https://ci.example/1".into()),
+            }]
+        };
+        let health = |conflict: Option<Conflict>, failed_checks: Vec<FailedCheck>| Health {
+            conflict,
+            failed_checks,
+            checks_pending: false,
+        };
+        let everything = health(Some(conflict()), red());
+
+        // Every case with everything true of it at once, most-read first.
+        assert_eq!(
+            poll_state(true, comment(), &everything, &[], true, false),
+            PrState::Merged
+        );
+        assert_eq!(
+            poll_state(false, comment(), &everything, &[], true, false),
+            PrState::Feedback(comment())
+        );
+        assert_eq!(
+            poll_state(false, vec![], &everything, &[], true, false),
+            PrState::Conflicting(conflict()),
+            "a conflict is read before the pipeline it is likely to have failed"
+        );
+        assert_eq!(
+            poll_state(false, vec![], &health(None, red()), &[], true, false),
+            PrState::ChecksFailed(red())
+        );
+        assert_eq!(
+            poll_state(false, vec![], &health(None, vec![]), &[], true, false),
+            PrState::Approved
+        );
+
+        // Relayed once, and never again — the ids are what say so, exactly as
+        // they do for a comment.
+        assert_eq!(
+            poll_state(false, vec![], &everything, &["MRGabc".into()], false, false),
+            PrState::ChecksFailed(red()),
+            "the conflict was handed over; the failing check has not been"
+        );
+        assert_eq!(
+            poll_state(
+                false,
+                vec![],
+                &everything,
+                &["MRGabc".into(), "CHKabc:build".into()],
+                false,
+                false
+            ),
+            PrState::Quiet
+        );
+
+        // But an approval is never announced over either of them, however
+        // long ago they were relayed: what the user would be told is that a
+        // request nobody can merge is theirs to merge.
+        assert_eq!(
+            poll_state(
+                false,
+                vec![],
+                &everything,
+                &["MRGabc".into(), "CHKabc:build".into()],
+                true,
+                false
+            ),
+            PrState::Quiet
+        );
+        assert_eq!(
+            poll_state(
+                false,
+                vec![],
+                &health(None, red()),
+                &["CHKabc:build".into()],
+                true,
+                false
+            ),
+            PrState::Quiet
+        );
+        assert!(!everything.is_ready());
+        assert!(!health(None, red()).is_ready());
+        assert!(!health(Some(conflict()), vec![]).is_ready());
+        assert!(Health::default().is_ready());
+    }
+
+    /// And the third thing a check can be, which is neither: still running.
+    ///
+    /// Nobody is sent back for it — there is nothing to fix — and nobody is
+    /// told the request is theirs to merge either, because it is not: the
+    /// poll after it either finds the branch green and says so, or finds it
+    /// red and hands it over.
+    #[test]
+    fn a_check_that_has_not_finished_is_nobodys_and_holds_the_notice_back() {
+        let pending = Health {
+            checks_pending: true,
+            ..Default::default()
+        };
+        assert!(!pending.is_ready());
+        assert_eq!(
+            poll_state(false, vec![], &pending, &[], true, false),
+            PrState::Quiet,
+            "a build still running is not a request to send anybody to"
+        );
+        // Nothing about it is relayable, so nothing about it is remembered:
+        // the same poll on the same request says the same thing next time.
+        assert_eq!(
+            poll_state(
+                false,
+                vec![],
+                &pending,
+                &["CHKabc:build".into()],
+                true,
+                false
+            ),
+            PrState::Quiet
+        );
+        // And once it has finished green, the approval goes out.
+        assert_eq!(
+            poll_state(false, vec![], &Health::default(), &[], true, false),
+            PrState::Approved
+        );
+        // A failure alongside it is still the engineer's: what has not
+        // finished says nothing about what has.
+        let mut red_and_running = pending.clone();
+        red_and_running.failed_checks = vec![FailedCheck {
+            id: "CHKabc123:build".into(),
+            name: "build".into(),
+            conclusion: "FAILURE".into(),
+            url: None,
+        }];
+        assert!(matches!(
+            poll_state(false, vec![], &red_and_running, &[], true, false),
+            PrState::ChecksFailed(_)
+        ));
+    }
+
+    /// What a check and a conflict are remembered by: the head they were read
+    /// on, so the same failure is one relay and the failure on the revision
+    /// that answered it is another.
+    #[test]
+    fn a_failure_is_keyed_by_the_commit_it_happened_on() {
+        assert_eq!(check_id(Some("abc123"), "build"), "CHKabc123:build");
+        assert_ne!(
+            check_id(Some("abc123"), "build"),
+            check_id(Some("def456"), "build"),
+            "the revision that was supposed to fix it is a new failure"
+        );
+        assert_eq!(check_id(None, "build"), "CHK:build");
+        assert_eq!(conflict_id(Some("abc123")), "MRGabc123");
+        assert_ne!(conflict_id(Some("abc123")), conflict_id(Some("def456")));
+        assert_eq!(conflict_id(None), "MRG");
     }
 
     /// Where a comment on the diff hangs, as the engineer is told it: the

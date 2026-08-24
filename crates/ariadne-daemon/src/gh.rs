@@ -21,14 +21,40 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use tokio::process::Command;
 
-use crate::forge::{self, Forge, Landing};
+use crate::forge::{self, Conflict, FailedCheck, Forge, Health, Landing};
 
 pub use crate::forge::{
     Feedback, GITHUB_HOST, PrState, WatchedPr, parse_pages, pull_request_number,
 };
 
 /// The `gh pr view --json` fields a poll asks for.
-const VIEW_FIELDS: &str = "number,state,mergedAt,mergeCommit,reviewDecision,reviews,comments";
+const VIEW_FIELDS: &str = "number,state,mergedAt,mergeCommit,reviewDecision,reviews,comments,\
+                           statusCheckRollup,mergeable,mergeStateStatus,baseRefName,headRefOid";
+
+/// What GitHub answers `mergeable` with when the branch no longer merges into
+/// its base. The other two are `MERGEABLE` and `UNKNOWN` — a merge it has not
+/// worked out yet, which is not a conflict.
+const CONFLICTING: &str = "CONFLICTING";
+
+/// And what `mergeStateStatus` calls the same thing. The rest of its
+/// vocabulary is about everything else standing in the way — `BEHIND`,
+/// `BLOCKED`, `UNSTABLE` — none of which is the branch failing to merge.
+const DIRTY: &str = "DIRTY";
+
+/// The conclusions a finished check run is red with, and the states a commit
+/// status is.
+///
+/// What is not here is as deliberate: `CANCELLED` is what a workflow that
+/// cancels its own superseded runs writes on every push, `NEUTRAL` and
+/// `SKIPPED` are green enough for GitHub's own merge button, and a conclusion
+/// this does not know is unknown rather than red.
+const FAILED_CONCLUSIONS: [&str; 5] = [
+    "FAILURE",
+    "TIMED_OUT",
+    "STARTUP_FAILURE",
+    "ACTION_REQUIRED",
+    "ERROR",
+];
 
 #[derive(Debug, Clone)]
 pub struct GhCli {
@@ -56,6 +82,123 @@ pub struct PullRequest {
     pub reviews: Vec<Review>,
     #[serde(default)]
     pub comments: Vec<Comment>,
+    /// Every check run and commit status on the head commit, as GitHub rolls
+    /// them up. Absent on a repository with no checks at all, which is no
+    /// checks failing rather than a poll that could not tell.
+    #[serde(default)]
+    pub status_check_rollup: Vec<StatusCheck>,
+    /// `MERGEABLE`, `CONFLICTING` or `UNKNOWN` — the last being a merge
+    /// GitHub has not worked out yet, on a background job of its own.
+    #[serde(default)]
+    pub mergeable: Option<String>,
+    /// `CLEAN`, `DIRTY`, `BEHIND`, `BLOCKED`, `UNSTABLE`, `UNKNOWN`: the same
+    /// question asked the other way, and the one that survives on requests
+    /// where `mergeable` stays unknown.
+    #[serde(default)]
+    pub merge_state_status: Option<String>,
+    /// The branch it is open against, which is what the engineer merges in to
+    /// reconcile a conflict.
+    #[serde(default)]
+    pub base_ref_name: Option<String>,
+    /// The commit the checks ran on, and the conflict was read on: what keeps
+    /// one failure to one relay, and makes the failure on the revision that
+    /// answered it a new one.
+    #[serde(default)]
+    pub head_ref_oid: Option<String>,
+}
+
+/// One entry of the status check rollup, in either of the two shapes GitHub
+/// answers with: a check run, from an app such as Actions, with a `name` and
+/// a `conclusion`; or a commit status, from anything that posts one, with a
+/// `context` and a `state`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatusCheck {
+    /// A check run's name.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// A commit status's, which is what it is called instead.
+    #[serde(default)]
+    pub context: Option<String>,
+    /// `QUEUED`, `IN_PROGRESS`, `COMPLETED`: a check run that has not
+    /// completed has no verdict yet, whatever its conclusion field says.
+    #[serde(default)]
+    pub status: Option<String>,
+    /// A finished check run's verdict.
+    #[serde(default)]
+    pub conclusion: Option<String>,
+    /// A commit status's, which carries `PENDING` for one still running.
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(default)]
+    pub details_url: Option<String>,
+    #[serde(default)]
+    pub target_url: Option<String>,
+}
+
+impl StatusCheck {
+    /// What GitHub calls it, whichever of the two shapes it came in.
+    fn name(&self) -> String {
+        self.name
+            .as_deref()
+            .or(self.context.as_deref())
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+            .map_or_else(|| "a check".to_string(), str::to_string)
+    }
+
+    /// Whether GitHub says it has not finished: a check run queued or in
+    /// progress, a commit status still pending or expected to be posted.
+    ///
+    /// A queued rerun of a job that failed last time still carries the old
+    /// conclusion, so what says it has not finished is the status beside it.
+    fn is_pending(&self) -> bool {
+        let running =
+            |s: &str| s.eq_ignore_ascii_case("QUEUED") || s.eq_ignore_ascii_case("IN_PROGRESS");
+        if self.status.as_deref().is_some_and(running) {
+            return true;
+        }
+        self.conclusion
+            .as_deref()
+            .or(self.state.as_deref())
+            .map(str::trim)
+            .is_some_and(|v| {
+                v.eq_ignore_ascii_case("PENDING") || v.eq_ignore_ascii_case("EXPECTED")
+            })
+    }
+
+    /// The verdict it finished with, if it has finished: a check run's
+    /// conclusion once its status says `COMPLETED`, a commit status's state
+    /// once that is anything but `PENDING`.
+    fn verdict(&self) -> Option<&str> {
+        if self.is_pending() {
+            return None;
+        }
+        self.conclusion
+            .as_deref()
+            .or(self.state.as_deref())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+    }
+
+    /// Whether GitHub is reporting it as red. Anything it has not finished,
+    /// and any verdict this does not know, is neither passing nor failing.
+    fn failed(&self) -> bool {
+        self.verdict().is_some_and(|verdict| {
+            FAILED_CONCLUSIONS
+                .iter()
+                .any(|failed| verdict.eq_ignore_ascii_case(failed))
+        })
+    }
+
+    fn url(&self) -> Option<String> {
+        self.details_url
+            .as_deref()
+            .or(self.target_url.as_deref())
+            .map(str::trim)
+            .filter(|u| !u.is_empty())
+            .map(str::to_string)
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -135,6 +278,55 @@ impl PullRequest {
     pub fn is_open(&self) -> bool {
         self.state.eq_ignore_ascii_case("OPEN")
     }
+
+    /// What GitHub says about the branch itself: whether it still merges into
+    /// its base, which of its checks are red, and whether any of them has yet
+    /// to answer.
+    ///
+    /// Everything degrades to "nothing to see" rather than to a failure — a
+    /// `mergeable` GitHub has not worked out yet, a rollup a repository with
+    /// no checks answers empty, a conclusion this does not know: an engineer
+    /// woken for a build nobody said had failed is an engineer woken for
+    /// nothing. A check that has not finished is not nothing, though: it is
+    /// the one thing that holds an approval back without being handed to
+    /// anybody.
+    pub fn health(&self) -> Health {
+        let head = self.head_ref_oid.as_deref().filter(|s| !s.is_empty());
+        let conflicting = self
+            .mergeable
+            .as_deref()
+            .is_some_and(|m| m.eq_ignore_ascii_case(CONFLICTING))
+            || self
+                .merge_state_status
+                .as_deref()
+                .is_some_and(|m| m.eq_ignore_ascii_case(DIRTY));
+        Health {
+            checks_pending: self.status_check_rollup.iter().any(StatusCheck::is_pending),
+            conflict: conflicting.then(|| Conflict {
+                id: forge::conflict_id(head),
+                base: self
+                    .base_ref_name
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|b| !b.is_empty())
+                    .map(str::to_string),
+            }),
+            failed_checks: self
+                .status_check_rollup
+                .iter()
+                .filter(|check| check.failed())
+                .map(|check| {
+                    let name = check.name();
+                    FailedCheck {
+                        id: forge::check_id(head, &name),
+                        name,
+                        conclusion: check.verdict().unwrap_or_default().to_string(),
+                        url: check.url(),
+                    }
+                })
+                .collect(),
+        }
+    }
 }
 
 /// One comment on the diff itself, as the REST API answers for it.
@@ -192,6 +384,8 @@ pub fn poll_state(
     forge::poll_state(
         pr.landing().merged,
         forge::unrelayed(feedback(pr, review_comments), relayed),
+        &pr.health(),
+        relayed,
         pr.is_approved() && pr.is_open(),
         approved_notified,
     )
@@ -312,8 +506,9 @@ impl GhCli {
 mod tests {
     use super::*;
 
-    /// `gh pr view --json number,state,mergedAt,mergeCommit,reviewDecision,reviews,comments`
-    /// on an open pull request nobody has touched, verbatim in shape.
+    /// `gh pr view --json <VIEW_FIELDS>` on an open pull request nobody has
+    /// touched, verbatim in shape: green, mergeable, and with a head commit
+    /// everything about the branch is keyed by.
     fn open_pr() -> serde_json::Value {
         serde_json::json!({
             "number": 12,
@@ -323,7 +518,47 @@ mod tests {
             "reviewDecision": "REVIEW_REQUIRED",
             "reviews": [],
             "comments": [],
+            "statusCheckRollup": [],
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "baseRefName": "main",
+            "headRefOid": "abc123",
         })
+    }
+
+    /// One check run, in the shape the rollup carries an Actions job in.
+    fn check_run(name: &str, status: &str, conclusion: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "__typename": "CheckRun",
+            "name": name,
+            "status": status,
+            "conclusion": conclusion,
+            "startedAt": "2026-08-24T09:55:00Z",
+            "completedAt": "2026-08-24T09:58:12Z",
+            "detailsUrl": format!("https://github.com/owner/repo/actions/runs/17/job/{name}"),
+            "workflowName": "CI",
+        })
+    }
+
+    /// And one commit status, which is the rollup's other shape entirely: a
+    /// `context` where a check run has a name, a `state` where it has a
+    /// conclusion.
+    fn commit_status(context: &str, state: &str) -> serde_json::Value {
+        serde_json::json!({
+            "__typename": "StatusContext",
+            "context": context,
+            "state": state,
+            "description": "the build",
+            "targetUrl": "https://ci.example/build/7",
+            "createdAt": "2026-08-24T09:58:12Z",
+        })
+    }
+
+    /// The health of a pull request whose rollup is `rollup`.
+    fn health(rollup: serde_json::Value) -> crate::forge::Health {
+        let mut pr = open_pr();
+        pr["statusCheckRollup"] = rollup;
+        parse(pr).health()
     }
 
     fn parse(value: serde_json::Value) -> PullRequest {
@@ -578,6 +813,302 @@ mod tests {
         );
     }
 
+    /// Every shape the rollup answers in, read the one way: red is a check
+    /// that finished red, and everything else — running, queued, cancelled,
+    /// skipped, a conclusion this has never heard of — is not.
+    #[test]
+    fn the_check_rollup_is_read_as_red_only_where_github_says_red() {
+        // Green, including the two conclusions GitHub's own merge button
+        // counts as green: nothing failing and nothing left to wait for.
+        for green in [
+            serde_json::json!([check_run("build", "COMPLETED", "SUCCESS".into())]),
+            serde_json::json!([check_run("lint", "COMPLETED", "SKIPPED".into())]),
+            serde_json::json!([check_run("audit", "COMPLETED", "NEUTRAL".into())]),
+            serde_json::json!([commit_status("ci/woodpecker", "SUCCESS")]),
+        ] {
+            assert!(
+                health(green.clone()).is_ready(),
+                "{green} was read as something to wait for"
+            );
+        }
+
+        // Pending, in each of the ways a check can be: nobody is woken for it,
+        // and nobody is told the pull request is ready either.
+        for pending in [
+            serde_json::json!([check_run("build", "IN_PROGRESS", serde_json::Value::Null)]),
+            serde_json::json!([check_run("build", "QUEUED", serde_json::Value::Null)]),
+            // A queued rerun of a job that failed last time still carries the
+            // old conclusion; what says it has not finished is the status.
+            serde_json::json!([check_run("build", "IN_PROGRESS", "FAILURE".into())]),
+            serde_json::json!([commit_status("ci/woodpecker", "PENDING")]),
+            serde_json::json!([commit_status("ci/woodpecker", "EXPECTED")]),
+            // One still running beside one that passed is still one running.
+            serde_json::json!([
+                check_run("lint", "COMPLETED", "SUCCESS".into()),
+                check_run("build", "IN_PROGRESS", serde_json::Value::Null),
+            ]),
+        ] {
+            let health = health(pending.clone());
+            assert!(
+                health.failed_checks.is_empty(),
+                "{pending} was read as failing"
+            );
+            assert!(health.checks_pending, "{pending} was read as finished");
+            assert!(!health.is_ready(), "{pending} was read as ready to merge");
+        }
+
+        // Cancelled is what a workflow that supersedes its own runs writes on
+        // every push, and a conclusion this does not know is unknown: neither
+        // is a branch anybody has to be sent back to.
+        for unknown in [
+            serde_json::json!([check_run("build", "COMPLETED", "CANCELLED".into())]),
+            serde_json::json!([check_run("build", "COMPLETED", "SOMETHING_NEW".into())]),
+            serde_json::json!([check_run("build", "COMPLETED", serde_json::Value::Null)]),
+            // And a repository with no checks at all: absent, not failing.
+            serde_json::json!([]),
+        ] {
+            assert!(
+                health(unknown.clone()).failed_checks.is_empty(),
+                "{unknown} was read as failing"
+            );
+            assert!(
+                health(unknown.clone()).is_ready(),
+                "a verdict this does not know is not something to wait for: {unknown}"
+            );
+        }
+        assert!(
+            parse(serde_json::json!({"state": "OPEN"}))
+                .health()
+                .failed_checks
+                .is_empty(),
+            "a `gh` that answered none of the fields answers no failure"
+        );
+
+        // Red, in both shapes, carrying what the engineer needs to find it.
+        let failed = health(serde_json::json!([
+            check_run("build", "COMPLETED", "SUCCESS".into()),
+            check_run("test", "COMPLETED", "FAILURE".into()),
+            check_run("e2e", "COMPLETED", "TIMED_OUT".into()),
+            commit_status("ci/woodpecker", "ERROR"),
+        ]))
+        .failed_checks;
+        assert_eq!(
+            failed,
+            vec![
+                FailedCheck {
+                    id: "CHKabc123:test".into(),
+                    name: "test".into(),
+                    conclusion: "FAILURE".into(),
+                    url: Some("https://github.com/owner/repo/actions/runs/17/job/test".into()),
+                },
+                FailedCheck {
+                    id: "CHKabc123:e2e".into(),
+                    name: "e2e".into(),
+                    conclusion: "TIMED_OUT".into(),
+                    url: Some("https://github.com/owner/repo/actions/runs/17/job/e2e".into()),
+                },
+                FailedCheck {
+                    id: "CHKabc123:ci/woodpecker".into(),
+                    name: "ci/woodpecker".into(),
+                    conclusion: "ERROR".into(),
+                    url: Some("https://ci.example/build/7".into()),
+                },
+            ]
+        );
+    }
+
+    /// The check that has not answered yet: nobody is sent back for it, and
+    /// nobody is told the pull request is theirs to merge over it.
+    ///
+    /// This is the state between the push and the verdict, and it is the one
+    /// an approved pull request spends every rebuild in: announcing it there
+    /// would send a person to a merge button that is about to turn red.
+    /// Nothing is said about the wait — the poll after it either finds the
+    /// branch green and announces it, or finds it red and hands it over.
+    #[test]
+    fn an_approval_over_a_check_still_running_waits_for_the_next_poll() {
+        let mut running = open_pr();
+        running["reviewDecision"] = "APPROVED".into();
+        running["statusCheckRollup"] = serde_json::json!([
+            check_run("lint", "COMPLETED", "SUCCESS".into()),
+            check_run("build", "IN_PROGRESS", serde_json::Value::Null),
+        ]);
+        assert_eq!(
+            poll_state(&parse(running.clone()), &[], &[], false),
+            PrState::Quiet,
+            "a pull request whose build is still running is not ready to merge"
+        );
+        // Nothing about it is relayable, so nothing is remembered of it: the
+        // poll finds the same request again and says the same thing.
+        assert_eq!(
+            poll_state(
+                &parse(running.clone()),
+                &[],
+                &["CHKabc123:build".into()],
+                false
+            ),
+            PrState::Quiet
+        );
+
+        // Finished green, and the approval goes out — the one announcement
+        // the whole wait was for.
+        let mut green = running.clone();
+        green["statusCheckRollup"] = serde_json::json!([
+            check_run("lint", "COMPLETED", "SUCCESS".into()),
+            check_run("build", "COMPLETED", "SUCCESS".into()),
+        ]);
+        assert_eq!(
+            poll_state(&parse(green), &[], &[], false),
+            PrState::Approved
+        );
+
+        // Finished red, and it is the engineer's instead.
+        let mut red = running;
+        red["statusCheckRollup"] = serde_json::json!([
+            check_run("lint", "COMPLETED", "SUCCESS".into()),
+            check_run("build", "COMPLETED", "FAILURE".into()),
+        ]);
+        assert!(matches!(
+            poll_state(&parse(red), &[], &[], false),
+            PrState::ChecksFailed(_)
+        ));
+    }
+
+    /// Mergeability, the same way: `CONFLICTING` is a conflict and so is the
+    /// `DIRTY` GitHub spells the same thing with, and everything else —
+    /// including the `UNKNOWN` it answers while it is still working the merge
+    /// out — is not.
+    #[test]
+    fn a_conflicting_pull_request_is_the_only_one_read_as_conflicting() {
+        let mergeability = |mergeable: serde_json::Value, state: serde_json::Value| {
+            let mut pr = open_pr();
+            pr["mergeable"] = mergeable;
+            pr["mergeStateStatus"] = state;
+            parse(pr).health().conflict
+        };
+        assert_eq!(
+            mergeability("CONFLICTING".into(), "DIRTY".into()),
+            Some(Conflict {
+                id: "MRGabc123".into(),
+                base: Some("main".into()),
+            })
+        );
+        assert!(
+            mergeability("UNKNOWN".into(), "DIRTY".into()).is_some(),
+            "a merge state GitHub calls dirty is a conflict whatever it says beside it"
+        );
+        for clean in [
+            (serde_json::json!("MERGEABLE"), serde_json::json!("CLEAN")),
+            // Behind, blocked and unstable are everything else that can stand
+            // in the way of a merge, and none of them is a conflict.
+            (serde_json::json!("MERGEABLE"), serde_json::json!("BEHIND")),
+            (serde_json::json!("MERGEABLE"), serde_json::json!("BLOCKED")),
+            (
+                serde_json::json!("MERGEABLE"),
+                serde_json::json!("UNSTABLE"),
+            ),
+            // And the merge GitHub has not worked out yet, on a background
+            // job of its own: unknown is not conflicting.
+            (serde_json::json!("UNKNOWN"), serde_json::json!("UNKNOWN")),
+            (serde_json::Value::Null, serde_json::Value::Null),
+        ] {
+            assert_eq!(
+                mergeability(clean.0.clone(), clean.1.clone()),
+                None,
+                "{clean:?} was read as a conflict"
+            );
+        }
+    }
+
+    /// What a poll makes of them: a conflict before the checks it is likely to
+    /// have caused, each of them relayed once, and the failure on the revision
+    /// that was supposed to fix it relayed again.
+    #[test]
+    fn a_red_or_conflicting_branch_is_relayed_once_per_commit() {
+        let mut red = open_pr();
+        red["reviewDecision"] = "APPROVED".into();
+        red["statusCheckRollup"] =
+            serde_json::json!([check_run("test", "COMPLETED", "FAILURE".into())]);
+        let failed = vec![FailedCheck {
+            id: "CHKabc123:test".into(),
+            name: "test".into(),
+            conclusion: "FAILURE".into(),
+            url: Some("https://github.com/owner/repo/actions/runs/17/job/test".into()),
+        }];
+        assert_eq!(
+            poll_state(&parse(red.clone()), &[], &[], false),
+            PrState::ChecksFailed(failed.clone())
+        );
+        // Handed over once, the same failure says nothing more — and says
+        // nothing about the approval either: a red branch is not ready to
+        // merge however long ago the engineer was told about it.
+        assert_eq!(
+            poll_state(&parse(red.clone()), &[], &["CHKabc123:test".into()], false),
+            PrState::Quiet
+        );
+
+        // The engineer pushed a fix, and it failed too: a new commit is a new
+        // failure, and the engineer hears about that one as well.
+        let mut again = red.clone();
+        again["headRefOid"] = "def456".into();
+        let PrState::ChecksFailed(new) =
+            poll_state(&parse(again), &[], &["CHKabc123:test".into()], false)
+        else {
+            panic!("a failure on the revision that answered one is news again");
+        };
+        assert_eq!(new[0].id, "CHKdef456:test");
+
+        // And a conflict is read before the checks, being what the failing
+        // pipeline of a merge that no longer applies is failing for.
+        let mut conflicting = red;
+        conflicting["mergeable"] = "CONFLICTING".into();
+        assert_eq!(
+            poll_state(&parse(conflicting.clone()), &[], &[], false),
+            PrState::Conflicting(Conflict {
+                id: "MRGabc123".into(),
+                base: Some("main".into()),
+            })
+        );
+        assert_eq!(
+            poll_state(&parse(conflicting), &[], &["MRGabc123".into()], false),
+            PrState::ChecksFailed(failed),
+            "the conflict was handed over; the failing check has not been"
+        );
+    }
+
+    /// And the whole reason any of it is read: a pull request everybody
+    /// approved is not the user's to merge while it is red or conflicting.
+    #[test]
+    fn an_approval_over_a_red_branch_is_not_announced() {
+        let mut approved = open_pr();
+        approved["reviewDecision"] = "APPROVED".into();
+        assert_eq!(
+            poll_state(&parse(approved.clone()), &[], &[], false),
+            PrState::Approved,
+            "green, mergeable and approved is the one that is announced"
+        );
+
+        let mut red = approved.clone();
+        red["statusCheckRollup"] =
+            serde_json::json!([check_run("test", "COMPLETED", "FAILURE".into())]);
+        assert!(matches!(
+            poll_state(&parse(red.clone()), &[], &[], false),
+            PrState::ChecksFailed(_)
+        ));
+        assert_eq!(
+            poll_state(&parse(red), &[], &["CHKabc123:test".into()], false),
+            PrState::Quiet,
+            "an approval announced over a failing check is the wrong half of the truth"
+        );
+
+        let mut conflicting = approved;
+        conflicting["mergeable"] = "CONFLICTING".into();
+        assert_eq!(
+            poll_state(&parse(conflicting), &[], &["MRGabc123".into()], false),
+            PrState::Quiet
+        );
+    }
+
     #[test]
     fn the_repository_a_pull_request_url_names() {
         assert_eq!(
@@ -607,6 +1138,10 @@ mod tests {
             Some("5c81311ec832970ab02c6cbb3946c17df29b3dd5")
         );
         assert_eq!(pr.review_decision.as_deref(), Some(""));
+        assert!(
+            pr.health().is_ready(),
+            "the fields this answer predates are absent, which is nothing standing in the way"
+        );
         // Merged wins over the comment on it: what a comment is relayed for
         // is a revision, and there is nothing left to revise.
         assert_eq!(poll_state(&pr, &[], &[], false), PrState::Merged);
