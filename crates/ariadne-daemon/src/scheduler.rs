@@ -1480,7 +1480,7 @@ impl Scheduler {
         let ids: Vec<String> = feedback.iter().map(|f| f.id.clone()).collect();
         self.relay_to_engineer(
             task,
-            forge_feedback(feedback),
+            forge_feedback(watched, feedback),
             &ids,
             &format!("{} was commented on", watched.label()),
         )
@@ -2480,10 +2480,11 @@ struct Poll {
 /// where it was written.
 ///
 /// This is the round's feedback and nothing else: what to do about it is the
-/// engineer's `changes_requested` briefing to say, which renders this under a
-/// heading naming the people it came from. How many of them there are opens
-/// it, since an engineer answering every one of them is owed the number.
-fn forge_feedback(feedback: &[Feedback]) -> String {
+/// engineer's `changes_requested` briefing to say, which renders it under a
+/// heading naming the request it came from. How many there are and where they
+/// were written open it: an engineer answering every one of them is owed the
+/// number, and the request is where the thread they hang on is read.
+fn forge_feedback(watched: &WatchedPr, feedback: &[Feedback]) -> String {
     let count = feedback.len();
     let plural = if count == 1 { "comment" } else { "comments" };
     let quoted = feedback
@@ -2509,7 +2510,7 @@ fn forge_feedback(feedback: &[Feedback]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n\n");
-    format!("{count} new {plural}:\n\n{quoted}")
+    format!("{count} new {plural} on {}:\n\n{quoted}", watched.url)
 }
 
 /// The rule every send-back on a published request carries: the commits
@@ -2640,23 +2641,29 @@ mod tests {
     /// `changes_requested` briefing to say, so none of it is here.
     #[test]
     fn the_send_back_quotes_every_comment_that_was_written_on_the_review() {
-        let feedback = forge_feedback(&[
-            Feedback {
-                id: "C1".into(),
-                author: "maria".into(),
-                body: "why a new module?".into(),
-                file: None,
-                blocking: false,
-            },
-            Feedback {
-                id: "RC2".into(),
-                author: "jon".into(),
-                body: "this allocates per row\n\nand the row is hot".into(),
-                file: Some("src/board.rs:42".into()),
-                blocking: true,
-            },
-        ]);
-        assert!(feedback.starts_with("2 new comments:\n\n"), "{feedback}");
+        let feedback = forge_feedback(
+            &pull_request(),
+            &[
+                Feedback {
+                    id: "C1".into(),
+                    author: "maria".into(),
+                    body: "why a new module?".into(),
+                    file: None,
+                    blocking: false,
+                },
+                Feedback {
+                    id: "RC2".into(),
+                    author: "jon".into(),
+                    body: "this allocates per row\n\nand the row is hot".into(),
+                    file: Some("src/board.rs:42".into()),
+                    blocking: true,
+                },
+            ],
+        );
+        assert!(
+            feedback.starts_with("2 new comments on https://github.com/owner/repo/pull/12:\n\n"),
+            "{feedback}"
+        );
         assert!(
             feedback.contains("#### maria commented\n> why a new module?"),
             "{feedback}"
@@ -2678,14 +2685,17 @@ mod tests {
         }
         assert!(!feedback.contains("  "), "{feedback}");
 
-        let one = forge_feedback(&[Feedback {
-            id: "C1".into(),
-            author: "maria".into(),
-            body: "why?".into(),
-            file: None,
-            blocking: false,
-        }]);
-        assert!(one.starts_with("1 new comment:\n\n"), "{one}");
+        let one = forge_feedback(
+            &pull_request(),
+            &[Feedback {
+                id: "C1".into(),
+                author: "maria".into(),
+                body: "why?".into(),
+                file: None,
+                blocking: false,
+            }],
+        );
+        assert!(one.starts_with("1 new comment on "), "{one}");
     }
 
     /// The same for what the forge says is failing rather than what a person
@@ -2786,14 +2796,22 @@ mod tests {
     /// forge itself raises say so too.
     #[test]
     fn a_merge_request_is_quoted_and_sent_back_the_gitlab_way() {
-        let feedback = forge_feedback(&[Feedback {
-            id: "N1".into(),
-            author: "maria".into(),
-            body: "why a new module?".into(),
-            file: Some("src/board.rs:7".into()),
-            blocking: true,
-        }]);
-        assert!(feedback.starts_with("1 new comment:\n\n"), "{feedback}");
+        let feedback = forge_feedback(
+            &merge_request(),
+            &[Feedback {
+                id: "N1".into(),
+                author: "maria".into(),
+                body: "why a new module?".into(),
+                file: Some("src/board.rs:7".into()),
+                blocking: true,
+            }],
+        );
+        assert!(
+            feedback.starts_with(
+                "1 new comment on https://gitlab.com/owner/repo/-/merge_requests/12:\n\n"
+            ),
+            "{feedback}"
+        );
         assert!(
             feedback.contains("#### maria requested changes on src/board.rs:7"),
             "{feedback}"

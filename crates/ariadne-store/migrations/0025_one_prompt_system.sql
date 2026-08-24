@@ -11,10 +11,11 @@
 -- as one written by the reviewers, `reviewer_resume` reads as the nudge it
 -- doubles as, and `integration_resume` covers the published revision the
 -- daemon used to compose itself. As in migrations 0009, 0012, 0016, 0017,
--- 0018, 0019, 0020 and 0021, only where the row still holds the default it
--- was seeded with, so a prompt its user rewrote survives the upgrade. The old
--- texts are the ones migrations 0017 and 0019 last wrote — 0021 rewrote the
--- system prompts and left every briefing alone.
+-- 0018, 0019, 0020, 0021 and 0022, only where the row still holds the default
+-- it was seeded with, so a prompt its user rewrote survives the upgrade. The
+-- old texts are the ones migrations 0017 and 0019 last wrote: 0021 rewrote the
+-- system prompts and 0022 the integration instructions, and neither touched
+-- these three.
 --
 -- Half two seeds the four new kinds into every profile that owns one. A
 -- profile with a row of its own is left alone: reruns are not possible, but a

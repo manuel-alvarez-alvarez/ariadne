@@ -983,17 +983,15 @@ async fn pull_request_comments_reach_the_engineer_once_each() {
     let engineer = h.live_session(&task.id, Role::Engineer).await.unwrap();
     let argv = h.launched_argv(&engineer.id);
     for quoted in [
-        PR_URL,
-        "4 new comments",
-        "### maria commented",
+        "#### maria commented",
         "> why a new module?",
-        "### jon requested changes",
+        "#### jon requested changes",
         "> split src/board.rs up",
         // The comments on the diff too, both pages of them, each naming the
         // file and line it hangs on.
-        "### jon commented on src/board.rs:42",
+        "#### jon commented on src/board.rs:42",
         "> this allocates per row",
-        "### maria commented on src/lane.rs:7",
+        "#### maria commented on src/lane.rs:7",
         "> and this name is wrong",
         "request_review",
         // Under the name of what the humans wrote on, never the integrator's:
@@ -1043,9 +1041,11 @@ async fn pull_request_comments_reach_the_engineer_once_each() {
         "the relay was recorded under a profile's name"
     );
     assert_eq!(sent_back[0].author_role.as_deref(), Some("forge"));
+    // The comments themselves, and nothing else: what to do about them is the
+    // engineer's briefing to say, not this row's.
     let body = sent_back[0].body.clone().unwrap();
+    assert!(!body.contains("request_review"), "{body}");
     for quoted in [
-        PR_URL,
         "why a new module?",
         "split src/board.rs up",
         "this allocates per row",
@@ -1160,15 +1160,16 @@ async fn pull_request_comments_reach_the_engineer_once_each() {
          transition's own and once into the thread"
     );
 
-    // And what the integrator was woken with: push the revision to the same
-    // pull request, the one way a published branch may be updated, and hand
-    // the engineer's replies to the user.
+    // And what the integrator was woken with: the request it published, the
+    // one way a published branch may be updated — its integration
+    // instructions', which this points back at rather than restating — and
+    // the engineer's replies to hand to the user.
     let instruction = h.resume_instruction(&integrator.id);
     for expected in [
         PR_URL,
         REPLIES,
-        "git merge --no-edit <remote>/main",
-        &format!("git push <remote> {}", task.branch),
+        "Pull request #12",
+        "your integration instructions",
         "`post_message` to \"user\"",
         "never a second one",
     ] {
@@ -1326,10 +1327,11 @@ async fn a_published_round_pushes_the_replies_and_addresses_the_user_twice() {
     // before this round began, and the replies the integrator just handed on.
     let told = h.user_messages(&task.id).await;
     assert_eq!(told.len(), 2, "{told:?}");
+    assert!(told[0].body.contains("is open for"), "{}", told[0].body);
     assert!(told[1].body.contains(REPLIES), "{}", told[1].body);
 
     // GitHub says it is approved: the daemon tells the user once, and that is
-    // the second and last thing it hears about this round.
+    // the last thing it hears about this round.
     let mut approved = open_pull_request();
     approved["reviewDecision"] = "APPROVED".into();
     approved["reviews"] = serde_json::json!([{
@@ -1814,7 +1816,7 @@ async fn comments_waiting_on_a_task_with_no_live_integrator_start_none() {
     let argv = h.launched_argv(&engineer.id);
     assert!(argv.contains("> why a new module?"), "{argv}");
     assert!(
-        argv.contains("### jon commented on src/board.rs:42"),
+        argv.contains("#### jon commented on src/board.rs:42"),
         "{argv}"
     );
 

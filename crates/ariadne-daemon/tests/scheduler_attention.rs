@@ -538,7 +538,9 @@ async fn a_nudge_that_never_submits_raises_the_session() {
     // Past the nudge threshold and nowhere near the flag one: the only route
     // to a raised session here is the delivery that could not be confirmed.
     h.idle_for(&session, STALL_NUDGE_SECS + 60).await;
-    h.composer_keeps("Keep working on this task, and call `request_review`");
+    // The engineer's resume template, as its profile has it: the pane is
+    // holding the very words the daemon is about to type into it.
+    h.composer_keeps(r#"Pick "task" up again: your worktree is on"#);
 
     let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
     sched
