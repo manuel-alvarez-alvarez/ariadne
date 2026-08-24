@@ -1280,12 +1280,14 @@ export interface components {
             kind: components["schemas"]["PromptKind"];
         };
         /**
-         * @description A prompt a profile owns beside its system prompt: the briefing an agent of
-         *     that role is started or resumed with. Each kind belongs to exactly one role
-         *     (see [`PromptKind::role`]).
+         * @description A prompt a profile owns beside its system prompt: one of the texts an
+         *     agent of that role is started, resumed or nudged with. Every text Ariadne
+         *     puts in front of an agent is one of these, and each kind belongs to the
+         *     role — or, for [`PromptKind::MessageDelivery`], the roles — that receive it
+         *     (see [`PromptKind::roles`]).
          * @enum {string}
          */
-        PromptKind: "planner_briefing" | "engineer_briefing" | "changes_requested" | "reviewer_briefing" | "reviewer_resume" | "integration_instructions" | "integration_resume";
+        PromptKind: "planner_briefing" | "planner_resume" | "engineer_briefing" | "engineer_resume" | "changes_requested" | "reviewer_briefing" | "reviewer_resume" | "integration_instructions" | "integration_resume" | "integration_merged" | "message_delivery";
         /**
          * @description Who a conversation message is addressed to: one agent profile, or the
          *     human user. Orthogonal to the author role, and optional — a message with
