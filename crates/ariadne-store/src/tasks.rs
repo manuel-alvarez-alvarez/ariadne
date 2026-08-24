@@ -658,16 +658,9 @@ impl Store {
     /// relaying the same one twice as it polls.
     pub async fn add_task_pr_relayed_comments(&self, task_id: &str, ids: &[String]) -> Result<()> {
         let task = self.get_task(task_id).await?;
-        let mut relayed = task.pr_relayed_comments();
-        for id in ids {
-            if !relayed.contains(id) {
-                relayed.push(id.clone());
-            }
-        }
-        let json = serde_json::to_string(&relayed).unwrap_or_else(|_| "[]".into());
         let n =
             sqlx::query("UPDATE tasks SET pr_relayed_comments = ?, updated_at = ? WHERE id = ?")
-                .bind(&json)
+                .bind(relayed_with(&task, ids))
                 .bind(now())
                 .bind(task_id)
                 .execute(self.w())
@@ -702,15 +695,8 @@ impl Store {
         let task = Self::get_task_in_tx(&mut tx, &review.task_id).await?;
         let created = Self::insert_review_in_tx(&mut tx, &review).await?;
 
-        let mut relayed = task.pr_relayed_comments();
-        for id in relayed_ids {
-            if !relayed.contains(id) {
-                relayed.push(id.clone());
-            }
-        }
-        let json = serde_json::to_string(&relayed).unwrap_or_else(|_| "[]".into());
         sqlx::query("UPDATE tasks SET pr_relayed_comments = ?, updated_at = ? WHERE id = ?")
-            .bind(&json)
+            .bind(relayed_with(&task, relayed_ids))
             .bind(now())
             .bind(&task.id)
             .execute(&mut *tx)
@@ -781,6 +767,23 @@ impl Store {
         }
         Ok(())
     }
+}
+
+/// What a task remembers as relayed once `ids` have been handed over:
+/// whatever it remembered already plus what this round adds, each of them
+/// once, as the column stores it.
+///
+/// Shared by the two writers of that column — the standalone one and the
+/// transaction a whole send-back goes down in — because a comment relayed
+/// twice and a comment counted twice are the same bug.
+fn relayed_with(task: &Task, ids: &[String]) -> String {
+    let mut relayed = task.pr_relayed_comments();
+    for id in ids {
+        if !relayed.contains(id) {
+            relayed.push(id.clone());
+        }
+    }
+    serde_json::to_string(&relayed).unwrap_or_else(|_| "[]".into())
 }
 
 #[cfg(test)]
