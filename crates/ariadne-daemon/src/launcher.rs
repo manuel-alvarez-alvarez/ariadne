@@ -671,19 +671,6 @@ impl Launcher {
         Ok(worktree)
     }
 
-    /// The engineer's review-request summary: the latest message it wrote, if
-    /// any.
-    pub(crate) async fn engineer_summary(&self, task_id: &str) -> Result<Option<String>> {
-        Ok(self
-            .store
-            .list_task_messages(task_id, None, 200)
-            .await?
-            .into_iter()
-            .rev()
-            .find(|m| m.author_role() == ariadne_core::AuthorRole::Engineer)
-            .map(|m| m.body))
-    }
-
     /// Spawn one reviewer for a task (detached worktree at the branch tip).
     ///
     /// The session is not tied to the round it starts in: later rounds resume
@@ -736,7 +723,7 @@ impl Launcher {
             })
             .await?;
 
-        let summary = self.engineer_summary(&task.id).await?;
+        let summary = self.store.review_summary(&task.id).await?;
         let system = prompts::system_prompt(&profile);
         let template =
             prompts::template_for(&self.store, &profile.id, PromptKind::ReviewerBriefing).await;

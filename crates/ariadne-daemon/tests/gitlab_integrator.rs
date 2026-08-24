@@ -63,6 +63,11 @@ const REPLIES: &str = "Reply to @jon on src/board.rs:42: it allocates once per l
                        Reply to @maria on src/lane.rs:7: renamed to `lane_index`.\n\
                        Reply to @maria: the module stays — it is what makes the lane testable.";
 
+/// And what it writes next, once the review is requested: a message in the
+/// same thread by the same author, which nothing downstream may hand on as
+/// the summary of the round.
+const AFTERWARDS: &str = "Thanks — I will watch for anything else on the request.";
+
 struct Harness {
     store: Store,
     router: Router,
@@ -435,8 +440,13 @@ impl Harness {
     }
 
     /// The engineer's `request_review`, made the way its MCP tool makes it:
-    /// the summary is posted to the thread first — which is where everything
-    /// downstream reads it — and then the task goes up for review.
+    /// the summary goes into the thread for whoever is reading it, and onto
+    /// the transition, which is the round's own record of it and where
+    /// everything downstream reads it from.
+    ///
+    /// Then the engineer says something else, as one answering a question in
+    /// its thread does — the message that must not be mistaken for the
+    /// summary of the round.
     async fn request_review(&self, task_id: &str, engineer: &str, summary: &str) {
         let _: MessageDto = self
             .json(
@@ -456,6 +466,16 @@ impl Harness {
                     serde_json::json!({"to": "under_review", "reason": summary}),
                 ),
                 StatusCode::OK,
+            )
+            .await;
+        let _: MessageDto = self
+            .json(
+                as_session(
+                    &format!("/v1/tasks/{task_id}/messages"),
+                    engineer,
+                    serde_json::json!({"body": AFTERWARDS}),
+                ),
+                StatusCode::CREATED,
             )
             .await;
     }

@@ -17,12 +17,17 @@ use std::path::Path;
 use std::sync::Arc;
 
 use ariadne_core::spawn_plan::SpawnPlanFile;
-use ariadne_core::{AgentKind, PromptKind, Role};
+use ariadne_core::{Actor, AgentKind, AuthorRole, PromptKind, Role, TaskStatus};
 use ariadne_daemon::config::Config;
 use ariadne_daemon::gitwt::GitManager;
 use ariadne_daemon::launcher::Launcher;
 use ariadne_daemon::tmux::TmuxManager;
-use ariadne_store::{NewGoal, NewProfile, NewRepository, NewTask, Store, Task};
+use ariadne_store::{NewGoal, NewMessage, NewProfile, NewRepository, NewTask, Store, Task};
+
+/// What the engineer requested review with, and what it wrote afterwards:
+/// the briefing has to carry the first and never the second.
+const SUMMARY: &str = "Rendered the board from the store, with a test per lane.";
+const AFTERWARDS: &str = "Thanks — I will look at the lane widths next.";
 
 struct Harness {
     store: Store,
@@ -230,6 +235,72 @@ async fn a_spawned_engineer_is_briefed_from_its_profiles_prompt() {
     )
     .unwrap();
     assert_eq!(system, "You are engineer.");
+}
+
+/// The `{summary}` a reviewer is briefed with is the one the engineer
+/// requested review with — the round's own record of it — and not whatever
+/// the engineer happened to say last.
+///
+/// The two are only the same until the engineer writes anything else: a
+/// "thanks, will do" posted after the request would otherwise be what the
+/// reviewers, and the people reading a published request, are handed as the
+/// summary of the change.
+#[tokio::test]
+async fn a_reviewer_is_briefed_with_the_summary_review_was_requested_with() {
+    let h = harness().await;
+    let (task, _engineer) = h.task().await;
+    let reviewer = h.store.list_task_reviewers(&task.id).await.unwrap()[0].clone();
+    // The engineer's worktree is what creates the branch the reviewer's is
+    // cut from.
+    h.launcher.spawn_engineer(&task.id).await.unwrap();
+
+    for status in [TaskStatus::Ready, TaskStatus::InProgress] {
+        h.store
+            .transition_task(&task.id, status, Actor::Daemon, None, None)
+            .await
+            .unwrap();
+    }
+    h.store
+        .transition_task(
+            &task.id,
+            TaskStatus::UnderReview,
+            Actor::Engineer,
+            Some(SUMMARY),
+            None,
+        )
+        .await
+        .unwrap();
+    // And then it says something else in the thread, as an engineer answering
+    // a question about the change does.
+    h.store
+        .create_message(NewMessage {
+            goal_id: task.goal_id.clone(),
+            task_id: Some(task.id.clone()),
+            author_role: AuthorRole::Engineer,
+            author_session_id: None,
+            recipient: None,
+            body: AFTERWARDS.into(),
+        })
+        .await
+        .unwrap();
+
+    let session = h
+        .launcher
+        .spawn_reviewer(&task.id, &reviewer)
+        .await
+        .unwrap();
+    let argv = h.launched_argv(&session.id);
+    assert!(argv.contains(SUMMARY), "the briefing has no summary: {argv}");
+    assert!(
+        !argv.contains(AFTERWARDS),
+        "the briefing carries what the engineer said after requesting review: {argv}"
+    );
+    // And the summary reaches it as it was written, with nothing prefixed to
+    // it on the way.
+    assert!(
+        !argv.contains("Review requested:"),
+        "the summary was decorated on its way to the reviewer: {argv}"
+    );
 }
 
 /// A template that is nonsense by the time it is read is still a briefing: the

@@ -737,7 +737,7 @@ impl Scheduler {
                 if pending.is_empty() {
                     return Ok(());
                 }
-                let summary = self.launcher.engineer_summary(&task.id).await?;
+                let summary = self.store.review_summary(&task.id).await?;
                 for profile_id in pending {
                     let live = self
                         .store
@@ -1489,7 +1489,7 @@ impl Scheduler {
                         &watched,
                         task,
                         &repo,
-                        self.launcher.engineer_summary(&task.id).await?.as_deref(),
+                        self.store.review_summary(&task.id).await?.as_deref(),
                     ),
                     None => {
                         let profile = self.launcher.integrator_profile(task).await?;

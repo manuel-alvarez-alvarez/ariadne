@@ -491,6 +491,27 @@ impl Store {
         .await?)
     }
 
+    /// The summary the engineer asked for review with, for the round that is
+    /// open now: the reason of the most recent `under_review` transition.
+    ///
+    /// The round records it because the round is what it belongs to. Read off
+    /// the conversation instead — the last thing an engineer happened to say —
+    /// it would be whatever it wrote after asking, and what the reviewers and
+    /// the people on a published request are handed has to be what it
+    /// submitted.
+    pub async fn review_summary(&self, task_id: &str) -> Result<Option<String>> {
+        Ok(sqlx::query_scalar::<_, Option<String>>(
+            "SELECT reason FROM task_transitions
+              WHERE task_id = ? AND to_status = ?
+              ORDER BY id DESC LIMIT 1",
+        )
+        .bind(task_id)
+        .bind(TaskStatus::UnderReview.as_str())
+        .fetch_optional(self.r())
+        .await?
+        .flatten())
+    }
+
     /// Reviewer profile ids in planner-assigned order.
     pub async fn list_task_reviewers(&self, task_id: &str) -> Result<Vec<String>> {
         Ok(sqlx::query_scalar(
