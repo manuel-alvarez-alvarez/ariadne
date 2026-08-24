@@ -63,7 +63,7 @@ const TASK: TaskDto = {
   title: "Do the thing",
   description: "",
   status: "in_progress",
-  branch: "ariadne/task-01TASK",
+  branch: "do-the-thing-01task",
   depends_on: [],
   engineer_profile_id: "01ENGINEER",
   integrator_profile_id: "01INTEGRATOR",

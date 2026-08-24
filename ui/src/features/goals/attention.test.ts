@@ -8,7 +8,7 @@ import { collectAttention, collectBoardAttention, taskAttentionReason } from "./
 
 function task(overrides: Partial<TaskDto>): TaskDto {
   return {
-    branch: "ariadne/task-1",
+    branch: "a-task-aaa111",
     created_at: "2026-08-16T10:00:00Z",
     depends_on: [],
     description: "",

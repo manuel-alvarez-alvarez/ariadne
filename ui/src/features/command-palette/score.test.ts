@@ -33,14 +33,14 @@ describe("preferLiteralMatches", () => {
     expect(score("Engineer · Keyboard support", "keyboard")).toBe(
       score("Engineer Keyboard support", "keyboard"),
     )
-    expect(score("ariadne/task-keyboard", "task")).toBe(score("ariadne task keyboard", "task"))
+    expect(score("worktrees/eng-keyboard", "eng")).toBe(score("worktrees eng keyboard", "eng"))
   })
 
   it("finds a row by a keyword — its full id — under everything it is named by", () => {
-    const byId = score("Keyboard support ariadne/task-key", "01jtask0000000000000000key", [
+    const byId = score("Keyboard support keyboard-support-key", "01jtask0000000000000000key", [
       "01JTASK0000000000000000KEY",
     ])
-    const byName = score("Keyboard support ariadne/task-key", "keyboard")
+    const byName = score("Keyboard support keyboard-support-key", "keyboard")
     expect(byId).toBeGreaterThan(0)
     expect(byName).toBeGreaterThan(byId)
   })

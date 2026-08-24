@@ -35,7 +35,7 @@ const TASK: TaskDto = {
   title: "Make the hints reachable",
   description: "",
   status: "changes_requested",
-  branch: "ariadne/task-01JTASK0000000000000000001",
+  branch: "make-the-hints-reachable-000001",
   depends_on: ["01JTASK0000000000000000002"],
   engineer_profile_id: "01JPROF0000000000000000ENG",
   integrator_profile_id: "01INTEGRATOR",

@@ -286,7 +286,7 @@ mod tests {
             integrator_profile_id: ariadne_store::defaults::INTEGRATOR_ID.into(),
             agent_kind: None,
             model: None,
-            branch: "ariadne/task-01taskxxxxxxxxxxxxxxxxxxxx".into(),
+            branch: "render-prompts-from-the-database-xxxxxx".into(),
             worktree_path: Some("/worktrees/task-eng".into()),
             review_round: 3,
             stalled: 0,
@@ -409,7 +409,7 @@ mod tests {
         let deps = vec![Task {
             title: "Store: per-profile prompts".into(),
             status: "merged".into(),
-            branch: "ariadne/task-01depxxxxxxxxxxxxxxxxxxxxx".into(),
+            branch: "store-per-profile-prompts-xxxxxx".into(),
             ..task.clone()
         }];
         let dep_lines = deps
@@ -579,7 +579,7 @@ mod tests {
         let deps = vec![Task {
             title: "Store: per-profile prompts".into(),
             status: "merged".into(),
-            branch: "ariadne/task-01depxxxxxxxxxxxxxxxxxxxxx".into(),
+            branch: "store-per-profile-prompts-xxxxxx".into(),
             ..task.clone()
         }];
         let engineer = engineer_briefing(

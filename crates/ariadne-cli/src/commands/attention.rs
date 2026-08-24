@@ -376,7 +376,7 @@ mod tests {
             model: None,
             reviewers: Vec::new(),
             depends_on: Vec::new(),
-            branch: "ariadne/x".into(),
+            branch: "a-task-01task".into(),
             worktree_path: None,
             review_round: 0,
             stalled,
