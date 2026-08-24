@@ -506,6 +506,7 @@ impl Scheduler {
                 }
             }
             GoalStatus::Active => {
+                self.end_idle_planner(&goal.id).await;
                 let tasks = self
                     .store
                     .list_tasks(TaskFilter {
@@ -574,6 +575,45 @@ impl Scheduler {
             GoalStatus::Completed => self.kill_goal_sessions(&goal.id).await,
         }
         Ok(())
+    }
+
+    /// The planner's work ends with the plan: an idle one is let go once the
+    /// goal it planned is being worked on.
+    ///
+    /// Nothing waits on a planner outside `planning` — `attention::work_is_active`
+    /// says so, which is why a planner pane that vanishes under an active
+    /// goal is not reported as a disconnect either — and a session nobody
+    /// waits on that is left running is an agent holding a pane, a tmux
+    /// process and the machine's sleep inhibitor open until the goal
+    /// completes.
+    ///
+    /// Ended, not unreachable: the goal's tasks may still have something to
+    /// say to their planner, and a message addressed to an exited session is
+    /// what `wake_profile` revives it with — the conversation is in the agent
+    /// CLI's own history, not in the pane. What is not ended is a planner
+    /// mid-turn: whatever it is writing is finished first, and the next tick
+    /// finds it idle.
+    async fn end_idle_planner(&self, goal_id: &str) {
+        let Ok(sessions) = self
+            .store
+            .list_sessions(SessionFilter {
+                goal_id: Some(goal_id.to_string()),
+                live_only: true,
+                ..Default::default()
+            })
+            .await
+        else {
+            return;
+        };
+        for planner in sessions
+            .iter()
+            .filter(|s| s.role() == Role::Planner && s.status() == SessionStatus::Idle)
+        {
+            info!(goal = %goal_id, session = %planner.id, "the goal is past planning; ending its idle planner");
+            if let Err(e) = self.launcher.kill_session(&planner.id).await {
+                warn!(goal = %goal_id, session = %planner.id, error = %e, "ending the planner failed");
+            }
+        }
     }
 
     /// Kill every live session of a goal, whatever ended it.

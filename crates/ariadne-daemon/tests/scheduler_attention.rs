@@ -1957,3 +1957,77 @@ async fn an_agent_that_wedges_after_every_relaunch_fails_its_task() {
         "and it is not left holding a pane under a failed task"
     );
 }
+
+/// The planner's work ends with the plan. Once the goal it planned is being
+/// worked on, an idle planner is an agent nobody is waiting on holding a pane
+/// and the machine's sleep inhibitor open until the last task lands, so it is
+/// let go — and being gone is what is expected of it, not a disconnect.
+///
+/// Gone, not unreachable: a task thread can still address its planner, and
+/// the message is what brings the session back on the conversation it was
+/// having.
+#[tokio::test]
+async fn an_idle_planner_is_let_go_once_the_goal_leaves_planning() {
+    let h = harness().await;
+    let (goal, _task, _engineer, _reviewer) = h.active_goal_with_task().await;
+    // The planner's own cwd, which a revive needs to be there.
+    std::fs::create_dir_all(h.dir.path().join("repo")).unwrap();
+    let planner = h
+        .session(&goal, None, Role::Planner, &goal.planner_profile_id)
+        .await;
+    h.pane_exists(&planner);
+    h.store
+        .set_session_internal_id(&planner.id, "uuid-planner")
+        .await
+        .unwrap();
+    h.store
+        .set_session_status(&planner.id, SessionStatus::Idle)
+        .await
+        .unwrap();
+
+    // The first tick is immediate, and one reconciliation of the goal is all
+    // it takes.
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    eventually("the planner to be let go", async || {
+        h.store.get_session(&planner.id).await.unwrap().status() == SessionStatus::Exited
+    })
+    .await;
+    // Whatever the sweep beside it had to say would have been said by now.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        h.attention(&planner).await,
+        None,
+        "a planner that is done is expected to be gone, not reported disconnected"
+    );
+
+    // And a message addressed to it still reaches it: the ended session is
+    // revived on the agent conversation it was having, which is the whole
+    // reason it is ended rather than kept alive.
+    let message = h
+        .store
+        .create_message(NewMessage {
+            goal_id: goal.id.clone(),
+            task_id: None,
+            author_role: AuthorRole::User,
+            author_session_id: None,
+            recipient: Some(Recipient::Profile(goal.planner_profile_id.clone())),
+            body: "Task three overlaps with task one; which of them owns the store?".into(),
+        })
+        .await
+        .unwrap();
+    sched.send(SchedEvent::MessagePosted(message.id)).unwrap();
+
+    eventually("the planner to be revived with the message", async || {
+        h.store.get_session(&planner.id).await.unwrap().status() != SessionStatus::Exited
+    })
+    .await;
+    let argv = h.spawn_argv(&planner);
+    assert!(
+        argv.contains("uuid-planner"),
+        "the same conversation is resumed: {argv}"
+    );
+    assert!(
+        argv.contains("which of them owns the store?"),
+        "and it is woken with what was said to it: {argv}"
+    );
+}
