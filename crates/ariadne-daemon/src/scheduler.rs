@@ -78,13 +78,16 @@ enum Wake {
     /// The agent has it: a resumed session comes back to it as its
     /// instruction.
     Delivered,
-    /// Nobody to deliver it to, and that is not a failure.
+    /// Nothing to deliver: the agent is being woken for what it said itself,
+    /// or it is sitting on a dialog nobody but the user may answer — and it
+    /// is there to read the thread once it has been.
     Nothing,
     /// Its pane is busy with another delivery; a later tick tries again
     /// without spending an attempt on it.
     Busy,
     /// This pass could not, with the session to raise for the user once the
-    /// attempts are gone — `None` when there is not even one of those left.
+    /// attempts are gone — `None` when the addressee has no session at all,
+    /// whether it has yet to have one or has lost the one it had.
     Failed(Option<String>),
 }
 
@@ -1837,9 +1840,10 @@ impl Scheduler {
 
     /// A message that will not be delivered, put where the user will see it:
     /// on the addressee's session — stalled while its pane is still there,
-    /// disconnected once it is gone — and, when there is no session of theirs
-    /// left to flag at all, on the session of whoever wrote it, which is the
-    /// pane they are watching for an answer.
+    /// disconnected once it is gone — and, when the addressee has no session
+    /// of its own to flag, on the session of whoever wrote it, which is the
+    /// pane they are watching for an answer. The message itself stays in the
+    /// thread either way; what is raised is that nobody came for it.
     async fn give_up(&self, message: &Message, session_id: Option<&str>) -> anyhow::Result<()> {
         let session = match session_id {
             Some(id) => self.store.get_session(id).await.ok(),
@@ -1891,24 +1895,22 @@ impl Scheduler {
     /// A message for an agent: typed into its pane if it has one, and
     /// otherwise resumed with the message as its instruction.
     ///
-    /// An addressee that never had a session to deliver to — a reviewer
-    /// between rounds, an engineer whose task has not started — is not a
-    /// failure and not a message lost: it stays in the thread, and the
-    /// briefings send every agent to read the conversation when it next
-    /// starts. What comes back is one of [`Wake`]; the caller keeps the count
-    /// of what a message has spent, since only it knows how many passes have
-    /// been made at this one.
+    /// An addressee with no session to deliver to — a reviewer between
+    /// rounds, an engineer whose task has not started, one whose session went
+    /// away — is not a message lost: it keeps its place in the thread, and
+    /// the briefings send every agent to read the conversation when it next
+    /// starts. It is not a message delivered either, though, so it is a pass
+    /// like any other: the later ticks find the session once it exists, and
+    /// when they run out with nobody there the author is told rather than
+    /// left waiting on an answer that is not coming.
+    ///
+    /// What comes back is one of [`Wake`]; the caller keeps the count of what
+    /// a message has spent, since only it knows how many passes have been
+    /// made at this one.
     async fn wake_profile(&mut self, message: &Message, profile_id: &str) -> anyhow::Result<Wake> {
         let Some(session) = self.recipient_session(message, profile_id).await? else {
-            // One whose session went away with a delivery still owed is
-            // another matter: the passes already spent say somebody was there
-            // to hear it, and now there is nobody — which the author is told.
-            if self.attempts.contains_key(&message.id) {
-                warn!(message = %message.id, profile = %profile_id, "the agent this message was for has no session left");
-                return Ok(Wake::Failed(None));
-            }
-            info!(message = %message.id, profile = %profile_id, "nobody to wake for this message; it waits in the thread");
-            return Ok(Wake::Nothing);
+            info!(message = %message.id, profile = %profile_id, "nobody to wake for this message yet; it waits in the thread");
+            return Ok(Wake::Failed(None));
         };
         // An agent does not need waking for what it said itself.
         if message.author_session_id.as_deref() == Some(session.id.as_str()) {
@@ -1971,11 +1973,13 @@ impl Scheduler {
     /// the only agent a goal thread can address; filtering by goal alone
     /// would reach into its tasks.
     ///
-    /// A task message looks in that task, and then at the goal's own sessions
-    /// for an addressee that has none there. Every task thread can address
-    /// the planner that wrote it (see `http::recipients`), and the planner
-    /// works at the goal level: filtering by task alone would find no session
-    /// for it and wake nobody at all.
+    /// A task message looks in that task, and then — for the planner alone —
+    /// at the goal's own sessions. Every task thread can address the planner
+    /// that wrote it (see `http::recipients`), and the planner works at the
+    /// goal level: filtering by task alone would find no session for it and
+    /// wake nobody at all. Everyone else a task thread addresses works in
+    /// that task, so a session of theirs outside it is somebody else's
+    /// conversation and is not typed into for this one.
     async fn recipient_session(
         &self,
         message: &Message,
@@ -1995,13 +1999,15 @@ impl Scheduler {
             }
             match &session.task_id {
                 Some(_) if session.task_id == message.task_id => return Ok(Some(session)),
-                None if at_goal.is_none() => at_goal = Some(session),
+                None if at_goal.is_none() && session.role() == Role::Planner => {
+                    at_goal = Some(session)
+                }
                 _ => {}
             }
         }
-        // Which leaves the goal's own: the planner, reached from the task
-        // thread that addressed it — and, for a goal thread, the only session
-        // it was ever allowed to reach.
+        // Which leaves the goal's own planner, reached from the task thread
+        // that addressed it — and, for a goal thread, the only session it was
+        // ever allowed to reach.
         Ok(at_goal)
     }
 }

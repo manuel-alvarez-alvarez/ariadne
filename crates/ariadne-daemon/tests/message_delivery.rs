@@ -8,10 +8,11 @@
 //! attention path instead, on the session of the agent that wrote it.
 //!
 //! The other half is what happens when the delivery does not work: a tmux
-//! that will not take the keystrokes and an agent that cannot be resumed are
-//! tried again, and once the passes are gone somebody is told — the addressee
-//! on its own session, or the author on theirs when the addressee has no
-//! session left at all. Nothing is ever quietly struck off.
+//! that will not take the keystrokes, an agent that cannot be resumed and an
+//! addressee with no session to type into are tried again, and once the
+//! passes are gone somebody is told — the addressee on its own session, or
+//! the author on theirs when the addressee has no session at all. Nothing is
+//! ever quietly struck off.
 //!
 //! The whole path is exercised, from the HTTP handler both agents and the CLI
 //! post through to the keystrokes that come out the other end: the router is
@@ -588,7 +589,8 @@ async fn a_goal_thread_message_wakes_the_planner() {
 
 /// An addressee with no session at all — a reviewer between rounds — is no
 /// error and no message lost: it stays in the thread, which is where every
-/// agent's briefing sends it to read.
+/// agent's briefing sends it to read, and nobody is started for it. What
+/// happens if no session ever turns up for it is the next test's.
 #[tokio::test]
 async fn an_addressee_with_no_session_leaves_the_message_in_the_thread() {
     let h = harness().await;
@@ -995,4 +997,100 @@ async fn a_message_whose_addressee_lost_its_session_raises_its_author() {
         h.attention(&planner).await == Some(AttentionReason::WaitingInput)
     })
     .await;
+}
+
+/// An addressee that never gets a session is the same story as one that lost
+/// it. The message keeps its place in the thread, and the passes are not
+/// endless: when they run out with nobody there to be woken, the agent that
+/// asked is raised for the user, since it is the one waiting on an answer
+/// that is not coming.
+#[tokio::test]
+async fn a_message_for_an_addressee_that_never_gets_a_session_raises_its_author() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    let planner = h
+        .session(&cast.goal, None, Role::Planner, &cast.planner)
+        .await;
+    h.pane_exists(&planner);
+
+    // The reviewer has no session at all: this round has not started one.
+    let message = h
+        .post_to_task(
+            &cast.task,
+            "Have a look at the error handling once you pick this up.",
+            Some("reviewer"),
+            Some(&planner),
+        )
+        .await;
+
+    // The passes the tick would make, asked for without waiting a quarter of
+    // a minute for each.
+    eventually("the author to be raised for the user", async || {
+        h.sched
+            .send(SchedEvent::MessagePosted(message.id.clone()))
+            .unwrap();
+        h.attention(&planner).await == Some(AttentionReason::WaitingInput)
+    })
+    .await;
+    assert!(
+        h.store
+            .list_sessions(SessionFilter::default())
+            .await
+            .unwrap()
+            .iter()
+            .all(|s| s.profile_id != cast.reviewer.id),
+        "no reviewer was started for a message"
+    );
+    assert_eq!(
+        h.keystrokes(&planner),
+        0,
+        "and nothing was typed at the agent that wrote it"
+    );
+    assert!(
+        h.thread(&cast.task)
+            .await
+            .contains(&"Have a look at the error handling once you pick this up.".to_string()),
+        "the message is still there for whoever comes to read it"
+    );
+}
+
+/// The goal-level fallback is the planner's alone. Profiles are reusable, so
+/// another role can have a session with no task on it; a task thread's
+/// message is not that conversation's, and is not typed into it.
+#[tokio::test]
+async fn a_task_message_is_not_typed_at_another_role_working_outside_the_task() {
+    let h = harness().await;
+    let cast = h.cast().await;
+    let planner = h
+        .session(&cast.goal, None, Role::Planner, &cast.planner)
+        .await;
+    // An engineer session of the goal's rather than of the task's — not where
+    // this task's engineer works, whatever profile it was started with.
+    let elsewhere = h
+        .session(&cast.goal, None, Role::Engineer, &cast.engineer)
+        .await;
+    h.pane_exists(&planner);
+    h.pane_exists(&elsewhere);
+
+    let message = h
+        .post_to_task(
+            &cast.task,
+            "Skip the migration.",
+            Some("engineer"),
+            Some(&planner),
+        )
+        .await;
+
+    eventually("the author to be raised for the user", async || {
+        h.sched
+            .send(SchedEvent::MessagePosted(message.id.clone()))
+            .unwrap();
+        h.attention(&planner).await == Some(AttentionReason::WaitingInput)
+    })
+    .await;
+    assert_eq!(
+        h.keystrokes(&elsewhere),
+        0,
+        "the session outside the task was left to its own conversation"
+    );
 }
