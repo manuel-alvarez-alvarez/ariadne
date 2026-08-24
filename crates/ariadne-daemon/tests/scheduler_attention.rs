@@ -1963,6 +1963,20 @@ async fn an_agent_that_wedges_after_every_relaunch_fails_its_task() {
         SessionStatus::Exited,
         "and it is not left holding a pane under a failed task"
     );
+    // A task nobody is coming back to is told to the user, whichever watchdog
+    // gave up on it.
+    eventually("the failure to reach the user", async || {
+        h.user_messages(&task).await.len() == 1
+    })
+    .await;
+    let told = h.user_messages(&task).await;
+    assert!(
+        told[0]
+            .body
+            .contains("stopped mid-turn after every relaunch"),
+        "the notice says what stopped it: {}",
+        told[0].body
+    );
 }
 
 /// The planner's work ends with the plan. Once the goal it planned is being

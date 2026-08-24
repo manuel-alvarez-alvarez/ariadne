@@ -2094,15 +2094,24 @@ impl Scheduler {
                 if let Err(e) = self.launcher.kill_session(&session.id).await {
                     warn!(session = %session.id, error = %e, "killing the wedged session failed");
                 }
-                self.store
+                // Told to the user like every other ending the daemon
+                // decides, and by the same call: a task nobody is coming
+                // back to is worth a line in its thread whichever watchdog
+                // gave up on it.
+                let reason = "its agent stopped mid-turn after every relaunch";
+                if let Ok(task) = self
+                    .store
                     .transition_task(
                         &task_id,
                         TaskStatus::Failed,
                         Actor::Daemon,
-                        Some("its agent wedged mid-turn after every relaunch"),
+                        Some(reason),
                         None,
                     )
-                    .await?;
+                    .await
+                {
+                    self.announce_ending(&task, Some(reason)).await;
+                }
             }
             return Ok(());
         }
