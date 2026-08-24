@@ -84,16 +84,29 @@ fn pasted(dir: &Path, session: &AgentSession) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
-#[tokio::test]
-async fn reconciliation_with_tmux_unavailable_neither_spawns_nor_fails_the_task() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(dir.path().join("test.db")).await.unwrap();
+/// Everything one of these tests works on: an active goal with a task on it,
+/// an engineer already sitting in a pane, and the daemon that cannot ask
+/// tmux about any of it.
+struct World {
+    store: Store,
+    launcher: Arc<Launcher>,
+    task: ariadne_store::Task,
+    engineer: String,
+    session: AgentSession,
+    goal: String,
+    _bus: ariadne_daemon::bus::EventBus,
+}
+
+/// The state both tests start from, up to but not including the transitions
+/// each of them wants the task in.
+async fn world(dir: &Path) -> World {
+    let store = Store::open(dir.join("test.db")).await.unwrap();
     let bus = ariadne_daemon::bus::start(store.clone());
-    let cfg = Arc::new(Config::load(Some(dir.path().join("home"))).unwrap());
+    let cfg = Arc::new(Config::load(Some(dir.join("home"))).unwrap());
     let launcher = Arc::new(Launcher {
         cfg,
         store: store.clone(),
-        tmux: unrunnable_tmux(dir.path()),
+        tmux: unrunnable_tmux(dir),
         git: GitManager,
     });
 
@@ -121,7 +134,7 @@ async fn reconciliation_with_tmux_unavailable_neither_spawns_nor_fails_the_task(
 
     let repo = store
         .create_repository(NewRepository {
-            path: dir.path().join("repo").display().to_string(),
+            path: dir.join("repo").display().to_string(),
             base_branch: "main".into(),
             description: None,
         })
@@ -163,7 +176,7 @@ async fn reconciliation_with_tmux_unavailable_neither_spawns_nor_fails_the_task(
             goal_id: goal.id.clone(),
             task_id: Some(task.id.clone()),
             role: Role::Engineer,
-            profile_id: engineer,
+            profile_id: engineer.clone(),
             agent_kind: AgentKind::ClaudeCode,
             model: None,
             tmux_session: session_name(&goal.id, Some(&task.id), "engineer", None),
@@ -172,6 +185,27 @@ async fn reconciliation_with_tmux_unavailable_neither_spawns_nor_fails_the_task(
         })
         .await
         .unwrap();
+    World {
+        store,
+        launcher,
+        task,
+        engineer,
+        session,
+        goal: goal.id,
+        _bus: bus,
+    }
+}
+
+#[tokio::test]
+async fn reconciliation_with_tmux_unavailable_neither_spawns_nor_fails_the_task() {
+    let dir = tempfile::tempdir().unwrap();
+    let World {
+        store,
+        launcher,
+        task,
+        session,
+        ..
+    } = world(dir.path()).await;
     store
         .transition_task(&task.id, TaskStatus::Ready, Actor::Daemon, None, None)
         .await
@@ -187,7 +221,6 @@ async fn reconciliation_with_tmux_unavailable_neither_spawns_nor_fails_the_task(
             .unwrap();
         tokio::time::sleep(Duration::from_millis(120)).await;
     }
-    drop(bus);
 
     let sessions = store
         .list_sessions(SessionFilter {
@@ -224,94 +257,22 @@ async fn reconciliation_with_tmux_unavailable_neither_spawns_nor_fails_the_task(
 #[tokio::test]
 async fn a_message_for_an_unreachable_pane_waits_rather_than_relaunching_its_agent() {
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(dir.path().join("test.db")).await.unwrap();
-    let bus = ariadne_daemon::bus::start(store.clone());
-    let cfg = Arc::new(Config::load(Some(dir.path().join("home"))).unwrap());
-    let launcher = Arc::new(Launcher {
-        cfg,
-        store: store.clone(),
-        tmux: unrunnable_tmux(dir.path()),
-        git: GitManager,
-    });
-
-    let profile = |name: &str, role: Role| {
-        let store = store.clone();
-        let name = name.to_string();
-        async move {
-            store
-                .create_profile(NewProfile {
-                    name,
-                    role,
-                    agent_kind: Some(AgentKind::ClaudeCode),
-                    model: None,
-                    system_prompt: "You work.".into(),
-                    prompts: vec![],
-                })
-                .await
-                .unwrap()
-                .id
-        }
-    };
-    let planner = profile("planner", Role::Planner).await;
-    let engineer = profile("engineer", Role::Engineer).await;
-    let reviewer = profile("reviewer", Role::Reviewer).await;
-
-    let repo = store
-        .create_repository(NewRepository {
-            path: dir.path().join("repo").display().to_string(),
-            base_branch: "main".into(),
-            description: None,
-        })
-        .await
-        .unwrap();
-    let goal = store
-        .create_goal(NewGoal {
-            title: "Ship the UI".into(),
-            description: "desc".into(),
-            planner_profile_id: planner,
-            max_tasks: None,
-            required_approvals: 1,
-            repository_ids: vec![repo.id.clone()],
-        })
-        .await
-        .unwrap();
-    store
-        .set_goal_status(&goal.id, GoalStatus::Active)
-        .await
-        .unwrap();
-    let task = store
-        .create_task(NewTask {
-            goal_id: goal.id.clone(),
-            repo_id: repo.id,
-            title: "task".into(),
-            description: "do things".into(),
-            engineer_profile_id: engineer.clone(),
-            integrator_profile_id: ariadne_store::defaults::INTEGRATOR_ID.into(),
-            reviewer_profile_ids: vec![reviewer],
-            depends_on: vec![],
-        })
-        .await
-        .unwrap();
-    let session = store
-        .create_session(NewSession {
-            goal_id: goal.id.clone(),
-            task_id: Some(task.id.clone()),
-            role: Role::Engineer,
-            profile_id: engineer.clone(),
-            agent_kind: AgentKind::ClaudeCode,
-            model: None,
-            tmux_session: session_name(&goal.id, Some(&task.id), "engineer", None),
-            worktree_path: None,
-            review_round: None,
-        })
-        .await
-        .unwrap();
+    let World {
+        store,
+        launcher,
+        task,
+        engineer,
+        session,
+        goal,
+        ..
+    } = world(dir.path()).await;
     for status in [TaskStatus::Ready, TaskStatus::InProgress] {
         store
             .transition_task(&task.id, status, Actor::Daemon, None, None)
             .await
             .unwrap();
     }
+
     // The scheduler first, and its opening reconciliation with it: what this
     // test counts is the passes made at one message, and a tick that came
     // round before the message existed makes none.
@@ -320,7 +281,7 @@ async fn a_message_for_an_unreachable_pane_waits_rather_than_relaunching_its_age
 
     let message = store
         .create_message(NewMessage {
-            goal_id: goal.id.clone(),
+            goal_id: goal,
             task_id: Some(task.id.clone()),
             author_role: AuthorRole::User,
             author_session_id: None,
@@ -371,7 +332,10 @@ async fn a_message_for_an_unreachable_pane_waits_rather_than_relaunching_its_age
         "and the user is not told about a message that still has passes left"
     );
 
-    // tmux comes back, and with it the pane it could not answer for.
+    // tmux comes back, and with it the pane it could not answer for. The
+    // reconciliation tick would offer the message again on its own; the test
+    // asks for the same passes rather than waiting a quarter of a minute for
+    // each of them.
     tmux_comes_back(dir.path());
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     loop {
@@ -396,5 +360,4 @@ async fn a_message_for_an_unreachable_pane_waits_rather_than_relaunching_its_age
         None,
         "a message that got there in the end raises nothing"
     );
-    drop(bus);
 }
