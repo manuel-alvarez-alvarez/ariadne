@@ -1684,7 +1684,10 @@ mod tests {
             "{review}"
         );
         assert!(review.contains("2 new comments"), "{review}");
-        assert!(review.contains("### maria commented\n> why a new module?"), "{review}");
+        assert!(
+            review.contains("### maria commented\n> why a new module?"),
+            "{review}"
+        );
         assert!(
             review.contains("### jon requested changes on src/board.rs:42"),
             "{review}"

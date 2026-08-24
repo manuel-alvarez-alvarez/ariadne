@@ -1,18 +1,17 @@
-//! The GitLab integrator's lifecycle: publish, watch, relay, finish.
+//! The GitLab integrator's lifecycle: publish, watch, send back, finish.
 //!
 //! `github_integrator`'s twin on the other forge, and deliberately the same
 //! test: the task branch becomes a merge request, the daemon watches it while
 //! humans review it, and what they do to it decides what happens next — an
-//! approval announced to the user once, a discussion note relayed to the
+//! approval announced to the user once, a discussion note written back to the
 //! engineer once, and the merge finished off the base branch.
 //!
 //! No tmux, no agent CLI and no GitLab: `glab` is a stub script that prints
 //! the merge request, the approvals and the discussions a test wants it to
 //! see, and records what it was asked. `gh` is stubbed beside it and is
 //! expected never to run — which forge a task is watched on is the recorded
-//! URL's to say. The "integrator" doing the recording, the sending back and
-//! the merging is the test itself, calling the endpoints its briefing tells
-//! the agent to call.
+//! URL's to say. The "integrator" doing the recording and the merging is the
+//! test itself, calling the endpoints its briefing tells the agent to call.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -729,8 +728,9 @@ async fn a_merge_request_is_watched_from_publication_to_its_merge() {
 }
 
 /// What humans write on the merge request reaches the engineer exactly once,
-/// as a round of requested changes — and the revision goes back to the same
-/// merge request rather than to a second one.
+/// as a round of requested changes the daemon writes itself — no integrator
+/// woken to copy it across — and the revision goes back to the same merge
+/// request rather than to a second one.
 #[tokio::test]
 async fn discussion_notes_reach_the_engineer_once_each() {
     let h = harness().await;
@@ -738,6 +738,16 @@ async fn discussion_notes_reach_the_engineer_once_each() {
     let integrator = h.hand_to_the_integrator(&task, &reviewer).await;
     h.publish(&task, &integrator.id).await;
     h.goes_idle(&integrator.id).await;
+    // When it was last launched, and the round the merge request was
+    // published from: the notes belong on that round, and they wake nobody
+    // here.
+    let integrator_launched_at = h
+        .store
+        .get_session(&integrator.id)
+        .await
+        .unwrap()
+        .launched_at;
+    let round = h.store.get_task(&task.id).await.unwrap().review_round;
 
     h.merge_request(open_merge_request());
     // Two pages of discussions, which is the shape `glab api --paginate`
@@ -749,43 +759,111 @@ async fn discussion_notes_reach_the_engineer_once_each() {
              "system":false,"resolvable":false,"resolved":false}]},
            {"id":"d2","notes":[{"id":102,"author":{"username":"jon"},"body":"this allocates per row",
              "system":false,"resolvable":true,"resolved":false,
-             "position":{"new_path":"src/board.rs","old_path":"src/board.rs"}}]}]
+             "position":{"new_path":"src/board.rs","old_path":"src/board.rs","new_line":42}}]}]
         [{"id":"d3","notes":[{"id":103,"author":{"username":"maria"},"body":"and this name is wrong",
              "system":false,"resolvable":true,"resolved":false,
-             "position":{"new_path":"src/lane.rs","old_path":"src/lane.rs"}}]},
+             "position":{"new_path":"src/lane.rs","old_path":"src/lane.rs","new_line":7}}]},
          {"id":"d4","notes":[{"id":104,"author":{"username":"maria"},"body":"approved this merge request",
              "system":true,"resolvable":false,"resolved":false}]}]"#,
     );
     h.notify(&task.id);
 
-    eventually("the integrator to be woken with the notes", async || {
-        h.launched_argv(&integrator.id)
-            .contains("why a new module?")
+    // One poll is the whole relay: the engineer is resumed on it, and the
+    // task passed through changes_requested to get there.
+    eventually("the engineer to be resumed with the notes", async || {
+        h.status(&task.id).await == TaskStatus::InProgress
+            && h.live_session(&task.id, Role::Engineer).await.is_some()
     })
     .await;
-    let argv = h.launched_argv(&integrator.id);
-    assert!(
-        argv.contains("Merge request !3 has 3 new comments"),
-        "{argv}"
-    );
-    assert!(argv.contains("maria commented"), "{argv}");
-    assert!(argv.contains("jon requested changes"), "{argv}");
-    // The notes on the diff, both pages of them, each carrying the file it
-    // hangs on.
-    assert!(
-        argv.contains("src/board.rs: this allocates per row"),
-        "{argv}"
-    );
-    assert!(
-        argv.contains("src/lane.rs: and this name is wrong"),
-        "{argv}"
-    );
+    let engineer = h.live_session(&task.id, Role::Engineer).await.unwrap();
+    let argv = h.launched_argv(&engineer.id);
+    for quoted in [
+        MR_URL,
+        "Merge request !3",
+        "3 new comments",
+        "### maria commented",
+        "> why a new module?",
+        // The notes on the diff, both pages of them, each naming the file and
+        // line it hangs on.
+        "### jon requested changes on src/board.rs:42",
+        "> this allocates per row",
+        "### maria requested changes on src/lane.rs:7",
+        "> and this name is wrong",
+        "request_review",
+    ] {
+        assert!(
+            argv.contains(quoted),
+            "the briefing has no {quoted}: {argv}"
+        );
+    }
     assert!(
         !argv.contains("approved this merge request"),
         "GitLab's own note is not a reviewer's: {argv}"
     );
-    assert!(argv.contains("return_to_engineer"), "{argv}");
-    assert!(argv.contains("glab mr view"), "{argv}");
+
+    // The daemon took the task off its integrator itself, saying why.
+    let sent_back_by_the_daemon = h
+        .store
+        .list_task_transitions(&task.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|t| t.to_status == "changes_requested")
+        .expect("the task went back to its engineer");
+    assert_eq!(sent_back_by_the_daemon.from_status, "integrating");
+    assert_eq!(sent_back_by_the_daemon.actor, "daemon");
+    assert_eq!(
+        sent_back_by_the_daemon.reason.as_deref(),
+        Some("Merge request !3 was commented on")
+    );
+
+    // Written as a round of requested changes on the round the merge request
+    // was published from, by no session: the daemon wrote it, not an agent.
+    let sent_back: Vec<_> = h
+        .store
+        .list_reviews(&task.id, Some(round))
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.verdict() == ReviewVerdict::RequestChanges)
+        .collect();
+    assert_eq!(sent_back.len(), 1, "one send-back for one poll");
+    assert_eq!(sent_back[0].session_id, None);
+    let body = sent_back[0].body.clone().unwrap();
+    for quoted in [
+        MR_URL,
+        "why a new module?",
+        "this allocates per row",
+        "and this name is wrong",
+    ] {
+        assert!(
+            body.contains(quoted),
+            "the send-back has no {quoted}: {body}"
+        );
+    }
+
+    // And no integrator was woken for any of it.
+    assert_eq!(
+        h.store
+            .get_session(&integrator.id)
+            .await
+            .unwrap()
+            .launched_at,
+        integrator_launched_at,
+        "the integrator was woken to relay the notes: {}",
+        h.launched_argv(&integrator.id)
+    );
+    assert_eq!(
+        h.sessions(&task.id, Role::Integrator).await.len(),
+        1,
+        "and no second one was started for them"
+    );
+    assert!(
+        !h.launched_argv(&integrator.id)
+            .contains("why a new module?"),
+        "the integrator was told what the humans wrote"
+    );
+
     assert_eq!(
         h.store
             .get_task(&task.id)
@@ -795,69 +873,6 @@ async fn discussion_notes_reach_the_engineer_once_each() {
         vec!["N101".to_string(), "N102".into(), "N103".into()],
         "every one of them is remembered as relayed, whichever page it came on"
     );
-
-    // Polled again, the same notes wake nobody a second time. The launch is
-    // dated after the spawn plan is written, so the relaunch this watches for
-    // is only settled once the session says it is running again.
-    eventually("the relay launch to be finished", async || {
-        h.store.get_session(&integrator.id).await.unwrap().status() == SessionStatus::Running
-    })
-    .await;
-    let launched_at = h
-        .store
-        .get_session(&integrator.id)
-        .await
-        .unwrap()
-        .launched_at;
-    h.goes_idle(&integrator.id).await;
-    for _ in 0..3 {
-        h.notify(&task.id);
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    assert_eq!(
-        h.store
-            .get_session(&integrator.id)
-            .await
-            .unwrap()
-            .launched_at,
-        launched_at,
-        "the integrator was relaunched for notes it had already relayed: {}",
-        h.launched_argv(&integrator.id)
-    );
-
-    // The integrator relays them, as its briefing says: the engineer reads a
-    // round of requested changes and the task is its own again.
-    let sent_back: TaskDto = h
-        .json(
-            as_session(
-                &format!("/v1/tasks/{}/return-to-engineer", task.id),
-                &integrator.id,
-                serde_json::json!({
-                    "summary": "Merge request !3 was commented on.",
-                    "changes": [
-                        "maria: why a new module?",
-                        "jon (src/board.rs): this allocates per row",
-                    ],
-                }),
-            ),
-            StatusCode::OK,
-        )
-        .await;
-    assert_eq!(sent_back.status, TaskStatus::ChangesRequested);
-    assert_eq!(
-        sent_back.pr_url.as_deref(),
-        Some(MR_URL),
-        "the merge request survives the round trip: the revision goes back to it"
-    );
-
-    eventually("the engineer to be resumed with the notes", async || {
-        h.status(&task.id).await == TaskStatus::InProgress
-            && h.live_session(&task.id, Role::Engineer).await.is_some()
-    })
-    .await;
-    let engineer = h.live_session(&task.id, Role::Engineer).await.unwrap();
-    let argv = h.launched_argv(&engineer.id);
-    assert!(argv.contains("why a new module?"), "{argv}");
 
     // Revised and approved again, the integrator gets the task back with the
     // resume briefing that tells it to merge the base into the branch and
@@ -899,33 +914,38 @@ async fn discussion_notes_reach_the_engineer_once_each() {
         "the same integrator session throughout"
     );
 
-    // The notes already relayed stay relayed across the round trip: the
-    // engineer is not sent back a second time for the same three. As above,
-    // the relaunch is only settled once the session says it is running again.
+    // Polled again, on the same notes, nothing is relayed a second time: the
+    // ids are remembered, so the poll reads a quiet merge request.
     eventually("the resume launch to be finished", async || {
         h.store.get_session(&integrator.id).await.unwrap().status() == SessionStatus::Running
     })
     .await;
     h.goes_idle(&integrator.id).await;
-    let launched_at = h
-        .store
-        .get_session(&integrator.id)
-        .await
-        .unwrap()
-        .launched_at;
+    let engineer_launched_at = h.store.get_session(&engineer.id).await.unwrap().launched_at;
+    let polls = h.glab_log().matches("mr view").count();
     for _ in 0..3 {
         h.notify(&task.id);
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    assert_eq!(
+    assert!(
+        h.glab_log().matches("mr view").count() > polls,
+        "the merge request was never polled again"
+    );
+    let round = h.store.get_task(&task.id).await.unwrap().review_round;
+    assert!(
         h.store
-            .get_session(&integrator.id)
+            .list_reviews(&task.id, Some(round))
             .await
             .unwrap()
-            .launched_at,
-        launched_at,
-        "the same notes came round again after the revision: {}",
-        h.launched_argv(&integrator.id)
+            .iter()
+            .all(|r| r.verdict() == ReviewVerdict::Approve),
+        "the notes were sent back a second time"
+    );
+    assert_eq!(h.status(&task.id).await, TaskStatus::Integrating);
+    assert_eq!(
+        h.store.get_session(&engineer.id).await.unwrap().launched_at,
+        engineer_launched_at,
+        "the engineer was resumed for notes it had already been given"
     );
 }
 

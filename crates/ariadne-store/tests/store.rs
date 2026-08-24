@@ -3835,7 +3835,6 @@ async fn a_pre_0018_database_moves_onto_the_rewritten_integrator_procedure() {
     }
 }
 
-
 /// The integrator's three texts as migration 0018 wrote them: what an install
 /// on the previous release holds on an integrator it never edited, and the
 /// only text migration 0019 rewrites.
