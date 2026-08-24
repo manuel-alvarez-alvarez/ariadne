@@ -155,6 +155,11 @@ pub struct Feedback {
     pub id: String,
     pub author: String,
     pub body: String,
+    /// Where on the diff it hangs — `src/board.rs:42`, or the file alone
+    /// where the forge names no line. `None` for a comment written on the
+    /// conversation rather than on the code, which is the difference the
+    /// engineer reads it by.
+    pub file: Option<String>,
     /// Whether it came with a verdict that blocks the merge: a
     /// `CHANGES_REQUESTED` review on GitHub, an unresolved thread on GitLab.
     pub blocking: bool,
@@ -215,6 +220,18 @@ pub fn unrelayed(all: impl IntoIterator<Item = Feedback>, relayed: &[String]) ->
 pub fn author_or_someone(name: Option<&str>) -> String {
     name.filter(|n| !n.is_empty())
         .map_or_else(|| "someone".to_string(), str::to_string)
+}
+
+/// Where a comment on the diff hangs, as [`Feedback::file`] carries it:
+/// `src/board.rs:42`, or the file alone where the forge gave no line — a
+/// comment whose lines have moved out from under it still names the file the
+/// engineer has to open.
+pub fn location(path: Option<&str>, line: Option<i64>) -> Option<String> {
+    let path = path.map(str::trim).filter(|p| !p.is_empty())?;
+    Some(match line.filter(|l| *l > 0) {
+        Some(line) => format!("{path}:{line}"),
+        None => path.to_string(),
+    })
 }
 
 /// Everything a `--paginate` wrote, however the CLI chose to write it.
@@ -393,6 +410,7 @@ mod tests {
                 id: "C1".into(),
                 author: "maria".into(),
                 body: "why?".into(),
+                file: None,
                 blocking: false,
             }]
         };
@@ -415,18 +433,21 @@ mod tests {
                 id: "C1".into(),
                 author: "maria".into(),
                 body: "why?".into(),
+                file: None,
                 blocking: false,
             },
             Feedback {
                 id: "C2".into(),
                 author: "jon".into(),
                 body: "   ".into(),
+                file: None,
                 blocking: true,
             },
             Feedback {
                 id: String::new(),
                 author: "nobody".into(),
                 body: "unidentified".into(),
+                file: None,
                 blocking: false,
             },
         ];

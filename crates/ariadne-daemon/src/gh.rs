@@ -138,20 +138,22 @@ pub struct ReviewComment {
     /// The file it hangs on, when it still hangs on one.
     #[serde(default)]
     pub path: Option<String>,
+    /// The line of that file it hangs on, in the version being reviewed —
+    /// absent on a comment whose lines the diff has since moved out from
+    /// under.
+    #[serde(default)]
+    pub line: Option<i64>,
 }
 
 impl ReviewComment {
-    /// As one piece of feedback: the file it is about belongs with what it
-    /// says, since that is what the engineer needs to find it.
+    /// As one piece of feedback: the file and line it is about travel beside
+    /// what it says, since that is what the engineer needs to find it.
     fn as_feedback(&self) -> Feedback {
-        let body = match self.path.as_deref() {
-            Some(path) if !path.is_empty() => format!("{path}: {}", self.body.trim()),
-            _ => self.body.trim().to_string(),
-        };
         Feedback {
             id: format!("RC{}", self.id),
             author: login(&self.user),
-            body,
+            body: self.body.trim().to_string(),
+            file: forge::location(self.path.as_deref(), self.line),
             blocking: false,
         }
     }
@@ -191,6 +193,7 @@ fn feedback(pr: &PullRequest, review_comments: &[ReviewComment]) -> Vec<Feedback
         id: c.id.clone(),
         author: login(&c.author),
         body: c.body.clone(),
+        file: None,
         blocking: false,
     });
     let inline = review_comments.iter().map(ReviewComment::as_feedback);
@@ -202,6 +205,7 @@ fn feedback(pr: &PullRequest, review_comments: &[ReviewComment]) -> Vec<Feedback
             id: r.id.clone(),
             author: login(&r.author),
             body: r.body.clone(),
+            file: None,
             blocking: r.state.eq_ignore_ascii_case("CHANGES_REQUESTED"),
         });
     comments.chain(inline).chain(reviews).collect()
@@ -354,12 +358,14 @@ mod tests {
                     id: "C1".into(),
                     author: "maria".into(),
                     body: "why a new module?".into(),
+                    file: None,
                     blocking: false,
                 },
                 Feedback {
                     id: "R1".into(),
                     author: "jon".into(),
                     body: "split this up".into(),
+                    file: None,
                     blocking: true,
                 },
             ]
@@ -457,7 +463,8 @@ mod tests {
             vec![Feedback {
                 id: "RC2318".into(),
                 author: "jon".into(),
-                body: "src/board.rs: this allocates per row".into(),
+                body: "this allocates per row".into(),
+                file: Some("src/board.rs:42".into()),
                 blocking: false,
             }]
         );
