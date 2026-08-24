@@ -549,10 +549,10 @@ mod tests {
             };
             integrator
         };
-        assert_eq!(integrator(&[]), "Local Integrator");
+        assert_eq!(integrator(&[]), "Integrator");
         assert_eq!(
-            integrator(&["--integrator", "GitHub Integrator"]),
-            "GitHub Integrator"
+            integrator(&["--integrator", "My Integrator"]),
+            "My Integrator"
         );
     }
 

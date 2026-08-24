@@ -4,10 +4,7 @@ use ariadne_core::{
     Actor, AgentKind, AttentionReason, AuthorRole, GoalStatus, PromptKind, ReviewVerdict, Role,
     SessionStatus, TaskStatus,
 };
-use ariadne_store::defaults::{
-    LOCAL_INTEGRATOR_ID, default_prompt, default_prompt_for, default_system_prompt,
-    default_system_prompt_for,
-};
+use ariadne_store::defaults::{INTEGRATOR_ID, default_prompt, default_system_prompt};
 use ariadne_store::*;
 
 async fn test_store() -> (Store, tempfile::TempDir) {
@@ -79,7 +76,7 @@ async fn seed_task(store: &Store, goal: &Goal, repo: &Repository, deps: Vec<Stri
             title: "task".into(),
             description: "do things".into(),
             engineer_profile_id: eng.id,
-            integrator_profile_id: LOCAL_INTEGRATOR_ID.into(),
+            integrator_profile_id: INTEGRATOR_ID.into(),
             reviewer_profile_ids: vec![rev.id],
             depends_on: deps,
         })
@@ -375,7 +372,7 @@ async fn a_goal_needs_repositories_that_exist() {
                 title: "task".into(),
                 description: "do things".into(),
                 engineer_profile_id: eng.id,
-                integrator_profile_id: LOCAL_INTEGRATOR_ID.into(),
+                integrator_profile_id: INTEGRATOR_ID.into(),
                 reviewer_profile_ids: vec![rev.id],
                 depends_on: vec![],
             })
@@ -535,7 +532,7 @@ async fn max_tasks_is_enforced() {
             title: "too many".into(),
             description: "".into(),
             engineer_profile_id: eng.id,
-            integrator_profile_id: LOCAL_INTEGRATOR_ID.into(),
+            integrator_profile_id: INTEGRATOR_ID.into(),
             reviewer_profile_ids: vec![rev.id],
             depends_on: vec![],
         })
@@ -1410,7 +1407,7 @@ async fn a_fresh_database_is_seeded_with_the_built_in_profiles_and_their_prompts
         ("Planner", Role::Planner),
         ("Engineer", Role::Engineer),
         ("Reviewer", Role::Reviewer),
-        ("Local Integrator", Role::Integrator),
+        ("Integrator", Role::Integrator),
     ] {
         let p = store.get_profile_by_name(name).await.unwrap();
         assert_eq!(p.role(), role);
@@ -1446,7 +1443,7 @@ async fn a_fresh_database_is_seeded_with_the_built_in_profiles_and_their_prompts
             .contains("install the project's dependencies"),
         "reviewers are told to install dependencies and verify"
     );
-    let integrator = store.get_profile_by_name("Local Integrator").await.unwrap();
+    let integrator = store.get_profile_by_name("Integrator").await.unwrap();
     assert_eq!(integrator.id, "00000000000000000000000004");
 
     // User edits stick.
@@ -1635,7 +1632,7 @@ async fn a_template_naming_a_placeholder_its_kind_cannot_fill_in_is_refused() {
 
     // What renders as itself still saves: literal braces, JSON, no
     // placeholders at all.
-    let integrator = store.get_profile_by_name("Local Integrator").await.unwrap();
+    let integrator = store.get_profile_by_name("Integrator").await.unwrap();
     for content in [
         "Land {branch} on {base_branch}, then answer {\"merged\": true}.",
         "Do it yourself.",
@@ -1935,7 +1932,7 @@ async fn creation_pins_the_agent_and_model_of_every_profile() {
             title: "task".into(),
             description: "do things".into(),
             engineer_profile_id: engineer.id.clone(),
-            integrator_profile_id: LOCAL_INTEGRATOR_ID.into(),
+            integrator_profile_id: INTEGRATOR_ID.into(),
             reviewer_profile_ids: vec![reviewer.id.clone()],
             depends_on: vec![],
         })
@@ -2008,7 +2005,7 @@ async fn auto_and_default_are_pinned_as_such() {
             title: "task".into(),
             description: "do things".into(),
             engineer_profile_id: engineer.id.clone(),
-            integrator_profile_id: LOCAL_INTEGRATOR_ID.into(),
+            integrator_profile_id: INTEGRATOR_ID.into(),
             reviewer_profile_ids: vec![reviewer.id.clone()],
             depends_on: vec![],
         })
@@ -2077,7 +2074,7 @@ async fn reassigned_reviewers_pin_the_profile_they_are_assigned_from() {
             title: "task".into(),
             description: "do things".into(),
             engineer_profile_id: engineer.id.clone(),
-            integrator_profile_id: LOCAL_INTEGRATOR_ID.into(),
+            integrator_profile_id: INTEGRATOR_ID.into(),
             reviewer_profile_ids: vec![first.id.clone()],
             depends_on: vec![],
         })
@@ -2354,8 +2351,8 @@ async fn a_pre_integrator_database_renames_merging_and_gains_the_builtin() {
     let task = store.get_task("legacytask").await.unwrap();
     assert_eq!(task.status(), TaskStatus::Integrating);
     assert_eq!(
-        task.integrator_profile_id, LOCAL_INTEGRATOR_ID,
-        "a task created before the column is backfilled with the Local Integrator"
+        task.integrator_profile_id, INTEGRATOR_ID,
+        "a task created before the column is backfilled with the Integrator"
     );
     let transitions = store.list_task_transitions("legacytask").await.unwrap();
     assert_eq!(transitions.len(), 1);
@@ -2363,36 +2360,28 @@ async fn a_pre_integrator_database_renames_merging_and_gains_the_builtin() {
 
     // The built-in the seeding path could not reach, because this database
     // already had profiles of its own.
-    let integrator = store.get_profile_by_name("Local Integrator").await.unwrap();
-    assert_eq!(integrator.id, LOCAL_INTEGRATOR_ID);
+    let integrator = store.get_profile_by_name("Integrator").await.unwrap();
+    assert_eq!(integrator.id, INTEGRATOR_ID);
     assert_eq!(integrator.role(), Role::Integrator);
     assert_eq!(
         integrator.system_prompt,
         default_system_prompt(Role::Integrator),
         "the seeded prompt is the default a reset would put back"
     );
-    // And beside it the two forge ones migrations 0013 and 0014 add, with the
-    // whole publish-and-watch workflow in the prompts they start from.
-    for name in ["GitHub Integrator", "GitLab Integrator"] {
-        let forge = store.get_profile_by_name(name).await.unwrap();
-        assert_eq!(forge.role(), Role::Integrator);
+    // With the whole of both forge playbooks in the briefings migrations 0013
+    // to 0016 left it with, and nothing beside it: the two forge built-ins
+    // 0013 and 0014 added were merged back into this one by 0016.
+    for kind in PromptKind::for_role(Role::Integrator) {
         assert_eq!(
-            forge.system_prompt,
-            default_system_prompt_for(&forge.id, Role::Integrator),
-            "the migration seeded exactly the prompt a reset would put back"
+            store
+                .get_profile_prompt(&integrator.id, *kind)
+                .await
+                .unwrap()
+                .content,
+            default_prompt(Role::Integrator, *kind).unwrap(),
+            "the {} briefing the migrations wrote",
+            kind.as_str()
         );
-        for kind in PromptKind::for_role(Role::Integrator) {
-            assert_eq!(
-                store
-                    .get_profile_prompt(&forge.id, *kind)
-                    .await
-                    .unwrap()
-                    .content,
-                default_prompt_for(&forge.id, Role::Integrator, *kind).unwrap(),
-                "the {} briefing the migration wrote for {name}",
-                kind.as_str()
-            );
-        }
     }
     assert_eq!(
         store
@@ -2400,7 +2389,7 @@ async fn a_pre_integrator_database_renames_merging_and_gains_the_builtin() {
             .await
             .unwrap()
             .len(),
-        3
+        1
     );
 
     // The rebuilds kept what hung off the tables they replaced...
@@ -2475,68 +2464,92 @@ async fn a_pre_integrator_database_renames_merging_and_gains_the_builtin() {
     ));
 }
 
-/// Two built-in integrators, one role, and a whole playbook between them: the
-/// GitHub one is seeded with prompts of its own, and putting one back to
-/// "the default" gives it the GitHub default rather than the local one.
+/// One built-in integrator, and every way of landing a task in the prompts it
+/// is seeded with: the pull request, the merge request and the local fallback
+/// are one playbook now, and a reset puts that whole playbook back.
 #[tokio::test]
-async fn the_github_integrator_is_seeded_with_the_prompts_of_its_own() {
+async fn the_integrator_is_seeded_with_all_three_ways_of_landing_a_task() {
     let (store, _dir) = test_store().await;
 
-    let local = store.get_profile_by_name("Local Integrator").await.unwrap();
-    let github = store
-        .get_profile_by_name("GitHub Integrator")
-        .await
-        .unwrap();
-    assert_eq!(github.role(), Role::Integrator);
-    assert_ne!(github.system_prompt, local.system_prompt);
-    assert!(
-        github.system_prompt.contains("pull request"),
-        "the GitHub playbook publishes rather than lands"
-    );
-    // The local one is what the CLI and the web form default to.
-    assert_eq!(store.builtin_integrator().await.unwrap().id, local.id);
-
-    let instructions = store
-        .get_profile_prompt(&github.id, PromptKind::IntegrationInstructions)
-        .await
-        .unwrap();
-    assert!(
-        instructions.content.contains("gh pr create"),
-        "{}",
-        instructions.content
+    let integrator = store.get_profile_by_name("Integrator").await.unwrap();
+    assert_eq!(integrator.id, INTEGRATOR_ID);
+    assert_eq!(integrator.role(), Role::Integrator);
+    assert_eq!(
+        (integrator.agent_kind(), integrator.model.as_deref()),
+        (None, None),
+        "on the auto-resolved agent CLI, like every other built-in"
     );
     assert_eq!(
-        instructions.content,
-        default_prompt_for(
-            &github.id,
-            Role::Integrator,
-            PromptKind::IntegrationInstructions
-        )
-        .unwrap()
+        store
+            .list_profiles(Some(Role::Integrator))
+            .await
+            .unwrap()
+            .len(),
+        1,
+        "the three built-in integrators are one"
     );
-    assert_ne!(
+    // And the whole seeding is four profiles, one per role.
+    assert_eq!(store.list_profiles(None).await.unwrap().len(), 4);
+    for both in ["pull request", "merge request"] {
+        assert!(
+            integrator.system_prompt.contains(both),
+            "the playbook does not name the {both}"
+        );
+    }
+
+    // The whole of the workflow the task asks it to carry, in the briefing it
+    // is started with.
+    let instructions = store
+        .get_profile_prompt(&integrator.id, PromptKind::IntegrationInstructions)
+        .await
+        .unwrap();
+    for step in [
+        "gh auth status",
+        "gh pr create",
+        ".github/PULL_REQUEST_TEMPLATE.md",
+        "glab auth status",
+        "glab mr create",
+        ".gitlab/merge_request_templates/",
+        "land the task locally instead",
+        "git rebase {base_branch}",
+        "git push -u <remote> {branch}",
+        "git reset --soft {base_branch}",
+        "merge --ff-only {branch}",
+        "return_to_engineer",
+        "record_pull_request",
+        "mark_merged",
+    ] {
+        assert!(
+            instructions.content.contains(step),
+            "the integrator briefing has no {step}: {}",
+            instructions.content
+        );
+    }
+    assert_eq!(
         instructions.content,
         default_prompt(Role::Integrator, PromptKind::IntegrationInstructions).unwrap(),
-        "and not the local integrator's, which the role default still is"
+        "the role default is what it was seeded with"
     );
 
-    // Edited and reset, it comes back to the prompt it was seeded with.
+    // Edited and reset, both of them come back to what they were seeded with.
     store
         .update_profile_prompt(
-            &github.id,
+            &integrator.id,
             PromptKind::IntegrationResume,
             "Do it however you like.",
         )
         .await
         .unwrap();
     let reset = store
-        .reset_profile_prompt(&github.id, PromptKind::IntegrationResume)
+        .reset_profile_prompt(&integrator.id, PromptKind::IntegrationResume)
         .await
         .unwrap();
-    assert!(reset.content.contains("force-push"), "{}", reset.content);
+    for listing in ["gh pr list --head", "glab mr list --source-branch"] {
+        assert!(reset.content.contains(listing), "{}", reset.content);
+    }
     store
         .update_profile(
-            &github.id,
+            &integrator.id,
             ProfileUpdate {
                 system_prompt: Some("You are whatever.".into()),
                 ..Default::default()
@@ -2546,15 +2559,18 @@ async fn the_github_integrator_is_seeded_with_the_prompts_of_its_own() {
         .unwrap();
     assert_eq!(
         store
-            .reset_system_prompt(&github.id)
+            .reset_system_prompt(&integrator.id)
             .await
             .unwrap()
             .system_prompt,
-        default_system_prompt_for(&github.id, Role::Integrator)
+        default_system_prompt(Role::Integrator)
     );
 
-    // A profile someone creates for themselves still starts from its role's
-    // defaults: the GitHub set belongs to that one built-in.
+    // And it is what a task that names no integrator of its own is landed by.
+    assert_eq!(store.builtin_integrator().await.unwrap().id, integrator.id);
+
+    // A profile someone creates for themselves starts from the same role
+    // defaults: there is no per-built-in set any more.
     let mine = seed_profile(&store, "my integrator", Role::Integrator).await;
     assert_eq!(
         store
@@ -2566,108 +2582,535 @@ async fn the_github_integrator_is_seeded_with_the_prompts_of_its_own() {
     );
 }
 
-/// And the third of them, on the other forge: the same publish-and-watch
-/// playbook driven by `glab` rather than by `gh`, seeded into a fresh
-/// database with prompts of its own.
+/// The Local Integrator's system prompt as migration 0015 left it: what an
+/// install on the previous release holds on `…04`, and the only text migration
+/// 0016 rewrites there.
+const PREVIOUS_INTEGRATOR_SYSTEM_PROMPT: &str = r##"You are the local integrator of an Ariadne task: you integrate tasks in repositories with no pull-request-capable remote, merging the change into the base branch locally with git alone. Once its reviewers have approved it, the task is yours to land. The engineer that wrote it is done with it, and you are the only agent touching the branch while you have it.
+
+Ariadne coordinates planner, engineer, reviewer and integrator agents over shared goals and tasks; you reach it only through the `ariadne` MCP tools: `post_message` to talk to the engineer, the reviewers, the planner and the user, `list_messages` to read the task's conversation. A message reaches one person in particular when you give `post_message` a `to` — a profile name as your briefing and `get_task` spell them, or "user" to ask the human — and that recipient is woken to read it; with no `to` it waits in the thread for whoever reads it next. Every operation named in backticks here or in your briefings — `get_diff`, `return_to_engineer`, `mark_merged` and the rest — is a tool on that MCP server: invoke it as an MCP tool call, never as a shell command or a message. Work autonomously: do not wait for a human unless a message asks you to. A human may attach to this terminal at any time and type follow-ups.
+
+You work in a git worktree of your own, checked out on the task branch; the briefing names the branch, its base, the repository and the worktree path. The change in it is the engineer's: land it as it stands and write no code of your own — a change that needs work goes back to the engineer instead. The primary checkout is yours to fast-forward, and for nothing else.
+
+1. Read the task, its acceptance criteria and its conversation, so the commit you write says what the change was for; `get_diff` shows what is being landed.
+2. Rebase the task branch onto the latest base in your worktree, exactly as the integration instructions you are briefed with say.
+3. If the rebase conflicts, do not resolve it: abort it and call the `return_to_engineer` MCP tool with a summary and a concrete list naming the conflicting files and what has to be reconciled. The task goes back to the engineer as a round of requested changes, and you are woken again once the reviewers have approved the revision.
+4. Otherwise squash the branch into one commit whose message follows the repository's commit conventions, fast-forward the base branch from the primary checkout, and call the `mark_merged` MCP tool with the real commit sha, which the daemon verifies itself. Report it truthfully.
+"##;
+
+/// Its integration instructions, as migration 0012 wrote them.
+const PREVIOUS_INTEGRATION_INSTRUCTIONS: &str = r##"# Integrate task: {task_title}
+
+{task_description}
+
+## Context
+- Goal: {goal_title}
+- Worktree (your cwd): {worktree_path}
+- Branch: {branch}
+- Base branch: {base_branch} (repo {repo_path})
+
+The reviewers approved this task. Land it on {base_branch}, keeping that branch's history linear — one commit per task, no merge commits:
+
+1. In your worktree, rebase onto the latest base: `git fetch . && git rebase {base_branch}`.
+2. If the rebase conflicts, do not resolve it yourself: `git rebase --abort`, then call `return_to_engineer` with a summary and a concrete list naming the conflicting files and what has to be reconciled. That ends your turn — the task goes back to the engineer, and you are woken again once the revision is approved.
+3. Squash the branch into a single commit on top of the base: `git reset --soft {base_branch} && git commit -m "<type(scope): summary>" -m "<what changed and why>"`. That squash commit is the only one landing on {base_branch}, so its message must:
+   - follow Conventional Commits: a `type(scope): summary` subject line derived from the task — the task title, "{task_title}", is not necessarily one already — and a body explaining what changed and why;
+   - carry no `Co-Authored-By`, `Generated with` or any other authorship or tool trailer;
+   - leave signing to the repository's git configuration: sign if git is configured to sign, do not pass `--no-gpg-sign` or otherwise disable it, and do not force `-S` either.
+4. Fast-forward the base branch from the primary checkout: `git -C {repo_path} merge --ff-only {branch}`. If it refuses because the base moved, go back to step 1.
+5. Call `mark_merged` with the resulting commit sha (`git -C {repo_path} rev-parse {base_branch}`)."##;
+
+/// An install that has both forge built-ins, with tasks, sessions and messages
+/// naming them: migration 0016 moves every one of those references onto the
+/// merged integrator and deletes the two, while an integrator profile the user
+/// created and a prompt the user edited on the merged one are left as they are.
 #[tokio::test]
-async fn the_gitlab_integrator_is_seeded_with_the_prompts_of_its_own() {
-    let (store, _dir) = test_store().await;
+async fn the_forge_integrators_are_merged_into_the_one_that_stays() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("forges.db");
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let pool = sqlx::SqlitePool::connect_with(options).await.unwrap();
 
-    let local = store.get_profile_by_name("Local Integrator").await.unwrap();
-    let github = store
-        .get_profile_by_name("GitHub Integrator")
-        .await
-        .unwrap();
-    let gitlab = store
-        .get_profile_by_name("GitLab Integrator")
-        .await
-        .unwrap();
-    assert_eq!(gitlab.id, "00000000000000000000000006");
-    assert_eq!(gitlab.role(), Role::Integrator);
-    assert_eq!(
-        (gitlab.agent_kind(), gitlab.model.as_deref()),
-        (None, None),
-        "on the auto-resolved agent CLI, like every other built-in"
-    );
-    assert_ne!(gitlab.system_prompt, local.system_prompt);
-    assert_ne!(gitlab.system_prompt, github.system_prompt);
-    assert!(
-        gitlab.system_prompt.contains("merge request"),
-        "the GitLab playbook publishes rather than lands"
-    );
-    // And the local one is still what a default assignment resolves to.
-    assert_eq!(store.builtin_integrator().await.unwrap().id, local.id);
+    // An install that already has profiles is the only one the forge built-ins
+    // ever reached: migrations 0013 and 0014 seed them where the table is not
+    // empty, so the profiles go in first and the rest of the upgrade follows.
+    const GITHUB: &str = "00000000000000000000000005";
+    const GITLAB: &str = "00000000000000000000000006";
+    let migrate_below = async |version: i64, pool: &sqlx::SqlitePool| {
+        let mut migrator = sqlx::migrate::Migrator::new(std::path::Path::new("./migrations"))
+            .await
+            .unwrap();
+        migrator.migrations = migrator
+            .migrations
+            .iter()
+            .filter(|m| m.version < version)
+            .cloned()
+            .collect::<Vec<_>>()
+            .into();
+        migrator.run(pool).await.unwrap();
+    };
+    migrate_below(13, &pool).await;
 
-    // The whole of the workflow the task asks it to carry, in the briefing it
-    // is started with.
-    let instructions = store
-        .get_profile_prompt(&gitlab.id, PromptKind::IntegrationInstructions)
-        .await
-        .unwrap();
-    for step in [
-        "glab auth status",
-        "land the task locally instead",
-        "git rebase {base_branch}",
-        "git push -u <remote> {branch}",
-        "glab mr create",
-        ".gitlab/merge_request_templates/",
-        "return_to_engineer",
-        "record_pull_request",
-        "mark_merged",
+    for (id, name, role) in [
+        ("seededplanner", "Planner", "planner"),
+        ("seededengineer", "Engineer", "engineer"),
+        ("seededreviewer", "Reviewer", "reviewer"),
+        ("mineintegrator", "My Integrator", "integrator"),
     ] {
-        assert!(
-            instructions.content.contains(step),
-            "the GitLab briefing has no {step}: {}",
-            instructions.content
+        sqlx::query(
+            "INSERT INTO profiles (id, name, role, system_prompt, created_at, updated_at)
+             VALUES (?, ?, ?, 'sys', 't', 't')",
+        )
+        .bind(id)
+        .bind(name)
+        .bind(role)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    // The one that stays, holding the defaults its release seeded it with —
+    // and a briefing its user rewrote.
+    sqlx::query(
+        "INSERT INTO profiles (id, name, role, system_prompt, created_at, updated_at)
+         VALUES (?, 'Local Integrator', 'integrator', ?, 't', 't')",
+    )
+    .bind(INTEGRATOR_ID)
+    .bind(PREVIOUS_INTEGRATOR_SYSTEM_PROMPT)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO profile_prompts (profile_id, kind, content, updated_at)
+         VALUES (?, 'integration_instructions', ?, 't'),
+                (?, 'integration_resume', 'Land it however you like.', 't')",
+    )
+    .bind(INTEGRATOR_ID)
+    .bind(PREVIOUS_INTEGRATION_INSTRUCTIONS)
+    .bind(INTEGRATOR_ID)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // The rest of the previous release: the two forge built-ins, and the
+    // per-task integrator column that names them.
+    migrate_below(16, &pool).await;
+
+    sqlx::query(
+        "INSERT INTO repositories (id, path, base_branch, created_at, updated_at)
+         VALUES ('forgerepo', '/tmp/forge-merge', 'main', 't', 't')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO goals (id, title, description, planner_profile_id, created_at, updated_at)
+         VALUES ('forgegoal', 'Forge goal', 'desc', 'seededplanner', 't', 't')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO goal_repositories (goal_id, repository_id) VALUES (?, ?)")
+        .bind("forgegoal")
+        .bind("forgerepo")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (task, integrator) in [("ghtask", GITHUB), ("gltask", GITLAB)] {
+        sqlx::query(
+            "INSERT INTO tasks (id, goal_id, repo_id, title, description, status,
+                                engineer_profile_id, integrator_profile_id, branch,
+                                created_at, updated_at)
+             VALUES (?, 'forgegoal', 'forgerepo', 'Forge task', 'd', 'integrating',
+                     'seededengineer', ?, ?, 't', 't')",
+        )
+        .bind(task)
+        .bind(integrator)
+        .bind(format!("ariadne/task-{task}"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO agent_sessions (id, goal_id, task_id, role, profile_id, agent_kind,
+                                     tmux_session, status, created_at)
+         VALUES ('ghsession', 'forgegoal', 'ghtask', 'integrator', ?, 'claude_code',
+                 'ariadne-ghsession', 'idle', 't')",
+    )
+    .bind(GITHUB)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO messages (id, goal_id, task_id, author_role, recipient_kind,
+                               recipient_profile_id, body, created_at)
+         VALUES ('glmsg', 'forgegoal', 'gltask', 'engineer', 'profile', ?,
+                 'the mr is stale', 't')",
+    )
+    .bind(GITLAB)
+    .execute(&pool)
+    .await
+    .unwrap();
+    pool.close().await;
+
+    // Opening the store runs the migration under test.
+    let store = Store::open(&path).await.unwrap();
+
+    // The two forge built-ins are gone, unconditionally, and their prompt rows
+    // with them.
+    for id in [GITHUB, GITLAB] {
+        assert!(matches!(
+            store.get_profile(id).await,
+            Err(StoreError::NotFound { .. })
+        ));
+    }
+    let raw = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+    let orphans: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM profile_prompts WHERE profile_id IN (?, ?)")
+            .bind(GITHUB)
+            .bind(GITLAB)
+            .fetch_one(&raw)
+            .await
+            .unwrap();
+    raw.close().await;
+    assert_eq!(orphans, 0, "the prompt rows went with the profiles");
+
+    // Everything that named them names the one that stays.
+    for task in ["ghtask", "gltask"] {
+        assert_eq!(
+            store.get_task(task).await.unwrap().integrator_profile_id,
+            INTEGRATOR_ID
         );
     }
-    assert!(
-        !instructions.content.contains("gh pr create"),
-        "and none of the GitHub one's commands"
-    );
     assert_eq!(
-        instructions.content,
-        default_prompt_for(
-            &gitlab.id,
-            Role::Integrator,
-            PromptKind::IntegrationInstructions
-        )
-        .unwrap()
+        store.get_session("ghsession").await.unwrap().profile_id,
+        INTEGRATOR_ID
     );
-
-    // Edited and reset, it comes back to the prompt it was seeded with —
-    // GitLab's, not the role's and not the GitHub one's.
-    store
-        .update_profile_prompt(
-            &gitlab.id,
-            PromptKind::IntegrationResume,
-            "Do it however you like.",
-        )
-        .await
-        .unwrap();
-    let reset = store
-        .reset_profile_prompt(&gitlab.id, PromptKind::IntegrationResume)
-        .await
-        .unwrap();
-    assert!(reset.content.contains("glab mr list"), "{}", reset.content);
-    store
-        .update_profile(
-            &gitlab.id,
-            ProfileUpdate {
-                system_prompt: Some("You are whatever.".into()),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
     assert_eq!(
         store
-            .reset_system_prompt(&gitlab.id)
+            .list_task_messages("gltask", None, 10)
             .await
             .unwrap()
-            .system_prompt,
-        default_system_prompt_for(&gitlab.id, Role::Integrator)
+            .first()
+            .unwrap()
+            .recipient_profile_id
+            .as_deref(),
+        Some(INTEGRATOR_ID)
     );
+
+    // Renamed, and given the playbook that covers all three ways of landing —
+    // but only where the row still held the default it was seeded with.
+    let merged = store.get_profile(INTEGRATOR_ID).await.unwrap();
+    assert_eq!(merged.name, "Integrator");
+    assert_eq!(
+        merged.system_prompt,
+        default_system_prompt(Role::Integrator)
+    );
+    assert_eq!(
+        store
+            .get_profile_prompt(INTEGRATOR_ID, PromptKind::IntegrationInstructions)
+            .await
+            .unwrap()
+            .content,
+        default_prompt(Role::Integrator, PromptKind::IntegrationInstructions).unwrap()
+    );
+    assert_eq!(
+        store
+            .get_profile_prompt(INTEGRATOR_ID, PromptKind::IntegrationResume)
+            .await
+            .unwrap()
+            .content,
+        "Land it however you like.",
+        "the briefing its user rewrote survives the upgrade"
+    );
+
+    // And the integrator the user made is untouched, beside it.
+    let mine = store.get_profile("mineintegrator").await.unwrap();
+    assert_eq!(mine.name, "My Integrator");
+    assert_eq!(mine.system_prompt, "sys");
+    assert_eq!(
+        store
+            .list_profiles(Some(Role::Integrator))
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+/// A database on the release before the merge, with both forge built-ins, one
+/// task landed by the GitHub one, and `…04` under whatever name this install
+/// gave it — or missing altogether, where the install deleted it — plus any
+/// integrator profiles the caller wants beside them. Everything short of
+/// migration 0016 itself, which runs when the store is opened.
+async fn a_pre_merge_install(
+    path: &std::path::Path,
+    integrator_name: Option<&str>,
+    extra: &[&str],
+) {
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let pool = sqlx::SqlitePool::connect_with(options).await.unwrap();
+    let migrate_below = async |version: i64, pool: &sqlx::SqlitePool| {
+        let mut migrator = sqlx::migrate::Migrator::new(std::path::Path::new("./migrations"))
+            .await
+            .unwrap();
+        migrator.migrations = migrator
+            .migrations
+            .iter()
+            .filter(|m| m.version < version)
+            .cloned()
+            .collect::<Vec<_>>()
+            .into();
+        migrator.run(pool).await.unwrap();
+    };
+    // The forge built-ins reach an install that already has profiles, so the
+    // profiles go in between the two halves of the upgrade.
+    migrate_below(13, &pool).await;
+    for (id, name, role) in [
+        ("seededplanner", "Planner", "planner"),
+        ("seededengineer", "Engineer", "engineer"),
+    ] {
+        sqlx::query(
+            "INSERT INTO profiles (id, name, role, system_prompt, created_at, updated_at)
+             VALUES (?, ?, ?, 'sys', 't', 't')",
+        )
+        .bind(id)
+        .bind(name)
+        .bind(role)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    for (i, name) in extra.iter().enumerate() {
+        sqlx::query(
+            "INSERT INTO profiles (id, name, role, system_prompt, created_at, updated_at)
+             VALUES (?, ?, 'integrator', 'sys', 't', 't')",
+        )
+        .bind(format!("extraprofile{i}"))
+        .bind(name)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    if let Some(name) = integrator_name {
+        sqlx::query(
+            "INSERT INTO profiles (id, name, role, system_prompt, created_at, updated_at)
+             VALUES (?, ?, 'integrator', ?, 't', 't')",
+        )
+        .bind(INTEGRATOR_ID)
+        .bind(name)
+        .bind(PREVIOUS_INTEGRATOR_SYSTEM_PROMPT)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    migrate_below(16, &pool).await;
+
+    sqlx::query(
+        "INSERT INTO repositories (id, path, base_branch, created_at, updated_at)
+         VALUES ('premergerepo', ?, 'main', 't', 't')",
+    )
+    .bind(path.display().to_string())
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO goals (id, title, description, planner_profile_id, created_at, updated_at)
+         VALUES ('premergegoal', 'Goal', 'desc', 'seededplanner', 't', 't')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO goal_repositories (goal_id, repository_id) VALUES (?, ?)")
+        .bind("premergegoal")
+        .bind("premergerepo")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO tasks (id, goal_id, repo_id, title, description, status,
+                            engineer_profile_id, integrator_profile_id, branch,
+                            created_at, updated_at)
+         VALUES ('ghtask', 'premergegoal', 'premergerepo', 'Task', 'd', 'integrating',
+                 'seededengineer', '00000000000000000000000005', 'ariadne/task-ghtask',
+                 't', 't')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    pool.close().await;
+}
+
+/// The built-in is the built-in whatever it was called: an install that
+/// renamed it still ends up with one integrator named "Integrator", since the
+/// name is what told the three of them apart and there is only one left. Its
+/// prompts are the other half of the rule and stay guarded by their defaults.
+#[tokio::test]
+async fn a_renamed_built_in_integrator_is_renamed_back_by_the_merge() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("renamed.db");
+    a_pre_merge_install(&path, Some("Lander"), &[]).await;
+
+    let store = Store::open(&path).await.unwrap();
+
+    let merged = store.get_profile(INTEGRATOR_ID).await.unwrap();
+    assert_eq!(merged.name, "Integrator", "renamed whatever it was called");
+    assert_eq!(
+        merged.system_prompt,
+        default_system_prompt(Role::Integrator),
+        "and its prompts still follow the default-matching rule"
+    );
+    assert_eq!(
+        store
+            .get_task("ghtask")
+            .await
+            .unwrap()
+            .integrator_profile_id,
+        INTEGRATOR_ID
+    );
+    assert_eq!(
+        store
+            .list_profiles(Some(Role::Integrator))
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+/// Unless the name is not the migration's to take: profile names are unique,
+/// so an install that renamed the built-in and gave "Integrator" to a profile
+/// of its own keeps both names — a failed upgrade would be the worse answer,
+/// and the merge itself still happens.
+#[tokio::test]
+async fn the_rename_yields_to_a_profile_that_took_the_name_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("taken.db");
+    a_pre_merge_install(&path, Some("Lander"), &["Integrator"]).await;
+
+    let store = Store::open(&path).await.unwrap();
+
+    assert_eq!(
+        store.get_profile(INTEGRATOR_ID).await.unwrap().name,
+        "Lander",
+        "the built-in keeps the name it had rather than failing the upgrade"
+    );
+    assert_eq!(
+        store.get_profile("extraprofile0").await.unwrap().name,
+        "Integrator",
+        "and the profile that took the name keeps it"
+    );
+    // The merge itself happened all the same.
+    assert_eq!(
+        store
+            .get_task("ghtask")
+            .await
+            .unwrap()
+            .integrator_profile_id,
+        INTEGRATOR_ID
+    );
+    for id in ["00000000000000000000000005", "00000000000000000000000006"] {
+        assert!(matches!(
+            store.get_profile(id).await,
+            Err(StoreError::NotFound { .. })
+        ));
+    }
+}
+
+/// The same merge on an install that deleted the built-in the merge keeps: the
+/// tasks its GitHub Integrator was landing have to point somewhere, so the
+/// merged Integrator comes back for them — with the prompts a fresh seeding
+/// would have given it.
+#[tokio::test]
+async fn the_merged_integrator_comes_back_where_an_install_had_deleted_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("deleted.db");
+    a_pre_merge_install(&path, None, &[]).await;
+
+    let store = Store::open(&path).await.unwrap();
+
+    let integrator = store.get_profile(INTEGRATOR_ID).await.unwrap();
+    assert_eq!(integrator.name, "Integrator");
+    assert_eq!(integrator.role(), Role::Integrator);
+    assert_eq!(
+        integrator.system_prompt,
+        default_system_prompt(Role::Integrator),
+        "brought back with the prompt a fresh seeding writes"
+    );
+    for kind in PromptKind::for_role(Role::Integrator) {
+        assert_eq!(
+            store
+                .get_profile_prompt(INTEGRATOR_ID, *kind)
+                .await
+                .unwrap()
+                .content,
+            default_prompt(Role::Integrator, *kind).unwrap()
+        );
+    }
+    assert_eq!(
+        store
+            .get_task("ghtask")
+            .await
+            .unwrap()
+            .integrator_profile_id,
+        INTEGRATOR_ID,
+        "and the task it was landing names it"
+    );
+}
+
+/// And it comes back under a name no profile has: the one it wants may be a
+/// user's, and so may the next, but the row has to go in — the tasks it is
+/// brought back for have nowhere else to point, and a name it cannot take
+/// would fail the upgrade instead.
+#[tokio::test]
+async fn the_integrator_comes_back_under_a_name_no_profile_has_taken() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("named.db");
+    a_pre_merge_install(&path, None, &["Integrator", "Integrator (1)"]).await;
+
+    let store = Store::open(&path).await.unwrap();
+
+    let integrator = store.get_profile(INTEGRATOR_ID).await.unwrap();
+    assert_eq!(
+        integrator.name, "Integrator (2)",
+        "the first of the numbered names nobody had"
+    );
+    assert_eq!(integrator.role(), Role::Integrator);
+    assert_eq!(
+        integrator.system_prompt,
+        default_system_prompt(Role::Integrator)
+    );
+    // The two profiles that took the names keep them, untouched.
+    for (id, name) in [
+        ("extraprofile0", "Integrator"),
+        ("extraprofile1", "Integrator (1)"),
+    ] {
+        let mine = store.get_profile(id).await.unwrap();
+        assert_eq!(mine.name, name);
+        assert_eq!(mine.system_prompt, "sys");
+    }
+    // And the merge itself happened: the task points at the profile that came
+    // back, and the two forge built-ins are gone.
+    assert_eq!(
+        store
+            .get_task("ghtask")
+            .await
+            .unwrap()
+            .integrator_profile_id,
+        INTEGRATOR_ID
+    );
+    for id in ["00000000000000000000000005", "00000000000000000000000006"] {
+        assert!(matches!(
+            store.get_profile(id).await,
+            Err(StoreError::NotFound { .. })
+        ));
+    }
 }
 
 /// What the daemon remembers of a published task between polls: the pull
