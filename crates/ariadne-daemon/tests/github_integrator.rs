@@ -2339,7 +2339,8 @@ async fn a_wedged_integrator_of_a_published_request_is_relaunched() {
 
     // Mid-turn and silent with it: the turn started, and nothing has been
     // reported since — for longer than the request would ever excuse.
-    h.wedged_for(&integrator, RUNNING_QUIET_RESUME_SECS + 60).await;
+    h.wedged_for(&integrator, RUNNING_QUIET_RESUME_SECS + 60)
+        .await;
     let launched = h
         .store
         .get_session(&integrator.id)

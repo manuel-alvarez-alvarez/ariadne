@@ -1790,7 +1790,8 @@ async fn a_running_agent_that_keeps_reporting_is_left_alone() {
     h.pane_exists(&session);
     h.resumable(&task, &session).await;
     // Launched long before both thresholds, and still saying so.
-    h.launched_ago(&session, RUNNING_QUIET_RESUME_SECS * 2).await;
+    h.launched_ago(&session, RUNNING_QUIET_RESUME_SECS * 2)
+        .await;
     h.reports(&session, "pre_tool_use").await;
     h.store.touch_session(&session.id).await.unwrap();
     let launched = h.launched_at(&session).await;
@@ -1872,10 +1873,7 @@ async fn a_running_agent_waiting_on_a_person_is_never_relaunched() {
     h.pane_exists(&control);
     h.wedged_for(&control, RUNNING_QUIET_FLAG_SECS + 60).await;
 
-    let launched = [
-        h.launched_at(&blocked).await,
-        h.launched_at(&asked).await,
-    ];
+    let launched = [h.launched_at(&blocked).await, h.launched_at(&asked).await];
     let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
     for id in [&task.id, &asked_task.id, &control_task.id] {
         sched.send(SchedEvent::TaskChanged(id.clone())).unwrap();
