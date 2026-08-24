@@ -9,7 +9,9 @@
 //! That dispatch is [`forge_of`], and around it is what the two watchers have
 //! in common: what one poll of either says has to happen next ([`PrState`]),
 //! what a human wrote on either that the engineer has not been told about yet
-//! ([`Feedback`]), and what either says became of the branch ([`Landing`]).
+//! ([`Feedback`]), what either says about the branch itself — whether it
+//! still merges and whether its checks pass ([`Health`]) — and what either
+//! says became of the branch ([`Landing`]).
 //!
 //! A URL on neither forge is recorded on the task like any other and simply
 //! never polled — the integrator that publishes to one brings its own way of
