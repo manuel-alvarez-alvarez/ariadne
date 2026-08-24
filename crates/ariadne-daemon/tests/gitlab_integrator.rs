@@ -705,7 +705,7 @@ async fn a_merge_request_is_watched_from_publication_to_its_merge() {
         "the integrator to be woken to finish the task",
         async || {
             h.launched_argv(&integrator.id)
-                .contains("Merge request !3 has been merged on GitLab")
+                .contains("Merge request !3 was merged on GitLab")
         },
     )
     .await;
