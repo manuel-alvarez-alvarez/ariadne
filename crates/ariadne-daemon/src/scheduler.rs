@@ -21,7 +21,7 @@ use ariadne_store::{
 
 use crate::agents::prompts;
 use crate::attention;
-use crate::forge::{self, Feedback, Forge, PrState, WatchedPr};
+use crate::forge::{self, Conflict, FailedCheck, Feedback, Forge, PrState, WatchedPr};
 use crate::gh;
 use crate::glab;
 use crate::launcher::Launcher;
@@ -991,9 +991,12 @@ impl Scheduler {
     /// - **commented on**, and every comment nobody has relayed yet is
     ///   written straight to the engineer as a round of requested changes —
     ///   no agent in between (see [`Self::relay_pr_feedback`]);
-    /// - **approved**, and the user is told once that it is theirs to merge.
+    /// - **conflicting** or **failing its checks**, and what the forge said
+    ///   goes the same way, to the same engineer, once each;
+    /// - **approved**, green and still merging, and the user is told once
+    ///   that it is theirs to merge.
     ///
-    /// The three read the same on either forge; which CLI answers for them is
+    /// They read the same on either forge; which CLI answers for them is
     /// [`Self::poll_forge`]'s to decide.
     ///
     /// An integrator mid-turn is left to finish it: resuming an agent means
@@ -1072,10 +1075,42 @@ impl Scheduler {
         // makes no difference to that — a task with none is exactly the case
         // a daemon restart leaves behind, and starting one here only to have
         // the transition kill it is the hop this whole arm exists to spare.
-        if let PrState::Feedback(feedback) = &poll.state {
-            info!(task = %task.id, pr = number, comments = feedback.len(), "the review was commented on; sending it to the engineer");
-            self.relay_pr_feedback(task, watched, feedback).await?;
-            return Box::pin(self.reconcile_task(&task.id)).await;
+        //
+        // A branch that stopped merging or stopped building goes the same
+        // way, and for the same reason: the fix is a commit, commits are the
+        // engineer's, and an integrator asleep over a published request would
+        // only discover either of them the next time somebody woke it.
+        match &poll.state {
+            PrState::Feedback(feedback) => {
+                info!(task = %task.id, pr = number, comments = feedback.len(), "the review was commented on; sending it to the engineer");
+                self.relay_pr_feedback(task, watched, feedback).await?;
+                return Box::pin(self.reconcile_task(&task.id)).await;
+            }
+            PrState::Conflicting(conflict) => {
+                info!(task = %task.id, pr = number, "the branch no longer merges into its base; sending it to the engineer");
+                let base = conflict_base(conflict, &repo);
+                self.relay_to_engineer(
+                    task,
+                    pr_conflict_review(watched, &base),
+                    std::slice::from_ref(&conflict.id),
+                    &format!("{} no longer merges into {base}", watched.label()),
+                )
+                .await?;
+                return Box::pin(self.reconcile_task(&task.id)).await;
+            }
+            PrState::ChecksFailed(checks) => {
+                info!(task = %task.id, pr = number, checks = checks.len(), "the checks on the review are failing; sending it to the engineer");
+                let ids: Vec<String> = checks.iter().map(|c| c.id.clone()).collect();
+                self.relay_to_engineer(
+                    task,
+                    pr_checks_review(watched, checks),
+                    &ids,
+                    &format!("{}'s checks are failing", watched.label()),
+                )
+                .await?;
+                return Box::pin(self.reconcile_task(&task.id)).await;
+            }
+            PrState::Quiet | PrState::Merged | PrState::Approved => {}
         }
 
         // The rest is the integrator's, and so is a quiet review: a published
@@ -1089,8 +1124,8 @@ impl Scheduler {
             return Ok(());
         };
         match poll.state {
-            // Handled above.
-            PrState::Feedback(_) => {}
+            // Handled above, every one of them the engineer's.
+            PrState::Feedback(_) | PrState::Conflicting(_) | PrState::ChecksFailed(_) => {}
             // A quiet review asks nothing of the integrator, and something of
             // the user whenever nothing but a person stands between the
             // request and its merge. They were told that once — when the
@@ -1151,6 +1186,30 @@ impl Scheduler {
         watched: &WatchedPr,
         feedback: &[Feedback],
     ) -> anyhow::Result<()> {
+        let ids: Vec<String> = feedback.iter().map(|f| f.id.clone()).collect();
+        self.relay_to_engineer(
+            task,
+            pr_feedback_review(watched, feedback),
+            &ids,
+            &format!("{} was commented on", watched.label()),
+        )
+        .await
+    }
+
+    /// The send-back itself, whatever the review said to send the task back
+    /// for: what the humans wrote, a branch that no longer merges, a check
+    /// that failed.
+    ///
+    /// `ids` are what the poll read it from, remembered on the task so that
+    /// the same comment, the same conflict and the same failing check are one
+    /// round of changes rather than one per poll.
+    async fn relay_to_engineer(
+        &mut self,
+        task: &Task,
+        body: String,
+        ids: &[String],
+        reason: &str,
+    ) -> anyhow::Result<()> {
         self.store
             .create_review(NewReview {
                 task_id: task.id.clone(),
@@ -1158,19 +1217,18 @@ impl Scheduler {
                 reviewer_profile_id: task.integrator_profile_id.clone(),
                 session_id: None,
                 verdict: ReviewVerdict::RequestChanges,
-                body: Some(pr_feedback_review(watched, feedback)),
+                body: Some(body),
             })
             .await?;
-        let ids: Vec<String> = feedback.iter().map(|f| f.id.clone()).collect();
         self.store
-            .add_task_pr_relayed_comments(&task.id, &ids)
+            .add_task_pr_relayed_comments(&task.id, ids)
             .await?;
         self.store
             .transition_task(
                 &task.id,
                 TaskStatus::ChangesRequested,
                 Actor::Daemon,
-                Some(&format!("{} was commented on", watched.label())),
+                Some(reason),
                 None,
             )
             .await?;
@@ -1271,7 +1329,10 @@ impl Scheduler {
                         Vec::new()
                     }
                 };
-                let approved = pr.is_approved();
+                // Approved *and* mergeable: a red or conflicting branch is
+                // nobody's to press a button on, however many people signed
+                // it off.
+                let approved = pr.is_approved() && !pr.health().blocks_merge();
                 Some(Poll {
                     approved: Some(approved),
                     state: gh::poll_state(
@@ -1298,7 +1359,11 @@ impl Scheduler {
                 // than as withdrawn.
                 let (approvals, approved) = match glab_cli.mr_approvals(repo_path, watched).await {
                     Ok(approvals) => {
-                        let approved = approvals.is_approved() && mr.is_open();
+                        // Approved *and* mergeable: a red or conflicting
+                        // branch is nobody's to press a button on, however
+                        // many people signed it off.
+                        let approved =
+                            approvals.is_approved() && mr.is_open() && !mr.health().blocks_merge();
                         (approvals, Some(approved))
                     }
                     Err(e) => {
@@ -2014,9 +2079,14 @@ impl Scheduler {
 
 /// What one poll of a review came back with.
 struct Poll {
-    /// Whether the forge says it is approved right now, or `None` when this
-    /// poll could not tell — an answer that never came is not an approval
-    /// withdrawn.
+    /// Whether the forge says nothing stands between it and its merge right
+    /// now — approved, still merging into its base, and not failing a check —
+    /// or `None` when this poll could not tell, since an answer that never
+    /// came is not an approval withdrawn.
+    ///
+    /// The mergeability is part of it because the notice it drives is "ready
+    /// for you to merge": a branch that went red after it was approved is not
+    /// that, and the flag comes back down until it is green again.
     approved: Option<bool>,
     state: PrState,
 }
@@ -2074,6 +2144,97 @@ fn pr_feedback_review(watched: &WatchedPr, feedback: &[Feedback]) -> String {
          comment above, naming its author the way this does — that summary is what they are \
          answered with.",
         url = watched.url,
+    )
+}
+
+/// The rule every send-back on a published request carries: the commits
+/// people are reading stay where they are, so whatever answers the request is
+/// a commit on top of them.
+fn published_branch_rule(watched: &WatchedPr) -> String {
+    format!(
+        "The {noun} is published and people are reading the commits on it, so the branch only \
+         ever grows: add new commits on top of what is already there — no `commit --amend`, no \
+         rebase, no forced push over what they have already seen.",
+        noun = watched.forge.noun(),
+    )
+}
+
+/// The branch a conflict is with: the one the forge named it against, and the
+/// repository's own base where the forge named none.
+fn conflict_base(conflict: &Conflict, repo: &Repository) -> String {
+    conflict
+        .base
+        .clone()
+        .unwrap_or_else(|| repo.base_branch.clone())
+}
+
+/// What the forge says is failing on the branch, as the round of requested
+/// changes the engineer is sent back with.
+///
+/// Named rather than pointed at, for the reason the comments are quoted
+/// rather than linked: an agent woken to go and find out what it was woken
+/// for has been woken for nothing. Each check travels as the forge spells it
+/// — its name, the verdict it finished with, and where the run is read —
+/// which is what the engineer looks for on the request itself.
+fn pr_checks_review(watched: &WatchedPr, checks: &[FailedCheck]) -> String {
+    let listed = checks
+        .iter()
+        .map(|check| {
+            let conclusion = match check.conclusion.trim() {
+                "" => String::new(),
+                conclusion => format!(" ({conclusion})"),
+            };
+            let url = match check
+                .url
+                .as_deref()
+                .map(str::trim)
+                .filter(|u| !u.is_empty())
+            {
+                Some(url) => format!(" — {url}"),
+                None => String::new(),
+            };
+            format!("- {}{conclusion}{url}", check.name)
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let count = checks.len();
+    let plural = if count == 1 { "check" } else { "checks" };
+    format!(
+        "{label} ({url}) has {count} failing {plural} on the commit it is open with:\n\n\
+         {listed}\n\n\
+         Making them pass is yours to do: read each run where the {noun} links to it, fix what \
+         it is failing on, and where it is failing on something that is not the branch's fault, \
+         say so. {rule} Then call `request_review` with a summary of what was failing and what \
+         fixed it — that summary is what the people reading the {noun} are answered with.",
+        label = watched.label(),
+        url = watched.url,
+        noun = watched.forge.noun(),
+        rule = published_branch_rule(watched),
+    )
+}
+
+/// The same for a branch that no longer merges into its base.
+///
+/// Nobody else can answer it: the integrator hits the conflict during its own
+/// merge, and one asleep over a published request — waiting on the humans
+/// reading it — would not hit it until somebody woke it for something else.
+/// Neither forge names the conflicting files on the request, so what the
+/// engineer is given is the branch to merge in, which is where it reads them
+/// from.
+fn pr_conflict_review(watched: &WatchedPr, base: &str) -> String {
+    let noun = watched.forge.noun();
+    format!(
+        "{label} ({url}) no longer merges into {base}: the base moved under the branch, and \
+         reconciling it is yours to do.\n\n\
+         Bring {base} into the branch — `git fetch <remote> {base} && git merge --no-edit \
+         <remote>/{base}`, or `git merge --no-edit {base}` where the base is only local — \
+         resolve every conflict it reports, and commit the resolution. {rule} The merge commit \
+         is fine: the forge squashes the {noun} when it merges it. Then call `request_review` \
+         with a summary of what you reconciled — that summary is what the people reading the \
+         {noun} are answered with.",
+        label = watched.label(),
+        url = watched.url,
+        rule = published_branch_rule(watched),
     )
 }
 

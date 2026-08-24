@@ -24,13 +24,29 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use tokio::process::Command;
 
-use crate::forge::{self, Landing, parse_pages};
+use crate::forge::{self, Conflict, FailedCheck, Health, Landing, parse_pages};
 
 pub use crate::forge::{Feedback, GITLAB_HOST, PrState, WatchedPr, pull_request_number};
 
 /// The states GitLab spells an open merge request with. Anything else is
 /// `merged`, `closed` or `locked`.
 const OPENED: &str = "opened";
+
+/// What `detailed_merge_status` spells a branch that no longer merges with.
+/// Its other values are about everything else that can stand in the way —
+/// `not_approved`, `ci_must_pass`, `checking` — none of which is a conflict.
+const CONFLICT: &str = "conflict";
+
+/// The one pipeline status that is a red branch. `canceled` is what a project
+/// that cancels its own superseded pipelines writes on every push, `skipped`
+/// and `manual` are pipelines nobody ran, and everything else — `created`,
+/// `pending`, `running`, `waiting_for_resource` — has not finished.
+const FAILED: &str = "failed";
+
+/// What the engineer is told the red thing is called: GitLab runs one
+/// pipeline over the merge result, so there is one of these rather than a
+/// check per job.
+const PIPELINE: &str = "pipeline";
 
 #[derive(Debug, Clone)]
 pub struct GlabCli {
@@ -52,6 +68,47 @@ pub struct MergeRequest {
     pub merge_commit_sha: Option<String>,
     #[serde(default)]
     pub squash_commit_sha: Option<String>,
+    /// The head commit, which the pipeline ran on and the conflict was read
+    /// on: what keeps one failure to one relay, and makes the failure on the
+    /// revision that answered it a new one.
+    #[serde(default)]
+    pub sha: Option<String>,
+    /// The branch it is open against, which is what the engineer merges in to
+    /// reconcile a conflict.
+    #[serde(default)]
+    pub target_branch: Option<String>,
+    /// Whether GitLab found the branch and the target in conflict. Absent on
+    /// an instance old enough not to answer it, and on a merge status it has
+    /// not worked out yet.
+    #[serde(default)]
+    pub has_conflicts: Option<bool>,
+    /// The same question in more detail: `mergeable`, `conflict`,
+    /// `not_approved`, `checking`, and a dozen more. Only `conflict` is one.
+    ///
+    /// What is deliberately not read is the older `merge_status`: its
+    /// `cannot_be_merged` covers a conflict and several things that are not
+    /// one, and an engineer sent back for a merge GitLab was merely still
+    /// checking is an engineer sent back for nothing.
+    #[serde(default)]
+    pub detailed_merge_status: Option<String>,
+    /// The pipeline of the head commit. `pipeline` is what older instances
+    /// answer with instead, and it is the same reading.
+    #[serde(default)]
+    pub head_pipeline: Option<Pipeline>,
+    #[serde(default)]
+    pub pipeline: Option<Pipeline>,
+}
+
+/// One pipeline, as much of it as a poll reads: what became of it and where a
+/// person reads it.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Pipeline {
+    /// `created`, `waiting_for_resource`, `preparing`, `pending`, `running`,
+    /// `success`, `failed`, `canceled`, `skipped`, `manual`, `scheduled`.
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub web_url: Option<String>,
 }
 
 impl MergeRequest {
@@ -74,6 +131,50 @@ impl MergeRequest {
     /// needs: a closed merge request is nobody's to merge.
     pub fn is_open(&self) -> bool {
         self.state.eq_ignore_ascii_case(OPENED)
+    }
+
+    /// What GitLab says about the branch itself: whether it still merges into
+    /// its target, and whether its pipeline is red.
+    ///
+    /// Both degrade to "nothing to see" rather than to a failure — an
+    /// instance that answers neither conflict field, a merge status still
+    /// being checked, a merge request with no pipeline at all: an engineer
+    /// woken for a build nobody said had failed is an engineer woken for
+    /// nothing.
+    pub fn health(&self) -> Health {
+        let head = self.sha.as_deref().filter(|s| !s.is_empty());
+        let conflicting = self.has_conflicts.unwrap_or(false)
+            || self
+                .detailed_merge_status
+                .as_deref()
+                .is_some_and(|s| s.eq_ignore_ascii_case(CONFLICT));
+        let pipeline = self.head_pipeline.as_ref().or(self.pipeline.as_ref());
+        Health {
+            conflict: conflicting.then(|| Conflict {
+                id: forge::conflict_id(head),
+                base: self
+                    .target_branch
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|b| !b.is_empty())
+                    .map(str::to_string),
+            }),
+            failed_checks: pipeline
+                .filter(|p| p.status.eq_ignore_ascii_case(FAILED))
+                .map(|p| FailedCheck {
+                    id: forge::check_id(head, PIPELINE),
+                    name: PIPELINE.to_string(),
+                    conclusion: p.status.clone(),
+                    url: p
+                        .web_url
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|u| !u.is_empty())
+                        .map(str::to_string),
+                })
+                .into_iter()
+                .collect(),
+        }
     }
 }
 
@@ -195,6 +296,8 @@ pub fn poll_state(
     forge::poll_state(
         mr.landing().merged,
         forge::unrelayed(feedback(discussions), relayed),
+        &mr.health(),
+        relayed,
         approvals.is_approved() && mr.is_open(),
         approved_notified,
     )
@@ -346,7 +449,8 @@ mod tests {
     use super::*;
 
     /// `glab mr view 3 -F json` on an open merge request nobody has touched,
-    /// in the shape GitLab's own API answers with.
+    /// in the shape GitLab's own API answers with: green, mergeable, and with
+    /// a head commit everything about the branch is keyed by.
     fn open_mr() -> serde_json::Value {
         serde_json::json!({
             "iid": 3,
@@ -354,8 +458,26 @@ mod tests {
             "merged_at": null,
             "merge_commit_sha": null,
             "squash_commit_sha": null,
+            "sha": "abc123",
+            "target_branch": "main",
+            "has_conflicts": false,
+            "detailed_merge_status": "mergeable",
+            "head_pipeline": {
+                "id": 4711,
+                "sha": "abc123",
+                "ref": "render-the-board",
+                "status": "success",
+                "web_url": "https://gitlab.com/owner/repo/-/pipelines/4711",
+            },
             "web_url": "https://gitlab.com/owner/repo/-/merge_requests/3",
         })
+    }
+
+    /// The health of a merge request whose head pipeline is in `status`.
+    fn pipeline(status: serde_json::Value) -> Health {
+        let mut value = open_mr();
+        value["head_pipeline"]["status"] = status;
+        mr(value).health()
     }
 
     fn mr(value: serde_json::Value) -> MergeRequest {
@@ -595,6 +717,196 @@ mod tests {
         );
     }
 
+    /// The pipeline, read the one way: red is a pipeline that failed, and
+    /// everything else — running, cancelled, skipped, a status this has never
+    /// heard of, no pipeline at all — is not.
+    #[test]
+    fn the_pipeline_is_read_as_red_only_where_gitlab_says_failed() {
+        for green in ["success", "skipped", "manual"] {
+            assert!(
+                pipeline(green.into()).failed_checks.is_empty(),
+                "a {green} pipeline was read as failing"
+            );
+        }
+        for pending in [
+            "created",
+            "waiting_for_resource",
+            "preparing",
+            "pending",
+            "running",
+            "scheduled",
+        ] {
+            assert!(
+                pipeline(pending.into()).failed_checks.is_empty(),
+                "a {pending} pipeline was read as failing"
+            );
+        }
+        // Cancelled is what a project that supersedes its own pipelines
+        // writes on every push, and a status this does not know is unknown.
+        for unknown in ["canceled", "something_new", ""] {
+            assert!(
+                pipeline(unknown.into()).failed_checks.is_empty(),
+                "a {unknown} pipeline was read as failing"
+            );
+        }
+        // And a merge request with no pipeline at all, on a project with no
+        // CI: absent, not failing.
+        let mut none = open_mr();
+        none["head_pipeline"] = serde_json::Value::Null;
+        assert!(mr(none).health().failed_checks.is_empty());
+        assert!(
+            mr(serde_json::json!({"state": "opened"}))
+                .health()
+                .failed_checks
+                .is_empty(),
+            "a `glab` that answered none of the fields answers no failure"
+        );
+
+        assert_eq!(
+            pipeline("failed".into()).failed_checks,
+            vec![FailedCheck {
+                id: "CHKabc123:pipeline".into(),
+                name: "pipeline".into(),
+                conclusion: "failed".into(),
+                url: Some("https://gitlab.com/owner/repo/-/pipelines/4711".into()),
+            }]
+        );
+
+        // An instance old enough to answer `pipeline` and no `head_pipeline`
+        // is read the same way.
+        let mut older = open_mr();
+        older["pipeline"] = older["head_pipeline"].clone();
+        older["pipeline"]["status"] = "failed".into();
+        older["head_pipeline"] = serde_json::Value::Null;
+        assert_eq!(mr(older).health().failed_checks.len(), 1);
+    }
+
+    /// Mergeability, the same way: what GitLab calls a conflict is one, and
+    /// the merge status it is still working out is not.
+    #[test]
+    fn a_conflicting_merge_request_is_the_only_one_read_as_conflicting() {
+        let mergeability = |conflicts: serde_json::Value, detailed: serde_json::Value| {
+            let mut value = open_mr();
+            value["has_conflicts"] = conflicts;
+            value["detailed_merge_status"] = detailed;
+            mr(value).health().conflict
+        };
+        assert_eq!(
+            mergeability(true.into(), "conflict".into()),
+            Some(Conflict {
+                id: "MRGabc123".into(),
+                base: Some("main".into()),
+            })
+        );
+        assert!(
+            mergeability(false.into(), "conflict".into()).is_some(),
+            "the detailed status says it on its own"
+        );
+        assert!(
+            mergeability(true.into(), "mergeable".into()).is_some(),
+            "and so does the flag"
+        );
+        for clean in [
+            (serde_json::json!(false), serde_json::json!("mergeable")),
+            // Everything else that can stand in the way of a merge, none of
+            // which is the branch failing to merge...
+            (serde_json::json!(false), serde_json::json!("not_approved")),
+            (serde_json::json!(false), serde_json::json!("ci_must_pass")),
+            (serde_json::json!(false), serde_json::json!("draft_status")),
+            // ...and the merge GitLab has not worked out yet, or an instance
+            // that answers neither field.
+            (serde_json::json!(null), serde_json::json!("checking")),
+            (serde_json::json!(null), serde_json::json!(null)),
+        ] {
+            assert_eq!(
+                mergeability(clean.0.clone(), clean.1.clone()),
+                None,
+                "{clean:?} was read as a conflict"
+            );
+        }
+    }
+
+    /// What a poll makes of them: a conflict before the pipeline it is likely
+    /// to have failed, each relayed once, the failure on the revision that was
+    /// supposed to fix it relayed again — and no approval announced over
+    /// either of them.
+    #[test]
+    fn a_red_or_conflicting_branch_is_relayed_once_per_commit() {
+        let approved = approvals(&["maria"]);
+        let mut red = open_mr();
+        red["head_pipeline"]["status"] = "failed".into();
+        let failed = vec![FailedCheck {
+            id: "CHKabc123:pipeline".into(),
+            name: "pipeline".into(),
+            conclusion: "failed".into(),
+            url: Some("https://gitlab.com/owner/repo/-/pipelines/4711".into()),
+        }];
+        assert_eq!(
+            poll_state(&mr(red.clone()), &approved, &[], &[], false),
+            PrState::ChecksFailed(failed.clone())
+        );
+        // Handed over once, the same failure says nothing more — and the
+        // approval stays unannounced for as long as the branch is red.
+        assert_eq!(
+            poll_state(
+                &mr(red.clone()),
+                &approved,
+                &[],
+                &["CHKabc123:pipeline".into()],
+                false
+            ),
+            PrState::Quiet
+        );
+
+        // The engineer pushed a fix, and the pipeline failed on it too.
+        let mut again = red.clone();
+        again["sha"] = "def456".into();
+        let PrState::ChecksFailed(new) = poll_state(
+            &mr(again),
+            &approved,
+            &[],
+            &["CHKabc123:pipeline".into()],
+            false,
+        ) else {
+            panic!("a failure on the revision that answered one is news again");
+        };
+        assert_eq!(new[0].id, "CHKdef456:pipeline");
+
+        // And the conflict is read first, being what the pipeline of a merge
+        // that no longer applies failed for.
+        let mut conflicting = red;
+        conflicting["has_conflicts"] = true.into();
+        assert_eq!(
+            poll_state(&mr(conflicting.clone()), &approved, &[], &[], false),
+            PrState::Conflicting(Conflict {
+                id: "MRGabc123".into(),
+                base: Some("main".into()),
+            })
+        );
+        assert_eq!(
+            poll_state(
+                &mr(conflicting.clone()),
+                &approved,
+                &[],
+                &["MRGabc123".into()],
+                false
+            ),
+            PrState::ChecksFailed(failed),
+            "the conflict was handed over; the failing pipeline has not been"
+        );
+        assert_eq!(
+            poll_state(
+                &mr(conflicting),
+                &approved,
+                &[],
+                &["MRGabc123".into(), "CHKabc123:pipeline".into()],
+                false
+            ),
+            PrState::Quiet,
+            "an approval announced over a branch nobody can merge is the wrong half of the truth"
+        );
+    }
+
     /// Approvals as every version of GitLab answers them: the outright flag
     /// where there is one, the list of approvers where there is not.
     #[test]
@@ -649,6 +961,10 @@ mod tests {
         let parsed: MergeRequest = serde_json::from_str(raw).expect("glab's own output");
         assert!(parsed.landing().merged);
         assert_eq!(parsed.landing().commits, vec!["5c81311ec8329".to_string()]);
+        assert!(
+            !parsed.health().blocks_merge(),
+            "a mergeable merge request with no conflicts blocks nothing"
+        );
         // Merged wins over the notes on it: what a note is relayed for is a
         // revision, and there is nothing left to revise.
         assert_eq!(
