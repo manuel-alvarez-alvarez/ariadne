@@ -8,10 +8,11 @@
 --
 -- Defaults are only seeded into an empty database, so an existing install
 -- would go on briefing its integrators to announce. The text is rewritten
--- here instead and, as in migrations 0009, 0012, 0016, 0017, 0018, 0019 and
--- 0020, only where the row still holds the default it was seeded with, so a
--- prompt its user rewrote survives the upgrade. The old text is the one
--- migration 0020 wrote.
+-- here instead and, as in migrations 0009, 0012, 0016, 0017, 0018, 0019, 0020
+-- and 0021, only where the row still holds the default it was seeded with, so
+-- a prompt its user rewrote survives the upgrade. The old text is the one
+-- migration 0020 wrote: 0021 rewrote the four system prompts and left the
+-- integration instructions where they were.
 
 UPDATE profile_prompts
 SET content = '# Integrate task: {task_title}
