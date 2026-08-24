@@ -22,7 +22,6 @@ function task(id: string, status: TaskStatus, extra: Partial<TaskDto> = {}): Tas
     repo_id: "r1",
     depends_on: [],
     engineer_profile_id: "p1",
-    integrator_profile_id: "01INTEGRATOR",
     reviewers: [],
     review_round: 0,
     stalled: false,
@@ -77,7 +76,6 @@ describe("canEdit", () => {
       "under_review",
       "changes_requested",
       "approved",
-      "integrating",
       "merged",
       "cancelled",
       "failed",
@@ -90,17 +88,11 @@ describe("canEdit", () => {
 
 describe("the board columns", () => {
   it("is one column per pipeline stage, in pipeline order", () => {
-    expect(BOARD_STATUSES).toEqual([
-      "pending",
-      "in_progress",
-      "under_review",
-      "integrating",
-      "merged",
-    ])
+    expect(BOARD_STATUSES).toEqual(["pending", "in_progress", "under_review", "approved", "merged"])
   })
 
   it("leaves the folded statuses out: they are badges, not columns", () => {
-    for (const folded of ["ready", "changes_requested", "approved"] as const) {
+    for (const folded of ["ready", "changes_requested"] as const) {
       expect(BOARD_STATUSES).not.toContain(folded)
       expect(subStatus(folded)).toBeDefined()
     }
@@ -131,35 +123,28 @@ describe("the ready fold", () => {
   })
 })
 
-describe("the approved fold", () => {
-  it("puts an approved task in the Integrating column, still saying it is approved", () => {
-    // Forwards, not back: the reviewers are done with it and the integrator is
-    // the next thing to touch it.
-    expect(primaryStatus("approved")).toBe("integrating")
-    expect(subStatus("approved")?.label).toBe("Approved")
-    expect(displayLabel("approved")).toBe("Integrating · Approved")
+describe("the landing column", () => {
+  it("gives approved a column of its own, folded into nothing", () => {
+    // The whole of the landing stage: the reviewers are done with it and its
+    // engineer is squashing it onto the base branch, or waiting on the
+    // request it published.
+    expect(primaryStatus("approved")).toBe("approved")
+    expect(subStatus("approved")).toBeUndefined()
+    expect(displayLabel("approved")).toBe("Approved")
   })
 
-  it("gives integrating a column, and a label of its own", () => {
-    expect(primaryStatus("integrating")).toBe("integrating")
-    expect(subStatus("integrating")).toBeUndefined()
-    expect(displayLabel("integrating")).toBe("Integrating")
-  })
-
-  it("ranks an integrating task above everything the agents can finish alone", () => {
+  it("ranks an approved task above everything the agents can finish alone", () => {
     // A published pull request is the one thing on the board whose next step
     // is a person's, so it sorts under nothing but a failure.
     const ordered = [
       task("under-review", "under_review"),
       task("changes-requested", "changes_requested"),
-      task("integrating", "integrating"),
       task("failed", "failed"),
       task("approved", "approved"),
     ].sort(compareByAttention)
 
     expect(ordered.map((t) => t.id)).toEqual([
       "failed",
-      "integrating",
       "approved",
       "changes-requested",
       "under-review",

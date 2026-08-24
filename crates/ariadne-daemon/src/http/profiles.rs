@@ -59,7 +59,7 @@ pub async fn create(
 /// editor can show a default (and offer to restore one) before anything
 /// exists to read them from.
 #[utoipa::path(get, path = "/v1/roles/{role}/prompt-defaults", tag = "profiles",
-    params(("role" = String, Path, description = "planner, engineer, reviewer or integrator")),
+    params(("role" = String, Path, description = "planner, engineer or reviewer")),
     responses(
         (status = 200, body = RolePromptDefaultsDto),
         (status = 400, description = "unknown role")

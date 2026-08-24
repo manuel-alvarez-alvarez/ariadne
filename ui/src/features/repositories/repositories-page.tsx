@@ -16,7 +16,7 @@ import { useQuery } from "@tanstack/react-query"
 import { PencilIcon, PlusIcon, Trash2Icon } from "lucide-react"
 import { useState } from "react"
 
-import { ApiError, type RepositoryDto } from "@/api"
+import { ApiError, type MergeStrategy, type RepositoryDto } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
@@ -37,7 +37,13 @@ import { DeleteRepositoryDialog } from "./delete-repository-dialog"
 import { repositoriesQueryOptions } from "./queries"
 import { RepositoryFormDialog } from "./repository-form-dialog"
 
-const COLUMN_COUNT = 4
+const COLUMN_COUNT = 5
+
+/** How an approved task reaches the base branch, in the column's own words. */
+const MERGE_STRATEGY_LABELS: Record<MergeStrategy, string> = {
+  direct: "Direct",
+  pull_request: "Pull request",
+}
 
 export function RepositoriesPage() {
   // The dialogs keep their subject after closing so the exit animation still
@@ -102,6 +108,7 @@ export function RepositoriesPage() {
               <TableRow className="hover:bg-transparent">
                 <TableHead>Path</TableHead>
                 <TableHead>Base branch</TableHead>
+                <TableHead>Merge strategy</TableHead>
                 <TableHead>Description</TableHead>
                 <TableHead className="w-20 text-right">
                   <span className="sr-only">Actions</span>
@@ -165,6 +172,9 @@ function RepositoryRow({
       </TableCell>
       <TableCell className="max-w-56 text-xs">
         <CopyableId value={repository.base_branch} label="base branch" truncate="middle" />
+      </TableCell>
+      <TableCell className="text-xs text-muted-foreground">
+        {MERGE_STRATEGY_LABELS[repository.merge_strategy]}
       </TableCell>
       <TableCell className="whitespace-normal text-muted-foreground">
         {repository.description ?? <span className="italic">no description</span>}

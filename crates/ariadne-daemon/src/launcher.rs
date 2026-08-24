@@ -9,13 +9,11 @@ use anyhow::{Context, Result, anyhow};
 
 use ariadne_core::spawn_plan::SpawnPlanFile;
 use ariadne_core::{AgentKind, AttentionReason, PromptKind, Role, SessionStatus, TaskStatus};
-use ariadne_store::{AgentSession, NewSession, Profile, Repository, SessionFilter, Store, Task};
+use ariadne_store::{AgentSession, NewSession, Repository, SessionFilter, Store, Task};
 
 use crate::agents::{SpawnCtx, SpawnPlan, adapter_for, detect_first_available, prompts};
 use crate::config::Config;
-use crate::gh::GhCli;
 use crate::gitwt::GitManager;
-use crate::glab::GlabCli;
 use crate::tmux::{TmuxManager, TmuxSpawn, session_name, tail};
 
 pub struct Launcher {
@@ -509,12 +507,9 @@ impl Launcher {
     }
 
     /// The engineer's worktree, checked out on the task branch: created on the
-    /// first spawn, and created again whenever the engineer comes back to a
-    /// task whose worktree was released — after the integrator took the branch
-    /// over, a send-back hands it back.
-    ///
-    /// A branch can only be checked out in one worktree, so taking it here
-    /// means taking it away from the integrator first.
+    /// first spawn, and created again whenever it has been cleaned up under a
+    /// task that is still going. Nobody else ever holds the branch — the
+    /// engineer keeps it from the first commit to the merge.
     ///
     /// `keep` is the tree a resumed engineer was working in — kept while it is
     /// still on disk, since an agent is put back where it left off rather than
@@ -534,7 +529,6 @@ impl Launcher {
                 .join(format!("{}-eng", tail(&task.id))),
         };
         if !worktree.exists() {
-            self.release_worktrees(task, Role::Integrator).await;
             std::fs::create_dir_all(worktree.parent().unwrap())?;
             self.git
                 .add_worktree(
@@ -549,104 +543,6 @@ impl Launcher {
             .set_task_worktree(&task.id, Some(&worktree.display().to_string()))
             .await?;
         Ok(worktree)
-    }
-
-    /// The integrator's worktree, checked out on the task branch it is landing.
-    ///
-    /// The same constraint the other way round: the engineer holds that branch
-    /// in its own worktree until the task is approved, and the integrator
-    /// cannot check it out until that one is gone. Which is also why the
-    /// engineer's sessions are killed with it — an agent whose working
-    /// directory has just been removed is an agent with nothing left to do.
-    async fn integrator_worktree(&self, task: &Task, repo: &Repository) -> Result<PathBuf> {
-        let worktree = self
-            .cfg
-            .worktree_root
-            .join(tail(&task.goal_id))
-            .join(format!("{}-int", tail(&task.id)));
-        if !worktree.exists() {
-            self.release_worktrees(task, Role::Engineer).await;
-            std::fs::create_dir_all(worktree.parent().unwrap())?;
-            self.git
-                .add_worktree(
-                    &PathBuf::from(&repo.path),
-                    &worktree,
-                    &task.branch,
-                    &repo.base_branch,
-                )
-                .await?;
-        }
-        Ok(worktree)
-    }
-
-    /// Give up the worktrees `role` holds on this task, and the sessions
-    /// working in them: the branch is about to be checked out somewhere else.
-    ///
-    /// Best effort throughout — a worktree that will not go is logged and left,
-    /// and the `git worktree add` that follows fails loudly enough for the
-    /// scheduler's retry budget to see. The engineer's path is also cleared off
-    /// the task row, since that is where the next spawn reads it from.
-    async fn release_worktrees(&self, task: &Task, role: Role) {
-        let Ok(repo) = self.store.get_repository(&task.repo_id).await else {
-            return;
-        };
-        let repo_path = PathBuf::from(&repo.path);
-        let sessions = self
-            .store
-            .list_sessions(SessionFilter {
-                task_id: Some(task.id.clone()),
-                ..Default::default()
-            })
-            .await
-            .unwrap_or_default();
-        let mut worktrees: Vec<PathBuf> = Vec::new();
-        for session in sessions.iter().filter(|s| s.role() == role) {
-            if session.status().is_live() {
-                tracing::info!(task = %task.id, session = %session.id, role = %session.role, "releasing the branch: killing the session that holds it");
-                let _ = self.kill_session(&session.id).await;
-            }
-            if let Some(wt) = &session.worktree_path {
-                worktrees.push(PathBuf::from(wt));
-            }
-        }
-        if role == Role::Engineer
-            && let Some(wt) = &task.worktree_path
-        {
-            worktrees.push(PathBuf::from(wt));
-        }
-        for worktree in worktrees {
-            if worktree.exists() {
-                tracing::info!(task = %task.id, worktree = %worktree.display(), "releasing the branch: removing the worktree");
-                if let Err(e) = self.git.remove_worktree(&repo_path, &worktree).await {
-                    tracing::warn!(task = %task.id, worktree = %worktree.display(), error = %e, "removing the worktree failed");
-                }
-            }
-        }
-        let _ = self.git.prune_worktrees(&repo_path).await;
-        if role == Role::Engineer {
-            let _ = self.store.set_task_worktree(&task.id, None).await;
-        }
-    }
-
-    /// The profile that lands this task, which a spawn cannot do without —
-    /// [`Store::task_integrator`] is the resolution itself, shared with the
-    /// thread that has to be able to address the session it starts.
-    pub async fn integrator_profile(&self, task: &Task) -> Result<Profile> {
-        Ok(self.store.task_integrator(task).await?)
-    }
-
-    /// The GitHub CLI this daemon watches pull requests with, as configured.
-    ///
-    /// Built where it is used rather than held: it is a binary name and
-    /// nothing else, and the one thing a test wants to swap is that name.
-    pub fn gh(&self) -> GhCli {
-        GhCli::new(&self.cfg.gh_bin)
-    }
-
-    /// And the GitLab CLI merge requests are watched with, for the same
-    /// reason and in the same way.
-    pub fn glab(&self) -> GlabCli {
-        GlabCli::new(&self.cfg.glab_bin)
     }
 
     /// The reviewer's detached worktree, pinned at the branch tip: created on
@@ -835,8 +731,7 @@ impl Launcher {
             .clone()
             .expect("filtered above");
         // The tree it was working in, from the task or from the session's own
-        // row — and, when the integrator took the branch over and the send-back
-        // is handing it back, a new one in its place.
+        // row, and a new one in its place where it is no longer on disk.
         let keep = task
             .worktree_path
             .clone()
@@ -851,122 +746,6 @@ impl Launcher {
         // is launched again. Its console log is appended to rather than rolled
         // over, so the terminal reads as the one continuous transcript the
         // agent actually produced.
-        let session = self
-            .store
-            .restart_session(&previous.id, Some(&worktree.display().to_string()), None)
-            .await?;
-
-        let ctx = self
-            .spawn_ctx(
-                &session,
-                worktree,
-                prompts::system_prompt(&profile),
-                String::new(),
-            )
-            .await?;
-        let plan = adapter_for(session.agent_kind()).plan_resume(&ctx, &internal, instruction)?;
-        self.launch(&session, plan).await?;
-        self.store
-            .get_session(&session.id)
-            .await
-            .map_err(Into::into)
-    }
-
-    /// Spawn the integrator for an approved task: its own worktree on the task
-    /// branch, and the briefing that says how the change is landed.
-    ///
-    /// Taking the branch over releases the engineer's worktree and kills its
-    /// sessions — see [`Launcher::integrator_worktree`].
-    pub async fn spawn_integrator(&self, task_id: &str) -> Result<AgentSession> {
-        let task = self.store.get_task(task_id).await?;
-        let goal = self.store.get_goal(&task.goal_id).await?;
-        let repo = self.store.get_repository(&task.repo_id).await?;
-        let profile = self.integrator_profile(&task).await?;
-        self.assert_no_live_session(&goal.id, Some(task_id), Role::Integrator, None)
-            .await?;
-
-        let worktree = self.integrator_worktree(&task, &repo).await?;
-        let session = self
-            .store
-            .create_session(NewSession {
-                goal_id: goal.id.clone(),
-                task_id: Some(task.id.clone()),
-                role: Role::Integrator,
-                profile_id: profile.id.clone(),
-                // The integrator profile's own agent and model, read at spawn
-                // time: unlike the engineer's and the reviewers', nothing
-                // pinned them when the task was defined, so the profile as it
-                // reads now is all there is to go on.
-                agent_kind: self.resolve_agent_kind(
-                    profile.agent_kind(),
-                    &format!("integrator profile {}", profile.id),
-                )?,
-                model: profile.model.clone(),
-                tmux_session: session_name(&goal.id, Some(&task.id), "integrator", None),
-                worktree_path: Some(worktree.display().to_string()),
-                review_round: None,
-            })
-            .await?;
-
-        let system = prompts::system_prompt(&profile);
-        let template = prompts::template_for(
-            &self.store,
-            &profile.id,
-            PromptKind::IntegrationInstructions,
-        )
-        .await;
-        let briefing = prompts::integration_briefing(
-            &template,
-            &task,
-            &goal,
-            &repo,
-            &worktree.display().to_string(),
-        );
-        self.spawn(&session, worktree, system, briefing).await?;
-        self.store
-            .get_session(&session.id)
-            .await
-            .map_err(Into::into)
-    }
-
-    /// Resume the integrator's previous agent session with a new instruction,
-    /// relaunching the very same session — row, id and tmux name — so an
-    /// integrator that sends a task back and gets it again remembers the
-    /// conflict it hit (spawn afresh if there is nothing to resume).
-    ///
-    /// Its worktree is taken back from the engineer if the send-back gave it
-    /// away, and recreated if it was cleaned up in between.
-    pub async fn resume_integrator(
-        &self,
-        task_id: &str,
-        instruction: &str,
-    ) -> Result<AgentSession> {
-        let task = self.store.get_task(task_id).await?;
-        let repo = self.store.get_repository(&task.repo_id).await?;
-        let profile = self.integrator_profile(&task).await?;
-
-        let previous = self
-            .store
-            .list_sessions(SessionFilter {
-                task_id: Some(task.id.clone()),
-                ..Default::default()
-            })
-            .await?
-            .into_iter()
-            .rev()
-            .find(|s| s.role() == Role::Integrator && s.internal_session_id.is_some());
-        let Some(previous) = previous else {
-            return self.spawn_integrator(task_id).await;
-        };
-        let internal = previous
-            .internal_session_id
-            .clone()
-            .expect("filtered above");
-
-        let worktree = self.integrator_worktree(&task, &repo).await?;
-        if self.tmux.has_session(&previous.tmux_session).await {
-            self.tmux.kill_session(&previous.tmux_session).await.ok();
-        }
         let session = self
             .store
             .restart_session(&previous.id, Some(&worktree.display().to_string()), None)
@@ -1038,7 +817,7 @@ impl Launcher {
                 let repos = self.store.list_goal_repositories(&previous.goal_id).await?;
                 PathBuf::from(&repos.first().context("goal has no repos")?.path)
             }
-            Role::Engineer | Role::Reviewer | Role::Integrator => PathBuf::from(
+            Role::Engineer | Role::Reviewer => PathBuf::from(
                 previous
                     .worktree_path
                     .clone()

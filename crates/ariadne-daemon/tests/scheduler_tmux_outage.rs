@@ -137,6 +137,7 @@ async fn world(dir: &Path) -> World {
             path: dir.join("repo").display().to_string(),
             base_branch: "main".into(),
             description: None,
+            merge_strategy: Default::default(),
         })
         .await
         .unwrap();
@@ -163,7 +164,6 @@ async fn world(dir: &Path) -> World {
             title: "task".into(),
             description: "do things".into(),
             engineer_profile_id: engineer.clone(),
-            integrator_profile_id: ariadne_store::defaults::INTEGRATOR_ID.into(),
             reviewer_profile_ids: vec![reviewer],
             depends_on: vec![],
         })

@@ -156,6 +156,7 @@ async fn seeded(h: &Harness) -> Seeded {
             path: h.dir.path().join("repo").display().to_string(),
             base_branch: "main".into(),
             description: None,
+            merge_strategy: Default::default(),
         })
         .await
         .unwrap();
@@ -179,7 +180,6 @@ async fn seeded(h: &Harness) -> Seeded {
             title: "Surfaces".into(),
             description: String::new(),
             engineer_profile_id: engineer.id.clone(),
-            integrator_profile_id: ariadne_store::defaults::INTEGRATOR_ID.into(),
             reviewer_profile_ids: vec![strict.id.clone(), auto.id.clone()],
             depends_on: vec![],
         })

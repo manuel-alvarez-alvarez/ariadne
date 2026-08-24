@@ -14,10 +14,7 @@
  * the two reviewer slots that share nothing but their order, and the pin that
  * says `auto · default` rather than borrowing the profile's answer.
  *
- * The integrator is the exception, and is here to hold the difference: it is
- * assigned per task like the engineer but pinned to nothing, since it is only
- * picked up once the reviewers approve — so its row is what its profile says
- * today. The pull request row is here because it exists only sometimes.
+ * The pull request row is here because it exists only sometimes.
  *
  * Everything is seeded into the query cache: what the daemon returns is
  * `queries.ts`'s story, and the tabs are `task-panel.tsx`'s own.
@@ -38,9 +35,8 @@ afterEach(cleanup)
 const ENGINEER = "01JPROF0000000000000000ENG"
 const STRICT = "01JPROF0000000000000STRICT"
 const AUTO = "01JPROF00000000000000AUTO"
-const INTEGRATOR = "01JPROF0000000000000000INT"
 
-/** Every profile as it stands *today* — all four edited since the task. */
+/** Every profile as it stands *today* — all three edited since the task. */
 const PROFILES: ProfileDto[] = [
   {
     id: ENGINEER,
@@ -72,16 +68,6 @@ const PROFILES: ProfileDto[] = [
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
   },
-  {
-    id: INTEGRATOR,
-    name: "Lander",
-    role: "integrator",
-    agent_kind: "claude_code",
-    model: "claude-opus-5",
-    system_prompt: "",
-    created_at: "2026-01-01T00:00:00Z",
-    updated_at: "2026-01-01T00:00:00Z",
-  },
 ]
 
 const TASK: TaskDto = {
@@ -94,7 +80,6 @@ const TASK: TaskDto = {
   branch: "surface-the-pins-000001",
   depends_on: [],
   engineer_profile_id: ENGINEER,
-  integrator_profile_id: INTEGRATOR,
   agent_kind: "codex",
   model: "gpt-5",
   reviewers: [
@@ -160,23 +145,14 @@ it("says a task has no reviewers rather than showing an empty list", () => {
   expect(fact("Reviewers")).toBe("none assigned")
 })
 
-it("shows the integrator as its profile stands, since nothing pinned it", () => {
-  mount()
-
-  // Assigned at creation like the engineer, run only once the reviewers are
-  // done — so there is no snapshot to prefer over the profile.
-  expect(fact("Integrator")).toBe("Lander · Claude Code · claude-opus-5")
-})
-
-it("links the pull request its integrator opened, by number", () => {
+it("links the pull request its engineer published", () => {
   mount({
     ...TASK,
-    status: "integrating",
-    pr_number: 12,
+    status: "approved",
     pr_url: "https://github.com/owner/repo/pull/12",
   })
 
-  const link = screen.getByRole("link", { name: "#12" })
+  const link = screen.getByRole("link", { name: "https://github.com/owner/repo/pull/12" })
   expect(link.getAttribute("href")).toBe("https://github.com/owner/repo/pull/12")
 })
 

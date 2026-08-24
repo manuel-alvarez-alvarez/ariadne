@@ -38,7 +38,6 @@ const TASK: TaskDto = {
   branch: "make-the-hints-reachable-000001",
   depends_on: ["01JTASK0000000000000000002"],
   engineer_profile_id: "01JPROF0000000000000000ENG",
-  integrator_profile_id: "01INTEGRATOR",
   reviewers: [],
   review_round: 2,
   stalled: true,

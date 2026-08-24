@@ -27,6 +27,7 @@ const REPOSITORY: RepositoryDto = {
   id: "01JREPO00000000000000ARI",
   path: "/home/me/dev/ariadne",
   base_branch: "main",
+  merge_strategy: "direct",
   description: null,
   created_at: STAMP,
   updated_at: STAMP,

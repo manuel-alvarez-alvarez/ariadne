@@ -321,7 +321,7 @@ async fn run(cli: Cli) -> Result<ExitCode> {
 mod tests {
     use super::*;
 
-    use ariadne_core::{GoalStatus, Role, TaskStatus};
+    use ariadne_core::{GoalStatus, MergeStrategy, Role, TaskStatus};
 
     /// clap's own consistency check over the whole tree, shadowed `--format`
     /// arguments included.
@@ -532,41 +532,72 @@ mod tests {
         );
     }
 
-    /// The integrator is a per-task assignment like the engineer, and the
-    /// wire requires one, so `task create` always names it: the built-in
-    /// local one when the caller does not say, exactly as `--engineer`
-    /// defaults to the built-in Engineer.
+    /// The status a task sits in while its engineer lands it is one the
+    /// terminal can filter on, spelled the way the wire spells it.
     #[test]
-    fn creating_a_task_always_names_an_integrator() {
-        let integrator = |args: &[&str]| {
-            let mut argv = vec!["ariadne", "task", "create", "01GOAL", "--title", "t"];
-            argv.extend_from_slice(args);
-            let Command::Task {
-                command: TaskCommand::Create { integrator, .. },
-            } = parse(&argv).command
-            else {
-                panic!("task create");
-            };
-            integrator
-        };
-        assert_eq!(integrator(&[]), "Integrator");
-        assert_eq!(
-            integrator(&["--integrator", "My Integrator"]),
-            "My Integrator"
-        );
-    }
-
-    /// The status the board grew a column for is one the terminal can filter
-    /// on, spelled the way the wire spells it.
-    #[test]
-    fn tasks_can_be_listed_by_the_status_their_integrator_holds_them_in() {
+    fn tasks_can_be_listed_by_the_status_they_are_landed_in() {
         let Command::Task {
             command: TaskCommand::Ls { status, .. },
-        } = parse(&["ariadne", "task", "ls", "--status", "integrating"]).command
+        } = parse(&["ariadne", "task", "ls", "--status", "approved"]).command
         else {
             panic!("task ls");
         };
-        assert_eq!(status, Some(TaskStatus::Integrating));
+        assert_eq!(status, Some(TaskStatus::Approved));
+        assert!(
+            try_parse(&["ariadne", "task", "ls", "--status", "integrating"]).is_err(),
+            "and the status a task was landed from by a fourth role is gone"
+        );
+    }
+
+    /// How a repository takes a change is the user's to set, on the way in
+    /// and afterwards; a repository nobody said anything about is landed on
+    /// directly.
+    #[test]
+    fn a_repository_can_be_registered_with_a_merge_strategy() {
+        let added = |args: &[&str]| {
+            let mut argv = vec!["ariadne", "repo", "add", "/tmp/repo"];
+            argv.extend_from_slice(args);
+            let Command::Repo {
+                command: RepoCommand::Add { merge_strategy, .. },
+            } = parse(&argv).command
+            else {
+                panic!("repo add");
+            };
+            merge_strategy
+        };
+        assert_eq!(added(&[]), MergeStrategy::Direct);
+        assert_eq!(
+            added(&["--merge-strategy", "pull_request"]),
+            MergeStrategy::PullRequest
+        );
+        assert!(
+            try_parse(&[
+                "ariadne",
+                "repo",
+                "add",
+                "/tmp/repo",
+                "--merge-strategy",
+                "forge"
+            ])
+            .is_err(),
+            "an unknown strategy is a usage error"
+        );
+
+        let Command::Repo {
+            command: RepoCommand::Edit { merge_strategy, .. },
+        } = parse(&[
+            "ariadne",
+            "repo",
+            "edit",
+            "01REPO",
+            "--merge-strategy",
+            "direct",
+        ])
+        .command
+        else {
+            panic!("repo edit");
+        };
+        assert_eq!(merge_strategy, Some(MergeStrategy::Direct));
     }
 
     /// `--host` was the documented spelling before `--endpoint`; scripts that

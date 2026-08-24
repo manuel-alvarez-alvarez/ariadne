@@ -154,11 +154,6 @@ pub fn reviewer_profiles() -> Vec<CompletionCandidate> {
     profiles(Some("reviewer"))
 }
 
-/// Integrator profile names (`task create --integrator`).
-pub fn integrator_profiles() -> Vec<CompletionCandidate> {
-    profiles(Some("integrator"))
-}
-
 /// Whom a goal's planning thread can address (`goal msg --to`): its planner,
 /// or the user.
 pub fn goal_message_recipients() -> Vec<CompletionCandidate> {

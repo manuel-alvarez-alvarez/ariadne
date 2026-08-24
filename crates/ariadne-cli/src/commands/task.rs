@@ -23,12 +23,8 @@ use crate::query::query_path;
 /// Columns of `task ls`. Titles and branches are the long ones: a task whose
 /// title runs to a paragraph would otherwise push status and round off-screen.
 ///
-/// The landing pair sits together: who lands the task, and whether they have
-/// published it yet. `integrator` is `Name (id)` capped like the `reviewer`
-/// column of `task reviews`, the CLI's other table that names a profile;
-/// `--no-trunc` gives it whole. `pr` is the number rather than the URL — a
-/// table is for scanning, and which tasks have a pull request open is the
-/// question it answers, with `task inspect` and `--format json` carrying the
+/// `pr` says whether the task has been published yet rather than where: a
+/// table is for scanning, and `task inspect` and `--format json` carry the
 /// link itself.
 const LS: &[Column] = &[
     ("id", UNCAPPED),
@@ -36,7 +32,6 @@ const LS: &[Column] = &[
     ("status", UNCAPPED),
     ("round", UNCAPPED),
     ("stalled", UNCAPPED),
-    ("integrator", 24),
     ("pr", UNCAPPED),
     ("branch", 40),
 ];
@@ -70,11 +65,6 @@ pub enum TaskCommand {
         /// Engineer profile id or name that owns the task
         #[arg(long, default_value = "Engineer", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::engineer_profiles))]
         engineer: String,
-        /// Integrator profile id or name that lands the task once its
-        /// reviewers approve it: onto the base branch with git, or as a pull
-        /// request for a person to merge
-        #[arg(long, default_value = "Integrator", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::integrator_profiles))]
-        integrator: String,
         /// Reviewer profile id or name, in review order; repeatable
         #[arg(long = "reviewer", default_value = "Reviewer", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::reviewer_profiles))]
         reviewers: Vec<String>,
@@ -88,7 +78,7 @@ pub enum TaskCommand {
     },
     /// Edit a task that has not started yet
     ///
-    /// Title, description, reviewers, integrator and dependencies, while the
+    /// Title, description, reviewers and dependencies, while the
     /// task is still pending or ready — once an engineer is on it the daemon
     /// refuses the edit. Every flag left out keeps what the task already has;
     /// `--reviewer` and `--depends-on` replace the whole list they name.
@@ -106,10 +96,6 @@ pub enum TaskCommand {
         /// replaces the task's reviewers rather than adding to them
         #[arg(long = "reviewer", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::reviewer_profiles))]
         reviewers: Vec<String>,
-        /// Integrator profile id or name that lands the task once its
-        /// reviewers approve it, replacing the one it was created with
-        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::integrator_profiles))]
-        integrator: Option<String>,
         /// Id of a task that must merge first; repeatable, and replaces the
         /// task's dependencies rather than adding to them
         #[arg(long = "depends-on", conflicts_with = "clear_depends_on", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
@@ -150,7 +136,7 @@ pub enum TaskCommand {
         /// Message body
         body: String,
         /// Address the message: the task's engineer, one of its reviewers,
-        /// the integrator that lands it or the goal's planner, by profile id
+        /// or the goal's planner, by profile id
         /// or name, or "user" for the human. An addressed recipient is woken
         /// to read it.
         #[arg(long, value_name = "PROFILE|user", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_message_recipients))]
@@ -197,7 +183,7 @@ pub enum TaskCommand {
         /// Task id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
         id: String,
-        /// engineer (default), reviewer or integrator
+        /// engineer (default) or reviewer
         #[arg(long, value_enum)]
         role: Option<ariadne_core::Role>,
     },
@@ -206,7 +192,7 @@ pub enum TaskCommand {
         /// Task id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
         id: String,
-        /// engineer (default), reviewer or integrator
+        /// engineer (default) or reviewer
         #[arg(long, value_enum)]
         role: Option<ariadne_core::Role>,
     },
@@ -219,7 +205,6 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             title,
             description,
             engineer,
-            integrator,
             reviewers,
             depends_on,
             repo,
@@ -236,7 +221,6 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                         description,
                         repo_id,
                         engineer_profile: engineer,
-                        integrator_profile: integrator,
                         reviewer_profiles: reviewers,
                         depends_on,
                     },
@@ -252,18 +236,10 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             title,
             description,
             reviewers,
-            integrator,
             depends_on,
             clear_depends_on,
         } => {
-            let body = update_request(
-                title,
-                description,
-                reviewers,
-                integrator,
-                depends_on,
-                clear_depends_on,
-            )?;
+            let body = update_request(title, description, reviewers, depends_on, clear_depends_on)?;
             let t: TaskDto = client.patch_json(&format!("/v1/tasks/{id}"), &body).await?;
             match format {
                 Format::Json => print_json(&t)?,
@@ -281,15 +257,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             match format {
                 Format::Json => print_json(&tasks)?,
                 Format::Table => {
-                    let profiles = ProfileNames::fetch(client).await;
-                    print_table(
-                        LS,
-                        &tasks
-                            .iter()
-                            .map(|t| ls_row(&profiles, t))
-                            .collect::<Vec<_>>(),
-                        no_trunc,
-                    );
+                    print_table(LS, &tasks.iter().map(ls_row).collect::<Vec<_>>(), no_trunc);
                     if tasks.is_empty() {
                         // An empty list under a filter is not an empty
                         // system, and saying so would send the reader
@@ -309,8 +277,6 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                 Format::Json => print_json(&t)?,
                 Format::Table => {
                     let profiles = ProfileNames::fetch(client).await;
-                    // Read before the block below moves the task apart.
-                    let integrator = integrator_label(&profiles, &t);
                     print_kv(&[
                         ("id", t.id),
                         ("goal", t.goal_id),
@@ -341,7 +307,6 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                                 .collect::<Vec<_>>()
                                 .join("\n             "),
                         ),
-                        ("integrator", integrator),
                         (
                             "depends_on",
                             if t.depends_on.is_empty() {
@@ -359,7 +324,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                         ),
                         ("merge", t.merge_commit.unwrap_or_else(|| "-".into())),
                         // The forge's own link, where the rest of a published
-                        // task's story is; only an integrator that opened one
+                        // task's story is; only an engineer that opened one
                         // reports it.
                         ("pull_request", t.pr_url.unwrap_or_else(|| "-".into())),
                         ("created", local_time(&t.created_at)),
@@ -486,39 +451,26 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
     Ok(())
 }
 
-/// Who a verdict is from, for the `reviewer` column: the profile that voted,
-/// or — for the round the daemon relayed off a published request — the forge
-/// whose reviewers wrote it. Every verdict has exactly one of the two.
+/// Who a verdict is from, for the `reviewer` column: the profile that voted.
 fn review_author(profiles: &ProfileNames, review: &ReviewDto) -> String {
-    match (&review.reviewer_profile_id, review.author_role) {
-        (Some(profile_id), _) => profiles.label(profile_id),
-        (None, Some(role)) => role.as_str().to_string(),
-        (None, None) => "-".to_string(),
-    }
+    profiles.label(&review.reviewer_profile_id)
 }
 
 /// One row of `task ls`, in [`LS`]'s order.
-fn ls_row(profiles: &ProfileNames, t: &TaskDto) -> Vec<String> {
+fn ls_row(t: &TaskDto) -> Vec<String> {
     vec![
         t.id.clone(),
         t.title.clone(),
         t.status.as_str().into(),
         t.review_round.to_string(),
         if t.stalled { "yes".into() } else { "-".into() },
-        integrator_label(profiles, t),
-        t.pr_number.map_or("-".into(), |n| format!("#{n}")),
+        if t.pr_url.is_some() {
+            "yes".into()
+        } else {
+            "-".into()
+        },
         t.branch.clone(),
     ]
-}
-
-/// Who lands this task, for `ls` and for `inspect` — one spelling, so the two
-/// never disagree about it.
-///
-/// Assigned like the engineer, but pinned to nothing: an integrator is only
-/// started once the reviewers have approved, so what runs is what its profile
-/// says then, and there is no snapshot to prefer.
-fn integrator_label(profiles: &ProfileNames, t: &TaskDto) -> String {
-    profiles.label(&t.integrator_profile_id)
 }
 
 /// What `task cancel` asks before the work is thrown away: cancelling is
@@ -547,7 +499,6 @@ fn update_request(
     title: Option<String>,
     description: Option<String>,
     reviewers: Vec<String>,
-    integrator: Option<String>,
     depends_on: Vec<String>,
     clear_depends_on: bool,
 ) -> Result<UpdateTaskRequest> {
@@ -555,7 +506,6 @@ fn update_request(
         title,
         description,
         reviewer_profiles: (!reviewers.is_empty()).then_some(reviewers),
-        integrator_profile: integrator,
         depends_on: match (clear_depends_on, depends_on.is_empty()) {
             (true, _) => Some(Vec::new()),
             (false, true) => None,
@@ -567,12 +517,11 @@ fn update_request(
     if req.title.is_none()
         && req.description.is_none()
         && req.reviewer_profiles.is_none()
-        && req.integrator_profile.is_none()
         && req.depends_on.is_none()
     {
         bail!(
-            "nothing to update — pass --title, --description, --reviewer, \
-             --integrator or --depends-on"
+            "nothing to update — pass --title, --description, --reviewer \
+             or --depends-on"
         );
     }
     Ok(req)
@@ -608,6 +557,8 @@ fn pick_repo(repos: &[RepositoryDto], spec: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use ariadne_core::{MergeStrategy, ReviewVerdict};
+
     use super::*;
 
     fn repos() -> Vec<RepositoryDto> {
@@ -615,6 +566,7 @@ mod tests {
             id: id.into(),
             path: path.into(),
             base_branch: "main".into(),
+            merge_strategy: MergeStrategy::Direct,
             description: None,
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:00Z".into(),
@@ -639,12 +591,10 @@ mod tests {
     /// an empty list and wipe what the task has.
     #[test]
     fn a_flag_that_was_not_given_is_left_alone() {
-        let req =
-            update_request(Some("new".into()), None, vec![], None, vec![], false).expect("body");
+        let req = update_request(Some("new".into()), None, vec![], vec![], false).expect("body");
         assert_eq!(req.title.as_deref(), Some("new"));
         assert!(req.description.is_none());
         assert!(req.reviewer_profiles.is_none());
-        assert!(req.integrator_profile.is_none());
         assert!(req.depends_on.is_none());
     }
 
@@ -654,7 +604,6 @@ mod tests {
             None,
             None,
             vec!["Reviewer".into(), "rev-strict".into()],
-            None,
             vec!["01TASK".into()],
             false,
         )
@@ -669,34 +618,16 @@ mod tests {
         );
     }
 
-    /// The integrator is reassignable while the task has not started, the way
-    /// the reviewers are, so `--integrator` alone is an update worth sending.
-    #[test]
-    fn the_integrator_can_be_reassigned_on_its_own() {
-        let req = update_request(
-            None,
-            None,
-            vec![],
-            Some("My Integrator".into()),
-            vec![],
-            false,
-        )
-        .expect("body");
-        assert_eq!(req.integrator_profile.as_deref(), Some("My Integrator"));
-        assert!(req.title.is_none());
-        assert!(req.reviewer_profiles.is_none());
-    }
-
     /// The one thing the repeatable flag cannot say on its own.
     #[test]
     fn clearing_the_dependencies_sends_an_empty_list() {
-        let req = update_request(None, None, vec![], None, vec![], true).expect("body");
+        let req = update_request(None, None, vec![], vec![], true).expect("body");
         assert_eq!(req.depends_on.as_deref(), Some([].as_slice()));
     }
 
     #[test]
     fn an_update_with_no_flags_is_refused_before_it_is_sent() {
-        let err = update_request(None, None, vec![], None, vec![], false).expect_err("no-op");
+        let err = update_request(None, None, vec![], vec![], false).expect_err("no-op");
         assert!(err.to_string().starts_with("nothing to update"), "{err}");
     }
 
@@ -710,7 +641,6 @@ mod tests {
             description: String::new(),
             status: TaskStatus::InProgress,
             engineer_profile_id: "01ENG".into(),
-            integrator_profile_id: "01INT".into(),
             agent_kind: None,
             model: None,
             reviewers: vec![],
@@ -720,7 +650,6 @@ mod tests {
             review_round: 0,
             stalled: false,
             merge_commit: None,
-            pr_number: None,
             pr_url: None,
             created_at: "2026-08-17T08:00:00Z".into(),
             updated_at: "2026-08-17T08:00:00Z".into(),
@@ -737,58 +666,57 @@ mod tests {
         );
     }
 
-    /// Who lands a task is an assignment like its engineer, so the list says
-    /// so rather than making the reader inspect every row to find out.
+    /// A verdict is a reviewer's, named the way every other mention of a
+    /// profile is, with the bare id where the daemon would not name it.
     #[test]
-    fn the_list_names_the_integrator_and_the_pull_request() {
-        let profiles =
-            ProfileNames::from_pairs([("01INT".to_string(), "My Integrator".to_string())]);
+    fn a_verdict_is_named_after_the_reviewer_that_left_it() {
+        let review = |profile_id: &str| ReviewDto {
+            id: "01REVIEW".into(),
+            task_id: "01TASK".into(),
+            round: 1,
+            reviewer_profile_id: profile_id.into(),
+            session_id: None,
+            verdict: ReviewVerdict::Approve,
+            body: None,
+            created_at: "2026-08-17T08:00:00Z".into(),
+        };
+        let profiles = ProfileNames::from_pairs([("01REV".to_string(), "My Reviewer".to_string())]);
+        assert_eq!(
+            review_author(&profiles, &review("01REV")),
+            "My Reviewer (01REV)"
+        );
+        assert_eq!(review_author(&profiles, &review("01GONE")), "01GONE");
+    }
+
+    /// A published task says so in the list, which is the question a table
+    /// answers; the link itself is `task inspect`'s.
+    #[test]
+    fn the_list_says_whether_a_task_was_published() {
         let t = TaskDto {
-            status: TaskStatus::Integrating,
-            pr_number: Some(12),
+            status: TaskStatus::Approved,
             pr_url: Some("https://github.com/owner/repo/pull/12".into()),
             ..dto()
         };
 
-        let row = ls_row(&profiles, &t);
+        let row = ls_row(&t);
         assert_eq!(row.len(), LS.len(), "a row per column, in LS's order");
         assert_eq!(
             row,
             [
                 "01TASK",
                 "Add the frobnicator",
-                "integrating",
+                "approved",
                 "0",
                 "-",
-                "My Integrator (01INT)",
-                "#12",
+                "yes",
                 "add-the-frobnicator-01task",
             ]
         );
-    }
 
-    /// Every task names an integrator, and the cell names it the way the
-    /// engineer's does — one spelling for the list and the inspect block.
-    #[test]
-    fn the_integrator_is_named_the_way_the_engineer_is() {
-        let profiles = ProfileNames::from_pairs([("01INT".to_string(), "Integrator".to_string())]);
-        let row = ls_row(&profiles, &dto());
-        assert_eq!(row[5], "Integrator (01INT)");
-        assert_eq!(row[6], "-", "and no pull request was ever opened for it");
-        assert_eq!(integrator_label(&profiles, &dto()), row[5]);
-    }
-
-    /// A profile the daemon would not name still leaves the id, the way every
-    /// other mention of one does.
-    #[test]
-    fn an_unresolvable_integrator_is_left_as_its_id() {
-        let t = TaskDto {
-            integrator_profile_id: "01GONE".into(),
-            ..dto()
-        };
         assert_eq!(
-            integrator_label(&ProfileNames::from_pairs([]), &t),
-            "01GONE"
+            ls_row(&dto())[5],
+            "-",
+            "and a task nobody published says nothing"
         );
     }
 }

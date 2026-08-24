@@ -22,17 +22,13 @@ pub async fn goal_participants(store: &Store, goal: &Goal) -> Result<Vec<Profile
 }
 
 /// Who may be addressed in a task's thread: everyone working on the task — its
-/// engineer, its reviewers, the integrator that lands it and the planner that
-/// wrote it — or the user.
+/// engineer, its reviewers and the planner that wrote it — or the user.
 pub async fn task_participants(store: &Store, task: &Task) -> Result<Vec<Profile>, StoreError> {
     let goal = store.get_goal(&task.goal_id).await?;
     let mut participants = vec![store.get_profile(&task.engineer_profile_id).await?];
     for pin in store.list_task_reviewer_pins(&task.id).await? {
         participants.push(store.get_profile(&pin.profile_id).await?);
     }
-    // Whoever lands it, resolved the way the launcher resolves it, so that an
-    // integrator working on a task is reachable in its thread.
-    participants.push(store.task_integrator(task).await?);
     participants.push(store.get_profile(&goal.planner_profile_id).await?);
     Ok(participants)
 }

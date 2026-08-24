@@ -770,11 +770,11 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Record the pull request an integrator opened for a task.
-         * @description The daemon watches what it is told here, and only here: the URL travels as
-         *     a tool call rather than as a sentence in the conversation, so that a
-         *     pull request is either being watched or was never reported — never
-         *     half-known from a message somebody has to parse.
+         * Record the pull or merge request the engineer opened for a task.
+         * @description The URL travels as a tool call rather than as a sentence in the
+         *     conversation, so a published task is either one the UI and the CLI can
+         *     point at or one that was never reported — never half-known from a message
+         *     somebody has to parse.
          */
         post: operations["tasks_record_pull_request"];
         delete?: never;
@@ -794,28 +794,6 @@ export interface paths {
         put?: never;
         /** Retry a failed task (user): failed -> ready. */
         post: operations["tasks_retry"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/tasks/{id}/return-to-engineer": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Hand an integrating task back to its engineer (integrator).
-         * @description The feedback is recorded as a change-request verdict on the round that was
-         *     approved, so it reaches the engineer exactly the way a reviewer's does — in
-         *     the resume briefing, and in `get_reviews` beside the approvals it follows.
-         */
-        post: operations["tasks_return_to_engineer"];
         delete?: never;
         options?: never;
         head?: never;
@@ -919,7 +897,7 @@ export interface components {
          * @description Author of a conversation message.
          * @enum {string}
          */
-        AuthorRole: "planner" | "engineer" | "reviewer" | "integrator" | "user" | "system" | "forge";
+        AuthorRole: "planner" | "engineer" | "reviewer" | "user" | "system";
         /** @description A binary as the daemon can — or cannot — find it. */
         BinaryDto: {
             agent_kind?: null | components["schemas"]["AgentKind"];
@@ -995,6 +973,7 @@ export interface components {
             /** @description Omit for the repo's currently checked-out branch. */
             base_branch?: string | null;
             description?: string | null;
+            merge_strategy?: null | components["schemas"]["MergeStrategy"];
             /**
              * @description Absolute path of an existing git work tree.
              * @example /home/me/dev/ariadne
@@ -1016,8 +995,6 @@ export interface components {
             description?: string;
             /** @description Engineer profile id or unique name. */
             engineer_profile: string;
-            /** @description Integrator profile id or unique name. */
-            integrator_profile: string;
             /**
              * @description Id of one of the goal's repositories; may be omitted when the goal
              *     works in exactly one.
@@ -1200,6 +1177,17 @@ export interface components {
         LogSnapshotResponse: {
             lines: components["schemas"]["LogLineDto"][];
         };
+        /**
+         * @description How a repository takes the change a task lands on its base branch: the one
+         *     thing about a repository the engineer that finishes a task has to be told,
+         *     since the commands it runs at the end differ entirely between the two.
+         *
+         *     Which forge a published request goes to is *not* here: `origin` says
+         *     whether it is GitHub or GitLab, and asking the remote at landing time
+         *     cannot go stale the way a second copy of the answer would.
+         * @enum {string}
+         */
+        MergeStrategy: "direct" | "pull_request";
         MessageDto: {
             author_role: components["schemas"]["AuthorRole"];
             author_session_id?: string | null;
@@ -1287,7 +1275,7 @@ export interface components {
          *     (see [`PromptKind::roles`]).
          * @enum {string}
          */
-        PromptKind: "planner_briefing" | "planner_resume" | "engineer_briefing" | "engineer_resume" | "changes_requested" | "reviewer_briefing" | "reviewer_resume" | "integration_instructions" | "integration_resume" | "integration_merged" | "message_delivery";
+        PromptKind: "planner_briefing" | "planner_resume" | "engineer_briefing" | "engineer_resume" | "changes_requested" | "reviewer_briefing" | "reviewer_resume" | "landing_instructions" | "message_delivery";
         /**
          * @description Who a conversation message is addressed to: one agent profile, or the
          *     human user. Orthogonal to the author role, and optional — a message with
@@ -1296,15 +1284,12 @@ export interface components {
          */
         RecipientKind: "profile" | "user";
         /**
-         * @description The integrator reporting the pull request it opened for a task, so the
-         *     daemon can watch it: read off `gh pr create`'s output rather than out of
-         *     the conversation.
+         * @description The engineer reporting the pull or merge request it opened for a task, so
+         *     the user has somewhere to go and read it: taken off `gh pr create`'s output
+         *     rather than out of the conversation.
          */
         RecordPullRequestRequest: {
-            /**
-             * @description The pull request's URL, e.g. `https://github.com/owner/repo/pull/12`.
-             *     The number is taken from it, so the two can never disagree.
-             */
+            /** @description The request's URL, e.g. `https://github.com/owner/repo/pull/12`. */
             url: string;
         };
         RepositoryDto: {
@@ -1312,6 +1297,8 @@ export interface components {
             created_at: string;
             description?: string | null;
             id: string;
+            /** @description How a task lands on `base_branch` here. */
+            merge_strategy: components["schemas"]["MergeStrategy"];
             /** @description Absolute path of the checkout. */
             path: string;
             updated_at: string;
@@ -1331,28 +1318,12 @@ export interface components {
              */
             missed: number;
         };
-        /**
-         * @description The integrator handing an approved task back to its engineer: a rebase it
-         *     will not resolve, or a change the landing showed to be wrong. Recorded as a
-         *     round of requested changes, which is how the engineer already reads
-         *     feedback.
-         */
-        ReturnToEngineerRequest: {
-            /** @description What has to change, concretely: one entry per file or decision. */
-            changes?: string[];
-            /** @description Why the task is coming back, in one or two sentences. */
-            summary: string;
-        };
         ReviewDto: {
-            author_role?: null | components["schemas"]["AuthorRole"];
             body?: string | null;
             created_at: string;
             id: string;
-            /**
-             * @description The task profile whose verdict this is. None exactly when
-             *     `author_role` names an author that is nobody's profile.
-             */
-            reviewer_profile_id?: string | null;
+            /** @description The reviewer of the round whose verdict this is. */
+            reviewer_profile_id: string;
             /** Format: int64 */
             round: number;
             session_id?: string | null;
@@ -1368,7 +1339,7 @@ export interface components {
          * @description The role an agent plays in the orchestration.
          * @enum {string}
          */
-        Role: "planner" | "engineer" | "reviewer" | "integrator";
+        Role: "planner" | "engineer" | "reviewer";
         /**
          * @description Response of `GET /v1/roles/{role}/prompt-defaults`: what a profile of that
          *     role is seeded with, read without creating or touching anything.
@@ -1480,11 +1451,6 @@ export interface components {
             engineer_profile_id: string;
             goal_id: string;
             id: string;
-            /**
-             * @description Profile that lands the task once it is approved, assigned at creation
-             *     exactly as the engineer is.
-             */
-            integrator_profile_id: string;
             merge_commit?: string | null;
             /**
              * @description Model the engineer runs on, pinned like `agent_kind`. None = the agent
@@ -1492,12 +1458,9 @@ export interface components {
              */
             model?: string | null;
             /**
-             * Format: int64
-             * @description Number of the pull request the task was published as, once its
-             *     integrator has reported one; None for a task landed locally.
+             * @description URL of the pull or merge request the task was published as, once its
+             *     engineer has reported one; None for a task landed directly.
              */
-            pr_number?: number | null;
-            /** @description Its URL, as the forge spells it. */
             pr_url?: string | null;
             /** @description Id of the repository the task works in, one of its goal's. */
             repo_id: string;
@@ -1528,7 +1491,7 @@ export interface components {
          * @description Task lifecycle status.
          * @enum {string}
          */
-        TaskStatus: "pending" | "ready" | "in_progress" | "under_review" | "changes_requested" | "approved" | "integrating" | "merged" | "cancelled" | "failed";
+        TaskStatus: "pending" | "ready" | "in_progress" | "under_review" | "changes_requested" | "approved" | "merged" | "cancelled" | "failed";
         TaskTransitionDto: {
             actor: string;
             created_at: string;
@@ -1579,17 +1542,13 @@ export interface components {
             base_branch?: string | null;
             /** @description New description, or empty to clear it. Absent = unchanged. */
             description?: string | null;
+            merge_strategy?: null | components["schemas"]["MergeStrategy"];
             path?: string | null;
         };
         /** @description Partial update; only allowed while the task is pending/ready. */
         UpdateTaskRequest: {
             depends_on?: string[] | null;
             description?: string | null;
-            /**
-             * @description Integrator profile id or unique name, replacing the one the task was
-             *     created with.
-             */
-            integrator_profile?: string | null;
             reviewer_profiles?: string[] | null;
             title?: string | null;
         };
@@ -2551,7 +2510,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description planner, engineer, reviewer or integrator */
+                /** @description planner, engineer or reviewer */
                 role: string;
             };
             cookie?: never;
@@ -3072,21 +3031,21 @@ export interface operations {
                     "application/json": components["schemas"]["TaskDto"];
                 };
             };
-            /** @description not a pull request URL */
+            /** @description empty URL */
             400: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
-            /** @description not an integrator session */
+            /** @description not an engineer session */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
-            /** @description the task is not being integrated */
+            /** @description the task is not approved */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -3115,46 +3074,6 @@ export interface operations {
                     "application/json": components["schemas"]["TaskDto"];
                 };
             };
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    tasks_return_to_engineer: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description task id */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ReturnToEngineerRequest"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TaskDto"];
-                };
-            };
-            /** @description not an integrator session */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description the task is not being integrated */
             409: {
                 headers: {
                     [name: string]: unknown;

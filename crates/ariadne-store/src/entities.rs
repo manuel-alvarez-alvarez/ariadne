@@ -4,8 +4,8 @@
 use std::str::FromStr;
 
 use ariadne_core::{
-    AgentKind, AttentionReason, AuthorRole, GoalStatus, PromptKind, RecipientKind, ReviewVerdict,
-    Role, SessionStatus, TaskStatus,
+    AgentKind, AttentionReason, AuthorRole, GoalStatus, MergeStrategy, PromptKind, RecipientKind,
+    ReviewVerdict, Role, SessionStatus, TaskStatus,
 };
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -83,8 +83,17 @@ pub struct Repository {
     pub path: String,
     pub base_branch: String,
     pub description: Option<String>,
+    /// How a task lands on `base_branch` here: squashed onto it directly, or
+    /// published as a pull or merge request.
+    pub merge_strategy: String,
     pub created_at: String,
     pub updated_at: String,
+}
+
+impl Repository {
+    pub fn merge_strategy(&self) -> MergeStrategy {
+        MergeStrategy::from_str(&self.merge_strategy).expect("valid merge strategy in db")
+    }
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -127,9 +136,6 @@ pub struct Task {
     pub description: String,
     pub status: String,
     pub engineer_profile_id: String,
-    /// Profile that lands this task once it is approved, assigned when the
-    /// task was created exactly as the engineer above it was.
-    pub integrator_profile_id: String,
     /// Agent CLI the engineer of this task runs on, snapshotted from the
     /// profile when the task was created. None = auto. Editing the profile
     /// afterwards leaves it alone.
@@ -142,20 +148,10 @@ pub struct Task {
     pub review_round: i64,
     pub stalled: i64,
     pub merge_commit: Option<String>,
-    /// Number of the pull request this task was published as, once its
-    /// integrator has reported one. None while there is none — every task
-    /// landed locally, and every task before the integrator opened one.
-    pub pr_number: Option<i64>,
-    /// Its URL, as the forge spells it; what says which forge it is on.
+    /// URL of the pull or merge request this task was published as, once its
+    /// engineer has reported one. None while there is none — every task
+    /// landed directly, and every task before its request was opened.
     pub pr_url: Option<String>,
-    /// Ids of what the pull request has already handed to the engineer — its
-    /// comments, its failing checks, its conflict with the base — as a JSON
-    /// array: what keeps one of them from being relayed twice as the daemon
-    /// polls.
-    pub pr_relayed_comments: Option<String>,
-    /// Whether the user has been told the pull request is approved and ready
-    /// for them to merge, so they are told once rather than every poll.
-    pub pr_approved_notified: i64,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -166,17 +162,6 @@ impl Task {
     }
     pub fn is_stalled(&self) -> bool {
         self.stalled != 0
-    }
-    /// The ids already relayed to the engineer. Unreadable JSON reads as none
-    /// relayed: a comment repeated is better than one never delivered.
-    pub fn pr_relayed_comments(&self) -> Vec<String> {
-        self.pr_relayed_comments
-            .as_deref()
-            .and_then(|raw| serde_json::from_str(raw).ok())
-            .unwrap_or_default()
-    }
-    pub fn pr_approved_notified(&self) -> bool {
-        self.pr_approved_notified != 0
     }
     pub fn agent_kind(&self) -> Option<AgentKind> {
         self.agent_kind
@@ -326,13 +311,8 @@ pub struct Review {
     pub id: String,
     pub task_id: String,
     pub round: i64,
-    /// The task profile whose verdict this is — a reviewer of the round, or
-    /// the integrator sending the change back. None exactly when
-    /// `author_role` names an author that is nobody's profile.
-    pub reviewer_profile_id: Option<String>,
-    /// The role that wrote it where no profile did: `forge`, for what the
-    /// people reading a published request wrote and the daemon relayed.
-    pub author_role: Option<String>,
+    /// The reviewer of the round whose verdict this is.
+    pub reviewer_profile_id: String,
     pub session_id: Option<String>,
     pub verdict: String,
     pub body: Option<String>,
@@ -343,26 +323,6 @@ impl Review {
     pub fn verdict(&self) -> ReviewVerdict {
         ReviewVerdict::from_str(&self.verdict).expect("valid verdict in db")
     }
-
-    /// Who the verdict is from, out of the two columns above.
-    pub fn author(&self) -> ReviewAuthor {
-        match (&self.reviewer_profile_id, &self.author_role) {
-            (Some(profile_id), _) => ReviewAuthor::Profile(profile_id.clone()),
-            (None, Some(role)) => {
-                ReviewAuthor::Role(AuthorRole::from_str(role).expect("valid author role in db"))
-            }
-            // The CHECK on the table is what makes this unreachable.
-            (None, None) => panic!("review {} has no author", self.id),
-        }
-    }
-}
-
-/// Who a verdict is from: one of the task's profiles, or a role that is
-/// nobody's profile — the forge a published request is being reviewed on.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ReviewAuthor {
-    Profile(String),
-    Role(AuthorRole),
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]

@@ -199,6 +199,7 @@ impl Harness {
                 path: self.dir.path().join("repo").display().to_string(),
                 base_branch: "main".into(),
                 description: None,
+                merge_strategy: Default::default(),
             })
             .await
             .unwrap();
@@ -226,7 +227,6 @@ impl Harness {
                 title: "task".into(),
                 description: "do things".into(),
                 engineer_profile_id: engineer.id.clone(),
-                integrator_profile_id: ariadne_store::defaults::INTEGRATOR_ID.into(),
                 reviewer_profile_ids: vec![reviewer.id.clone()],
                 depends_on: vec![],
             })

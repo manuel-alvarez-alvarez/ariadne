@@ -44,6 +44,7 @@ const ARIADNE: RepositoryDto = {
   id: "01JREPO00000000000000ARI",
   path: "/home/me/dev/ariadne",
   base_branch: "main",
+  merge_strategy: "direct",
   description: "The orchestrator itself.",
   created_at: STAMP,
   updated_at: STAMP,
@@ -53,6 +54,7 @@ const SANDBOX: RepositoryDto = {
   id: "01JREPO00000000000000SND",
   path: "/home/me/dev/sandbox",
   base_branch: "trunk",
+  merge_strategy: "pull_request",
   description: null,
   created_at: STAMP,
   updated_at: STAMP,
@@ -130,6 +132,12 @@ describe("RepositoriesPage", () => {
     expect(screen.getByTitle(SANDBOX.path)).toBeDefined()
     expect(screen.getByText("no description")).toBeDefined()
     expect(screen.getByText("2 repositories")).toBeDefined()
+
+    // How a task lands here is a column of its own: it decides what the
+    // engineer does at the end, so it is read off the list rather than out of
+    // each repository in turn.
+    expect(screen.getByText("Direct")).toBeDefined()
+    expect(screen.getByText("Pull request")).toBeDefined()
   })
 
   it("copies the whole path, which is longer than what the column shows", async () => {

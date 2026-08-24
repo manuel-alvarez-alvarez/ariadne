@@ -3,9 +3,8 @@
 //! A message may name one addressee, the way a task names its profiles: a
 //! profile id, a profile name, or the literal `"user"`. What each thread
 //! accepts is who works in it — the planner in a goal's planning thread, and
-//! the engineer, the reviewers, the integrator and the planner in a task's —
-//! so that a message
-//! never names someone who is not there to read it. Anything else is refused
+//! the engineer, the reviewers and the planner in a task's — so that a
+//! message never names someone who is not there to read it. Anything else is refused
 //! with a sentence naming the addressees that would have worked.
 //!
 //! No tmux and no agent CLI: nothing here launches anything, the rows are
@@ -72,7 +71,6 @@ struct Cast {
     planner: Profile,
     engineer: Profile,
     reviewer: Profile,
-    integrator: Profile,
 }
 
 impl Harness {
@@ -94,7 +92,6 @@ impl Harness {
         let planner = self.profile("planner", Role::Planner).await;
         let engineer = self.profile("engineer", Role::Engineer).await;
         let reviewer = self.profile("reviewer", Role::Reviewer).await;
-        let integrator = self.profile("integrator", Role::Integrator).await;
         // Named by one test and refused there: an addressee is checked
         // against the thread, not against the profiles that exist.
         self.profile("outsider", Role::Reviewer).await;
@@ -104,6 +101,7 @@ impl Harness {
                 path: "/tmp/ariadne-messages-test".into(),
                 base_branch: "main".into(),
                 description: None,
+                merge_strategy: Default::default(),
             })
             .await
             .unwrap();
@@ -129,7 +127,6 @@ impl Harness {
                 title: "Task".into(),
                 description: "do things".into(),
                 engineer_profile_id: engineer.id.clone(),
-                integrator_profile_id: integrator.id.clone(),
                 reviewer_profile_ids: vec![reviewer.id.clone()],
                 depends_on: vec![],
             })
@@ -141,26 +138,7 @@ impl Harness {
             planner,
             engineer,
             reviewer,
-            integrator,
         }
-    }
-
-    /// A second task on the same goal, landed by the built-in Local
-    /// Integrator rather than by the cast's own one.
-    async fn task_on_the_builtin_integrator(&self, cast: &Cast) -> Task {
-        self.store
-            .create_task(NewTask {
-                goal_id: cast.goal.id.clone(),
-                repo_id: cast.task.repo_id.clone(),
-                title: "Plainly landed task".into(),
-                description: "landed by the built-in integrator".into(),
-                engineer_profile_id: cast.engineer.id.clone(),
-                integrator_profile_id: ariadne_store::defaults::INTEGRATOR_ID.into(),
-                reviewer_profile_ids: vec![cast.reviewer.id.clone()],
-                depends_on: vec![],
-            })
-            .await
-            .unwrap()
     }
 
     async fn send(&self, request: Request<Body>) -> (StatusCode, Vec<u8>) {
@@ -253,22 +231,6 @@ async fn a_task_message_addresses_a_participant_by_name_or_by_id() {
         Some(cast.planner.id.as_str())
     );
 
-    // The integrator that will land the task is in its thread too, from the
-    // moment the task names one.
-    let to_integrator = h
-        .post_message(
-            &uri,
-            serde_json::json!({"body": "the rebase conflicts", "to": "integrator"}),
-        )
-        .await;
-    assert_eq!(
-        to_integrator
-            .recipient
-            .and_then(|r| r.profile_id)
-            .as_deref(),
-        Some(cast.integrator.id.as_str())
-    );
-
     // The user is addressed by the literal, and carries no profile.
     let to_user = h
         .post_message(
@@ -301,7 +263,6 @@ async fn a_task_message_addresses_a_participant_by_name_or_by_id() {
             Some((RecipientKind::Profile, Some("reviewer"))),
             Some((RecipientKind::Profile, Some("engineer"))),
             Some((RecipientKind::Profile, Some("planner"))),
-            Some((RecipientKind::Profile, Some("integrator"))),
             Some((RecipientKind::User, None)),
             None,
         ]
@@ -322,41 +283,8 @@ async fn a_task_thread_refuses_a_profile_that_takes_no_part_in_it() {
     assert_eq!(
         message,
         "outsider takes no part in this thread; address one of: \
-         engineer, reviewer, integrator, planner, user"
+         engineer, reviewer, planner, user"
     );
-}
-
-/// Whichever integrator a task was assigned, its thread addresses that one —
-/// the built-in Local Integrator included. An integrator session working on a
-/// task nobody can reach would be one whose questions and send-backs go
-/// nowhere.
-#[tokio::test]
-async fn a_task_on_the_built_in_integrator_addresses_it() {
-    let h = harness().await;
-    let cast = h.cast().await;
-    let plain = h.task_on_the_builtin_integrator(&cast).await;
-    let uri = format!("/v1/tasks/{}/messages", plain.id);
-    let builtin = h.store.builtin_integrator().await.expect("the built-in");
-
-    let to_integrator = h
-        .post_message(
-            &uri,
-            serde_json::json!({"body": "the rebase conflicts", "to": builtin.name}),
-        )
-        .await;
-    assert_eq!(
-        to_integrator
-            .recipient
-            .and_then(|r| r.profile_id)
-            .as_deref(),
-        Some(builtin.id.as_str())
-    );
-    // And the refusal for anyone else names it among the addressees, so the
-    // integrator of such a task is discoverable rather than merely accepted.
-    let message = h
-        .refused(&uri, serde_json::json!({"body": "psst", "to": "outsider"}))
-        .await;
-    assert!(message.contains(&builtin.name), "{message}");
 }
 
 /// The planning thread is the planner's: the agents of a task are addressed in
@@ -413,7 +341,7 @@ async fn an_unknown_addressee_is_refused_naming_the_ones_that_would_work() {
     assert_eq!(
         message,
         "no profile has the id or name nobody; address one of: \
-         engineer, reviewer, integrator, planner, user"
+         engineer, reviewer, planner, user"
     );
 }
 

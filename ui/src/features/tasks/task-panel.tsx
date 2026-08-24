@@ -303,12 +303,6 @@ function TaskFacts({ task }: { task: TaskDto }) {
           <Muted>none assigned</Muted>
         )}
       </Fact>
-      <Fact label="Integrator">
-        {/* Assigned per task like the engineer, and read the same way — but
-            unpinned: the integrator is picked up when the reviewers approve,
-            so what its profile says now is what will run. */}
-        <ProfileSummary profileId={task.integrator_profile_id} className="text-xs" />
-      </Fact>
       <Fact label="Depends on">
         <Dependencies ids={task.depends_on} />
       </Fact>
@@ -327,7 +321,7 @@ function TaskFacts({ task }: { task: TaskDto }) {
           <Muted>not merged</Muted>
         )}
       </Fact>
-      {/* Only a task its integrator published has one, and only then is the
+      {/* Only a task its engineer published has one, and only then is the
           forge where the rest of its story is — a row saying "no pull request"
           on every locally landed task would say nothing at all. */}
       {task.pr_url ? (
@@ -341,7 +335,7 @@ function TaskFacts({ task }: { task: TaskDto }) {
               className="min-w-0 truncate text-xs underline-offset-3 hover:underline"
               title={task.pr_url}
             >
-              {task.pr_number ? `#${task.pr_number}` : task.pr_url}
+              {task.pr_url}
             </a>
           </span>
         </Fact>

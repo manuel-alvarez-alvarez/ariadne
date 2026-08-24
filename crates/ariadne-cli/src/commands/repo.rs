@@ -5,6 +5,7 @@ use clap::Subcommand;
 
 use ariadne_api::repositories::{CreateRepositoryRequest, RepositoryDto, UpdateRepositoryRequest};
 use ariadne_client::Client;
+use ariadne_core::MergeStrategy;
 use serde_json::json;
 
 use super::confirm;
@@ -17,6 +18,7 @@ const LS: &[Column] = &[
     ("id", UNCAPPED),
     ("path", 48),
     ("branch", 24),
+    ("merge", UNCAPPED),
     ("description", 40),
 ];
 
@@ -32,6 +34,10 @@ pub enum RepoCommand {
         /// What this repository is, in a line
         #[arg(long)]
         description: Option<String>,
+        /// How an approved task lands on the base branch: squashed straight
+        /// onto it, or published as a pull/merge request for a human to merge
+        #[arg(long, value_enum, default_value_t = MergeStrategy::Direct)]
+        merge_strategy: MergeStrategy,
     },
     /// List repositories
     Ls {
@@ -59,6 +65,9 @@ pub enum RepoCommand {
         /// New description, or "" to clear it
         #[arg(long)]
         description: Option<String>,
+        /// How an approved task lands on the base branch
+        #[arg(long, value_enum)]
+        merge_strategy: Option<MergeStrategy>,
     },
     /// Delete a repository
     Rm {
@@ -77,6 +86,7 @@ pub async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Result<()
             path,
             branch,
             description,
+            merge_strategy,
         } => {
             let repo: RepositoryDto = client
                 .post_json(
@@ -85,6 +95,7 @@ pub async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Result<()
                         path,
                         base_branch: branch,
                         description,
+                        merge_strategy: Some(merge_strategy),
                     },
                 )
                 .await?;
@@ -107,6 +118,7 @@ pub async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Result<()
                                     r.id.clone(),
                                     r.path.clone(),
                                     r.base_branch.clone(),
+                                    r.merge_strategy.as_str().into(),
                                     r.description.clone().unwrap_or_else(|| "-".into()),
                                 ]
                             })
@@ -127,6 +139,7 @@ pub async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Result<()
                     ("id", r.id),
                     ("path", r.path),
                     ("branch", r.base_branch),
+                    ("merge_strategy", r.merge_strategy.as_str().into()),
                     ("description", r.description.unwrap_or_else(|| "-".into())),
                     ("created", local_time(&r.created_at)),
                     ("updated", local_time(&r.updated_at)),
@@ -138,6 +151,7 @@ pub async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Result<()
             path,
             branch,
             description,
+            merge_strategy,
         } => {
             let r: RepositoryDto = client
                 .put_json(
@@ -146,6 +160,7 @@ pub async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Result<()
                         path,
                         base_branch: branch,
                         description,
+                        merge_strategy,
                     },
                 )
                 .await?;

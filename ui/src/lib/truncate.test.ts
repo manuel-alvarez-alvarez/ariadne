@@ -17,9 +17,9 @@ describe("middleTruncate", () => {
     // A branch has no segment to split on at all, so the character split
     // keeps the tail of the id — the half that tells two same-titled tasks
     // apart — and offers the title up.
-    const { head, tail } = middleTruncate("fix-the-integrator-briefing-real-fetch-r9jr7c")
+    const { head, tail } = middleTruncate("fix-the-landing-briefing-real-fetch-r9jr7c")
     expect(tail).toBe("h-r9jr7c")
-    expect(head).toBe("fix-the-integrator-briefing-real-fetc")
+    expect(head).toBe("fix-the-landing-briefing-real-fetc")
   })
 
   it("keeps the last characters when there is no segment to keep", () => {
