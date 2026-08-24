@@ -1,4 +1,4 @@
-//! Query-string building over the shared `ariadne-api` query types.
+//! Path and query-string building over the shared `ariadne-api` query types.
 
 use anyhow::Result;
 use serde::Serialize;
@@ -15,9 +15,38 @@ pub fn query_path(base: &str, query: &impl Serialize) -> Result<String> {
     })
 }
 
+/// The hex digits a percent-escape is spelled with.
+const HEX: &[u8; 16] = b"0123456789ABCDEF";
+
+/// One caller-typed value as a single path segment.
+///
+/// Profiles answer to their name as well as their id, and a name is free text
+/// — the built-in `GitHub Integrator` has a space in it, and a space is not a
+/// character a URI may carry: `ariadne profile inspect "GitHub Integrator"`
+/// used to reach the client with it raw and panic on the URI it could not
+/// build. Everything outside the unreserved set (RFC 3986 §2.3) is escaped
+/// rather than only what is known to hurt, and `/` with it: the value is one
+/// whole segment, so a slash inside it is data, never structure.
+pub fn path_segment(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(byte as char);
+            }
+            _ => {
+                out.push('%');
+                out.push(HEX[(byte >> 4) as usize] as char);
+                out.push(HEX[(byte & 0xf) as usize] as char);
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
-    use super::query_path;
+    use super::{path_segment, query_path};
 
     use ariadne_api::sessions::SessionListQuery;
     use ariadne_api::tasks::TaskListQuery;
@@ -95,5 +124,35 @@ mod tests {
             query_path("/v1/sessions", &query).unwrap(),
             "/v1/sessions?status=failed"
         );
+    }
+
+    /// The ids every other command passes through here are untouched.
+    #[test]
+    fn an_id_comes_out_as_it_went_in() {
+        assert_eq!(
+            path_segment("01M0R9EPJK7QYAGYCN31E8EF58"),
+            "01M0R9EPJK7QYAGYCN31E8EF58"
+        );
+    }
+
+    /// The one that made this necessary: a built-in profile with a space in
+    /// its name, which is how a user names it on the command line.
+    #[test]
+    fn a_name_with_a_space_is_escaped_rather_than_sent_raw() {
+        assert_eq!(path_segment("GitHub Integrator"), "GitHub%20Integrator");
+    }
+
+    /// A whole segment, so nothing in it may be read as structure.
+    #[test]
+    fn a_name_cannot_smuggle_in_another_path_segment() {
+        assert_eq!(path_segment("../goals/01G"), "..%2Fgoals%2F01G");
+        assert_eq!(path_segment("a?b#c"), "a%3Fb%23c");
+    }
+
+    /// Names are stored as text, not as bytes: a non-ASCII one round-trips
+    /// through UTF-8 rather than being dropped.
+    #[test]
+    fn a_non_ascii_name_is_escaped_by_its_utf8_bytes() {
+        assert_eq!(path_segment("Revisor Estrícto"), "Revisor%20Estr%C3%ADcto");
     }
 }

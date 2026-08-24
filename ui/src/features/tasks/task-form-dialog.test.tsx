@@ -2,12 +2,16 @@
 
 /**
  * The task form's dismissal, which is the one thing about it that cannot be
- * left to the daemon.
+ * left to the daemon, and the assignments it puts on the wire.
  *
  * The brief is what a whole task is built from, so an outside press a few
- * paragraphs in has to ask — and the two profiles the form preselects on open
- * are its own doing rather than the user's, so a glance at the dialog must
- * still close it with nothing asked.
+ * paragraphs in has to ask — and the three profiles the form preselects on
+ * open are its own doing rather than the user's, so a glance at the dialog
+ * must still close it with nothing asked.
+ *
+ * The integrator is checked because the request may not lean on the daemon's
+ * implicit default: what the picker shows has to be what is sent, whether the
+ * user touched it or not.
  */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
@@ -59,6 +63,43 @@ const REVIEWER: ProfileDto = {
   role: "reviewer",
 }
 
+/** The built-in local integrator: the one the form preselects, by its id. */
+const INTEGRATOR: ProfileDto = {
+  ...ENGINEER,
+  id: "00000000000000000000000004",
+  name: "Integrator",
+  role: "integrator",
+}
+
+/** Sorts first of the two, so preselecting the local one cannot be an accident. */
+const GITHUB_INTEGRATOR: ProfileDto = {
+  ...ENGINEER,
+  id: "00000000000000000000000005",
+  name: "GitHub Integrator",
+  role: "integrator",
+}
+
+/** The bodies of the writes the dialog made, in order. */
+let posted: unknown[] = []
+
+/** Enough of a task for the mutation's cache write and its toast. */
+const CREATED = {
+  id: "01JTASK0000000000000000001",
+  goal_id: GOAL.id,
+  repo_id: "01JREPO0000000000000000001",
+  title: "Wire the strip",
+  description: "",
+  status: "pending",
+  branch: "ariadne/task-01JTASK0000000000000000001",
+  depends_on: [],
+  engineer_profile_id: ENGINEER.id,
+  reviewers: [],
+  review_round: 0,
+  stalled: false,
+  created_at: STAMP,
+  updated_at: STAMP,
+}
+
 let writes: string[] = []
 
 /** The reads the dialog does; a write would be a failure, so it is recorded. */
@@ -66,7 +107,10 @@ function stubDaemon() {
   daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(String(input), init)
     const url = new URL(request.url)
-    if (request.method !== "GET") writes.push(`${request.method} ${url.pathname}`)
+    if (request.method !== "GET") {
+      writes.push(`${request.method} ${url.pathname}`)
+      posted.push(await request.clone().json())
+    }
 
     const answer = (payload: unknown) =>
       new Response(JSON.stringify(payload), {
@@ -75,10 +119,19 @@ function stubDaemon() {
       })
 
     if (url.pathname === "/v1/profiles") {
-      const role = url.searchParams.get("role")
-      return answer(role === "reviewer" ? [REVIEWER] : [ENGINEER])
+      switch (url.searchParams.get("role")) {
+        case "reviewer":
+          return answer([REVIEWER])
+        case "integrator":
+          return answer([GITHUB_INTEGRATOR, INTEGRATOR])
+        default:
+          return answer([ENGINEER])
+      }
     }
     if (url.pathname === "/v1/tasks") return answer([])
+    if (url.pathname === `/v1/goals/${GOAL.id}/tasks`) {
+      return answer({ ...CREATED, ...(await request.clone().json()) })
+    }
     return new Response("not stubbed", { status: 404 })
   })
 }
@@ -103,6 +156,7 @@ beforeEach(() => {
     },
   )
   writes = []
+  posted = []
   daemonFetch.mockReset()
   stubDaemon()
 })
@@ -120,6 +174,7 @@ describe("dismissing the dialog", () => {
 
     // The preselects are what this is about: wait until they have happened.
     expect(await screen.findByText("Engineer")).toBeDefined()
+    expect(await screen.findByText("Integrator")).toBeDefined()
     expect(await screen.findByText("Reviewer")).toBeDefined()
 
     await user.click(screen.getByRole("button", { name: "Cancel" }))
@@ -158,5 +213,34 @@ describe("dismissing the dialog", () => {
 
     expect(onOpenChange).toHaveBeenCalledWith(false)
     expect(writes).toEqual([])
+  })
+})
+
+describe("the integrator assignment", () => {
+  it("preselects the built-in local integrator and sends it untouched", async () => {
+    const user = userEvent.setup()
+    renderDialog(vi.fn())
+
+    // Not simply the first of the list — "GitHub Integrator" sorts ahead of it.
+    expect(await screen.findByText("Integrator")).toBeDefined()
+
+    await user.type(screen.getByLabelText("Title"), "Wire the strip")
+    await user.click(screen.getByRole("button", { name: "Create task" }))
+
+    await vi.waitFor(() => expect(writes).toEqual([`POST /v1/goals/${GOAL.id}/tasks`]))
+    expect(posted[0]).toMatchObject({ integrator_profile: INTEGRATOR.id })
+  })
+
+  it("sends the integrator the user picked instead", async () => {
+    const user = userEvent.setup()
+    renderDialog(vi.fn())
+
+    await user.type(screen.getByLabelText("Title"), "Wire the strip")
+    await user.click(await screen.findByLabelText("Integrator profile"))
+    await user.click(await screen.findByRole("option", { name: "GitHub Integrator" }))
+    await user.click(screen.getByRole("button", { name: "Create task" }))
+
+    await vi.waitFor(() => expect(writes).toEqual([`POST /v1/goals/${GOAL.id}/tasks`]))
+    expect(posted[0]).toMatchObject({ integrator_profile: GITHUB_INTEGRATOR.id })
   })
 })

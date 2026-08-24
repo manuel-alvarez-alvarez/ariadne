@@ -41,9 +41,17 @@ export function TaskConversation({ taskId }: { taskId: string }) {
     enabled: Boolean(task.data),
   })
   const post = usePostTaskMessage(taskId)
+  // The daemon's own list, in its order (`http/recipients.rs`): engineer,
+  // reviewers, the integrator that lands it, the planner that wrote it. A task
+  // that names no integrator is landed by the built-in, whose id is not on the
+  // task — that one is addressed by name from the CLI rather than offered here.
   const addressees = useAddressees([
     ...(task.data
-      ? [task.data.engineer_profile_id, ...task.data.reviewers.map((slot) => slot.profile_id)]
+      ? [
+          task.data.engineer_profile_id,
+          ...task.data.reviewers.map((slot) => slot.profile_id),
+          ...(task.data.integrator_profile_id ? [task.data.integrator_profile_id] : []),
+        ]
       : []),
     ...(goal.data ? [goal.data.planner_profile_id] : []),
   ])

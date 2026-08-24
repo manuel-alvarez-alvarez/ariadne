@@ -154,6 +154,11 @@ pub fn reviewer_profiles() -> Vec<CompletionCandidate> {
     profiles(Some("reviewer"))
 }
 
+/// Integrator profile names (`task create --integrator`).
+pub fn integrator_profiles() -> Vec<CompletionCandidate> {
+    profiles(Some("integrator"))
+}
+
 /// Whom a goal's planning thread can address (`goal msg --to`): its planner,
 /// or the user.
 pub fn goal_message_recipients() -> Vec<CompletionCandidate> {
@@ -364,7 +369,10 @@ fn agent_hint() -> Option<ariadne_core::AgentKind> {
             let client = Client::from_env();
             tokio::time::timeout(
                 BUDGET,
-                client.get_json::<serde_json::Value>(&format!("/v1/profiles/{name}")),
+                client.get_json::<serde_json::Value>(&format!(
+                    "/v1/profiles/{}",
+                    crate::query::path_segment(name)
+                )),
             )
             .await
             .ok()?

@@ -17,6 +17,7 @@ use super::confirm;
 use crate::output::{
     Column, Format, UNCAPPED, local_time, note, print_json, print_kv, print_table,
 };
+use crate::query::path_segment;
 
 /// Columns of `profile ls`.
 const LS: &[Column] = &[
@@ -427,7 +428,7 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
             }
         }
         ProfileCommand::Inspect { id } => {
-            let p: ProfileDto = client.get_json(&format!("/v1/profiles/{id}")).await?;
+            let p: ProfileDto = client.get_json(&profile_path(&id)).await?;
             match format {
                 Format::Json => print_json(&p)?,
                 Format::Table => print_kv(&[
@@ -465,7 +466,7 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
             let system = system_prompt.is_some();
             let p: ProfileDto = client
                 .put_json(
-                    &format!("/v1/profiles/{id}"),
+                    &profile_path(&id),
                     &UpdateProfileRequest {
                         name,
                         // Accept dash spelling too (claude-code).
@@ -490,7 +491,7 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
             let p = get_profile(client, &id).await?;
             confirm(&rm_question(&p), yes)?;
             client
-                .send_no_content::<()>(http::Method::DELETE, &format!("/v1/profiles/{id}"), None)
+                .send_no_content::<()>(http::Method::DELETE, &profile_path(&id), None)
                 .await?;
             match format {
                 // The profile is gone, so there is no DTO left to print: what
@@ -673,7 +674,14 @@ impl From<ProfilePromptDto> for Prompt {
 /// is what tells a kind from a kind of another role, and what puts a name
 /// beside the id in the output.
 async fn get_profile(client: &Client, id: &str) -> Result<ProfileDto> {
-    Ok(client.get_json(&format!("/v1/profiles/{id}")).await?)
+    Ok(client.get_json(&profile_path(id)).await?)
+}
+
+/// The endpoint of one profile, named the way the caller named it: by id, or
+/// by a name that may have anything in it — a space, in the case of the
+/// built-in GitHub Integrator. See [`path_segment`].
+fn profile_path(id_or_name: &str) -> String {
+    format!("/v1/profiles/{}", path_segment(id_or_name))
 }
 
 /// Every prompt of a profile, in the order [`owned`] lists them.
