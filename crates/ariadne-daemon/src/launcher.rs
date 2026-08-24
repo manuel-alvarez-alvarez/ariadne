@@ -13,6 +13,7 @@ use ariadne_store::{AgentSession, NewSession, Profile, Repository, SessionFilter
 
 use crate::agents::{SpawnCtx, SpawnPlan, adapter_for, detect_first_available, prompts};
 use crate::config::Config;
+use crate::gh::GhCli;
 use crate::gitwt::GitManager;
 use crate::tmux::{TmuxManager, TmuxSpawn, session_name, tail};
 
@@ -629,6 +630,14 @@ impl Launcher {
                 task.id
             )
         })
+    }
+
+    /// The GitHub CLI this daemon watches pull requests with, as configured.
+    ///
+    /// Built where it is used rather than held: it is a binary name and
+    /// nothing else, and the one thing a test wants to swap is that name.
+    pub fn gh(&self) -> GhCli {
+        GhCli::new(&self.cfg.gh_bin)
     }
 
     /// The reviewer's detached worktree, pinned at the branch tip: created on

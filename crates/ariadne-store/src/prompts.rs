@@ -12,7 +12,10 @@ use std::str::FromStr;
 
 use ariadne_core::{PromptKind, Role};
 
-use crate::defaults::{BUILTIN_PROFILES, default_prompt, default_prompts, default_system_prompt};
+use crate::defaults::{
+    BUILTIN_PROFILES, default_prompt, default_prompt_for, default_prompts_for,
+    default_system_prompt_for,
+};
 use crate::{Change, Profile, ProfilePrompt, Result, Store, StoreError, not_found, now};
 
 /// Parse a prompt kind arriving from outside (an HTTP path, a CLI argument)
@@ -53,7 +56,7 @@ impl Store {
             .bind(builtin.id)
             .bind(builtin.name)
             .bind(builtin.role.as_str())
-            .bind(default_system_prompt(builtin.role))
+            .bind(default_system_prompt_for(builtin.id, builtin.role))
             .bind(&ts)
             .bind(&ts)
             .execute(&mut *tx)
@@ -64,7 +67,8 @@ impl Store {
         Ok(())
     }
 
-    /// Give a freshly created profile the prompts of its role, with
+    /// Give a freshly created profile the prompts it starts from — its
+    /// role's, or the built-in set of its own where it has one — with
     /// `overrides` replacing the default text of the kinds they name.
     pub(crate) async fn insert_prompts(
         tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
@@ -73,7 +77,7 @@ impl Store {
         ts: &str,
         overrides: &HashMap<PromptKind, String>,
     ) -> Result<()> {
-        for (kind, default) in default_prompts(role) {
+        for (kind, default) in default_prompts_for(profile_id, role) {
             let content = overrides.get(&kind).map_or(default, String::as_str);
             sqlx::query(
                 "INSERT INTO profile_prompts (profile_id, kind, content, updated_at)
@@ -137,7 +141,7 @@ impl Store {
         self.write_prompt(profile_id, kind, content).await
     }
 
-    /// Put one prompt back to the default of the profile's role.
+    /// Put one prompt back to the default this profile starts from.
     pub async fn reset_profile_prompt(
         &self,
         profile_id: &str,
@@ -148,11 +152,11 @@ impl Store {
         self.write_prompt(profile_id, kind, content).await
     }
 
-    /// Put the profile's system prompt back to the default of its role.
+    /// Put the profile's system prompt back to the default it starts from.
     pub async fn reset_system_prompt(&self, profile_id: &str) -> Result<Profile> {
         let profile = self.get_profile(profile_id).await?;
         sqlx::query("UPDATE profiles SET system_prompt = ?, updated_at = ? WHERE id = ?")
-            .bind(default_system_prompt(profile.role()))
+            .bind(default_system_prompt_for(profile_id, profile.role()))
             .bind(now())
             .bind(profile_id)
             .execute(self.w())
@@ -196,14 +200,15 @@ impl Store {
     }
 }
 
-/// The default text of `kind` for this profile, or an error naming the role
-/// that owns the kind instead.
+/// The default text of `kind` for this profile — the built-in set it carries
+/// where it has one — or an error naming the role that owns the kind instead.
 fn check_kind(profile: &Profile, kind: PromptKind) -> Result<&'static str> {
     check_role_kind(
         kind,
         profile.role(),
         &format!("{} ({})", profile.name, profile.role),
-    )
+    )?;
+    Ok(default_prompt_for(&profile.id, profile.role(), kind).expect("checked above"))
 }
 
 /// Reject a template using a `{placeholder}` its kind cannot fill in, with the

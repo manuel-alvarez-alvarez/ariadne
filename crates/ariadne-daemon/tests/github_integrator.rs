@@ -1,0 +1,927 @@
+//! The GitHub integrator's lifecycle: publish, watch, relay, finish.
+//!
+//! The same loop as `integrator_lifecycle`, on a repository that is published
+//! to a forge instead of landed on the spot. The task branch becomes a pull
+//! request, the daemon watches it while humans review it, and what they do to
+//! it decides what happens next: an approval is announced to the user once, a
+//! comment goes back to the engineer through the integrator's send-back, and
+//! the merge wakes the integrator to finish the task off the base branch.
+//!
+//! No tmux and no agent CLI, as in that test — and no GitHub either: `gh` is
+//! a stub script that prints the pull request a test wants it to see and
+//! records what it was asked. The "integrator" doing the recording, the
+//! sending back and the merging is the test itself, calling the endpoints its
+//! briefing tells the agent to call.
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
+
+use axum::Router;
+use axum::body::Body;
+use axum::http::{Method, Request, StatusCode, header};
+use http_body_util::BodyExt;
+use serde::de::DeserializeOwned;
+use tower::ServiceExt;
+
+use ariadne_api::SESSION_HEADER;
+use ariadne_api::messages::MessageDto;
+use ariadne_api::tasks::TaskDto;
+use ariadne_core::spawn_plan::SpawnPlanFile;
+use ariadne_core::{
+    Actor, AgentKind, AttentionReason, RecipientKind, ReviewVerdict, Role, SessionStatus,
+    TaskStatus,
+};
+use ariadne_daemon::bus::EventBus;
+use ariadne_daemon::config::Config;
+use ariadne_daemon::gitwt::GitManager;
+use ariadne_daemon::http::{self, AppState};
+use ariadne_daemon::launcher::Launcher;
+use ariadne_daemon::logbuf::LogBuffer;
+use ariadne_daemon::scheduler::{self, SchedEvent};
+use ariadne_daemon::tmux::TmuxManager;
+use ariadne_store::{
+    AgentSession, NewGoal, NewProfile, NewRepository, NewReview, NewTask, ProfileUpdate,
+    SessionFilter, Store, Task,
+};
+
+/// How long a test waits for the scheduler to reach a state.
+const TIMEOUT: Duration = Duration::from_secs(20);
+
+/// The pull request every test in here publishes.
+const PR_URL: &str = "https://github.com/ariadne/ariadne/pull/12";
+
+struct Harness {
+    store: Store,
+    router: Router,
+    launcher: Arc<Launcher>,
+    sched_tx: tokio::sync::mpsc::UnboundedSender<SchedEvent>,
+    dir: tempfile::TempDir,
+    _bus: EventBus,
+}
+
+async fn harness() -> Harness {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path().join("test.db")).await.unwrap();
+    let bus = ariadne_daemon::bus::start(store.clone());
+    let mut cfg = Config::load(Some(dir.path().join("home"))).unwrap();
+    cfg.gh_bin = write_gh_stub(dir.path());
+    // Every reconciliation is a poll: what the interval is for is sparing
+    // GitHub, and there is no GitHub here.
+    cfg.pr_poll_secs = 0;
+    let launcher = Arc::new(Launcher {
+        cfg: Arc::new(cfg),
+        store: store.clone(),
+        tmux: write_tmux_stub(dir.path()),
+        git: GitManager,
+    });
+    let sched_tx = scheduler::start(store.clone(), launcher.clone(), false);
+    let state = AppState {
+        store: store.clone(),
+        started_at: std::time::Instant::now(),
+        launcher: launcher.clone(),
+        sched_tx: Some(sched_tx.clone()),
+        events: bus.clone(),
+        logs: LogBuffer::new(),
+    };
+    Harness {
+        router: http::router(state),
+        store,
+        launcher,
+        sched_tx,
+        dir,
+        _bus: bus,
+    }
+}
+
+/// A `tmux` with no sessions that records every command it is given.
+fn write_tmux_stub(dir: &Path) -> TmuxManager {
+    use std::os::unix::fs::PermissionsExt;
+
+    let bin = dir.join("tmux-stub.sh");
+    let script = format!(
+        "#!/bin/sh\n\
+         echo \"$@\" >> '{log}'\n\
+         case \"$1\" in\n\
+         \x20 has-session) exit 1 ;;\n\
+         esac\n\
+         exit 0\n",
+        log = dir.join("tmux-commands.log").display(),
+    );
+    std::fs::write(&bin, script).unwrap();
+    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+    TmuxManager::new(bin.display().to_string())
+}
+
+/// A `gh` that answers `pr view` and `api` with whatever JSON the test last
+/// wrote, and writes down everything it was asked. No file means no pull
+/// request, which is what `gh` itself does about one: a failure on stderr;
+/// no review comments file means the empty answer a pull request nobody has
+/// written on the diff of gets.
+fn write_gh_stub(dir: &Path) -> String {
+    use std::os::unix::fs::PermissionsExt;
+
+    let bin = dir.join("gh-stub.sh");
+    let script = format!(
+        "#!/bin/sh\n\
+         echo \"$@\" >> '{log}'\n\
+         case \"$*\" in\n\
+         \x20 *'pr view'*)\n\
+         \x20   if [ -f '{pr}' ]; then cat '{pr}'; else echo 'no pull requests found' >&2; exit 1; fi ;;\n\
+         \x20 *api*)\n\
+         \x20   if [ -f '{comments}' ]; then cat '{comments}'; else echo '[]'; fi ;;\n\
+         esac\n\
+         exit 0\n",
+        log = dir.join("gh-commands.log").display(),
+        pr = dir.join("pr.json").display(),
+        comments = dir.join("review-comments.json").display(),
+    );
+    std::fs::write(&bin, script).unwrap();
+    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+    bin.display().to_string()
+}
+
+/// Run a git (or shell) command in `dir`, failing the test if it does not.
+fn sh(dir: &Path, cmd: &str) {
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(cmd)
+        .current_dir(dir)
+        .status()
+        .unwrap();
+    assert!(
+        status.success(),
+        "command failed in {}: {cmd}",
+        dir.display()
+    );
+}
+
+/// The same, for what a test reads back out of the repository.
+fn out(dir: &Path, cmd: &str) -> String {
+    let output = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(cmd)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "command failed in {}: {cmd}",
+        dir.display()
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+/// Wait for what the scheduler was supposed to do, rather than guessing at how
+/// long a reconciliation takes.
+async fn eventually(what: &str, mut check: impl AsyncFnMut() -> bool) {
+    let deadline = std::time::Instant::now() + TIMEOUT;
+    loop {
+        if check().await {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for {what}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+impl Harness {
+    fn repo_path(&self) -> PathBuf {
+        self.dir.path().join("repo")
+    }
+
+    /// A goal on a real repository, active, with one task on it landed by the
+    /// built-in GitHub Integrator. Returns the task and the reviewer's id.
+    async fn task(&self) -> (Task, String) {
+        let repo_path = self.repo_path();
+        std::fs::create_dir_all(&repo_path).unwrap();
+        sh(
+            &repo_path,
+            "git init -q -b main && echo v1 > file.txt && git add . && \
+             git -c user.email=t@t -c user.name=t commit -qm 'chore: init'",
+        );
+        let repo_id = self
+            .store
+            .create_repository(NewRepository {
+                path: repo_path.display().to_string(),
+                base_branch: "main".into(),
+                description: None,
+            })
+            .await
+            .unwrap()
+            .id;
+
+        let engineer = self.profile("engineer", Role::Engineer).await;
+        let reviewer = self.profile("reviewer", Role::Reviewer).await;
+        let integrator = self.github_integrator().await;
+        let planner = self.profile("planner", Role::Planner).await;
+        let goal = self
+            .store
+            .create_goal(NewGoal {
+                title: "Ship the board".into(),
+                description: "desc".into(),
+                planner_profile_id: planner,
+                max_tasks: None,
+                required_approvals: 1,
+                repository_ids: vec![repo_id.clone()],
+            })
+            .await
+            .unwrap();
+        self.store
+            .set_goal_status(&goal.id, ariadne_core::GoalStatus::Active)
+            .await
+            .unwrap();
+
+        let task = self
+            .store
+            .create_task(NewTask {
+                goal_id: goal.id,
+                repo_id,
+                title: "Render the board".into(),
+                description: "Do the thing.".into(),
+                engineer_profile_id: engineer,
+                integrator_profile_id: Some(integrator),
+                reviewer_profile_ids: vec![reviewer.clone()],
+                depends_on: vec![],
+            })
+            .await
+            .unwrap();
+        (task, reviewer)
+    }
+
+    /// The built-in GitHub Integrator itself — its prompts are what is under
+    /// test — pinned to an agent CLI so that the resume paths here are the
+    /// ones a real session takes (the internal session id a resume needs is
+    /// the Claude adapter's, chosen at spawn).
+    async fn github_integrator(&self) -> String {
+        let profile = self
+            .store
+            .get_profile_by_name("GitHub Integrator")
+            .await
+            .unwrap();
+        self.store
+            .update_profile(
+                &profile.id,
+                ProfileUpdate {
+                    agent_kind: Some(Some(AgentKind::ClaudeCode)),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        profile.id
+    }
+
+    async fn profile(&self, name: &str, role: Role) -> String {
+        if let Ok(existing) = self.store.get_profile_by_name(name).await {
+            return existing.id;
+        }
+        self.store
+            .create_profile(NewProfile {
+                name: name.into(),
+                role,
+                agent_kind: Some(AgentKind::ClaudeCode),
+                model: None,
+                system_prompt: format!("You are {name}."),
+                prompts: vec![],
+            })
+            .await
+            .unwrap()
+            .id
+    }
+
+    fn notify(&self, task_id: &str) {
+        self.sched_tx
+            .send(SchedEvent::TaskChanged(task_id.to_string()))
+            .unwrap();
+    }
+
+    /// What the stub `gh` will answer the next poll with.
+    fn pull_request(&self, json: serde_json::Value) {
+        std::fs::write(
+            self.dir.path().join("pr.json"),
+            serde_json::to_string(&json).unwrap(),
+        )
+        .unwrap();
+    }
+
+    /// What the stub `gh api` will answer the next poll with, verbatim: the
+    /// pages of review comments as `--paginate` writes them.
+    fn review_comments(&self, pages: &str) {
+        std::fs::write(self.dir.path().join("review-comments.json"), pages).unwrap();
+    }
+
+    /// Everything `gh` has been asked, one invocation per line.
+    fn gh_log(&self) -> String {
+        std::fs::read_to_string(self.dir.path().join("gh-commands.log")).unwrap_or_default()
+    }
+
+    async fn status(&self, task_id: &str) -> TaskStatus {
+        self.store.get_task(task_id).await.unwrap().status()
+    }
+
+    async fn sessions(&self, task_id: &str, role: Role) -> Vec<AgentSession> {
+        self.store
+            .list_sessions(SessionFilter {
+                task_id: Some(task_id.to_string()),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|s| s.role() == role)
+            .collect()
+    }
+
+    async fn live_session(&self, task_id: &str, role: Role) -> Option<AgentSession> {
+        self.sessions(task_id, role)
+            .await
+            .into_iter()
+            .find(|s| s.status() == SessionStatus::Running)
+    }
+
+    /// The agent has finished its turn: what the daemon acts on a moved pull
+    /// request against is an idle integrator, never one mid-turn.
+    async fn goes_idle(&self, session_id: &str) {
+        self.store
+            .set_session_status(session_id, SessionStatus::Idle)
+            .await
+            .unwrap();
+    }
+
+    /// What the agent of `session_id` was launched with, briefing and all.
+    fn launched_argv(&self, session_id: &str) -> String {
+        let path = self
+            .launcher
+            .cfg
+            .run_dir
+            .join(session_id)
+            .join("spawn.json");
+        let raw = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
+        SpawnPlanFile::from_json(&raw).unwrap().argv.join(" ")
+    }
+
+    /// Walk a fresh task to its integrator working on it, exactly as the
+    /// local lifecycle does: the engineer commits, the reviewer approves.
+    async fn hand_to_the_integrator(&self, task: &Task, reviewer: &str) -> AgentSession {
+        self.notify(&task.id);
+        eventually("the engineer to be spawned", async || {
+            self.status(&task.id).await == TaskStatus::InProgress
+                && self.live_session(&task.id, Role::Engineer).await.is_some()
+        })
+        .await;
+        let worktree = PathBuf::from(
+            self.store
+                .get_task(&task.id)
+                .await
+                .unwrap()
+                .worktree_path
+                .unwrap(),
+        );
+        sh(
+            &worktree,
+            "echo change > feature.txt && git add . && \
+             git -c user.email=t@t -c user.name=t commit -qm 'wip: the change'",
+        );
+        self.approve(task, reviewer).await;
+        eventually("the integrator to take the task over", async || {
+            self.status(&task.id).await == TaskStatus::Integrating
+                && self
+                    .live_session(&task.id, Role::Integrator)
+                    .await
+                    .is_some()
+        })
+        .await;
+        self.live_session(&task.id, Role::Integrator)
+            .await
+            .expect("a live integrator session")
+    }
+
+    async fn approve(&self, task: &Task, reviewer: &str) {
+        let task = self
+            .store
+            .transition_task(
+                &task.id,
+                TaskStatus::UnderReview,
+                Actor::Engineer,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        self.store
+            .create_review(NewReview {
+                task_id: task.id.clone(),
+                round: task.review_round,
+                reviewer_profile_id: reviewer.to_string(),
+                session_id: None,
+                verdict: ReviewVerdict::Approve,
+                body: Some("looks right".into()),
+            })
+            .await
+            .unwrap();
+        self.notify(&task.id);
+    }
+
+    /// The messages of the task thread that are addressed to the user.
+    async fn user_messages(&self, task_id: &str) -> Vec<MessageDto> {
+        let messages: Vec<MessageDto> = self
+            .json(
+                Request::get(format!("/v1/tasks/{task_id}/messages?limit=100"))
+                    .body(Body::empty())
+                    .unwrap(),
+                StatusCode::OK,
+            )
+            .await;
+        messages
+            .into_iter()
+            .filter(|m| {
+                m.recipient
+                    .as_ref()
+                    .is_some_and(|r| r.kind == RecipientKind::User)
+            })
+            .collect()
+    }
+
+    async fn send(&self, request: Request<Body>) -> (StatusCode, Vec<u8>) {
+        let response = self.router.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        (status, body.to_vec())
+    }
+
+    async fn json<T: DeserializeOwned>(&self, request: Request<Body>, expected: StatusCode) -> T {
+        let (status, body) = self.send(request).await;
+        assert_eq!(status, expected, "{}", String::from_utf8_lossy(&body));
+        serde_json::from_slice(&body).unwrap()
+    }
+}
+
+/// A request from an agent session: the header the daemon reads its identity
+/// from, exactly as the MCP server sends it.
+fn as_session(uri: &str, session_id: &str, body: serde_json::Value) -> Request<Body> {
+    Request::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(SESSION_HEADER, session_id)
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+/// An open pull request with nothing on it, in the shape `gh pr view --json`
+/// answers with.
+fn open_pull_request() -> serde_json::Value {
+    serde_json::json!({
+        "number": 12,
+        "state": "OPEN",
+        "mergedAt": null,
+        "mergeCommit": null,
+        "reviewDecision": "REVIEW_REQUIRED",
+        "reviews": [],
+        "comments": [],
+    })
+}
+
+/// The whole GitHub path: the integrator is briefed to publish rather than to
+/// land, records the pull request it opened, and from there the daemon
+/// watches it — an approval told to the user once, a comment relayed to the
+/// engineer once, and the merge finished off the base branch with a
+/// `mark_merged` no ancestor check would have accepted.
+#[tokio::test]
+async fn a_pull_request_is_watched_from_publication_to_its_merge() {
+    let h = harness().await;
+    let (task, reviewer) = h.task().await;
+    let integrator = h.hand_to_the_integrator(&task, &reviewer).await;
+
+    // It was briefed to publish, not to land.
+    let argv = h.launched_argv(&integrator.id);
+    for expected in [
+        "Publish it as a pull request",
+        "gh auth status",
+        "gh pr create",
+        "record_pull_request",
+        "land the task locally instead",
+    ] {
+        assert!(argv.contains(expected), "the briefing has no {expected}");
+    }
+
+    // Nothing is asked of GitHub before there is a pull request to ask about.
+    h.notify(&task.id);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(
+        h.gh_log(),
+        "",
+        "gh was called for a task with no pull request"
+    );
+
+    // The integrator opens it and reports it. That is the end of its turn.
+    let published: TaskDto = h
+        .json(
+            as_session(
+                &format!("/v1/tasks/{}/pull-request", task.id),
+                &integrator.id,
+                serde_json::json!({"url": PR_URL}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(published.pr_number, Some(12));
+    assert_eq!(published.pr_url.as_deref(), Some(PR_URL));
+    h.goes_idle(&integrator.id).await;
+
+    // An untouched pull request wakes nobody: the integrator is left idle
+    // rather than nudged for not having landed anything.
+    h.pull_request(open_pull_request());
+    h.notify(&task.id);
+    eventually("the pull request to be polled", async || {
+        // By URL, which names the repository as well as the number.
+        h.gh_log().contains(&format!("pr view {PR_URL}"))
+    })
+    .await;
+    assert!(h.user_messages(&task.id).await.is_empty());
+    assert!(
+        !h.store.get_task(&task.id).await.unwrap().is_stalled(),
+        "an integrator waiting on humans is not a stalled task"
+    );
+
+    // Approved: the user is told once that merging it is theirs to do.
+    let mut approved = open_pull_request();
+    approved["reviewDecision"] = "APPROVED".into();
+    approved["reviews"] = serde_json::json!([{
+        "id": "R1", "author": {"login": "maria"}, "body": "", "state": "APPROVED",
+    }]);
+    h.pull_request(approved);
+    h.notify(&task.id);
+    eventually(
+        "the user to be told the pull request is ready",
+        async || !h.user_messages(&task.id).await.is_empty(),
+    )
+    .await;
+    let notice = h.user_messages(&task.id).await;
+    assert_eq!(notice.len(), 1);
+    assert!(notice[0].body.contains(PR_URL), "{}", notice[0].body);
+    assert!(
+        notice[0].body.contains("ready for you to merge"),
+        "{}",
+        notice[0].body
+    );
+    assert_eq!(
+        h.store
+            .get_session(&integrator.id)
+            .await
+            .unwrap()
+            .attention_reason(),
+        Some(AttentionReason::WaitingInput),
+        "and it is on the attention strip the user reads it from"
+    );
+    // Polled again and again, it is still one message.
+    for _ in 0..3 {
+        h.notify(&task.id);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(h.user_messages(&task.id).await.len(), 1);
+
+    // Merging is not the integrator's to claim while GitHub says otherwise.
+    let branch_tip = out(&h.repo_path(), &format!("git rev-parse {}", task.branch));
+    let (status, body) = h
+        .send(as_session(
+            &format!("/v1/tasks/{}/transitions", task.id),
+            &integrator.id,
+            serde_json::json!({"to": "merged", "merge_commit": branch_tip}),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert!(
+        String::from_utf8_lossy(&body).contains("not merged"),
+        "{}",
+        String::from_utf8_lossy(&body)
+    );
+
+    // Merged on GitHub as a squash: a commit the local base does not contain
+    // yet, and no ancestor of the task branch anywhere. Reporting it before
+    // the local base has caught up is refused too — a task is landed here as
+    // well as there.
+    let repo = h.repo_path();
+    let mut merged_elsewhere = open_pull_request();
+    merged_elsewhere["state"] = "MERGED".into();
+    merged_elsewhere["mergedAt"] = "2026-08-24T10:00:00Z".into();
+    merged_elsewhere["mergeCommit"] = serde_json::json!({"oid": branch_tip});
+    h.pull_request(merged_elsewhere);
+    let (status, body) = h
+        .send(as_session(
+            &format!("/v1/tasks/{}/transitions", task.id),
+            &integrator.id,
+            serde_json::json!({"to": "merged", "merge_commit": branch_tip}),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert!(
+        String::from_utf8_lossy(&body).contains("does not contain yet"),
+        "{}",
+        String::from_utf8_lossy(&body)
+    );
+
+    sh(
+        &repo,
+        &format!(
+            "git merge --squash -q {branch} && \
+             git -c user.email=t@t -c user.name=t commit -qm 'feat(board): render it'",
+            branch = task.branch
+        ),
+    );
+    let squash = out(&repo, "git rev-parse main");
+    assert!(
+        !GitManager
+            .is_ancestor(&repo, &task.branch, "main")
+            .await
+            .unwrap(),
+        "a squash merge leaves the branch out of the base, which is the point"
+    );
+    let mut merged = open_pull_request();
+    merged["state"] = "MERGED".into();
+    merged["mergedAt"] = "2026-08-24T10:00:00Z".into();
+    merged["mergeCommit"] = serde_json::json!({"oid": squash});
+    h.pull_request(merged);
+    h.notify(&task.id);
+
+    eventually(
+        "the integrator to be woken to finish the task",
+        async || h.launched_argv(&integrator.id).contains("has been merged"),
+    )
+    .await;
+    let argv = h.launched_argv(&integrator.id);
+    assert!(argv.contains("mark_merged"), "{argv}");
+
+    // And the sha it reports is accepted, though no ancestor check would have.
+    let landed: TaskDto = h
+        .json(
+            as_session(
+                &format!("/v1/tasks/{}/transitions", task.id),
+                &integrator.id,
+                serde_json::json!({"to": "merged", "merge_commit": squash}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(landed.status, TaskStatus::Merged);
+    assert_eq!(landed.merge_commit.as_deref(), Some(squash.as_str()));
+}
+
+/// What humans write on the pull request reaches the engineer exactly once,
+/// as a round of requested changes — and the revision goes back to the same
+/// pull request rather than to a second one.
+#[tokio::test]
+async fn pull_request_comments_reach_the_engineer_once_each() {
+    let h = harness().await;
+    let (task, reviewer) = h.task().await;
+    let integrator = h.hand_to_the_integrator(&task, &reviewer).await;
+    let _: TaskDto = h
+        .json(
+            as_session(
+                &format!("/v1/tasks/{}/pull-request", task.id),
+                &integrator.id,
+                serde_json::json!({"url": PR_URL}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    h.goes_idle(&integrator.id).await;
+
+    let mut commented = open_pull_request();
+    commented["reviewDecision"] = "CHANGES_REQUESTED".into();
+    commented["comments"] = serde_json::json!([{
+        "id": "C1", "author": {"login": "maria"}, "body": "why a new module?",
+    }]);
+    commented["reviews"] = serde_json::json!([{
+        "id": "R1", "author": {"login": "jon"}, "body": "split src/board.rs up",
+        "state": "CHANGES_REQUESTED",
+    }]);
+    h.pull_request(commented);
+    // And what they wrote on the diff, over more pages than one — the shape
+    // `gh api --paginate` documents, and the one a pull request people have
+    // really been through comes back as.
+    h.review_comments(
+        r#"[{"id":21,"user":{"login":"jon"},"body":"this allocates per row","path":"src/board.rs"}]
+           [{"id":22,"user":{"login":"maria"},"body":"and this name is wrong","path":"src/lane.rs"}]"#,
+    );
+    h.notify(&task.id);
+
+    eventually("the integrator to be woken with the comments", async || {
+        h.launched_argv(&integrator.id)
+            .contains("why a new module?")
+    })
+    .await;
+    let argv = h.launched_argv(&integrator.id);
+    assert!(argv.contains("maria commented"), "{argv}");
+    assert!(argv.contains("jon requested changes"), "{argv}");
+    assert!(argv.contains("split src/board.rs up"), "{argv}");
+    assert!(argv.contains("return_to_engineer"), "{argv}");
+    // The comments on the diff too, both pages of them, each carrying the
+    // file it hangs on.
+    assert!(
+        argv.contains("src/board.rs: this allocates per row"),
+        "{argv}"
+    );
+    assert!(
+        argv.contains("src/lane.rs: and this name is wrong"),
+        "{argv}"
+    );
+    assert!(argv.contains("4 new comments"), "{argv}");
+    assert_eq!(
+        h.store
+            .get_task(&task.id)
+            .await
+            .unwrap()
+            .pr_relayed_comments(),
+        vec![
+            "C1".to_string(),
+            "RC21".to_string(),
+            "RC22".to_string(),
+            "R1".to_string()
+        ],
+        "every one of them is remembered as relayed, whichever page it came on"
+    );
+
+    // Polled again, the same comments wake nobody a second time. The launch
+    // is dated after the spawn plan is written, so the relaunch this watches
+    // for is only settled once the session says it is running again.
+    eventually("the relay launch to be finished", async || {
+        h.store.get_session(&integrator.id).await.unwrap().status() == SessionStatus::Running
+    })
+    .await;
+    let launched_at = h
+        .store
+        .get_session(&integrator.id)
+        .await
+        .unwrap()
+        .launched_at;
+    h.goes_idle(&integrator.id).await;
+    for _ in 0..3 {
+        h.notify(&task.id);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(
+        h.store
+            .get_session(&integrator.id)
+            .await
+            .unwrap()
+            .launched_at,
+        launched_at,
+        "the integrator was relaunched for comments it had already relayed: {}",
+        h.launched_argv(&integrator.id)
+    );
+
+    // The integrator relays them, as its briefing says: the engineer reads a
+    // round of requested changes and the task is its own again.
+    let sent_back: TaskDto = h
+        .json(
+            as_session(
+                &format!("/v1/tasks/{}/return-to-engineer", task.id),
+                &integrator.id,
+                serde_json::json!({
+                    "summary": "Pull request #12 was commented on.",
+                    "changes": ["maria: why a new module?", "jon: split src/board.rs up"],
+                }),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(sent_back.status, TaskStatus::ChangesRequested);
+    assert_eq!(
+        sent_back.pr_url.as_deref(),
+        Some(PR_URL),
+        "the pull request survives the round trip: the revision goes back to it"
+    );
+
+    eventually("the engineer to be resumed with the comments", async || {
+        h.status(&task.id).await == TaskStatus::InProgress
+            && h.live_session(&task.id, Role::Engineer).await.is_some()
+    })
+    .await;
+    let engineer = h.live_session(&task.id, Role::Engineer).await.unwrap();
+    let argv = h.launched_argv(&engineer.id);
+    assert!(argv.contains("why a new module?"), "{argv}");
+
+    // Revised and approved again, the integrator gets the task back with the
+    // resume briefing that tells it to force-push to the pull request it
+    // already opened.
+    let worktree = PathBuf::from(
+        h.store
+            .get_task(&task.id)
+            .await
+            .unwrap()
+            .worktree_path
+            .unwrap(),
+    );
+    sh(
+        &worktree,
+        "echo fixed > feature.txt && git add . && \
+         git -c user.email=t@t -c user.name=t commit -qm 'fix: split it up'",
+    );
+    h.approve(&h.store.get_task(&task.id).await.unwrap(), &reviewer)
+        .await;
+    eventually("the integrator to be handed the task again", async || {
+        h.status(&task.id).await == TaskStatus::Integrating
+            && h.launched_argv(&integrator.id)
+                .contains("Pick the integration")
+    })
+    .await;
+    let argv = h.launched_argv(&integrator.id);
+    assert!(argv.contains("force-push"), "{argv}");
+    assert!(argv.contains("never open a second one"), "{argv}");
+    assert_eq!(
+        h.sessions(&task.id, Role::Integrator).await.len(),
+        1,
+        "the same integrator session throughout"
+    );
+}
+
+/// A repository with no GitHub remote — or a `gh` that cannot answer for it —
+/// is landed the local way: no pull request is ever recorded, so nothing is
+/// polled and the ancestor check is what proves the merge.
+#[tokio::test]
+async fn without_a_pull_request_the_task_is_landed_locally() {
+    let h = harness().await;
+    let (task, reviewer) = h.task().await;
+    let integrator = h.hand_to_the_integrator(&task, &reviewer).await;
+
+    // The fallback the briefing names, run: rebase, squash, fast-forward.
+    let worktree = PathBuf::from(integrator.worktree_path.clone().unwrap());
+    sh(&worktree, "git rebase -q main");
+    sh(
+        &worktree,
+        "git reset --soft main && \
+         git -c user.email=t@t -c user.name=t commit -qm 'feat(board): render it'",
+    );
+    let repo = h.repo_path();
+    sh(&repo, &format!("git merge -q --ff-only {}", task.branch));
+    let sha = out(&repo, "git rev-parse main");
+
+    let landed: TaskDto = h
+        .json(
+            as_session(
+                &format!("/v1/tasks/{}/transitions", task.id),
+                &integrator.id,
+                serde_json::json!({"to": "merged", "merge_commit": sha}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(landed.status, TaskStatus::Merged);
+    assert_eq!(landed.pr_url, None);
+    assert_eq!(h.gh_log(), "", "a locally landed task never asks GitHub");
+}
+
+/// Watching is GitHub's alone: a pull request published anywhere else is
+/// recorded on the task and never polled — whatever a stub `gh` in the same
+/// checkout would have said about it.
+#[tokio::test]
+async fn a_pull_request_on_another_forge_is_recorded_but_not_watched() {
+    let h = harness().await;
+    let (task, reviewer) = h.task().await;
+    let integrator = h.hand_to_the_integrator(&task, &reviewer).await;
+    h.goes_idle(&integrator.id).await;
+
+    let published: TaskDto = h
+        .json(
+            as_session(
+                &format!("/v1/tasks/{}/pull-request", task.id),
+                &integrator.id,
+                serde_json::json!({"url": "https://gitlab.com/ariadne/ariadne/-/merge_requests/3"}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(published.pr_number, Some(3));
+
+    // An approval nobody is watching for is an approval nobody is told about.
+    let mut approved = open_pull_request();
+    approved["reviewDecision"] = "APPROVED".into();
+    h.pull_request(approved);
+    for _ in 0..3 {
+        h.notify(&task.id);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(h.gh_log(), "");
+    assert!(h.user_messages(&task.id).await.is_empty());
+
+    // And a URL that names no pull request at all is refused outright.
+    let (status, body) = h
+        .send(as_session(
+            &format!("/v1/tasks/{}/pull-request", task.id),
+            &integrator.id,
+            serde_json::json!({"url": "https://github.com/ariadne/ariadne"}),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        String::from_utf8_lossy(&body).contains("not a pull request URL"),
+        "{}",
+        String::from_utf8_lossy(&body)
+    );
+}

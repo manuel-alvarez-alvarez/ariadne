@@ -18,7 +18,8 @@ use ariadne_api::goals::FinalizePlanRequest;
 use ariadne_api::messages::{CreateMessageRequest, MessageDto};
 use ariadne_api::reviews::CreateReviewRequest;
 use ariadne_api::tasks::{
-    CreateTaskRequest, ReturnToEngineerRequest, TransitionRequest, UpdateTaskRequest,
+    CreateTaskRequest, RecordPullRequestRequest, ReturnToEngineerRequest, TransitionRequest,
+    UpdateTaskRequest,
 };
 use ariadne_client::{Client, ClientError};
 use ariadne_core::{ReviewVerdict, TaskStatus};
@@ -126,6 +127,13 @@ pub struct RequestReviewReq {
 pub struct MarkMergedReq {
     /// The merge commit sha on the base branch.
     pub merge_commit: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct RecordPullRequestReq {
+    /// URL of the pull request, as `gh pr create` printed it.
+    pub url: String,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -240,6 +248,7 @@ impl AriadneMcp {
                 "list_messages",
                 "post_message",
                 "mark_merged",
+                "record_pull_request",
                 "return_to_engineer",
             ],
         }
@@ -504,6 +513,23 @@ impl AriadneMcp {
                     reason: None,
                     merge_commit: Some(req.merge_commit),
                 },
+            )
+            .await?;
+        json_result(value)
+    }
+
+    #[tool(
+        description = "Report the pull request you opened for this task, by the URL `gh pr create` printed. Ariadne watches it from there — it wakes you when the pull request is commented on or merged, and tells the user when it is approved and ready for them to merge — so report it as soon as it exists and then end your turn instead of waiting on it."
+    )]
+    async fn record_pull_request(
+        &self,
+        Parameters(req): Parameters<RecordPullRequestReq>,
+    ) -> Result<CallToolResult, McpError> {
+        let task = self.own_task(None)?;
+        let value = self
+            .post(
+                &format!("/v1/tasks/{task}/pull-request"),
+                &RecordPullRequestRequest { url: req.url },
             )
             .await?;
         json_result(value)

@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use ariadne_core::id::new_id;
 use ariadne_core::{AgentKind, PromptKind, Role};
 
-use crate::defaults::BUILTIN_PROFILES;
+use crate::defaults::LOCAL_INTEGRATOR_ID;
 use crate::prompts::{check_placeholders, check_role_kind};
 use crate::{Change, Profile, Result, Store, StoreError, Task, not_found, now};
 
@@ -111,14 +111,13 @@ impl Store {
     ///
     /// The one profile the daemon looks up by identity rather than by
     /// assignment: a task created before the integrator existed names none, and
-    /// this is who lands it. `None` when the built-in was deleted — allowed,
-    /// and permanent — which leaves such a task with no integrator at all.
+    /// this is who lands it. The local one by name, since there are several
+    /// built-in integrators and landing a task with git alone is what a task
+    /// that asked for nothing in particular gets. `None` when the built-in was
+    /// deleted — allowed, and permanent — which leaves such a task with no
+    /// integrator at all.
     pub async fn builtin_integrator(&self) -> Option<Profile> {
-        let builtin = BUILTIN_PROFILES
-            .iter()
-            .find(|b| b.role == Role::Integrator)
-            .expect("a built-in integrator profile");
-        self.get_profile(builtin.id).await.ok()
+        self.get_profile(LOCAL_INTEGRATOR_ID).await.ok()
     }
 
     /// The profile that lands `task`: the one it was created with, or the

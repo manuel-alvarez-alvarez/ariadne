@@ -1942,6 +1942,58 @@
         }
       }
     },
+    "/v1/tasks/{id}/pull-request": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Record the pull request an integrator opened for a task.",
+        "description": "The daemon watches what it is told here, and only here: the URL travels as\na tool call rather than as a sentence in the conversation, so that a\npull request is either being watched or was never reported — never\nhalf-known from a message somebody has to parse.",
+        "operationId": "record_pull_request",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordPullRequestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "not a pull request URL"
+          },
+          "403": {
+            "description": "not an integrator session"
+          },
+          "409": {
+            "description": "the task is not being integrated"
+          }
+        }
+      }
+    },
     "/v1/tasks/{id}/retry": {
       "post": {
         "tags": [
@@ -3331,6 +3383,19 @@
           "user"
         ]
       },
+      "RecordPullRequestRequest": {
+        "type": "object",
+        "description": "The integrator reporting the pull request it opened for a task, so the\ndaemon can watch it: read off `gh pr create`'s output rather than out of\nthe conversation.",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The pull request's URL, e.g. `https://github.com/owner/repo/pull/12`.\nThe number is taken from it, so the two can never disagree."
+          }
+        }
+      },
       "RepositoryDto": {
         "type": "object",
         "required": [
@@ -3773,6 +3838,21 @@
               "null"
             ],
             "description": "Model the engineer runs on, pinned like `agent_kind`. None = the agent\nCLI's own default."
+          },
+          "pr_number": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Number of the pull request the task was published as, once its\nintegrator has reported one; None for a task landed locally."
+          },
+          "pr_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its URL, as the forge spells it."
           },
           "repo_id": {
             "type": "string",

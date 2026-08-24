@@ -53,6 +53,13 @@ pub struct FileConfig {
     pub delete_merged_worktrees: Option<bool>,
     /// Keep the machine awake while agent sessions are live (default true).
     pub prevent_sleep: Option<bool>,
+    /// Path to the GitHub CLI the daemon watches pull requests with
+    /// (default: "gh" on PATH).
+    pub gh_bin: Option<String>,
+    /// How often an integrating task's pull request is looked at, in seconds
+    /// (default 180). It is reviewed by humans, so polling it faster buys
+    /// nothing but API calls.
+    pub pr_poll_secs: Option<u64>,
 }
 
 /// Why `<home>/config.toml` could not be read as configuration.
