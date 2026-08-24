@@ -995,8 +995,28 @@ impl Scheduler {
             return Ok(());
         };
         match poll.state {
-            // Handled above, both of them: a quiet review asks for nothing.
-            PrState::Quiet | PrState::Feedback(_) => {}
+            // Handled above.
+            PrState::Feedback(_) => {}
+            // A quiet review asks nothing of the integrator, and something of
+            // the user whenever nothing but a person stands between the
+            // request and its merge. They were told that once — when the
+            // request was opened, or when it was approved — but the flag they
+            // read it from does not stay up on its own: an agent's own events
+            // take attention back down as it works, and the integrator was
+            // still mid-turn when the request was recorded. So every poll
+            // raises it again for as long as the request is open and theirs:
+            // a no-op once it is up, and never on an integrator that is
+            // working rather than waiting.
+            PrState::Quiet => {
+                if poll.approved == Some(true)
+                    && task.pr_approved_notified()
+                    && integrator.status() == SessionStatus::Idle
+                {
+                    self.store
+                        .set_session_attention(&integrator.id, AttentionReason::WaitingInput)
+                        .await?;
+                }
+            }
             PrState::Merged => {
                 info!(task = %task.id, pr = number, "the review was merged; waking the integrator to finish the task");
                 self.launcher

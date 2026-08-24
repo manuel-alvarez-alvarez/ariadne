@@ -112,12 +112,28 @@ impl PullRequest {
         }
     }
 
-    /// Whether the reviewers approved it, as `reviewDecision` reports —
-    /// absent or empty on a repository that gates nothing.
+    /// Whether nothing stands between it and its merge, as `reviewDecision`
+    /// reports — `APPROVED` where the repository requires a review, and
+    /// absent or empty where it requires none at all.
+    ///
+    /// A repository that gates nothing is the case worth spelling out: there
+    /// is no approval coming, because there is nobody the pull request is
+    /// waiting on but the person who opened it. Reading that as "not
+    /// approved" is how a published task went unannounced until somebody
+    /// happened to look at the forge. It is also what GitLab already answers
+    /// for a project with no approval rules, so the two forges now say the
+    /// same thing about the same situation.
     pub fn is_approved(&self) -> bool {
-        self.review_decision
-            .as_deref()
-            .is_some_and(|d| d.eq_ignore_ascii_case("APPROVED"))
+        match self.review_decision.as_deref().map(str::trim) {
+            None | Some("") => true,
+            Some(decision) => decision.eq_ignore_ascii_case("APPROVED"),
+        }
+    }
+
+    /// Whether it is still open, which is what an approval worth announcing
+    /// needs: a closed pull request is nobody's to merge.
+    pub fn is_open(&self) -> bool {
+        self.state.eq_ignore_ascii_case("OPEN")
     }
 }
 
@@ -176,7 +192,7 @@ pub fn poll_state(
     forge::poll_state(
         pr.landing().merged,
         forge::unrelayed(feedback(pr, review_comments), relayed),
-        pr.is_approved(),
+        pr.is_approved() && pr.is_open(),
         approved_notified,
     )
 }
@@ -320,6 +336,35 @@ mod tests {
             poll_state(&parse(open_pr()), &[], &[], false),
             PrState::Quiet
         );
+    }
+
+    /// The case a repository with no branch protection is always in: GitHub
+    /// answers with no review decision at all, and a pull request nobody has
+    /// to approve is the user's to merge from the moment it exists. Read as
+    /// "not approved" — as it was — a task published to such a repository was
+    /// never announced to anybody.
+    #[test]
+    fn a_pull_request_nothing_gates_is_the_users_to_merge() {
+        for decision in [serde_json::Value::Null, "".into(), "   ".into()] {
+            let mut pr = open_pr();
+            pr["reviewDecision"] = decision.clone();
+            assert_eq!(
+                poll_state(&parse(pr), &[], &[], false),
+                PrState::Approved,
+                "reviewDecision {decision:?}"
+            );
+        }
+    }
+
+    /// And announcing one is only ever worth it while it is open: a pull
+    /// request closed unmerged is nobody's to press a button on, however
+    /// little stood between it and the merge.
+    #[test]
+    fn a_closed_pull_request_is_announced_to_nobody() {
+        let mut pr = open_pr();
+        pr["state"] = "CLOSED".into();
+        pr["reviewDecision"] = "APPROVED".into();
+        assert_eq!(poll_state(&parse(pr), &[], &[], false), PrState::Quiet);
     }
 
     #[test]
