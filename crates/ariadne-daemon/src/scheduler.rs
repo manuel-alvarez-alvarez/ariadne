@@ -1521,17 +1521,16 @@ fn pr_feedback_instruction(watched: &WatchedPr, feedback: &[Feedback]) -> String
     // integrator has: an agent sent to read more is sent to the right place.
     let reread = match watched.forge {
         Forge::GitHub => "`gh pr view --comments` and the inline review threads",
-        Forge::GitLab => "`glab mr view --comments` and the discussion threads on the diff",
+        Forge::GitLab => "`glab mr view --comments` and the diff's discussion threads",
     };
     format!(
-        "{label} has {count} new {plural} nobody has relayed yet:\n\n\
+        "{label} has {count} new {plural} to relay:\n\n\
          {quoted}\n\n\
-         Relay every one that asks for something to the engineer with `return_to_engineer`, \
-         quoting the comment and naming who wrote it, as your integration instructions say. \
-         Read the {noun} first if you need the code they are about — {reread} — and write no \
-         code yourself. If none of them asks for a change at all — a bot notice, a thank-you — \
-         say so in the task thread with `post_message` instead of sending the task back. Either \
-         way that ends your turn."
+         Relay every comment that asks for something with the `return_to_engineer` MCP tool, \
+         quoted and attributed. Write no code; read the {noun} first with {reread} if you need \
+         the code they mean. If none asks for a change — a bot notice, a thank-you — report \
+         that in the task thread with the `post_message` MCP tool instead of sending the task \
+         back. Your turn ends either way."
     )
 }
 
@@ -1540,10 +1539,10 @@ fn pr_merged_instruction(watched: &WatchedPr, base_branch: &str) -> String {
     let label = watched.label();
     let forge = watched.forge.name();
     format!(
-        "{label} has been merged on {forge}. Finish the task as your integration instructions \
-         say: fetch the remote in the primary checkout, fast-forward {base_branch} onto it, and \
-         call `mark_merged` with the sha it now points at. The daemon verifies the merge against \
-         {forge} itself, so report it truthfully."
+        "{label} was merged on {forge}. Finish the task: fetch the remote in the primary \
+         checkout, fast-forward {base_branch} onto it, and call the `mark_merged` MCP tool with \
+         the sha it now points at. The daemon verifies the merge against {forge}, so report it \
+         truthfully."
     )
 }
 
@@ -1558,8 +1557,7 @@ fn delivery_text(message: &Message) -> String {
     };
     format!(
         "New message from the {author} in {thread}:\n\n{body}\n\n\
-         Read the whole conversation with `list_messages`, and answer with \
-         `post_message`.",
+         Read the rest with the `list_messages` MCP tool; answer with `post_message`.",
         author = message.author_role().as_str(),
         body = message.body,
     )
@@ -1619,6 +1617,8 @@ mod tests {
             "{instruction}"
         );
         assert!(instruction.contains("return_to_engineer"), "{instruction}");
+        assert!(instruction.contains("gh pr view"), "{instruction}");
+        assert!(!instruction.contains("glab"), "{instruction}");
         assert!(!instruction.contains("  "), "{instruction}");
 
         let one = pr_feedback_instruction(
@@ -1630,13 +1630,13 @@ mod tests {
                 blocking: false,
             }],
         );
-        assert!(one.contains("1 new comment nobody"), "{one}");
+        assert!(one.contains("1 new comment to relay"), "{one}");
     }
 
     #[test]
     fn the_merge_instruction_names_the_branch_to_fast_forward() {
         let instruction = pr_merged_instruction(&pull_request(), "main");
-        assert!(instruction.contains("#12 has been merged"), "{instruction}");
+        assert!(instruction.contains("#12 was merged"), "{instruction}");
         assert!(instruction.contains("fast-forward main"), "{instruction}");
         assert!(instruction.contains("mark_merged"), "{instruction}");
         assert!(!instruction.contains("  "), "{instruction}");
@@ -1657,7 +1657,7 @@ mod tests {
             }],
         );
         assert!(
-            instruction.contains("Merge request !12 has 1 new comment"),
+            instruction.contains("Merge request !12 has 1 new comment to relay"),
             "{instruction}"
         );
         assert!(
@@ -1671,7 +1671,7 @@ mod tests {
 
         let merged = pr_merged_instruction(&merge_request(), "main");
         assert!(
-            merged.contains("Merge request !12 has been merged on GitLab"),
+            merged.contains("Merge request !12 was merged on GitLab"),
             "{merged}"
         );
         assert!(merged.contains("fast-forward main"), "{merged}");

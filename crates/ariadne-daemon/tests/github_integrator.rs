@@ -647,7 +647,7 @@ async fn a_pull_request_is_watched_from_publication_to_its_merge() {
 
     eventually(
         "the integrator to be woken to finish the task",
-        async || h.launched_argv(&integrator.id).contains("has been merged"),
+        async || h.launched_argv(&integrator.id).contains("was merged"),
     )
     .await;
     let argv = h.launched_argv(&integrator.id);
