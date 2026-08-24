@@ -1204,14 +1204,11 @@ impl Scheduler {
     /// The daemon polled the comments and has them in hand: relaying them
     /// through the integrator would be a turn spent copying them from one
     /// forge into the other end of the same database, and a turn is a place
-    /// a relay can go wrong. So the send-back is written here, in the rows
-    /// `return_to_engineer` writes for the integrator's own send-backs — a
-    /// change request on the round the pull request was published from,
-    /// under the forge's own name rather than any profile's, since what it
-    /// carries is what the humans on the request wrote — and the engineer is
-    /// resumed with it by the `changes_requested` arm like any other round of
-    /// feedback. Its worktree is checked out again as it resumes, which is
-    /// what releases the integrator's hold on the branch.
+    /// a relay can go wrong. So the send-back is written by the daemon itself
+    /// ([`Self::relay_to_engineer`]), and the engineer is resumed with it by
+    /// the `changes_requested` arm like any other round of feedback. Its
+    /// worktree is checked out again as it resumes, which is what releases
+    /// the integrator's hold on the branch.
     ///
     /// The order is the send-back's: the feedback is recorded before the
     /// transition, so the engineer the scheduler resumes on it has it to
@@ -1240,6 +1237,13 @@ impl Scheduler {
     /// `ids` are what the poll read it from, remembered on the task so that
     /// the same comment, the same conflict and the same failing check are one
     /// round of changes rather than one per poll.
+    ///
+    /// The row is one of the ones `return_to_engineer` writes for the
+    /// integrator's own send-backs — a change request on the round the
+    /// request was published from — but under the forge's own name rather
+    /// than any profile's: what it carries is what the people reading the
+    /// request wrote, or what their checks said, and no agent of ours has
+    /// read a word of it.
     async fn relay_to_engineer(
         &mut self,
         task: &Task,

@@ -38,8 +38,7 @@ use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_daemon::tmux::{TmuxManager, session_name};
 use ariadne_store::{
     AgentSession, Goal, Message, NewAgentEvent, NewGoal, NewMessage, NewProfile, NewRepository,
-    NewReview,
-    NewSession, NewTask, Recipient, ReviewAuthor, SessionFilter, Store, Task,
+    NewReview, NewSession, NewTask, Recipient, ReviewAuthor, SessionFilter, Store, Task,
 };
 
 /// Idle long enough to be past both thresholds (nudge at 300s, flag at 900s).
