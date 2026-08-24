@@ -41,8 +41,8 @@ use ariadne_daemon::logbuf::LogBuffer;
 use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_daemon::tmux::TmuxManager;
 use ariadne_store::{
-    AgentSession, NewGoal, NewProfile, NewRepository, NewReview, NewTask, ProfileUpdate,
-    ReviewAuthor, SessionFilter, Store, Task,
+    AgentSession, NewAgentEvent, NewGoal, NewProfile, NewRepository, NewReview, NewTask,
+    ProfileUpdate, ReviewAuthor, SessionFilter, Store, Task,
 };
 
 /// How long a test waits for the scheduler to reach a state. Generous
@@ -50,6 +50,11 @@ use ariadne_store::{
 /// reconciliations while the rest of the file runs beside it: what the number
 /// has to outlast is a loaded machine, not a scheduler that is quick about it.
 const TIMEOUT: Duration = Duration::from_secs(60);
+
+/// The daemon's defaults for the watchdog that measures a running agent by
+/// what it has reported since its turn started — the second of them is when
+/// the agent is killed and relaunched.
+const RUNNING_QUIET_RESUME_SECS: i64 = 2_700;
 
 /// The pull request every test in here publishes.
 const PR_URL: &str = "https://github.com/ariadne/ariadne/pull/12";
@@ -403,6 +408,52 @@ impl Harness {
             .await
             .into_iter()
             .find(|s| s.status() == SessionStatus::Running)
+    }
+
+    /// One event reported by the agent, the way its hook would: what says
+    /// that a turn ever started, as opposed to a launch that came up.
+    async fn reports(&self, session: &AgentSession, kind: &str) {
+        self.store
+            .create_event(NewAgentEvent {
+                session_id: Some(session.id.clone()),
+                task_id: session.task_id.clone(),
+                agent_kind: Some(AgentKind::ClaudeCode),
+                kind: kind.into(),
+                payload: serde_json::json!({}),
+            })
+            .await
+            .unwrap();
+    }
+
+    /// Move one of a session's clocks back, since the store only ever stamps
+    /// them "now" and the watchdog's thresholds are tens of minutes away.
+    async fn backdate(&self, column: &str, session_id: &str, secs: i64) {
+        let when = (chrono::Utc::now() - chrono::Duration::seconds(secs))
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let pool = sqlx::SqlitePool::connect(&format!(
+            "sqlite://{}",
+            self.dir.path().join("test.db").display()
+        ))
+        .await
+        .unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE agent_sessions SET {column} = ? WHERE id = ?"
+        )))
+        .bind(when)
+        .bind(session_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+    }
+
+    /// An integrator that started its turn and has reported nothing since:
+    /// what a wedged agent looks like from outside its pane.
+    async fn wedged_for(&self, session: &AgentSession, secs: i64) {
+        self.reports(session, "pre_tool_use").await;
+        for column in ["launched_at", "last_activity_at"] {
+            self.backdate(column, &session.id, secs).await;
+        }
     }
 
     /// The agent has finished its turn: what the daemon acts on a moved pull
@@ -2261,5 +2312,65 @@ async fn a_conflicting_pull_request_goes_to_the_engineer_with_the_base_to_merge(
         !told[0].body.contains("ready for you to merge"),
         "{}",
         told[0].body
+    );
+}
+
+/// A published task is waiting on people, so its integrator is not nudged for
+/// being idle — but it is still an agent, and an agent can wedge inside the
+/// turn it was woken for. The watchdog that watches every other running
+/// session watches this one too: the pane is killed and the same session put
+/// back on the request it was already working on.
+#[tokio::test]
+async fn a_wedged_integrator_of_a_published_request_is_relaunched() {
+    let h = harness().await;
+    let (task, reviewer) = h.task().await;
+    let integrator = h.hand_to_the_integrator(&task, &reviewer).await;
+    let _: TaskDto = h
+        .json(
+            as_session(
+                &format!("/v1/tasks/{}/pull-request", task.id),
+                &integrator.id,
+                serde_json::json!({"url": PR_URL}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    h.pull_request(open_pull_request());
+
+    // Mid-turn and silent with it: the turn started, and nothing has been
+    // reported since — for longer than the request would ever excuse.
+    h.wedged_for(&integrator, RUNNING_QUIET_RESUME_SECS + 60).await;
+    let launched = h
+        .store
+        .get_session(&integrator.id)
+        .await
+        .unwrap()
+        .launched_at;
+
+    h.notify(&task.id);
+    eventually("the wedged integrator to be relaunched", async || {
+        h.store
+            .get_session(&integrator.id)
+            .await
+            .unwrap()
+            .launched_at
+            != launched
+    })
+    .await;
+
+    assert_eq!(
+        h.sessions(&task.id, Role::Integrator).await.len(),
+        1,
+        "the same session row, not a second integrator beside it"
+    );
+    assert_eq!(
+        h.status(&task.id).await,
+        TaskStatus::Integrating,
+        "the task is still the integrator's"
+    );
+    let instruction = h.resume_instruction(&integrator.id);
+    assert!(
+        instruction.contains(PR_URL),
+        "it is woken on the request it had open: {instruction}"
     );
 }
