@@ -324,10 +324,10 @@ Once published, Ariadne wakes you in one of two situations, saying which. Commen
 /// The two differ in what has already happened, not in what to do, so what is
 /// here is the state (`{request}` is the pull or merge request Ariadne has
 /// recorded, or that there is none) and the check that settles the rest. The
-/// procedure itself is [`INTEGRATION_INSTRUCTIONS`]', which the session was
-/// briefed with and is pointed back at: a published request is updated in
-/// place, one that does not exist yet is opened, and the rules for either are
-/// stated once, over there.
+/// procedure itself belongs to [`INTEGRATION_INSTRUCTIONS`], the briefing the
+/// session was started on and is pointed back at: a published request is
+/// updated in place, one that does not exist yet is opened, and the rules for
+/// either are stated once, over there.
 ///
 /// `{summary}` is the engineer's own account of the revision. Where a request
 /// is open it is its replies to the people reading it, quoted here whole so
