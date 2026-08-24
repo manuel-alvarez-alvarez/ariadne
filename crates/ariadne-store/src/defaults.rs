@@ -146,7 +146,7 @@ Whichever way you land it:
 - A rebase or a merge that conflicts is not yours to resolve: it goes back to the engineer with `return_to_engineer`.
 - Everything you push to the forge — the commit that lands, a request's title and its body — reads as a human contributor's work: no `Co-Authored-By`, `Generated with` or other authorship or tool trailer and no mention of Ariadne, agents, models or tooling.
 - Never merge a published pull or merge request, never approve one, never sit waiting: end your turn and let Ariadne wake you when it moves.
-- Talk to the humans reviewing it through `post_message`, never by commenting on the request — your own comment would come back to you as feedback to relay.
+- Talk to the humans reviewing it through `post_message`, never by commenting on the request — Ariadne reads what is written on it as the reviewers' feedback and sends it to the engineer, your own comment included.
 - Report truthfully what you landed or published, and which check failed when one did."#;
 
 /// Initial briefing of a planner session.
@@ -204,10 +204,11 @@ Apply them on the same branch, commit, and call `request_review` again, saying h
 ///
 /// Publishing ends the turn: everything after `gh pr create` happens on the
 /// forge, at human speed, and an agent left waiting on it is an agent
-/// stalling. The steps for the three ways the daemon wakes it again —
-/// comments, an approved revision, the merge — are here too, since the wake
-/// instruction names the event and this is where what to do about it is
-/// written down.
+/// stalling. The steps for the two ways the daemon wakes it again — an
+/// approved revision to push, a merged request to finish the task off — are
+/// here too, since the wake instruction names the event and this is where
+/// what to do about it is written down. Comments are not one of them: the
+/// daemon polls them and writes them to the engineer itself.
 const INTEGRATION_INSTRUCTIONS: &str = r#"# Integrate task: {task_title}
 
 {task_description}
@@ -240,9 +241,8 @@ The reviewers approved it. Read the task and its conversation, and `get_diff` fo
    - `mark_merged` with the resulting sha (`git -C {repo_path} rev-parse {base_branch}`), which the daemon verifies, so report it truthfully.
    - Push the base where there is a remote: `git -C {repo_path} push <remote> {base_branch}`, or the commit you just landed lives on this machine alone. That ends the task.
 
-Once published, Ariadne wakes you in one of three situations, saying which:
+Once published, Ariadne wakes you in one of two situations, saying which. Comments are neither of them: what humans write on the request goes straight to the engineer, and the revision comes back to you approved.
 
-- **The request has comments.** Read them all — `gh pr view {branch} --comments` plus the inline review threads (`gh api repos/<owner>/<repo>/pulls/<number>/comments`), or `glab mr view {branch} --comments` plus the discussion threads (`glab api projects/:fullpath/merge_requests/<iid>/discussions`) — and relay every one to the engineer with `return_to_engineer`: the summary says it was commented on, `changes` one entry per comment, quoting it and naming its author and file. Answer nothing in code yourself. That ends your turn.
 - **The revision was approved and the task is yours again.** Update the request already open — never a second one, and never by rewriting a commit a human has read: `git fetch <remote> {base_branch} && git merge --no-edit <remote>/{base_branch}` in your worktree, then a plain `git push <remote> {branch}`, never forced, never a `rebase` or a `commit --amend` over what is published. The merge commit on {branch} is fine: the forge squashes the request when it merges it. On a conflict, do not resolve it: name the files with `git diff --name-only --diff-filter=U`, then `git merge --abort` and `return_to_engineer` with them and what to reconcile. Otherwise `post_message` to "user" that the comments are addressed and it is ready to look at again, and end your turn.
 - **The request was merged.** Finish the task: `git -C {repo_path} fetch <remote>`, fast-forward the local base (`git -C {repo_path} merge --ff-only <remote>/{base_branch}`), then `mark_merged` with the sha it landed as (`git -C {repo_path} rev-parse {base_branch}`), which the daemon verifies."#;
 
@@ -261,7 +261,7 @@ Check first whether it was already published — `gh pr list --head {branch} --s
 
 Whatever you write for the forge or for the commit that lands reads as a human contributor's work: no `Co-Authored-By`, `Generated with` or other authorship or tool trailer and no mention of Ariadne, agents, models or tooling.
 
-End your turn afterwards: Ariadne watches a published request and wakes you when it is commented on or merged. If the rebase or the merge conflicts, abort it and `return_to_engineer` with the conflicting files and what to reconcile."#;
+End your turn afterwards: Ariadne watches a published request and wakes you when a human merges it; what they write on it in the meantime goes to the engineer, not to you. If the rebase or the merge conflicts, abort it and `return_to_engineer` with the conflicting files and what to reconcile."#;
 
 /// Initial briefing of a reviewer session.
 const REVIEWER_BRIEFING: &str = r#"# Review task: {task_title} (round {review_round})
@@ -402,7 +402,6 @@ mod tests {
             "gh auth status",
             "gh pr create",
             "gh pr list --head",
-            "gh pr view",
         ] {
             assert!(whole.contains(gh), "the integrator has no {gh}");
         }
@@ -411,7 +410,6 @@ mod tests {
             "glab auth status",
             "glab mr create",
             "glab mr list --source-branch",
-            "glab mr view",
         ] {
             assert!(whole.contains(glab), "the integrator has no {glab}");
         }
@@ -443,6 +441,12 @@ mod tests {
         // gone.
         for never in ["--force", "git fetch ."] {
             assert!(!whole.contains(never), "the integrator still runs {never}");
+        }
+
+        // And it is never sent to read the comments on a published request:
+        // the daemon polls them and writes them to the engineer itself.
+        for never in ["--comments", "/discussions", "/pulls/<number>/comments"] {
+            assert!(!whole.contains(never), "the integrator still reads {never}");
         }
 
         // Its opening says all three, so `list_profiles` alone tells a planner
