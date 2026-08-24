@@ -8,6 +8,13 @@
 //! at all — the instruction still sitting in its composer — is unstuck with a
 //! keystroke before the user is told about it.
 //!
+//! None of it waits on the keystrokes themselves: typing into a pane settles
+//! for a second or two, and a pass with three agents to nudge sends all three
+//! at once rather than one after another. A message that reached an agent
+//! counts for the same pass as the nudge would have — it says the same thing
+//! and better — so nothing tells an agent to get on with what it was asked to
+//! do a moment ago.
+//!
 //! No tmux and no agent CLI: `tmux` is a stub script whose sessions are the
 //! ones a test lists as alive, and which writes down every `send-keys` it is
 //! handed — which is how "this agent was nudged" is asserted. Both clocks are
@@ -21,7 +28,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use ariadne_core::{
-    Actor, AgentKind, AttentionReason, GoalStatus, ReviewVerdict, Role, SessionStatus, TaskStatus,
+    Actor, AgentKind, AttentionReason, AuthorRole, GoalStatus, ReviewVerdict, Role, SessionStatus,
+    TaskStatus,
 };
 use ariadne_daemon::config::Config;
 use ariadne_daemon::gitwt::GitManager;
@@ -29,8 +37,8 @@ use ariadne_daemon::launcher::Launcher;
 use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_daemon::tmux::{TmuxManager, session_name};
 use ariadne_store::{
-    AgentSession, Goal, NewAgentEvent, NewGoal, NewProfile, NewRepository, NewReview, NewSession,
-    NewTask, SessionFilter, Store, Task,
+    AgentSession, Goal, NewAgentEvent, NewGoal, NewMessage, NewProfile, NewRepository, NewReview,
+    NewSession, NewTask, Recipient, SessionFilter, Store, Task,
 };
 
 /// Idle long enough to be past both thresholds (nudge at 300s, flag at 900s).
@@ -42,8 +50,11 @@ const LONG_SILENCE_SECS: i64 = 1_000;
 /// The first of those thresholds, for a test that wants the nudge and not the
 /// escalation behind it.
 const STALL_NUDGE_SECS: i64 = 300;
-/// How long a test waits for a reconciliation to reach the store.
-const TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a test waits for a reconciliation to reach the store. Generous
+/// because some of what is waited on is not the daemon thinking: a nudge no
+/// composer will let go of spends several seconds of widening backoff before
+/// anybody hears about it, and every test here runs beside the others.
+const TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Wait for what a reconciliation was supposed to do, rather than guessing at
 /// how long a pass takes.
@@ -1345,5 +1356,136 @@ async fn a_completed_goal_with_nothing_live_is_left_alone() {
     assert_eq!(
         h.store.get_session(&session.id).await.unwrap().status(),
         SessionStatus::Exited
+    );
+}
+
+/// Three agents to nudge in one pass, and the pass does not wait on any of
+/// them. Every delivery settles a paste and an Enter before it can say
+/// whether the composer let go — a second or two each — which the loop used
+/// to spend one agent at a time while every other event queued behind it.
+#[tokio::test]
+async fn a_pass_with_three_agents_to_nudge_does_not_wait_on_the_keystrokes() {
+    let h = harness().await;
+    let (goal, task, engineer, reviewer) = h.active_goal_with_task().await;
+    let second = h.extra_task(&goal, &engineer, &reviewer, "second").await;
+    let third = h.extra_task(&goal, &engineer, &reviewer, "third").await;
+    let mut sessions = Vec::new();
+    for task in [&task, &second, &third] {
+        h.advance(task, TaskStatus::InProgress).await;
+        let session = h
+            .session(&goal, Some(task), Role::Engineer, &engineer)
+            .await;
+        h.pane_exists(&session);
+        h.idle_for(&session, STALL_NUDGE_SECS + 60).await;
+        sessions.push(session);
+    }
+
+    // The scheduler's opening reconciliation is the pass: it sees all three.
+    let _sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+
+    // What is measured is the pass, not the machine it runs on: how long
+    // after the first pane is typed into the last one is. A delivery settles
+    // for a second before it can report anything, so three taken in turn put
+    // seconds between the first and the last.
+    let deadline = std::time::Instant::now() + TIMEOUT;
+    let mut first: Option<std::time::Instant> = None;
+    let spread = loop {
+        let typed = sessions.iter().filter(|s| h.keystrokes(s) > 0).count();
+        if typed > 0 && first.is_none() {
+            first = Some(std::time::Instant::now());
+        }
+        if typed == sessions.len() {
+            break first.unwrap().elapsed();
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for all three panes to be typed into"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    assert!(
+        spread < Duration::from_millis(900),
+        "the three nudges went out together, not one after another: {spread:?}"
+    );
+}
+
+/// A message that reached an agent is a nudge, and a better one: it says what
+/// to do rather than asking why nothing is being done. So the pass that would
+/// have nudged this session leaves it alone, and the escalation behind the
+/// nudge does not happen either — the idle clock runs from the delivery.
+#[tokio::test]
+async fn a_delivered_message_stands_in_for_the_stall_nudge() {
+    let h = harness().await;
+    let (goal, task, engineer, reviewer) = h.active_goal_with_task().await;
+    h.advance(&task, TaskStatus::InProgress).await;
+    let session = h
+        .session(&goal, Some(&task), Role::Engineer, &engineer)
+        .await;
+    h.pane_exists(&session);
+    h.idle_for(&session, 5).await;
+    // Another task's agent, idle long enough to be nudged in the same passes:
+    // what says a pass really looked at both of them.
+    let other = h.extra_task(&goal, &engineer, &reviewer, "second").await;
+    h.advance(&other, TaskStatus::InProgress).await;
+    let canary = h
+        .session(&goal, Some(&other), Role::Engineer, &engineer)
+        .await;
+    h.pane_exists(&canary);
+    h.idle_for(&canary, LONG_IDLE_SECS).await;
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    let message = h
+        .store
+        .create_message(NewMessage {
+            goal_id: goal.id.clone(),
+            task_id: Some(task.id.clone()),
+            author_role: AuthorRole::User,
+            author_session_id: None,
+            recipient: Some(Recipient::Profile(engineer.clone())),
+            body: "Use the other endpoint.".into(),
+        })
+        .await
+        .unwrap();
+    sched
+        .send(SchedEvent::MessagePosted(message.id.clone()))
+        .unwrap();
+    eventually("the message to reach the pane", async || {
+        h.keystrokes(&session) > 1
+    })
+    .await;
+    // The delivery is confirmed a beat after the Enter, by reading the pane
+    // back; nothing here means anything until the scheduler has been told.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let after_delivery = h.keystrokes(&session);
+
+    // And now what the agent's own clock says: nothing since long before the
+    // message. Two passes, which is a nudge and then the flag behind it.
+    h.idle_for(&session, LONG_IDLE_SECS).await;
+    for _ in 0..2 {
+        sched
+            .send(SchedEvent::TaskChanged(task.id.clone()))
+            .unwrap();
+        sched
+            .send(SchedEvent::TaskChanged(other.id.clone()))
+            .unwrap();
+        eventually("the other agent to be nudged", async || {
+            h.keystrokes(&canary) > 0
+        })
+        .await;
+    }
+
+    assert_eq!(
+        h.keystrokes(&session),
+        after_delivery,
+        "nothing was typed at an agent that has just been told what to do"
+    );
+    assert_eq!(
+        h.attention(&session).await,
+        None,
+        "and it was not raised for the user either"
+    );
+    assert!(
+        !h.store.get_task(&task.id).await.unwrap().is_stalled(),
+        "nor was its task"
     );
 }
