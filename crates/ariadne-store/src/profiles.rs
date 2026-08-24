@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use ariadne_core::id::new_id;
 use ariadne_core::{AgentKind, PromptKind, Role};
 
-use crate::defaults::LOCAL_INTEGRATOR_ID;
+use crate::defaults::INTEGRATOR_ID;
 use crate::prompts::{check_placeholders, check_role_kind};
 use crate::{Change, Profile, Result, Store, StoreError, Task, not_found, now};
 
@@ -107,15 +107,14 @@ impl Store {
             .ok_or_else(|| not_found("profile", name))
     }
 
-    /// The built-in Local Integrator, while it is still there.
+    /// The built-in Integrator, while it is still there.
     ///
-    /// The integrator that lands a task with git alone, and what a migrated
-    /// task that named none was backfilled with. Looked up by id rather than
-    /// by name because a profile can be renamed and there are three built-in
-    /// integrators to tell apart; `None` when it was deleted — allowed, and
-    /// permanent.
+    /// The integrator a task is landed by unless another was named, and what a
+    /// migrated task that named none was backfilled with. Looked up by id
+    /// rather than by name because a profile can be renamed; `None` when it
+    /// was deleted — allowed, and permanent.
     pub async fn builtin_integrator(&self) -> Option<Profile> {
-        self.get_profile(LOCAL_INTEGRATOR_ID).await.ok()
+        self.get_profile(INTEGRATOR_ID).await.ok()
     }
 
     /// The profile that lands `task`, the one it was assigned at creation.

@@ -170,7 +170,7 @@ impl Harness {
             post_json(
                 &format!("/v1/goals/{}/tasks", goal.id),
                 serde_json::json!({"title": "Do the thing", "engineer_profile": "Engineer",
-                                   "integrator_profile": "Local Integrator",
+                                   "integrator_profile": "Integrator",
                                    "reviewer_profiles": ["Reviewer"]}),
             ),
             StatusCode::CREATED,

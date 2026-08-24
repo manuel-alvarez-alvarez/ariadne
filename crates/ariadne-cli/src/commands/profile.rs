@@ -678,8 +678,8 @@ async fn get_profile(client: &Client, id: &str) -> Result<ProfileDto> {
 }
 
 /// The endpoint of one profile, named the way the caller named it: by id, or
-/// by a name that may have anything in it — a space, in the case of the
-/// built-in GitHub Integrator. See [`path_segment`].
+/// by a name that may have anything in it — a space, in the case of a profile
+/// someone named `My Integrator`. See [`path_segment`].
 fn profile_path(id_or_name: &str) -> String {
     format!("/v1/profiles/{}", path_segment(id_or_name))
 }
