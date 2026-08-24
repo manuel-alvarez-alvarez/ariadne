@@ -1283,10 +1283,9 @@ impl Scheduler {
     /// is waiting for — so the round is closed here instead, with no reviewer
     /// started and no review row wanted.
     ///
-    /// It is written down twice, because the two records are read by
-    /// different people: the transition's own reason is the audit entry, and
-    /// the message is what a human scrolling the task's conversation sees.
-    /// Neither addresses anybody — the round is decided, not announced.
+    /// Written down once, on the transition that closes the round: the round
+    /// was decided, not announced, and the reason a transition carries is
+    /// what both the audit and the task's history tab read it from.
     async fn approve_published_revision(
         &self,
         task: &Task,
@@ -1294,23 +1293,6 @@ impl Scheduler {
     ) -> anyhow::Result<()> {
         let label = watched.label();
         info!(task = %task.id, pr = watched.number, round = task.review_round, "the revision answers a published request: approving it without an internal review round");
-        self.store
-            .create_message(NewMessage {
-                goal_id: task.goal_id.clone(),
-                task_id: Some(task.id.clone()),
-                author_role: AuthorRole::System,
-                author_session_id: None,
-                recipient: None,
-                body: format!(
-                    "{label} ({url}) is published, so the humans reviewing it are this \
-                     round's reviewers: round {round} is approved without an internal \
-                     review, and the integrator pushes the revision to the request with \
-                     the engineer's replies.",
-                    url = watched.url,
-                    round = task.review_round,
-                ),
-            })
-            .await?;
         self.store
             .transition_task(
                 &task.id,

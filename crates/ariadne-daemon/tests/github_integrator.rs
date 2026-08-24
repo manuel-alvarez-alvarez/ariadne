@@ -1102,10 +1102,11 @@ async fn pull_request_comments_reach_the_engineer_once_each() {
         "the round wanted a review row of its own"
     );
     assert!(
-        h.thread_messages(&task.id).await.iter().any(|m| m
+        !h.thread_messages(&task.id).await.iter().any(|m| m
             .body
             .contains("is published, so the humans reviewing it are this round's reviewers")),
-        "the task's conversation does not say why the round was approved"
+        "the reason the round was approved is written twice: once as the \
+         transition's own and once into the thread"
     );
 
     // And what the integrator was woken with: push the revision to the same
