@@ -63,11 +63,8 @@ pub struct PostMessageReq {
     pub body: String,
     /// Task id; defaults to your own task (planner: goal-level thread).
     pub task_id: Option<String>,
-    /// Whom to address, waking them to read it: a profile name as your
-    /// briefing and `list_profiles` spell it, or "user" for the human. A task
-    /// thread addresses its engineer, its reviewers, its integrator or the
-    /// planner; a goal thread only the planner. Leave it out to address the
-    /// thread itself.
+    /// Whom to address, waking them, as your system prompt spells it; leave
+    /// it out to address the thread itself.
     pub to: Option<String>,
 }
 
@@ -377,7 +374,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Read a task's conversation, for what the other agents and the user said. Without task_id, a planner reads the goal thread. A message that addressed someone carries a `to`: the profile name it named, or \"user\"."
+        description = "Read a task's conversation, for what the other agents and the user said. Without task_id, a planner reads the goal thread. A message that addressed someone carries the `to` it named."
     )]
     async fn list_messages(
         &self,
@@ -394,7 +391,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Write into a task's conversation: the way to reach the other agents and the user. Without task_id, a planner posts to the goal thread. Address one of them with `to` — a profile name (as your briefing and `list_profiles` spell it) or \"user\" — and that recipient is woken and notified; without `to` the message is left to the thread, read whenever someone next looks. A task thread addresses its engineer, its reviewers, its integrator and the planner; a goal thread addresses the planner. Addressing anyone else is refused, naming who would have worked."
+        description = "Write into a task's conversation, the way to reach the other agents and the user: `to` addresses one of them as your system prompt spells it, and without task_id a planner posts to the goal thread instead."
     )]
     async fn post_message(
         &self,
@@ -637,7 +634,9 @@ impl AriadneMcp {
         Ok(CallToolResult::success(vec![ContentBlock::text(diff)]))
     }
 
-    #[tool(description = "Approve the change under review, as this round's single verdict.")]
+    #[tool(
+        description = "Approve the change under review; the body is the note that goes with it."
+    )]
     async fn approve(
         &self,
         Parameters(req): Parameters<VerdictReq>,
@@ -646,7 +645,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Request changes on the change under review, as this round's single verdict: name the files and functions that must change."
+        description = "Request changes on the change under review; the body is the feedback the engineer is resumed with."
     )]
     async fn request_changes(
         &self,
