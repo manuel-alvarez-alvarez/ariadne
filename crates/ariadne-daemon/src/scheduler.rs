@@ -1763,9 +1763,12 @@ fn published_revision_instruction(
     let noun = watched.forge.noun();
     let base = &repo.base_branch;
     let branch = &task.branch;
+    // Whatever the engineer wrote, byte for byte: the emptiness check reads a
+    // trimmed copy, and what goes into the instruction is the summary itself —
+    // its indentation, its blank lines and its trailing newline are part of
+    // what the people on the request are being answered with.
     let replies = replies
-        .map(str::trim)
-        .filter(|r| !r.is_empty())
+        .filter(|r| !r.trim().is_empty())
         .unwrap_or("(the engineer left no summary of this revision)");
     format!(
         "The engineer has answered the people reviewing {label} ({url}), and the branch is \
@@ -2025,6 +2028,21 @@ mod tests {
             "{instruction}"
         );
         assert!(!instruction.contains("  "), "{instruction}");
+
+        // Verbatim to the byte: an agent that lays its replies out is not
+        // reformatted on the way through, blank lines, indentation, trailing
+        // newline and all.
+        let laid_out = "\n  1. @maria: it allocates once now.\n\n  2. @jon: the module stays.\n";
+        let kept = published_revision_instruction(
+            &pull_request(),
+            &published_task(),
+            &repository(),
+            Some(laid_out),
+        );
+        assert!(
+            kept.ends_with(laid_out),
+            "the replies were reflowed on the way in: {kept:?}"
+        );
 
         // A revision with nothing said about it still pushes.
         let silent =

@@ -1161,6 +1161,10 @@ async fn a_published_round_pushes_the_replies_and_addresses_the_user_twice() {
         instruction.contains("`post_message` to \"user\""),
         "{instruction}"
     );
+    assert!(
+        instruction.ends_with(REPLIES),
+        "the replies reached the integrator changed: {instruction:?}"
+    );
 
     // The integrator does what it was told: pushes, and writes the one
     // message the user gets out of the round.
