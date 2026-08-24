@@ -737,7 +737,7 @@ mod tests {
     use super::*;
 
     use ariadne_api::messages::MessageRecipientDto;
-    use ariadne_core::{AuthorRole, RecipientKind};
+    use ariadne_core::{AuthorRole, RecipientKind, Role};
 
     fn message(recipient: Option<MessageRecipientDto>) -> MessageDto {
         MessageDto {
@@ -769,7 +769,7 @@ mod tests {
         assert_eq!(to_the_thread["to"], serde_json::Value::Null);
     }
 
-    fn profile(id: &str, name: &str, role: ariadne_core::Role) -> ProfileDto {
+    fn profile(id: &str, name: &str, role: Role) -> ProfileDto {
         ProfileDto {
             id: id.into(),
             name: name.into(),
@@ -797,10 +797,10 @@ mod tests {
             }),
             "01PLAN",
             &[
-                profile("01ENG", "Engineer", ariadne_core::Role::Engineer),
-                profile("01REV", "Reviewer", ariadne_core::Role::Reviewer),
-                profile("01INT", "Integrator", ariadne_core::Role::Integrator),
-                profile("01PLAN", "Planner", ariadne_core::Role::Planner),
+                profile("01ENG", "Engineer", Role::Engineer),
+                profile("01REV", "Reviewer", Role::Reviewer),
+                profile("01INT", "Integrator", Role::Integrator),
+                profile("01PLAN", "Planner", Role::Planner),
             ],
         );
         assert_eq!(
