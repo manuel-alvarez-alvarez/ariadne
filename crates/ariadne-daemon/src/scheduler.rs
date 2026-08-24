@@ -2056,12 +2056,19 @@ impl Scheduler {
         if quiet_secs < self.launcher.cfg.running_quiet_flag_secs as i64 {
             return Ok(());
         }
-        if session.attention_reason() != Some(AttentionReason::Stalled) {
-            warn!(session = %session.id, role = %session.role, quiet_secs, "the agent's turn has reported nothing, flagging for user attention");
+        // A flag raised for the user is left where it is: what
+        // `waiting_user` says — a message written to them, a request that is
+        // theirs to merge — is more use to them than "stalled", and it is not
+        // the daemon's to take down on the agent's behalf. The silence is
+        // measured all the same, and the relaunch below still happens.
+        if session.attention_reason() != Some(AttentionReason::WaitingUser) {
+            if session.attention_reason() != Some(AttentionReason::Stalled) {
+                warn!(session = %session.id, role = %session.role, quiet_secs, "the agent's turn has reported nothing, flagging for user attention");
+            }
+            self.store
+                .set_session_attention(&session.id, AttentionReason::Stalled)
+                .await?;
         }
-        self.store
-            .set_session_attention(&session.id, AttentionReason::Stalled)
-            .await?;
         if quiet_secs < self.launcher.cfg.running_quiet_resume_secs as i64 {
             return Ok(());
         }

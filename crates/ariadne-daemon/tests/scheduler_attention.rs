@@ -2144,3 +2144,60 @@ async fn a_wedged_agent_is_not_killed_while_a_message_is_going_into_its_pane() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
+
+/// A flag raised for the user is not an agent waiting on one. `waiting_user`
+/// says the user has something to do about this task — a message written to
+/// them, a request that is theirs to merge — and nothing about whether the
+/// agent is working, so it is neither overwritten with a stall nor taken as a
+/// reason to leave a wedged agent where it is.
+#[tokio::test]
+async fn a_wedged_agent_flagged_for_the_user_keeps_the_flag_and_is_relaunched() {
+    let h = harness().await;
+    let (goal, task, engineer, reviewer) = h.active_goal_with_task().await;
+    h.advance(&task, TaskStatus::InProgress).await;
+    let session = h
+        .session(&goal, Some(&task), Role::Engineer, &engineer)
+        .await;
+    h.pane_exists(&session);
+    h.resumable(&task, &session).await;
+    h.wedged_for(&session, RUNNING_QUIET_FLAG_SECS + 60).await;
+    h.store
+        .set_session_attention(&session.id, AttentionReason::WaitingUser)
+        .await
+        .unwrap();
+    // A second task's agent, wedged in the same way with nothing raised on
+    // it: its flag is what says the pass the first one went through is over.
+    let control_task = h.extra_task(&goal, &engineer, &reviewer, "control").await;
+    h.advance(&control_task, TaskStatus::InProgress).await;
+    let control = h
+        .session(&goal, Some(&control_task), Role::Engineer, &engineer)
+        .await;
+    h.pane_exists(&control);
+    h.wedged_for(&control, RUNNING_QUIET_FLAG_SECS + 60).await;
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    for id in [&task.id, &control_task.id] {
+        sched.send(SchedEvent::TaskChanged(id.clone())).unwrap();
+    }
+    eventually("the other wedged agent to be raised", async || {
+        h.attention(&control).await == Some(AttentionReason::Stalled)
+    })
+    .await;
+    assert_eq!(
+        h.attention(&session).await,
+        Some(AttentionReason::WaitingUser),
+        "what the user is owed is not overwritten with a stall"
+    );
+
+    // And the silence was measured all the same: a threshold later the agent
+    // is put back on its feet like any other, flag and all.
+    h.wedged_for(&session, RUNNING_QUIET_RESUME_SECS + 60).await;
+    let launched = h.launched_at(&session).await;
+    sched
+        .send(SchedEvent::TaskChanged(task.id.clone()))
+        .unwrap();
+    eventually("the wedged agent to be relaunched", async || {
+        h.launched_at(&session).await != launched
+    })
+    .await;
+}
