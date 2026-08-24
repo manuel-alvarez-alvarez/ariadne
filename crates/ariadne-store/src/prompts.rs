@@ -325,6 +325,13 @@ Ariadne coordinates planner, engineer, reviewer and integrator agents over share
     /// already exists: the engineer's playbook loses it, the integrator's
     /// placeholder becomes the real one, the briefings its lifecycle needs are
     /// written, and the prompt kind nobody owns any more is dropped.
+    ///
+    /// What the migrations write is the wording of their own release, not
+    /// today's defaults — those have been rewritten since, and reseeding a
+    /// database that already exists is its own migration. So what is checked
+    /// here is the move itself: the duty left the engineer, and the integrator
+    /// ended up with a playbook covering all three ways it lands a task and
+    /// with every briefing its role owns.
     #[tokio::test]
     async fn the_migration_hands_the_merge_duty_to_the_integrator() {
         let store = Store::open_in_memory().await.unwrap();
@@ -336,29 +343,40 @@ Ariadne coordinates planner, engineer, reviewer and integrator agents over share
         migrate_0015(&store).await;
         migrate_0016(&store).await;
 
-        assert_eq!(
-            store.get_profile(&engineer.id).await.unwrap().system_prompt,
-            default_system_prompt(Role::Engineer),
-            "the engineer's playbook no longer ends in a merge"
+        let rewritten = store.get_profile(&engineer.id).await.unwrap().system_prompt;
+        assert_ne!(
+            rewritten, OLD_ENGINEER_SYSTEM_PROMPT,
+            "the engineer's playbook was rewritten"
         );
+        for merging in ["mark_merged", "git rebase", "--ff-only"] {
+            assert!(
+                !rewritten.contains(merging),
+                "the engineer's playbook no longer ends in a merge: {merging}"
+            );
+        }
         let landed = store.get_profile(&integrator.id).await.unwrap();
-        assert_eq!(
-            landed.system_prompt,
-            default_system_prompt(Role::Integrator),
+        assert_ne!(
+            landed.system_prompt, OLD_INTEGRATOR_SYSTEM_PROMPT,
             "the integrator's placeholder became its playbook"
         );
+        for landing in ["github.com remote", "GitLab remote", "git alone"] {
+            assert!(
+                landed.system_prompt.contains(landing),
+                "the integrator's playbook has no {landing}"
+            );
+        }
         assert_eq!(
             landed.name, "Integrator",
             "and 0015 renamed it beside the two forge ones, 0016 back again"
         );
         for kind in PromptKind::for_role(Role::Integrator) {
-            assert_eq!(
-                store
-                    .get_profile_prompt(&integrator.id, *kind)
-                    .await
-                    .unwrap()
-                    .content,
-                default_prompt(Role::Integrator, *kind).unwrap(),
+            let written = store
+                .get_profile_prompt(&integrator.id, *kind)
+                .await
+                .unwrap()
+                .content;
+            assert!(
+                !written.trim().is_empty(),
                 "the {} briefing was written",
                 kind.as_str()
             );
