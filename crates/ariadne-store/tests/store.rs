@@ -1216,6 +1216,197 @@ async fn session_attention_is_raised_kept_and_cleared() {
     );
 }
 
+/// What an agent's own event may take down, and what it may not.
+///
+/// Every reason an agent raises for itself goes when it is working again —
+/// and `waiting_user` is not one of those: nobody raised it on the agent's
+/// behalf, so the agent getting on with something else is not the user having
+/// dealt with it. Only the clear the sweep makes drops that one.
+#[tokio::test]
+async fn an_agents_own_event_does_not_clear_the_attention_raised_for_the_user() {
+    let (store, _dir) = test_store().await;
+    let planner = seed_profile(&store, "planner", Role::Planner).await;
+    let (goal, repo) = seed_goal(&store, &planner, None).await;
+    let task = seed_task(&store, &goal, &repo, vec![]).await;
+    let session = store
+        .create_session(NewSession {
+            goal_id: goal.id.clone(),
+            task_id: Some(task.id.clone()),
+            role: Role::Integrator,
+            profile_id: task.integrator_profile_id.clone(),
+            agent_kind: AgentKind::ClaudeCode,
+            model: None,
+            tmux_session: "ariadne-test-int".into(),
+            worktree_path: Some("/tmp/wt".into()),
+            review_round: None,
+        })
+        .await
+        .unwrap();
+
+    // What the agent raised for itself, the agent takes back down.
+    store
+        .set_session_attention(&session.id, AttentionReason::WaitingPermission)
+        .await
+        .unwrap();
+    store.clear_agent_attention(&session.id).await.unwrap();
+    assert_eq!(
+        store
+            .get_session(&session.id)
+            .await
+            .unwrap()
+            .attention_reason(),
+        None
+    );
+
+    // What was raised for the user stays up through every event it works
+    // through...
+    store
+        .set_session_attention(&session.id, AttentionReason::WaitingUser)
+        .await
+        .unwrap();
+    for _ in 0..3 {
+        store.clear_agent_attention(&session.id).await.unwrap();
+    }
+    assert_eq!(
+        store
+            .get_session(&session.id)
+            .await
+            .unwrap()
+            .attention_reason(),
+        Some(AttentionReason::WaitingUser)
+    );
+
+    // ...until the user, or the sweep that decides nobody is owed it any
+    // more, takes it down.
+    store.clear_session_attention(&session.id).await.unwrap();
+    assert_eq!(
+        store
+            .get_session(&session.id)
+            .await
+            .unwrap()
+            .attention_reason(),
+        None
+    );
+}
+
+/// The summary a round was asked for review with is the round's own, read off
+/// the transition that opened it — the latest one, so a second round answers
+/// with what was submitted for it and not for the first.
+#[tokio::test]
+async fn the_review_summary_is_the_reason_of_the_latest_review_request() {
+    let (store, _dir) = test_store().await;
+    let planner = seed_profile(&store, "planner", Role::Planner).await;
+    let (goal, repo) = seed_goal(&store, &planner, None).await;
+    let task = seed_task(&store, &goal, &repo, vec![]).await;
+    assert_eq!(store.review_summary(&task.id).await.unwrap(), None);
+
+    let round = async |summary: &str| {
+        for (status, actor, reason) in [
+            (TaskStatus::Ready, Actor::Daemon, None),
+            (TaskStatus::InProgress, Actor::Daemon, None),
+            (TaskStatus::UnderReview, Actor::Engineer, Some(summary)),
+        ] {
+            store
+                .transition_task(&task.id, status, actor, reason, None)
+                .await
+                .unwrap();
+        }
+    };
+    round("the first pass, with a test per lane").await;
+    assert_eq!(
+        store.review_summary(&task.id).await.unwrap().as_deref(),
+        Some("the first pass, with a test per lane")
+    );
+
+    // A round of changes, and a second request with its own summary.
+    store
+        .transition_task(
+            &task.id,
+            TaskStatus::ChangesRequested,
+            Actor::Daemon,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .transition_task(&task.id, TaskStatus::InProgress, Actor::Daemon, None, None)
+        .await
+        .unwrap();
+    store
+        .transition_task(
+            &task.id,
+            TaskStatus::UnderReview,
+            Actor::Engineer,
+            Some("the lane widths, as asked"),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store.review_summary(&task.id).await.unwrap().as_deref(),
+        Some("the lane widths, as asked")
+    );
+}
+
+/// A verdict is from a profile of the task or from a role that is nobody's
+/// profile, never from both and never from neither — and the round holds one
+/// of each kind of author at most.
+#[tokio::test]
+async fn a_verdict_relayed_from_a_forge_has_no_profile_behind_it() {
+    let (store, _dir) = test_store().await;
+    let planner = seed_profile(&store, "planner", Role::Planner).await;
+    let (goal, repo) = seed_goal(&store, &planner, None).await;
+    let task = seed_task(&store, &goal, &repo, vec![]).await;
+    let reviewer = store.list_task_reviewers(&task.id).await.unwrap().remove(0);
+
+    let relayed = store
+        .create_review(NewReview {
+            task_id: task.id.clone(),
+            round: 1,
+            author: ReviewAuthor::Role(AuthorRole::Forge),
+            session_id: None,
+            verdict: ReviewVerdict::RequestChanges,
+            body: Some("### jon requested changes on src/board.rs:42".into()),
+        })
+        .await
+        .unwrap();
+    assert_eq!(relayed.reviewer_profile_id, None);
+    assert_eq!(
+        relayed.author(),
+        ReviewAuthor::Role(AuthorRole::Forge),
+        "the author is the forge, not the profile whose round it closed"
+    );
+
+    // A reviewer of the same round is a different author, and lands.
+    store
+        .create_review(NewReview {
+            task_id: task.id.clone(),
+            round: 1,
+            author: ReviewAuthor::Profile(reviewer),
+            session_id: None,
+            verdict: ReviewVerdict::Approve,
+            body: None,
+        })
+        .await
+        .unwrap();
+
+    // The forge is not two authors, though: one relay per round, exactly as
+    // one verdict per reviewer per round.
+    let twice = store
+        .create_review(NewReview {
+            task_id: task.id.clone(),
+            round: 1,
+            author: ReviewAuthor::Role(AuthorRole::Forge),
+            session_id: None,
+            verdict: ReviewVerdict::RequestChanges,
+            body: Some("the same comments again".into()),
+        })
+        .await;
+    assert!(matches!(twice, Err(StoreError::Conflict(_))));
+    assert_eq!(store.list_reviews(&task.id, Some(1)).await.unwrap().len(), 2);
+}
+
 /// A prompt is a dialog on the agent's terminal, so it cannot outlive the
 /// session it was raised on: retiring one takes `waiting_permission` /
 /// `waiting_input` down with it, and leaves every reason a session ends

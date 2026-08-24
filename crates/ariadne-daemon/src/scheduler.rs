@@ -1210,8 +1210,8 @@ impl Scheduler {
     /// under the forge's own name rather than any profile's, since what it
     /// carries is what the humans on the request wrote — and the engineer is
     /// resumed with it by the `changes_requested` arm like any other round of
-    /// feedback. Its worktree is checked out again as it
-    /// resumes, which is what releases the integrator's hold on the branch.
+    /// feedback. Its worktree is checked out again as it resumes, which is
+    /// what releases the integrator's hold on the branch.
     ///
     /// The order is the send-back's: the feedback is recorded before the
     /// transition, so the engineer the scheduler resumes on it has it to
