@@ -45,8 +45,11 @@ use ariadne_store::{
     SessionFilter, Store, Task,
 };
 
-/// How long a test waits for the scheduler to reach a state.
-const TIMEOUT: Duration = Duration::from_secs(20);
+/// How long a test waits for the scheduler to reach a state. Generous
+/// because every test in here walks a real repository through several
+/// reconciliations while the rest of the file runs beside it: what the number
+/// has to outlast is a loaded machine, not a scheduler that is quick about it.
+const TIMEOUT: Duration = Duration::from_secs(60);
 
 /// The merge request every test in here publishes: nested groups and all,
 /// which is what a GitLab project path looks like and what the API paths have
@@ -380,7 +383,18 @@ impl Harness {
 
     /// The agent has finished its turn: what the daemon acts on a moved merge
     /// request against is an idle integrator, never one mid-turn.
+    ///
+    /// The launch it is in the middle of is waited out first. A resume writes
+    /// `running` when its tmux side is done, which is after the file the
+    /// briefing is read from — so an idleness set on seeing that file is
+    /// written straight back over, and the poll leaves the review to an
+    /// integrator that will never finish its turn, there being no agent in
+    /// it.
     async fn goes_idle(&self, session_id: &str) {
+        eventually("the launch to be finished", async || {
+            self.store.get_session(session_id).await.unwrap().status() == SessionStatus::Running
+        })
+        .await;
         self.store
             .set_session_status(session_id, SessionStatus::Idle)
             .await
