@@ -28,9 +28,13 @@ use crate::forge::{self, Conflict, FailedCheck, Health, Landing, parse_pages};
 
 pub use crate::forge::{Feedback, GITLAB_HOST, PrState, WatchedPr, pull_request_number};
 
-/// The states GitLab spells an open merge request with. Anything else is
+/// The state GitLab spells an open merge request with. Anything else is
 /// `merged`, `closed` or `locked`.
 const OPENED: &str = "opened";
+
+/// The states GitLab spells a merge request nobody is going to merge with:
+/// closed by a person, or locked against being worked on any further.
+const NOT_MERGING: [&str; 2] = ["closed", "locked"];
 
 /// What `detailed_merge_status` spells a branch that no longer merges with.
 /// Its other values are about everything else that can stand in the way —
@@ -145,6 +149,16 @@ impl MergeRequest {
     /// needs: a closed merge request is nobody's to merge.
     pub fn is_open(&self) -> bool {
         self.state.eq_ignore_ascii_case(OPENED)
+    }
+
+    /// Whether it ended without being merged: closed by somebody, or locked.
+    ///
+    /// A merge is a state of its own, so this is only ever the other ending —
+    /// [`Self::landing`] is what a merge is read from, and it is read first.
+    pub fn is_closed(&self) -> bool {
+        NOT_MERGING
+            .iter()
+            .any(|state| self.state.eq_ignore_ascii_case(state))
     }
 
     /// What GitLab says about the branch itself: whether it still merges into
@@ -317,6 +331,7 @@ pub fn poll_state(
 ) -> PrState {
     forge::poll_state(
         mr.landing().merged,
+        mr.is_closed(),
         forge::unrelayed(feedback(discussions), relayed),
         &mr.health(),
         relayed,
@@ -542,12 +557,49 @@ mod tests {
         // Once the user has been told, every further poll says nothing.
         assert_eq!(poll_state(&open, &approved, &[], &[], true), PrState::Quiet);
         // And an approval on a merge request nobody can merge any more is not
-        // one to send anybody to: it is closed.
+        // one to send anybody to: it is over.
         let mut closed = open_mr();
         closed["state"] = "closed".into();
         assert_eq!(
             poll_state(&mr(closed), &approved, &[], &[], false),
-            PrState::Quiet
+            PrState::Closed
+        );
+    }
+
+    /// Both endings GitLab spells that are not a merge, and what outranks
+    /// them: a closed or locked merge request is the end of the review — read
+    /// as quiet, as it was, the task it belonged to was polled for ever — and
+    /// a merged one is still a merge whatever else the state says.
+    #[test]
+    fn a_closed_or_locked_merge_request_is_the_end_of_the_review() {
+        for state in ["closed", "locked", "CLOSED"] {
+            let mut ended = open_mr();
+            ended["state"] = state.into();
+            assert_eq!(
+                poll_state(&mr(ended), &approvals(&[]), &[], &[], false),
+                PrState::Closed,
+                "{state}"
+            );
+        }
+        // Notes on a merge request nobody will merge are not a revision
+        // anybody is waiting for.
+        let mut closed = open_mr();
+        closed["state"] = "closed".into();
+        let notes = discussions(
+            r#"[{"id":"d1","notes":[{"id":101,"author":{"username":"maria"},
+                 "body":"not this way","system":false,"resolvable":false,"resolved":false}]}]"#,
+        );
+        assert_eq!(
+            poll_state(&mr(closed), &approvals(&[]), &notes, &[], false),
+            PrState::Closed
+        );
+        // A merge that GitLab also reports a closing time for is a merge.
+        let mut merged = open_mr();
+        merged["state"] = "closed".into();
+        merged["merged_at"] = "2026-08-24T10:00:00Z".into();
+        assert_eq!(
+            poll_state(&mr(merged), &approvals(&[]), &[], &[], false),
+            PrState::Merged
         );
     }
 

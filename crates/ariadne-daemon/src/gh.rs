@@ -279,6 +279,17 @@ impl PullRequest {
         self.state.eq_ignore_ascii_case("OPEN")
     }
 
+    /// Whether somebody closed it without merging it.
+    ///
+    /// GitHub keeps the two apart on the state itself — a merged pull request
+    /// is `MERGED`, never `CLOSED` — so this is only ever the ending nobody
+    /// wanted. It is the end of the review either way: a closed pull request
+    /// cannot be commented into life, and reopening one is a new decision
+    /// somebody has to take on the forge.
+    pub fn is_closed(&self) -> bool {
+        self.state.eq_ignore_ascii_case("CLOSED")
+    }
+
     /// What GitHub says about the branch itself: whether it still merges into
     /// its base, which of its checks are red, and whether any of them has yet
     /// to answer.
@@ -383,6 +394,7 @@ pub fn poll_state(
 ) -> PrState {
     forge::poll_state(
         pr.landing().merged,
+        pr.is_closed(),
         forge::unrelayed(feedback(pr, review_comments), relayed),
         &pr.health(),
         relayed,
@@ -593,13 +605,39 @@ mod tests {
 
     /// And announcing one is only ever worth it while it is open: a pull
     /// request closed unmerged is nobody's to press a button on, however
-    /// little stood between it and the merge.
+    /// little stood between it and the merge. It is not quiet either — a
+    /// review that ended without a merge is the end of the task, and read as
+    /// quiet it was polled for ever instead.
     #[test]
-    fn a_closed_pull_request_is_announced_to_nobody() {
+    fn a_closed_pull_request_is_the_end_of_the_review() {
         let mut pr = open_pr();
         pr["state"] = "CLOSED".into();
         pr["reviewDecision"] = "APPROVED".into();
-        assert_eq!(poll_state(&parse(pr), &[], &[], false), PrState::Quiet);
+        assert_eq!(poll_state(&parse(pr), &[], &[], false), PrState::Closed);
+    }
+
+    /// Comments on a closed pull request are not a revision anybody is
+    /// waiting for: the request is over, and sending the engineer back to
+    /// answer a request nobody will merge is a round spent on nothing.
+    #[test]
+    fn a_closed_pull_request_outranks_what_was_written_on_it() {
+        let mut pr = open_pr();
+        pr["state"] = "CLOSED".into();
+        pr["comments"] = serde_json::json!([{
+            "id": "C1", "author": {"login": "maria"}, "body": "not this way",
+        }]);
+        assert_eq!(poll_state(&parse(pr), &[], &[], false), PrState::Closed);
+    }
+
+    /// And a merged one still wins over both: GitHub spells a merge with a
+    /// state of its own, but a `mergedAt` on a request it also calls closed
+    /// is a merge all the same.
+    #[test]
+    fn a_merged_pull_request_outranks_a_closed_one() {
+        let mut pr = open_pr();
+        pr["state"] = "CLOSED".into();
+        pr["mergedAt"] = "2026-08-24T10:00:00Z".into();
+        assert_eq!(poll_state(&parse(pr), &[], &[], false), PrState::Merged);
     }
 
     #[test]

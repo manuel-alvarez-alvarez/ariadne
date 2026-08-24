@@ -55,6 +55,15 @@ impl Forge {
         }
     }
 
+    /// The CLI the daemon reads it through, as a person would type it — and
+    /// as what the daemon writes to one names the thing to go and fix.
+    pub fn cli(self) -> &'static str {
+        match self {
+            Self::GitHub => "gh",
+            Self::GitLab => "glab",
+        }
+    }
+
     /// How it refers to one by number: `#12` on GitHub, `!12` on GitLab.
     pub fn reference(self, number: i64) -> String {
         match self {
@@ -253,17 +262,23 @@ impl Health {
 
 /// What one poll of a pull or merge request says has to happen next.
 ///
-/// In the order they are read: a merged review is finished with whatever else
-/// it also says, feedback comes before everything unmerged because relaying it
-/// is what moves the task, a branch that does not merge or does not build is
-/// the engineer's before it is anybody's, and an approval is announced once —
-/// and only over a branch none of that is true of.
+/// In the order they are read: the two answers that end the review come
+/// first, because nothing said on a request that is over asks for anything —
+/// merged, and the integrator finishes the task locally; closed unmerged, and
+/// the task is over unfinished. Then feedback, because relaying it is what
+/// moves the task; then a branch that does not merge or does not build, which
+/// is the engineer's before it is anybody's; and an approval is announced
+/// once, and only over a branch none of that is true of.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PrState {
     /// Nothing anybody has to be woken for.
     Quiet,
     /// Merged on the forge: the integrator finishes the task locally.
     Merged,
+    /// Closed on the forge without being merged, or locked against merging:
+    /// no poll after this one will say anything else, and nobody is coming to
+    /// press the button. The task it was published for is over.
+    Closed,
     /// Comments and change requests nobody has relayed yet.
     Feedback(Vec<Feedback>),
     /// The branch no longer merges into its base, and nobody has been told.
@@ -288,12 +303,22 @@ pub enum PrState {
 /// finished holds it back too, without being announced to anybody (see
 /// [`Health`]).
 ///
+/// `closed` is the answer that used to have no name: a request closed
+/// unmerged read as quiet, and the task it belonged to sat in `integrating`
+/// being polled for ever. It is read straight after `merged` because the two
+/// say the same kind of thing — this review is over — and ahead of everything
+/// else because none of it applies any more: comments left on a request
+/// nobody will merge are not a revision anybody wants, and neither a red
+/// build nor a conflict is the engineer's to fix on a branch nothing is
+/// waiting for.
+///
 /// A conflict is read before the checks it is likely to have caused: GitLab
 /// runs the pipeline on the merge result, and telling an engineer its build
 /// is red when what is red is a merge that no longer applies sends it after
 /// the wrong thing.
 pub fn poll_state(
     merged: bool,
+    closed: bool,
     feedback: Vec<Feedback>,
     health: &Health,
     relayed: &[String],
@@ -302,6 +327,9 @@ pub fn poll_state(
 ) -> PrState {
     if merged {
         return PrState::Merged;
+    }
+    if closed {
+        return PrState::Closed;
     }
     if !feedback.is_empty() {
         return PrState::Feedback(feedback);
@@ -541,11 +569,16 @@ mod tests {
         };
         assert_eq!(gitlab.label(), "Merge request !3");
         assert_eq!(gitlab.forge.noun(), "merge request");
+
+        // And the CLI each is read through, which is what a message about a
+        // watch that is not working names.
+        assert_eq!(Forge::GitHub.cli(), "gh");
+        assert_eq!(Forge::GitLab.cli(), "glab");
     }
 
     /// The reading both watchers share, in the order it reads them.
     #[test]
-    fn a_poll_is_read_merged_then_feedback_then_approved() {
+    fn a_poll_is_read_merged_then_closed_then_feedback_then_approved() {
         let comment = || {
             vec![Feedback {
                 id: "C1".into(),
@@ -557,31 +590,42 @@ mod tests {
         };
         let green = Health::default();
         assert_eq!(
-            poll_state(true, comment(), &green, &[], true, false),
+            poll_state(true, false, comment(), &green, &[], true, false),
             PrState::Merged
         );
+        // A merge outranks the closing a forge may report beside it.
         assert_eq!(
-            poll_state(false, comment(), &green, &[], true, false),
+            poll_state(true, true, comment(), &green, &[], true, false),
+            PrState::Merged
+        );
+        // And a request that ended unmerged outranks everything written on
+        // it: there is no revision left to ask the engineer for.
+        assert_eq!(
+            poll_state(false, true, comment(), &green, &[], true, false),
+            PrState::Closed
+        );
+        assert_eq!(
+            poll_state(false, false, comment(), &green, &[], true, false),
             PrState::Feedback(comment())
         );
         assert_eq!(
-            poll_state(false, vec![], &green, &[], true, false),
+            poll_state(false, false, vec![], &green, &[], true, false),
             PrState::Approved
         );
         assert_eq!(
-            poll_state(false, vec![], &green, &[], true, true),
+            poll_state(false, false, vec![], &green, &[], true, true),
             PrState::Quiet
         );
         assert_eq!(
-            poll_state(false, vec![], &green, &[], false, false),
+            poll_state(false, false, vec![], &green, &[], false, false),
             PrState::Quiet
         );
     }
 
-    /// The whole order, in one table: merged over everything, then what people
-    /// wrote, then the branch not merging, then the branch not building, then
-    /// the approval — which is only ever read over a branch none of the rest
-    /// is true of.
+    /// The whole order, in one table: merged over everything, then the
+    /// request having been closed unmerged, then what people wrote, then the
+    /// branch not merging, then the branch not building, then the approval —
+    /// which is only ever read over a branch none of the rest is true of.
     #[test]
     fn a_poll_is_read_in_one_order_whatever_else_is_true_of_it() {
         let comment = || {
@@ -614,36 +658,58 @@ mod tests {
 
         // Every case with everything true of it at once, most-read first.
         assert_eq!(
-            poll_state(true, comment(), &everything, &[], true, false),
+            poll_state(true, false, comment(), &everything, &[], true, false),
             PrState::Merged
         );
         assert_eq!(
-            poll_state(false, comment(), &everything, &[], true, false),
+            poll_state(false, true, comment(), &everything, &[], true, false),
+            PrState::Closed,
+            "a request that is over is nobody's to fix a build or a merge for"
+        );
+        assert_eq!(
+            poll_state(false, false, comment(), &everything, &[], true, false),
             PrState::Feedback(comment())
         );
         assert_eq!(
-            poll_state(false, vec![], &everything, &[], true, false),
+            poll_state(false, false, vec![], &everything, &[], true, false),
             PrState::Conflicting(conflict()),
             "a conflict is read before the pipeline it is likely to have failed"
         );
         assert_eq!(
-            poll_state(false, vec![], &health(None, red()), &[], true, false),
+            poll_state(false, false, vec![], &health(None, red()), &[], true, false),
             PrState::ChecksFailed(red())
         );
         assert_eq!(
-            poll_state(false, vec![], &health(None, vec![]), &[], true, false),
+            poll_state(
+                false,
+                false,
+                vec![],
+                &health(None, vec![]),
+                &[],
+                true,
+                false
+            ),
             PrState::Approved
         );
 
         // Relayed once, and never again — the ids are what say so, exactly as
         // they do for a comment.
         assert_eq!(
-            poll_state(false, vec![], &everything, &["MRGabc".into()], false, false),
+            poll_state(
+                false,
+                false,
+                vec![],
+                &everything,
+                &["MRGabc".into()],
+                false,
+                false
+            ),
             PrState::ChecksFailed(red()),
             "the conflict was handed over; the failing check has not been"
         );
         assert_eq!(
             poll_state(
+                false,
                 false,
                 vec![],
                 &everything,
@@ -660,6 +726,7 @@ mod tests {
         assert_eq!(
             poll_state(
                 false,
+                false,
                 vec![],
                 &everything,
                 &["MRGabc".into(), "CHKabc:build".into()],
@@ -670,6 +737,7 @@ mod tests {
         );
         assert_eq!(
             poll_state(
+                false,
                 false,
                 vec![],
                 &health(None, red()),
@@ -699,7 +767,7 @@ mod tests {
         };
         assert!(!pending.is_ready());
         assert_eq!(
-            poll_state(false, vec![], &pending, &[], true, false),
+            poll_state(false, false, vec![], &pending, &[], true, false),
             PrState::Quiet,
             "a build still running is not a request to send anybody to"
         );
@@ -707,6 +775,7 @@ mod tests {
         // the same poll on the same request says the same thing next time.
         assert_eq!(
             poll_state(
+                false,
                 false,
                 vec![],
                 &pending,
@@ -718,7 +787,7 @@ mod tests {
         );
         // And once it has finished green, the approval goes out.
         assert_eq!(
-            poll_state(false, vec![], &Health::default(), &[], true, false),
+            poll_state(false, false, vec![], &Health::default(), &[], true, false),
             PrState::Approved
         );
         // A failure alongside it is still the engineer's: what has not
@@ -731,7 +800,7 @@ mod tests {
             url: None,
         }];
         assert!(matches!(
-            poll_state(false, vec![], &red_and_running, &[], true, false),
+            poll_state(false, false, vec![], &red_and_running, &[], true, false),
             PrState::ChecksFailed(_)
         ));
     }
