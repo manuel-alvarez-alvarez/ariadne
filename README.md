@@ -52,9 +52,12 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    request with `gh pr create` following the repository's conventions, reports
    the URL with `record_pull_request` and ends its turn. From there the daemon
    polls `gh pr view` every `pr_poll_secs` — an approval is announced to you
-   once, comments come back to the engineer through `return_to_engineer`
-   exactly once each and the revision is force-pushed to the same pull
-   request, and the merge you make on GitHub wakes the integrator to
+   once, comments come back to the engineer exactly once each as a round of
+   requested changes the daemon writes itself, and the reply it answers them
+   with is what the integrator pushes to the same pull request and passes on
+   to you (a published branch is merged into, never rewritten; the people
+   reading it are that round's reviewers, so no internal review is run for
+   it), and the merge you make on GitHub wakes the integrator to
    fast-forward the base branch and report the sha. That sha is verified
    against GitHub, so a squash- or rebase-merged pull request lands as cleanly
    as a fast-forward.

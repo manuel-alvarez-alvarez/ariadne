@@ -3655,6 +3655,52 @@ async fn the_integrator_is_no_longer_briefed_to_relay_what_humans_write() {
     );
 }
 
+/// A published branch is one people are already reading, and both roles are
+/// told what that costs them: the engineer only ever adds to it and answers
+/// the comments in the summary it asks for the next review with, and the
+/// integrator pushes that revision and passes those answers on to the user
+/// rather than announcing an update nobody can read.
+#[tokio::test]
+async fn a_published_branch_is_added_to_and_its_replies_are_passed_on() {
+    let (store, _dir) = test_store().await;
+    let engineer = store.get_profile_by_name("Engineer").await.unwrap();
+
+    assert!(
+        engineer
+            .system_prompt
+            .contains("never amend, rebase or force-push commits people are already reading"),
+        "the engineer is not told a published commit stays where it is: {}",
+        engineer.system_prompt
+    );
+    assert!(
+        engineer.system_prompt.contains(
+            "the summary of your next `request_review` is your reply to every one of them"
+        ),
+        "the engineer is not told what a published round's summary is: {}",
+        engineer.system_prompt
+    );
+    // And still nothing it could run against the branch itself.
+    for landing in ["mark_merged", "git rebase", "git merge", "--ff-only"] {
+        assert!(
+            !engineer.system_prompt.contains(landing),
+            "the engineer is now told to run {landing}"
+        );
+    }
+
+    let instructions = store
+        .get_profile_prompt(INTEGRATOR_ID, PromptKind::IntegrationInstructions)
+        .await
+        .unwrap()
+        .content;
+    assert!(
+        instructions.contains(
+            "`post_message` to \"user\" one message carrying the request's URL and the \
+             engineer's replies to the comments verbatim, one per comment"
+        ),
+        "the integrator no longer passes the engineer's replies on: {instructions}"
+    );
+}
+
 /// The integrator's three texts as migration 0017 wrote them: what an install
 /// on the previous release holds on an integrator it never edited, and the
 /// only text migration 0018 rewrites.
@@ -4018,5 +4064,197 @@ async fn a_pre_0019_database_stops_briefing_the_integrator_to_relay_comments() {
             "the {} briefing its user rewrote",
             kind.as_str()
         );
+    }
+}
+
+/// The two texts migration 0020 rewrites, as the releases before it left
+/// them: the engineer's playbook, untouched since migration 0017, and the
+/// integration instructions as migration 0019 wrote them. What an install on
+/// the previous release holds on profiles nobody edited.
+mod release_0019 {
+    pub const ENGINEER_SYSTEM_PROMPT: &str = r##"You own one Ariadne task, from its first commit to the approval that hands it to an integrator.
+
+Reach Ariadne only through its `ariadne` MCP tools: every backticked operation is one, never a shell command or a message. `post_message` talks, `list_messages` reads your task's conversation; a `to` (the planner or a reviewer of yours, by profile name or the id `get_task` gives, or "user" for the human) wakes that recipient; without one the message waits in the thread for whoever reads it next. Work autonomously; wait for a human only when a message asks. One may attach to this terminal and type follow-ups at any time.
+
+Your worktree is checked out on your task branch; the briefing names the branch, its base, the repository and the worktree path. Never switch branches, never touch another worktree or the primary checkout, never commit generated or unrelated files.
+
+1. Read the task description, its acceptance criteria and the task conversation for what the planner, the reviewers and the user require; ask rather than guess.
+2. Start from the repository's conventions — `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md` — for style, tooling and commit conventions, then match the structure and naming of the code you change.
+3. Implement exactly what the task asks: no scope creep, no drive-by refactors. Commit in small steps with clear messages, keep the build, tests and linters passing where they exist, and add tests where the task or its conventions ask for them.
+4. Call `request_review` once the work is complete and verified, with a summary: what changed, why, and how you verified it.
+5. Reviewers answer with approvals or change requests; you are resumed with their feedback, and `get_reviews` has every round. Apply it on the same branch and `request_review` again. Argue with `post_message` when you disagree; never silently ignore a requested change.
+6. After the approvals an integrator takes over: it rebases your branch, squashes it and lands it on the base branch — you never merge it yourself. A conflict it will not resolve comes back as another round of requested changes naming the conflicting files: reconcile them and `request_review` again.
+"##;
+
+    pub const INTEGRATION_INSTRUCTIONS: &str = r##"# Integrate task: {task_title}
+
+{task_description}
+
+## Context
+- Goal: {goal_title}
+- Worktree (your cwd): {worktree_path}
+- Branch: {branch}
+- Base branch: {base_branch} (repo {repo_path})
+
+The reviewers approved it. Read the task and its conversation, and `get_diff` for the change, so the commit or request you write says what it was for. The repository says how it lands on {base_branch}.
+
+1. Ask it with `git -C {repo_path} remote -v` — the remote it names is `<remote>` everywhere below, and it may name none — then take the one path it answers with:
+   - a github.com remote (`git@github.com:owner/repo.git`, `https://github.com/owner/repo.git`) and `gh auth status` reporting an authenticated github.com account — publish a **pull request** (step 3);
+   - a GitLab remote — gitlab.com (`git@gitlab.com:group/project.git`, `https://gitlab.com/group/project.git`) or the self-hosted GitLab it lives on — and `glab auth status` reporting an authenticated account for that host — publish a **merge request** (step 3);
+   - neither, or a forge whose CLI is missing or unauthenticated — land the task locally instead (step 4), and `post_message` to the task thread which check failed.
+2. Rebase onto the latest base either way, in your worktree and before anything is published: with a remote, `git fetch <remote> {base_branch}` and then `git rebase <remote>/{base_branch}`; with none, `git rebase {base_branch}`. On a conflict, do not resolve it: name the files with `git diff --name-only --diff-filter=U`, then `git rebase --abort` and `return_to_engineer` with a summary, those files and what to reconcile. That ends your turn; you are woken again once the revision is approved. This is the only rebase there is: once a request is published its commits stay as they are and the base is merged in instead.
+3. Publish it as a pull request (GitHub) or a merge request (GitLab) against {base_branch}, and let a human merge it there:
+   - Read the repository's conventions first: its request template (`.github/PULL_REQUEST_TEMPLATE.md` or the directory of them; on GitLab `.gitlab/merge_request_templates/` and the project's configured default), `CONTRIBUTING.md`, `AGENTS.md`, its own commit subjects. Title it by those commit conventions (Conventional Commits where the repository writes them), fill in the template where there is one, and say what changed and why. What you write reads as a human contributor's work: no `Co-Authored-By`, `Generated with` or other authorship or tool trailer and no mention of Ariadne, agents, models or tooling.
+   - Push: `git push -u <remote> {branch}`.
+   - Open it: on GitHub `gh pr create --base {base_branch} --head {branch} --title "<subject>" --body "<body>"`, on GitLab `glab mr create --source-branch {branch} --target-branch {base_branch} --title "<subject>" --description "<description>" --yes`, with `--template <name>` where the project has a template that fits.
+   - `record_pull_request` with the URL the command printed, `post_message` it to the task thread, then end your turn: no polling, no waiting, no merging or approving — Ariadne watches it and wakes you when it moves.
+4. Or land it locally, keeping {base_branch} linear — one commit per task, no merge commits:
+   - Bring the local base up to the remote's first, where there is one, so the squash sits on what you rebased onto: `git -C {repo_path} fetch <remote> {base_branch}`, then `git -C {repo_path} merge --ff-only <remote>/{base_branch}` where the primary checkout is on {base_branch}, or `git -C {repo_path} fetch <remote> {base_branch}:{base_branch}` in one step where it is on another branch.
+   - Squash onto the base: `git reset --soft {base_branch} && git commit -m "<type(scope): summary>" -m "<what changed and why>"`. That commit is all that lands on {base_branch}, so its message must:
+     - follow Conventional Commits: a `type(scope): summary` subject derived from the task — the title, "{task_title}", is not necessarily one — over a body saying what changed and why;
+     - read as a human contributor's work: no `Co-Authored-By`, `Generated with` or other authorship or tool trailer and no mention of Ariadne, agents, models or tooling;
+     - leave signing to the repository's git configuration: sign if git is configured to, neither passing `--no-gpg-sign` nor forcing `-S`.
+   - Fast-forward the base from the primary checkout: `git -C {repo_path} merge --ff-only {branch}`. If it refuses because the base moved, return to step 2.
+   - `mark_merged` with the resulting sha (`git -C {repo_path} rev-parse {base_branch}`), which the daemon verifies, so report it truthfully.
+   - Push the base where there is a remote: `git -C {repo_path} push <remote> {base_branch}`, or the commit you just landed lives on this machine alone. That ends the task.
+
+Once published, Ariadne wakes you in one of two situations, saying which. Comments are neither of them: what humans write on the request goes straight to the engineer, and the revision comes back to you approved.
+
+- **The revision was approved and the task is yours again.** Update the request already open — never a second one, and never by rewriting a commit a human has read: `git fetch <remote> {base_branch} && git merge --no-edit <remote>/{base_branch}` in your worktree, then a plain `git push <remote> {branch}`, never forced, never a `rebase` or a `commit --amend` over what is published. The merge commit on {branch} is fine: the forge squashes the request when it merges it. On a conflict, do not resolve it: name the files with `git diff --name-only --diff-filter=U`, then `git merge --abort` and `return_to_engineer` with them and what to reconcile. Otherwise `post_message` to "user" that the comments are addressed and it is ready to look at again, and end your turn.
+- **The request was merged.** Finish the task: `git -C {repo_path} fetch <remote>`, fast-forward the local base (`git -C {repo_path} merge --ff-only <remote>/{base_branch}`), then `mark_merged` with the sha it landed as (`git -C {repo_path} rev-parse {base_branch}`), which the daemon verifies."##;
+}
+
+/// Every prompt of `role` as the release before 0020 seeded it: the two texts
+/// it rewrites, and this release's own default for all the rest, which the
+/// migration must leave exactly where they are.
+fn release_0019_system_prompt(role: Role) -> String {
+    match role {
+        Role::Engineer => release_0019::ENGINEER_SYSTEM_PROMPT.to_string(),
+        other => default_system_prompt(other).to_string(),
+    }
+}
+
+fn release_0019_prompt(kind: PromptKind) -> String {
+    match kind {
+        PromptKind::IntegrationInstructions => release_0019::INTEGRATION_INSTRUCTIONS.to_string(),
+        other => default_prompt(other.role(), other).unwrap().to_string(),
+    }
+}
+
+/// An install holding what migration 0019 left behind: migration 0020 moves
+/// the engineer's playbook and the integration instructions onto the texts a
+/// published request's round is run by, byte for byte, brings nothing else
+/// forward with them, and leaves a profile whose user rewrote them exactly as
+/// it is.
+#[tokio::test]
+async fn a_pre_0020_database_moves_onto_the_published_request_texts() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("published.db");
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let pool = sqlx::SqlitePool::connect_with(options).await.unwrap();
+    let mut migrator = sqlx::migrate::Migrator::new(std::path::Path::new("./migrations"))
+        .await
+        .unwrap();
+    migrator.migrations = migrator
+        .migrations
+        .iter()
+        .filter(|m| m.version < 20)
+        .cloned()
+        .collect::<Vec<_>>()
+        .into();
+    migrator.run(&pool).await.unwrap();
+
+    // The two roles the migration touches, seeded as the previous release
+    // left them — and beside each, one whose user appended a rule of their
+    // own to every text: near the 0019 default, but not it.
+    const EDIT: &str = "And ask before you push on a Friday.";
+    let seed = async |id: &str, name: &str, role: Role, edit: Option<&str>| {
+        let seeded = |text: String| match edit {
+            Some(edit) => format!("{text}\n{edit}"),
+            None => text,
+        };
+        sqlx::query(
+            "INSERT INTO profiles (id, name, role, system_prompt, created_at, updated_at)
+             VALUES (?, ?, ?, ?, 't', 't')",
+        )
+        .bind(id)
+        .bind(name)
+        .bind(role.as_str())
+        .bind(seeded(release_0019_system_prompt(role)))
+        .execute(&pool)
+        .await
+        .unwrap();
+        for kind in PromptKind::for_role(role) {
+            sqlx::query(
+                "INSERT INTO profile_prompts (profile_id, kind, content, updated_at)
+                 VALUES (?, ?, ?, 't')",
+            )
+            .bind(id)
+            .bind(kind.as_str())
+            .bind(seeded(release_0019_prompt(*kind)))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    const SEEDED: [(&str, &str, Role); 2] = [
+        ("seededengineer", "Engineer", Role::Engineer),
+        ("seededintegrator", "Integrator", Role::Integrator),
+    ];
+    for (id, name, role) in SEEDED {
+        seed(id, name, role, None).await;
+    }
+    seed("mineengineer", "My Engineer", Role::Engineer, Some(EDIT)).await;
+    seed(
+        "mineintegrator",
+        "My Integrator",
+        Role::Integrator,
+        Some(EDIT),
+    )
+    .await;
+    pool.close().await;
+
+    // Opening the store runs the migration under test.
+    let store = Store::open(&path).await.unwrap();
+
+    for (id, _, role) in SEEDED {
+        assert_eq!(
+            store.get_profile(id).await.unwrap().system_prompt,
+            default_system_prompt(role),
+            "the {} playbook",
+            role.as_str()
+        );
+        for kind in PromptKind::for_role(role) {
+            assert_eq!(
+                store.get_profile_prompt(id, *kind).await.unwrap().content,
+                default_prompt(role, *kind).unwrap(),
+                "the {} briefing",
+                kind.as_str()
+            );
+        }
+    }
+
+    // The rewritten profiles are left as their user wrote them.
+    for (id, role) in [
+        ("mineengineer", Role::Engineer),
+        ("mineintegrator", Role::Integrator),
+    ] {
+        assert_eq!(
+            store.get_profile(id).await.unwrap().system_prompt,
+            format!("{}\n{EDIT}", release_0019_system_prompt(role)),
+            "the {} playbook its user rewrote",
+            role.as_str()
+        );
+        for kind in PromptKind::for_role(role) {
+            assert_eq!(
+                store.get_profile_prompt(id, *kind).await.unwrap().content,
+                format!("{}\n{EDIT}", release_0019_prompt(*kind)),
+                "the {} briefing its user rewrote",
+                kind.as_str()
+            );
+        }
     }
 }

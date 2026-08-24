@@ -53,6 +53,13 @@ const TIMEOUT: Duration = Duration::from_secs(20);
 /// to escape.
 const MR_URL: &str = "https://gitlab.com/ariadne/tools/ariadne/-/merge_requests/3";
 
+/// What the engineer answers the humans with, and what has to reach them
+/// unchanged: the summary of the `request_review` that closes a published
+/// round is a reply to every comment on the request.
+const REPLIES: &str = "Reply to @jon on src/board.rs:42: it allocates once per lane now.\n\
+                       Reply to @maria on src/lane.rs:7: renamed to `lane_index`.\n\
+                       Reply to @maria: the module stays — it is what makes the lane testable.";
+
 struct Harness {
     store: Store,
     router: Router,
@@ -393,6 +400,67 @@ impl Harness {
         SpawnPlanFile::from_json(&raw).unwrap().argv.join(" ")
     }
 
+    /// The instruction alone, without the system prompt every launch carries
+    /// beside it: the last of the argv, which is where the adapters put what
+    /// the agent is being woken for.
+    fn resume_instruction(&self, session_id: &str) -> String {
+        let path = self
+            .launcher
+            .cfg
+            .run_dir
+            .join(session_id)
+            .join("spawn.json");
+        let raw = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
+        SpawnPlanFile::from_json(&raw)
+            .unwrap()
+            .argv
+            .last()
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// The engineer's `request_review`, made the way its MCP tool makes it:
+    /// the summary is posted to the thread first — which is where everything
+    /// downstream reads it — and then the task goes up for review.
+    async fn request_review(&self, task_id: &str, engineer: &str, summary: &str) {
+        let _: MessageDto = self
+            .json(
+                as_session(
+                    &format!("/v1/tasks/{task_id}/messages"),
+                    engineer,
+                    serde_json::json!({"body": format!("Review requested: {summary}")}),
+                ),
+                StatusCode::CREATED,
+            )
+            .await;
+        let _: TaskDto = self
+            .json(
+                as_session(
+                    &format!("/v1/tasks/{task_id}/transitions"),
+                    engineer,
+                    serde_json::json!({"to": "under_review", "reason": summary}),
+                ),
+                StatusCode::OK,
+            )
+            .await;
+    }
+
+    /// What the integrator does at the end of that round: one message to the
+    /// user, carrying what the engineer answered.
+    async fn post_to_user(&self, task_id: &str, session_id: &str, body: &str) {
+        let _: MessageDto = self
+            .json(
+                as_session(
+                    &format!("/v1/tasks/{task_id}/messages"),
+                    session_id,
+                    serde_json::json!({"body": body, "to": "user"}),
+                ),
+                StatusCode::CREATED,
+            )
+            .await;
+    }
+
     /// Walk a fresh task to its integrator working on it: the engineer
     /// commits, the reviewer approves.
     async fn hand_to_the_integrator(&self, task: &Task, reviewer: &str) -> AgentSession {
@@ -455,17 +523,21 @@ impl Harness {
         self.notify(&task.id);
     }
 
+    /// Everything written in the task's conversation.
+    async fn thread_messages(&self, task_id: &str) -> Vec<MessageDto> {
+        self.json(
+            Request::get(format!("/v1/tasks/{task_id}/messages?limit=100"))
+                .body(Body::empty())
+                .unwrap(),
+            StatusCode::OK,
+        )
+        .await
+    }
+
     /// The messages of the task thread that are addressed to the user.
     async fn user_messages(&self, task_id: &str) -> Vec<MessageDto> {
-        let messages: Vec<MessageDto> = self
-            .json(
-                Request::get(format!("/v1/tasks/{task_id}/messages?limit=100"))
-                    .body(Body::empty())
-                    .unwrap(),
-                StatusCode::OK,
-            )
-            .await;
-        messages
+        self.thread_messages(task_id)
+            .await
             .into_iter()
             .filter(|m| {
                 m.recipient
@@ -886,12 +958,12 @@ async fn discussion_notes_reach_the_engineer_once_each() {
         "every one of them is remembered as relayed, whichever page it came on"
     );
 
-    // Revised and approved again, the integrator gets the task back with the
-    // resume briefing that tells it to merge the base into the branch and
-    // push it to the merge request it already opened, never rewriting what the
-    // humans reading it have already seen. Its session died with the
-    // send-back, so this is also the other half of the poll's job: a quiet
-    // review whose task has no live integrator gets one started for it.
+    // The engineer answers every one of them and asks for review again. The
+    // merge request is published, so the people reading it are this round's
+    // reviewers: no reviewer profile is started and no verdict is waited for,
+    // and the branch goes straight back to the integrator with the answers on
+    // it. Its session died with the send-back, so this is also the other half
+    // of the poll's job: a task whose integrator is gone gets one started.
     let worktree = PathBuf::from(
         h.store
             .get_task(&task.id)
@@ -905,27 +977,95 @@ async fn discussion_notes_reach_the_engineer_once_each() {
         "echo fixed > feature.txt && git add . && \
          git -c user.email=t@t -c user.name=t commit -qm 'fix: split it up'",
     );
-    h.approve(&h.store.get_task(&task.id).await.unwrap(), &reviewer)
-        .await;
+    let reviewer_sessions = h.sessions(&task.id, Role::Reviewer).await.len();
+    h.request_review(&task.id, &engineer.id, REPLIES).await;
     eventually("the integrator to be handed the task again", async || {
         h.status(&task.id).await == TaskStatus::Integrating
-            && h.launched_argv(&integrator.id)
-                .contains("Pick the integration")
+            && h.resume_instruction(&integrator.id).contains(REPLIES)
     })
     .await;
-    let argv = h.launched_argv(&integrator.id);
-    assert!(argv.contains("glab mr list --source-branch"), "{argv}");
-    assert!(argv.contains("git merge --no-edit <remote>/main"), "{argv}");
-    assert!(argv.contains("never open a second"), "{argv}");
-    assert!(!argv.contains("--force"), "{argv}");
-    assert!(
-        argv.contains("ready to look at again"),
-        "and the user is told once the push has happened: {argv}"
+
+    // Nobody reviewed it here: the round was closed by the daemon, on the
+    // reason it wrote down, with no reviewer started and no verdict recorded.
+    assert_eq!(
+        h.sessions(&task.id, Role::Reviewer).await.len(),
+        reviewer_sessions,
+        "a reviewer was started for a round the humans on the merge request are reviewing"
     );
+    let approval = h
+        .store
+        .list_task_transitions(&task.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .rev()
+        .find(|t| t.to_status == "approved")
+        .expect("the round was approved");
+    assert_eq!(approval.from_status, "under_review");
+    assert_eq!(approval.actor, "daemon");
+    assert_eq!(
+        approval.reason.as_deref(),
+        Some("Merge request !3 is published: its reviewers replace the internal review round")
+    );
+    let published_round = h.store.get_task(&task.id).await.unwrap().review_round;
+    assert!(
+        h.store
+            .list_reviews(&task.id, Some(published_round))
+            .await
+            .unwrap()
+            .is_empty(),
+        "the round wanted a review row of its own"
+    );
+    assert!(
+        h.thread_messages(&task.id).await.iter().any(|m| m
+            .body
+            .contains("is published, so the humans reviewing it are this round's reviewers")),
+        "the task's conversation does not say why the round was approved"
+    );
+
+    // And what the integrator was woken with: push the revision to the same
+    // merge request, the one way a published branch may be updated, and hand
+    // the engineer's replies to the user.
+    let instruction = h.resume_instruction(&integrator.id);
+    for expected in [
+        MR_URL,
+        REPLIES,
+        "git merge --no-edit <remote>/main",
+        &format!("git push <remote> {}", task.branch),
+        "`post_message` to \"user\"",
+        "never a second one",
+    ] {
+        assert!(
+            instruction.contains(expected),
+            "the instruction has no {expected}: {instruction}"
+        );
+    }
+    for never in ["rebase", "--force", "--amend"] {
+        assert!(
+            !instruction.contains(never),
+            "the instruction rewrites what is published with {never}: {instruction}"
+        );
+    }
     assert_eq!(
         h.sessions(&task.id, Role::Integrator).await.len(),
         1,
         "the same integrator session throughout"
+    );
+
+    // Its worktree was cut again from the branch as the engineer left it, so
+    // what it pushes is the revision the humans asked for.
+    let integrator_worktree = PathBuf::from(
+        h.store
+            .get_session(&integrator.id)
+            .await
+            .unwrap()
+            .worktree_path
+            .unwrap(),
+    );
+    assert_eq!(
+        out(&integrator_worktree, "git log -1 --format=%s"),
+        "fix: split it up",
+        "the integrator holds an older tip than the engineer left"
     );
 
     // Polled again, on the same notes, nothing is relayed a second time: the
@@ -960,6 +1100,145 @@ async fn discussion_notes_reach_the_engineer_once_each() {
         h.store.get_session(&engineer.id).await.unwrap().launched_at,
         engineer_launched_at,
         "the engineer was resumed for notes it had already been given"
+    );
+}
+
+/// The whole of one round on a published merge request: a note, the
+/// engineer's answers, the push that carries them and the two — exactly two —
+/// messages the user gets out of it, one from the integrator with the replies
+/// in it and one from the daemon when GitLab says the request is approved.
+#[tokio::test]
+async fn a_published_round_pushes_the_replies_and_addresses_the_user_twice() {
+    let h = harness().await;
+    let (task, reviewer) = h.task().await;
+    let integrator = h.hand_to_the_integrator(&task, &reviewer).await;
+    h.publish(&task, &integrator.id).await;
+    h.goes_idle(&integrator.id).await;
+
+    // A human asks for a change, and the engineer gets it.
+    h.merge_request(open_merge_request());
+    h.discussions(
+        r#"[{"id":"d1","notes":[{"id":101,"author":{"username":"jon"},"body":"split src/board.rs up",
+             "system":false,"resolvable":true,"resolved":false,
+             "position":{"new_path":"src/board.rs","old_path":"src/board.rs","new_line":42}}]}]"#,
+    );
+    h.notify(&task.id);
+    eventually("the engineer to be resumed with the note", async || {
+        h.status(&task.id).await == TaskStatus::InProgress
+            && h.live_session(&task.id, Role::Engineer).await.is_some()
+    })
+    .await;
+    let engineer = h.live_session(&task.id, Role::Engineer).await.unwrap();
+
+    // It answers, and asks for review again: one reconciliation later the
+    // task is approved and being integrated, with no reviewer in between.
+    let worktree = PathBuf::from(
+        h.store
+            .get_task(&task.id)
+            .await
+            .unwrap()
+            .worktree_path
+            .unwrap(),
+    );
+    sh(
+        &worktree,
+        "echo fixed > feature.txt && git add . && \
+         git -c user.email=t@t -c user.name=t commit -qm 'fix: split it up'",
+    );
+    h.request_review(&task.id, &engineer.id, REPLIES).await;
+    eventually("the integrator to be woken with the replies", async || {
+        h.status(&task.id).await == TaskStatus::Integrating
+            && h.resume_instruction(&integrator.id).contains(REPLIES)
+    })
+    .await;
+    assert!(
+        h.sessions(&task.id, Role::Reviewer).await.is_empty(),
+        "a reviewer was started for a round GitLab's reviewers own"
+    );
+    let instruction = h.resume_instruction(&integrator.id);
+    assert!(instruction.contains(MR_URL), "{instruction}");
+    assert!(
+        instruction.contains("`post_message` to \"user\""),
+        "{instruction}"
+    );
+    assert!(
+        instruction.ends_with(REPLIES),
+        "the replies reached the integrator changed: {instruction:?}"
+    );
+
+    // The integrator does what it was told: pushes, and writes the one
+    // message the user gets out of the round.
+    h.post_to_user(
+        &task.id,
+        &integrator.id,
+        &format!("The revision is on {MR_URL}. The engineer's replies:\n\n{REPLIES}"),
+    )
+    .await;
+    eventually("the resume launch to be finished", async || {
+        h.store.get_session(&integrator.id).await.unwrap().status() == SessionStatus::Running
+    })
+    .await;
+    h.goes_idle(&integrator.id).await;
+    let told = h.user_messages(&task.id).await;
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert!(told[0].body.contains(REPLIES), "{}", told[0].body);
+
+    // GitLab says it is approved: the daemon tells the user once, and that is
+    // the second and last thing it hears about this round.
+    h.approvals(&["maria"]);
+    h.notify(&task.id);
+    eventually("the user to be told it is theirs to merge", async || {
+        h.user_messages(&task.id).await.len() == 2
+    })
+    .await;
+    for _ in 0..3 {
+        h.notify(&task.id);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let told = h.user_messages(&task.id).await;
+    assert_eq!(told.len(), 2, "the user was addressed again: {told:?}");
+    assert!(told[1].body.contains("ready for you to merge"), "{told:?}");
+
+    // And the merge finishes the task off the base branch, as it always did.
+    let repo = h.repo_path();
+    sh(
+        &repo,
+        &format!(
+            "git merge --squash -q {branch} && \
+             git -c user.email=t@t -c user.name=t commit -qm 'feat(board): render it'",
+            branch = task.branch
+        ),
+    );
+    let squash = out(&repo, "git rev-parse main");
+    let mut merged = open_merge_request();
+    merged["state"] = "merged".into();
+    merged["merged_at"] = "2026-08-24T10:00:00Z".into();
+    merged["squash_commit_sha"] = squash.clone().into();
+    h.merge_request(merged);
+    h.notify(&task.id);
+    eventually(
+        "the integrator to be woken to finish the task",
+        async || {
+            h.resume_instruction(&integrator.id)
+                .contains("Merge request !3 was merged on GitLab")
+        },
+    )
+    .await;
+    let landed: TaskDto = h
+        .json(
+            as_session(
+                &format!("/v1/tasks/{}/transitions", task.id),
+                &integrator.id,
+                serde_json::json!({"to": "merged", "merge_commit": squash}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(landed.status, TaskStatus::Merged);
+    assert_eq!(
+        h.user_messages(&task.id).await.len(),
+        2,
+        "the round addressed the user more than twice"
     );
 }
 

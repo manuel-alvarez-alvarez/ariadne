@@ -15,7 +15,8 @@ use ariadne_core::{
     TaskStatus,
 };
 use ariadne_store::{
-    AgentSession, Message, NewMessage, NewReview, Recipient, SessionFilter, Store, Task, TaskFilter,
+    AgentSession, Message, NewMessage, NewReview, Recipient, Repository, SessionFilter, Store,
+    Task, TaskFilter,
 };
 
 use crate::agents::prompts;
@@ -592,6 +593,17 @@ impl Scheduler {
                 self.check_stall(&task, Role::Engineer).await?;
             }
             TaskStatus::UnderReview => {
+                // A published request has reviewers of its own, and they are
+                // people: the round the engineer just answered them in is
+                // theirs to judge on the forge, not one for the reviewer
+                // profiles to sit through again. So it is approved on the
+                // spot and the branch goes back to the integrator, which
+                // pushes the revision to the request and hands the answers
+                // on.
+                if let Some(watched) = forge::watched_pull_request(&task) {
+                    self.approve_published_revision(&task, &watched).await?;
+                    return Box::pin(self.reconcile_task(task_id)).await;
+                }
                 let reviewers = self.store.list_task_reviewers(&task.id).await?;
                 let reviews = self
                     .store
@@ -1083,6 +1095,59 @@ impl Scheduler {
         Ok(())
     }
 
+    /// Approve the revision of a published task without a review round of
+    /// our own.
+    ///
+    /// Once a pull or merge request is open, the people reading it are the
+    /// reviewers: they asked for the change, the engineer answered them, and
+    /// the only thing standing between that answer and them is the push that
+    /// carries it. Putting the reviewer profiles through a round of their own
+    /// first would hold the answer back for a verdict nobody on the request
+    /// is waiting for — so the round is closed here instead, with no reviewer
+    /// started and no review row wanted.
+    ///
+    /// It is written down twice, because the two records are read by
+    /// different people: the transition's own reason is the audit entry, and
+    /// the message is what a human scrolling the task's conversation sees.
+    /// Neither addresses anybody — the round is decided, not announced.
+    async fn approve_published_revision(
+        &self,
+        task: &Task,
+        watched: &WatchedPr,
+    ) -> anyhow::Result<()> {
+        let label = watched.label();
+        info!(task = %task.id, pr = watched.number, round = task.review_round, "the revision answers a published request: approving it without an internal review round");
+        self.store
+            .create_message(NewMessage {
+                goal_id: task.goal_id.clone(),
+                task_id: Some(task.id.clone()),
+                author_role: AuthorRole::System,
+                author_session_id: None,
+                recipient: None,
+                body: format!(
+                    "{label} ({url}) is published, so the humans reviewing it are this \
+                     round's reviewers: round {round} is approved without an internal \
+                     review, and the integrator pushes the revision to the request with \
+                     the engineer's replies.",
+                    url = watched.url,
+                    round = task.review_round,
+                ),
+            })
+            .await?;
+        self.store
+            .transition_task(
+                &task.id,
+                TaskStatus::Approved,
+                Actor::Daemon,
+                Some(&format!(
+                    "{label} is published: its reviewers replace the internal review round"
+                )),
+                None,
+            )
+            .await?;
+        Ok(())
+    }
+
     /// One look at the review, through the CLI of the forge it is on.
     ///
     /// A CLI that cannot answer — not installed, not authenticated, the
@@ -1266,15 +1331,32 @@ impl Scheduler {
         match role {
             Role::Integrator => {
                 let repo = self.store.get_repository(&task.repo_id).await?;
-                let profile = self.launcher.integrator_profile(task).await?;
-                let template =
-                    prompts::template_for(&self.store, &profile.id, PromptKind::IntegrationResume)
+                // A published task is never picked up from scratch: the
+                // request is open, the branch carries a revision the engineer
+                // wrote for the people reading it, and both what to do with
+                // it and what to tell them are the daemon's to say. The
+                // stored resume briefing is for the other case — a task whose
+                // landing nobody has started yet.
+                let instruction = match forge::watched_pull_request(task) {
+                    Some(watched) => published_revision_instruction(
+                        &watched,
+                        task,
+                        &repo,
+                        self.launcher.engineer_summary(&task.id).await?.as_deref(),
+                    ),
+                    None => {
+                        let profile = self.launcher.integrator_profile(task).await?;
+                        let template = prompts::template_for(
+                            &self.store,
+                            &profile.id,
+                            PromptKind::IntegrationResume,
+                        )
                         .await;
+                        prompts::integration_resume_briefing(&template, task, &repo)
+                    }
+                };
                 self.launcher
-                    .resume_integrator(
-                        &task.id,
-                        &prompts::integration_resume_briefing(&template, task, &repo),
-                    )
+                    .resume_integrator(&task.id, &instruction)
                     .await?;
             }
             _ => {
@@ -1656,6 +1738,58 @@ fn pr_feedback_review(watched: &WatchedPr, feedback: &[Feedback]) -> String {
     )
 }
 
+/// What the integrator is woken with when the engineer has answered the
+/// people reading a published request.
+///
+/// Two things have to reach the request, and only one of them is a commit:
+/// the revision, which is pushed, and the answers, which are the engineer's
+/// words and are quoted here whole so that the agent has nothing to compose
+/// and nothing to look up. It writes them to the user — one message, so the
+/// user can paste the replies onto the request themselves — because the
+/// daemon has no account on the forge to answer with.
+///
+/// The instruction is built here rather than stored as a briefing template
+/// because the engineer's summary is not a value a briefing kind can name:
+/// the resume the store holds is for the task whose landing nobody has
+/// started yet, and lengthening its placeholder list for one situation would
+/// leave the other rendering a token it has nothing to fill in.
+fn published_revision_instruction(
+    watched: &WatchedPr,
+    task: &Task,
+    repo: &Repository,
+    replies: Option<&str>,
+) -> String {
+    let label = watched.label();
+    let noun = watched.forge.noun();
+    let base = &repo.base_branch;
+    let branch = &task.branch;
+    // Whatever the engineer wrote, byte for byte: the emptiness check reads a
+    // trimmed copy, and what goes into the instruction is the summary itself —
+    // its indentation, its blank lines and its trailing newline are part of
+    // what the people on the request are being answered with.
+    let replies = replies
+        .filter(|r| !r.trim().is_empty())
+        .unwrap_or("(the engineer left no summary of this revision)");
+    format!(
+        "The engineer has answered the people reviewing {label} ({url}), and the branch is \
+         yours again. Push the revision to that same {noun} — never a second one — and hand \
+         their answers on.\n\n\
+         1. Bring {branch} up to date in your worktree: `git fetch <remote> {base} && \
+         git merge --no-edit <remote>/{base}`, then a plain `git push <remote> {branch}`, \
+         never forced and never rewriting a commit the {noun} already shows. The merge \
+         commit is fine: the forge squashes the {noun} when it merges it. If the merge \
+         conflicts, do not resolve it: name the files with `git diff --name-only \
+         --diff-filter=U`, then `git merge --abort` and `return_to_engineer` with them and \
+         what to reconcile, which ends your turn.\n\
+         2. Then `post_message` to \"user\" — one message, carrying {url} and the engineer's \
+         replies below verbatim, one per comment — so they can answer on the {noun} \
+         themselves. Then end your turn: Ariadne watches the {noun} and wakes you when it \
+         moves.\n\n\
+         The engineer's replies, as it wrote them:\n\n{replies}",
+        url = watched.url,
+    )
+}
+
 /// And when it was merged: the task is finished off the branch it landed on.
 fn pr_merged_instruction(watched: &WatchedPr, base_branch: &str) -> String {
     let label = watched.label();
@@ -1702,6 +1836,43 @@ mod tests {
             forge: Forge::GitLab,
             number: 12,
             url: "https://gitlab.com/owner/repo/-/merge_requests/12".into(),
+        }
+    }
+
+    fn published_task() -> Task {
+        Task {
+            id: "T1".into(),
+            goal_id: "G1".into(),
+            repo_id: "R1".into(),
+            title: "Render the board".into(),
+            description: "Do the thing.".into(),
+            status: "under_review".into(),
+            engineer_profile_id: "E1".into(),
+            integrator_profile_id: ariadne_store::defaults::INTEGRATOR_ID.into(),
+            agent_kind: None,
+            model: None,
+            branch: "ariadne/task-t1".into(),
+            worktree_path: None,
+            review_round: 2,
+            stalled: 0,
+            merge_commit: None,
+            pr_number: Some(12),
+            pr_url: Some("https://github.com/owner/repo/pull/12".into()),
+            pr_relayed_comments: None,
+            pr_approved_notified: 0,
+            created_at: "2026-01-01T00:00:00Z".into(),
+            updated_at: "2026-01-01T00:00:00Z".into(),
+        }
+    }
+
+    fn repository() -> Repository {
+        Repository {
+            id: "R1".into(),
+            path: "/repos/ariadne".into(),
+            base_branch: "main".into(),
+            description: None,
+            created_at: "2026-01-01T00:00:00Z".into(),
+            updated_at: "2026-01-01T00:00:00Z".into(),
         }
     }
 
@@ -1814,6 +1985,78 @@ mod tests {
         );
     }
 
+    /// The revision instruction carries both things the request is waiting
+    /// for: the commits, pushed the one way a published branch may be
+    /// updated, and the engineer's answers, quoted whole for the user to put
+    /// on the request.
+    #[test]
+    fn the_revision_instruction_pushes_the_branch_and_quotes_the_replies() {
+        const REPLIES: &str = "Reply to @maria on src/board.rs:42: it allocates once now.\n\
+                               Reply to @jon: the module stays, and here is why.";
+        let instruction = published_revision_instruction(
+            &pull_request(),
+            &published_task(),
+            &repository(),
+            Some(REPLIES),
+        );
+        assert!(instruction.contains("Pull request #12"), "{instruction}");
+        assert!(
+            instruction.contains("https://github.com/owner/repo/pull/12"),
+            "{instruction}"
+        );
+        // The one way a published branch is brought up to date, on the branch
+        // and the base it names.
+        assert!(
+            instruction.contains("git merge --no-edit <remote>/main"),
+            "{instruction}"
+        );
+        assert!(
+            instruction.contains("git push <remote> ariadne/task-t1"),
+            "{instruction}"
+        );
+        assert!(instruction.contains("never a second one"), "{instruction}");
+        assert!(instruction.contains("git merge --abort"), "{instruction}");
+        assert!(instruction.contains("return_to_engineer"), "{instruction}");
+        // And never the ways that rewrite what people are already reading.
+        for never in ["rebase", "--force", "--amend"] {
+            assert!(!instruction.contains(never), "{never}: {instruction}");
+        }
+        // The replies verbatim, and who to give them to.
+        assert!(instruction.contains(REPLIES), "{instruction}");
+        assert!(
+            instruction.contains("`post_message` to \"user\""),
+            "{instruction}"
+        );
+        assert!(!instruction.contains("  "), "{instruction}");
+
+        // Verbatim to the byte: an agent that lays its replies out is not
+        // reformatted on the way through, blank lines, indentation, trailing
+        // newline and all.
+        let laid_out = "\n  1. @maria: it allocates once now.\n\n  2. @jon: the module stays.\n";
+        let kept = published_revision_instruction(
+            &pull_request(),
+            &published_task(),
+            &repository(),
+            Some(laid_out),
+        );
+        assert!(
+            kept.ends_with(laid_out),
+            "the replies were reflowed on the way in: {kept:?}"
+        );
+
+        // A revision with nothing said about it still pushes.
+        let silent =
+            published_revision_instruction(&pull_request(), &published_task(), &repository(), None);
+        assert!(silent.contains("left no summary"), "{silent}");
+        let blank = published_revision_instruction(
+            &pull_request(),
+            &published_task(),
+            &repository(),
+            Some("  \n "),
+        );
+        assert!(blank.contains("left no summary"), "{blank}");
+    }
+
     #[test]
     fn the_merge_instruction_names_the_branch_to_fast_forward() {
         let instruction = pr_merged_instruction(&pull_request(), "main");
@@ -1852,6 +2095,22 @@ mod tests {
         );
         assert!(!review.contains("pull request"), "{review}");
         assert!(!review.contains("  "), "{review}");
+
+        let revision = published_revision_instruction(
+            &merge_request(),
+            &published_task(),
+            &repository(),
+            Some("Reply to @maria: fixed."),
+        );
+        assert!(
+            revision.contains(
+                "reviewing Merge request !12 (https://gitlab.com/owner/repo/-/merge_requests/12)"
+            ),
+            "{revision}"
+        );
+        assert!(revision.contains("same merge request"), "{revision}");
+        assert!(!revision.contains("pull request"), "{revision}");
+        assert!(!revision.contains("  "), "{revision}");
 
         let merged = pr_merged_instruction(&merge_request(), "main");
         assert!(
