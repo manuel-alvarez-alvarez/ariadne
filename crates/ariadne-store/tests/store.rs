@@ -692,7 +692,7 @@ async fn one_review_verdict_per_round() {
         .create_review(NewReview {
             task_id: task.id.clone(),
             round: 1,
-            reviewer_profile_id: reviewer.clone(),
+            author: ReviewAuthor::Profile(reviewer.clone()),
             session_id: None,
             verdict: ReviewVerdict::RequestChanges,
             body: Some("please fix".into()),
@@ -704,7 +704,7 @@ async fn one_review_verdict_per_round() {
         .create_review(NewReview {
             task_id: task.id.clone(),
             round: 1,
-            reviewer_profile_id: reviewer.clone(),
+            author: ReviewAuthor::Profile(reviewer.clone()),
             session_id: None,
             verdict: ReviewVerdict::Approve,
             body: None,
@@ -717,7 +717,7 @@ async fn one_review_verdict_per_round() {
         .create_review(NewReview {
             task_id: task.id.clone(),
             round: 2,
-            reviewer_profile_id: reviewer,
+            author: ReviewAuthor::Profile(reviewer),
             session_id: None,
             verdict: ReviewVerdict::Approve,
             body: None,

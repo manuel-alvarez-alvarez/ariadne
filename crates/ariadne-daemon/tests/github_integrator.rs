@@ -41,7 +41,7 @@ use ariadne_daemon::logbuf::LogBuffer;
 use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_daemon::tmux::TmuxManager;
 use ariadne_store::{
-    AgentSession, NewGoal, NewProfile, NewRepository, NewReview, NewTask, ProfileUpdate,
+    AgentSession, NewGoal, NewProfile, NewRepository, NewReview, NewTask, ProfileUpdate, ReviewAuthor,
     SessionFilter, Store, Task,
 };
 
@@ -515,7 +515,7 @@ impl Harness {
             .create_review(NewReview {
                 task_id: task.id.clone(),
                 round: task.review_round,
-                reviewer_profile_id: reviewer.to_string(),
+                author: ReviewAuthor::Profile(reviewer.to_string()),
                 session_id: None,
                 verdict: ReviewVerdict::Approve,
                 body: Some("looks right".into()),
@@ -926,12 +926,19 @@ async fn pull_request_comments_reach_the_engineer_once_each() {
         "### maria commented on src/lane.rs:7",
         "> and this name is wrong",
         "request_review",
+        // Under the name of what the humans wrote on, never the integrator's:
+        // the round was relayed off GitHub, not written by an agent.
+        "### From Pull request #12 on GitHub",
     ] {
         assert!(
             argv.contains(quoted),
             "the briefing has no {quoted}: {argv}"
         );
     }
+    assert!(
+        !argv.contains("From Integrator"),
+        "the humans' comments wear the integrator's name: {argv}"
+    );
 
     // The daemon took the task off its integrator itself, saying why.
     let sent_back_by_the_daemon = h
@@ -961,6 +968,11 @@ async fn pull_request_comments_reach_the_engineer_once_each() {
         .collect();
     assert_eq!(sent_back.len(), 1, "one send-back for one poll");
     assert_eq!(sent_back[0].session_id, None);
+    assert_eq!(
+        sent_back[0].reviewer_profile_id, None,
+        "the relay was recorded under a profile's name"
+    );
+    assert_eq!(sent_back[0].author_role.as_deref(), Some("forge"));
     let body = sent_back[0].body.clone().unwrap();
     for quoted in [
         PR_URL,

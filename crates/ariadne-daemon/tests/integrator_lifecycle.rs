@@ -39,8 +39,8 @@ use ariadne_daemon::logbuf::LogBuffer;
 use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_daemon::tmux::TmuxManager;
 use ariadne_store::{
-    AgentSession, NewGoal, NewProfile, NewRepository, NewReview, NewTask, SessionFilter, Store,
-    Task,
+    AgentSession, NewGoal, NewProfile, NewRepository, NewReview, NewTask, ReviewAuthor,
+    SessionFilter, Store, Task,
 };
 
 /// How long a test waits for the scheduler to reach a state.
@@ -360,7 +360,7 @@ impl Harness {
             .create_review(NewReview {
                 task_id: task.id.clone(),
                 round: task.review_round,
-                reviewer_profile_id: reviewer.to_string(),
+                author: ReviewAuthor::Profile(reviewer.to_string()),
                 session_id: None,
                 verdict: ReviewVerdict::Approve,
                 body: Some("looks right".into()),
@@ -524,7 +524,12 @@ async fn a_send_back_returns_the_branch_and_the_task_to_the_engineer() {
         .iter()
         .find(|r| r.verdict == ReviewVerdict::RequestChanges)
         .expect("the send-back is a verdict on the round");
-    assert_eq!(feedback.reviewer_profile_id, integrator.profile_id);
+    assert_eq!(
+        feedback.reviewer_profile_id.as_deref(),
+        Some(integrator.profile_id.as_str()),
+        "an integrator's own send-back is its own"
+    );
+    assert_eq!(feedback.author_role, None);
     let body = feedback.body.clone().unwrap();
     assert!(body.contains("The rebase onto main conflicts."), "{body}");
     assert!(body.contains("- src/board.rs: reconcile"), "{body}");
@@ -742,7 +747,7 @@ async fn an_unpublished_task_still_waits_for_its_reviewers() {
         .create_review(NewReview {
             task_id: task.id.clone(),
             round: h.store.get_task(&task.id).await.unwrap().review_round,
-            reviewer_profile_id: reviewer,
+            author: ReviewAuthor::Profile(reviewer),
             session_id: None,
             verdict: ReviewVerdict::Approve,
             body: Some("looks right".into()),

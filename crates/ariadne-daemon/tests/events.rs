@@ -26,7 +26,9 @@ use ariadne_daemon::launcher::Launcher;
 use ariadne_daemon::logbuf::LogBuffer;
 use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_daemon::tmux::TmuxManager;
-use ariadne_store::{Goal, NewGoal, NewProfile, NewRepository, NewTask, Profile, Store, Task};
+use ariadne_store::{
+    Goal, NewGoal, NewProfile, NewRepository, NewTask, Profile, ReviewAuthor, Store, Task,
+};
 
 /// How long a test waits for an event before giving up.
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -1007,7 +1009,7 @@ async fn a_reviewer_that_already_voted_raises_no_attention() {
         .create_review(ariadne_store::NewReview {
             task_id: task.id.clone(),
             round: task.review_round,
-            reviewer_profile_id: reviewer.clone(),
+            author: ReviewAuthor::Profile(reviewer.clone()),
             session_id: Some(session.id.clone()),
             verdict: ReviewVerdict::Approve,
             body: None,

@@ -11,9 +11,9 @@ use ariadne_api::tasks::{
     CreateTaskRequest, RecordPullRequestRequest, ReturnToEngineerRequest, TaskDto, TaskListQuery,
     TaskTransitionDto, TransitionRequest, UpdateTaskRequest,
 };
-use ariadne_core::{Actor, AttentionReason, AuthorRole, ReviewVerdict, Role, TaskStatus};
+use ariadne_core::{Actor, AuthorRole, ReviewVerdict, Role, TaskStatus};
 use ariadne_store::{
-    NewMessage, NewReview, NewTask, Recipient, Store, Task, TaskFilter, TaskUpdate,
+    NewMessage, NewReview, NewTask, Recipient, ReviewAuthor, Store, Task, TaskFilter, TaskUpdate,
 };
 
 use super::AppState;
@@ -641,7 +641,7 @@ pub async fn post_review(
         .create_review(NewReview {
             task_id: id.clone(),
             round: task.review_round,
-            reviewer_profile_id,
+            author: ReviewAuthor::Profile(reviewer_profile_id),
             session_id: ctx.session.map(|s| s.id),
             verdict: req.verdict,
             body: req.body,
@@ -698,7 +698,7 @@ pub async fn return_to_engineer(
         .create_review(NewReview {
             task_id: id.clone(),
             round: task.review_round,
-            reviewer_profile_id: session.profile_id.clone(),
+            author: ReviewAuthor::Profile(session.profile_id.clone()),
             session_id: Some(session.id.clone()),
             verdict: ReviewVerdict::RequestChanges,
             body: Some(feedback_body(&req)),

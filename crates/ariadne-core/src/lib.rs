@@ -582,16 +582,22 @@ pub enum AuthorRole {
     Integrator,
     User,
     System,
+    /// The forge a task was published to: what the people reading a pull or
+    /// merge request wrote there, relayed by the daemon. Not an Ariadne agent
+    /// and not one of the task's profiles — the humans on the request, under
+    /// the name of the thing they wrote on.
+    Forge,
 }
 
 impl AuthorRole {
-    pub const ALL: [AuthorRole; 6] = [
+    pub const ALL: [AuthorRole; 7] = [
         AuthorRole::Planner,
         AuthorRole::Engineer,
         AuthorRole::Reviewer,
         AuthorRole::Integrator,
         AuthorRole::User,
         AuthorRole::System,
+        AuthorRole::Forge,
     ];
 
     pub fn as_str(&self) -> &'static str {
@@ -602,6 +608,7 @@ impl AuthorRole {
             AuthorRole::Integrator => "integrator",
             AuthorRole::User => "user",
             AuthorRole::System => "system",
+            AuthorRole::Forge => "forge",
         }
     }
 }

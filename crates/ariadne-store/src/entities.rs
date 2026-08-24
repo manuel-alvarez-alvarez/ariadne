@@ -326,7 +326,13 @@ pub struct Review {
     pub id: String,
     pub task_id: String,
     pub round: i64,
-    pub reviewer_profile_id: String,
+    /// The task profile whose verdict this is — a reviewer of the round, or
+    /// the integrator sending the change back. None exactly when
+    /// `author_role` names an author that is nobody's profile.
+    pub reviewer_profile_id: Option<String>,
+    /// The role that wrote it where no profile did: `forge`, for what the
+    /// people reading a published request wrote and the daemon relayed.
+    pub author_role: Option<String>,
     pub session_id: Option<String>,
     pub verdict: String,
     pub body: Option<String>,
@@ -337,6 +343,26 @@ impl Review {
     pub fn verdict(&self) -> ReviewVerdict {
         ReviewVerdict::from_str(&self.verdict).expect("valid verdict in db")
     }
+
+    /// Who the verdict is from, out of the two columns above.
+    pub fn author(&self) -> ReviewAuthor {
+        match (&self.reviewer_profile_id, &self.author_role) {
+            (Some(profile_id), _) => ReviewAuthor::Profile(profile_id.clone()),
+            (None, Some(role)) => {
+                ReviewAuthor::Role(AuthorRole::from_str(role).expect("valid author role in db"))
+            }
+            // The CHECK on the table is what makes this unreachable.
+            (None, None) => panic!("review {} has no author", self.id),
+        }
+    }
+}
+
+/// Who a verdict is from: one of the task's profiles, or a role that is
+/// nobody's profile — the forge a published request is being reviewed on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReviewAuthor {
+    Profile(String),
+    Role(AuthorRole),
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]

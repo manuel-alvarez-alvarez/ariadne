@@ -15,8 +15,8 @@ use ariadne_core::{
     TaskStatus,
 };
 use ariadne_store::{
-    AgentSession, Message, NewMessage, NewReview, Recipient, Repository, SessionFilter, Store,
-    Task, TaskFilter,
+    AgentSession, Message, NewMessage, NewReview, Recipient, Repository, ReviewAuthor,
+    SessionFilter, Store, Task, TaskFilter,
 };
 
 use crate::agents::prompts;
@@ -810,15 +810,31 @@ impl Scheduler {
                 // Who asked, as the engineer reads it: the profile's own name
                 // and role, since a round can also be closed by the integrator
                 // sending the task back. The id is the fallback for a profile
-                // that has since been deleted.
+                // that has since been deleted. A round the daemon relayed from
+                // a published request has no profile behind it at all — it is
+                // named after the request the humans wrote on, whose comments
+                // carry their own names inside it.
                 let mut feedback: Vec<(String, String)> = Vec::new();
                 for review in reviews
                     .iter()
                     .filter(|r| r.verdict() == ReviewVerdict::RequestChanges)
                 {
-                    let who = match self.store.get_profile(&review.reviewer_profile_id).await {
-                        Ok(profile) => format!("{} ({})", profile.name, profile.role),
-                        Err(_) => format!("reviewer {}", review.reviewer_profile_id),
+                    let who = match review.author() {
+                        ReviewAuthor::Profile(profile_id) => {
+                            match self.store.get_profile(&profile_id).await {
+                                Ok(profile) => format!("{} ({})", profile.name, profile.role),
+                                Err(_) => format!("reviewer {profile_id}"),
+                            }
+                        }
+                        ReviewAuthor::Role(AuthorRole::Forge) => {
+                            match forge::watched_pull_request(&task) {
+                                Some(watched) => {
+                                    format!("{} on {}", watched.label(), watched.forge.name())
+                                }
+                                None => "the published request".to_string(),
+                            }
+                        }
+                        ReviewAuthor::Role(role) => role.as_str().to_string(),
                     };
                     feedback.push((
                         who,
@@ -1171,9 +1187,10 @@ impl Scheduler {
     /// a relay can go wrong. So the send-back is written here, in the rows
     /// `return_to_engineer` writes for the integrator's own send-backs — a
     /// change request on the round the pull request was published from,
-    /// attributed to the integrator profile that published it — and the
-    /// engineer is resumed with it by the `changes_requested` arm like any
-    /// other round of feedback. Its worktree is checked out again as it
+    /// under the forge's own name rather than any profile's, since what it
+    /// carries is what the humans on the request wrote — and the engineer is
+    /// resumed with it by the `changes_requested` arm like any other round of
+    /// feedback. Its worktree is checked out again as it
     /// resumes, which is what releases the integrator's hold on the branch.
     ///
     /// The order is the send-back's: the feedback is recorded before the
@@ -1214,7 +1231,7 @@ impl Scheduler {
             .create_review(NewReview {
                 task_id: task.id.clone(),
                 round: task.review_round,
-                reviewer_profile_id: task.integrator_profile_id.clone(),
+                author: ReviewAuthor::Role(AuthorRole::Forge),
                 session_id: None,
                 verdict: ReviewVerdict::RequestChanges,
                 body: Some(body),

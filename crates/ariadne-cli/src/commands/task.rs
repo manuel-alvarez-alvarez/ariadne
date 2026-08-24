@@ -410,7 +410,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                             .map(|r| {
                                 vec![
                                     r.round.to_string(),
-                                    profiles.label(&r.reviewer_profile_id),
+                                    review_author(&profiles, r),
                                     r.verdict.as_str().into(),
                                     r.body.clone().unwrap_or_else(|| "-".into()),
                                 ]
@@ -484,6 +484,17 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
         }
     }
     Ok(())
+}
+
+/// Who a verdict is from, for the `reviewer` column: the profile that voted,
+/// or — for the round the daemon relayed off a published request — the forge
+/// whose reviewers wrote it. Every verdict has exactly one of the two.
+fn review_author(profiles: &ProfileNames, review: &ReviewDto) -> String {
+    match (&review.reviewer_profile_id, review.author_role) {
+        (Some(profile_id), _) => profiles.label(profile_id),
+        (None, Some(role)) => role.as_str().to_string(),
+        (None, None) => "-".to_string(),
+    }
 }
 
 /// One row of `task ls`, in [`LS`]'s order.

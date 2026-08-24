@@ -3,31 +3,39 @@
 use ariadne_core::ReviewVerdict;
 use ariadne_core::id::new_id;
 
-use crate::{Change, Result, Review, Store, StoreError, now};
+use crate::{Change, Result, Review, ReviewAuthor, Store, StoreError, now};
 
 #[derive(Debug, Clone)]
 pub struct NewReview {
     pub task_id: String,
     pub round: i64,
-    pub reviewer_profile_id: String,
+    /// Who the verdict is from: a profile of the task, or the forge whose
+    /// reviewers the daemon relayed.
+    pub author: ReviewAuthor,
     pub session_id: Option<String>,
     pub verdict: ReviewVerdict,
     pub body: Option<String>,
 }
 
 impl Store {
-    /// Record a verdict. The UNIQUE(task, round, reviewer) constraint maps to
-    /// `Conflict`: one verdict per reviewer per round.
+    /// Record a verdict. The uniqueness of an author within a round maps to
+    /// `Conflict`: one verdict per reviewer per round, and one relay of what
+    /// a published request says per round.
     pub async fn create_review(&self, new: NewReview) -> Result<Review> {
         let id = new_id();
+        let (profile_id, author_role) = match &new.author {
+            ReviewAuthor::Profile(profile_id) => (Some(profile_id.as_str()), None),
+            ReviewAuthor::Role(role) => (None, Some(role.as_str())),
+        };
         sqlx::query(
-            "INSERT INTO reviews (id, task_id, round, reviewer_profile_id, session_id, verdict, body, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO reviews (id, task_id, round, reviewer_profile_id, author_role, session_id, verdict, body, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&new.task_id)
         .bind(new.round)
-        .bind(&new.reviewer_profile_id)
+        .bind(profile_id)
+        .bind(author_role)
         .bind(&new.session_id)
         .bind(new.verdict.as_str())
         .bind(&new.body)
@@ -37,8 +45,13 @@ impl Store {
         .map_err(|e| match e {
             sqlx::Error::Database(ref db) if db.is_unique_violation() => StoreError::Conflict(
                 format!(
-                    "reviewer {} already submitted a verdict for round {} of task {}",
-                    new.reviewer_profile_id, new.round, new.task_id
+                    "{} already submitted a verdict for round {} of task {}",
+                    profile_id.map_or_else(
+                        || format!("the {}", author_role.unwrap_or("author")),
+                        |id| format!("reviewer {id}")
+                    ),
+                    new.round,
+                    new.task_id
                 ),
             ),
             other => StoreError::Db(other),

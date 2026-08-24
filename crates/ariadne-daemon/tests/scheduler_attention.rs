@@ -38,7 +38,7 @@ use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_daemon::tmux::{TmuxManager, session_name};
 use ariadne_store::{
     AgentSession, Goal, NewAgentEvent, NewGoal, NewMessage, NewProfile, NewRepository, NewReview,
-    NewSession, NewTask, Recipient, SessionFilter, Store, Task,
+    NewSession, NewTask, Recipient, ReviewAuthor, SessionFilter, Store, Task,
 };
 
 /// Idle long enough to be past both thresholds (nudge at 300s, flag at 900s).
@@ -902,7 +902,7 @@ async fn a_vanished_reviewer_pane_after_its_verdict_is_not_raised() {
         .create_review(NewReview {
             task_id: task.id.clone(),
             round: task.review_round,
-            reviewer_profile_id: reviewer.clone(),
+            author: ReviewAuthor::Profile(reviewer.clone()),
             session_id: Some(session.id.clone()),
             verdict: ReviewVerdict::Approve,
             body: None,
