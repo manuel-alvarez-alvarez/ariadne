@@ -1059,6 +1059,9 @@ impl Scheduler {
     /// and act on what the forge's CLI says:
     ///
     /// - **merged**, and the integrator finishes the task locally;
+    /// - **closed** without being merged, and the task is over: it is failed
+    ///   and the user told what became of it
+    ///   (see [`Self::fail_on_closed_request`]);
     /// - **commented on**, and every comment nobody has relayed yet is
     ///   written straight to the engineer as a round of requested changes —
     ///   no agent in between (see [`Self::relay_pr_feedback`]);
@@ -1068,7 +1071,11 @@ impl Scheduler {
     ///   that it is theirs to merge.
     ///
     /// They read the same on either forge; which CLI answers for them is
-    /// [`Self::poll_forge`]'s to decide.
+    /// [`Self::poll_forge`]'s to decide — and a CLI that answers nothing at
+    /// all is the last thing a poll can say, counted and eventually told to
+    /// the user by [`Self::note_poll_failure`], since a watch that reads
+    /// nothing looks from the outside exactly like a watch on a request
+    /// nobody is touching.
     ///
     /// An integrator mid-turn is left to finish it: resuming an agent means
     /// relaunching its pane, and whatever it is doing on the branch right now
@@ -1132,9 +1139,9 @@ impl Scheduler {
                     .await;
             }
         };
-        match poll.failure.clone() {
+        match poll.failure.as_deref() {
             Some(error) => {
-                self.note_poll_failure(task, integrator.as_ref(), watched, &error)
+                self.note_poll_failure(task, integrator.as_ref(), watched, error)
                     .await?;
             }
             None => {

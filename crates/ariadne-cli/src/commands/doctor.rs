@@ -316,7 +316,7 @@ async fn probe(name: &str, version_flag: &str, authenticates: bool) -> Local {
         Some(path) => {
             let version = probe_version(path, version_flag).await;
             let authenticated = match authenticates {
-                true => Some(probe_status(&path.display().to_string(), &["auth", "status"]).await),
+                true => probe_auth(path).await,
                 false => None,
             };
             (version, authenticated)
@@ -329,6 +329,28 @@ async fn probe(name: &str, version_flag: &str, authenticates: bool) -> Local {
         version,
         authenticated,
     }
+}
+
+/// Whether a forge CLI holds credentials, as it answers `auth status`.
+///
+/// The exit status is the whole answer — both CLIs write the account, host and
+/// token scopes to stderr, which is more than a report wants — and one that
+/// never answered is no answer rather than a "no": a `gh` waiting on a network
+/// is not a `gh` signed out, and reporting it as one would send somebody to
+/// sign in again for nothing.
+async fn probe_auth(binary: &Path) -> Option<bool> {
+    let status = tokio::time::timeout(
+        PROBE_TIMEOUT,
+        tokio::process::Command::new(binary)
+            .args(["auth", "status"])
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .ok()?
+    .ok()?
+    .status;
+    Some(status.success())
 }
 
 /// `ariadned` as `daemon start` would find it: next to this binary, else on
