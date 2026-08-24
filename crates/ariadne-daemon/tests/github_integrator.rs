@@ -1,17 +1,17 @@
-//! The GitHub integrator's lifecycle: publish, watch, relay, finish.
+//! The GitHub integrator's lifecycle: publish, watch, send back, finish.
 //!
 //! The same loop as `integrator_lifecycle`, on a repository that is published
 //! to a forge instead of landed on the spot. The task branch becomes a pull
 //! request, the daemon watches it while humans review it, and what they do to
 //! it decides what happens next: an approval is announced to the user once, a
-//! comment goes back to the engineer through the integrator's send-back, and
-//! the merge wakes the integrator to finish the task off the base branch.
+//! comment is written back to the engineer as a round of requested changes,
+//! and the merge wakes the integrator to finish the task off the base branch.
 //!
 //! No tmux and no agent CLI, as in that test — and no GitHub either: `gh` is
 //! a stub script that prints the pull request a test wants it to see and
-//! records what it was asked. The "integrator" doing the recording, the
-//! sending back and the merging is the test itself, calling the endpoints its
-//! briefing tells the agent to call.
+//! records what it was asked. The "integrator" doing the recording and the
+//! merging is the test itself, calling the endpoints its briefing tells the
+//! agent to call.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -669,8 +669,9 @@ async fn a_pull_request_is_watched_from_publication_to_its_merge() {
 }
 
 /// What humans write on the pull request reaches the engineer exactly once,
-/// as a round of requested changes — and the revision goes back to the same
-/// pull request rather than to a second one.
+/// as a round of requested changes the daemon writes itself — no integrator
+/// woken to copy it across — and the revision goes back to the same pull
+/// request rather than to a second one.
 #[tokio::test]
 async fn pull_request_comments_reach_the_engineer_once_each() {
     let h = harness().await;
@@ -687,6 +688,15 @@ async fn pull_request_comments_reach_the_engineer_once_each() {
         )
         .await;
     h.goes_idle(&integrator.id).await;
+    // When it was last launched, and the round the pull request was published
+    // from: the comments belong on that round, and they wake nobody here.
+    let integrator_launched_at = h
+        .store
+        .get_session(&integrator.id)
+        .await
+        .unwrap()
+        .launched_at;
+    let round = h.store.get_task(&task.id).await.unwrap().review_round;
 
     let mut commented = open_pull_request();
     commented["reviewDecision"] = "CHANGES_REQUESTED".into();
@@ -702,32 +712,105 @@ async fn pull_request_comments_reach_the_engineer_once_each() {
     // `gh api --paginate` documents, and the one a pull request people have
     // really been through comes back as.
     h.review_comments(
-        r#"[{"id":21,"user":{"login":"jon"},"body":"this allocates per row","path":"src/board.rs"}]
-           [{"id":22,"user":{"login":"maria"},"body":"and this name is wrong","path":"src/lane.rs"}]"#,
+        r#"[{"id":21,"user":{"login":"jon"},"body":"this allocates per row","path":"src/board.rs","line":42}]
+           [{"id":22,"user":{"login":"maria"},"body":"and this name is wrong","path":"src/lane.rs","line":7}]"#,
     );
     h.notify(&task.id);
 
-    eventually("the integrator to be woken with the comments", async || {
-        h.launched_argv(&integrator.id)
-            .contains("why a new module?")
+    // One poll is the whole relay: the engineer is resumed on it, and the
+    // task passed through changes_requested to get there.
+    eventually("the engineer to be resumed with the comments", async || {
+        h.status(&task.id).await == TaskStatus::InProgress
+            && h.live_session(&task.id, Role::Engineer).await.is_some()
     })
     .await;
-    let argv = h.launched_argv(&integrator.id);
-    assert!(argv.contains("maria commented"), "{argv}");
-    assert!(argv.contains("jon requested changes"), "{argv}");
-    assert!(argv.contains("split src/board.rs up"), "{argv}");
-    assert!(argv.contains("return_to_engineer"), "{argv}");
-    // The comments on the diff too, both pages of them, each carrying the
-    // file it hangs on.
-    assert!(
-        argv.contains("src/board.rs: this allocates per row"),
-        "{argv}"
+    let engineer = h.live_session(&task.id, Role::Engineer).await.unwrap();
+    let argv = h.launched_argv(&engineer.id);
+    for quoted in [
+        PR_URL,
+        "4 new comments",
+        "### maria commented",
+        "> why a new module?",
+        "### jon requested changes",
+        "> split src/board.rs up",
+        // The comments on the diff too, both pages of them, each naming the
+        // file and line it hangs on.
+        "### jon commented on src/board.rs:42",
+        "> this allocates per row",
+        "### maria commented on src/lane.rs:7",
+        "> and this name is wrong",
+        "request_review",
+    ] {
+        assert!(
+            argv.contains(quoted),
+            "the briefing has no {quoted}: {argv}"
+        );
+    }
+
+    // The daemon took the task off its integrator itself, saying why.
+    let sent_back_by_the_daemon = h
+        .store
+        .list_task_transitions(&task.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|t| t.to_status == "changes_requested")
+        .expect("the task went back to its engineer");
+    assert_eq!(sent_back_by_the_daemon.from_status, "integrating");
+    assert_eq!(sent_back_by_the_daemon.actor, "daemon");
+    assert_eq!(
+        sent_back_by_the_daemon.reason.as_deref(),
+        Some("Pull request #12 was commented on")
+    );
+
+    // Written as a round of requested changes on the round the pull request
+    // was published from, by no session: the daemon wrote it, not an agent.
+    let sent_back: Vec<_> = h
+        .store
+        .list_reviews(&task.id, Some(round))
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.verdict() == ReviewVerdict::RequestChanges)
+        .collect();
+    assert_eq!(sent_back.len(), 1, "one send-back for one poll");
+    assert_eq!(sent_back[0].session_id, None);
+    let body = sent_back[0].body.clone().unwrap();
+    for quoted in [
+        PR_URL,
+        "why a new module?",
+        "split src/board.rs up",
+        "this allocates per row",
+        "and this name is wrong",
+    ] {
+        assert!(
+            body.contains(quoted),
+            "the send-back has no {quoted}: {body}"
+        );
+    }
+
+    // And no integrator was woken for any of it.
+    assert_eq!(
+        h.store
+            .get_session(&integrator.id)
+            .await
+            .unwrap()
+            .launched_at,
+        integrator_launched_at,
+        "the integrator was woken to relay the comments: {}",
+        h.launched_argv(&integrator.id)
+    );
+    assert_eq!(
+        h.sessions(&task.id, Role::Integrator).await.len(),
+        1,
+        "and no second one was started for them"
     );
     assert!(
-        argv.contains("src/lane.rs: and this name is wrong"),
-        "{argv}"
+        !h.launched_argv(&integrator.id)
+            .contains("why a new module?"),
+        "the integrator was told what the humans wrote"
     );
-    assert!(argv.contains("4 new comments"), "{argv}");
+
     assert_eq!(
         h.store
             .get_task(&task.id)
@@ -743,70 +826,12 @@ async fn pull_request_comments_reach_the_engineer_once_each() {
         "every one of them is remembered as relayed, whichever page it came on"
     );
 
-    // Polled again, the same comments wake nobody a second time. The launch
-    // is dated after the spawn plan is written, so the relaunch this watches
-    // for is only settled once the session says it is running again.
-    eventually("the relay launch to be finished", async || {
-        h.store.get_session(&integrator.id).await.unwrap().status() == SessionStatus::Running
-    })
-    .await;
-    let launched_at = h
-        .store
-        .get_session(&integrator.id)
-        .await
-        .unwrap()
-        .launched_at;
-    h.goes_idle(&integrator.id).await;
-    for _ in 0..3 {
-        h.notify(&task.id);
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    assert_eq!(
-        h.store
-            .get_session(&integrator.id)
-            .await
-            .unwrap()
-            .launched_at,
-        launched_at,
-        "the integrator was relaunched for comments it had already relayed: {}",
-        h.launched_argv(&integrator.id)
-    );
-
-    // The integrator relays them, as its briefing says: the engineer reads a
-    // round of requested changes and the task is its own again.
-    let sent_back: TaskDto = h
-        .json(
-            as_session(
-                &format!("/v1/tasks/{}/return-to-engineer", task.id),
-                &integrator.id,
-                serde_json::json!({
-                    "summary": "Pull request #12 was commented on.",
-                    "changes": ["maria: why a new module?", "jon: split src/board.rs up"],
-                }),
-            ),
-            StatusCode::OK,
-        )
-        .await;
-    assert_eq!(sent_back.status, TaskStatus::ChangesRequested);
-    assert_eq!(
-        sent_back.pr_url.as_deref(),
-        Some(PR_URL),
-        "the pull request survives the round trip: the revision goes back to it"
-    );
-
-    eventually("the engineer to be resumed with the comments", async || {
-        h.status(&task.id).await == TaskStatus::InProgress
-            && h.live_session(&task.id, Role::Engineer).await.is_some()
-    })
-    .await;
-    let engineer = h.live_session(&task.id, Role::Engineer).await.unwrap();
-    let argv = h.launched_argv(&engineer.id);
-    assert!(argv.contains("why a new module?"), "{argv}");
-
     // Revised and approved again, the integrator gets the task back with the
     // resume briefing that tells it to merge the base into the branch and
     // push it to the pull request it already opened, never rewriting what the
-    // humans reading it have already seen.
+    // humans reading it have already seen. Its session died with the
+    // send-back, so this is also the other half of the poll's job: a quiet
+    // review whose task has no live integrator gets one started for it.
     let worktree = PathBuf::from(
         h.store
             .get_task(&task.id)
@@ -837,6 +862,104 @@ async fn pull_request_comments_reach_the_engineer_once_each() {
         1,
         "the same integrator session throughout"
     );
+
+    // Polled again, on the same comments, nothing is relayed a second time:
+    // the ids are remembered, so the poll reads a quiet pull request.
+    h.goes_idle(&integrator.id).await;
+    let engineer_launched_at = h.store.get_session(&engineer.id).await.unwrap().launched_at;
+    let polls = h.gh_log().matches("pr view").count();
+    for _ in 0..3 {
+        h.notify(&task.id);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(
+        h.gh_log().matches("pr view").count() > polls,
+        "the pull request was never polled again"
+    );
+    let round = h.store.get_task(&task.id).await.unwrap().review_round;
+    assert!(
+        h.store
+            .list_reviews(&task.id, Some(round))
+            .await
+            .unwrap()
+            .iter()
+            .all(|r| r.verdict() == ReviewVerdict::Approve),
+        "the comments were sent back a second time"
+    );
+    assert_eq!(h.status(&task.id).await, TaskStatus::Integrating);
+    assert_eq!(
+        h.store.get_session(&engineer.id).await.unwrap().launched_at,
+        engineer_launched_at,
+        "the engineer was resumed for comments it had already been given"
+    );
+}
+
+/// The same on a daemon that restarted: a published request with comments
+/// waiting on it has no live integrator to poll around, and none is started
+/// for it — the comments are the engineer's, and an agent stood up for a task
+/// that is leaving `integrating` in the same breath is the hop this avoids.
+#[tokio::test]
+async fn comments_waiting_on_a_task_with_no_live_integrator_start_none() {
+    let h = harness().await;
+    let (task, reviewer) = h.task().await;
+    let integrator = h.hand_to_the_integrator(&task, &reviewer).await;
+    let _: TaskDto = h
+        .json(
+            as_session(
+                &format!("/v1/tasks/{}/pull-request", task.id),
+                &integrator.id,
+                serde_json::json!({"url": PR_URL}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+
+    // The daemon went down and came back: the pane the integrator was in is
+    // gone, and its session row with it.
+    h.store
+        .set_session_status(&integrator.id, SessionStatus::Exited)
+        .await
+        .unwrap();
+    let launched_at = h
+        .store
+        .get_session(&integrator.id)
+        .await
+        .unwrap()
+        .launched_at;
+
+    let mut commented = open_pull_request();
+    commented["comments"] = serde_json::json!([{
+        "id": "C1", "author": {"login": "maria"}, "body": "why a new module?",
+    }]);
+    h.pull_request(commented);
+    h.review_comments(
+        r#"[{"id":21,"user":{"login":"jon"},"body":"this allocates per row","path":"src/board.rs","line":42}]"#,
+    );
+    h.notify(&task.id);
+
+    eventually("the engineer to be resumed with the comments", async || {
+        h.status(&task.id).await == TaskStatus::InProgress
+            && h.live_session(&task.id, Role::Engineer).await.is_some()
+    })
+    .await;
+    let engineer = h.live_session(&task.id, Role::Engineer).await.unwrap();
+    let argv = h.launched_argv(&engineer.id);
+    assert!(argv.contains("> why a new module?"), "{argv}");
+    assert!(
+        argv.contains("### jon commented on src/board.rs:42"),
+        "{argv}"
+    );
+
+    // Nothing was started for the request and nothing was relaunched: the
+    // session that died stays dead.
+    assert_eq!(
+        h.sessions(&task.id, Role::Integrator).await.len(),
+        1,
+        "an integrator was started for comments that were the engineer's"
+    );
+    let after = h.store.get_session(&integrator.id).await.unwrap();
+    assert_eq!(after.status(), SessionStatus::Exited);
+    assert_eq!(after.launched_at, launched_at);
 }
 
 /// A repository with no GitHub remote — or a `gh` that cannot answer for it —

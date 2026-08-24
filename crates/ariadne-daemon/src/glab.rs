@@ -152,25 +152,27 @@ pub struct Position {
     pub new_path: Option<String>,
     #[serde(default)]
     pub old_path: Option<String>,
+    /// The line it hangs on, on whichever side of the diff it was written:
+    /// a note on a line that was added carries the new one, a note on a line
+    /// that was deleted the old.
+    #[serde(default)]
+    pub new_line: Option<i64>,
+    #[serde(default)]
+    pub old_line: Option<i64>,
 }
 
 impl Note {
-    /// As one piece of feedback: the file it is about belongs with what it
-    /// says, since that is what the engineer needs to find it.
+    /// As one piece of feedback: the file and line it is about travel beside
+    /// what it says, since that is what the engineer needs to find it.
     fn as_feedback(&self) -> Feedback {
-        let path = self
-            .position
-            .as_ref()
-            .and_then(|p| p.new_path.as_ref().or(p.old_path.as_ref()))
-            .filter(|p| !p.is_empty());
-        let body = match path {
-            Some(path) => format!("{path}: {}", self.body.trim()),
-            None => self.body.trim().to_string(),
-        };
+        let position = self.position.as_ref();
+        let path = position.and_then(|p| p.new_path.as_deref().or(p.old_path.as_deref()));
+        let line = position.and_then(|p| p.new_line.or(p.old_line));
         Feedback {
             id: format!("N{}", self.id),
             author: forge::author_or_someone(self.author.as_ref().map(|a| a.username.as_str())),
-            body,
+            body: self.body.trim().to_string(),
+            file: forge::location(path, line),
             blocking: self.resolvable && !self.resolved,
         }
     }
@@ -417,7 +419,8 @@ mod tests {
             {"id":"d2","notes":[
                 {"id":102,"author":{"username":"jon"},"body":"this allocates per row",
                  "system":false,"resolvable":true,"resolved":false,"type":"DiffNote",
-                 "position":{"new_path":"src/board.rs","old_path":"src/board.rs"}}]},
+                 "position":{"new_path":"src/board.rs","old_path":"src/board.rs",
+                  "new_line":42,"old_line":null}}]},
             {"id":"d3","notes":[
                 {"id":103,"author":{"username":"maria"},"body":"approved this merge request",
                  "system":true,"resolvable":false,"resolved":false}]}
@@ -435,12 +438,14 @@ mod tests {
                     id: "N101".into(),
                     author: "maria".into(),
                     body: "why a new module?".into(),
+                    file: None,
                     blocking: false,
                 },
                 Feedback {
                     id: "N102".into(),
                     author: "jon".into(),
-                    body: "src/board.rs: this allocates per row".into(),
+                    body: "this allocates per row".into(),
+                    file: Some("src/board.rs:42".into()),
                     blocking: true,
                 },
             ],

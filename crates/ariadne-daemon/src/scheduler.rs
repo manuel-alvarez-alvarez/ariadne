@@ -15,7 +15,7 @@ use ariadne_core::{
     TaskStatus,
 };
 use ariadne_store::{
-    AgentSession, Message, NewMessage, Recipient, SessionFilter, Store, Task, TaskFilter,
+    AgentSession, Message, NewMessage, NewReview, Recipient, SessionFilter, Store, Task, TaskFilter,
 };
 
 use crate::agents::prompts;
@@ -894,8 +894,9 @@ impl Scheduler {
     /// and act on what the forge's CLI says:
     ///
     /// - **merged**, and the integrator finishes the task locally;
-    /// - **commented on**, and every comment nobody has relayed yet goes to
-    ///   the engineer through the integrator's send-back;
+    /// - **commented on**, and every comment nobody has relayed yet is
+    ///   written straight to the engineer as a round of requested changes —
+    ///   no agent in between (see [`Self::relay_pr_feedback`]);
     /// - **approved**, and the user is told once that it is theirs to merge.
     ///
     /// The three read the same on either forge; which CLI answers for them is
@@ -905,21 +906,31 @@ impl Scheduler {
     /// relaunching its pane, and whatever it is doing on the branch right now
     /// is more current than a poll taken a moment ago. The next poll asks
     /// again.
+    ///
+    /// The poll comes before any of that, and before an integrator is started
+    /// for a task that has none — a daemon that restarts on a request with
+    /// comments waiting on it hands them to the engineer on that first pass,
+    /// rather than standing an agent up for a task that is leaving
+    /// `integrating` in the same breath. One is started once the poll has
+    /// said the task is still the integrator's.
     async fn watch_pull_request(&mut self, task: &Task, watched: &WatchedPr) -> anyhow::Result<()> {
         let number = watched.number;
-        let Some(integrator) = self.live_integrator(task).await? else {
-            // A task back from the engineer, or a daemon that restarted: the
-            // integrator is started with its resume briefing, which tells it
-            // to update the review it already opened.
-            return Ok(());
-        };
+        // Whichever integrator is on the task already, asked for rather than
+        // started: what the poll below says may be that the task is leaving
+        // `integrating` altogether, and an agent started for that is an agent
+        // started to be killed. Starting one is what the tail of this does,
+        // once the poll has said the task is still the integrator's.
+        let integrator = self.integrator_session(task).await?;
         // The one watchdog that still applies: an agent whose instruction is
         // sitting unsubmitted in its composer has not started the turn this
         // arm woke it for, and no amount of polling will move it. The idle
         // half of the stall watch is what does not apply — an integrator with
         // a review open is waiting on people, not stalling.
-        if integrator.status() == SessionStatus::Running {
-            self.check_unstarted_turn(&integrator).await?;
+        if let Some(running) = integrator
+            .as_ref()
+            .filter(|s| s.status() == SessionStatus::Running)
+        {
+            self.check_unstarted_turn(running).await?;
         }
         let interval = std::time::Duration::from_secs(self.launcher.cfg.pr_poll_secs);
         let now = std::time::Instant::now();
@@ -954,31 +965,42 @@ impl Scheduler {
                 .set_task_pr_approved_notified(&task.id, false)
                 .await?;
         }
-        if poll.state != PrState::Quiet && integrator.status() != SessionStatus::Idle {
-            info!(task = %task.id, pr = number, session = %integrator.id, "the review moved while its integrator is working; leaving it to finish");
+        if poll.state != PrState::Quiet
+            && let Some(working) = integrator
+                .as_ref()
+                .filter(|s| s.status() != SessionStatus::Idle)
+        {
+            info!(task = %task.id, pr = number, session = %working.id, "the review moved while its integrator is working; leaving it to finish");
             return Ok(());
         }
+        // Comments wake nobody: they are the engineer's to answer, and the
+        // task is about to be its own again. Whether an integrator is running
+        // makes no difference to that — a task with none is exactly the case
+        // a daemon restart leaves behind, and starting one here only to have
+        // the transition kill it is the hop this whole arm exists to spare.
+        if let PrState::Feedback(feedback) = &poll.state {
+            info!(task = %task.id, pr = number, comments = feedback.len(), "the review was commented on; sending it to the engineer");
+            self.relay_pr_feedback(task, watched, feedback).await?;
+            return Box::pin(self.reconcile_task(&task.id)).await;
+        }
+
+        // The rest is the integrator's, and so is a quiet review: a published
+        // task being integrated keeps an agent on it, started here when a
+        // restart or a send-back left none. That is what pushes the next
+        // revision to the request, and what a merge is finished by.
+        let Some(integrator) = self.live_integrator(task, integrator).await? else {
+            // A task back from the engineer, or a daemon that restarted: the
+            // integrator is started with its resume briefing, which tells it
+            // to update the review it already opened.
+            return Ok(());
+        };
         match poll.state {
-            PrState::Quiet => {}
+            // Handled above, both of them: a quiet review asks for nothing.
+            PrState::Quiet | PrState::Feedback(_) => {}
             PrState::Merged => {
                 info!(task = %task.id, pr = number, "the review was merged; waking the integrator to finish the task");
                 self.launcher
                     .resume_integrator(&task.id, &pr_merged_instruction(watched, &repo.base_branch))
-                    .await?;
-                self.spawn_failures.remove(&task.id);
-            }
-            PrState::Feedback(feedback) => {
-                info!(task = %task.id, pr = number, comments = feedback.len(), "the review was commented on; waking the integrator to relay it");
-                // Spent before the attempt, like the stall nudge and the
-                // message delivery: what a comment relayed twice costs the
-                // engineer is a round of work it has already done, and a
-                // resume that fails will not go better for being repeated.
-                let ids: Vec<String> = feedback.iter().map(|f| f.id.clone()).collect();
-                self.store
-                    .add_task_pr_relayed_comments(&task.id, &ids)
-                    .await?;
-                self.launcher
-                    .resume_integrator(&task.id, &pr_feedback_instruction(watched, &feedback))
                     .await?;
                 self.spawn_failures.remove(&task.id);
             }
@@ -988,6 +1010,56 @@ impl Scheduler {
                     .await?;
             }
         }
+        Ok(())
+    }
+
+    /// Hand what the humans wrote to the engineer, without waking anybody in
+    /// between.
+    ///
+    /// The daemon polled the comments and has them in hand: relaying them
+    /// through the integrator would be a turn spent copying them from one
+    /// forge into the other end of the same database, and a turn is a place
+    /// a relay can go wrong. So the send-back is written here, in the rows
+    /// `return_to_engineer` writes for the integrator's own send-backs — a
+    /// change request on the round the pull request was published from,
+    /// attributed to the integrator profile that published it — and the
+    /// engineer is resumed with it by the `changes_requested` arm like any
+    /// other round of feedback. Its worktree is checked out again as it
+    /// resumes, which is what releases the integrator's hold on the branch.
+    ///
+    /// The order is the send-back's: the feedback is recorded before the
+    /// transition, so the engineer the scheduler resumes on it has it to
+    /// read, and the ids are remembered in between so that a comment already
+    /// written into a round is never written into a second one.
+    async fn relay_pr_feedback(
+        &mut self,
+        task: &Task,
+        watched: &WatchedPr,
+        feedback: &[Feedback],
+    ) -> anyhow::Result<()> {
+        self.store
+            .create_review(NewReview {
+                task_id: task.id.clone(),
+                round: task.review_round,
+                reviewer_profile_id: task.integrator_profile_id.clone(),
+                session_id: None,
+                verdict: ReviewVerdict::RequestChanges,
+                body: Some(pr_feedback_review(watched, feedback)),
+            })
+            .await?;
+        let ids: Vec<String> = feedback.iter().map(|f| f.id.clone()).collect();
+        self.store
+            .add_task_pr_relayed_comments(&task.id, &ids)
+            .await?;
+        self.store
+            .transition_task(
+                &task.id,
+                TaskStatus::ChangesRequested,
+                Actor::Daemon,
+                Some(&format!("{} was commented on", watched.label())),
+                None,
+            )
+            .await?;
         Ok(())
     }
 
@@ -1088,12 +1160,13 @@ impl Scheduler {
         }
     }
 
-    /// The integrator working on this task, started if there is none.
+    /// The integrator on this task, if one is live — asked, never started.
     ///
-    /// `None` means one was just started and there is nothing else to decide
-    /// this pass: an agent resuming is about to read the branch and the pull
-    /// request for itself.
-    async fn live_integrator(&mut self, task: &Task) -> anyhow::Result<Option<AgentSession>> {
+    /// What a poll does about a review depends on whether an agent is already
+    /// working on it, and that question has to be answerable without starting
+    /// one: a review with comments on it is answered by the engineer, and the
+    /// task leaves `integrating` without an integrator being wanted at all.
+    async fn integrator_session(&self, task: &Task) -> anyhow::Result<Option<AgentSession>> {
         let sessions = self
             .store
             .list_sessions(SessionFilter {
@@ -1102,7 +1175,21 @@ impl Scheduler {
                 ..Default::default()
             })
             .await?;
-        if let Some(integrator) = sessions.into_iter().find(|s| s.role() == Role::Integrator) {
+        Ok(sessions.into_iter().find(|s| s.role() == Role::Integrator))
+    }
+
+    /// The integrator working on this task, started if there is none.
+    ///
+    /// `found` is what [`Self::integrator_session`] already answered this
+    /// pass, so the question is not asked twice. `None` means one was just
+    /// started and there is nothing else to decide this pass: an agent
+    /// resuming is about to read the branch and the pull request for itself.
+    async fn live_integrator(
+        &mut self,
+        task: &Task,
+        found: Option<AgentSession>,
+    ) -> anyhow::Result<Option<AgentSession>> {
+        if let Some(integrator) = found {
             return Ok(Some(integrator));
         }
         info!(task = %task.id, "no live integrator for a task with a pull request, starting one");
@@ -1493,14 +1580,21 @@ struct Poll {
     state: PrState,
 }
 
-/// What the integrator is woken with when humans have written on the review:
-/// what they wrote, quoted, and what to do with it.
+/// What the humans wrote on the review, as the round of requested changes the
+/// engineer is sent back with.
 ///
-/// Quoted rather than pointed at, for the reason a delivered message is
-/// quoted whole: an agent told only that there is something to go and read
-/// has been woken for nothing. What to do about it is in its own briefing —
-/// this says which of the situations it was briefed for has happened.
-fn pr_feedback_instruction(watched: &WatchedPr, feedback: &[Feedback]) -> String {
+/// Quoted verbatim rather than pointed at, for the reason a delivered message
+/// is quoted whole: an agent sent to go and read what it was woken for has
+/// been woken for nothing — and here there is nothing to send it to, since
+/// the branch is on a forge and the comments were read by the daemon. Every
+/// entry carries who wrote it, and where on the diff it hangs when that is
+/// where it was written.
+///
+/// What to do with them is spelled out here rather than in the engineer's
+/// briefing, because it is particular to a published request: the commits
+/// people are reading stay where they are, and the answer to each comment
+/// goes into the summary the engineer hands back.
+fn pr_feedback_review(watched: &WatchedPr, feedback: &[Feedback]) -> String {
     let quoted = feedback
         .iter()
         .map(|f| {
@@ -1509,7 +1603,18 @@ fn pr_feedback_instruction(watched: &WatchedPr, feedback: &[Feedback]) -> String
             } else {
                 "commented"
             };
-            format!("### {} {what}\n{}", f.author, f.body.trim())
+            let at = match &f.file {
+                Some(file) => format!(" on {file}"),
+                None => String::new(),
+            };
+            let body = f
+                .body
+                .trim()
+                .lines()
+                .map(|line| format!("> {line}").trim_end().to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!("### {} {what}{at}\n{body}", f.author)
         })
         .collect::<Vec<_>>()
         .join("\n\n");
@@ -1517,20 +1622,17 @@ fn pr_feedback_instruction(watched: &WatchedPr, feedback: &[Feedback]) -> String
     let plural = if count == 1 { "comment" } else { "comments" };
     let label = watched.label();
     let noun = watched.forge.noun();
-    // Where the rest of what was said is, in the words of the CLI the
-    // integrator has: an agent sent to read more is sent to the right place.
-    let reread = match watched.forge {
-        Forge::GitHub => "`gh pr view --comments` and the inline review threads",
-        Forge::GitLab => "`glab mr view --comments` and the diff's discussion threads",
-    };
     format!(
-        "{label} has {count} new {plural} to relay:\n\n\
+        "{label} ({url}) has {count} new {plural} from the humans reviewing it:\n\n\
          {quoted}\n\n\
-         Relay every comment that asks for something with the `return_to_engineer` MCP tool, \
-         quoted and attributed. Write no code; read the {noun} first with {reread} if you need \
-         the code they mean. If none asks for a change — a bot notice, a thank-you — report \
-         that in the task thread with the `post_message` MCP tool instead of sending the task \
-         back. Your turn ends either way."
+         Every one of them is yours to answer: change the code where it asks for a change, and \
+         where it does not — a question, a suggestion you disagree with — say why the code stays \
+         as it is. The {noun} is published and people are reading the commits on it, so add new \
+         commits on top of them: no `commit --amend`, no rebase, no forced push over what they \
+         have already seen. Then call `request_review` with a summary that replies to every \
+         comment above, naming its author the way this does — that summary is what they are \
+         answered with.",
+        url = watched.url,
     )
 }
 
@@ -1597,54 +1699,69 @@ mod tests {
         }
     }
 
-    /// The wake instruction is the whole of what the integrator knows when it
-    /// comes back: every comment quoted with its author, and what to do about
-    /// them in one readable paragraph — no run-on whitespace from a template
-    /// that got folded wrong.
+    /// The send-back is the whole of what the engineer reads: every comment
+    /// quoted verbatim with its author and, where it hangs on the diff, its
+    /// file and line — and what to do about them in one readable paragraph,
+    /// with no run-on whitespace from a template that got folded wrong.
     #[test]
-    fn the_wake_instruction_quotes_every_comment_it_was_woken_for() {
-        let instruction = pr_feedback_instruction(
+    fn the_send_back_quotes_every_comment_that_was_written_on_the_review() {
+        let review = pr_feedback_review(
             &pull_request(),
             &[
                 Feedback {
                     id: "C1".into(),
                     author: "maria".into(),
                     body: "why a new module?".into(),
+                    file: None,
                     blocking: false,
                 },
                 Feedback {
                     id: "RC2".into(),
                     author: "jon".into(),
-                    body: "src/board.rs: this allocates per row".into(),
+                    body: "this allocates per row\n\nand the row is hot".into(),
+                    file: Some("src/board.rs:42".into()),
                     blocking: true,
                 },
             ],
         );
-        assert!(instruction.contains("2 new comments"), "{instruction}");
-        assert!(instruction.contains("### maria commented"), "{instruction}");
+        assert!(review.contains("Pull request #12"), "{review}");
         assert!(
-            instruction.contains("### jon requested changes"),
-            "{instruction}"
+            review.contains("https://github.com/owner/repo/pull/12"),
+            "{review}"
+        );
+        assert!(review.contains("2 new comments"), "{review}");
+        assert!(
+            review.contains("### maria commented\n> why a new module?"),
+            "{review}"
         );
         assert!(
-            instruction.contains("src/board.rs: this allocates per row"),
-            "{instruction}"
+            review.contains("### jon requested changes on src/board.rs:42"),
+            "{review}"
         );
-        assert!(instruction.contains("return_to_engineer"), "{instruction}");
-        assert!(instruction.contains("gh pr view"), "{instruction}");
-        assert!(!instruction.contains("glab"), "{instruction}");
-        assert!(!instruction.contains("  "), "{instruction}");
+        // Verbatim, every line of it, and the empty line between them is a
+        // quote too rather than the end of the quotation.
+        assert!(
+            review.contains("> this allocates per row\n>\n> and the row is hot"),
+            "{review}"
+        );
+        // What to do with them, and nothing about relaying anything: no agent
+        // stands between the comments and the engineer any more.
+        assert!(review.contains("`request_review`"), "{review}");
+        assert!(review.contains("no `commit --amend`"), "{review}");
+        assert!(!review.contains("return_to_engineer"), "{review}");
+        assert!(!review.contains("  "), "{review}");
 
-        let one = pr_feedback_instruction(
+        let one = pr_feedback_review(
             &pull_request(),
             &[Feedback {
                 id: "C1".into(),
                 author: "maria".into(),
                 body: "why?".into(),
+                file: None,
                 blocking: false,
             }],
         );
-        assert!(one.contains("1 new comment to relay"), "{one}");
+        assert!(one.contains("1 new comment from the humans"), "{one}");
     }
 
     /// The delivery nudge carries the message itself, not a pointer to go
@@ -1691,27 +1808,30 @@ mod tests {
     /// `gh` is not that CLI.
     #[test]
     fn a_merge_request_is_named_and_reread_the_gitlab_way() {
-        let instruction = pr_feedback_instruction(
+        let review = pr_feedback_review(
             &merge_request(),
             &[Feedback {
                 id: "N1".into(),
                 author: "maria".into(),
-                body: "src/board.rs: why a new module?".into(),
+                body: "why a new module?".into(),
+                file: Some("src/board.rs:7".into()),
                 blocking: true,
             }],
         );
         assert!(
-            instruction.contains("Merge request !12 has 1 new comment to relay"),
-            "{instruction}"
+            review.contains("Merge request !12 (https://gitlab.com/owner/repo/-/merge_requests/12) has 1 new comment"),
+            "{review}"
         );
         assert!(
-            instruction.contains("### maria requested changes"),
-            "{instruction}"
+            review.contains("### maria requested changes on src/board.rs:7"),
+            "{review}"
         );
-        assert!(instruction.contains("glab mr view"), "{instruction}");
-        assert!(!instruction.contains("gh pr view"), "{instruction}");
-        assert!(instruction.contains("return_to_engineer"), "{instruction}");
-        assert!(!instruction.contains("  "), "{instruction}");
+        assert!(
+            review.contains("The merge request is published"),
+            "{review}"
+        );
+        assert!(!review.contains("pull request"), "{review}");
+        assert!(!review.contains("  "), "{review}");
 
         let merged = pr_merged_instruction(&merge_request(), "main");
         assert!(
