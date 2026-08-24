@@ -1975,8 +1975,11 @@ impl Scheduler {
     /// exactly one of them, which is the point of asking here rather than in
     /// either.
     ///
-    /// `revival` is what a planner or a reviewer is put back on its feet
-    /// with; an engineer and an integrator have a resume of their own.
+    /// `revival` is the resume its profile renders — the same text the caller
+    /// would nudge it with, since an agent that has gone quiet and one whose
+    /// session ended are in the same situation. A planner and a reviewer are
+    /// put back on their feet with it; an engineer and an integrator go
+    /// through the arm that renders it for itself.
     async fn check_running_session(
         &mut self,
         session: &AgentSession,
@@ -2130,11 +2133,11 @@ impl Scheduler {
     /// session row relaunched on the agent conversation it was already having.
     ///
     /// An engineer and an integrator are started the way a task with no live
-    /// agent of their role is started — [`Self::start_role`], which is where
-    /// what each of them is resumed with lives, the instruction for a
-    /// published request included. A planner and a reviewer have no such
-    /// path: they are revived with what the nudge would have carried, through
-    /// the same `revive_session` a message addressed to a dead agent takes.
+    /// agent of their role is started — [`Self::start_role`], which renders
+    /// what each of them is picked up with, the published request's account
+    /// included. A planner and a reviewer have no such path: they are revived
+    /// with the resume the caller already rendered, through the same
+    /// `revive_session` a message addressed to a dead agent takes.
     ///
     /// What the user is owed outlives the relaunch. Putting an agent back on
     /// its feet drops the row's attention (`restart_session`), which is right

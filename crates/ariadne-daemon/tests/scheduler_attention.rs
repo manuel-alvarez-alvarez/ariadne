@@ -1780,8 +1780,9 @@ async fn a_running_agent_that_stopped_reporting_is_flagged_and_then_relaunched()
         "the relaunch resumes the conversation it was having: {argv}"
     );
     assert!(
-        argv.contains("continue this task on the same branch"),
-        "and carries the instruction its role is resumed with: {argv}"
+        argv.contains(&task.branch) && argv.contains("request_review"),
+        "and carries the resume its role is picked up with, rendered for this \
+         task: {argv}"
     );
 }
 
