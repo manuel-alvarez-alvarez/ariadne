@@ -59,25 +59,32 @@ pub fn default_system_prompt(role: Role) -> &'static str {
 /// The default text of `kind`, or `None` when a profile of `role` does not own
 /// that kind of prompt.
 pub fn default_prompt(role: Role, kind: PromptKind) -> Option<&'static str> {
-    (kind.role() == role).then(|| prompt_text(kind))
+    kind.owned_by(role).then(|| default_prompt_text(kind))
 }
 
 /// Every prompt a profile of `role` starts with, in briefing order.
 pub fn default_prompts(role: Role) -> impl Iterator<Item = (PromptKind, &'static str)> {
     PromptKind::for_role(role)
         .iter()
-        .map(|kind| (*kind, prompt_text(*kind)))
+        .map(|kind| (*kind, default_prompt_text(*kind)))
 }
 
-fn prompt_text(kind: PromptKind) -> &'static str {
+/// The default text of `kind`, whichever role is reading it: what every
+/// profile that owns the kind is seeded with, and what is fallen back on when
+/// a profile has no row for it.
+pub fn default_prompt_text(kind: PromptKind) -> &'static str {
     match kind {
         PromptKind::PlannerBriefing => PLANNER_BRIEFING,
+        PromptKind::PlannerResume => PLANNER_RESUME,
         PromptKind::EngineerBriefing => ENGINEER_BRIEFING,
+        PromptKind::EngineerResume => ENGINEER_RESUME,
         PromptKind::ChangesRequested => CHANGES_REQUESTED,
         PromptKind::ReviewerBriefing => REVIEWER_BRIEFING,
         PromptKind::ReviewerResume => REVIEWER_RESUME,
         PromptKind::IntegrationInstructions => INTEGRATION_INSTRUCTIONS,
         PromptKind::IntegrationResume => INTEGRATION_RESUME,
+        PromptKind::IntegrationMerged => INTEGRATION_MERGED,
+        PromptKind::MessageDelivery => MESSAGE_DELIVERY,
     }
 }
 
@@ -206,6 +213,12 @@ const PLANNER_BRIEFING: &str = r#"# Goal: {goal_title}
 
 Discuss the goal with the user in this terminal, then break it into tasks with `create_task`, each with acceptance criteria and how to verify them. Call `finalize_plan` once the user agrees the plan is done."#;
 
+/// What a planner that has gone quiet is picked up with: the goal is still in
+/// planning, so there is exactly one thing left to do with it, and this says
+/// which two calls end it. A nudge, not a briefing: the goal itself is what
+/// the session was started on and has already read.
+const PLANNER_RESUME: &str = r#"Keep planning "{goal_title}": create the tasks it still needs with `create_task`, or `finalize_plan` once the user agrees the plan is complete. If you are waiting on the user, `post_message` to "user" asks them rather than sitting idle."#;
+
 /// Initial briefing of an engineer session.
 const ENGINEER_BRIEFING: &str = r#"# Task: {task_title}
 
@@ -221,12 +234,26 @@ const ENGINEER_BRIEFING: &str = r#"# Task: {task_title}
 
 Implement the task on this branch, commit as you go, and call `request_review` with a summary when complete. The acceptance criteria above are what the reviewers will check."#;
 
-/// Resume briefing of an engineer after change requests.
-const CHANGES_REQUESTED: &str = r#"Reviewers requested changes on your task.
+/// What an engineer holding unfinished work is picked up with, in both
+/// situations there are: a session that ended and is being started again, and
+/// one that is merely sitting idle with the task still open. Neither wants the
+/// task read out to it again — it is in the worktree and in the conversation —
+/// so this says where the work stands and what ends it.
+const ENGINEER_RESUME: &str = r#"Pick "{task_title}" up again: your worktree is on {branch}, and `git status` and `git log` say where the last session left it. Carry on from there until the work is complete and verified, then `request_review`. If something is blocking you, `post_message` says so instead of stalling."#;
+
+/// Resume briefing of an engineer with a round of requested changes, wherever
+/// they were written.
+///
+/// One round can come from the reviewers Ariadne started, and one from the
+/// people reading a published pull or merge request; `{feedback}` carries
+/// whichever it is, each entry under a heading naming who wrote it. What a
+/// published branch may be done to is the engineer's playbook to say, not this
+/// text's.
+const CHANGES_REQUESTED: &str = r#"Changes were requested on your task.
 
 {feedback}
 
-Apply them on the same branch, commit, and call `request_review` again, saying how each point was addressed."#;
+Apply them on the same branch and commit, then `request_review` again, answering every point above — where you disagree with one, say why the code stays as it is instead of changing it."#;
 
 /// Initial briefing of an integrator session, and the one place the procedure
 /// is spelled out.
@@ -289,22 +316,38 @@ Once published, Ariadne wakes you in one of two situations, saying which. Commen
 - **The revision was approved and the task is yours again.** Update the request already open — never a second one, and never by rewriting a commit a human has read: `git fetch <remote> {base_branch} && git merge --no-edit <remote>/{base_branch}` in your worktree, then a plain `git push <remote> {branch}`, never forced, never a `rebase` or a `commit --amend` over what is published. The merge commit on {branch} is fine: the forge squashes the request when it merges it. On a conflict, do not resolve it: name the files with `git diff --name-only --diff-filter=U`, then `git merge --abort` and `return_to_engineer` with them and what to reconcile. Otherwise `post_message` to "user" one message carrying the request's URL and the engineer's replies to the comments verbatim, one per comment, so they can answer on the request themselves — the wake instruction quotes those replies — and end your turn.
 - **The request was merged.** Finish the task: `git -C {repo_path} fetch <remote>`, fast-forward the local base (`git -C {repo_path} merge --ff-only <remote>/{base_branch}`), then `mark_merged` with the sha it landed as (`git -C {repo_path} rev-parse {base_branch}`), which the daemon verifies."#;
 
-/// Resume briefing of an integrator coming back to a task it already tried to
-/// land: after a send-back the engineer revised it, and after a daemon restart
-/// the base — or the request already open on the forge — may simply have
-/// moved. Either way what it read last time is stale, and a request that
-/// already exists is the one to update — in place, by the merge the
-/// instructions spell out, never by rewriting what it already shows.
-const INTEGRATION_RESUME: &str = r#"Pick the integration of "{task_title}" up again: it is approved and yours to land, in {repo_path}. Your worktree is on {branch}, which has moved if the engineer revised the change.
+/// What an integrator holding an unlanded task is picked up with, in both
+/// situations there are: a task whose landing nobody has started yet — after a
+/// send-back the engineer revised, or after a daemon restart — and a published
+/// request whose revision the engineer has just answered.
+///
+/// The two differ in what has already happened, not in what to do, so what is
+/// here is the state (`{request}` is the pull or merge request Ariadne has
+/// recorded, or that there is none) and the check that settles the rest. The
+/// procedure itself is [`INTEGRATION_INSTRUCTIONS`]', which the session was
+/// briefed with and is pointed back at: a published request is updated in
+/// place, one that does not exist yet is opened, and the rules for either are
+/// stated once, over there.
+///
+/// `{summary}` is the engineer's own account of the revision. Where a request
+/// is open it is its replies to the people reading it, quoted here whole so
+/// the agent has nothing to compose and nothing to look up — the message it
+/// writes to the user carries them verbatim, since Ariadne has no account on
+/// the forge to answer with.
+const INTEGRATION_RESUME: &str = r#"Pick the integration of "{task_title}" up again: it is approved and yours to land, in {repo_path}. Your worktree is on {branch}, which has moved if the engineer revised the change. Ariadne has recorded {request}.
 
-Check first whether it was already published — `gh pr list --head {branch} --state all` on GitHub, `glab mr list --source-branch {branch} --all` on GitLab.
+Check what is open before you touch anything — `gh pr list --head {branch} --state all` on GitHub, `glab mr list --source-branch {branch} --all` on GitLab — then go on from your integration instructions: an open {noun} is the one to update, never a second one, and with none open the task is landed the way they say. Then end your turn.
 
-- If a pull or merge request exists, update that one and never open a second, exactly as your integration instructions say a published request is updated: `git fetch <remote> {base_branch} && git merge --no-edit <remote>/{base_branch}`, then a plain `git push <remote> {branch}`, never forced and never rewriting a commit it already shows. Then `post_message` to "user" that it is updated and ready to look at again.
-- If none does, land the task as your integration instructions say, from the forge check (`gh auth status` / `glab auth status`) onward: publish it and `record_pull_request` the URL, or, with no forge to publish to, rebase, squash by the repository's commit conventions, fast-forward the base from the primary checkout and `mark_merged` with the resulting sha.
+The engineer's summary of this revision is below. Where a {noun} is open it is its replies to the people reading it, and the one message you `post_message` to "user" carries it verbatim, so they can answer on the {noun} themselves.
 
-Whatever you write for the forge or for the commit that lands reads as a human contributor's work: no `Co-Authored-By`, `Generated with` or other authorship or tool trailer and no mention of Ariadne, agents, models or tooling.
+## The engineer's summary, as it wrote it
 
-End your turn afterwards: Ariadne watches a published request and wakes you when a human merges it; what they write on it in the meantime goes to the engineer, not to you. If the rebase or the merge conflicts, abort it and `return_to_engineer` with the conflicting files and what to reconcile."#;
+{summary}"#;
+
+/// What the integrator is woken with once a human has merged the request it
+/// published: the last thing the task needs is the sha it landed as, and the
+/// commands that get there are the instructions' to state.
+const INTEGRATION_MERGED: &str = r#"{request} was merged on {forge}. Finish "{task_title}" off {base_branch} in {repo_path}, the way your integration instructions say a merged request is finished, and `mark_merged` with the sha it landed as. The daemon verifies the merge against {forge}, so report it truthfully."#;
 
 /// Initial briefing of a reviewer session.
 const REVIEWER_BRIEFING: &str = r#"# Review task: {task_title} (round {review_round})
@@ -319,14 +362,29 @@ const REVIEWER_BRIEFING: &str = r#"# Review task: {task_title} (round {review_ro
 
 Review the change with `get_diff` and the code around it, then submit exactly one verdict for round {review_round}: `approve` or `request_changes`."#;
 
-/// Resume briefing of a reviewer whose worktree moved under it: what it
-/// read last round is stale, and the verdict it owes belongs to a new round.
-const REVIEWER_RESUME: &str = r#"The engineer revised the change: this is review round {review_round} of "{task_title}".
+/// What a reviewer that owes a verdict is picked up with, in both situations
+/// there are: a later round, where the engineer revised the change under its
+/// worktree, and a round it has simply gone quiet in. Either way the diff it
+/// last read may be stale and the verdict is still outstanding, so this says
+/// both and nothing else — the task itself is what its first briefing was for.
+const REVIEWER_RESUME: &str = r#"Your verdict is what review round {review_round} of "{task_title}" is waiting on.
 
-Your worktree has moved to the new tip of {branch}: last round's diff is stale. Fetch it again with `get_diff`, review the change as it stands — checking whether your feedback was addressed — and submit exactly one verdict for round {review_round}: `approve` or `request_changes`.
+Your worktree is on the tip of {branch}, which has moved if the engineer revised the change: fetch the diff again with `get_diff`, review the change as it stands — checking whether your feedback was addressed — and submit exactly one verdict for review round {review_round}: `approve` or `request_changes`.
 
-## Engineer's summary of this revision
+## The engineer's summary of what it last did
 {summary}"#;
+
+/// The notice an agent of any role is woken with when a message addresses it.
+///
+/// The message is quoted whole rather than pointed at: an agent sent to go and
+/// read what it was woken for has been woken for nothing. `{thread}` is the
+/// conversation it was written in, and the two tools are named as the tool
+/// calls they are, since a woken agent answers in the same breath.
+const MESSAGE_DELIVERY: &str = r#"New message from the {author} in {thread}:
+
+{body}
+
+Read the rest with `list_messages`, answer with `post_message` — both MCP tools."#;
 
 #[cfg(test)]
 mod tests {
@@ -418,6 +476,67 @@ mod tests {
             assert!(
                 integrator.contains(landing),
                 "the integrator has no {landing}"
+            );
+        }
+    }
+
+    /// Every rule an agent is briefed with is written down once.
+    ///
+    /// The briefings are the one prompt system now — a nudge, a resume and a
+    /// wake instruction are templates like the briefings that start a session
+    /// — and the way that stays readable is that each rule lives in the kind
+    /// that needs it and is pointed back at from the others. A rule restated
+    /// in a second kind is a rule that goes stale in one of them.
+    ///
+    /// The system prompts are not part of this: they state the role's own
+    /// standing rules, and a briefing is free to work from what its playbook
+    /// already said.
+    #[test]
+    fn each_rule_is_stated_in_exactly_one_briefing() {
+        // What a published branch may be done to, what an agent reaches
+        // Ariadne with, and what ends a piece of engineering work.
+        for marker in [
+            "git merge --no-edit",
+            "never forced",
+            "git rebase --abort",
+            "MCP tools",
+            "`request_review` with a summary",
+        ] {
+            let kinds = PromptKind::ALL
+                .into_iter()
+                .filter(|kind| default_prompt_text(*kind).contains(marker))
+                .map(|kind| kind.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                kinds.len(),
+                1,
+                "\"{marker}\" is stated in {kinds:?}, not in one briefing"
+            );
+        }
+    }
+
+    /// And what picks an agent up again is a nudge, not the briefing over:
+    /// a resumed agent has its task, its goal and its conversation already,
+    /// and a wall of text typed into its pane buries the one line that says
+    /// what changed.
+    #[test]
+    fn the_resume_briefings_stay_short() {
+        for kind in [
+            PromptKind::PlannerResume,
+            PromptKind::EngineerResume,
+            PromptKind::ReviewerResume,
+            PromptKind::IntegrationResume,
+            PromptKind::IntegrationMerged,
+            PromptKind::MessageDelivery,
+        ] {
+            // The engineer's summary and the message body travel inside two of
+            // them, so what is measured is the template, placeholders and all.
+            let text = default_prompt_text(kind);
+            assert!(
+                text.len() < 1000,
+                "the {} template is {} characters: it briefs rather than nudges",
+                kind.as_str(),
+                text.len()
             );
         }
     }
@@ -524,7 +643,7 @@ mod tests {
             "return_to_engineer",
             "mark_merged",
             "git merge --no-edit <remote>/{base_branch}",
-            "never open a second",
+            "never a second one",
         ] {
             assert!(whole.contains(shared), "the integrator has no {shared}");
         }
