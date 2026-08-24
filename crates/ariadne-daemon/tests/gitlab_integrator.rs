@@ -877,7 +877,9 @@ async fn discussion_notes_reach_the_engineer_once_each() {
     // Revised and approved again, the integrator gets the task back with the
     // resume briefing that tells it to merge the base into the branch and
     // push it to the merge request it already opened, never rewriting what the
-    // humans reading it have already seen.
+    // humans reading it have already seen. Its session died with the
+    // send-back, so this is also the other half of the poll's job: a quiet
+    // review whose task has no live integrator gets one started for it.
     let worktree = PathBuf::from(
         h.store
             .get_task(&task.id)
@@ -947,6 +949,65 @@ async fn discussion_notes_reach_the_engineer_once_each() {
         engineer_launched_at,
         "the engineer was resumed for notes it had already been given"
     );
+}
+
+/// The same on a daemon that restarted: a published request with notes
+/// waiting on it has no live integrator to poll around, and none is started
+/// for it — the notes are the engineer's, and an agent stood up for a task
+/// that is leaving `integrating` in the same breath is the hop this avoids.
+#[tokio::test]
+async fn notes_waiting_on_a_task_with_no_live_integrator_start_none() {
+    let h = harness().await;
+    let (task, reviewer) = h.task().await;
+    let integrator = h.hand_to_the_integrator(&task, &reviewer).await;
+    h.publish(&task, &integrator.id).await;
+
+    // The daemon went down and came back: the pane the integrator was in is
+    // gone, and its session row with it.
+    h.store
+        .set_session_status(&integrator.id, SessionStatus::Exited)
+        .await
+        .unwrap();
+    let launched_at = h
+        .store
+        .get_session(&integrator.id)
+        .await
+        .unwrap()
+        .launched_at;
+
+    h.merge_request(open_merge_request());
+    h.discussions(
+        r#"[{"id":"d1","notes":[{"id":101,"author":{"username":"maria"},"body":"why a new module?",
+             "system":false,"resolvable":false,"resolved":false}]},
+           {"id":"d2","notes":[{"id":102,"author":{"username":"jon"},"body":"this allocates per row",
+             "system":false,"resolvable":true,"resolved":false,
+             "position":{"new_path":"src/board.rs","old_path":"src/board.rs","new_line":42}}]}]"#,
+    );
+    h.notify(&task.id);
+
+    eventually("the engineer to be resumed with the notes", async || {
+        h.status(&task.id).await == TaskStatus::InProgress
+            && h.live_session(&task.id, Role::Engineer).await.is_some()
+    })
+    .await;
+    let engineer = h.live_session(&task.id, Role::Engineer).await.unwrap();
+    let argv = h.launched_argv(&engineer.id);
+    assert!(argv.contains("> why a new module?"), "{argv}");
+    assert!(
+        argv.contains("### jon requested changes on src/board.rs:42"),
+        "{argv}"
+    );
+
+    // Nothing was started for the request and nothing was relaunched: the
+    // session that died stays dead.
+    assert_eq!(
+        h.sessions(&task.id, Role::Integrator).await.len(),
+        1,
+        "an integrator was started for notes that were the engineer's"
+    );
+    let after = h.store.get_session(&integrator.id).await.unwrap();
+    assert_eq!(after.status(), SessionStatus::Exited);
+    assert_eq!(after.launched_at, launched_at);
 }
 
 /// A repository with no GitLab remote — or a `glab` that cannot answer for it

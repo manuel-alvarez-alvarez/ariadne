@@ -906,21 +906,31 @@ impl Scheduler {
     /// relaunching its pane, and whatever it is doing on the branch right now
     /// is more current than a poll taken a moment ago. The next poll asks
     /// again.
+    ///
+    /// The poll comes before any of that, and before an integrator is started
+    /// for a task that has none — a daemon that restarts on a request with
+    /// comments waiting on it hands them to the engineer on that first pass,
+    /// rather than standing an agent up for a task that is leaving
+    /// `integrating` in the same breath. One is started once the poll has
+    /// said the task is still the integrator's.
     async fn watch_pull_request(&mut self, task: &Task, watched: &WatchedPr) -> anyhow::Result<()> {
         let number = watched.number;
-        let Some(integrator) = self.live_integrator(task).await? else {
-            // A task back from the engineer, or a daemon that restarted: the
-            // integrator is started with its resume briefing, which tells it
-            // to update the review it already opened.
-            return Ok(());
-        };
+        // Whichever integrator is on the task already, asked for rather than
+        // started: what the poll below says may be that the task is leaving
+        // `integrating` altogether, and an agent started for that is an agent
+        // started to be killed. Starting one is what the tail of this does,
+        // once the poll has said the task is still the integrator's.
+        let integrator = self.integrator_session(task).await?;
         // The one watchdog that still applies: an agent whose instruction is
         // sitting unsubmitted in its composer has not started the turn this
         // arm woke it for, and no amount of polling will move it. The idle
         // half of the stall watch is what does not apply — an integrator with
         // a review open is waiting on people, not stalling.
-        if integrator.status() == SessionStatus::Running {
-            self.check_unstarted_turn(&integrator).await?;
+        if let Some(running) = integrator
+            .as_ref()
+            .filter(|s| s.status() == SessionStatus::Running)
+        {
+            self.check_unstarted_turn(running).await?;
         }
         let interval = std::time::Duration::from_secs(self.launcher.cfg.pr_poll_secs);
         let now = std::time::Instant::now();
@@ -955,23 +965,44 @@ impl Scheduler {
                 .set_task_pr_approved_notified(&task.id, false)
                 .await?;
         }
-        if poll.state != PrState::Quiet && integrator.status() != SessionStatus::Idle {
-            info!(task = %task.id, pr = number, session = %integrator.id, "the review moved while its integrator is working; leaving it to finish");
+        if poll.state != PrState::Quiet
+            && let Some(working) = integrator
+                .as_ref()
+                .filter(|s| s.status() != SessionStatus::Idle)
+        {
+            info!(task = %task.id, pr = number, session = %working.id, "the review moved while its integrator is working; leaving it to finish");
             return Ok(());
         }
+        // Comments wake nobody: they are the engineer's to answer, and the
+        // task is about to be its own again. Whether an integrator is running
+        // makes no difference to that — a task with none is exactly the case
+        // a daemon restart leaves behind, and starting one here only to have
+        // the transition kill it is the hop this whole arm exists to spare.
+        if let PrState::Feedback(feedback) = &poll.state {
+            info!(task = %task.id, pr = number, comments = feedback.len(), "the review was commented on; sending it to the engineer");
+            self.relay_pr_feedback(task, watched, feedback).await?;
+            return Box::pin(self.reconcile_task(&task.id)).await;
+        }
+
+        // The rest is the integrator's, and so is a quiet review: a published
+        // task being integrated keeps an agent on it, started here when a
+        // restart or a send-back left none. That is what pushes the next
+        // revision to the request, and what a merge is finished by.
+        let Some(integrator) = self.live_integrator(task, integrator).await? else {
+            // A task back from the engineer, or a daemon that restarted: the
+            // integrator is started with its resume briefing, which tells it
+            // to update the review it already opened.
+            return Ok(());
+        };
         match poll.state {
-            PrState::Quiet => {}
+            // Handled above, both of them: a quiet review asks for nothing.
+            PrState::Quiet | PrState::Feedback(_) => {}
             PrState::Merged => {
                 info!(task = %task.id, pr = number, "the review was merged; waking the integrator to finish the task");
                 self.launcher
                     .resume_integrator(&task.id, &pr_merged_instruction(watched, &repo.base_branch))
                     .await?;
                 self.spawn_failures.remove(&task.id);
-            }
-            PrState::Feedback(feedback) => {
-                info!(task = %task.id, pr = number, comments = feedback.len(), "the review was commented on; sending it to the engineer");
-                self.relay_pr_feedback(task, watched, &feedback).await?;
-                return Box::pin(self.reconcile_task(&task.id)).await;
             }
             PrState::Approved => {
                 info!(task = %task.id, pr = number, "the review is approved; telling the user it is theirs to merge");
@@ -1129,12 +1160,13 @@ impl Scheduler {
         }
     }
 
-    /// The integrator working on this task, started if there is none.
+    /// The integrator on this task, if one is live — asked, never started.
     ///
-    /// `None` means one was just started and there is nothing else to decide
-    /// this pass: an agent resuming is about to read the branch and the pull
-    /// request for itself.
-    async fn live_integrator(&mut self, task: &Task) -> anyhow::Result<Option<AgentSession>> {
+    /// What a poll does about a review depends on whether an agent is already
+    /// working on it, and that question has to be answerable without starting
+    /// one: a review with comments on it is answered by the engineer, and the
+    /// task leaves `integrating` without an integrator being wanted at all.
+    async fn integrator_session(&self, task: &Task) -> anyhow::Result<Option<AgentSession>> {
         let sessions = self
             .store
             .list_sessions(SessionFilter {
@@ -1143,7 +1175,21 @@ impl Scheduler {
                 ..Default::default()
             })
             .await?;
-        if let Some(integrator) = sessions.into_iter().find(|s| s.role() == Role::Integrator) {
+        Ok(sessions.into_iter().find(|s| s.role() == Role::Integrator))
+    }
+
+    /// The integrator working on this task, started if there is none.
+    ///
+    /// `found` is what [`Self::integrator_session`] already answered this
+    /// pass, so the question is not asked twice. `None` means one was just
+    /// started and there is nothing else to decide this pass: an agent
+    /// resuming is about to read the branch and the pull request for itself.
+    async fn live_integrator(
+        &mut self,
+        task: &Task,
+        found: Option<AgentSession>,
+    ) -> anyhow::Result<Option<AgentSession>> {
+        if let Some(integrator) = found {
             return Ok(Some(integrator));
         }
         info!(task = %task.id, "no live integrator for a task with a pull request, starting one");

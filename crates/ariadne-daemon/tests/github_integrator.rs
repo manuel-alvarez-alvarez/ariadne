@@ -829,7 +829,9 @@ async fn pull_request_comments_reach_the_engineer_once_each() {
     // Revised and approved again, the integrator gets the task back with the
     // resume briefing that tells it to merge the base into the branch and
     // push it to the pull request it already opened, never rewriting what the
-    // humans reading it have already seen.
+    // humans reading it have already seen. Its session died with the
+    // send-back, so this is also the other half of the poll's job: a quiet
+    // review whose task has no live integrator gets one started for it.
     let worktree = PathBuf::from(
         h.store
             .get_task(&task.id)
@@ -890,6 +892,74 @@ async fn pull_request_comments_reach_the_engineer_once_each() {
         engineer_launched_at,
         "the engineer was resumed for comments it had already been given"
     );
+}
+
+/// The same on a daemon that restarted: a published request with comments
+/// waiting on it has no live integrator to poll around, and none is started
+/// for it — the comments are the engineer's, and an agent stood up for a task
+/// that is leaving `integrating` in the same breath is the hop this avoids.
+#[tokio::test]
+async fn comments_waiting_on_a_task_with_no_live_integrator_start_none() {
+    let h = harness().await;
+    let (task, reviewer) = h.task().await;
+    let integrator = h.hand_to_the_integrator(&task, &reviewer).await;
+    let _: TaskDto = h
+        .json(
+            as_session(
+                &format!("/v1/tasks/{}/pull-request", task.id),
+                &integrator.id,
+                serde_json::json!({"url": PR_URL}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+
+    // The daemon went down and came back: the pane the integrator was in is
+    // gone, and its session row with it.
+    h.store
+        .set_session_status(&integrator.id, SessionStatus::Exited)
+        .await
+        .unwrap();
+    let launched_at = h
+        .store
+        .get_session(&integrator.id)
+        .await
+        .unwrap()
+        .launched_at;
+
+    let mut commented = open_pull_request();
+    commented["comments"] = serde_json::json!([{
+        "id": "C1", "author": {"login": "maria"}, "body": "why a new module?",
+    }]);
+    h.pull_request(commented);
+    h.review_comments(
+        r#"[{"id":21,"user":{"login":"jon"},"body":"this allocates per row","path":"src/board.rs","line":42}]"#,
+    );
+    h.notify(&task.id);
+
+    eventually("the engineer to be resumed with the comments", async || {
+        h.status(&task.id).await == TaskStatus::InProgress
+            && h.live_session(&task.id, Role::Engineer).await.is_some()
+    })
+    .await;
+    let engineer = h.live_session(&task.id, Role::Engineer).await.unwrap();
+    let argv = h.launched_argv(&engineer.id);
+    assert!(argv.contains("> why a new module?"), "{argv}");
+    assert!(
+        argv.contains("### jon commented on src/board.rs:42"),
+        "{argv}"
+    );
+
+    // Nothing was started for the request and nothing was relaunched: the
+    // session that died stays dead.
+    assert_eq!(
+        h.sessions(&task.id, Role::Integrator).await.len(),
+        1,
+        "an integrator was started for comments that were the engineer's"
+    );
+    let after = h.store.get_session(&integrator.id).await.unwrap();
+    assert_eq!(after.status(), SessionStatus::Exited);
+    assert_eq!(after.launched_at, launched_at);
 }
 
 /// A repository with no GitHub remote — or a `gh` that cannot answer for it —
