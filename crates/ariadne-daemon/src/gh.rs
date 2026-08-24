@@ -147,23 +147,38 @@ impl StatusCheck {
             .map_or_else(|| "a check".to_string(), str::to_string)
     }
 
+    /// Whether GitHub says it has not finished: a check run queued or in
+    /// progress, a commit status still pending or expected to be posted.
+    ///
+    /// A queued rerun of a job that failed last time still carries the old
+    /// conclusion, so what says it has not finished is the status beside it.
+    fn is_pending(&self) -> bool {
+        let running =
+            |s: &str| s.eq_ignore_ascii_case("QUEUED") || s.eq_ignore_ascii_case("IN_PROGRESS");
+        if self.status.as_deref().is_some_and(running) {
+            return true;
+        }
+        self.conclusion
+            .as_deref()
+            .or(self.state.as_deref())
+            .map(str::trim)
+            .is_some_and(|v| {
+                v.eq_ignore_ascii_case("PENDING") || v.eq_ignore_ascii_case("EXPECTED")
+            })
+    }
+
     /// The verdict it finished with, if it has finished: a check run's
     /// conclusion once its status says `COMPLETED`, a commit status's state
     /// once that is anything but `PENDING`.
     fn verdict(&self) -> Option<&str> {
-        let running =
-            |s: &str| s.eq_ignore_ascii_case("QUEUED") || s.eq_ignore_ascii_case("IN_PROGRESS");
-        if self.status.as_deref().is_some_and(running) {
+        if self.is_pending() {
             return None;
         }
-        let verdict = self
-            .conclusion
+        self.conclusion
             .as_deref()
             .or(self.state.as_deref())
             .map(str::trim)
-            .filter(|v| !v.is_empty())?;
-        (!verdict.eq_ignore_ascii_case("PENDING") && !verdict.eq_ignore_ascii_case("EXPECTED"))
-            .then_some(verdict)
+            .filter(|v| !v.is_empty())
     }
 
     /// Whether GitHub is reporting it as red. Anything it has not finished,
@@ -265,13 +280,16 @@ impl PullRequest {
     }
 
     /// What GitHub says about the branch itself: whether it still merges into
-    /// its base, and which of its checks are red.
+    /// its base, which of its checks are red, and whether any of them has yet
+    /// to answer.
     ///
-    /// Both degrade to "nothing to see" rather than to a failure — a
+    /// Everything degrades to "nothing to see" rather than to a failure — a
     /// `mergeable` GitHub has not worked out yet, a rollup a repository with
     /// no checks answers empty, a conclusion this does not know: an engineer
     /// woken for a build nobody said had failed is an engineer woken for
-    /// nothing.
+    /// nothing. A check that has not finished is not nothing, though: it is
+    /// the one thing that holds an approval back without being handed to
+    /// anybody.
     pub fn health(&self) -> Health {
         let head = self.head_ref_oid.as_deref().filter(|s| !s.is_empty());
         let conflicting = self
@@ -283,6 +301,7 @@ impl PullRequest {
                 .as_deref()
                 .is_some_and(|m| m.eq_ignore_ascii_case(DIRTY));
         Health {
+            checks_pending: self.status_check_rollup.iter().any(StatusCheck::is_pending),
             conflict: conflicting.then(|| Conflict {
                 id: forge::conflict_id(head),
                 base: self
@@ -800,7 +819,7 @@ mod tests {
     #[test]
     fn the_check_rollup_is_read_as_red_only_where_github_says_red() {
         // Green, including the two conclusions GitHub's own merge button
-        // counts as green.
+        // counts as green: nothing failing and nothing left to wait for.
         for green in [
             serde_json::json!([check_run("build", "COMPLETED", "SUCCESS".into())]),
             serde_json::json!([check_run("lint", "COMPLETED", "SKIPPED".into())]),
@@ -808,13 +827,13 @@ mod tests {
             serde_json::json!([commit_status("ci/woodpecker", "SUCCESS")]),
         ] {
             assert!(
-                health(green.clone()).failed_checks.is_empty(),
-                "{green} was read as failing"
+                health(green.clone()).is_ready(),
+                "{green} was read as something to wait for"
             );
         }
 
-        // Pending, in each of the ways a check can be: neither passing nor
-        // failing, and nobody is woken for it.
+        // Pending, in each of the ways a check can be: nobody is woken for it,
+        // and nobody is told the pull request is ready either.
         for pending in [
             serde_json::json!([check_run("build", "IN_PROGRESS", serde_json::Value::Null)]),
             serde_json::json!([check_run("build", "QUEUED", serde_json::Value::Null)]),
@@ -823,11 +842,19 @@ mod tests {
             serde_json::json!([check_run("build", "IN_PROGRESS", "FAILURE".into())]),
             serde_json::json!([commit_status("ci/woodpecker", "PENDING")]),
             serde_json::json!([commit_status("ci/woodpecker", "EXPECTED")]),
+            // One still running beside one that passed is still one running.
+            serde_json::json!([
+                check_run("lint", "COMPLETED", "SUCCESS".into()),
+                check_run("build", "IN_PROGRESS", serde_json::Value::Null),
+            ]),
         ] {
+            let health = health(pending.clone());
             assert!(
-                health(pending.clone()).failed_checks.is_empty(),
+                health.failed_checks.is_empty(),
                 "{pending} was read as failing"
             );
+            assert!(health.checks_pending, "{pending} was read as finished");
+            assert!(!health.is_ready(), "{pending} was read as ready to merge");
         }
 
         // Cancelled is what a workflow that supersedes its own runs writes on
@@ -843,6 +870,10 @@ mod tests {
             assert!(
                 health(unknown.clone()).failed_checks.is_empty(),
                 "{unknown} was read as failing"
+            );
+            assert!(
+                health(unknown.clone()).is_ready(),
+                "a verdict this does not know is not something to wait for: {unknown}"
             );
         }
         assert!(
@@ -884,6 +915,63 @@ mod tests {
                 },
             ]
         );
+    }
+
+    /// The check that has not answered yet: nobody is sent back for it, and
+    /// nobody is told the pull request is theirs to merge over it.
+    ///
+    /// This is the state between the push and the verdict, and it is the one
+    /// an approved pull request spends every rebuild in: announcing it there
+    /// would send a person to a merge button that is about to turn red.
+    /// Nothing is said about the wait — the poll after it either finds the
+    /// branch green and announces it, or finds it red and hands it over.
+    #[test]
+    fn an_approval_over_a_check_still_running_waits_for_the_next_poll() {
+        let mut running = open_pr();
+        running["reviewDecision"] = "APPROVED".into();
+        running["statusCheckRollup"] = serde_json::json!([
+            check_run("lint", "COMPLETED", "SUCCESS".into()),
+            check_run("build", "IN_PROGRESS", serde_json::Value::Null),
+        ]);
+        assert_eq!(
+            poll_state(&parse(running.clone()), &[], &[], false),
+            PrState::Quiet,
+            "a pull request whose build is still running is not ready to merge"
+        );
+        // Nothing about it is relayable, so nothing is remembered of it: the
+        // poll finds the same request again and says the same thing.
+        assert_eq!(
+            poll_state(
+                &parse(running.clone()),
+                &[],
+                &["CHKabc123:build".into()],
+                false
+            ),
+            PrState::Quiet
+        );
+
+        // Finished green, and the approval goes out — the one announcement
+        // the whole wait was for.
+        let mut green = running.clone();
+        green["statusCheckRollup"] = serde_json::json!([
+            check_run("lint", "COMPLETED", "SUCCESS".into()),
+            check_run("build", "COMPLETED", "SUCCESS".into()),
+        ]);
+        assert_eq!(
+            poll_state(&parse(green), &[], &[], false),
+            PrState::Approved
+        );
+
+        // Finished red, and it is the engineer's instead.
+        let mut red = running;
+        red["statusCheckRollup"] = serde_json::json!([
+            check_run("lint", "COMPLETED", "SUCCESS".into()),
+            check_run("build", "COMPLETED", "FAILURE".into()),
+        ]);
+        assert!(matches!(
+            poll_state(&parse(red), &[], &[], false),
+            PrState::ChecksFailed(_)
+        ));
     }
 
     /// Mergeability, the same way: `CONFLICTING` is a conflict and so is the
@@ -1051,8 +1139,8 @@ mod tests {
         );
         assert_eq!(pr.review_decision.as_deref(), Some(""));
         assert!(
-            !pr.health().blocks_merge(),
-            "the fields this answer predates are absent, which is nothing failing"
+            pr.health().is_ready(),
+            "the fields this answer predates are absent, which is nothing standing in the way"
         );
         // Merged wins over the comment on it: what a comment is relayed for
         // is a revision, and there is nothing left to revise.

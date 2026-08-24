@@ -1606,6 +1606,36 @@ async fn a_failing_pipeline_goes_to_the_engineer_rather_than_to_the_user() {
     .await;
     h.goes_idle(&integrator.id).await;
 
+    // The revision is pushed and GitLab starts the pipeline over. While it
+    // runs the merge request is neither the engineer's — there is nothing to
+    // fix yet — nor the user's, and nothing at all is said about the wait.
+    let mut running = open_merge_request();
+    running["sha"] = "789abc".into();
+    running["head_pipeline"]["sha"] = "789abc".into();
+    running["head_pipeline"]["status"] = "running".into();
+    h.merge_request(running);
+    for _ in 0..3 {
+        h.notify(&task.id);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(
+        h.user_messages(&task.id).await.len(),
+        1,
+        "the user was told a merge request whose pipeline was still running was theirs to merge"
+    );
+    assert_eq!(
+        h.store
+            .list_reviews(&task.id, None)
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| r.verdict() == ReviewVerdict::RequestChanges)
+            .count(),
+        2,
+        "a pipeline that had not finished was sent back to the engineer"
+    );
+    assert_eq!(h.status(&task.id).await, TaskStatus::Integrating);
+
     let mut green = open_merge_request();
     green["sha"] = "789abc".into();
     green["head_pipeline"]["sha"] = "789abc".into();

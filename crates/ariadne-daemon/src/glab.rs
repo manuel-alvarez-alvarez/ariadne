@@ -38,10 +38,24 @@ const OPENED: &str = "opened";
 const CONFLICT: &str = "conflict";
 
 /// The one pipeline status that is a red branch. `canceled` is what a project
-/// that cancels its own superseded pipelines writes on every push, `skipped`
-/// and `manual` are pipelines nobody ran, and everything else — `created`,
-/// `pending`, `running`, `waiting_for_resource` — has not finished.
+/// that cancels its own superseded pipelines writes on every push, and
+/// `skipped` and `manual` are pipelines nobody ran.
 const FAILED: &str = "failed";
+
+/// The statuses of a pipeline that has not answered yet — which is neither a
+/// failure nor a branch anybody can merge.
+///
+/// `manual` is deliberately not one of them: a pipeline waiting for a person
+/// to press a job is not going to finish on its own, and a notice held back
+/// for it would be held back for good.
+const PENDING: [&str; 6] = [
+    "created",
+    "waiting_for_resource",
+    "preparing",
+    "pending",
+    "running",
+    "scheduled",
+];
 
 /// What the engineer is told the red thing is called: GitLab runs one
 /// pipeline over the merge result, so there is one of these rather than a
@@ -134,13 +148,16 @@ impl MergeRequest {
     }
 
     /// What GitLab says about the branch itself: whether it still merges into
-    /// its target, and whether its pipeline is red.
+    /// its target, whether its pipeline is red, and whether it is still
+    /// running.
     ///
-    /// Both degrade to "nothing to see" rather than to a failure — an
+    /// Everything degrades to "nothing to see" rather than to a failure — an
     /// instance that answers neither conflict field, a merge status still
     /// being checked, a merge request with no pipeline at all: an engineer
     /// woken for a build nobody said had failed is an engineer woken for
-    /// nothing.
+    /// nothing. A pipeline that has not finished is not nothing, though: it is
+    /// the one thing that holds an approval back without being handed to
+    /// anybody.
     pub fn health(&self) -> Health {
         let head = self.sha.as_deref().filter(|s| !s.is_empty());
         let conflicting = self.has_conflicts.unwrap_or(false)
@@ -150,6 +167,11 @@ impl MergeRequest {
                 .is_some_and(|s| s.eq_ignore_ascii_case(CONFLICT));
         let pipeline = self.head_pipeline.as_ref().or(self.pipeline.as_ref());
         Health {
+            checks_pending: pipeline.is_some_and(|p| {
+                PENDING
+                    .iter()
+                    .any(|pending| p.status.eq_ignore_ascii_case(pending))
+            }),
             conflict: conflicting.then(|| Conflict {
                 id: forge::conflict_id(head),
                 base: self
@@ -722,12 +744,18 @@ mod tests {
     /// heard of, no pipeline at all — is not.
     #[test]
     fn the_pipeline_is_read_as_red_only_where_gitlab_says_failed() {
+        // Green, and nothing left to wait for. `manual` is here rather than
+        // among the pending: a pipeline waiting for a person to press a job
+        // is not going to finish on its own, and a notice held back for it
+        // would be held back for good.
         for green in ["success", "skipped", "manual"] {
             assert!(
-                pipeline(green.into()).failed_checks.is_empty(),
-                "a {green} pipeline was read as failing"
+                pipeline(green.into()).is_ready(),
+                "a {green} pipeline was read as something to wait for"
             );
         }
+        // Still running: nobody is sent back for it, and nobody is told the
+        // merge request is theirs either.
         for pending in [
             "created",
             "waiting_for_resource",
@@ -736,24 +764,33 @@ mod tests {
             "running",
             "scheduled",
         ] {
+            let health = pipeline(pending.into());
             assert!(
-                pipeline(pending.into()).failed_checks.is_empty(),
+                health.failed_checks.is_empty(),
                 "a {pending} pipeline was read as failing"
+            );
+            assert!(
+                health.checks_pending,
+                "a {pending} pipeline was read as finished"
+            );
+            assert!(
+                !health.is_ready(),
+                "a {pending} pipeline was read as ready to merge"
             );
         }
         // Cancelled is what a project that supersedes its own pipelines
         // writes on every push, and a status this does not know is unknown.
         for unknown in ["canceled", "something_new", ""] {
             assert!(
-                pipeline(unknown.into()).failed_checks.is_empty(),
-                "a {unknown} pipeline was read as failing"
+                pipeline(unknown.into()).is_ready(),
+                "a {unknown} pipeline was read as failing or as something to wait for"
             );
         }
         // And a merge request with no pipeline at all, on a project with no
         // CI: absent, not failing.
         let mut none = open_mr();
         none["head_pipeline"] = serde_json::Value::Null;
-        assert!(mr(none).health().failed_checks.is_empty());
+        assert!(mr(none).health().is_ready());
         assert!(
             mr(serde_json::json!({"state": "opened"}))
                 .health()
@@ -779,6 +816,48 @@ mod tests {
         older["pipeline"]["status"] = "failed".into();
         older["head_pipeline"] = serde_json::Value::Null;
         assert_eq!(mr(older).health().failed_checks.len(), 1);
+    }
+
+    /// The pipeline that has not answered yet: nobody is sent back for it,
+    /// and nobody is told the merge request is theirs to merge over it.
+    ///
+    /// This is the state between the push and the verdict, and it is the one
+    /// an approved merge request spends every rebuild in: announcing it there
+    /// would send a person to a merge button that is about to turn red.
+    #[test]
+    fn an_approval_over_a_pipeline_still_running_waits_for_the_next_poll() {
+        let approved = approvals(&["maria"]);
+        let mut running = open_mr();
+        running["head_pipeline"]["status"] = "running".into();
+        assert_eq!(
+            poll_state(&mr(running.clone()), &approved, &[], &[], false),
+            PrState::Quiet,
+            "a merge request whose pipeline is still running is not ready to merge"
+        );
+        // Nothing about it is relayable, so nothing is remembered of it.
+        assert_eq!(
+            poll_state(
+                &mr(running.clone()),
+                &approved,
+                &[],
+                &["CHKabc123:pipeline".into()],
+                false
+            ),
+            PrState::Quiet
+        );
+
+        // Finished green, and the approval goes out.
+        assert_eq!(
+            poll_state(&mr(open_mr()), &approved, &[], &[], false),
+            PrState::Approved
+        );
+
+        // Finished red, and it is the engineer's instead.
+        running["head_pipeline"]["status"] = "failed".into();
+        assert!(matches!(
+            poll_state(&mr(running), &approved, &[], &[], false),
+            PrState::ChecksFailed(_)
+        ));
     }
 
     /// Mergeability, the same way: what GitLab calls a conflict is one, and
@@ -962,8 +1041,8 @@ mod tests {
         assert!(parsed.landing().merged);
         assert_eq!(parsed.landing().commits, vec!["5c81311ec8329".to_string()]);
         assert!(
-            !parsed.health().blocks_merge(),
-            "a mergeable merge request with no conflicts blocks nothing"
+            parsed.health().is_ready(),
+            "a mergeable merge request with a green pipeline blocks nothing"
         );
         // Merged wins over the notes on it: what a note is relayed for is a
         // revision, and there is nothing left to revise.

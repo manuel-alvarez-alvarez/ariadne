@@ -1329,10 +1329,10 @@ impl Scheduler {
                         Vec::new()
                     }
                 };
-                // Approved *and* mergeable: a red or conflicting branch is
-                // nobody's to press a button on, however many people signed
-                // it off.
-                let approved = pr.is_approved() && !pr.health().blocks_merge();
+                // Approved *and* ready: a branch that is red, conflicting or
+                // still building is nobody's to press a button on, however
+                // many people signed it off.
+                let approved = pr.is_approved() && pr.health().is_ready();
                 Some(Poll {
                     approved: Some(approved),
                     state: gh::poll_state(
@@ -1359,11 +1359,11 @@ impl Scheduler {
                 // than as withdrawn.
                 let (approvals, approved) = match glab_cli.mr_approvals(repo_path, watched).await {
                     Ok(approvals) => {
-                        // Approved *and* mergeable: a red or conflicting
-                        // branch is nobody's to press a button on, however
-                        // many people signed it off.
+                        // Approved *and* ready: a branch that is red,
+                        // conflicting or still building is nobody's to press
+                        // a button on, however many people signed it off.
                         let approved =
-                            approvals.is_approved() && mr.is_open() && !mr.health().blocks_merge();
+                            approvals.is_approved() && mr.is_open() && mr.health().is_ready();
                         (approvals, Some(approved))
                     }
                     Err(e) => {
@@ -2080,13 +2080,14 @@ impl Scheduler {
 /// What one poll of a review came back with.
 struct Poll {
     /// Whether the forge says nothing stands between it and its merge right
-    /// now — approved, still merging into its base, and not failing a check —
-    /// or `None` when this poll could not tell, since an answer that never
-    /// came is not an approval withdrawn.
+    /// now — approved, still merging into its base, and with every check it
+    /// has finished and green — or `None` when this poll could not tell,
+    /// since an answer that never came is not an approval withdrawn.
     ///
-    /// The mergeability is part of it because the notice it drives is "ready
-    /// for you to merge": a branch that went red after it was approved is not
-    /// that, and the flag comes back down until it is green again.
+    /// The state of the branch is part of it because the notice it drives is
+    /// "ready for you to merge": a branch that went red, stopped merging or
+    /// is building the revision somebody just pushed is not that, and the
+    /// flag comes back down until it is all three again.
     approved: Option<bool>,
     state: PrState,
 }

@@ -1636,6 +1636,39 @@ async fn a_failing_check_goes_to_the_engineer_rather_than_to_the_user() {
     .await;
     h.goes_idle(&integrator.id).await;
 
+    // The revision is pushed and GitHub starts the checks over. While they
+    // run the pull request is neither the engineer's — there is nothing to
+    // fix yet — nor the user's, and nothing at all is said about the wait.
+    let mut running = open_pull_request();
+    running["reviewDecision"] = "APPROVED".into();
+    running["headRefOid"] = "789abc".into();
+    running["statusCheckRollup"] = serde_json::json!([{
+        "__typename": "CheckRun", "name": "test", "status": "IN_PROGRESS", "conclusion": null,
+        "detailsUrl": "https://github.com/ariadne/ariadne/actions/runs/19/job/test",
+    }]);
+    h.pull_request(running);
+    for _ in 0..3 {
+        h.notify(&task.id);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(
+        h.user_messages(&task.id).await.len(),
+        1,
+        "the user was told a pull request whose checks were still running was theirs to merge"
+    );
+    assert_eq!(
+        h.store
+            .list_reviews(&task.id, None)
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| r.verdict() == ReviewVerdict::RequestChanges)
+            .count(),
+        2,
+        "a check that had not finished was sent back to the engineer"
+    );
+    assert_eq!(h.status(&task.id).await, TaskStatus::Integrating);
+
     let mut green = open_pull_request();
     green["reviewDecision"] = "APPROVED".into();
     green["headRefOid"] = "789abc".into();

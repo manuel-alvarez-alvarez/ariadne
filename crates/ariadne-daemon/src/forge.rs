@@ -207,11 +207,18 @@ pub struct Conflict {
 }
 
 /// What the forge says about the branch itself, beside what people wrote on
-/// it: whether it still merges into its base, and whether its checks pass.
+/// it: whether it still merges into its base, and how its checks stand.
 ///
 /// Every field is what the forge answered, not what a poll has already
 /// relayed: an approval is held back for a red branch however long ago its
 /// failure reached the engineer.
+///
+/// The three answers a check can give are kept apart, because they are asked
+/// for two different things. Failing is somebody's to fix, and goes to the
+/// engineer. Still running is nobody's — there is nothing to fix and nothing
+/// to say — but it is not a request anybody can merge either, so it holds the
+/// notice back and the next poll asks again. Passing, or nothing to ask about
+/// at all, is what lets the approval through.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Health {
     /// The conflict with the base, where the forge reports one. `None` is
@@ -219,16 +226,28 @@ pub struct Health {
     /// as unknown, or did not answer at all, is not a conflict.
     pub conflict: Option<Conflict>,
     /// The checks the forge reports as failed. Empty is "nothing failing this
-    /// poll could see": a check still running, queued, cancelled or reported
-    /// with a verdict this does not know is neither passing nor failing.
+    /// poll could see": a check still running, cancelled or reported with a
+    /// verdict this does not know is not a failure.
     pub failed_checks: Vec<FailedCheck>,
+    /// Whether the forge is still working a check out: one queued or in
+    /// progress on GitHub, a pipeline created, pending, running or waiting for
+    /// a runner on GitLab. Not a failure, and nobody is told about it — it is
+    /// simply not an answer yet.
+    pub checks_pending: bool,
 }
 
 impl Health {
-    /// Whether anything about the branch stands between the request and its
-    /// merge — which is what keeps an approval from being announced as ready.
-    pub fn blocks_merge(&self) -> bool {
-        self.conflict.is_some() || !self.failed_checks.is_empty()
+    /// Whether nothing at all stands between the request and its merge: no
+    /// conflict, no failing check, and none still to come.
+    ///
+    /// This is what an approval is announced over, and the reason a check
+    /// that has not finished counts: "approved and ready for you to merge" is
+    /// a thing to send a person to, and a request whose build is still
+    /// running is not ready however approved it is. Nothing is said about the
+    /// wait — the next poll either finds it green and says so, or finds it red
+    /// and sends it to the engineer.
+    pub fn is_ready(&self) -> bool {
+        self.conflict.is_none() && self.failed_checks.is_empty() && !self.checks_pending
     }
 }
 
@@ -265,7 +284,9 @@ pub enum PrState {
 /// `health` is what the forge said about the branch and `relayed` the ids
 /// already handed over, which is the same bookkeeping the comments use: a
 /// failure is announced once, and holds the approval back for as long as it
-/// lasts whether or not it was announced this poll.
+/// lasts whether or not it was announced this poll. A check the forge has not
+/// finished holds it back too, without being announced to anybody (see
+/// [`Health`]).
 ///
 /// A conflict is read before the checks it is likely to have caused: GitLab
 /// runs the pipeline on the merge result, and telling an engineer its build
@@ -301,7 +322,7 @@ pub fn poll_state(
     if !failed.is_empty() {
         return PrState::ChecksFailed(failed);
     }
-    if approved && !approved_notified && !health.blocks_merge() {
+    if approved && !approved_notified && health.is_ready() {
         return PrState::Approved;
     }
     PrState::Quiet
@@ -587,6 +608,7 @@ mod tests {
         let health = |conflict: Option<Conflict>, failed_checks: Vec<FailedCheck>| Health {
             conflict,
             failed_checks,
+            checks_pending: false,
         };
         let everything = health(Some(conflict()), red());
 
@@ -657,10 +679,61 @@ mod tests {
             ),
             PrState::Quiet
         );
-        assert!(everything.blocks_merge());
-        assert!(health(None, red()).blocks_merge());
-        assert!(health(Some(conflict()), vec![]).blocks_merge());
-        assert!(!Health::default().blocks_merge());
+        assert!(!everything.is_ready());
+        assert!(!health(None, red()).is_ready());
+        assert!(!health(Some(conflict()), vec![]).is_ready());
+        assert!(Health::default().is_ready());
+    }
+
+    /// And the third thing a check can be, which is neither: still running.
+    ///
+    /// Nobody is sent back for it — there is nothing to fix — and nobody is
+    /// told the request is theirs to merge either, because it is not: the
+    /// poll after it either finds the branch green and says so, or finds it
+    /// red and hands it over.
+    #[test]
+    fn a_check_that_has_not_finished_is_nobodys_and_holds_the_notice_back() {
+        let pending = Health {
+            checks_pending: true,
+            ..Default::default()
+        };
+        assert!(!pending.is_ready());
+        assert_eq!(
+            poll_state(false, vec![], &pending, &[], true, false),
+            PrState::Quiet,
+            "a build still running is not a request to send anybody to"
+        );
+        // Nothing about it is relayable, so nothing about it is remembered:
+        // the same poll on the same request says the same thing next time.
+        assert_eq!(
+            poll_state(
+                false,
+                vec![],
+                &pending,
+                &["CHKabc:build".into()],
+                true,
+                false
+            ),
+            PrState::Quiet
+        );
+        // And once it has finished green, the approval goes out.
+        assert_eq!(
+            poll_state(false, vec![], &Health::default(), &[], true, false),
+            PrState::Approved
+        );
+        // A failure alongside it is still the engineer's: what has not
+        // finished says nothing about what has.
+        let mut red_and_running = pending.clone();
+        red_and_running.failed_checks = vec![FailedCheck {
+            id: "CHKabc123:build".into(),
+            name: "build".into(),
+            conclusion: "FAILURE".into(),
+            url: None,
+        }];
+        assert!(matches!(
+            poll_state(false, vec![], &red_and_running, &[], true, false),
+            PrState::ChecksFailed(_)
+        ));
     }
 
     /// What a check and a conflict are remembered by: the head they were read
