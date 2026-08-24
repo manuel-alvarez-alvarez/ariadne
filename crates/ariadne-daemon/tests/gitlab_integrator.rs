@@ -139,21 +139,31 @@ fn write_tmux_stub(dir: &Path) -> TmuxManager {
 /// asked. No merge request file means no merge request, which is what `glab`
 /// itself does about one: a failure on stderr. No approvals file is nobody
 /// having approved it, and no discussions file is nothing written on it.
+///
+/// The three reads fail apart from each other, because that is how they fail
+/// in life: a token that lost a scope, a rate limit or approval rules nobody
+/// may read leave part of a poll answering and part of it failing. A
+/// `glab-fails` file is the whole CLI down — not installed, not signed in —
+/// and an `approvals-fails` file only the read of the approvals.
 fn write_glab_stub(dir: &Path) -> String {
     let script = format!(
         "#!/bin/sh\n\
          echo \"$@\" >> '{log}'\n\
+         if [ -f '{down}' ]; then cat '{down}' >&2; exit 1; fi\n\
          case \"$*\" in\n\
          \x20 *'mr view'*)\n\
          \x20   if [ -f '{mr}' ]; then cat '{mr}'; else echo 'merge request not found' >&2; exit 1; fi ;;\n\
          \x20 *approvals*)\n\
+         \x20   if [ -f '{approvals_down}' ]; then cat '{approvals_down}' >&2; exit 1; fi\n\
          \x20   if [ -f '{approvals}' ]; then cat '{approvals}'; else echo '{{\"approved\":false,\"approved_by\":[]}}'; fi ;;\n\
          \x20 *discussions*)\n\
          \x20   if [ -f '{discussions}' ]; then cat '{discussions}'; else echo '[]'; fi ;;\n\
          esac\n\
          exit 0\n",
         log = dir.join("glab-commands.log").display(),
+        down = dir.join("glab-fails").display(),
         mr = dir.join("mr.json").display(),
+        approvals_down = dir.join("approvals-fails").display(),
         approvals = dir.join("approvals.json").display(),
         discussions = dir.join("discussions.json").display(),
     );
@@ -355,6 +365,30 @@ impl Harness {
     /// Everything `glab` has been asked, one invocation per line.
     fn glab_log(&self) -> String {
         std::fs::read_to_string(self.dir.path().join("glab-commands.log")).unwrap_or_default()
+    }
+
+    /// What `glab` fails with from now on, whole (`glab-fails`) or only for
+    /// the approvals (`approvals-fails`); `None` puts it back on its feet.
+    fn glab_fails(&self, file: &str, error: Option<&str>) {
+        let path = self.dir.path().join(file);
+        match error {
+            Some(error) => std::fs::write(&path, error).unwrap(),
+            None => {
+                std::fs::remove_file(&path).ok();
+            }
+        }
+    }
+
+    /// Poll the request once and wait for the poll to have happened, rather
+    /// than for what it decided: what a failing poll decides is nothing, and
+    /// there is no state to wait on.
+    async fn poll(&self, task_id: &str) {
+        let before = self.glab_log().matches("mr view").count();
+        self.notify(task_id);
+        eventually("the merge request to be polled", async || {
+            self.glab_log().matches("mr view").count() > before
+        })
+        .await;
     }
 
     /// And everything `gh` has, which had better be nothing.
@@ -1206,6 +1240,284 @@ async fn discussion_notes_reach_the_engineer_once_each() {
         engineer_launched_at,
         "the engineer was resumed for notes it had already been given"
     );
+}
+
+/// A merge request somebody closed without merging it — and the locked state
+/// GitLab spells the same ending with: the end of the task, said once to the
+/// user, with the branch left where a retry can pick it up.
+///
+/// Read as quiet — as it was — this was the shape of a task that hung for
+/// ever: `integrating`, polled every few minutes, with no stall watch running
+/// (the watch replaces it) and nothing said to anybody.
+#[tokio::test]
+async fn a_merge_request_closed_unmerged_fails_the_task_and_tells_the_user() {
+    let h = harness().await;
+    let (task, reviewer) = h.task().await;
+    let integrator = h.hand_to_the_integrator(&task, &reviewer).await;
+    h.publish(&task, &integrator.id).await;
+    h.goes_idle(&integrator.id).await;
+    let opened = h.user_messages(&task.id).await.len();
+
+    // Closed on GitLab, unmerged, with a note on it nobody is waiting for an
+    // answer to: one poll is all it takes.
+    let mut closed = open_merge_request();
+    closed["state"] = "closed".into();
+    h.merge_request(closed);
+    h.discussions(
+        r#"[{"id":"d1","notes":[{"id":101,"author":{"username":"maria"},"body":"not this way",
+             "system":false,"resolvable":false,"resolved":false}]}]"#,
+    );
+    h.notify(&task.id);
+    eventually("the task to be failed", async || {
+        h.status(&task.id).await == TaskStatus::Failed
+    })
+    .await;
+
+    let told = h.user_messages(&task.id).await;
+    assert_eq!(told.len(), opened + 1, "{told:?}");
+    let notice = &told[opened].body;
+    assert!(notice.contains(MR_URL), "{notice}");
+    assert!(
+        notice.contains("Merge request !3") && notice.contains("closed without being merged"),
+        "{notice}"
+    );
+    assert!(
+        notice.contains("Retry it") && notice.contains("cancel it"),
+        "{notice}"
+    );
+    assert!(
+        h.sessions(&task.id, Role::Engineer)
+            .await
+            .iter()
+            .all(|s| s.status() != SessionStatus::Running),
+        "the engineer was sent back to a request nobody will merge"
+    );
+    eventually("the integrator session to end", async || {
+        !h.store
+            .get_session(&integrator.id)
+            .await
+            .unwrap()
+            .status()
+            .is_live()
+    })
+    .await;
+
+    // Retried, it starts over on the same branch and with no memory of the
+    // merge request that was closed.
+    let retried: TaskDto = h
+        .json(
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/v1/tasks/{}/retry", task.id))
+                .body(Body::empty())
+                .unwrap(),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(retried.status, TaskStatus::Ready);
+    assert_eq!(retried.pr_url, None);
+    eventually("a fresh engineer to be spawned", async || {
+        h.status(&task.id).await == TaskStatus::InProgress
+            && h.live_session(&task.id, Role::Engineer).await.is_some()
+    })
+    .await;
+    let polls = h.glab_log().matches("mr view").count();
+    for _ in 0..3 {
+        h.notify(&task.id);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(
+        h.glab_log().matches("mr view").count(),
+        polls,
+        "a task that starts over is still being watched on GitLab"
+    );
+}
+
+/// The other ending GitLab spells that is not a merge: a locked merge request
+/// is nobody's to merge either, and it fails the task the same way.
+#[tokio::test]
+async fn a_locked_merge_request_ends_the_task_like_a_closed_one() {
+    let h = harness().await;
+    let (task, reviewer) = h.task().await;
+    let integrator = h.hand_to_the_integrator(&task, &reviewer).await;
+    h.publish(&task, &integrator.id).await;
+    h.goes_idle(&integrator.id).await;
+
+    let mut locked = open_merge_request();
+    locked["state"] = "locked".into();
+    h.merge_request(locked);
+    h.notify(&task.id);
+    eventually("the task to be failed", async || {
+        h.status(&task.id).await == TaskStatus::Failed
+    })
+    .await;
+    let told = h.user_messages(&task.id).await;
+    assert!(
+        told.last().unwrap().body.contains(MR_URL),
+        "{:?}",
+        told.last()
+    );
+}
+
+/// A `glab` that cannot read the merge request at all: the failure nobody
+/// could see, because a watch that reads nothing looks exactly like a watch on
+/// a request nobody is touching.
+#[tokio::test]
+async fn a_glab_that_cannot_read_the_request_is_reported_once_and_recovers() {
+    let h = harness().await;
+    let (task, reviewer) = h.task().await;
+    let integrator = h.hand_to_the_integrator(&task, &reviewer).await;
+    h.publish(&task, &integrator.id).await;
+    h.goes_idle(&integrator.id).await;
+    h.store
+        .clear_session_attention(&integrator.id)
+        .await
+        .unwrap();
+    let opened = h.user_messages(&task.id).await.len();
+
+    // Signed out, and every poll fails the same way. The first of them says
+    // nothing: a forge has bad minutes, and one failed poll is not a broken
+    // watch.
+    h.glab_fails(
+        "glab-fails",
+        Some("error: you must be authenticated: run `glab auth login`"),
+    );
+    let before = h.glab_log().matches("mr view").count();
+    h.poll(&task.id).await;
+    assert_eq!(
+        h.user_messages(&task.id).await.len(),
+        opened,
+        "one bad minute is not news"
+    );
+
+    // A run of them is: the user is told, once, with the CLI and what it
+    // said, and the task goes up on the strip they read such things from.
+    while h.user_messages(&task.id).await.len() == opened {
+        h.poll(&task.id).await;
+    }
+    assert!(
+        h.glab_log().matches("mr view").count() - before >= 5,
+        "the user was told about the first poll that failed"
+    );
+    let told = h.user_messages(&task.id).await;
+    assert_eq!(told.len(), opened + 1, "{told:?}");
+    let notice = &told[opened].body;
+    assert!(notice.contains("`glab`"), "{notice}");
+    assert!(
+        notice.contains("glab auth login"),
+        "the error is quoted: {notice}"
+    );
+    assert!(notice.contains(MR_URL), "{notice}");
+    eventually("the integrator session to carry the failure", async || {
+        h.store
+            .get_session(&integrator.id)
+            .await
+            .unwrap()
+            .attention_reason()
+            == Some(AttentionReason::AgentError)
+    })
+    .await;
+    for _ in 0..3 {
+        h.poll(&task.id).await;
+    }
+    assert_eq!(h.user_messages(&task.id).await.len(), opened + 1);
+    assert_eq!(h.status(&task.id).await, TaskStatus::Integrating);
+
+    // Signed in again: the next poll that reads the request says so, once,
+    // and takes the flag back down.
+    h.merge_request(open_merge_request());
+    h.glab_fails("glab-fails", None);
+    h.poll(&task.id).await;
+    eventually("the user to be told it works again", async || {
+        h.user_messages(&task.id).await.len() > opened + 1
+    })
+    .await;
+    let told = h.user_messages(&task.id).await;
+    assert_eq!(told.len(), opened + 2, "{told:?}");
+    assert!(told[opened + 1].body.contains("again"), "{told:?}");
+    assert_eq!(
+        h.store
+            .get_session(&integrator.id)
+            .await
+            .unwrap()
+            .attention_reason(),
+        None
+    );
+    for _ in 0..3 {
+        h.poll(&task.id).await;
+    }
+    assert_eq!(h.user_messages(&task.id).await.len(), opened + 2);
+}
+
+/// Half a poll is not a quiet merge request: `glab mr view` answers, the read
+/// of the approvals does not, and what comes back must not be acted on as
+/// though nobody had approved anything.
+#[tokio::test]
+async fn a_poll_that_could_only_be_half_read_decides_nothing() {
+    let h = harness().await;
+    let (task, reviewer) = h.task().await;
+    let integrator = h.hand_to_the_integrator(&task, &reviewer).await;
+    h.publish(&task, &integrator.id).await;
+    h.goes_idle(&integrator.id).await;
+    let opened = h.user_messages(&task.id).await.len();
+    // Recording the request told the user it was theirs, which is the flag a
+    // poll that reads nobody having approved it takes back down.
+    assert!(
+        h.store
+            .get_task(&task.id)
+            .await
+            .unwrap()
+            .pr_approved_notified()
+    );
+
+    h.merge_request(open_merge_request());
+    h.glab_fails(
+        "approvals-fails",
+        Some("error: GET .../approvals: 403 Forbidden"),
+    );
+    h.poll(&task.id).await;
+    assert!(
+        h.store
+            .get_task(&task.id)
+            .await
+            .unwrap()
+            .pr_approved_notified(),
+        "an approval nobody could read was taken for one withdrawn"
+    );
+    assert_eq!(h.user_messages(&task.id).await.len(), opened);
+
+    // It counts as a failed poll like any other, so a run of them is
+    // reported — naming the CLI, not the merge request's silence.
+    while h.user_messages(&task.id).await.len() == opened {
+        h.poll(&task.id).await;
+        assert!(
+            h.store
+                .get_task(&task.id)
+                .await
+                .unwrap()
+                .pr_approved_notified()
+        );
+    }
+    let told = h.user_messages(&task.id).await;
+    assert_eq!(told.len(), opened + 1, "{told:?}");
+    assert!(told[opened].body.contains("`glab`"), "{told:?}");
+
+    // Reading the approvals again: the poll decides, and a merge request
+    // nobody has approved takes the flag back down.
+    h.glab_fails("approvals-fails", None);
+    h.approvals(&[]);
+    h.poll(&task.id).await;
+    eventually(
+        "the approval flag to be cleared by a whole answer",
+        async || {
+            !h.store
+                .get_task(&task.id)
+                .await
+                .unwrap()
+                .pr_approved_notified()
+        },
+    )
+    .await;
 }
 
 /// The whole of one round on a published merge request: a note, the
