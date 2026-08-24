@@ -1757,18 +1757,21 @@ impl Scheduler {
         self.typing.remove(&report.session_id);
         match report.outcome {
             DeliveryOutcome::Confirmed => {
+                // Only a message. A nudge that went in is a nudge spent —
+                // what follows one nobody acts on is the user, and a nudge
+                // that gave itself back would ask for ever and tell nobody.
                 if let Some(message_id) = &report.message_id {
                     info!(message = %message_id, session = %report.session_id, "the addressed agent has the message");
                     self.attempts.remove(message_id);
                     self.delivered.insert(message_id.clone());
+                    // This agent has just been told what to do: the idle
+                    // clock starts again here and the nudge that may have
+                    // been spent comes back, so that nothing tells it to get
+                    // on with what it was asked to do a moment ago.
+                    self.nudged.remove(&report.session_id);
+                    self.delivered_at
+                        .insert(report.session_id.clone(), chrono::Utc::now());
                 }
-                // Whatever it was, this agent has just been told something:
-                // the idle clock starts again here and the nudge that may
-                // have been spent comes back, so that nothing tells an agent
-                // to get on with what it was asked to do a moment ago.
-                self.nudged.remove(&report.session_id);
-                self.delivered_at
-                    .insert(report.session_id.clone(), chrono::Utc::now());
             }
             DeliveryOutcome::Unsubmitted => {
                 warn!(session = %report.session_id, message = ?report.message_id, "what was typed stayed in the agent's composer, flagging for user attention");
