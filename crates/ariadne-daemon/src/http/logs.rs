@@ -9,23 +9,15 @@ use axum::extract::{Query, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use futures_util::Stream;
 use futures_util::stream::{once, unfold};
-use serde::Deserialize;
 use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::error::RecvError;
-use utoipa::IntoParams;
 
-use ariadne_api::logs::{LogLineDto, LogSnapshotResponse};
+use ariadne_api::logs::{LogLineDto, LogSnapshotResponse, LogsQuery};
 
 use super::AppState;
 
 /// How often a keep-alive comment is sent on a quiet stream.
 const KEEP_ALIVE_SECS: u64 = 15;
-
-#[derive(Debug, Default, Deserialize, IntoParams)]
-pub struct LogsQuery {
-    /// Return only the last N lines.
-    pub tail: Option<usize>,
-}
 
 /// Recent daemon log lines from the in-memory ring buffer, oldest first.
 #[utoipa::path(get, path = "/v1/logs", tag = "logs",

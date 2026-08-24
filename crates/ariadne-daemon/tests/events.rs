@@ -365,8 +365,9 @@ async fn sse_stream_frames_events_and_honours_the_goal_filter() {
     let mut lines = message.trim_end().lines();
     let id = lines.next().unwrap();
     assert!(id.starts_with("id: "), "first line is the event id: {id:?}");
+    let event_id = id.trim_start_matches("id: ");
     assert!(
-        ariadne_core::id::is_valid(id.trim_start_matches("id: ")),
+        event_id.len() == 26 && event_id.chars().all(|c| c.is_ascii_alphanumeric()),
         "event id is a ULID: {id:?}"
     );
     assert_eq!(lines.next(), Some("event: task_updated"));

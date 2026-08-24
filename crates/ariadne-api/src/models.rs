@@ -2,7 +2,7 @@
 
 use ariadne_core::AgentKind;
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 
 /// One model an agent CLI can run, as served by `GET /v1/models`.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -13,4 +13,10 @@ pub struct ModelDto {
     pub agent_kind: AgentKind,
     /// One-line capability summary (absent for discovered opencode models).
     pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize, IntoParams)]
+pub struct ModelListQuery {
+    /// Filter by agent CLI.
+    pub agent: Option<AgentKind>,
 }

@@ -72,7 +72,7 @@ pub fn goal_dto(g: store::Goal, repos: Vec<store::Repository>) -> GoalDto {
     }
 }
 
-pub fn task_reviewer_dto(r: store::TaskReviewer) -> TaskReviewerDto {
+fn task_reviewer_dto(r: store::TaskReviewer) -> TaskReviewerDto {
     TaskReviewerDto {
         agent_kind: r.agent_kind(),
         profile_id: r.profile_id,
@@ -122,7 +122,7 @@ pub fn transition_dto(t: store::TaskTransition) -> TaskTransitionDto {
 /// `recipient_profile_name` is the name of the addressed profile, which the
 /// callers below load; it is ignored for a message addressed to the user or to
 /// nobody.
-pub fn message_dto(m: store::Message, recipient_profile_name: Option<String>) -> MessageDto {
+fn message_dto(m: store::Message, recipient_profile_name: Option<String>) -> MessageDto {
     let recipient = m.recipient().map(|r| MessageRecipientDto {
         kind: r.kind(),
         profile_id: r.profile_id().map(str::to_string),

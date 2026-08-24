@@ -2,7 +2,7 @@
 
 use ariadne_core::{AgentKind, PromptKind, Role};
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ProfileDto {
@@ -88,4 +88,10 @@ pub struct PromptDefaultDto {
     pub kind: PromptKind,
     /// Template text with `{placeholder}` tokens the daemon fills in.
     pub content: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize, IntoParams)]
+pub struct ProfileListQuery {
+    /// Filter by role.
+    pub role: Option<Role>,
 }

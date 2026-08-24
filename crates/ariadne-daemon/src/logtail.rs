@@ -59,13 +59,6 @@ impl LogTail {
         }
     }
 
-    /// Skip whatever the file already holds — for when the caller has just
-    /// sent a snapshot covering it.
-    pub async fn skip_existing(&mut self) {
-        let end = self.end_offset().await;
-        self.skip_to(end);
-    }
-
     /// Where the file ends right now.
     ///
     /// For a caller that is about to capture the screen: the tail has to be
@@ -249,13 +242,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn skip_existing_starts_after_the_snapshot() {
+    async fn skipping_to_the_end_starts_after_the_snapshot() {
         let dir = tempfile::tempdir().unwrap();
         let log = dir.path().join("console.log");
         append(&log, b"already rendered\n").await;
 
         let mut tail = LogTail::new(&log);
-        tail.skip_existing().await;
+        let end = tail.end_offset().await;
+        tail.skip_to(end);
         assert_eq!(tail.read_new().await, "");
 
         append(&log, b"new\n").await;
@@ -269,7 +263,8 @@ mod tests {
         append(&log, b"one\ntwo\n").await;
 
         let mut tail = LogTail::new(&log);
-        tail.skip_existing().await;
+        let end = tail.end_offset().await;
+        tail.skip_to(end);
         tail.rewind();
         assert_eq!(tail.read_new().await, "one\ntwo\n");
     }
@@ -281,7 +276,8 @@ mod tests {
         let log = dir.path().join("console.log");
 
         let mut tail = LogTail::new(&log);
-        tail.skip_existing().await;
+        let end = tail.end_offset().await;
+        tail.skip_to(end);
         assert_eq!(tail.read_new().await, "");
 
         append(&log, b"late\n").await;

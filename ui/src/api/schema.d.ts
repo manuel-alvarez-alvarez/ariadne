@@ -775,6 +775,11 @@ export interface paths {
          *     conversation, so a published task is either one the UI and the CLI can
          *     point at or one that was never reported — never half-known from a message
          *     somebody has to parse.
+         *
+         *     Recording it writes the URL and nothing else. Telling the user where the
+         *     request is belongs to the engineer that opened it — its landing briefing
+         *     says to `post_message` them the link — and a notice the daemon composed
+         *     beside this write would be a second author for the same news.
          */
         post: operations["tasks_record_pull_request"];
         delete?: never;

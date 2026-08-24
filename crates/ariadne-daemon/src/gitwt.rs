@@ -1,4 +1,5 @@
-//! GitManager: worktrees, branches, merge verification, diffs.
+//! GitManager: repo validation, worktrees, branches, merge verification,
+//! diffs.
 //!
 //! Shells out to `git` — worktree support in libgit2/gitoxide is weak and the
 //! CLI is the canonical implementation.
@@ -99,6 +100,58 @@ impl GitManager {
             .is_ok())
     }
 
+    /// Ensure `path` is an existing git work tree.
+    pub async fn validate_repo(&self, path: &Path) -> Result<()> {
+        if !path.is_dir() {
+            bail!(
+                "repo path does not exist or is not a directory: {}",
+                path.display()
+            );
+        }
+        let inside = self
+            .git(path, &["rev-parse", "--is-inside-work-tree"])
+            .await?;
+        if inside != "true" {
+            bail!("not a git work tree: {}", path.display());
+        }
+        Ok(())
+    }
+
+    /// Current branch of the repo (used as default base branch).
+    pub async fn current_branch(&self, repo: &Path) -> Result<String> {
+        self.git(repo, &["symbolic-ref", "--short", "HEAD"])
+            .await
+            .with_context(|| {
+                format!(
+                    "cannot resolve current branch of {} (detached HEAD?)",
+                    repo.display()
+                )
+            })
+    }
+
+    /// Ensure a branch points at a real commit. Catches freshly `git init`ed
+    /// repos where HEAD names an unborn branch: worktrees cannot be created
+    /// from it, so fail goal creation with a clear message instead.
+    pub async fn ensure_branch_has_commits(&self, repo: &Path, branch: &str) -> Result<()> {
+        self.git(
+            repo,
+            &[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("refs/heads/{branch}^{{commit}}"),
+            ],
+        )
+        .await
+        .map(|_| ())
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "branch {branch} of {} has no commits yet — make an initial commit first",
+                repo.display()
+            )
+        })
+    }
+
     pub async fn delete_branch(&self, repo: &Path, branch: &str) -> Result<()> {
         self.git(repo, &["branch", "-D", branch]).await?;
         Ok(())
@@ -115,10 +168,6 @@ impl GitManager {
             .await
             .context("running git merge-base")?;
         Ok(output.status.success())
-    }
-
-    pub async fn rev_parse(&self, repo: &Path, reference: &str) -> Result<String> {
-        self.git(repo, &["rev-parse", reference]).await
     }
 
     /// Diff of the task branch against its merge base with `base`

@@ -32,7 +32,6 @@ pub use sessions::{NewSession, SessionFilter};
 pub use tasks::{NewTask, TaskFilter, TaskUpdate};
 
 use std::path::Path;
-use std::str::FromStr;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -118,32 +117,6 @@ impl Store {
         let store = Self {
             write,
             read,
-            changes: Arc::default(),
-        };
-        store.seed_builtin_profiles().await?;
-        store.seed_agent_configs().await?;
-        Ok(store)
-    }
-
-    /// In-memory store for tests.
-    pub async fn open_in_memory() -> Result<Self> {
-        let options = SqliteConnectOptions::from_str("sqlite::memory:")
-            .map_err(StoreError::Db)?
-            .foreign_keys(true);
-        // A single shared connection: :memory: databases are per-connection.
-        let write = SqlitePoolOptions::new()
-            .max_connections(1)
-            .idle_timeout(None)
-            .max_lifetime(None)
-            .connect_with(options)
-            .await?;
-        sqlx::migrate!("./migrations")
-            .run(&write)
-            .await
-            .map_err(|e| StoreError::Invalid(format!("migration failed: {e}")))?;
-        let store = Self {
-            read: write.clone(),
-            write,
             changes: Arc::default(),
         };
         store.seed_builtin_profiles().await?;

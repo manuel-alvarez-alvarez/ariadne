@@ -51,7 +51,6 @@ pub enum ClientError {
         status: StatusCode,
         code: String,
         message: String,
-        details: Option<serde_json::Value>,
     },
     #[error("failed to decode daemon response: {0}")]
     Decode(#[from] serde_json::Error),
@@ -441,13 +440,11 @@ impl Client {
                     status,
                     code: body.error.code,
                     message: body.error.message,
-                    details: body.error.details,
                 }),
                 Err(_) => Err(ClientError::Api {
                     status,
                     code: "unknown_error".into(),
                     message: String::from_utf8_lossy(&bytes).into_owned(),
-                    details: None,
                 }),
             }
         }
@@ -546,7 +543,6 @@ mod tests {
             status: StatusCode::NOT_FOUND,
             code: "not_found".into(),
             message: "task not found: badid123".into(),
-            details: None,
         };
         assert_eq!(err.human(), "task not found: badid123");
         assert_eq!(err.hint(), None);
@@ -560,7 +556,6 @@ mod tests {
             status: StatusCode::BAD_GATEWAY,
             code: "unknown_error".into(),
             message: String::new(),
-            details: None,
         };
         assert_eq!(err.human(), "daemon returned 502 Bad Gateway");
     }

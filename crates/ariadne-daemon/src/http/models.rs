@@ -4,18 +4,10 @@ use std::time::Duration;
 
 use axum::Json;
 use axum::extract::Query;
-use serde::Deserialize;
-use utoipa::IntoParams;
 
-use ariadne_api::models::ModelDto;
+use ariadne_api::models::{ModelDto, ModelListQuery};
 use ariadne_core::AgentKind;
 use ariadne_core::models::curated_models;
-
-#[derive(Debug, Default, Deserialize, IntoParams)]
-pub struct ModelListQuery {
-    /// Filter by agent CLI.
-    pub agent: Option<AgentKind>,
-}
 
 /// Model candidates per agent CLI: curated catalogs for claude_code and
 /// codex, live discovery (`opencode models`) for opencode. Without `agent`,

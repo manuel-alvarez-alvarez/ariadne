@@ -12,7 +12,7 @@ use ariadne_store::{NewRepository, RepositoryUpdate};
 use super::AppState;
 use super::convert::repository_dto;
 use super::error::{ApiError, ApiResult};
-use crate::gitutil;
+use crate::gitwt::GitManager;
 
 /// Create a repository.
 #[utoipa::path(post, path = "/v1/repositories", tag = "repositories",
@@ -134,12 +134,14 @@ fn repo_path(raw: &str) -> Result<PathBuf, ApiError> {
 /// commit — a freshly `git init`ed repo has an unborn branch that worktrees
 /// cannot be created from.
 async fn resolve_base_branch(path: &FsPath, branch: Option<&str>) -> Result<String, ApiError> {
-    gitutil::validate_repo(path)
+    let git = GitManager;
+    git.validate_repo(path)
         .await
         .map_err(|e| ApiError::bad_request(e.to_string()))?;
     let base_branch = match branch {
         Some(b) => {
-            if !gitutil::branch_exists(path, b)
+            if !git
+                .branch_exists(path, b)
                 .await
                 .map_err(|e| ApiError::bad_request(e.to_string()))?
             {
@@ -150,11 +152,12 @@ async fn resolve_base_branch(path: &FsPath, branch: Option<&str>) -> Result<Stri
             }
             b.to_string()
         }
-        None => gitutil::current_branch(path)
+        None => git
+            .current_branch(path)
             .await
             .map_err(|e| ApiError::bad_request(e.to_string()))?,
     };
-    gitutil::ensure_branch_has_commits(path, &base_branch)
+    git.ensure_branch_has_commits(path, &base_branch)
         .await
         .map_err(|e| ApiError::bad_request(e.to_string()))?;
     Ok(base_branch)

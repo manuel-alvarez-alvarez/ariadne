@@ -39,14 +39,8 @@ fn json_error(err: &anyhow::Error) -> serde_json::Value {
     };
     let mut out = serde_json::json!({"code": client.code(), "message": client.human()});
     let map = out.as_object_mut().expect("json object");
-    if let ClientError::Api {
-        status, details, ..
-    } = client
-    {
+    if let ClientError::Api { status, .. } = client {
         map.insert("status".into(), status.as_u16().into());
-        if let Some(details) = details {
-            map.insert("details".into(), details.clone());
-        }
     }
     if let Some(hint) = client.hint() {
         map.insert("hint".into(), hint.into());
@@ -92,7 +86,6 @@ mod tests {
             status: StatusCode::NOT_FOUND,
             code: "not_found".into(),
             message: "task not found: badid123".into(),
-            details: None,
         }
     }
 

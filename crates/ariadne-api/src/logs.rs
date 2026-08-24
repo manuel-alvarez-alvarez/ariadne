@@ -1,7 +1,7 @@
 //! Daemon-log DTOs.
 
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 
 /// One captured daemon log line.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -23,4 +23,10 @@ pub struct LogLineDto {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct LogSnapshotResponse {
     pub lines: Vec<LogLineDto>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize, IntoParams)]
+pub struct LogsQuery {
+    /// Return only the last N lines.
+    pub tail: Option<usize>,
 }

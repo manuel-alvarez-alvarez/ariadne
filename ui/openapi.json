@@ -1948,7 +1948,7 @@
           "tasks"
         ],
         "summary": "Record the pull or merge request the engineer opened for a task.",
-        "description": "The URL travels as a tool call rather than as a sentence in the\nconversation, so a published task is either one the UI and the CLI can\npoint at or one that was never reported — never half-known from a message\nsomebody has to parse.",
+        "description": "The URL travels as a tool call rather than as a sentence in the\nconversation, so a published task is either one the UI and the CLI can\npoint at or one that was never reported — never half-known from a message\nsomebody has to parse.\n\nRecording it writes the URL and nothing else. Telling the user where the\nrequest is belongs to the engineer that opened it — its landing briefing\nsays to `post_message` them the link — and a notice the daemon composed\nbeside this write would be a second author for the same news.",
         "operationId": "record_pull_request",
         "parameters": [
           {

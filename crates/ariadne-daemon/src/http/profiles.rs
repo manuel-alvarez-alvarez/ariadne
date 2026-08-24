@@ -3,12 +3,10 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use serde::Deserialize;
-use utoipa::IntoParams;
 
 use ariadne_api::profiles::{
-    CreateProfileRequest, ProfileDto, ProfilePromptDto, PromptDefaultDto, RolePromptDefaultsDto,
-    UpdateProfilePromptRequest, UpdateProfileRequest,
+    CreateProfileRequest, ProfileDto, ProfileListQuery, ProfilePromptDto, PromptDefaultDto,
+    RolePromptDefaultsDto, UpdateProfilePromptRequest, UpdateProfileRequest,
 };
 use ariadne_core::Role;
 use ariadne_store::defaults::{default_prompts, default_system_prompt};
@@ -17,12 +15,6 @@ use ariadne_store::{NewProfile, ProfileUpdate, parse_prompt_kind};
 use super::AppState;
 use super::convert::{profile_dto, profile_prompt_dto};
 use super::error::{ApiError, ApiResult};
-
-#[derive(Debug, Default, Deserialize, IntoParams)]
-pub struct ProfileListQuery {
-    /// Filter by role.
-    pub role: Option<Role>,
-}
 
 /// Create a profile.
 #[utoipa::path(post, path = "/v1/profiles", tag = "profiles",

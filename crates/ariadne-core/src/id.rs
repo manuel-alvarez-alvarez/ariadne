@@ -27,11 +27,6 @@ pub fn new_id() -> String {
         .to_lowercase()
 }
 
-/// Validate that a string is a well-formed ULID.
-pub fn is_valid(id: &str) -> bool {
-    Ulid::from_string(&id.to_uppercase()).is_ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -40,7 +35,11 @@ mod tests {
     fn generated_ids_are_valid_and_strictly_ordered() {
         let ids: Vec<String> = (0..1000).map(|_| new_id()).collect();
         for pair in ids.windows(2) {
-            assert!(is_valid(&pair[0]));
+            assert!(
+                Ulid::from_string(&pair[0].to_uppercase()).is_ok(),
+                "not a ULID: {}",
+                pair[0]
+            );
             assert!(
                 pair[0] < pair[1],
                 "ids must be strictly increasing: {} >= {}",
@@ -48,11 +47,5 @@ mod tests {
                 pair[1]
             );
         }
-    }
-
-    #[test]
-    fn rejects_garbage() {
-        assert!(!is_valid("not-an-id"));
-        assert!(!is_valid(""));
     }
 }

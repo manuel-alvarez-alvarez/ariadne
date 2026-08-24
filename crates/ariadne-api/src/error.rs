@@ -1,4 +1,4 @@
-//! Uniform API error shape: `{"error": {"code": "...", "message": "...", "details": {...}}}`.
+//! Uniform API error shape: `{"error": {"code": "...", "message": "..."}}`.
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -16,9 +16,6 @@ pub struct ErrorDetail {
     pub code: String,
     /// Human-readable description.
     pub message: String,
-    /// Optional structured context.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub details: Option<serde_json::Value>,
 }
 
 impl ErrorBody {
@@ -27,13 +24,7 @@ impl ErrorBody {
             error: ErrorDetail {
                 code: code.into(),
                 message: message.into(),
-                details: None,
             },
         }
-    }
-
-    pub fn with_details(mut self, details: serde_json::Value) -> Self {
-        self.error.details = Some(details);
-        self
     }
 }

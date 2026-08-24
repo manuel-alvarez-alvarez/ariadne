@@ -5,7 +5,6 @@ pub mod agents;
 pub mod attention;
 pub mod bus;
 pub mod config;
-pub mod gitutil;
 pub mod gitwt;
 pub mod http;
 pub mod launcher;

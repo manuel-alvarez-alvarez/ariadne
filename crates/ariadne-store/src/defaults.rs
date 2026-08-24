@@ -90,9 +90,10 @@ macro_rules! shared_rules {
     };
 }
 
-/// The shared block as the three system prompts carry it, for whoever has to
-/// find it in one of them.
-pub const SHARED_RULES: &str = shared_rules!();
+/// The shared block as the three system prompts carry it, for the tests that
+/// have to find it in one of them.
+#[cfg(test)]
+const SHARED_RULES: &str = shared_rules!();
 
 /// Planner persona and playbook.
 const PLANNER_SYSTEM_PROMPT: &str = concat!(
