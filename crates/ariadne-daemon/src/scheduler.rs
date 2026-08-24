@@ -2135,22 +2135,54 @@ impl Scheduler {
     /// published request included. A planner and a reviewer have no such
     /// path: they are revived with what the nudge would have carried, through
     /// the same `revive_session` a message addressed to a dead agent takes.
+    ///
+    /// What the user is owed outlives the relaunch. Putting an agent back on
+    /// its feet drops the row's attention (`restart_session`), which is right
+    /// for every reason the agent raised for itself and wrong for the one
+    /// nobody raised on its behalf: an approved request is still theirs to
+    /// merge and a message written to them is still unread, however many
+    /// times the agent underneath is restarted. So `waiting_user` is put back
+    /// — on whatever came back up, since a resume keeps the row and a spawn
+    /// that had to start afresh does not, and the flag belongs to the agent
+    /// the work is with either way.
     async fn relaunch_wedged(
         &mut self,
         session: &AgentSession,
         revival: &str,
     ) -> anyhow::Result<()> {
+        let for_the_user = session.attention_reason() == Some(AttentionReason::WaitingUser);
         self.launcher.kill_session(&session.id).await?;
         if let Some(task_id) = session.task_id.clone()
             && matches!(session.role(), Role::Engineer | Role::Integrator)
         {
             let task = self.store.get_task(&task_id).await?;
-            return self.start_role(&task, session.role()).await;
+            self.start_role(&task, session.role()).await?;
+        } else {
+            self.launcher
+                .revive_session(&session.id, Some(revival))
+                .await?;
         }
-        self.launcher
-            .revive_session(&session.id, Some(revival))
-            .await?;
+        if for_the_user {
+            let back = self.relaunched_session(session).await;
+            self.store
+                .set_session_attention(&back, AttentionReason::WaitingUser)
+                .await?;
+        }
         Ok(())
+    }
+
+    /// The session the agent came back as: the same row wherever it was
+    /// resumed, and the one the role is live in when the relaunch had to
+    /// spawn afresh instead. The row that was killed is the answer of last
+    /// resort — a relaunch that left nothing running is not a row to lose the
+    /// flag over.
+    async fn relaunched_session(&self, session: &AgentSession) -> String {
+        self.live_sessions(&session.goal_id, session.task_id.as_deref(), session.role())
+            .await
+            .ok()
+            .and_then(|mut live| live.pop())
+            .map(|live| live.id)
+            .unwrap_or_else(|| session.id.clone())
     }
 
     /// One launched agent that never started its turn: an Enter at

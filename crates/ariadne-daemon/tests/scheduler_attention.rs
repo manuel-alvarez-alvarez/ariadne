@@ -2190,7 +2190,9 @@ async fn a_wedged_agent_flagged_for_the_user_keeps_the_flag_and_is_relaunched() 
     );
 
     // And the silence was measured all the same: a threshold later the agent
-    // is put back on its feet like any other, flag and all.
+    // is put back on its feet like any other — and what the user is owed
+    // comes back up with it, since a relaunch is not the user having merged
+    // the request or read the message.
     h.wedged_for(&session, RUNNING_QUIET_RESUME_SECS + 60).await;
     let launched = h.launched_at(&session).await;
     sched
@@ -2200,4 +2202,18 @@ async fn a_wedged_agent_flagged_for_the_user_keeps_the_flag_and_is_relaunched() 
         h.launched_at(&session).await != launched
     })
     .await;
+    eventually(
+        "the flag raised for the user to survive the relaunch",
+        async || h.attention(&session).await == Some(AttentionReason::WaitingUser),
+    )
+    .await;
+    assert_eq!(
+        h.store.get_session(&session.id).await.unwrap().status(),
+        SessionStatus::Running,
+        "on the agent that is running again, not on the row it was killed in"
+    );
+    assert!(
+        !h.store.get_task(&task.id).await.unwrap().is_stalled(),
+        "and what the user is owed is not the task stalling"
+    );
 }
