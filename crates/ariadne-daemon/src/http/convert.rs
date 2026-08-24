@@ -45,6 +45,7 @@ pub fn profile_prompt_dto(p: store::ProfilePrompt) -> ProfilePromptDto {
 
 pub fn repository_dto(r: store::Repository) -> RepositoryDto {
     RepositoryDto {
+        merge_strategy: r.merge_strategy(),
         id: r.id,
         path: r.path,
         base_branch: r.base_branch,
@@ -94,7 +95,6 @@ pub fn task_dto(
         title: t.title,
         description: t.description,
         engineer_profile_id: t.engineer_profile_id,
-        integrator_profile_id: t.integrator_profile_id,
         model: t.model,
         reviewers: reviewers.into_iter().map(task_reviewer_dto).collect(),
         depends_on,
@@ -102,7 +102,6 @@ pub fn task_dto(
         worktree_path: t.worktree_path,
         review_round: t.review_round,
         merge_commit: t.merge_commit,
-        pr_number: t.pr_number,
         pr_url: t.pr_url,
         created_at: t.created_at,
         updated_at: t.updated_at,
@@ -181,10 +180,6 @@ pub fn review_dto(r: store::Review) -> ReviewDto {
         id: r.id,
         task_id: r.task_id,
         round: r.round,
-        author_role: r
-            .author_role
-            .as_deref()
-            .map(|role| std::str::FromStr::from_str(role).expect("valid author role in db")),
         reviewer_profile_id: r.reviewer_profile_id,
         session_id: r.session_id,
         body: r.body,

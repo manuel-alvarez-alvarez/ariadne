@@ -13,7 +13,6 @@ function task(overrides: Partial<TaskDto>): TaskDto {
     depends_on: [],
     description: "",
     engineer_profile_id: "p1",
-    integrator_profile_id: "01INTEGRATOR",
     goal_id: "g1",
     id: "t1",
     repo_id: "r1",

@@ -264,12 +264,6 @@ pub async fn debug_spawn(
             let profile = state.store.resolve_profile(&spec).await?;
             launcher.spawn_reviewer(&task, &profile.id).await
         }
-        Role::Integrator => {
-            let task = req
-                .task_id
-                .ok_or_else(|| ApiError::bad_request("task_id required"))?;
-            launcher.spawn_integrator(&task).await
-        }
     }
     .map_err(|e| ApiError::conflict(e.to_string()))?;
     Ok(Json(session_dto(session)))

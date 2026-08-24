@@ -14,9 +14,6 @@ pub struct TaskDto {
     pub description: String,
     pub status: TaskStatus,
     pub engineer_profile_id: String,
-    /// Profile that lands the task once it is approved, assigned at creation
-    /// exactly as the engineer is.
-    pub integrator_profile_id: String,
     /// Agent CLI the engineer runs on, pinned from the profile when the task
     /// was created; editing the profile afterwards leaves it alone. None =
     /// auto, resolved at spawn time to the first installed CLI.
@@ -34,10 +31,8 @@ pub struct TaskDto {
     /// Set when the agent went idle without advancing the task.
     pub stalled: bool,
     pub merge_commit: Option<String>,
-    /// Number of the pull request the task was published as, once its
-    /// integrator has reported one; None for a task landed locally.
-    pub pr_number: Option<i64>,
-    /// Its URL, as the forge spells it.
+    /// URL of the pull or merge request the task was published as, once its
+    /// engineer has reported one; None for a task landed directly.
     pub pr_url: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -66,8 +61,6 @@ pub struct CreateTaskRequest {
     pub repo_id: Option<String>,
     /// Engineer profile id or unique name.
     pub engineer_profile: String,
-    /// Integrator profile id or unique name.
-    pub integrator_profile: String,
     /// Reviewer profile ids or names, in review order. At least one.
     pub reviewer_profiles: Vec<String>,
     /// Task ids this task depends on.
@@ -81,9 +74,6 @@ pub struct UpdateTaskRequest {
     pub title: Option<String>,
     pub description: Option<String>,
     pub reviewer_profiles: Option<Vec<String>>,
-    /// Integrator profile id or unique name, replacing the one the task was
-    /// created with.
-    pub integrator_profile: Option<String>,
     pub depends_on: Option<Vec<String>>,
 }
 
@@ -95,26 +85,12 @@ pub struct TransitionRequest {
     pub merge_commit: Option<String>,
 }
 
-/// The integrator handing an approved task back to its engineer: a rebase it
-/// will not resolve, or a change the landing showed to be wrong. Recorded as a
-/// round of requested changes, which is how the engineer already reads
-/// feedback.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct ReturnToEngineerRequest {
-    /// Why the task is coming back, in one or two sentences.
-    pub summary: String,
-    /// What has to change, concretely: one entry per file or decision.
-    #[serde(default)]
-    pub changes: Vec<String>,
-}
-
-/// The integrator reporting the pull request it opened for a task, so the
-/// daemon can watch it: read off `gh pr create`'s output rather than out of
-/// the conversation.
+/// The engineer reporting the pull or merge request it opened for a task, so
+/// the user has somewhere to go and read it: taken off `gh pr create`'s output
+/// rather than out of the conversation.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RecordPullRequestRequest {
-    /// The pull request's URL, e.g. `https://github.com/owner/repo/pull/12`.
-    /// The number is taken from it, so the two can never disagree.
+    /// The request's URL, e.g. `https://github.com/owner/repo/pull/12`.
     pub url: String,
 }
 

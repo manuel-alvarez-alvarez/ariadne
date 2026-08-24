@@ -9,7 +9,7 @@
  * open are its own doing rather than the user's, so a glance at the dialog
  * must still close it with nothing asked.
  *
- * The integrator is checked in both modes: the daemon requires one on create,
+ * The reviewers are checked in both modes: the daemon requires one on create,
  * so what the picker shows has to be what is sent whether the user touched it
  * or not, and it is reassignable while the task waits, so the edit form offers
  * it beside the reviewers.
@@ -64,21 +64,12 @@ const REVIEWER: ProfileDto = {
   role: "reviewer",
 }
 
-/** The built-in Integrator: the one the form preselects, by its id. */
-const INTEGRATOR: ProfileDto = {
+/** A second one, for the edit that replaces the task's reviewer list. */
+const STRICT_REVIEWER: ProfileDto = {
   ...ENGINEER,
-  id: "00000000000000000000000004",
-  name: "Integrator",
-  role: "integrator",
-}
-
-/** One the user made, sorting ahead of the built-in so preselecting the
- * built-in cannot be an accident. */
-const CUSTOM_INTEGRATOR: ProfileDto = {
-  ...ENGINEER,
-  id: "01JPROF000000000000000INT",
-  name: "Fleet Lander",
-  role: "integrator",
+  id: "01JPROF00000000000000REV2",
+  name: "Strict Reviewer",
+  role: "reviewer",
 }
 
 /** The bodies of the writes the dialog made, in order. */
@@ -95,7 +86,6 @@ const CREATED = {
   branch: "wire-the-strip-000001",
   depends_on: [],
   engineer_profile_id: ENGINEER.id,
-  integrator_profile_id: INTEGRATOR.id,
   reviewers: [],
   review_round: 0,
   stalled: false,
@@ -125,8 +115,6 @@ function stubDaemon() {
       switch (url.searchParams.get("role")) {
         case "reviewer":
           return answer([REVIEWER])
-        case "integrator":
-          return answer([CUSTOM_INTEGRATOR, INTEGRATOR])
         default:
           return answer([ENGINEER])
       }
@@ -177,7 +165,6 @@ describe("dismissing the dialog", () => {
 
     // The preselects are what this is about: wait until they have happened.
     expect(await screen.findByText("Engineer")).toBeDefined()
-    expect(await screen.findByText("Integrator")).toBeDefined()
     expect(await screen.findByText("Reviewer")).toBeDefined()
 
     await user.click(screen.getByRole("button", { name: "Cancel" }))
@@ -219,35 +206,6 @@ describe("dismissing the dialog", () => {
   })
 })
 
-describe("the integrator assignment", () => {
-  it("preselects the built-in integrator and sends it untouched", async () => {
-    const user = userEvent.setup()
-    renderDialog(vi.fn())
-
-    // Not simply the first of the list — "Fleet Lander" sorts ahead of it.
-    expect(await screen.findByText("Integrator")).toBeDefined()
-
-    await user.type(screen.getByLabelText("Title"), "Wire the strip")
-    await user.click(screen.getByRole("button", { name: "Create task" }))
-
-    await vi.waitFor(() => expect(writes).toEqual([`POST /v1/goals/${GOAL.id}/tasks`]))
-    expect(posted[0]).toMatchObject({ integrator_profile: INTEGRATOR.id })
-  })
-
-  it("sends the integrator the user picked instead", async () => {
-    const user = userEvent.setup()
-    renderDialog(vi.fn())
-
-    await user.type(screen.getByLabelText("Title"), "Wire the strip")
-    await user.click(await screen.findByLabelText("Integrator profile"))
-    await user.click(await screen.findByRole("option", { name: "Fleet Lander" }))
-    await user.click(screen.getByRole("button", { name: "Create task" }))
-
-    await vi.waitFor(() => expect(writes).toEqual([`POST /v1/goals/${GOAL.id}/tasks`]))
-    expect(posted[0]).toMatchObject({ integrator_profile: CUSTOM_INTEGRATOR.id })
-  })
-})
-
 describe("editing a task that has not started", () => {
   const TASK = {
     ...CREATED,
@@ -265,7 +223,7 @@ describe("editing a task that has not started", () => {
     )
   }
 
-  it("offers the integrator beside the reviewers and patches the new one", async () => {
+  it("patches the reviewers the user replaced", async () => {
     const user = userEvent.setup()
     daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
       const request = input instanceof Request ? input : new Request(String(input), init)
@@ -278,28 +236,22 @@ describe("editing a task that has not started", () => {
       if (request.method !== "GET") {
         writes.push(`${request.method} ${url.pathname}`)
         posted.push(await request.clone().json())
-        return answer({ ...TASK, integrator_profile_id: CUSTOM_INTEGRATOR.id })
+        return answer(TASK)
       }
-      if (url.pathname === "/v1/profiles") {
-        return answer(
-          url.searchParams.get("role") === "integrator"
-            ? [CUSTOM_INTEGRATOR, INTEGRATOR]
-            : [REVIEWER],
-        )
-      }
+      if (url.pathname === "/v1/profiles") return answer([REVIEWER, STRICT_REVIEWER])
       if (url.pathname === "/v1/tasks") return answer([])
       return new Response("not stubbed", { status: 404 })
     })
     renderEdit()
 
-    // The task's own integrator is what the picker starts on, not a default.
-    expect(await screen.findByText("Integrator")).toBeDefined()
+    // The task's own reviewer is what the row starts on, not a default.
+    expect(await screen.findByText("Reviewer")).toBeDefined()
 
-    await user.click(await screen.findByLabelText("Integrator profile"))
-    await user.click(await screen.findByRole("option", { name: "Fleet Lander" }))
+    await user.click(await screen.findByLabelText("Reviewer 1"))
+    await user.click(await screen.findByRole("option", { name: "Strict Reviewer" }))
     await user.click(screen.getByRole("button", { name: "Save changes" }))
 
     await vi.waitFor(() => expect(writes).toEqual([`PATCH /v1/tasks/${TASK.id}`]))
-    expect(posted[0]).toMatchObject({ integrator_profile: CUSTOM_INTEGRATOR.id })
+    expect(posted[0]).toMatchObject({ reviewer_profiles: [STRICT_REVIEWER.id] })
   })
 })

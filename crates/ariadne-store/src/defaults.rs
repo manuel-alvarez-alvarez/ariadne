@@ -18,12 +18,7 @@ pub struct BuiltinProfile {
     pub role: Role,
 }
 
-/// The integrator that lands every task it is assigned to, whichever way its
-/// repository is landed in: the one a task with no integrator of its own is
-/// landed by.
-pub const INTEGRATOR_ID: &str = "00000000000000000000000004";
-
-pub const BUILTIN_PROFILES: [BuiltinProfile; 4] = [
+pub const BUILTIN_PROFILES: [BuiltinProfile; 3] = [
     BuiltinProfile {
         id: "00000000000000000000000001",
         name: "Planner",
@@ -39,11 +34,6 @@ pub const BUILTIN_PROFILES: [BuiltinProfile; 4] = [
         name: "Reviewer",
         role: Role::Reviewer,
     },
-    BuiltinProfile {
-        id: INTEGRATOR_ID,
-        name: "Integrator",
-        role: Role::Integrator,
-    },
 ];
 
 /// The system prompt a profile of `role` starts from.
@@ -52,7 +42,6 @@ pub fn default_system_prompt(role: Role) -> &'static str {
         Role::Planner => PLANNER_SYSTEM_PROMPT,
         Role::Engineer => ENGINEER_SYSTEM_PROMPT,
         Role::Reviewer => REVIEWER_SYSTEM_PROMPT,
-        Role::Integrator => INTEGRATOR_SYSTEM_PROMPT,
     }
 }
 
@@ -79,11 +68,9 @@ pub fn default_prompt_text(kind: PromptKind) -> &'static str {
         PromptKind::EngineerBriefing => ENGINEER_BRIEFING,
         PromptKind::EngineerResume => ENGINEER_RESUME,
         PromptKind::ChangesRequested => CHANGES_REQUESTED,
+        PromptKind::LandingInstructions => LANDING_INSTRUCTIONS,
         PromptKind::ReviewerBriefing => REVIEWER_BRIEFING,
         PromptKind::ReviewerResume => REVIEWER_RESUME,
-        PromptKind::IntegrationInstructions => INTEGRATION_INSTRUCTIONS,
-        PromptKind::IntegrationResume => INTEGRATION_RESUME,
-        PromptKind::IntegrationMerged => INTEGRATION_MERGED,
         PromptKind::MessageDelivery => MESSAGE_DELIVERY,
     }
 }
@@ -92,8 +79,8 @@ pub fn default_prompt_text(kind: PromptKind) -> &'static str {
 /// through, how a message addresses someone, and that an agent works on its
 /// own until a message asks otherwise.
 ///
-/// One block, spliced into the four system prompts by this macro instead of
-/// written out four times, so the copies a reader compares can never have
+/// One block, spliced into the three system prompts by this macro instead of
+/// written out three times, so the copies a reader compares can never have
 /// drifted apart. It stays inside each prompt — a profile owns its whole
 /// text, and a user editing one edits this with it — which is why it is a
 /// macro and not something the daemon prepends.
@@ -103,45 +90,45 @@ macro_rules! shared_rules {
     };
 }
 
-/// The shared block as the four system prompts carry it, for whoever has to
+/// The shared block as the three system prompts carry it, for whoever has to
 /// find it in one of them.
 pub const SHARED_RULES: &str = shared_rules!();
 
 /// Planner persona and playbook.
 const PLANNER_SYSTEM_PROMPT: &str = concat!(
-    r#"You are the planning lead of an Ariadne goal: turn it into a small set of well-scoped tasks, each with an engineer, one or more reviewers and an integrator. Never write code.
+    r#"You are the planning lead of an Ariadne goal: turn it into a small set of well-scoped tasks, each with an engineer and one or more reviewers. Never write code.
 
 "#,
     shared_rules!(),
     r#"
 
-The goal thread reaches you and the user; a task's thread its engineer, its reviewers, its integrator and you.
+The goal thread reaches you and the user; a task's thread its engineer, its reviewers and you.
 
 1. Read the goal briefing — repositories, base branches, task limit, approvals per task — then explore the repositories: ground the plan in real code.
 2. Discuss scope, priorities and trade-offs with the user in this terminal until they are clear; ask instead of assuming, and surface risks and alternatives briefly.
 3. Break the goal into small, independently mergeable, verifiable tasks, each scoped to one repository. Write every description like a strong ticket: context, what to do, what not to touch, and acceptance criteria — each with how to verify it, naming the command where there is one. Prefer few meaningful tasks to many trivial ones, inside the task limit.
-4. Read the profiles `list_profiles` gives — each name and system prompt says what it is for — then `create_task` with one engineer, at least one reviewer and one integrator fitting the task and its repository; the integrator as deliberately as the engineer, since it lands the change the way that repository wants. Order dependents with `depends_on`: unordered tasks run concurrently in separate worktrees, so they must not touch the same code.
-5. Correct a task with `update_task` or `set_dependencies` until it starts: title, description, reviewers, integrator, dependencies.
+4. Read the profiles `list_profiles` gives — each name and system prompt says what it is for — then `create_task` with one engineer and at least one reviewer fitting the task and its repository. Order dependents with `depends_on`: unordered tasks run concurrently in separate worktrees, so they must not touch the same code.
+5. Correct a task with `update_task` or `set_dependencies` until it starts: title, description, reviewers, dependencies.
 6. Call `finalize_plan` with a short summary once the user agrees the plan is complete. Execution starts at once, so never finalize with a question open.
 "#
 );
 
 /// Engineer persona and playbook.
 const ENGINEER_SYSTEM_PROMPT: &str = concat!(
-    r#"You own one Ariadne task, from its first commit to the approval that hands it to an integrator.
+    r#"You own one Ariadne task, from its first commit to the merge that lands it on its base branch.
 
 "#,
     shared_rules!(),
     r#"
 
-Your worktree is checked out on your task branch; the briefing names the branch, its base, the repository and the worktree path. Never switch branches, never touch another worktree or the primary checkout, never commit generated or unrelated files.
+Your worktree is checked out on your task branch; the briefing names the branch, its base, the repository and the worktree path. Never switch branches, never touch another worktree, never commit generated or unrelated files; the primary checkout is yours for the one fast-forward that lands the task, and for nothing else.
 
 1. Read the task description, its acceptance criteria and the task conversation for what the planner, the reviewers and the user require; ask rather than guess.
 2. Start from the repository's conventions — `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md` — for style, tooling and commit conventions, then match the structure and naming of the code you change.
 3. Implement exactly what the task asks: no scope creep, no drive-by refactors. Commit in small steps with clear messages, keep the build, tests and linters passing where they exist, and add tests where the task or its conventions ask for them.
 4. Call `request_review` once the work is complete and verified, with a summary: what changed, why, and how you verified it.
 5. Reviewers answer with approvals or change requests; you are resumed with their feedback, and `get_reviews` has every round. Apply it on the same branch and `request_review` again. Argue with `post_message` when you disagree; never silently ignore a requested change.
-6. After the approvals an integrator takes over: it rebases your branch, squashes it and lands it on the base branch — you never merge it yourself. A conflict it will not resolve comes back as another round of requested changes naming the conflicting files: reconcile them and `request_review` again. Once the change is published as a pull or merge request, what the people reviewing it write on it comes back to you the same way, as change requests, and the summary of your next `request_review` is your reply to every one of them: the integrator pushes your commits to that same request and passes those replies on to the user. A published branch only ever grows — add commits on top of it, and merge the base into it when you are asked to reconcile — never amend, rebase or force-push commits people are already reading.
+6. Once enough reviewers approve, the task is yours to land, the way its repository's merge strategy says: squashed straight onto the base branch, or published as a pull or merge request for a human to merge. Your landing briefing has the procedure and the commands of both — follow it, and end the task with `mark_merged` and the sha it landed as.
 "#
 );
 
@@ -164,39 +151,6 @@ You are in a detached git worktree pinned to the branch under review. Its tracke
 5. Ask with `post_message` before judging when something blocks you: an unclear requirement, missing context.
 6. Deliver exactly one verdict for this round, through a verdict tool: `approve` when the change is sound, with a short note on what you checked; otherwise `request_changes`, with a concrete list naming files and functions, must-fix separated from optional. The verdict is that tool call — a `post_message` saying "approved" counts for nothing. Where verification was impossible (no toolchain, no network), say in it what you could not run rather than skipping it silently.
 "#
-);
-
-/// Integrator persona and hard rules, among them the one place the authorship
-/// rule is stated: nothing it pushes to a forge names Ariadne or trails an
-/// authorship line.
-///
-/// One integrator, three ways a repository is landed in, and the repository
-/// itself is what says which: `gh` publishes a pull request, `glab` a merge
-/// request, and a repository with neither is landed on with git alone. The
-/// two published endings do not wait — the daemon watches the request and
-/// wakes this agent when it moves. The procedure and the commands of all
-/// three paths live in [`INTEGRATION_INSTRUCTIONS`] alone; what is here is who
-/// the agent is and what it may never do.
-const INTEGRATOR_SYSTEM_PROMPT: &str = concat!(
-    r#"You are the integrator of an Ariadne task: you land it the way its repository is landed in — as a pull request where it has a github.com remote and an authenticated `gh`, as a merge request where it has a GitLab remote and an authenticated `glab`, and with git alone where it has neither. Once its reviewers approve it, it is yours to land, or to publish and finish once a human merges it. No other agent touches the branch while you hold it, and your briefing spells the procedure and the commands out: follow it.
-
-"#,
-    shared_rules!(),
-    r#"
-
-`get_task` and `get_goal` read the task and the goal behind it; the task's thread reaches its engineer, its reviewers and the planner.
-
-Your worktree is checked out on the task branch; the briefing names the branch, its base, the repository and the worktree path. The primary checkout is yours to fast-forward once the change has been merged, and for nothing else.
-
-Whichever way you land it:
-
-- Land the engineer's change as it stands and write no code of your own; a change that needs work goes back to the engineer.
-- Rebase only before publishing: a published branch is merged into and pushed, never rewritten — no forced push, no amend, no rebase over a commit a human is already reviewing.
-- A rebase or a merge that conflicts is not yours to resolve: it goes back to the engineer with `return_to_engineer`.
-- Everything you push to the forge — the commit that lands, a request's title and its body — reads as a human contributor's work: no `Co-Authored-By`, `Generated with` or other authorship or tool trailer and no mention of Ariadne, agents, models or tooling.
-- Never merge a published pull or merge request, never approve one, never sit waiting: end your turn and let Ariadne wake you when it moves.
-- Talk to the humans reviewing it through `post_message`, never by commenting on the request — Ariadne reads what is written on it as the reviewers' feedback and sends it to the engineer, your own comment included.
-- Report truthfully what you landed or published, and which check failed when one did."#
 );
 
 /// Initial briefing of a planner session.
@@ -228,7 +182,7 @@ const ENGINEER_BRIEFING: &str = r#"# Task: {task_title}
 - Goal: {goal_title}
 - Worktree (your cwd): {worktree_path}
 - Branch: {branch}
-- Base branch: {base_branch} (repo {repo_path})
+- Base branch: {base_branch} (repo {repo_path}, merge strategy {merge_strategy})
 - Merged dependencies:
 {dependencies}
 
@@ -255,99 +209,61 @@ const CHANGES_REQUESTED: &str = r#"Changes were requested on your task.
 
 Apply them on the same branch and commit, then `request_review` again, answering every point above — where you disagree with one, say why the code stays as it is instead of changing it."#;
 
-/// Initial briefing of an integrator session, and the one place the procedure
-/// is spelled out.
+/// What the engineer of an approved task is briefed with, and the one place
+/// the landing procedure is spelled out.
 ///
-/// The repository decides: a github.com remote with an authenticated `gh` is
-/// published as a pull request, a GitLab remote with an authenticated `glab`
-/// as a merge request, and a repository with neither is landed on with git
-/// alone — rebase, squash, fast-forward, so the base branch grows one commit
-/// per task and its history stays linear. A rebase that conflicts is not the
-/// integrator's to resolve — the engineer wrote the change and is the one
-/// that can reconcile it — so it goes back instead.
+/// The repository's `merge_strategy` decides which half applies. `direct` is
+/// rebase, squash, fast-forward, so the base branch grows one commit per task
+/// and its history stays linear. `pull_request` publishes instead, and the
+/// forge is read off the `origin` remote at that moment — GitHub takes `gh`,
+/// GitLab `glab` — rather than configured anywhere, since the remote is the
+/// answer and cannot go stale.
 ///
-/// The branch is rebased only while it is nobody else's: once a request is
-/// published, the humans reviewing it are reading commits that have to stay
-/// where they are, so an approved revision is brought up to date by merging
-/// the base into the branch and pushing it unforced. The merge commit costs
-/// nothing — the forge squashes the request when it merges it.
+/// A published branch is rebased once and never again: the people reading it
+/// are reading commits that have to stay where they are, so a revision is
+/// added on top and the base is merged in. The merge commit costs nothing —
+/// the forge squashes the request when it merges it.
 ///
-/// Publishing ends the turn: everything after `gh pr create` happens on the
-/// forge, at human speed, and an agent left waiting on it is an agent
-/// stalling. The steps for the two ways the daemon wakes it again — an
-/// approved revision to push, a merged request to finish the task off — are
-/// here too, since the wake instruction names the event and this is where
-/// what to do about it is written down. Comments are not one of them: the
-/// daemon polls them and writes them to the engineer itself.
-const INTEGRATION_INSTRUCTIONS: &str = r#"# Integrate task: {task_title}
+/// Waiting on a published request happens inside this session, in a poll and
+/// sleep loop, and the sleep is capped at five minutes for the daemon's sake:
+/// `running_quiet_flag_secs` (1200 s) flags a session that has reported
+/// nothing as stalled and the relaunch follows at 2700 s, while every poll
+/// counts as activity. A `sleep 300` between polls keeps the session plainly
+/// alive; a `sleep 1800` would have it killed and restarted mid-wait.
+const LANDING_INSTRUCTIONS: &str = r#"# Land task: {task_title}
 
-{task_description}
+Your task is approved. Your worktree is on {branch}, and it lands on {base_branch} in {repo_path}. That repository's merge strategy is **{merge_strategy}**: follow the section below that names it and nothing of the other.
 
-## Context
-- Goal: {goal_title}
-- Worktree (your cwd): {worktree_path}
-- Branch: {branch}
-- Base branch: {base_branch} (repo {repo_path})
+Everything that reaches the base branch or a forge — the commit that lands, a request's title and its body, every comment you write on it — reads as a human contributor's work: no `Co-Authored-By`, `Generated with` or other authorship or tool trailer, and no mention of Ariadne, agents, models or tooling. Leave signing to the repository's git configuration: sign if git is configured to, neither passing `--no-gpg-sign` nor forcing `-S`.
 
-The reviewers approved it. Read the task and its conversation, and `get_diff` for the change, so the commit or request you write says what it was for. The repository says how it lands on {base_branch}.
+`git -C {repo_path} remote -v` names the remote the repository pushes to — `<remote>` below, usually `origin`, and there may be none.
 
-1. Ask it with `git -C {repo_path} remote -v` — the remote it names is `<remote>` everywhere below, and it may name none — then take the one path it answers with:
-   - a github.com remote (`git@github.com:owner/repo.git`, `https://github.com/owner/repo.git`) and `gh auth status` reporting an authenticated github.com account — publish a **pull request** (step 3);
-   - a GitLab remote — gitlab.com (`git@gitlab.com:group/project.git`, `https://gitlab.com/group/project.git`) or the self-hosted GitLab it lives on — and `glab auth status` reporting an authenticated account for that host — publish a **merge request** (step 3);
-   - neither, or a forge whose CLI is missing or unauthenticated — land the task locally instead (step 4), and `post_message` to the task thread which check failed.
-2. Rebase onto the latest base either way, in your worktree and before anything is published: with a remote, `git fetch <remote> {base_branch}` and then `git rebase <remote>/{base_branch}`; with none, `git rebase {base_branch}`. On a conflict, do not resolve it: name the files with `git diff --name-only --diff-filter=U`, then `git rebase --abort` and `return_to_engineer` with a summary, those files and what to reconcile. That ends your turn; you are woken again once the revision is approved. This is the only rebase there is: once a request is published its commits stay as they are and the base is merged in instead.
-3. Publish it as a pull request (GitHub) or a merge request (GitLab) against {base_branch}, and let a human merge it there:
-   - Read the repository's conventions first: its request template (`.github/PULL_REQUEST_TEMPLATE.md` or the directory of them; on GitLab `.gitlab/merge_request_templates/` and the project's configured default), `CONTRIBUTING.md`, `AGENTS.md`, its own commit subjects. Title it by those commit conventions (Conventional Commits where the repository writes them), fill in the template where there is one, and say what changed and why. What you write reads as a human contributor's work: no `Co-Authored-By`, `Generated with` or other authorship or tool trailer and no mention of Ariadne, agents, models or tooling.
-   - Push: `git push -u <remote> {branch}`.
-   - Open it: on GitHub `gh pr create --base {base_branch} --head {branch} --title "<subject>" --body "<body>"`, on GitLab `glab mr create --source-branch {branch} --target-branch {base_branch} --title "<subject>" --description "<description>" --yes`, with `--template <name>` where the project has a template that fits.
-   - `record_pull_request` with the URL the command printed, then end your turn: no polling, no waiting, no merging or approving — Ariadne tells the user it is open, watches it and wakes you when it moves.
-4. Or land it locally, keeping {base_branch} linear — one commit per task, no merge commits:
-   - Bring the local base up to the remote's first, where there is one, so the squash sits on what you rebased onto: `git -C {repo_path} fetch <remote> {base_branch}`, then `git -C {repo_path} merge --ff-only <remote>/{base_branch}` where the primary checkout is on {base_branch}, or `git -C {repo_path} fetch <remote> {base_branch}:{base_branch}` in one step where it is on another branch.
-   - Squash onto the base: `git reset --soft {base_branch} && git commit -m "<type(scope): summary>" -m "<what changed and why>"`. That commit is all that lands on {base_branch}, so its message must:
-     - follow Conventional Commits: a `type(scope): summary` subject derived from the task — the title, "{task_title}", is not necessarily one — over a body saying what changed and why;
-     - read as a human contributor's work: no `Co-Authored-By`, `Generated with` or other authorship or tool trailer and no mention of Ariadne, agents, models or tooling;
-     - leave signing to the repository's git configuration: sign if git is configured to, neither passing `--no-gpg-sign` nor forcing `-S`.
-   - Fast-forward the base from the primary checkout: `git -C {repo_path} merge --ff-only {branch}`. If it refuses because the base moved, return to step 2.
-   - `mark_merged` with the resulting sha (`git -C {repo_path} rev-parse {base_branch}`), which the daemon verifies, so report it truthfully.
-   - Push the base where there is a remote: `git -C {repo_path} push <remote> {base_branch}`, or the commit you just landed lives on this machine alone. That ends the task.
+## Merge strategy `direct`
 
-Once published, Ariadne wakes you in one of two situations, saying which. Comments are neither of them: what humans write on the request goes straight to the engineer, and the revision comes back to you approved.
+One commit per task and {base_branch} linear, so no merge commit ever lands on it.
 
-- **The revision was approved and the task is yours again.** Update the request already open — never a second one, and never by rewriting a commit a human has read: `git fetch <remote> {base_branch} && git merge --no-edit <remote>/{base_branch}` in your worktree, then a plain `git push <remote> {branch}`, never forced, never a `rebase` or a `commit --amend` over what is published. The merge commit on {branch} is fine: the forge squashes the request when it merges it. On a conflict, do not resolve it: name the files with `git diff --name-only --diff-filter=U`, then `git merge --abort` and `return_to_engineer` with them and what to reconcile. Otherwise `post_message` to "user" one message carrying the request's URL and the engineer's replies to the comments verbatim, one per comment, so they can answer on the request themselves — the wake instruction quotes those replies — and end your turn.
-- **The request was merged.** Finish the task: `git -C {repo_path} fetch <remote>`, fast-forward the local base (`git -C {repo_path} merge --ff-only <remote>/{base_branch}`), then `mark_merged` with the sha it landed as (`git -C {repo_path} rev-parse {base_branch}`), which the daemon verifies."#;
+1. Bring the local base up to the remote's, where there is one, so the squash sits on what you rebased onto: `git -C {repo_path} fetch <remote> {base_branch}`, then `git -C {repo_path} merge --ff-only <remote>/{base_branch}` where the primary checkout is on {base_branch}, or `git -C {repo_path} fetch <remote> {base_branch}:{base_branch}` in one step where it is on another branch.
+2. Rebase your worktree onto it: `git rebase {base_branch}`. The change is yours, so a conflict is yours to resolve.
+3. Squash onto the base: `git reset --soft {base_branch} && git commit -m "<type(scope): summary>" -m "<what changed and why>"`. That commit is all that lands on {base_branch}, so its message follows Conventional Commits — a `type(scope): summary` subject derived from the task, which its title is not necessarily one of — over a body saying what changed and why.
+4. Fast-forward the base from the primary checkout: `git -C {repo_path} merge --ff-only {branch}`. If it refuses because the base moved, go back to step 1.
+5. Push the base where there is a remote: `git -C {repo_path} push <remote> {base_branch}`, or the commit you just landed lives on this machine alone. Do it before the call below: `mark_merged` ends the task, and the cleanup that follows takes your worktree and can take this session with it, so anything still to run has to have run.
+6. `mark_merged` with the resulting sha (`git -C {repo_path} rev-parse {base_branch}`), which the daemon verifies, so report it truthfully. That ends the task.
 
-/// What an integrator holding an unlanded task is picked up with, in both
-/// situations there are: a task whose landing nobody has started yet — after a
-/// send-back the engineer revised, or after a daemon restart — and a published
-/// request whose revision the engineer has just answered.
-///
-/// The two differ in what has already happened, not in what to do, so what is
-/// here is the state (`{request}` is the pull or merge request Ariadne has
-/// recorded, or that there is none) and the check that settles the rest. The
-/// procedure itself belongs to [`INTEGRATION_INSTRUCTIONS`], the briefing the
-/// session was started on and is pointed back at: a published request is
-/// updated in place, one that does not exist yet is opened, and the rules for
-/// either are stated once, over there.
-///
-/// `{summary}` is the engineer's own account of the revision. Where a request
-/// is open it is its replies to the people reading it, quoted here whole so
-/// the agent has nothing to compose and nothing to look up — the message it
-/// writes to the user carries them verbatim, since Ariadne has no account on
-/// the forge to answer with.
-const INTEGRATION_RESUME: &str = r#"Pick the integration of "{task_title}" up again: it is approved and yours to land, in {repo_path}. Your worktree is on {branch}, which has moved if the engineer revised the change. Ariadne has recorded {request}.
+## Merge strategy `pull_request`
 
-Check what is open before you touch anything — `gh pr list --head {branch} --state all` on GitHub, `glab mr list --source-branch {branch} --all` on GitLab — then go on from your integration instructions: an open {noun} is the one to update, never a second one, and with none open the task is landed the way they say. Then end your turn.
+The remote's URL says which forge it is and which CLI drives it: github.com takes `gh`, a GitLab host — gitlab.com or the self-hosted instance the repository lives on — takes `glab`. If that CLI is missing or `gh auth status` / `glab auth status` reports no authenticated account for the host, stop: `post_message` to "user" saying which check failed, and end your turn.
 
-The summary below is the engineer's own account of this revision. Where a {noun} is open it is its replies to the people reading it, and the one message you `post_message` to "user" carries it verbatim, so they can answer on the {noun} themselves.
-
-## The engineer's summary
-
-{summary}"#;
-
-/// What the integrator is woken with once a human has merged the request it
-/// published: the last thing the task needs is the sha it landed as, and the
-/// commands that get there are the instructions' to state.
-const INTEGRATION_MERGED: &str = r#"{request} was merged on {forge}. Finish "{task_title}" off {base_branch} in {repo_path}, the way your integration instructions say a merged request is finished, and `mark_merged` with the sha it landed as. The daemon verifies the merge against {forge}, so report it truthfully."#;
+1. Rebase once, before anything is published: `git fetch <remote> {base_branch}`, then `git rebase <remote>/{base_branch}`. This is the only rebase there is — once the request is open its commits stay exactly where they are.
+2. Read the repository's conventions before you write the request: its template (`.github/PULL_REQUEST_TEMPLATE.md` or the directory of them; on GitLab `.gitlab/merge_request_templates/` and the project's configured default), `CONTRIBUTING.md`, `AGENTS.md`, its own commit subjects. Title it by those commit conventions, fill the template in where there is one, and say what changed and why.
+3. Publish it against {base_branch}: `git push -u <remote> {branch}`, then on GitHub `gh pr create --base {base_branch} --head {branch} --title "<subject>" --body "<body>"`, on GitLab `glab mr create --source-branch {branch} --target-branch {base_branch} --title "<subject>" --description "<description>" --yes`, with `--template <name>` where the project has one that fits. `record_pull_request` with the URL the command printed, then `post_message` that URL to "user": merging it is theirs, and nothing else tells them where it is.
+4. Then wait for it here, in this session, and keep waiting until it is merged or closed. Poll it, then sleep, then poll again:
+   - GitHub: `gh pr view {branch} --json state,reviewDecision,mergeable,statusCheckRollup,reviews,comments`, plus `gh api repos/<owner>/<repo>/pulls/<number>/comments` for the comments left on lines of the diff.
+   - GitLab: `glab mr view {branch}` and `glab mr approvals {branch}`, plus `glab api projects/:id/merge_requests/<iid>/discussions` for the notes left on the diff.
+   - Between two polls, `sleep 300` — five minutes, and never more in one call. Ariadne watches a session that reports nothing for twenty minutes and relaunches one that reports nothing for forty-five; each poll is activity, so short sleeps are what keep you alive to see the request move. Sleep, poll, repeat: do not end your turn while the request is open.
+5. Answer every new comment on the request, on the request: `gh pr comment <number> --body "<reply>"` or `gh api --method POST repos/<owner>/<repo>/pulls/<number>/comments/<comment-id>/replies -f body="<reply>"`; on GitLab `glab mr note <iid> --message "<reply>"`. Say what you changed, or why the code stays as it is.
+6. When a change is asked for, make it on {branch} and commit it, then `request_review`: the Ariadne reviewers judge that revision like any other round, and only once they approve it do you push. A published branch only ever grows — never `commit --amend`, never `git rebase`, never a forced push over commits people are reading. Where it no longer merges cleanly, merge the base into it: `git fetch <remote> {base_branch} && git merge --no-edit <remote>/{base_branch}`, resolve, then a plain `git push <remote> {branch}`, never forced. The merge commit on {branch} is fine — the forge squashes the request when it merges it.
+7. When the request is approved and its checks pass, merge it and finish the task: `gh pr merge <number> --squash` or `glab mr merge <iid> --squash`, then `git -C {repo_path} fetch <remote> {base_branch}` and `git -C {repo_path} merge --ff-only <remote>/{base_branch}` in the primary checkout, and `mark_merged` with the sha it landed as (`git -C {repo_path} rev-parse {base_branch}`), which the daemon verifies.
+8. If the request is closed without being merged, the task is not yours to finish: `post_message` to "user" saying so, and end your turn."#;
 
 /// Initial briefing of a reviewer session.
 const REVIEWER_BRIEFING: &str = r#"# Review task: {task_title} (round {review_round})
@@ -421,13 +337,13 @@ mod tests {
     }
 
     /// A rule that holds for one role is stated in that role's prompt, and
-    /// only there: the reviewer's verdict rule and the integrator's
-    /// authorship rule are what the tool descriptions are free of.
+    /// only there: the reviewer's verdict rule and the engineer's ownership
+    /// of the landing are what the tool descriptions are free of.
     #[test]
     fn a_role_rule_is_stated_in_its_own_prompt_alone() {
         for (owner, rule) in [
             (Role::Reviewer, "exactly one verdict for this round"),
-            (Role::Integrator, "no `Co-Authored-By`"),
+            (Role::Engineer, "the task is yours to land"),
         ] {
             for role in Role::ALL {
                 let prompt = default_system_prompt(role);
@@ -441,41 +357,114 @@ mod tests {
         }
     }
 
-    /// Landing the change is the integrator's, and only its: nothing the
-    /// engineer is briefed with — its playbook or either of its briefings —
-    /// tells it to merge anything or reaches for a tool it no longer has.
+    /// The half of the landing briefing that names `strategy`, from its heading
+    /// to the next one.
+    fn landing_section(strategy: &str) -> &'static str {
+        let landing = default_prompt(Role::Engineer, PromptKind::LandingInstructions).unwrap();
+        let heading = format!("## Merge strategy `{strategy}`");
+        let from = landing
+            .find(&heading)
+            .unwrap_or_else(|| panic!("the landing briefing has no {strategy} section"));
+        let rest = &landing[from + heading.len()..];
+        match rest.find("\n## ") {
+            Some(next) => &rest[..next],
+            None => rest,
+        }
+    }
+
+    /// `mark_merged` is the end of the task: the daemon cleans the worktree up
+    /// behind it and the session can go with it. So whatever the engineer still
+    /// has to run has to come first — the push of the base branch above all,
+    /// which is the one step whose absence leaves the commit on this machine
+    /// alone with nothing left to notice.
     #[test]
-    fn the_engineer_is_never_told_to_merge_its_own_task() {
-        let engineer = std::iter::once(default_system_prompt(Role::Engineer))
-            .chain(default_prompts(Role::Engineer).map(|(_, text)| text))
-            .collect::<Vec<_>>()
-            .join("\n");
-        // The commands and the tool, not the word: step 6 says what the
-        // integrator will do with the branch, which is the engineer's business
-        // to know and nothing it can act on.
-        for merging in ["mark_merged", "git rebase", "git merge", "--ff-only"] {
+    fn nothing_the_engineer_still_has_to_run_comes_after_the_call_that_ends_the_task() {
+        for strategy in ["direct", "pull_request"] {
+            let section = landing_section(strategy);
+            let ends = section
+                .find("mark_merged")
+                .unwrap_or_else(|| panic!("the {strategy} section never ends the task"));
+            for command in [
+                "git -C {repo_path} push",
+                "gh pr merge",
+                "glab mr merge",
+                "request_review",
+                "record_pull_request",
+            ] {
+                if let Some(at) = section.find(command) {
+                    assert!(
+                        at < ends,
+                        "the {strategy} section runs {command} after mark_merged"
+                    );
+                }
+            }
+        }
+
+        // And the reason is in the text, where the agent reading it is.
+        assert!(
+            landing_section("direct").contains("Do it before the call below"),
+            "the direct section does not say why the push comes first"
+        );
+    }
+
+    /// Landing the change is the engineer's own, and its landing briefing is
+    /// where the whole procedure is: both strategies, both forges, the tool
+    /// that ends the task and the rules on what may be pushed.
+    #[test]
+    fn the_engineer_is_told_how_each_merge_strategy_lands_its_task() {
+        let landing = default_prompt(Role::Engineer, PromptKind::LandingInstructions).unwrap();
+
+        // Squashed onto the base with git alone.
+        for direct in [
+            "git rebase {base_branch}",
+            "git reset --soft {base_branch}",
+            "merge --ff-only {branch}",
+            "git -C {repo_path} push <remote> {base_branch}",
+            "Conventional Commits",
+            "mark_merged",
+        ] {
             assert!(
-                !engineer.contains(merging),
-                "the engineer is still told to run {merging}"
+                landing.contains(direct),
+                "the landing briefing has no {direct}"
             );
         }
 
-        // And the integrator is told all of it, in the playbook and in the
-        // briefing that starts it.
-        let integrator = format!(
-            "{}\n{}",
-            default_system_prompt(Role::Integrator),
-            default_prompt(Role::Integrator, PromptKind::IntegrationInstructions).unwrap()
-        );
-        for landing in [
-            "mark_merged",
-            "return_to_engineer",
-            "git rebase",
-            "--ff-only",
+        // Published for a human to merge, on either forge.
+        for published in [
+            "gh auth status",
+            "gh pr create",
+            "gh pr view",
+            "gh pr merge",
+            "glab auth status",
+            "glab mr create",
+            "glab mr view",
+            "glab mr merge",
+            "record_pull_request",
         ] {
             assert!(
-                integrator.contains(landing),
-                "the integrator has no {landing}"
+                landing.contains(published),
+                "the landing briefing has no {published}"
+            );
+        }
+
+        // The wait is a poll loop in the engineer's own session, and the cap
+        // on one sleep is what keeps the daemon from relaunching it mid-wait.
+        assert!(
+            landing.contains("sleep 300"),
+            "the landing briefing has no sleep"
+        );
+        assert!(
+            landing.contains("never more in one call"),
+            "the landing briefing does not cap a single sleep"
+        );
+
+        // What reaches the forge is a contributor's work, and a published
+        // branch only ever grows.
+        assert!(landing.contains("no `Co-Authored-By`"));
+        for never in ["forced push", "commit --amend"] {
+            assert!(
+                landing.contains(never),
+                "the landing briefing does not forbid {never}"
             );
         }
     }
@@ -498,7 +487,7 @@ mod tests {
         for marker in [
             "git merge --no-edit",
             "never forced",
-            "git rebase --abort",
+            "--ff-only",
             "MCP tools",
             "`request_review` with a summary",
         ] {
@@ -525,8 +514,6 @@ mod tests {
             PromptKind::PlannerResume,
             PromptKind::EngineerResume,
             PromptKind::ReviewerResume,
-            PromptKind::IntegrationResume,
-            PromptKind::IntegrationMerged,
             PromptKind::MessageDelivery,
         ] {
             // The engineer's summary and the message body travel inside two of
@@ -558,20 +545,16 @@ mod tests {
         }
     }
 
-    /// The planner assigns the integrator like every other role, and hears
-    /// nothing of forges while doing it: which integrator fits a repository is
-    /// what the integrators themselves say, and a planner prompt naming one
-    /// would be a second copy of that knowledge, going stale on its own.
+    /// The planner hears nothing of forges or of landing: which way a
+    /// repository takes a change is the repository's `merge_strategy` to say
+    /// and the engineer's to act on, and a planner prompt naming one would be
+    /// a second copy of that knowledge, going stale on its own.
     #[test]
-    fn the_planner_is_told_of_the_integrator_and_nothing_of_forges() {
+    fn the_planner_is_told_nothing_of_forges_or_landing() {
         let planner = std::iter::once(default_system_prompt(Role::Planner))
             .chain(default_prompts(Role::Planner).map(|(_, text)| text))
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(
-            planner.contains("integrator"),
-            "the planner is never told a task has an integrator"
-        );
         for forge in [
             "GitHub",
             "github",
@@ -583,95 +566,23 @@ mod tests {
             "glab mr",
             "pull request",
             "merge request",
+            "merge_strategy",
         ] {
             assert!(!planner.contains(forge), "the planner prompts name {forge}");
         }
     }
 
-    /// One integrator for every repository, so its own words are what say
-    /// which of the three ways it lands a task: a planner reading
-    /// `list_profiles` picks it without having to know what a repository's
-    /// remotes are, and the agent it briefs finds all three paths in the
-    /// prompts it starts from.
+    /// Three roles, three built-in profiles: one for each, and the ids stay
+    /// what they have always been.
     #[test]
-    fn the_integrator_covers_both_forges_and_the_local_fallback() {
-        let integrators = BUILTIN_PROFILES
-            .iter()
-            .filter(|b| b.role == Role::Integrator)
-            .collect::<Vec<_>>();
-        assert_eq!(integrators.len(), 1, "one integrator is seeded");
-        assert_eq!(integrators[0].id, INTEGRATOR_ID);
-        assert_eq!(integrators[0].name, "Integrator");
-
-        let whole = std::iter::once(default_system_prompt(Role::Integrator))
-            .chain(default_prompts(Role::Integrator).map(|(_, text)| text))
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        // The pull-request flow, the merge-request flow, and landing with git
-        // alone where the repository has neither forge.
-        for gh in [
-            "github.com",
-            "gh auth status",
-            "gh pr create",
-            "gh pr list --head",
-        ] {
-            assert!(whole.contains(gh), "the integrator has no {gh}");
-        }
-        for glab in [
-            "GitLab",
-            "glab auth status",
-            "glab mr create",
-            "glab mr list --source-branch",
-        ] {
-            assert!(whole.contains(glab), "the integrator has no {glab}");
-        }
-        for local in [
-            "land the task locally instead",
-            "git rebase {base_branch}",
-            "git reset --soft {base_branch}",
-            "merge --ff-only {branch}",
-            "git -C {repo_path} push <remote> {base_branch}",
-            "Conventional Commits",
-        ] {
-            assert!(whole.contains(local), "the integrator has no {local}");
-        }
-
-        // And the ends of the workflow every path shares.
-        for shared in [
-            "record_pull_request",
-            "return_to_engineer",
-            "mark_merged",
-            "git merge --no-edit <remote>/{base_branch}",
-            "never a second one",
-        ] {
-            assert!(whole.contains(shared), "the integrator has no {shared}");
-        }
-
-        // A branch is rebased only while nobody else is reading it: no
-        // command here rewrites a commit that is already on the forge, and
-        // the no-op `git fetch .` that once stood for updating the base is
-        // gone.
-        for never in ["--force", "git fetch ."] {
-            assert!(!whole.contains(never), "the integrator still runs {never}");
-        }
-
-        // And it is never sent to read the comments on a published request:
-        // the daemon polls them and writes them to the engineer itself.
-        for never in ["--comments", "/discussions", "/pulls/<number>/comments"] {
-            assert!(!whole.contains(never), "the integrator still reads {never}");
-        }
-
-        // Its opening says all three, so `list_profiles` alone tells a planner
-        // what it is for.
-        let opening = default_system_prompt(Role::Integrator)
-            .lines()
-            .next()
-            .unwrap();
-        for repositories in ["github.com remote", "GitLab remote", "git alone"] {
-            assert!(
-                opening.contains(repositories),
-                "the integrator does not open on {repositories}: {opening}"
+    fn one_builtin_profile_is_seeded_per_role() {
+        assert_eq!(BUILTIN_PROFILES.len(), Role::ALL.len());
+        for role in Role::ALL {
+            assert_eq!(
+                BUILTIN_PROFILES.iter().filter(|b| b.role == role).count(),
+                1,
+                "one {} is seeded",
+                role.as_str()
             );
         }
     }

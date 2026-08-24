@@ -25,21 +25,15 @@ pub async fn work_is_active(store: &Store, session: &AgentSession) -> bool {
             Ok(GoalStatus::Planning)
         ),
         // Every status the engineer is working in or about to be woken for;
-        // `pending` has no engineer yet, `under_review` is not its turn, and
-        // once the task is approved the integrator has it.
+        // `pending` has no engineer yet and `under_review` is not its turn.
+        // `approved` is: landing the change is the engineer's last job.
         Role::Engineer => match task_of(store, session).await {
             Some(task) => matches!(
                 task.status(),
-                TaskStatus::Ready | TaskStatus::InProgress | TaskStatus::ChangesRequested
-            ),
-            None => false,
-        },
-        // The integrator's turn is the landing, and nothing else: a task sent
-        // back to the engineer is not the integrator's to wait on.
-        Role::Integrator => match task_of(store, session).await {
-            Some(task) => matches!(
-                task.status(),
-                TaskStatus::Approved | TaskStatus::Integrating
+                TaskStatus::Ready
+                    | TaskStatus::InProgress
+                    | TaskStatus::ChangesRequested
+                    | TaskStatus::Approved
             ),
             None => false,
         },
@@ -51,7 +45,7 @@ pub async fn work_is_active(store: &Store, session: &AgentSession) -> bool {
                 .is_ok_and(|reviews| {
                     !reviews
                         .iter()
-                        .any(|r| r.reviewer_profile_id.as_deref() == Some(&session.profile_id))
+                        .any(|r| r.reviewer_profile_id == session.profile_id)
                 }),
             _ => false,
         },

@@ -427,6 +427,8 @@ fn pick_repository(repos: &[RepositoryDto], spec: &str) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
+    use ariadne_core::MergeStrategy;
+
     use super::*;
 
     fn repo(id: &str, path: &str, base_branch: &str) -> RepositoryDto {
@@ -434,6 +436,7 @@ mod tests {
             id: id.into(),
             path: path.into(),
             base_branch: base_branch.into(),
+            merge_strategy: MergeStrategy::Direct,
             description: None,
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:00Z".into(),

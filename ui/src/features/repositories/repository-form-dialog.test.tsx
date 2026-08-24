@@ -37,6 +37,7 @@ const REPOSITORY: RepositoryDto = {
   id: "01JREPO00000000000000ARI",
   path: "/home/me/dev/ariadne",
   base_branch: "main",
+  merge_strategy: "direct",
   description: "The orchestrator itself.",
   created_at: STAMP,
   updated_at: STAMP,
@@ -126,7 +127,23 @@ describe("registering a repository", () => {
       path: "/home/me/dev/new",
       base_branch: null,
       description: null,
+      merge_strategy: "direct",
     })
+  })
+
+  it("registers a repository whose tasks are published for a human to merge", async () => {
+    const user = userEvent.setup()
+    renderDialog(null)
+
+    await user.type(screen.getByLabelText("Path"), "/home/me/dev/new")
+    await user.click(screen.getByLabelText("Merge strategy"))
+    await user.click(await screen.findByRole("option", { name: "Publish a pull or merge request" }))
+    await user.click(screen.getByRole("button", { name: "Register repository" }))
+
+    await waitFor(() => {
+      expect(lastWrite()).toBeDefined()
+    })
+    expect(lastWrite()?.body).toMatchObject({ merge_strategy: "pull_request" })
   })
 
   it("refuses a relative path itself, without asking the daemon", async () => {
@@ -214,6 +231,7 @@ describe("editing a repository", () => {
     expect(lastWrite()?.body).toEqual({
       path: REPOSITORY.path,
       base_branch: "main",
+      merge_strategy: "direct",
       description: "The orchestrator itself. Now with repositories.",
     })
   })

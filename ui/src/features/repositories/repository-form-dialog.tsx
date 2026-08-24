@@ -11,11 +11,11 @@
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useEffect } from "react"
-import { useForm } from "react-hook-form"
+import { Controller, useForm } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
 
-import { ApiError, type RepositoryDto } from "@/api"
+import { ApiError, type MergeStrategy, type RepositoryDto } from "@/api"
 import { FormDialog } from "@/components/form-dialog"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -29,6 +29,13 @@ import {
 } from "@/components/ui/dialog"
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { describeError } from "@/lib/errors"
 
@@ -42,11 +49,35 @@ const formSchema = z.object({
     .refine((value) => value.startsWith("/"), { message: "The path must be absolute." }),
   base_branch: z.string().trim(),
   description: z.string(),
+  merge_strategy: z.enum(["direct", "pull_request"]),
 })
 
 type RepositoryFormValues = z.infer<typeof formSchema>
 
-const EMPTY_VALUES: RepositoryFormValues = { path: "", base_branch: "", description: "" }
+const EMPTY_VALUES: RepositoryFormValues = {
+  path: "",
+  base_branch: "",
+  description: "",
+  merge_strategy: "direct",
+}
+
+/**
+ * How an approved task reaches the base branch here, in the two words the
+ * daemon knows and the sentence each of them means for the engineer that has
+ * to act on it.
+ */
+const MERGE_STRATEGIES: { value: MergeStrategy; label: string; hint: string }[] = [
+  {
+    value: "direct",
+    label: "Squash onto the base branch",
+    hint: "The engineer rebases, squashes the task into one commit and fast-forwards the base branch itself.",
+  },
+  {
+    value: "pull_request",
+    label: "Publish a pull or merge request",
+    hint: "The engineer opens a request with `gh` or `glab`, answers what is written on it, and finishes the task once it is merged.",
+  },
+]
 
 export function RepositoryFormDialog({
   open,
@@ -67,7 +98,8 @@ export function RepositoryFormDialog({
     resolver: zodResolver(formSchema),
     defaultValues: EMPTY_VALUES,
   })
-  const { formState, handleSubmit, register, reset, setError } = form
+  const { formState, handleSubmit, register, reset, setError, watch } = form
+  const selectedStrategy = watch("merge_strategy")
 
   // Every open starts from what is actually stored, never from the previous
   // attempt. Keyed off the dialog opening rather than the prop: a
@@ -80,6 +112,7 @@ export function RepositoryFormDialog({
             path: repository.path,
             base_branch: repository.base_branch,
             description: repository.description ?? "",
+            merge_strategy: repository.merge_strategy,
           }
         : EMPTY_VALUES,
     )
@@ -100,6 +133,7 @@ export function RepositoryFormDialog({
             base_branch: branch,
             // Empty is how the daemon spells "clear the description".
             description,
+            merge_strategy: values.merge_strategy,
           },
         })
         toast.success("Repository updated", { description: path })
@@ -109,6 +143,7 @@ export function RepositoryFormDialog({
           // Absent, not empty: that is what asks for the repo's current branch.
           base_branch: branch || null,
           description: description || null,
+          merge_strategy: values.merge_strategy,
         })
         toast.success("Repository registered", { description: created.path })
       }
@@ -188,6 +223,35 @@ export function RepositoryFormDialog({
                     : "Leave empty for whatever the repo has checked out right now."}
                 </FieldDescription>
               )}
+            </Field>
+
+            <Field>
+              <FieldLabel htmlFor="repository-merge-strategy">Merge strategy</FieldLabel>
+              <Controller
+                control={form.control}
+                name="merge_strategy"
+                render={({ field }) => (
+                  <Select
+                    value={field.value}
+                    onValueChange={(value) => field.onChange((value as MergeStrategy) ?? "direct")}
+                    items={MERGE_STRATEGIES.map(({ value, label }) => ({ label, value }))}
+                  >
+                    <SelectTrigger id="repository-merge-strategy" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {MERGE_STRATEGIES.map(({ value, label }) => (
+                        <SelectItem key={value} value={value}>
+                          {label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+              <FieldDescription>
+                {MERGE_STRATEGIES.find(({ value }) => value === selectedStrategy)?.hint}
+              </FieldDescription>
             </Field>
 
             <Field>

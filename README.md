@@ -27,49 +27,44 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    the **planner** in tmux; `ariadne goal attach` drops you into the
    conversation.
 2. The planner discusses the breakdown with you, creates tasks through the
-   Ariadne MCP tools (assigning an engineer profile, reviewer profiles and an
-   integrator profile per task, with optional `depends_on` ordering), then
-   calls `finalize_plan`.
+   Ariadne MCP tools (assigning an engineer profile and reviewer profiles per
+   task, with optional `depends_on` ordering), then calls `finalize_plan`.
 3. The scheduler takes over: when a task's dependencies are merged it becomes
    `ready`, an **engineer** is spawned in a dedicated git worktree on a branch
    named after the task — its title slugged, plus a short tail of its id, as in
-   `fix-the-integrator-briefing-real-fetch-r9jr7c` — implements, commits and
+   `fix-the-landing-briefing-real-fetch-r9jr7c` — implements, commits and
    calls `request_review`.
 4. **Reviewers** spawn in read-only detached worktrees, inspect the diff and
    `approve` or `request_changes`. Change requests resume the engineer with
-   the feedback; enough approvals hand the task to its integrator.
-5. The **integrator** takes the branch over in a worktree of its own — the
-   engineer's is released with it — and lands it the way the repository is
-   landed in. With no forge remote, or none its CLI is authenticated for, that
-   is local: rebase, squash, fast-forward the base branch and `mark_merged`,
-   which the daemon only accepts after verifying the merge with
-   `git merge-base --is-ancestor`. A rebase it will not resolve goes back to
-   the engineer as a round of requested changes (`return_to_engineer`)
-   instead. Worktrees are cleaned up, dependent tasks wake up, and the goal
-   completes when everything is merged.
-6. On a repository with a github.com remote and an authenticated `gh`, the
-   same integrator publishes instead: it rebases, pushes and opens a pull
-   request with `gh pr create` following the repository's conventions, reports
-   the URL with `record_pull_request` and ends its turn. From there the daemon
-   polls `gh pr view` every `pr_poll_secs` — an approval is announced to you
-   once, comments come back to the engineer exactly once each as a round of
-   requested changes the daemon writes itself, and the reply it answers them
-   with is what the integrator pushes to the same pull request and passes on
-   to you (a published branch is merged into, never rewritten; the people
-   reading it are that round's reviewers, so no internal review is run for
-   it), and the merge you make on GitHub wakes the integrator to
-   fast-forward the base branch and report the sha. That sha is verified
-   against GitHub, so a squash- or rebase-merged pull request lands as cleanly
-   as a fast-forward.
-7. A GitLab remote with an authenticated `glab` gets the same treatment:
-   `glab mr create` against the project's own merge request templates, and a
-   daemon that polls `glab` for the approval, the discussion notes and the
-   merge. Which of the two watches a task is the URL its integrator recorded.
+   the feedback; enough approvals move the task to `approved`.
+5. The task never leaves the engineer that wrote it: it keeps its session and
+   its worktree, and is briefed to land the change the way the repository's
+   **merge strategy** says (`ariadne repo add --merge-strategy`, default
+   `direct`).
+   - **`direct`** — rebase onto the base, squash into one commit with a
+     conventional subject, fast-forward the base branch in the primary
+     checkout, push it where there is a remote, then `mark_merged`. The daemon
+     only accepts the sha after verifying the merge with
+     `git merge-base --is-ancestor`.
+   - **`pull_request`** — rebase once, push the branch, and open a request
+     with `gh pr create` or `glab mr create` (whichever the `origin` remote
+     calls for), following the repository's own templates and conventions;
+     `record_pull_request` tells you where it is. The engineer then waits on it
+     in its own session, polling the forge and sleeping between polls: it
+     answers every comment on the request, and a change somebody asks for is
+     made on the same branch and sent through the Ariadne reviewers before it
+     is pushed — a published branch is merged into and added to, never
+     rewritten. Once the request is approved and green it merges it with
+     `--squash`, fast-forwards the base branch and reports the sha.
+6. Worktrees are cleaned up, dependent tasks wake up, and the goal completes
+   when everything is merged.
 
 Task lifecycle: `pending → ready → in_progress → under_review →
-(changes_requested → in_progress …) → approved → integrating → merged`, with
-`cancelled`/`failed` (retryable) escapes. Every transition is validated
-against a typed state machine and recorded in an audit table.
+(changes_requested → in_progress …) → approved → merged`, with
+`cancelled`/`failed` (retryable) escapes. From `approved` the engineer can also
+`request_review` again, which is how a revision of a published request is
+reviewed. Every transition is validated against a typed state machine and
+recorded in an audit table.
 
 Agents run with permissions bypassed (`--dangerously-skip-permissions`,
 `--yolo`, `permission: allow`) — hooks installed at spawn time report every
@@ -187,7 +182,7 @@ cargo build --release          # builds `ariadned` and `ariadne`
 
 ariadne daemon start           # unix socket at ~/.ariadne/ariadne.sock
 
-# Built-in profiles Planner / Engineer / Reviewer / Integrator are seeded
+# Built-in profiles Planner / Engineer / Reviewer are seeded
 # automatically with no agent kind or model: at spawn time the first installed
 # CLI is used, in order claude_code -> codex -> opencode. A repository is
 # registered once and referenced by every goal that works in it (--branch
@@ -201,6 +196,12 @@ ariadne goal attach <goal-id>
 ariadne repo add ~/projects/api --branch release/2.0
 ariadne repo ls
 ariadne goal create --title "..." --repo <repository-id>
+
+# How a task lands here is the repository's to say: squashed straight onto the
+# base branch (the default), or published for a human to merge — in which case
+# the engineer opens the request with `gh`/`glab` and waits on it itself.
+ariadne repo add ~/projects/api --merge-strategy pull_request
+ariadne repo edit <repository-id> --merge-strategy direct
 
 # Custom profiles pin a role to a specific agent/model/prompt:
 ariadne profile create --name rev-strict --role reviewer --agent codex \
@@ -336,13 +337,6 @@ delete_merged_branches = true      # only applies when worktrees are deleted too
 prevent_sleep = true               # hold a system sleep inhibition while any agent
                                    # session is live, so the box does not idle-sleep
                                    # out from under a working agent (default)
-gh_bin = "/opt/homebrew/bin/gh"    # the GitHub CLI pull requests are watched with
-                                   # (default: "gh" on PATH)
-glab_bin = "/opt/homebrew/bin/glab" # and the GitLab CLI merge requests are watched
-                                   # with (default: "glab" on PATH)
-pr_poll_secs = 180                 # how often an integrating task's pull or merge
-                                   # request is looked at (default); it moves when a
-                                   # human reads it, so polling faster buys nothing
 running_quiet_flag_secs = 1200     # how long an agent may be mid-turn without
                                    # reporting anything before it is raised for you
                                    # (default); what it measures is silence, not how

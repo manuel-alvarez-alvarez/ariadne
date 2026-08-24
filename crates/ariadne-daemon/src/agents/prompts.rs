@@ -18,8 +18,6 @@ use ariadne_core::PromptKind;
 use ariadne_store::defaults::default_prompt_text;
 use ariadne_store::{Goal, Message, Profile, Repository, Store, Task};
 
-use crate::forge::WatchedPr;
-
 /// The profile's own text for `kind`, falling back to the built-in default
 /// when there is no row to read (deleted by hand, or a profile that predates
 /// the kind).
@@ -91,7 +89,12 @@ pub fn planner_briefing(template: &str, goal: &Goal, repos: &[Repository]) -> St
     let repo_lines = repos
         .iter()
         .map(|r| {
-            let line = format!("- {} (base branch: {})", r.path, r.base_branch);
+            let line = format!(
+                "- {} (base branch: {}, merge strategy: {})",
+                r.path,
+                r.base_branch,
+                r.merge_strategy().as_str()
+            );
             match r.description.as_deref().map(str::trim) {
                 Some(d) if !d.is_empty() => format!("{line} — {d}"),
                 _ => line,
@@ -149,6 +152,7 @@ pub fn engineer_briefing(
             ("branch", &task.branch),
             ("base_branch", &repo.base_branch),
             ("repo_path", &repo.path),
+            ("merge_strategy", repo.merge_strategy().as_str()),
             ("dependencies", &dep_lines),
         ],
     )
@@ -221,51 +225,13 @@ pub fn changes_requested_briefing(template: &str, feedback: &[(String, String)])
     render(template, &[("feedback", &items)])
 }
 
-/// Initial prompt for an integrator session: the approved task, and how the
-/// repository wants it landed.
+/// What the engineer of an approved task is briefed with: how its repository
+/// takes the change, and the branch and checkout the commands below act on.
 ///
-/// `worktree_path` is the integrator's own, not the task's — the task row
-/// carries the engineer's, which by now has been released so that the branch
-/// can be checked out here instead.
-pub fn integration_briefing(
-    template: &str,
-    task: &Task,
-    goal: &Goal,
-    repo: &Repository,
-    worktree_path: &str,
-) -> String {
-    render(
-        template,
-        &[
-            ("task_title", &task.title),
-            ("task_description", &task.description),
-            ("goal_title", &goal.title),
-            ("worktree_path", worktree_path),
-            ("branch", &task.branch),
-            ("base_branch", &repo.base_branch),
-            ("repo_path", &repo.path),
-        ],
-    )
-}
-
-/// What an integrator holding an unlanded task is picked up with, in both
-/// situations there are: a task whose landing nobody has started — after a
-/// send-back the engineer revised the branch, after a daemon restart the base
-/// may have moved under it — and a published request whose revision the
-/// engineer has just answered.
-///
-/// `request` is what Ariadne has recorded for the task, named the way the
-/// forge names it; `summary` the engineer's own account of the revision,
-/// which on a published request is its replies to the people reading it and
-/// travels through byte for byte — its indentation, its blank lines and its
-/// trailing newline are part of what those people are answered with.
-pub fn integration_resume_briefing(
-    template: &str,
-    task: &Task,
-    repo: &Repository,
-    request: Option<&WatchedPr>,
-    summary: Option<&str>,
-) -> String {
+/// The one place the merge strategy reaches an agent as a value rather than as
+/// a thing to go and ask for, so the briefing can name the half of the
+/// procedure that applies and the agent has nothing to decide.
+pub fn landing_briefing(template: &str, task: &Task, repo: &Repository) -> String {
     render(
         template,
         &[
@@ -273,32 +239,7 @@ pub fn integration_resume_briefing(
             ("branch", &task.branch),
             ("base_branch", &repo.base_branch),
             ("repo_path", &repo.path),
-            ("request", &recorded_request(request)),
-            (
-                "noun",
-                request.map_or("pull or merge request", |r| r.forge.noun()),
-            ),
-            ("summary", revision_summary(summary)),
-        ],
-    )
-}
-
-/// What the integrator is woken with once a human has merged the request it
-/// published.
-pub fn integration_merged_briefing(
-    template: &str,
-    task: &Task,
-    repo: &Repository,
-    request: &WatchedPr,
-) -> String {
-    render(
-        template,
-        &[
-            ("task_title", &task.title),
-            ("request", &request.label()),
-            ("forge", request.forge.name()),
-            ("base_branch", &repo.base_branch),
-            ("repo_path", &repo.path),
+            ("merge_strategy", repo.merge_strategy().as_str()),
         ],
     )
 }
@@ -320,28 +261,8 @@ pub fn message_delivery(template: &str, message: &Message) -> String {
     )
 }
 
-/// The pull or merge request Ariadne has on record for a task, as the
-/// integrator reads it — or that there is none to update yet.
-fn recorded_request(request: Option<&WatchedPr>) -> String {
-    match request {
-        Some(r) => format!("{} ({})", r.label(), r.url),
-        None => "no pull or merge request for it yet".to_string(),
-    }
-}
-
-/// The engineer's account of the revision, or the stand-in for one it never
-/// wrote. Only the emptiness check reads a trimmed copy: what goes into the
-/// briefing is the summary itself.
-fn revision_summary(summary: Option<&str>) -> &str {
-    summary
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or("(the engineer left no summary of this revision)")
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::forge::Forge;
-
     use super::*;
 
     fn goal() -> Goal {
@@ -366,6 +287,7 @@ mod tests {
             path: "/repos/ariadne".into(),
             base_branch: "main".into(),
             description: None,
+            merge_strategy: "direct".into(),
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:00Z".into(),
         }
@@ -380,7 +302,6 @@ mod tests {
             description: "Read them from `profile_prompts`.".into(),
             status: "in_progress".into(),
             engineer_profile_id: "01engineerxxxxxxxxxxxxxxxx".into(),
-            integrator_profile_id: ariadne_store::defaults::INTEGRATOR_ID.into(),
             agent_kind: None,
             model: None,
             branch: "render-prompts-from-the-database-xxxxxx".into(),
@@ -388,20 +309,9 @@ mod tests {
             review_round: 3,
             stalled: 0,
             merge_commit: None,
-            pr_number: None,
             pr_url: None,
-            pr_relayed_comments: None,
-            pr_approved_notified: 0,
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:00Z".into(),
-        }
-    }
-
-    fn request() -> WatchedPr {
-        WatchedPr {
-            forge: crate::forge::Forge::GitHub,
-            number: 12,
-            url: "https://github.com/owner/repo/pull/12".into(),
         }
     }
 
@@ -499,19 +409,7 @@ mod tests {
                 PromptKind::ReviewerResume => {
                     reviewer_resume_briefing(&template, &task, Some("done"))
                 }
-                PromptKind::IntegrationInstructions => {
-                    integration_briefing(&template, &task, &goal, &repo, "/worktrees/task-int")
-                }
-                PromptKind::IntegrationResume => integration_resume_briefing(
-                    &template,
-                    &task,
-                    &repo,
-                    Some(&request()),
-                    Some("done"),
-                ),
-                PromptKind::IntegrationMerged => {
-                    integration_merged_briefing(&template, &task, &repo, &request())
-                }
+                PromptKind::LandingInstructions => landing_briefing(&template, &task, &repo),
                 PromptKind::MessageDelivery => message_delivery(&template, &message()),
             };
             assert!(
@@ -558,10 +456,13 @@ mod tests {
             .map(|(who, body)| format!("### From {who}\n{body}"))
             .collect::<Vec<_>>()
             .join("\n\n");
-        let repo_line = format!("- {} (base branch: {})", repo.path, repo.base_branch);
+        let repo_line = format!(
+            "- {} (base branch: {}, merge strategy: {})",
+            repo.path,
+            repo.base_branch,
+            repo.merge_strategy().as_str()
+        );
         let round = task.review_round.to_string();
-        let label = request().label();
-        let recorded = format!("{label} ({})", request().url);
         let message = message();
 
         // The values every kind is rendered with, and what the briefing that
@@ -611,6 +512,7 @@ mod tests {
                     ("branch", &task.branch),
                     ("base_branch", &repo.base_branch),
                     ("repo_path", &repo.path),
+                    ("merge_strategy", "direct"),
                     ("dependencies", &dep_lines),
                 ],
             ),
@@ -659,57 +561,14 @@ mod tests {
                 ],
             ),
             (
-                PromptKind::IntegrationInstructions,
-                integration_briefing(
-                    default(PromptKind::IntegrationInstructions),
-                    &task,
-                    &goal,
-                    &repo,
-                    "/worktrees/task-int",
-                ),
-                vec![
-                    ("task_title", &task.title),
-                    ("task_description", &task.description),
-                    ("goal_title", &goal.title),
-                    ("worktree_path", "/worktrees/task-int"),
-                    ("branch", &task.branch),
-                    ("base_branch", &repo.base_branch),
-                    ("repo_path", &repo.path),
-                ],
-            ),
-            (
-                PromptKind::IntegrationResume,
-                integration_resume_briefing(
-                    default(PromptKind::IntegrationResume),
-                    &task,
-                    &repo,
-                    Some(&request()),
-                    Some("I answered them all."),
-                ),
+                PromptKind::LandingInstructions,
+                landing_briefing(default(PromptKind::LandingInstructions), &task, &repo),
                 vec![
                     ("task_title", &task.title),
                     ("branch", &task.branch),
                     ("base_branch", &repo.base_branch),
                     ("repo_path", &repo.path),
-                    ("request", &recorded),
-                    ("noun", "pull request"),
-                    ("summary", "I answered them all."),
-                ],
-            ),
-            (
-                PromptKind::IntegrationMerged,
-                integration_merged_briefing(
-                    default(PromptKind::IntegrationMerged),
-                    &task,
-                    &repo,
-                    &request(),
-                ),
-                vec![
-                    ("task_title", &task.title),
-                    ("request", &label),
-                    ("forge", "GitHub"),
-                    ("base_branch", &repo.base_branch),
-                    ("repo_path", &repo.path),
+                    ("merge_strategy", "direct"),
                 ],
             ),
             (
@@ -787,131 +646,43 @@ mod tests {
             "{changes}"
         );
 
-        let integration = integration_briefing(
-            default(PromptKind::IntegrationInstructions),
+        let landing = landing_briefing(default(PromptKind::LandingInstructions), &task, &repo);
+        assert!(landing.starts_with(&format!("# Land task: {}", task.title)));
+        assert!(
+            landing.contains("merge strategy is **direct**"),
+            "the repository's own strategy is named as a value: {landing}"
+        );
+    }
+
+    /// The landing briefing renders for either strategy, saying which one the
+    /// repository has and carrying both procedures: the half that does not
+    /// apply is what the agent skips, not what it is left to guess at.
+    #[test]
+    fn the_landing_briefing_names_the_strategy_of_its_repository() {
+        let task = task();
+        let template = default(PromptKind::LandingInstructions);
+
+        let direct = landing_briefing(template, &task, &repo());
+        assert!(direct.contains("merge strategy is **direct**"), "{direct}");
+
+        let published = landing_briefing(
+            template,
             &task,
-            &goal,
-            &repo,
-            "/worktrees/task-int",
-        );
-        assert!(integration.starts_with(&format!("# Integrate task: {}", task.title)));
-        assert!(
-            integration.contains("- Worktree (your cwd): /worktrees/task-int"),
-            "the integrator's own worktree, not the engineer's: {integration}"
-        );
-    }
-
-    /// The integrator's resume renders in both situations it covers: a
-    /// published request whose revision the engineer has answered, and a task
-    /// nobody has published yet.
-    ///
-    /// The replies travel through byte for byte — an agent that lays them out
-    /// is not reformatted on the way — and neither reading rewrites a commit
-    /// people are already looking at.
-    #[test]
-    fn the_integration_resume_carries_the_request_and_the_replies_verbatim() {
-        const REPLIES: &str = "Reply to @maria on src/board.rs:42: it allocates once now.\n\
-                               Reply to @jon: the module stays, and here is why.";
-        let (task, repo) = (task(), repo());
-        let template = default(PromptKind::IntegrationResume);
-        let published =
-            integration_resume_briefing(template, &task, &repo, Some(&request()), Some(REPLIES));
-        assert!(published.contains("Pull request #12"), "{published}");
-        assert!(
-            published.contains("https://github.com/owner/repo/pull/12"),
-            "{published}"
-        );
-        assert!(published.contains("never a second one"), "{published}");
-        assert!(
-            published.contains("`post_message` to \"user\""),
-            "{published}"
-        );
-        assert!(published.ends_with(REPLIES), "{published:?}");
-        // The commits on a published request stay where they are, and no
-        // wording here suggests otherwise.
-        for never in ["rebase", "--force", "--amend"] {
-            assert!(!published.contains(never), "{never}: {published}");
-        }
-        assert!(!published.contains("  "), "{published}");
-
-        // Verbatim to the byte: blank lines, indentation, trailing newline.
-        let laid_out = "\n  1. @maria: it allocates once now.\n\n  2. @jon: the module stays.\n";
-        let kept =
-            integration_resume_briefing(template, &task, &repo, Some(&request()), Some(laid_out));
-        assert!(
-            kept.ends_with(laid_out),
-            "the replies were reflowed on the way in: {kept:?}"
-        );
-
-        // A merge request is a merge request, in GitLab's own word for it.
-        let gitlab = WatchedPr {
-            forge: Forge::GitLab,
-            number: 12,
-            url: "https://gitlab.com/owner/repo/-/merge_requests/12".into(),
-        };
-        let merge_request =
-            integration_resume_briefing(template, &task, &repo, Some(&gitlab), Some(REPLIES));
-        assert!(
-            merge_request
-                .contains("Merge request !12 (https://gitlab.com/owner/repo/-/merge_requests/12)"),
-            "{merge_request}"
-        );
-        assert!(!merge_request.contains("pull request"), "{merge_request}");
-
-        // And with nothing published yet, the same text says so and names
-        // neither forge's noun over the other.
-        let unpublished = integration_resume_briefing(template, &task, &repo, None, None);
-        assert!(
-            unpublished.contains("no pull or merge request for it yet"),
-            "{unpublished}"
-        );
-        assert!(unpublished.contains("gh pr list --head"), "{unpublished}");
-        assert!(
-            unpublished.contains("glab mr list --source-branch"),
-            "{unpublished}"
-        );
-        assert!(
-            unpublished.ends_with("(the engineer left no summary of this revision)"),
-            "{unpublished}"
-        );
-        let blank =
-            integration_resume_briefing(template, &task, &repo, Some(&request()), Some("  \n "));
-        assert!(blank.contains("left no summary"), "{blank}");
-    }
-
-    /// The merged instruction names the request, the forge that verifies it
-    /// and the branch the task is finished off.
-    #[test]
-    fn the_merged_instruction_names_the_forge_and_the_branch() {
-        let instruction = integration_merged_briefing(
-            default(PromptKind::IntegrationMerged),
-            &task(),
-            &repo(),
-            &request(),
-        );
-        assert!(
-            instruction.contains("Pull request #12 was merged on GitHub"),
-            "{instruction}"
-        );
-        assert!(instruction.contains("off main"), "{instruction}");
-        assert!(instruction.contains("mark_merged"), "{instruction}");
-        assert!(!instruction.contains("  "), "{instruction}");
-
-        let gitlab = integration_merged_briefing(
-            default(PromptKind::IntegrationMerged),
-            &task(),
-            &repo(),
-            &WatchedPr {
-                forge: Forge::GitLab,
-                number: 3,
-                url: "https://gitlab.com/owner/repo/-/merge_requests/3".into(),
+            &Repository {
+                merge_strategy: "pull_request".into(),
+                ..repo()
             },
         );
         assert!(
-            gitlab.contains("Merge request !3 was merged on GitLab"),
-            "{gitlab}"
+            published.contains("merge strategy is **pull_request**"),
+            "{published}"
         );
-        assert!(!gitlab.contains("GitHub"), "{gitlab}");
+
+        // The branch, the base and the checkout the commands act on.
+        for value in [task.branch.as_str(), "main", "/repos/ariadne"] {
+            assert!(published.contains(value), "{value}: {published}");
+        }
+        assert!(!published.contains('{'), "{published}");
     }
 
     /// The notice a woken agent reads carries the message itself, not a
@@ -969,15 +740,17 @@ mod tests {
             &[described, blank, repo()],
         );
         assert!(
-            briefing.contains("- /repos/ui (base branch: main) — the web client"),
+            briefing.contains(
+                "- /repos/ui (base branch: main, merge strategy: direct) — the web client"
+            ),
             "{briefing}"
         );
         assert!(
-            briefing.contains("- /repos/api (base branch: main)\n"),
+            briefing.contains("- /repos/api (base branch: main, merge strategy: direct)\n"),
             "a blank description adds nothing: {briefing}"
         );
         assert!(
-            briefing.contains("- /repos/ariadne (base branch: main)"),
+            briefing.contains("- /repos/ariadne (base branch: main, merge strategy: direct)"),
             "{briefing}"
         );
     }

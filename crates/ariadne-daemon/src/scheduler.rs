@@ -7,24 +7,16 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use anyhow::Context;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 use ariadne_core::{
-    Actor, AttentionReason, AuthorRole, GoalStatus, PromptKind, ReviewVerdict, Role, SessionStatus,
-    TaskStatus,
+    Actor, AttentionReason, GoalStatus, PromptKind, ReviewVerdict, Role, SessionStatus, TaskStatus,
 };
-use ariadne_store::{
-    AgentSession, Message, NewMessage, NewReview, Recipient, Repository, ReviewAuthor,
-    SessionFilter, Store, Task, TaskFilter,
-};
+use ariadne_store::{AgentSession, Message, Recipient, SessionFilter, Store, Task, TaskFilter};
 
 use crate::agents::prompts;
 use crate::attention;
-use crate::forge::{self, Conflict, FailedCheck, Feedback, Forge, PrState, WatchedPr};
-use crate::gh;
-use crate::glab;
 use crate::launcher::Launcher;
 use crate::notify;
 use crate::sleep::SleepInhibitor;
@@ -114,18 +106,6 @@ const UNSTARTED_ENTER_SECS: i64 = STALL_NUDGE_SECS;
 /// Time since a launch after which that agent is raised for the user
 /// (post-Enter).
 const UNSTARTED_FLAG_SECS: i64 = STALL_FLAG_SECS;
-/// Consecutive polls that could not read a published request before the user
-/// is told about it.
-///
-/// At the default `pr_poll_secs` that is a quarter of an hour: long enough
-/// that a forge having a bad minute, a laptop between networks or a token
-/// being refreshed passes unremarked, short enough that a `gh` nobody ever
-/// authenticated is not left watching nothing all afternoon. A poll that
-/// fails is a poll that said nothing at all — the request may have been
-/// merged, closed or commented on meanwhile — so silence here is not the
-/// same silence as a quiet review.
-const POLL_FAILURE_LIMIT: u32 = 5;
-
 /// Event kinds only an agent whose turn actually started can have reported.
 ///
 /// What is missing from the set is the point of it. Lifecycle alone proves
@@ -191,18 +171,11 @@ pub struct Scheduler {
     /// like a task's spawn attempts are: an agent that wedges again after
     /// every relaunch is not one more relaunch away from working.
     wedged: HashMap<String, u32>,
-    /// When each task's pull or merge request was last looked at, by task
-    /// id: what keeps the polling to `pr_poll_secs` rather than to every tick and
-    /// every event. In memory like the maps above — a daemon that restarts
-    /// simply looks once immediately, which is what it wants to do anyway.
-    pr_polled: HashMap<String, std::time::Instant>,
-    /// Consecutive polls of each task's request that could not read it, by
-    /// task id: what turns a CLI failing over and over into the one message
-    /// [`POLL_FAILURE_LIMIT`] is the threshold for. Cleared by the first poll
-    /// that reads the request again — and in memory beside `pr_polled`, so a
-    /// daemon that restarts starts the count over, which is the right thing
-    /// to do about a CLI that may well have been fixed in between.
-    poll_failures: HashMap<String, u32>,
+    /// Tasks whose engineer has been handed the landing briefing, by task id.
+    /// In memory like the maps above: what it prevents is briefing the same
+    /// approved task twice while the daemon that approved it is running, and
+    /// a daemon that restarts over an approved task wants to say it again.
+    landing_briefed: HashSet<String>,
     /// Messages the addressee is *confirmed* to have, by message id. In
     /// memory like the two maps above, and for the same reason: what it
     /// prevents is typing one message into a pane twice, which is only ever
@@ -249,8 +222,7 @@ pub fn start(
         nudged: HashMap::new(),
         unstarted: HashMap::new(),
         wedged: HashMap::new(),
-        pr_polled: HashMap::new(),
-        poll_failures: HashMap::new(),
+        landing_briefed: HashSet::new(),
         delivered: HashSet::new(),
         attempts: HashMap::new(),
         typing: HashSet::new(),
@@ -720,14 +692,18 @@ impl Scheduler {
             return Ok(());
         }
 
-        // Reviewer sessions only belong to under_review, integrator ones to
-        // integrating: an agent whose part of the lifecycle has passed is not
-        // left running on the task.
+        // Reviewer sessions only belong to under_review: an agent whose part
+        // of the lifecycle has passed is not left running on the task. The
+        // engineer's is not one of them — it holds the worktree from the
+        // first commit to the merge.
         if task.status() != TaskStatus::UnderReview {
             self.kill_role_sessions(&task, Role::Reviewer).await;
         }
-        if task.status() != TaskStatus::Integrating {
-            self.kill_role_sessions(&task, Role::Integrator).await;
+        // A task that has left `approved` — landed, or sent back to the
+        // reviewers with a revision — is one whose engineer wants briefing
+        // again the next time it is approved.
+        if task.status() != TaskStatus::Approved {
+            self.landing_briefed.remove(&task.id);
         }
 
         match task.status() {
@@ -759,17 +735,6 @@ impl Scheduler {
                 self.check_stall(&task, Role::Engineer).await?;
             }
             TaskStatus::UnderReview => {
-                // A published request has reviewers of its own, and they are
-                // people: the round the engineer just answered them in is
-                // theirs to judge on the forge, not one for the reviewer
-                // profiles to sit through again. So it is approved on the
-                // spot and the branch goes back to the integrator, which
-                // pushes the revision to the request and hands the answers
-                // on.
-                if let Some(watched) = forge::watched_pull_request(&task) {
-                    self.approve_published_revision(&task, &watched).await?;
-                    return Box::pin(self.reconcile_task(task_id)).await;
-                }
                 let reviewers = self.store.list_task_reviewers(&task.id).await?;
                 let reviews = self
                     .store
@@ -812,7 +777,7 @@ impl Scheduler {
                 // the briefing it is woken with.
                 let verdict_by: std::collections::HashSet<_> = reviews
                     .iter()
-                    .filter_map(|r| r.reviewer_profile_id.clone())
+                    .map(|r| r.reviewer_profile_id.clone())
                     .collect();
                 let pending: Vec<String> = reviewers
                     .into_iter()
@@ -886,34 +851,17 @@ impl Scheduler {
                     .store
                     .list_reviews(&task.id, Some(task.review_round))
                     .await?;
-                // Who asked, as the engineer reads it: the profile's own name
-                // and role, since a round can also be closed by the integrator
-                // sending the task back. The id is the fallback for a profile
-                // that has since been deleted. A round the daemon relayed from
-                // a published request has no profile behind it at all — it is
-                // named after the request the humans wrote on, whose comments
-                // carry their own names inside it.
+                // Who asked, as the engineer reads it: the reviewer's own name
+                // and role, with the id as the fallback for a profile that has
+                // since been deleted.
                 let mut feedback: Vec<(String, String)> = Vec::new();
                 for review in reviews
                     .iter()
                     .filter(|r| r.verdict() == ReviewVerdict::RequestChanges)
                 {
-                    let who = match review.author() {
-                        ReviewAuthor::Profile(profile_id) => {
-                            match self.store.get_profile(&profile_id).await {
-                                Ok(profile) => format!("{} ({})", profile.name, profile.role),
-                                Err(_) => format!("reviewer {profile_id}"),
-                            }
-                        }
-                        ReviewAuthor::Role(AuthorRole::Forge) => {
-                            match forge::watched_pull_request(&task) {
-                                Some(watched) => {
-                                    format!("{} on {}", watched.label(), watched.forge.name())
-                                }
-                                None => "the published request".to_string(),
-                            }
-                        }
-                        ReviewAuthor::Role(role) => role.as_str().to_string(),
+                    let who = match self.store.get_profile(&review.reviewer_profile_id).await {
+                        Ok(profile) => format!("{} ({})", profile.name, profile.role),
+                        Err(_) => format!("reviewer {}", review.reviewer_profile_id),
                     };
                     feedback.push((
                         who,
@@ -939,44 +887,21 @@ impl Scheduler {
                     .await?;
             }
             TaskStatus::Approved => {
-                info!(task = %task.id, "approved: handing the task to its integrator");
-                // The engineer is about to lose its worktree and its session
-                // with it — the integrator checks the branch out. A line in
-                // the thread is what it costs to have that happen to an agent
-                // that was told why: addressed to nobody, so nothing is woken
-                // for it.
-                let _ = self
-                    .store
-                    .create_message(NewMessage {
-                        goal_id: task.goal_id.clone(),
-                        task_id: Some(task.id.clone()),
-                        author_role: AuthorRole::System,
-                        author_session_id: None,
-                        recipient: None,
-                        body: format!(
-                            "Round {} of \"{}\" is approved. Its integrator takes the \
-                             branch from here, and the engineer's worktree with it.",
-                            task.review_round, task.title,
-                        ),
-                    })
-                    .await;
-                self.store
-                    .transition_task(&task.id, TaskStatus::Integrating, Actor::Daemon, None, None)
-                    .await?;
-                // The integrator is started by the arm below, on the status it
-                // belongs to: one place decides what an integrating task wants,
-                // whether it got here from an approval or from a daemon that
-                // restarted halfway through one.
-                return Box::pin(self.reconcile_task(task_id)).await;
+                // Landing the change is the engineer's last turn, and the
+                // session that wrote it is still there to take it: nothing
+                // took the worktree away. What it has not had is the briefing
+                // that says the task is approved and how its repository takes
+                // it, so that goes out once — and from there the turn is
+                // watched like any other.
+                if self.landing_briefed.insert(task.id.clone()) {
+                    info!(task = %task.id, "approved: briefing the engineer to land it");
+                    let landing = self.resume_text(&task, Role::Engineer).await?;
+                    self.launcher.resume_engineer(&task.id, &landing).await?;
+                    self.spawn_failures.remove(&task.id);
+                } else {
+                    self.check_stall(&task, Role::Engineer).await?;
+                }
             }
-            TaskStatus::Integrating => match forge::watched_pull_request(&task) {
-                // A published task is waiting on people, not on its
-                // integrator: the pull request is watched instead, and the
-                // idle agent that opened it is left alone rather than nudged
-                // for not having landed anything.
-                Some(pr) => self.watch_pull_request(&task, &pr).await?,
-                None => self.check_stall(&task, Role::Integrator).await?,
-            },
             TaskStatus::Merged => {
                 // Post-merge cleanup (idempotent), then wake dependents.
                 // Worktrees and the branch go by default; set
@@ -1046,8 +971,8 @@ impl Scheduler {
 
     /// The agent a task is waiting on, watched.
     ///
-    /// `role` is whose turn it is: the engineer while the task is being
-    /// written, the integrator once it has been approved and is being landed.
+    /// `role` is whose turn it is, which is the engineer's from the first
+    /// commit to the merge.
     /// A task with no live session of that role gets one started; one that is
     /// idle too long gets exactly one tmux nudge per (status, round), and if it
     /// stays idle its session is flagged for the user (never an endless loop).
@@ -1082,786 +1007,44 @@ impl Scheduler {
             .await
     }
 
-    /// Watch the pull or merge request a task was published as, and wake
-    /// whoever the humans on it have given something to do.
-    ///
-    /// Nothing here is the integrator's to be nudged about: the review moves
-    /// when a person reads it, which is why the integrator ends its turn after
-    /// opening one and why this arm replaces the stall watch rather than
-    /// running beside it. What it does instead is look every `pr_poll_secs`
-    /// and act on what the forge's CLI says:
-    ///
-    /// - **merged**, and the integrator finishes the task locally;
-    /// - **closed** without being merged, and the task is over: it is failed
-    ///   and the user told what became of it
-    ///   (see [`Self::fail_on_closed_request`]);
-    /// - **commented on**, and every comment nobody has relayed yet is
-    ///   written straight to the engineer as a round of requested changes —
-    ///   no agent in between (see [`Self::relay_pr_feedback`]);
-    /// - **conflicting** or **failing its checks**, and what the forge said
-    ///   goes the same way, to the same engineer, once each;
-    /// - **approved**, green and still merging, and the user is told once
-    ///   that it is theirs to merge.
-    ///
-    /// They read the same on either forge; which CLI answers for them is
-    /// [`Self::poll_forge`]'s to decide — and a CLI that answers nothing at
-    /// all is the last thing a poll can say, counted and eventually told to
-    /// the user by [`Self::note_poll_failure`], since a watch that reads
-    /// nothing looks from the outside exactly like a watch on a request
-    /// nobody is touching.
-    ///
-    /// An integrator mid-turn is left to finish it: resuming an agent means
-    /// relaunching its pane, and whatever it is doing on the branch right now
-    /// is more current than a poll taken a moment ago. The next poll asks
-    /// again. The closed request is the exception, and the only one: there is
-    /// nothing for a turn to be more current about once the request it would
-    /// push to is closed, and a task waiting for its integrator to finish
-    /// before it can be failed is a task nobody hears has ended.
-    ///
-    /// The poll comes before any of that, and before an integrator is started
-    /// for a task that has none — a daemon that restarts on a request with
-    /// comments waiting on it hands them to the engineer on that first pass,
-    /// rather than standing an agent up for a task that is leaving
-    /// `integrating` in the same breath. One is started once the poll has
-    /// said the task is still the integrator's.
-    async fn watch_pull_request(&mut self, task: &Task, watched: &WatchedPr) -> anyhow::Result<()> {
-        let number = watched.number;
-        // Whichever integrator is on the task already, asked for rather than
-        // started: what the poll below says may be that the task is leaving
-        // `integrating` altogether, and an agent started for that is an agent
-        // started to be killed. Starting one is what the tail of this does,
-        // once the poll has said the task is still the integrator's.
-        let integrator = self.integrator_session(task).await?;
-        // The watchdogs that still apply: an integrator mid-turn can be stuck
-        // holding an unsubmitted instruction or wedged inside the turn it did
-        // start, and no amount of polling will move either. The idle half of
-        // the stall watch is what does not apply — an integrator with a
-        // review open is waiting on people, not stalling.
-        if let Some(running) = integrator
-            .as_ref()
-            .filter(|s| s.status() == SessionStatus::Running)
-        {
-            let resume = self.resume_text(task, Role::Integrator).await?;
-            self.check_running_session(running, &resume).await?;
-        }
-        let interval = std::time::Duration::from_secs(self.launcher.cfg.pr_poll_secs);
-        let now = std::time::Instant::now();
-        if self
-            .pr_polled
-            .get(&task.id)
-            .is_some_and(|last| now.duration_since(*last) < interval)
-        {
-            return Ok(());
-        }
-        self.pr_polled.insert(task.id.clone(), now);
-
-        let repo = self.store.get_repository(&task.repo_id).await?;
-        let repo_path = std::path::PathBuf::from(&repo.path);
-        let poll = match self
-            .poll_forge(
-                &task.id,
-                &repo_path,
-                watched,
-                &task.pr_relayed_comments(),
-                task.pr_approved_notified(),
-            )
-            .await
-        {
-            Ok(poll) => poll,
-            // Nothing was read at all: there is no state to act on, and the
-            // only thing this poll has to say is that it failed.
-            Err(e) => {
-                return self
-                    .note_poll_failure(task, integrator.as_ref(), watched, &format!("{e:#}"))
-                    .await;
-            }
-        };
-        match poll.failure.as_deref() {
-            Some(error) => {
-                self.note_poll_failure(task, integrator.as_ref(), watched, error)
-                    .await?;
-            }
-            None => {
-                self.note_poll_success(task, integrator.as_ref(), watched)
-                    .await?;
-            }
-        }
-        // An approval that was dismissed or overtaken by a new review is one
-        // the user has to be told about again when it comes back. A poll that
-        // could not tell is not one withdrawn, so it leaves the flag alone —
-        // and neither is a poll one of whose reads failed: what came back of
-        // it is half an answer, and half an answer withdraws nothing.
-        if poll.failure.is_none() && poll.approved == Some(false) && task.pr_approved_notified() {
-            self.store
-                .set_task_pr_approved_notified(&task.id, false)
-                .await?;
-        }
-        // A request closed without being merged is the end of the task, and
-        // the one thing a poll can say that no later poll will take back:
-        // nothing in Ariadne reopens one, and nobody is coming to press the
-        // button. Read as quiet — as it was — the task sat in `integrating`
-        // being polled every few minutes with nothing to show for it, and no
-        // stall watch running either, since this arm replaces it.
-        //
-        // Read before the integrator is left to its turn, and the only thing
-        // that is: everything else a poll says is work for somebody, and an
-        // agent mid-turn is left to finish because what it is doing is more
-        // current than the poll. Here there is nothing to finish — the
-        // request it would push to is closed — so a turn left running is a
-        // turn spent against a review that is over, on a task nobody would
-        // hear had ended.
-        if poll.state == PrState::Closed {
-            info!(task = %task.id, pr = number, "the review was closed without being merged; failing the task");
-            return self.fail_on_closed_request(task, watched).await;
-        }
-        if poll.state != PrState::Quiet
-            && let Some(working) = integrator
-                .as_ref()
-                .filter(|s| s.status() != SessionStatus::Idle)
-        {
-            info!(task = %task.id, pr = number, session = %working.id, "the review moved while its integrator is working; leaving it to finish");
-            return Ok(());
-        }
-        // Comments wake nobody: they are the engineer's to answer, and the
-        // task is about to be its own again. Whether an integrator is running
-        // makes no difference to that — a task with none is exactly the case
-        // a daemon restart leaves behind, and starting one here only to have
-        // the transition kill it is the hop this whole arm exists to spare.
-        //
-        // A branch that stopped merging or stopped building goes the same
-        // way, and for the same reason: the fix is a commit, commits are the
-        // engineer's, and an integrator asleep over a published request would
-        // only discover either of them the next time somebody woke it.
-        match &poll.state {
-            PrState::Feedback(feedback) => {
-                info!(task = %task.id, pr = number, comments = feedback.len(), "the review was commented on; sending it to the engineer");
-                self.relay_pr_feedback(task, watched, feedback).await?;
-                return Box::pin(self.reconcile_task(&task.id)).await;
-            }
-            PrState::Conflicting(conflict) => {
-                info!(task = %task.id, pr = number, "the branch no longer merges into its base; sending it to the engineer");
-                let base = conflict_base(conflict, &repo);
-                self.relay_to_engineer(
-                    task,
-                    pr_conflict_review(watched, &base),
-                    std::slice::from_ref(&conflict.id),
-                    &format!("{} no longer merges into {base}", watched.label()),
-                )
-                .await?;
-                return Box::pin(self.reconcile_task(&task.id)).await;
-            }
-            PrState::ChecksFailed(checks) => {
-                info!(task = %task.id, pr = number, checks = checks.len(), "the checks on the review are failing; sending it to the engineer");
-                let ids: Vec<String> = checks.iter().map(|c| c.id.clone()).collect();
-                self.relay_to_engineer(
-                    task,
-                    pr_checks_review(watched, checks),
-                    &ids,
-                    &format!("{}'s checks are failing", watched.label()),
-                )
-                .await?;
-                return Box::pin(self.reconcile_task(&task.id)).await;
-            }
-            // Read before this match, and never reaching it: the closed
-            // request ends the task rather than sending it anywhere.
-            PrState::Closed | PrState::Quiet | PrState::Merged | PrState::Approved => {}
-        }
-
-        // The rest is the integrator's, and so is a quiet review: a published
-        // task being integrated keeps an agent on it, started here when a
-        // restart or a send-back left none. That is what pushes the next
-        // revision to the request, and what a merge is finished by.
-        if self.live_integrator(task, integrator).await?.is_none() {
-            // A task back from the engineer, or a daemon that restarted: the
-            // integrator is started with its resume briefing, which tells it
-            // to update the review it already opened.
-            return Ok(());
-        }
-        match poll.state {
-            // All handled above: the three that are the engineer's, and the
-            // one that ends the task.
-            PrState::Feedback(_)
-            | PrState::Conflicting(_)
-            | PrState::ChecksFailed(_)
-            | PrState::Closed => {}
-            // A quiet review asks nothing of anybody. The user was told once
-            // that the request is theirs — when it was opened, and again when
-            // it was approved — and the flag that went up with each of those
-            // is theirs to take down: no agent event clears a `waiting_user`,
-            // so there is nothing here to put back.
-            PrState::Quiet => {}
-            PrState::Merged => {
-                info!(task = %task.id, pr = number, "the review was merged; waking the integrator to finish the task");
-                let profile = self.launcher.integrator_profile(task).await?;
-                let template =
-                    prompts::template_for(&self.store, &profile.id, PromptKind::IntegrationMerged)
-                        .await;
-                let instruction =
-                    prompts::integration_merged_briefing(&template, task, &repo, watched);
-                self.launcher
-                    .resume_integrator(&task.id, &instruction)
-                    .await?;
-                self.spawn_failures.remove(&task.id);
-            }
-            PrState::Approved => {
-                info!(task = %task.id, pr = number, "the review is approved; telling the user it is theirs to merge");
-                self.notify_pull_request_approved(task, watched).await?;
-            }
-        }
-        Ok(())
-    }
-
-    /// End a task whose request was closed without being merged, and tell the
-    /// user what became of it.
-    ///
-    /// The transition comes first, and that ordering is what keeps the user to
-    /// one message: a task still `integrating` is polled again in
-    /// `pr_poll_secs`, and a second poll of the same closed request would say
-    /// the same thing twice. Once the task is `failed` nothing polls it again,
-    /// so a daemon that dies between the two writes loses the message rather
-    /// than repeating it — and the transition it kept is the one the user can
-    /// see and act on.
-    ///
-    /// What to do about it is theirs, which is why the message says both
-    /// halves: retrying the task puts the engineer back on the same branch and
-    /// the recorded request is cleared as it goes ready again, so its next
-    /// integrator publishes afresh rather than pushing to a request nobody
-    /// will merge; cancelling it keeps the branch and the worktree for
-    /// whatever is worth salvaging.
-    async fn fail_on_closed_request(
-        &mut self,
-        task: &Task,
-        watched: &WatchedPr,
-    ) -> anyhow::Result<()> {
-        let label = watched.label();
-        let noun = watched.forge.noun();
-        self.store
-            .transition_task(
-                &task.id,
-                TaskStatus::Failed,
-                Actor::Daemon,
-                Some(&format!("{label} was closed without being merged")),
-                None,
-            )
-            .await?;
-        // This ending writes its own notice rather than the one
-        // [`notify::task_ended`] writes for the others, and instead of it:
-        // what the user needs is the request itself — the URL, and that
-        // retrying publishes a fresh one — and two notices for one ending is
-        // the noise every ending here is written once to avoid. It is
-        // delivered like any other, so it goes up the attention path the user
-        // reads such things from.
-        let notice = self
-            .store
-            .create_message(NewMessage {
-                goal_id: task.goal_id.clone(),
-                task_id: Some(task.id.clone()),
-                author_role: AuthorRole::System,
-                author_session_id: None,
-                recipient: Some(Recipient::User),
-                body: format!(
-                    "{label} for \"{title}\" was closed without being merged: {url}\n\n\
-                     Nothing is going to merge it now, so the task is failed. Retry it and \
-                     the engineer picks the branch up where it left off, with a fresh \
-                     {noun} published for it; cancel it if the work is not wanted after \
-                     all — the branch and the worktree are kept either way.",
-                    title = task.title,
-                    url = watched.url,
-                ),
-            })
-            .await?;
-        self.deliver_message(&notice.id).await;
-        // The agents on it are stood down the way a finished task stands them
-        // down — mid-turn ones included, since what a turn on this task would
-        // push to is a request nobody will merge — with the worktree and the
-        // branch kept: a retry puts the engineer back on that branch, and a
-        // task nobody retries may still hold work worth reading.
-        self.launcher.cleanup_task(&task.id, false, false).await?;
-        self.pr_polled.remove(&task.id);
-        self.poll_failures.remove(&task.id);
-        Ok(())
-    }
-
-    /// Count one poll that could not read the request, and tell the user once
-    /// it has happened [`POLL_FAILURE_LIMIT`] times in a row.
-    ///
-    /// A single failure says nothing worth waking anybody for: forges have bad
-    /// minutes, laptops change networks, tokens are refreshed. A run of them
-    /// says the watch itself is broken — a `gh` that is not installed on the
-    /// daemon's PATH, or one nobody ever signed in — and that is invisible
-    /// from the outside, because a published task looks exactly the same
-    /// whether it is being watched or not.
-    ///
-    /// Exactly at the threshold, so it is said once however long the CLI stays
-    /// broken; the attention flag beside it is what puts the task on the strip
-    /// the user reads such things from.
-    async fn note_poll_failure(
-        &mut self,
-        task: &Task,
-        integrator: Option<&AgentSession>,
-        watched: &WatchedPr,
-        error: &str,
-    ) -> anyhow::Result<()> {
-        let failures = self.poll_failures.entry(task.id.clone()).or_insert(0);
-        *failures += 1;
-        let failures = *failures;
-        warn!(task = %task.id, pr = watched.number, failures, error, "reading the review failed");
-        if failures != POLL_FAILURE_LIMIT {
-            return Ok(());
-        }
-        let cli = watched.forge.cli();
-        self.store
-            .create_message(NewMessage {
-                goal_id: task.goal_id.clone(),
-                task_id: Some(task.id.clone()),
-                author_role: AuthorRole::System,
-                author_session_id: None,
-                recipient: Some(Recipient::User),
-                body: format!(
-                    "Ariadne cannot read the {noun} for \"{title}\": `{cli}` has failed \
-                     {failures} polls in a row.\n\n{error}\n\n\
-                     {label} ({url}) is not being watched while that lasts — nothing \
-                     written on it reaches the engineer, and its merge would go \
-                     unnoticed. Check that `{cli}` is installed where the daemon can \
-                     run it and signed in ({cli} auth status; `ariadne doctor` reports \
-                     both), and the watch picks up again by itself.",
-                    noun = watched.forge.noun(),
-                    title = task.title,
-                    label = watched.label(),
-                    url = watched.url,
-                ),
-            })
-            .await?;
-        // On the integrator's session because that is the one this task shows
-        // on the strip: the agent itself is fine, and what is broken is the
-        // daemon's own reading of the request it is waiting on.
-        //
-        // Under its own reason rather than the `waiting_user` a delivered
-        // notice raises, because the two are cleared by different people: a
-        // notice is up until the user has read it, and this is up until the
-        // CLI works again, which the daemon is the one that finds out (see
-        // [`Self::note_poll_success`]).
-        if let Some(integrator) = integrator {
-            self.store
-                .set_session_attention(&integrator.id, AttentionReason::AgentError)
-                .await?;
-        }
-        Ok(())
-    }
-
-    /// Forget the failed polls, and say so if the user was ever told about
-    /// them.
-    ///
-    /// Only if they were told: a run of failures that never reached the
-    /// threshold is nothing anybody heard about, and announcing its end would
-    /// be news about news. The flag comes down with the message, and only the
-    /// one this raised — an approval waiting on the user is a different flag
-    /// on the same session, and it stays up.
-    async fn note_poll_success(
-        &mut self,
-        task: &Task,
-        integrator: Option<&AgentSession>,
-        watched: &WatchedPr,
-    ) -> anyhow::Result<()> {
-        let Some(failures) = self.poll_failures.remove(&task.id) else {
-            return Ok(());
-        };
-        if failures < POLL_FAILURE_LIMIT {
-            return Ok(());
-        }
-        info!(task = %task.id, pr = watched.number, failures, "reading the review works again");
-        self.store
-            .create_message(NewMessage {
-                goal_id: task.goal_id.clone(),
-                task_id: Some(task.id.clone()),
-                author_role: AuthorRole::System,
-                author_session_id: None,
-                recipient: Some(Recipient::User),
-                body: format!(
-                    "`{cli}` can read the {noun} for \"{title}\" again: {label} ({url}) \
-                     is being watched as before, and whatever was written on it while it \
-                     was not is read now.",
-                    cli = watched.forge.cli(),
-                    noun = watched.forge.noun(),
-                    title = task.title,
-                    label = watched.label(),
-                    url = watched.url,
-                ),
-            })
-            .await?;
-        if let Some(integrator) =
-            integrator.filter(|s| s.attention_reason() == Some(AttentionReason::AgentError))
-        {
-            self.store.clear_session_attention(&integrator.id).await?;
-        }
-        Ok(())
-    }
-
-    /// Hand what the humans wrote to the engineer, without waking anybody in
-    /// between.
-    ///
-    /// The daemon polled the comments and has them in hand: relaying them
-    /// through the integrator would be a turn spent copying them from one
-    /// forge into the other end of the same database, and a turn is a place
-    /// a relay can go wrong. So the send-back is written by the daemon itself
-    /// ([`Self::relay_to_engineer`]), and the engineer is resumed with it by
-    /// the `changes_requested` arm like any other round of feedback. Its
-    /// worktree is checked out again as it resumes, which is what releases
-    /// the integrator's hold on the branch.
-    ///
-    /// What that send-back is written by, for comments as for everything else
-    /// a poll can send the task back for, is [`Self::relay_to_engineer`].
-    async fn relay_pr_feedback(
-        &mut self,
-        task: &Task,
-        watched: &WatchedPr,
-        feedback: &[Feedback],
-    ) -> anyhow::Result<()> {
-        let ids: Vec<String> = feedback.iter().map(|f| f.id.clone()).collect();
-        self.relay_to_engineer(
-            task,
-            forge_feedback(watched, feedback),
-            &ids,
-            &format!("{} was commented on", watched.label()),
-        )
-        .await
-    }
-
-    /// The send-back itself, whatever the review said to send the task back
-    /// for: what the humans wrote, a branch that no longer merges, a check
-    /// that failed.
-    ///
-    /// `ids` are what the poll read it from, remembered on the task so that
-    /// the same comment, the same conflict and the same failing check are one
-    /// round of changes rather than one per poll.
-    ///
-    /// The row is one of the ones `return_to_engineer` writes for the
-    /// integrator's own send-backs — a change request on the round the
-    /// request was published from — but under the forge's own name rather
-    /// than any profile's: what it carries is what the people reading the
-    /// request wrote, or what their checks said, and no agent of ours has
-    /// read a word of it.
-    ///
-    /// The three records it is made of go down together, in one store write:
-    /// the round of changes the engineer is resumed with, the ids that keep
-    /// any of it from being relayed into a second round, and the transition
-    /// that wakes it. Written one after another, as they were, a daemon that
-    /// failed in between left something no later poll could put right — a
-    /// failure marked relayed into a round that was never opened, or a second
-    /// round of what the forge said once — so the store writes all three or
-    /// none of them ([`Store::relay_pull_request_feedback`]), and a failure
-    /// leaves the task where the next poll expects it: still `integrating`,
-    /// with nothing relayed.
-    async fn relay_to_engineer(
-        &mut self,
-        task: &Task,
-        body: String,
-        ids: &[String],
-        reason: &str,
-    ) -> anyhow::Result<()> {
-        self.store
-            .relay_pull_request_feedback(
-                NewReview {
-                    task_id: task.id.clone(),
-                    round: task.review_round,
-                    author: ReviewAuthor::Role(AuthorRole::Forge),
-                    session_id: None,
-                    verdict: ReviewVerdict::RequestChanges,
-                    body: Some(body),
-                },
-                ids,
-                reason,
-            )
-            .await?;
-        Ok(())
-    }
-
-    /// Approve the revision of a published task without a review round of
-    /// our own.
-    ///
-    /// Once a pull or merge request is open, the people reading it are the
-    /// reviewers: they asked for the change, the engineer answered them, and
-    /// the only thing standing between that answer and them is the push that
-    /// carries it. Putting the reviewer profiles through a round of their own
-    /// first would hold the answer back for a verdict nobody on the request
-    /// is waiting for — so the round is closed here instead, with no reviewer
-    /// started and no review row wanted.
-    ///
-    /// Written down once, on the transition that closes the round: the round
-    /// was decided, not announced, and the reason a transition carries is
-    /// what both the audit and the task's history tab read it from.
-    async fn approve_published_revision(
-        &self,
-        task: &Task,
-        watched: &WatchedPr,
-    ) -> anyhow::Result<()> {
-        let label = watched.label();
-        info!(task = %task.id, pr = watched.number, round = task.review_round, "the revision answers a published request: approving it without an internal review round");
-        self.store
-            .transition_task(
-                &task.id,
-                TaskStatus::Approved,
-                Actor::Daemon,
-                Some(&format!(
-                    "{label} is published: its reviewers replace the internal review round"
-                )),
-                None,
-            )
-            .await?;
-        Ok(())
-    }
-
-    /// One look at the review, through the CLI of the forge it is on.
-    ///
-    /// A CLI that cannot answer — not installed, not authenticated, the
-    /// network down — is not a reason to fail the task: the review is still
-    /// there, and the next poll asks again. That is the `Err`, and what it
-    /// carries is what the caller counts and eventually tells the user about
-    /// ([`Self::note_poll_failure`]), because a watch that reads nothing is
-    /// indistinguishable from a watch on a request nobody is touching.
-    ///
-    /// The two forges differ in how many reads one look takes and in nothing
-    /// else: GitHub keeps what was written on the diff away from the pull
-    /// request itself, and GitLab keeps the approvals away from the merge
-    /// request. Either way what comes back is the same reading — with
-    /// [`Poll::failure`] set when it is only part of one.
-    async fn poll_forge(
-        &self,
-        task_id: &str,
-        repo_path: &std::path::Path,
-        watched: &WatchedPr,
-        relayed: &[String],
-        approved_notified: bool,
-    ) -> anyhow::Result<Poll> {
-        let number = watched.number;
-        match watched.forge {
-            Forge::GitHub => {
-                let gh_cli = self.launcher.gh();
-                let pr = gh_cli
-                    .pr_view(repo_path, watched)
-                    .await
-                    .with_context(|| format!("reading pull request {number}"))?;
-                // What was written on the diff rather than in the
-                // conversation, which is where most review feedback lives.
-                // Failing to read them is not worth dropping the poll for —
-                // the conversation may be carrying something too, and the next
-                // poll asks for both again — but it is worth saying so: a
-                // comment nobody could read is not a pull request nobody
-                // commented on.
-                let mut failure = None;
-                let review_comments = match gh_cli.pr_review_comments(repo_path, watched).await {
-                    Ok(comments) => comments,
-                    Err(e) => {
-                        let error = format!("{e:#}");
-                        warn!(task = %task_id, pr = number, error, "reading the pull request's review comments failed");
-                        failure = Some(error);
-                        Vec::new()
-                    }
-                };
-                // Approved *and* ready: a branch that is red, conflicting or
-                // still building is nobody's to press a button on, however
-                // many people signed it off.
-                let approved = pr.is_approved() && pr.health().is_ready();
-                Ok(Poll {
-                    approved: Some(approved),
-                    state: gh::poll_state(
-                        &pr,
-                        &review_comments,
-                        relayed,
-                        approved && approved_notified,
-                    ),
-                    failure,
-                })
-            }
-            Forge::GitLab => {
-                let glab_cli = self.launcher.glab();
-                let mr = glab_cli
-                    .mr_view(repo_path, watched)
-                    .await
-                    .with_context(|| format!("reading merge request {number}"))?;
-                // Approvals and discussions are their own resources on
-                // GitLab. One of them failing leaves the other still worth
-                // acting on, so the poll goes on with what it has — and an
-                // approval it could not read is reported as unknown rather
-                // than as withdrawn.
-                let mut failure = None;
-                let (approvals, approved) = match glab_cli.mr_approvals(repo_path, watched).await {
-                    Ok(approvals) => {
-                        // Approved *and* ready: a branch that is red,
-                        // conflicting or still building is nobody's to press
-                        // a button on, however many people signed it off.
-                        let approved =
-                            approvals.is_approved() && mr.is_open() && mr.health().is_ready();
-                        (approvals, Some(approved))
-                    }
-                    Err(e) => {
-                        let error = format!("{e:#}");
-                        warn!(task = %task_id, mr = number, error, "reading the merge request's approvals failed");
-                        failure = Some(error);
-                        (glab::Approvals::default(), None)
-                    }
-                };
-                let discussions = match glab_cli.mr_discussions(repo_path, watched).await {
-                    Ok(discussions) => discussions,
-                    Err(e) => {
-                        let error = format!("{e:#}");
-                        warn!(task = %task_id, mr = number, error, "reading the merge request's discussions failed");
-                        failure = failure.or(Some(error));
-                        Vec::new()
-                    }
-                };
-                Ok(Poll {
-                    approved,
-                    state: glab::poll_state(
-                        &mr,
-                        &approvals,
-                        &discussions,
-                        relayed,
-                        approved.unwrap_or(false) && approved_notified,
-                    ),
-                    failure,
-                })
-            }
-        }
-    }
-
-    /// The integrator on this task, if one is live — asked, never started.
-    ///
-    /// What a poll does about a review depends on whether an agent is already
-    /// working on it, and that question has to be answerable without starting
-    /// one: a review with comments on it is answered by the engineer, and the
-    /// task leaves `integrating` without an integrator being wanted at all.
-    async fn integrator_session(&self, task: &Task) -> anyhow::Result<Option<AgentSession>> {
-        let sessions = self
-            .store
-            .list_sessions(SessionFilter {
-                task_id: Some(task.id.clone()),
-                live_only: true,
-                ..Default::default()
-            })
-            .await?;
-        Ok(sessions.into_iter().find(|s| s.role() == Role::Integrator))
-    }
-
-    /// The integrator working on this task, started if there is none.
-    ///
-    /// `found` is what [`Self::integrator_session`] already answered this
-    /// pass, so the question is not asked twice. `None` means one was just
-    /// started and there is nothing else to decide this pass: an agent
-    /// resuming is about to read the branch and the pull request for itself.
-    async fn live_integrator(
-        &mut self,
-        task: &Task,
-        found: Option<AgentSession>,
-    ) -> anyhow::Result<Option<AgentSession>> {
-        if let Some(integrator) = found {
-            return Ok(Some(integrator));
-        }
-        info!(task = %task.id, "no live integrator for a task with a pull request, starting one");
-        if let Err(e) = self.start_role(task, Role::Integrator).await {
-            self.flag_last_disconnected(task, Role::Integrator).await;
-            return Err(e);
-        }
-        self.spawn_failures.remove(&task.id);
-        Ok(None)
-    }
-
-    /// Tell the user their pull request is ready to merge: a message in the
-    /// task thread addressed to them, which the delivery path puts on the
-    /// attention strip they read it from.
-    ///
-    /// Once per approval — `pr_approved_notified` is what says it has been
-    /// done, and it is written before the message so a failure repeats
-    /// nothing.
-    async fn notify_pull_request_approved(
-        &mut self,
-        task: &Task,
-        watched: &WatchedPr,
-    ) -> anyhow::Result<()> {
-        self.store
-            .set_task_pr_approved_notified(&task.id, true)
-            .await?;
-        let noun = watched.forge.noun();
-        let where_ = task.pr_url.clone().unwrap_or_else(|| watched.label());
-        let msg = self
-            .store
-            .create_message(NewMessage {
-                goal_id: task.goal_id.clone(),
-                task_id: Some(task.id.clone()),
-                author_role: AuthorRole::System,
-                author_session_id: None,
-                recipient: Some(Recipient::User),
-                body: format!(
-                    "The {noun} for \"{}\" is approved and ready for you to merge: {where_}\n\n\
-                     Merging it is yours to do — Ariadne watches the {noun} and finishes \
-                     the task once you have.",
-                    task.title,
-                ),
-            })
-            .await?;
-        self.deliver_message(&msg.id).await;
-        Ok(())
-    }
-
-    /// Put the agent the task is waiting on back on its feet: the same session
-    /// resumed where there is one to resume, a fresh spawn otherwise (both
-    /// launcher calls fall back to the spawn themselves).
+    /// Put the agent a task is waiting on back on it: its engineer, resumed
+    /// where its session merely ended and started afresh where there is none.
     async fn start_role(&mut self, task: &Task, role: Role) -> anyhow::Result<()> {
+        debug_assert_eq!(role, Role::Engineer);
         let instruction = self.resume_text(task, role).await?;
-        match role {
-            Role::Integrator => {
-                self.launcher
-                    .resume_integrator(&task.id, &instruction)
-                    .await?;
-            }
-            _ => {
-                self.launcher
-                    .resume_engineer(&task.id, &instruction)
-                    .await?;
-            }
-        }
+        self.launcher
+            .resume_engineer(&task.id, &instruction)
+            .await?;
         Ok(())
     }
 
     /// What the agent a task is waiting on is picked up with, whether its
-    /// session ended or it merely went quiet: its profile's resume template,
-    /// rendered.
+    /// session ended or it merely went quiet: its profile's template for the
+    /// situation, rendered.
     ///
-    /// The integrator's carries what has happened to the task since it last
-    /// looked — the request Ariadne has on record, and the engineer's own
-    /// account of the revision, which on a published request is its replies to
-    /// the people reading it. There is nothing to compose here: what the two
-    /// situations have in common is what the template says, and what tells
-    /// them apart is the two values.
-    ///
-    /// Every other role a task waits on is its engineer, which is the arm the
-    /// callers below reach through [`Self::start_role`].
-    async fn resume_text(&self, task: &Task, role: Role) -> anyhow::Result<String> {
-        match role {
-            Role::Integrator => {
-                let repo = self.store.get_repository(&task.repo_id).await?;
-                let profile = self.launcher.integrator_profile(task).await?;
-                let template =
-                    prompts::template_for(&self.store, &profile.id, PromptKind::IntegrationResume)
-                        .await;
-                Ok(prompts::integration_resume_briefing(
-                    &template,
-                    task,
-                    &repo,
-                    forge::watched_pull_request(task).as_ref(),
-                    self.store.review_summary(&task.id).await?.as_deref(),
-                ))
-            }
-            _ => {
-                let template = prompts::template_for(
-                    &self.store,
-                    &task.engineer_profile_id,
-                    PromptKind::EngineerResume,
-                )
-                .await;
-                Ok(prompts::engineer_resume_briefing(&template, task))
-            }
+    /// Two situations, and the task's status tells them apart. An approved
+    /// task is one the engineer is landing, and what it is picked up with is
+    /// the landing briefing — the whole procedure, which is what a session
+    /// that ended over it has to be given back. Anything earlier is work in
+    /// the worktree, and the resume nudge is what that wants.
+    async fn resume_text(&self, task: &Task, _role: Role) -> anyhow::Result<String> {
+        if task.status() == TaskStatus::Approved {
+            let repo = self.store.get_repository(&task.repo_id).await?;
+            let template = prompts::template_for(
+                &self.store,
+                &task.engineer_profile_id,
+                PromptKind::LandingInstructions,
+            )
+            .await;
+            return Ok(prompts::landing_briefing(&template, task, &repo));
         }
+        let template = prompts::template_for(
+            &self.store,
+            &task.engineer_profile_id,
+            PromptKind::EngineerResume,
+        )
+        .await;
+        Ok(prompts::engineer_resume_briefing(&template, task))
     }
 
     /// Raise `disconnected` on the session of `role` that was last on this
@@ -1977,9 +1160,7 @@ impl Scheduler {
     ///
     /// `revival` is the resume its profile renders — the same text the caller
     /// would nudge it with, since an agent that has gone quiet and one whose
-    /// session ended are in the same situation. A planner and a reviewer are
-    /// put back on their feet with it; an engineer and an integrator go
-    /// through the arm that renders it for itself.
+    /// session ended are in the same situation.
     async fn check_running_session(
         &mut self,
         session: &AgentSession,
@@ -2132,17 +1313,17 @@ impl Scheduler {
     /// Put a wedged agent back on its feet: the pane killed, and the same
     /// session row relaunched on the agent conversation it was already having.
     ///
-    /// An engineer and an integrator are started the way a task with no live
-    /// agent of their role is started — [`Self::start_role`], which renders
-    /// what each of them is picked up with, the published request's account
-    /// included. A planner and a reviewer have no such path: they are revived
-    /// with the resume the caller already rendered, through the same
-    /// `revive_session` a message addressed to a dead agent takes.
+    /// An engineer is started the way a task with no live engineer is started
+    /// — [`Self::start_role`], which renders what it is picked up with, the
+    /// landing briefing included where the task is approved. A planner and a
+    /// reviewer have no such path: they are revived with the resume the caller
+    /// already rendered, through the same `revive_session` a message addressed
+    /// to a dead agent takes.
     ///
     /// What the user is owed outlives the relaunch. Putting an agent back on
     /// its feet drops the row's attention (`restart_session`), which is right
     /// for every reason the agent raised for itself and wrong for the one
-    /// nobody raised on its behalf: an approved request is still theirs to
+    /// nobody raised on its behalf: a published request is still theirs to
     /// merge and a message written to them is still unread, however many
     /// times the agent underneath is restarted. So `waiting_user` is put back
     /// — on whatever came back up, since a resume keeps the row and a spawn
@@ -2156,7 +1337,7 @@ impl Scheduler {
         let for_the_user = session.attention_reason() == Some(AttentionReason::WaitingUser);
         self.launcher.kill_session(&session.id).await?;
         if let Some(task_id) = session.task_id.clone()
-            && matches!(session.role(), Role::Engineer | Role::Integrator)
+            && session.role() == Role::Engineer
         {
             let task = self.store.get_task(&task_id).await?;
             self.start_role(&task, session.role()).await?;
@@ -2561,9 +1742,8 @@ impl Scheduler {
         Ok(())
     }
 
-    /// The live session a task's own notices are raised on: its integrator
-    /// while one is landing it, its engineer otherwise, and the most recent of
-    /// either.
+    /// The live session a task's own notices are raised on: its engineer, the
+    /// most recent one it has.
     async fn session_the_task_is_with(
         &self,
         message: &Message,
@@ -2579,9 +1759,11 @@ impl Scheduler {
                 ..Default::default()
             })
             .await?;
-        Ok([Role::Integrator, Role::Engineer]
-            .into_iter()
-            .find_map(|role| sessions.iter().rev().find(|s| s.role() == role).cloned()))
+        Ok(sessions
+            .iter()
+            .rev()
+            .find(|s| s.role() == Role::Engineer)
+            .cloned())
     }
 
     /// A message for an agent: typed into its pane if it has one, and
@@ -2703,407 +1885,5 @@ impl Scheduler {
         // that addressed it — and, for a goal thread, the only session it was
         // ever allowed to reach.
         Ok(at_goal)
-    }
-}
-
-/// What one poll of a review came back with.
-struct Poll {
-    /// Whether the forge says nothing stands between it and its merge right
-    /// now — approved, still merging into its base, and with every check it
-    /// has finished and green — or `None` when this poll could not tell,
-    /// since an answer that never came is not an approval withdrawn.
-    ///
-    /// The state of the branch is part of it because the notice it drives is
-    /// "ready for you to merge": a branch that went red, stopped merging or
-    /// is building the revision somebody just pushed is not that, and the
-    /// flag comes back down until it is all three again.
-    approved: Option<bool>,
-    state: PrState,
-    /// What a read of the request failed with, when one of the reads a look
-    /// takes did.
-    ///
-    /// A request is more than one resource on either forge — what was written
-    /// on the diff is its own read on GitHub, the approvals are on GitLab —
-    /// and one of them failing leaves the rest worth acting on. What it does
-    /// not leave is a quiet review: a comment nobody could read looks exactly
-    /// like a comment nobody wrote, so a look that came back in pieces says
-    /// so, and the counting that tells the user about a broken watch counts
-    /// it like any other failure.
-    failure: Option<String>,
-}
-
-/// What the humans wrote on the review, quoted for the engineer.
-///
-/// Quoted verbatim rather than pointed at, for the reason a delivered message
-/// is quoted whole: an agent sent to go and read what it was woken for has
-/// been woken for nothing — and here there is nothing to send it to, since
-/// the branch is on a forge and the comments were read by the daemon. Every
-/// entry carries who wrote it, and where on the diff it hangs when that is
-/// where it was written.
-///
-/// This is the round's feedback and nothing else: what to do about it is the
-/// engineer's `changes_requested` briefing to say, which renders it under a
-/// heading naming the request it came from. How many there are and where they
-/// were written open it: an engineer answering every one of them is owed the
-/// number, and the request is where the thread they hang on is read.
-fn forge_feedback(watched: &WatchedPr, feedback: &[Feedback]) -> String {
-    let count = feedback.len();
-    let plural = if count == 1 { "comment" } else { "comments" };
-    let quoted = feedback
-        .iter()
-        .map(|f| {
-            let what = if f.blocking {
-                "requested changes"
-            } else {
-                "commented"
-            };
-            let at = match &f.file {
-                Some(file) => format!(" on {file}"),
-                None => String::new(),
-            };
-            let body = f
-                .body
-                .trim()
-                .lines()
-                .map(|line| format!("> {line}").trim_end().to_string())
-                .collect::<Vec<_>>()
-                .join("\n");
-            format!("#### {} {what}{at}\n{body}", f.author)
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n");
-    format!("{count} new {plural} on {}:\n\n{quoted}", watched.url)
-}
-
-/// The rule every send-back on a published request carries: the commits
-/// people are reading stay where they are, so whatever answers the request is
-/// a commit on top of them.
-fn published_branch_rule(watched: &WatchedPr) -> String {
-    format!(
-        "The {noun} is published and people are reading the commits on it, so the branch only \
-         ever grows: add new commits on top of what is already there — no `commit --amend`, no \
-         rebase, no forced push over what they have already seen.",
-        noun = watched.forge.noun(),
-    )
-}
-
-/// The branch a conflict is with: the one the forge named it against, and the
-/// repository's own base where the forge named none.
-fn conflict_base(conflict: &Conflict, repo: &Repository) -> String {
-    conflict
-        .base
-        .clone()
-        .unwrap_or_else(|| repo.base_branch.clone())
-}
-
-/// What the forge says is failing on the branch, as the round of requested
-/// changes the engineer is sent back with.
-///
-/// Named rather than pointed at, for the reason the comments are quoted
-/// rather than linked: an agent woken to go and find out what it was woken
-/// for has been woken for nothing. Each check travels as the forge spells it
-/// — its name, the verdict it finished with, and where the run is read —
-/// which is what the engineer looks for on the request itself.
-fn pr_checks_review(watched: &WatchedPr, checks: &[FailedCheck]) -> String {
-    let listed = checks
-        .iter()
-        .map(|check| {
-            let conclusion = match check.conclusion.trim() {
-                "" => String::new(),
-                conclusion => format!(" ({conclusion})"),
-            };
-            let url = match check
-                .url
-                .as_deref()
-                .map(str::trim)
-                .filter(|u| !u.is_empty())
-            {
-                Some(url) => format!(" — {url}"),
-                None => String::new(),
-            };
-            format!("- {}{conclusion}{url}", check.name)
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    let count = checks.len();
-    let plural = if count == 1 { "check" } else { "checks" };
-    format!(
-        "{label} ({url}) has {count} failing {plural} on the commit it is open with:\n\n\
-         {listed}\n\n\
-         Making them pass is yours to do: read each run where the {noun} links to it, fix what \
-         it is failing on, and where it is failing on something that is not the branch's fault, \
-         say so. {rule} Then call `request_review` with a summary of what was failing and what \
-         fixed it — that summary is what the people reading the {noun} are answered with.",
-        label = watched.label(),
-        url = watched.url,
-        noun = watched.forge.noun(),
-        rule = published_branch_rule(watched),
-    )
-}
-
-/// The same for a branch that no longer merges into its base.
-///
-/// Nobody else can answer it: the integrator hits the conflict during its own
-/// merge, and one asleep over a published request — waiting on the humans
-/// reading it — would not hit it until somebody woke it for something else.
-/// Neither forge names the conflicting files on the request, so what the
-/// engineer is given is the branch to merge in, which is where it reads them
-/// from.
-fn pr_conflict_review(watched: &WatchedPr, base: &str) -> String {
-    let noun = watched.forge.noun();
-    format!(
-        "{label} ({url}) no longer merges into {base}: the base moved under the branch, and \
-         reconciling it is yours to do.\n\n\
-         Bring {base} into the branch — `git fetch <remote> {base} && git merge --no-edit \
-         <remote>/{base}`, or `git merge --no-edit {base}` where the base is only local — \
-         resolve every conflict it reports, and commit the resolution. {rule} The merge commit \
-         is fine: the forge squashes the {noun} when it merges it. Then call `request_review` \
-         with a summary of what you reconciled — that summary is what the people reading the \
-         {noun} are answered with.",
-        label = watched.label(),
-        url = watched.url,
-        rule = published_branch_rule(watched),
-    )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn pull_request() -> WatchedPr {
-        WatchedPr {
-            forge: Forge::GitHub,
-            number: 12,
-            url: "https://github.com/owner/repo/pull/12".into(),
-        }
-    }
-
-    fn merge_request() -> WatchedPr {
-        WatchedPr {
-            forge: Forge::GitLab,
-            number: 12,
-            url: "https://gitlab.com/owner/repo/-/merge_requests/12".into(),
-        }
-    }
-
-    fn repository() -> Repository {
-        Repository {
-            id: "R1".into(),
-            path: "/repos/ariadne".into(),
-            base_branch: "main".into(),
-            description: None,
-            created_at: "2026-01-01T00:00:00Z".into(),
-            updated_at: "2026-01-01T00:00:00Z".into(),
-        }
-    }
-
-    /// The comments the daemon relays are the round's feedback, quoted: every
-    /// one of them verbatim with its author and, where it hangs on the diff,
-    /// its file and line. What to do about them is the engineer's
-    /// `changes_requested` briefing to say, so none of it is here.
-    #[test]
-    fn the_send_back_quotes_every_comment_that_was_written_on_the_review() {
-        let feedback = forge_feedback(
-            &pull_request(),
-            &[
-                Feedback {
-                    id: "C1".into(),
-                    author: "maria".into(),
-                    body: "why a new module?".into(),
-                    file: None,
-                    blocking: false,
-                },
-                Feedback {
-                    id: "RC2".into(),
-                    author: "jon".into(),
-                    body: "this allocates per row\n\nand the row is hot".into(),
-                    file: Some("src/board.rs:42".into()),
-                    blocking: true,
-                },
-            ],
-        );
-        assert!(
-            feedback.starts_with("2 new comments on https://github.com/owner/repo/pull/12:\n\n"),
-            "{feedback}"
-        );
-        assert!(
-            feedback.contains("#### maria commented\n> why a new module?"),
-            "{feedback}"
-        );
-        assert!(
-            feedback.contains("#### jon requested changes on src/board.rs:42"),
-            "{feedback}"
-        );
-        // Verbatim, every line of it, and the empty line between them is a
-        // quote too rather than the end of the quotation.
-        assert!(
-            feedback.contains("> this allocates per row\n>\n> and the row is hot"),
-            "{feedback}"
-        );
-        // The instructions are the briefing's: nothing here tells the engineer
-        // what to do, and nothing here says the word twice.
-        for instruction in ["request_review", "commit --amend", "return_to_engineer"] {
-            assert!(!feedback.contains(instruction), "{feedback}");
-        }
-        assert!(!feedback.contains("  "), "{feedback}");
-
-        let one = forge_feedback(
-            &pull_request(),
-            &[Feedback {
-                id: "C1".into(),
-                author: "maria".into(),
-                body: "why?".into(),
-                file: None,
-                blocking: false,
-            }],
-        );
-        assert!(one.starts_with("1 new comment on "), "{one}");
-    }
-
-    /// The same for what the forge says is failing rather than what a person
-    /// wrote: every check named as the forge names it, where its run is read,
-    /// and the rule a published branch is answered under.
-    #[test]
-    fn the_send_back_names_every_check_the_forge_reported_as_failed() {
-        let review = pr_checks_review(
-            &pull_request(),
-            &[
-                FailedCheck {
-                    id: "CHKabc123:test".into(),
-                    name: "test".into(),
-                    conclusion: "FAILURE".into(),
-                    url: Some("https://github.com/owner/repo/actions/runs/17".into()),
-                },
-                // A forge that answered with no URL and no verdict still
-                // answers with a name, which is what the engineer looks for.
-                FailedCheck {
-                    id: "CHKabc123:lint".into(),
-                    name: "lint".into(),
-                    conclusion: String::new(),
-                    url: None,
-                },
-            ],
-        );
-        assert!(review.contains("Pull request #12"), "{review}");
-        assert!(review.contains("2 failing checks"), "{review}");
-        assert!(
-            review.contains("- test (FAILURE) — https://github.com/owner/repo/actions/runs/17"),
-            "{review}"
-        );
-        assert!(review.contains("\n- lint\n"), "{review}");
-        assert!(review.contains("`request_review`"), "{review}");
-        assert!(review.contains("no `commit --amend`"), "{review}");
-        assert!(!review.contains("  "), "{review}");
-
-        let one = pr_checks_review(
-            &merge_request(),
-            &[FailedCheck {
-                id: "CHKabc123:pipeline".into(),
-                name: "pipeline".into(),
-                conclusion: "failed".into(),
-                url: None,
-            }],
-        );
-        assert!(one.contains("1 failing check on the commit"), "{one}");
-        assert!(one.contains("merge request is published"), "{one}");
-    }
-
-    /// And for a branch that no longer merges: the base to bring in, since
-    /// neither forge names the files, and the same rule about how.
-    #[test]
-    fn the_send_back_for_a_conflict_names_the_base_to_merge_in() {
-        let review = pr_conflict_review(&pull_request(), "main");
-        assert!(
-            review.contains(
-                "Pull request #12 (https://github.com/owner/repo/pull/12) no longer \
-                             merges into main"
-            ),
-            "{review}"
-        );
-        assert!(
-            review.contains("git merge --no-edit <remote>/main"),
-            "{review}"
-        );
-        assert!(review.contains("`request_review`"), "{review}");
-        assert!(review.contains("no `commit --amend`"), "{review}");
-        assert!(!review.contains("  "), "{review}");
-
-        // The branch the forge named, and the repository's own base where it
-        // named none.
-        let repo = repository();
-        assert_eq!(
-            conflict_base(
-                &Conflict {
-                    id: "MRGabc123".into(),
-                    base: Some("release/2".into()),
-                },
-                &repo
-            ),
-            "release/2"
-        );
-        assert_eq!(
-            conflict_base(
-                &Conflict {
-                    id: "MRGabc123".into(),
-                    base: None,
-                },
-                &repo
-            ),
-            repo.base_branch
-        );
-    }
-
-    /// The same on GitLab, in GitLab's own words: what the daemon quotes off
-    /// a merge request is the merge request's, and the two send-backs the
-    /// forge itself raises say so too.
-    #[test]
-    fn a_merge_request_is_quoted_and_sent_back_the_gitlab_way() {
-        let feedback = forge_feedback(
-            &merge_request(),
-            &[Feedback {
-                id: "N1".into(),
-                author: "maria".into(),
-                body: "why a new module?".into(),
-                file: Some("src/board.rs:7".into()),
-                blocking: true,
-            }],
-        );
-        assert!(
-            feedback.starts_with(
-                "1 new comment on https://gitlab.com/owner/repo/-/merge_requests/12:\n\n"
-            ),
-            "{feedback}"
-        );
-        assert!(
-            feedback.contains("#### maria requested changes on src/board.rs:7"),
-            "{feedback}"
-        );
-        assert!(!feedback.contains("  "), "{feedback}");
-
-        let conflict = pr_conflict_review(&merge_request(), "main");
-        assert!(
-            conflict.contains(
-                "Merge request !12 (https://gitlab.com/owner/repo/-/merge_requests/12) no longer merges into main"
-            ),
-            "{conflict}"
-        );
-        assert!(!conflict.contains("pull request"), "{conflict}");
-        assert!(!conflict.contains("  "), "{conflict}");
-
-        let checks = pr_checks_review(
-            &merge_request(),
-            &[FailedCheck {
-                id: "test:failed".into(),
-                name: "test".into(),
-                conclusion: "failed".into(),
-                url: None,
-            }],
-        );
-        assert!(
-            checks.contains("Merge request !12 (https://gitlab.com/owner/repo/-/merge_requests/12) has 1 failing check"),
-            "{checks}"
-        );
-        assert!(!checks.contains("pull request"), "{checks}");
-        assert!(!checks.contains("  "), "{checks}");
     }
 }

@@ -276,10 +276,7 @@ async fn a_create_naming_an_unfillable_placeholder_creates_nothing() {
 async fn a_kind_of_another_role_is_refused_with_a_sentence() {
     let h = harness().await;
     let planner = h.profile("plan", Role::Planner).await;
-    let uri = format!(
-        "/v1/profiles/{}/prompts/integration_instructions",
-        planner.id
-    );
+    let uri = format!("/v1/profiles/{}/prompts/landing_instructions", planner.id);
 
     for request in [
         put_json(&uri, serde_json::json!({ "content": "..." })),
@@ -288,8 +285,8 @@ async fn a_kind_of_another_role_is_refused_with_a_sentence() {
         let err = h.error(request, StatusCode::BAD_REQUEST).await;
         assert_eq!(err.error.code, "invalid_request");
         assert!(
-            err.error.message.contains("integration_instructions")
-                && err.error.message.contains("integrator"),
+            err.error.message.contains("landing_instructions")
+                && err.error.message.contains("engineer"),
             "unhelpful message: {}",
             err.error.message
         );

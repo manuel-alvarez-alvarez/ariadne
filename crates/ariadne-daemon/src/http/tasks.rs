@@ -8,20 +8,17 @@ use ariadne_api::Page;
 use ariadne_api::messages::{CreateMessageRequest, MessageDto};
 use ariadne_api::reviews::{CreateReviewRequest, ReviewDto};
 use ariadne_api::tasks::{
-    CreateTaskRequest, RecordPullRequestRequest, ReturnToEngineerRequest, TaskDto, TaskListQuery,
-    TaskTransitionDto, TransitionRequest, UpdateTaskRequest,
+    CreateTaskRequest, RecordPullRequestRequest, TaskDto, TaskListQuery, TaskTransitionDto,
+    TransitionRequest, UpdateTaskRequest,
 };
-use ariadne_core::{Actor, AuthorRole, ReviewVerdict, Role, TaskStatus};
-use ariadne_store::{
-    NewMessage, NewReview, NewTask, Recipient, ReviewAuthor, Store, Task, TaskFilter, TaskUpdate,
-};
+use ariadne_core::{Actor, MergeStrategy, Role, TaskStatus};
+use ariadne_store::{NewMessage, NewReview, NewTask, Store, Task, TaskFilter, TaskUpdate};
 
 use super::AppState;
 use super::auth::{CallCtx, call_ctx, ensure_task_scope};
 use super::convert::{message_dto_of, message_dtos, review_dto, task_dto, transition_dto};
 use super::error::{ApiError, ApiResult};
 use super::recipients;
-use crate::forge::{self, Forge};
 use crate::notify;
 
 async fn to_dto(store: &Store, task: Task) -> ApiResult<TaskDto> {
@@ -99,8 +96,6 @@ pub async fn create(
 
     let engineer = resolve_profile(&state.store, &req.engineer_profile, Role::Engineer).await?;
     let reviewers = resolve_profiles(&state.store, &req.reviewer_profiles, Role::Reviewer).await?;
-    let integrator =
-        resolve_profile(&state.store, &req.integrator_profile, Role::Integrator).await?;
 
     let task = state
         .store
@@ -110,7 +105,6 @@ pub async fn create(
             title: req.title,
             description: req.description,
             engineer_profile_id: engineer,
-            integrator_profile_id: integrator,
             reviewer_profile_ids: reviewers,
             depends_on: req.depends_on,
         })
@@ -174,10 +168,6 @@ pub async fn update(
         Some(specs) => Some(resolve_profiles(&state.store, specs, Role::Reviewer).await?),
         None => None,
     };
-    let integrator_profile_id = match &req.integrator_profile {
-        Some(spec) => Some(resolve_profile(&state.store, spec, Role::Integrator).await?),
-        None => None,
-    };
     let task = state
         .store
         .update_task(
@@ -186,7 +176,6 @@ pub async fn update(
                 title: req.title,
                 description: req.description,
                 reviewer_profile_ids,
-                integrator_profile_id,
             },
         )
         .await?;
@@ -244,11 +233,10 @@ pub(crate) async fn apply_transition(
     }
     // A task going back to `ready` is a task starting over, and the only way
     // there is a retry of a failed one. Whatever it was published as is not
-    // its request any more — a pull request closed unmerged is what fails a
-    // published task in the first place — so the record goes with the retry:
-    // its next integrator opens a fresh one rather than pushing a revision at
-    // a request nobody will merge, and no poll watches a review that is over.
-    // A no-op for the tasks that were never published, which is most of them.
+    // its request any more — a request closed unmerged is what fails a
+    // published task in the first place — so the record goes with the retry
+    // rather than pointing the user at something nobody will merge. A no-op
+    // for the tasks that were never published, which is most of them.
     let task = match req.to == TaskStatus::Ready {
         true => {
             state.store.clear_task_pull_request(task_id).await?;
@@ -260,15 +248,23 @@ pub(crate) async fn apply_transition(
     Ok(task)
 }
 
-/// Prove the task really was landed, the way it was landed.
+/// Prove the task really was landed, in the primary checkout and with git
+/// alone.
 ///
-/// Locally that is the branch being an ancestor of the base: rebase, squash
-/// and fast-forward leave the branch tip *as* the base tip. A pull or merge
-/// request leaves no such thing — a squash or rebase merge on either forge
-/// writes a commit nobody's branch points at — so what is checked there is
-/// the forge's own answer, plus the local base having caught up with it: a
-/// task whose branch merged on a forge is only finished here once the
-/// checkout says so too.
+/// What "landed" leaves behind depends on the strategy, so the check does too.
+///
+/// `direct` rebases, squashes and fast-forwards, which leaves the base tip *as*
+/// the branch tip: the branch being an ancestor of the base is the whole of it,
+/// and no sha has to be taken on trust.
+///
+/// `pull_request` is squashed by the forge, which writes a commit no branch
+/// points at — the task branch is deliberately *not* an ancestor of the base
+/// afterwards. What can be checked here is the other half of the engineer's
+/// last step: it fetches and fast-forwards the local base onto the merge, and
+/// the sha it reports has to be on that base branch. Until it is, the change is
+/// not on this machine and the task is not finished. Asking the forge instead
+/// would be the daemon watching a request again, which is what this release
+/// stopped doing.
 async fn verify_merged(
     state: &AppState,
     task: &Task,
@@ -276,87 +272,61 @@ async fn verify_merged(
     reported: Option<&str>,
 ) -> ApiResult<()> {
     let repo_path = std::path::PathBuf::from(&repo.path);
-    let Some(watched) = forge::watched_pull_request(task) else {
-        let merged = state
+    let on_the_base = async |rev: &str| {
+        state
             .launcher
             .git
-            .is_ancestor(&repo_path, &task.branch, &repo.base_branch)
+            .is_ancestor(&repo_path, rev, &repo.base_branch)
             .await
-            .map_err(|e| ApiError::conflict(e.to_string()))?;
-        if !merged {
-            return Err(ApiError::conflict(format!(
-                "merge not verified: {} is not an ancestor of {} in {}",
-                task.branch, repo.base_branch, repo.path
-            )));
-        }
-        return Ok(());
+            .map_err(|e| ApiError::conflict(e.to_string()))
     };
-
-    // Whichever forge it is on, the same two facts: whether it was merged,
-    // and the commit the merge landed as.
-    let landing = match watched.forge {
-        Forge::GitHub => state
-            .launcher
-            .gh()
-            .pr_view(&repo_path, &watched)
-            .await
-            .map(|pr| pr.landing()),
-        Forge::GitLab => state
-            .launcher
-            .glab()
-            .mr_view(&repo_path, &watched)
-            .await
-            .map(|mr| mr.landing()),
-    }
-    .map_err(|e| ApiError::conflict(format!("merge not verified: {e:#}")))?;
-
-    let label = watched.label();
-    if !landing.merged {
-        return Err(ApiError::conflict(format!(
-            "merge not verified: {label} is {}, not merged",
-            landing.state
-        )));
-    }
-    // Merged there, but the task is landed here: both the sha being reported
-    // and the commit the forge says the merge landed as have to be on the
-    // local base branch, which is what says the checkout has caught up with
-    // the remote. Everything the integrator is told to do — fetch,
-    // fast-forward, report `git rev-parse <base>` — makes both true at once.
-    let mut contained = Vec::new();
-    contained.extend(reported.map(str::to_string));
-    contained.extend(landing.commits);
-    for commit in contained {
-        let caught_up = state
-            .launcher
-            .git
-            .is_ancestor(&repo_path, &commit, &repo.base_branch)
-            .await
-            .map_err(|e| ApiError::conflict(e.to_string()))?;
-        if !caught_up {
-            return Err(ApiError::conflict(format!(
-                "merge not verified: {label} landed as {commit}, which {} in {} \
-                 does not contain yet — fetch the remote and fast-forward it first",
-                repo.base_branch, repo.path
-            )));
+    match repo.merge_strategy() {
+        MergeStrategy::Direct => {
+            if !on_the_base(&task.branch).await? {
+                return Err(ApiError::conflict(format!(
+                    "merge not verified: {} is not an ancestor of {} in {}",
+                    task.branch, repo.base_branch, repo.path
+                )));
+            }
+        }
+        MergeStrategy::PullRequest => {
+            let Some(sha) = reported else {
+                return Err(ApiError::conflict(
+                    "merge not verified: a published request is squashed by the forge, \
+                     so report the sha it landed as (`git rev-parse <base>`)",
+                ));
+            };
+            if !on_the_base(sha).await? {
+                return Err(ApiError::conflict(format!(
+                    "merge not verified: {sha} is not on {} in {} — fetch the remote \
+                     and fast-forward the base branch first",
+                    repo.base_branch, repo.path
+                )));
+            }
         }
     }
     Ok(())
 }
 
-/// Record the pull request an integrator opened for a task.
+/// Record the pull or merge request the engineer opened for a task.
 ///
-/// The daemon watches what it is told here, and only here: the URL travels as
-/// a tool call rather than as a sentence in the conversation, so that a
-/// pull request is either being watched or was never reported — never
-/// half-known from a message somebody has to parse.
+/// The URL travels as a tool call rather than as a sentence in the
+/// conversation, so a published task is either one the UI and the CLI can
+/// point at or one that was never reported — never half-known from a message
+/// somebody has to parse.
+///
+/// Recording it writes the URL and nothing else. Telling the user where the
+/// request is belongs to the engineer that opened it — its landing briefing
+/// says to `post_message` them the link — and a notice the daemon composed
+/// beside this write would be a second author for the same news.
 #[utoipa::path(post, path = "/v1/tasks/{id}/pull-request", tag = "tasks",
     request_body = RecordPullRequestRequest,
     params(("id" = String, Path, description = "task id")),
     responses(
         (status = 200, body = TaskDto),
-        (status = 400, description = "not a pull request URL"),
-        (status = 403, description = "not an integrator session"),
-        (status = 409, description = "the task is not being integrated")
+        (status = 400, description = "empty URL"),
+        (status = 403, description = "not an engineer session"),
+        (status = 409, description = "the task is not approved")
     ))]
 pub async fn record_pull_request(
     State(state): State<AppState>,
@@ -369,106 +339,30 @@ pub async fn record_pull_request(
     if !ctx
         .session
         .as_ref()
-        .is_some_and(|s| s.role() == Role::Integrator)
+        .is_some_and(|s| s.role() == Role::Engineer)
     {
         return Err(ApiError::forbidden(
-            "only the integrator of a task may record its pull request",
+            "only the engineer of a task may record its pull request",
         ));
     }
     let task = state.store.get_task(&id).await?;
-    if task.status() != TaskStatus::Integrating {
+    if task.status() != TaskStatus::Approved {
         return Err(ApiError::conflict(format!(
-            "task is {}, a pull request belongs to a task being integrated",
+            "task is {}, a pull request belongs to an approved task being landed",
             task.status
         )));
     }
     let url = req.url.trim();
-    let Some(number) = forge::pull_request_number(url) else {
-        return Err(ApiError::bad_request(format!(
-            "{url} is not a pull request URL: pass the one `gh pr create` or \
-             `glab mr create` printed, e.g. https://github.com/owner/repo/pull/12 \
-             or https://gitlab.com/owner/repo/-/merge_requests/12"
-        )));
-    };
-    let announce = task.pr_url.as_deref() != Some(url);
-    state.store.set_task_pull_request(&id, number, url).await?;
-    if announce {
-        announce_pull_request(&state, &task, number, url).await?;
+    if url.is_empty() {
+        return Err(ApiError::bad_request(
+            "pass the URL `gh pr create` or `glab mr create` printed, e.g. \
+             https://github.com/owner/repo/pull/12",
+        ));
     }
-    // The scheduler starts watching it on the next reconciliation rather than
-    // on the poll interval, so the first look is immediate.
+    state.store.set_task_pull_request(&id, url).await?;
     state.notify_scheduler(&id).await;
     let task = state.store.get_task(&id).await?;
     Ok(Json(to_dto(&state.store, task).await?))
-}
-
-/// Tell the user a pull request was opened for them, as the request itself is
-/// recorded rather than as something an agent has to remember to say.
-///
-/// A published task is the user's from here: nothing in Ariadne merges it, and
-/// until this the only trace of one was whatever the integrator happened to
-/// write into the thread, addressed to nobody and so waking nobody.
-///
-/// Announced once per request — a re-reported URL is the same request, and
-/// [`Store::set_task_pull_request`] is idempotent for exactly that reason. The
-/// announcement counts as the telling that `pr_approved_notified` records: on
-/// a repository that gates nothing the first poll reads the request as
-/// approved from the moment it exists, and this is that same news a moment
-/// earlier. Where a review *is* required the poll reads it as not approved and
-/// clears the flag again, so the approval, when it comes, is still announced.
-///
-/// The notice travels as a message like every other one: the scheduler
-/// delivers it, and delivering one addressed to the user is what raises the
-/// attention flag the strip shows. Nothing is flagged beside the write here.
-async fn announce_pull_request(
-    state: &AppState,
-    task: &Task,
-    number: i64,
-    url: &str,
-) -> ApiResult<()> {
-    let watched = forge::forge_of(url);
-    let label = match watched {
-        Some(forge) => forge::WatchedPr {
-            forge,
-            number,
-            url: url.to_string(),
-        }
-        .label(),
-        // A forge with no watcher has no vocabulary of its own here either.
-        None => format!("Pull request #{number}"),
-    };
-    // A forge Ariadne cannot poll is one nothing will ever say more about, so
-    // the notice says so rather than promising a watch there is none of.
-    let from_here = match watched {
-        Some(forge) => format!(
-            "It is yours from here — Ariadne watches the {}, relays what is said on it \
-             and finishes the task once it is merged.",
-            forge.noun()
-        ),
-        None => "It is yours from here. Ariadne does not watch this forge, so tell the \
-                 integrator in this thread once it is merged."
-            .to_string(),
-    };
-    let msg = state
-        .store
-        .create_message(NewMessage {
-            goal_id: task.goal_id.clone(),
-            task_id: Some(task.id.clone()),
-            author_role: AuthorRole::System,
-            author_session_id: None,
-            recipient: Some(Recipient::User),
-            body: format!(
-                "{label} is open for \"{}\": {url}\n\n{from_here}",
-                task.title
-            ),
-        })
-        .await?;
-    state
-        .store
-        .set_task_pr_approved_notified(&task.id, true)
-        .await?;
-    state.notify_scheduler_message(&msg.id).await;
-    Ok(())
 }
 
 /// Cancel a task (user).
@@ -655,7 +549,7 @@ pub async fn post_review(
         .create_review(NewReview {
             task_id: id.clone(),
             round: task.review_round,
-            author: ReviewAuthor::Profile(reviewer_profile_id),
+            reviewer_profile_id,
             session_id: ctx.session.map(|s| s.id),
             verdict: req.verdict,
             body: req.body,
@@ -663,92 +557,6 @@ pub async fn post_review(
         .await?;
     state.notify_scheduler(&id).await;
     Ok((StatusCode::CREATED, Json(review_dto(review))))
-}
-
-/// Hand an integrating task back to its engineer (integrator).
-///
-/// The feedback is recorded as a change-request verdict on the round that was
-/// approved, so it reaches the engineer exactly the way a reviewer's does — in
-/// the resume briefing, and in `get_reviews` beside the approvals it follows.
-#[utoipa::path(post, path = "/v1/tasks/{id}/return-to-engineer", tag = "tasks",
-    request_body = ReturnToEngineerRequest,
-    params(("id" = String, Path, description = "task id")),
-    responses(
-        (status = 200, body = TaskDto),
-        (status = 403, description = "not an integrator session"),
-        (status = 409, description = "the task is not being integrated")
-    ))]
-pub async fn return_to_engineer(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    headers: HeaderMap,
-    Json(req): Json<ReturnToEngineerRequest>,
-) -> ApiResult<Json<TaskDto>> {
-    let ctx = call_ctx(&state.store, &headers).await?;
-    ensure_task_scope(&ctx, &id)?;
-    let Some(session) = ctx
-        .session
-        .as_ref()
-        .filter(|s| s.role() == Role::Integrator)
-    else {
-        return Err(ApiError::forbidden(
-            "only the integrator of a task may send it back to its engineer",
-        ));
-    };
-    let task = state.store.get_task(&id).await?;
-    if task.status() != TaskStatus::Integrating {
-        return Err(ApiError::conflict(format!(
-            "task is {}, only a task being integrated can be sent back to its engineer",
-            task.status
-        )));
-    }
-
-    // The feedback is recorded before the transition, so that the engineer the
-    // scheduler resumes on it has it to read. A transition that then fails
-    // leaves a verdict on a round nobody is waiting on, which is inert — the
-    // next round is a new one.
-    state
-        .store
-        .create_review(NewReview {
-            task_id: id.clone(),
-            round: task.review_round,
-            author: ReviewAuthor::Profile(session.profile_id.clone()),
-            session_id: Some(session.id.clone()),
-            verdict: ReviewVerdict::RequestChanges,
-            body: Some(feedback_body(&req)),
-        })
-        .await?;
-    let task = apply_transition(
-        &state,
-        &ctx,
-        &id,
-        TransitionRequest {
-            to: TaskStatus::ChangesRequested,
-            reason: Some(req.summary),
-            merge_commit: None,
-        },
-    )
-    .await?;
-    Ok(Json(to_dto(&state.store, task).await?))
-}
-
-/// The send-back as the engineer reads it: what happened, then the list of
-/// what to do about it.
-fn feedback_body(req: &ReturnToEngineerRequest) -> String {
-    let mut body = req.summary.trim().to_string();
-    if !req.changes.is_empty() {
-        if !body.is_empty() {
-            body.push_str("\n\n");
-        }
-        body.push_str(
-            &req.changes
-                .iter()
-                .map(|change| format!("- {}", change.trim()))
-                .collect::<Vec<_>>()
-                .join("\n"),
-        );
-    }
-    body
 }
 
 /// Diff of the task branch against its base (`git diff base...branch`), or,

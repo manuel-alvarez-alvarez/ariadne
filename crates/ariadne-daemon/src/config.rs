@@ -27,17 +27,10 @@ pub struct Config {
     pub delete_merged_branches: bool,
     pub delete_merged_worktrees: bool,
     pub prevent_sleep: bool,
-    pub gh_bin: String,
-    pub glab_bin: String,
-    pub pr_poll_secs: u64,
     pub typed_input_window: Duration,
     pub running_quiet_flag_secs: u64,
     pub running_quiet_resume_secs: u64,
 }
-
-/// How often an integrating task's pull request is polled by default: a few
-/// minutes, because what moves it is a human reading a diff.
-const DEFAULT_PR_POLL_SECS: u64 = 180;
 
 /// How long a freshly launched pane is watched for a TUI to type a resume
 /// instruction into (see `Launcher::deliver_typed_input`): two minutes,
@@ -101,9 +94,6 @@ impl Config {
             delete_merged_branches: file.delete_merged_branches.unwrap_or(true),
             delete_merged_worktrees: file.delete_merged_worktrees.unwrap_or(true),
             prevent_sleep: file.prevent_sleep.unwrap_or(true),
-            gh_bin: file.gh_bin.unwrap_or_else(|| "gh".to_string()),
-            glab_bin: file.glab_bin.unwrap_or_else(|| "glab".to_string()),
-            pr_poll_secs: file.pr_poll_secs.unwrap_or(DEFAULT_PR_POLL_SECS),
             typed_input_window: DEFAULT_TYPED_INPUT_WINDOW,
             running_quiet_flag_secs: file
                 .running_quiet_flag_secs
@@ -148,8 +138,8 @@ mod tests {
         let config = Config::load(Some(dir.path().join("home"))).unwrap();
         assert_eq!(config.running_quiet_flag_secs, 60);
         assert_eq!(config.running_quiet_resume_secs, 120);
-        assert_eq!(
-            config.pr_poll_secs, DEFAULT_PR_POLL_SECS,
+        assert!(
+            config.delete_merged_worktrees,
             "and what the file does not say keeps its default"
         );
     }

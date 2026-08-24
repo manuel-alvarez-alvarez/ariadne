@@ -1,18 +1,19 @@
-//! The integrator's lifecycle on a local-only repository.
+//! What an approved task does, driven by the scheduler over a real git
+//! repository.
 //!
-//! The whole loop, driven by the scheduler over a real git repository: the
-//! approvals hand the task to an integrator, which takes the branch over in a
-//! worktree of its own — the engineer's is released, since a branch can only
-//! be checked out once — lands it, and reports the merge. And the other way
-//! out of it: a change the integrator will not land goes back to the engineer
-//! as a round of requested changes, and comes round again once it is approved.
+//! The approvals leave the task with the engineer that wrote it: the same
+//! session, the same worktree, briefed with the landing instructions its
+//! repository's merge strategy names. From there it has two ways out, and
+//! both are the engineer's own — `mark_merged` once the change is on the base
+//! branch, and `request_review` for a revision the people on a published
+//! request asked for, which the Ariadne reviewers judge like any other round.
 //!
 //! No tmux and no agent CLI: `tmux` is a stub script that answers "no such
 //! session" and records what it was asked for, so the sessions here are rows
 //! and spawn plans rather than panes. `git` is real, and so is the merge the
-//! daemon verifies before accepting it — the "integrator" doing the rebase,
-//! the squash and the fast-forward is the test itself, running the commands
-//! its briefing tells the agent to run.
+//! daemon verifies before accepting it — the agent doing the rebase, the
+//! squash and the fast-forward is the test itself, running the commands its
+//! briefing tells the agent to run.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -29,7 +30,9 @@ use ariadne_api::SESSION_HEADER;
 use ariadne_api::reviews::ReviewDto;
 use ariadne_api::tasks::TaskDto;
 use ariadne_core::spawn_plan::SpawnPlanFile;
-use ariadne_core::{Actor, AgentKind, ReviewVerdict, Role, SessionStatus, TaskStatus};
+use ariadne_core::{
+    Actor, AgentKind, MergeStrategy, ReviewVerdict, Role, SessionStatus, TaskStatus,
+};
 use ariadne_daemon::bus::EventBus;
 use ariadne_daemon::config::Config;
 use ariadne_daemon::gitwt::GitManager;
@@ -39,7 +42,7 @@ use ariadne_daemon::logbuf::LogBuffer;
 use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_daemon::tmux::TmuxManager;
 use ariadne_store::{
-    AgentSession, NewGoal, NewProfile, NewRepository, NewReview, NewTask, ReviewAuthor,
+    AgentSession, NewGoal, NewProfile, NewRepository, NewReview, NewSession, NewTask,
     SessionFilter, Store, Task,
 };
 
@@ -165,6 +168,22 @@ impl Harness {
         self.task_named("Render the board", &[]).await
     }
 
+    /// Switch the repository over to publishing, which changes what the
+    /// engineer is briefed to do and what the daemon will accept as a merge.
+    async fn publish_instead(&self) {
+        let repo = self.store.list_repositories().await.unwrap().remove(0);
+        self.store
+            .update_repository(
+                &repo.id,
+                ariadne_store::RepositoryUpdate {
+                    merge_strategy: Some(MergeStrategy::PullRequest),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+    }
+
     async fn task_named(&self, title: &str, depends_on: &[String]) -> (Task, String) {
         let repo_path = self.repo_path();
         let repo_id = if repo_path.exists() {
@@ -181,6 +200,7 @@ impl Harness {
                     path: repo_path.display().to_string(),
                     base_branch: "main".into(),
                     description: None,
+                    merge_strategy: MergeStrategy::Direct,
                 })
                 .await
                 .unwrap()
@@ -189,7 +209,6 @@ impl Harness {
 
         let engineer = self.profile("engineer", Role::Engineer).await;
         let reviewer = self.profile("reviewer", Role::Reviewer).await;
-        let integrator = self.profile("integrator", Role::Integrator).await;
         let goal = match self.store.list_goals(&[]).await.unwrap().first() {
             Some(goal) => goal.clone(),
             None => {
@@ -222,7 +241,6 @@ impl Harness {
                 title: title.into(),
                 description: "Do the thing.".into(),
                 engineer_profile_id: engineer,
-                integrator_profile_id: integrator,
                 reviewer_profile_ids: vec![reviewer.clone()],
                 depends_on: depends_on.to_vec(),
             })
@@ -302,18 +320,23 @@ impl Harness {
         SpawnPlanFile::from_json(&raw).unwrap().argv.join(" ")
     }
 
-    /// Walk a fresh task to an integrator working on it: the engineer commits
+    /// Walk a fresh task to the engineer landing it: the engineer commits
     /// something, the reviewer approves, the scheduler does the rest. Returns
-    /// the engineer's worktree (now released) and the integrator's session.
-    async fn hand_to_the_integrator(&self, task: &Task, reviewer: &str) -> (PathBuf, AgentSession) {
+    /// the engineer's worktree — which it never gave up — and the session that
+    /// has been briefed to land the change.
+    async fn walk_to_approved(&self, task: &Task, reviewer: &str) -> (PathBuf, AgentSession) {
         self.notify(&task.id);
         eventually("the engineer to be spawned", async || {
             self.status(&task.id).await == TaskStatus::InProgress
                 && self.live_session(&task.id, Role::Engineer).await.is_some()
         })
         .await;
+        let writing = self
+            .live_session(&task.id, Role::Engineer)
+            .await
+            .expect("a live engineer session");
 
-        let engineer_worktree = PathBuf::from(
+        let worktree = PathBuf::from(
             self.store
                 .get_task(&task.id)
                 .await
@@ -322,25 +345,32 @@ impl Harness {
                 .unwrap(),
         );
         sh(
-            &engineer_worktree,
+            &worktree,
             "echo change > feature.txt && git add . && \
              git -c user.email=t@t -c user.name=t commit -qm 'wip: the change'",
         );
         self.approve(task, reviewer).await;
 
-        eventually("the integrator to take the task over", async || {
-            self.status(&task.id).await == TaskStatus::Integrating
+        eventually("the engineer to be briefed to land it", async || {
+            self.status(&task.id).await == TaskStatus::Approved
                 && self
-                    .live_session(&task.id, Role::Integrator)
+                    .live_session(&task.id, Role::Engineer)
                     .await
-                    .is_some()
+                    .is_some_and(|s| {
+                        self.launched_argv(&s.id)
+                            .contains(&format!("# Land task: {}", task.title))
+                    })
         })
         .await;
-        let integrator = self
-            .live_session(&task.id, Role::Integrator)
+        let landing = self
+            .live_session(&task.id, Role::Engineer)
             .await
-            .expect("a live integrator session");
-        (engineer_worktree, integrator)
+            .expect("a live engineer session");
+        assert_eq!(
+            landing.id, writing.id,
+            "the session that wrote the change is the one landing it"
+        );
+        (worktree, landing)
     }
 
     /// The engineer asks for review and the reviewer approves it.
@@ -360,7 +390,7 @@ impl Harness {
             .create_review(NewReview {
                 task_id: task.id.clone(),
                 round: task.review_round,
-                author: ReviewAuthor::Profile(reviewer.to_string()),
+                reviewer_profile_id: reviewer.to_string(),
                 session_id: None,
                 verdict: ReviewVerdict::Approve,
                 body: Some("looks right".into()),
@@ -396,11 +426,12 @@ fn as_session(uri: &str, session_id: &str, body: serde_json::Value) -> Request<B
         .unwrap()
 }
 
-/// The whole local path: approvals reached, engineer released, integrator
-/// spawned on the branch in a worktree of its own, rebase-squash-fast-forward,
-/// `mark_merged` accepted, cleanup, dependents woken.
+/// The whole of it, the way `direct` says: the approvals leave the task with
+/// its engineer — same session, same worktree, briefed to land it —
+/// rebase-squash-fast-forward, `mark_merged` accepted, cleanup, dependents
+/// woken.
 #[tokio::test]
-async fn an_approved_task_is_landed_by_its_integrator() {
+async fn an_approved_task_is_landed_by_its_own_engineer() {
     let h = harness().await;
     let (task, reviewer) = h.task().await;
     let (dependent, _) = h
@@ -409,50 +440,37 @@ async fn an_approved_task_is_landed_by_its_integrator() {
             std::slice::from_ref(&task.id),
         )
         .await;
-    let (engineer_worktree, integrator) = h.hand_to_the_integrator(&task, &reviewer).await;
+    let (worktree, engineer) = h.walk_to_approved(&task, &reviewer).await;
 
-    // The engineer is out of the way: its session is over and its worktree —
-    // which held the branch — is gone, off the task row as well as off disk.
-    assert!(
-        !engineer_worktree.exists(),
-        "the engineer's worktree still holds the branch"
-    );
-    assert!(
+    // Nobody took the branch: the worktree the change was written in is still
+    // the task's, still on the branch, and still on disk.
+    assert!(worktree.exists(), "the engineer lost its worktree");
+    assert_eq!(
         h.store
             .get_task(&task.id)
             .await
             .unwrap()
             .worktree_path
-            .is_none()
-    );
-    for session in h.sessions(&task.id, Role::Engineer).await {
-        assert!(!session.status().is_live(), "an engineer is still running");
-    }
-
-    // The integrator has the branch, in a worktree named for its part.
-    let integrator_worktree = PathBuf::from(integrator.worktree_path.clone().unwrap());
-    assert!(
-        integrator_worktree.ends_with(format!(
-            "{}-int",
-            task.id[task.id.len() - 8..].to_lowercase()
-        )),
-        "{}",
-        integrator_worktree.display()
+            .as_deref(),
+        Some(worktree.display().to_string().as_str())
     );
     assert_eq!(
-        out(&integrator_worktree, "git rev-parse --abbrev-ref HEAD"),
+        out(&worktree, "git rev-parse --abbrev-ref HEAD"),
         task.branch
     );
-    let argv = h.launched_argv(&integrator.id);
+
+    // And the briefing it was picked up with names the strategy it is to
+    // follow, rather than leaving it to guess.
+    let argv = h.launched_argv(&engineer.id);
     assert!(
-        argv.contains(&format!("# Integrate task: {}", task.title)),
-        "the integration briefing is what it was started on: {argv}"
+        argv.contains("merge strategy is **direct**"),
+        "the landing briefing does not name the repository's strategy: {argv}"
     );
 
     // What the briefing tells it to do, done: rebase, squash, fast-forward.
-    sh(&integrator_worktree, "git rebase -q main");
+    sh(&worktree, "git rebase -q main");
     sh(
-        &integrator_worktree,
+        &worktree,
         "git reset --soft main && \
          git -c user.email=t@t -c user.name=t commit -qm 'feat(board): render it'",
     );
@@ -464,7 +482,7 @@ async fn an_approved_task_is_landed_by_its_integrator() {
         .json(
             as_session(
                 &format!("/v1/tasks/{}/transitions", task.id),
-                &integrator.id,
+                &engineer.id,
                 serde_json::json!({"to": "merged", "merge_commit": sha}),
             ),
             StatusCode::OK,
@@ -473,10 +491,10 @@ async fn an_approved_task_is_landed_by_its_integrator() {
     assert_eq!(landed.status, TaskStatus::Merged);
     assert_eq!(landed.merge_commit.as_deref(), Some(sha.as_str()));
 
-    // Cleanup takes the integrator's worktree with it, and the task that was
-    // waiting on this one starts.
+    // Cleanup takes the worktree with it, and the task that was waiting on
+    // this one starts.
     eventually("the cleanup and the dependent task", async || {
-        !integrator_worktree.exists()
+        !worktree.exists()
             && matches!(
                 h.status(&dependent.id).await,
                 TaskStatus::Ready | TaskStatus::InProgress
@@ -485,33 +503,136 @@ async fn an_approved_task_is_landed_by_its_integrator() {
     .await;
 }
 
-/// The other way out: a rebase the integrator will not resolve sends the task
-/// back to the engineer as a round of requested changes — the branch with it —
-/// and the next approval hands it to the very same integrator again.
+/// A merge nobody made is refused: the daemon checks the branch really is on
+/// the base branch of the primary checkout before it believes the sha.
 #[tokio::test]
-async fn a_send_back_returns_the_branch_and_the_task_to_the_engineer() {
+async fn a_merge_that_never_happened_is_refused() {
     let h = harness().await;
     let (task, reviewer) = h.task().await;
-    let (_engineer_worktree, integrator) = h.hand_to_the_integrator(&task, &reviewer).await;
-    let integrator_worktree = PathBuf::from(integrator.worktree_path.clone().unwrap());
+    let (worktree, engineer) = h.walk_to_approved(&task, &reviewer).await;
 
-    let sent_back: TaskDto = h
+    let sha = out(&worktree, "git rev-parse HEAD");
+    let (status, body) = h
+        .send(as_session(
+            &format!("/v1/tasks/{}/transitions", task.id),
+            &engineer.id,
+            serde_json::json!({"to": "merged", "merge_commit": sha}),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let message = String::from_utf8_lossy(&body);
+    assert!(message.contains("merge not verified"), "{message}");
+    assert_eq!(h.status(&task.id).await, TaskStatus::Approved);
+}
+
+/// The other way out of `approved`: the people reading a published request
+/// asked for something, the engineer made it, and the revision goes back to
+/// the Ariadne reviewers like any other round — from `approved`, which is
+/// where a task being landed sits.
+#[tokio::test]
+async fn a_revision_of_a_published_request_goes_back_to_the_reviewers() {
+    let h = harness().await;
+    let (task, reviewer) = h.task().await;
+    let (_worktree, engineer) = h.walk_to_approved(&task, &reviewer).await;
+
+    // The request it published is recorded by the engineer, and only by it.
+    const URL: &str = "https://github.com/owner/repo/pull/12";
+    let published: TaskDto = h
         .json(
             as_session(
-                &format!("/v1/tasks/{}/return-to-engineer", task.id),
-                &integrator.id,
+                &format!("/v1/tasks/{}/pull-request", task.id),
+                &engineer.id,
+                serde_json::json!({"url": URL}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(published.pr_url.as_deref(), Some(URL));
+
+    // The URL and nothing else: telling the user where the request is belongs
+    // to the engineer that opened it, so recording one writes no message of
+    // the daemon's own into the thread.
+    assert!(
+        h.store
+            .list_task_messages(&task.id, None, 100)
+            .await
+            .unwrap()
+            .is_empty(),
+        "recording a request wrote a message into the thread"
+    );
+    let reviewer_session = h
+        .store
+        .create_session(NewSession {
+            goal_id: task.goal_id.clone(),
+            task_id: Some(task.id.clone()),
+            role: Role::Reviewer,
+            profile_id: reviewer.clone(),
+            agent_kind: AgentKind::ClaudeCode,
+            model: None,
+            tmux_session: "ariadne-test-rev".into(),
+            worktree_path: None,
+            review_round: Some(1),
+        })
+        .await
+        .unwrap();
+    let (status, refusal) = h
+        .send(as_session(
+            &format!("/v1/tasks/{}/pull-request", task.id),
+            &reviewer_session.id,
+            serde_json::json!({"url": URL}),
+        ))
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "only its engineer records it"
+    );
+    let refusal = String::from_utf8_lossy(&refusal);
+    assert!(refusal.contains("only the engineer"), "{refusal}");
+
+    // And the revision it made for them is reviewed like any other round.
+    let round = h.store.get_task(&task.id).await.unwrap().review_round;
+    let revised: TaskDto = h
+        .json(
+            as_session(
+                &format!("/v1/tasks/{}/transitions", task.id),
+                &engineer.id,
                 serde_json::json!({
-                    "summary": "The rebase onto main conflicts.",
-                    "changes": ["src/board.rs: reconcile the swimlane layout with main's"],
+                    "to": "under_review",
+                    "reason": "answered every comment on the request",
                 }),
             ),
             StatusCode::OK,
         )
         .await;
-    assert_eq!(sent_back.status, TaskStatus::ChangesRequested);
+    assert_eq!(revised.status, TaskStatus::UnderReview);
+    assert_eq!(revised.review_round, round + 1);
+    assert_eq!(
+        revised.pr_url.as_deref(),
+        Some(URL),
+        "the request it is a revision of is still the task's"
+    );
 
-    // The engineer reads it exactly as it reads a reviewer's change request:
-    // a verdict on the round, and the same resume briefing.
+    // The reviewers judge it, and the approval hands it back to the engineer
+    // to finish landing.
+    h.store
+        .create_review(NewReview {
+            task_id: task.id.clone(),
+            round: revised.review_round,
+            reviewer_profile_id: reviewer.clone(),
+            session_id: None,
+            verdict: ReviewVerdict::Approve,
+            body: Some("the answers read right".into()),
+        })
+        .await
+        .unwrap();
+    h.notify(&task.id);
+    eventually("the task to come back to its engineer", async || {
+        h.status(&task.id).await == TaskStatus::Approved
+    })
+    .await;
+
+    // One round of verdicts per reviewer, both rounds readable.
     let reviews: Vec<ReviewDto> = h
         .json(
             Request::get(format!("/v1/tasks/{}/reviews", task.id))
@@ -520,243 +641,76 @@ async fn a_send_back_returns_the_branch_and_the_task_to_the_engineer() {
             StatusCode::OK,
         )
         .await;
-    let feedback = reviews
-        .iter()
-        .find(|r| r.verdict == ReviewVerdict::RequestChanges)
-        .expect("the send-back is a verdict on the round");
-    assert_eq!(
-        feedback.reviewer_profile_id.as_deref(),
-        Some(integrator.profile_id.as_str()),
-        "an integrator's own send-back is its own"
-    );
-    assert_eq!(feedback.author_role, None);
-    let body = feedback.body.clone().unwrap();
-    assert!(body.contains("The rebase onto main conflicts."), "{body}");
-    assert!(body.contains("- src/board.rs: reconcile"), "{body}");
-
-    eventually("the engineer to be resumed with the feedback", async || {
-        engineer_is_back(&h, &task).await
-    })
-    .await;
-    let engineer = h
-        .live_session(&task.id, Role::Engineer)
-        .await
-        .expect("a live engineer");
-    let argv = h.launched_argv(&engineer.id);
-    assert!(
-        argv.contains("src/board.rs: reconcile the swimlane layout"),
-        "the integrator's list reached the engineer: {argv}"
-    );
-    assert!(
-        argv.contains("integrator (integrator)"),
-        "and it says who asked: {argv}"
-    );
-
-    // The branch went back with it: the integrator's worktree is gone and the
-    // engineer has one it can commit in.
-    assert!(
-        !integrator_worktree.exists(),
-        "the integrator still holds the branch"
-    );
-    let engineer_worktree = PathBuf::from(
-        h.store
-            .get_task(&task.id)
-            .await
-            .unwrap()
-            .worktree_path
-            .unwrap(),
-    );
-    sh(
-        &engineer_worktree,
-        "echo fixed > feature.txt && git add . && \
-         git -c user.email=t@t -c user.name=t commit -qm 'fix: reconcile it'",
-    );
-
-    // Round two: approved again, and the same integrator session picks it up
-    // rather than a second one starting beside it.
-    h.approve(&h.store.get_task(&task.id).await.unwrap(), &reviewer)
-        .await;
-    eventually("the integrator to be handed the task again", async || {
-        h.status(&task.id).await == TaskStatus::Integrating
-            && h.live_session(&task.id, Role::Integrator).await.is_some()
-    })
-    .await;
-    let again = h
-        .live_session(&task.id, Role::Integrator)
-        .await
-        .expect("a live integrator");
-    assert_eq!(
-        again.id, integrator.id,
-        "the same integrator session, resumed"
-    );
-    assert_eq!(h.sessions(&task.id, Role::Integrator).await.len(), 1);
-    assert!(
-        PathBuf::from(again.worktree_path.clone().unwrap()).exists(),
-        "its worktree was taken back from the engineer"
-    );
-    let argv = h.launched_argv(&again.id);
-    assert!(
-        argv.contains(&format!("Pick the integration of \"{}\"", task.title)),
-        "resumed with the integration resume briefing: {argv}"
-    );
+    assert_eq!(reviews.len(), 2, "{reviews:?}");
+    assert!(reviews.iter().all(|r| r.reviewer_profile_id == reviewer));
 }
 
-/// The task is the engineer's again, in a session of its own that is running.
-async fn engineer_is_back(h: &Harness, task: &Task) -> bool {
-    h.status(&task.id).await == TaskStatus::InProgress
-        && h.live_session(&task.id, Role::Engineer).await.is_some()
-}
-
-/// Only the integrator of the task, and only while it is being integrated: the
-/// send-back is not a way for anyone else to reopen a task.
+/// A request the forge squashed leaves no branch on the base at all, so what
+/// the daemon checks there is the other half of the engineer's last step: the
+/// sha it reports is on the base branch of the primary checkout.
 #[tokio::test]
-async fn the_send_back_belongs_to_the_integrator_of_an_integrating_task() {
+async fn a_squashed_request_lands_on_the_sha_the_engineer_fast_forwarded_to() {
     let h = harness().await;
     let (task, reviewer) = h.task().await;
+    h.publish_instead().await;
+    let (worktree, engineer) = h.walk_to_approved(&task, &reviewer).await;
 
-    // Before the approvals there is nothing to send back — and the engineer
-    // holding the task cannot do it either.
-    h.notify(&task.id);
-    eventually("the engineer to be spawned", async || {
-        h.status(&task.id).await == TaskStatus::InProgress
-            && h.live_session(&task.id, Role::Engineer).await.is_some()
-    })
-    .await;
-    let engineer = h.live_session(&task.id, Role::Engineer).await.unwrap();
-    let (status, body) = h
-        .send(as_session(
-            &format!("/v1/tasks/{}/return-to-engineer", task.id),
-            &engineer.id,
-            serde_json::json!({"summary": "let me out", "changes": []}),
-        ))
-        .await;
-    assert_eq!(
-        status,
-        StatusCode::FORBIDDEN,
-        "{}",
-        String::from_utf8_lossy(&body)
-    );
-
-    // The integrator can, once the task is its own — and not a second time,
-    // since by then the task is the engineer's.
-    let engineer_worktree = PathBuf::from(
-        h.store
-            .get_task(&task.id)
-            .await
-            .unwrap()
-            .worktree_path
-            .unwrap(),
-    );
-    sh(
-        &engineer_worktree,
-        "echo change > feature.txt && git add . && \
-         git -c user.email=t@t -c user.name=t commit -qm 'wip: the change'",
-    );
-    h.approve(&task, &reviewer).await;
-    eventually("the integrator to take the task over", async || {
-        h.live_session(&task.id, Role::Integrator).await.is_some()
-    })
-    .await;
-    let integrator = h.live_session(&task.id, Role::Integrator).await.unwrap();
-    let send_back = || {
-        as_session(
-            &format!("/v1/tasks/{}/return-to-engineer", task.id),
-            &integrator.id,
-            serde_json::json!({"summary": "the rebase conflicts", "changes": []}),
-        )
-    };
-    let _: TaskDto = h.json(send_back(), StatusCode::OK).await;
-    let (status, body) = h.send(send_back()).await;
-    assert_eq!(
-        status,
-        StatusCode::CONFLICT,
-        "{}",
-        String::from_utf8_lossy(&body)
-    );
+    // The briefing says which half of the procedure applies.
     assert!(
-        String::from_utf8_lossy(&body).contains("only a task being integrated"),
-        "{}",
-        String::from_utf8_lossy(&body)
+        h.launched_argv(&engineer.id)
+            .contains("merge strategy is **pull_request**"),
+        "the engineer was not briefed to publish it"
     );
-}
 
-/// A task nobody has published still waits for its reviewers: a request for
-/// review starts one, and the task sits under review until a verdict is in.
-///
-/// This is the other half of what a published request changes. There, the
-/// people reading it are the round's reviewers and the reviewer profiles are
-/// skipped; here there is no request, so the approvals are the only thing
-/// that can hand the task to its integrator.
-#[tokio::test]
-async fn an_unpublished_task_still_waits_for_its_reviewers() {
-    let h = harness().await;
-    let (task, reviewer) = h.task().await;
-    h.notify(&task.id);
-    eventually("the engineer to be spawned", async || {
-        h.status(&task.id).await == TaskStatus::InProgress
-            && h.live_session(&task.id, Role::Engineer).await.is_some()
-    })
-    .await;
-    let worktree = PathBuf::from(
-        h.store
-            .get_task(&task.id)
-            .await
-            .unwrap()
-            .worktree_path
-            .unwrap(),
-    );
+    // What a squash merge on the forge leaves behind, reproduced with git: a
+    // commit on the base that no branch points at, and a task branch that is
+    // not its ancestor.
+    let repo = h.repo_path();
     sh(
-        &worktree,
-        "echo change > feature.txt && git add . && \
-         git -c user.email=t@t -c user.name=t commit -qm 'wip: the change'",
+        &repo,
+        &format!(
+            "git merge -q --squash {} && \
+             git -c user.email=t@t -c user.name=t commit -qm 'feat(board): render it (#12)'",
+            task.branch
+        ),
     );
+    let sha = out(&repo, "git rev-parse main");
+    assert_ne!(sha, out(&worktree, "git rev-parse HEAD"));
 
-    // Up for review, with nobody having judged it: a reviewer is started for
-    // the round, and the task stays where it is.
-    let under_review: TaskDto = h
+    let landed: TaskDto = h
         .json(
             as_session(
                 &format!("/v1/tasks/{}/transitions", task.id),
-                &h.live_session(&task.id, Role::Engineer).await.unwrap().id,
-                serde_json::json!({"to": "under_review", "reason": "the board renders"}),
+                &engineer.id,
+                serde_json::json!({"to": "merged", "merge_commit": sha}),
             ),
             StatusCode::OK,
         )
         .await;
-    assert_eq!(under_review.status, TaskStatus::UnderReview);
-    eventually("the reviewer to be started for the round", async || {
-        h.live_session(&task.id, Role::Reviewer).await.is_some()
-    })
-    .await;
-    for _ in 0..3 {
-        h.notify(&task.id);
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    assert_eq!(
-        h.status(&task.id).await,
-        TaskStatus::UnderReview,
-        "an unpublished task was approved without a verdict"
-    );
-    assert!(
-        h.sessions(&task.id, Role::Integrator).await.is_empty(),
-        "an integrator was handed a task no reviewer has approved"
-    );
+    assert_eq!(landed.status, TaskStatus::Merged);
+    assert_eq!(landed.merge_commit.as_deref(), Some(sha.as_str()));
+}
 
-    // And the verdict is what moves it.
-    h.store
-        .create_review(NewReview {
-            task_id: task.id.clone(),
-            round: h.store.get_task(&task.id).await.unwrap().review_round,
-            author: ReviewAuthor::Profile(reviewer),
-            session_id: None,
-            verdict: ReviewVerdict::Approve,
-            body: Some("looks right".into()),
-        })
-        .await
-        .unwrap();
-    h.notify(&task.id);
-    eventually("the integrator to take the task over", async || {
-        h.status(&task.id).await == TaskStatus::Integrating
-    })
-    .await;
+/// And a sha that is not on the base branch is still refused, which is what
+/// keeps the reported one worth anything.
+#[tokio::test]
+async fn a_published_task_cannot_report_a_sha_the_base_branch_has_never_seen() {
+    let h = harness().await;
+    let (task, reviewer) = h.task().await;
+    h.publish_instead().await;
+    let (worktree, engineer) = h.walk_to_approved(&task, &reviewer).await;
+
+    // The tip of the branch: real, and nowhere near the base branch.
+    let sha = out(&worktree, "git rev-parse HEAD");
+    let (status, body) = h
+        .send(as_session(
+            &format!("/v1/tasks/{}/transitions", task.id),
+            &engineer.id,
+            serde_json::json!({"to": "merged", "merge_commit": sha}),
+        ))
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let refusal = String::from_utf8_lossy(&body);
+    assert!(refusal.contains("merge not verified"), "{refusal}");
+    assert_eq!(h.status(&task.id).await, TaskStatus::Approved);
 }

@@ -75,7 +75,6 @@ const TASK: TaskDto = {
   repo_id: "01JREPO0000000000000000001",
   stalled: false,
   engineer_profile_id: "01JPROF00000000000000ENGI",
-  integrator_profile_id: "01INTEGRATOR",
   reviewers: [],
   depends_on: [],
   review_round: 0,

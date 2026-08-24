@@ -21,8 +21,8 @@ const HEX: &[u8; 16] = b"0123456789ABCDEF";
 /// One caller-typed value as a single path segment.
 ///
 /// Profiles answer to their name as well as their id, and a name is free text
-/// — a profile named `My Integrator` has a space in it, and a space is not a
-/// character a URI may carry: `ariadne profile inspect "My Integrator"` used
+/// — a profile named `My Reviewer` has a space in it, and a space is not a
+/// character a URI may carry: `ariadne profile inspect "My Reviewer"` used
 /// to reach the client with it raw and panic on the URI it could not build.
 /// Everything outside the unreserved set (RFC 3986 §2.3) is escaped rather
 /// than only what is known to hurt, and `/` with it: the value is one
@@ -139,7 +139,7 @@ mod tests {
     /// which is how a user names it on the command line.
     #[test]
     fn a_name_with_a_space_is_escaped_rather_than_sent_raw() {
-        assert_eq!(path_segment("My Integrator"), "My%20Integrator");
+        assert_eq!(path_segment("My Reviewer"), "My%20Reviewer");
     }
 
     /// A whole segment, so nothing in it may be read as structure.

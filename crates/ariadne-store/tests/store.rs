@@ -1,12 +1,10 @@
 //! Store integration tests against a temp-file SQLite database.
 
 use ariadne_core::{
-    Actor, AgentKind, AttentionReason, AuthorRole, GoalStatus, PromptKind, ReviewVerdict, Role,
-    SessionStatus, TaskStatus,
+    Actor, AgentKind, AttentionReason, AuthorRole, GoalStatus, MergeStrategy, PromptKind,
+    ReviewVerdict, Role, SessionStatus, TaskStatus,
 };
-use ariadne_store::defaults::{
-    INTEGRATOR_ID, default_prompt, default_prompt_text, default_system_prompt,
-};
+use ariadne_store::defaults::{default_prompt, default_system_prompt};
 use ariadne_store::*;
 
 async fn test_store() -> (Store, tempfile::TempDir) {
@@ -37,6 +35,7 @@ async fn seed_repository(store: &Store) -> Repository {
             path: format!("/tmp/repo-{}", ariadne_core::id::new_id()),
             base_branch: "main".into(),
             description: None,
+            merge_strategy: MergeStrategy::Direct,
         })
         .await
         .unwrap()
@@ -78,7 +77,6 @@ async fn seed_task(store: &Store, goal: &Goal, repo: &Repository, deps: Vec<Stri
             title: "task".into(),
             description: "do things".into(),
             engineer_profile_id: eng.id,
-            integrator_profile_id: INTEGRATOR_ID.into(),
             reviewer_profile_ids: vec![rev.id],
             depends_on: deps,
         })
@@ -214,11 +212,17 @@ async fn repository_crud_and_unique_path_branch() {
             path: "/tmp/repo".into(),
             base_branch: "main".into(),
             description: Some("the one repo".into()),
+            merge_strategy: Default::default(),
         })
         .await
         .unwrap();
     assert_eq!(repo.path, "/tmp/repo");
     assert_eq!(repo.description.as_deref(), Some("the one repo"));
+    assert_eq!(
+        repo.merge_strategy(),
+        MergeStrategy::Direct,
+        "a repository nobody said otherwise about is landed on directly"
+    );
 
     // The same checkout on another branch is a different repository.
     let other = store
@@ -226,6 +230,7 @@ async fn repository_crud_and_unique_path_branch() {
             path: "/tmp/repo".into(),
             base_branch: "next".into(),
             description: None,
+            merge_strategy: Default::default(),
         })
         .await
         .unwrap();
@@ -238,6 +243,7 @@ async fn repository_crud_and_unique_path_branch() {
             path: "/tmp/repo".into(),
             base_branch: "main".into(),
             description: None,
+            merge_strategy: Default::default(),
         })
         .await;
     assert!(matches!(dup, Err(StoreError::Conflict(_))));
@@ -287,6 +293,57 @@ async fn repository_crud_and_unique_path_branch() {
 
 /// A goal holds references, not copies: what it lists is whatever the
 /// repositories say right now, and so is what its tasks resolve.
+/// How a repository takes a change is the one thing about it an engineer has
+/// to be told, and it round-trips like every other field: `direct` unless
+/// somebody said otherwise, and editable either way.
+#[tokio::test]
+async fn a_repository_says_how_a_task_lands_on_it() {
+    let (store, _dir) = test_store().await;
+    let published = store
+        .create_repository(NewRepository {
+            path: "/tmp/published".into(),
+            base_branch: "main".into(),
+            description: None,
+            merge_strategy: MergeStrategy::PullRequest,
+        })
+        .await
+        .unwrap();
+    assert_eq!(published.merge_strategy(), MergeStrategy::PullRequest);
+    assert_eq!(
+        store
+            .get_repository(&published.id)
+            .await
+            .unwrap()
+            .merge_strategy(),
+        MergeStrategy::PullRequest
+    );
+
+    // Switched over, and an update that says nothing about it leaves it.
+    let back = store
+        .update_repository(
+            &published.id,
+            RepositoryUpdate {
+                merge_strategy: Some(MergeStrategy::Direct),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(back.merge_strategy(), MergeStrategy::Direct);
+    let renamed = store
+        .update_repository(
+            &published.id,
+            RepositoryUpdate {
+                description: Some(Some("still the one".into())),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(renamed.merge_strategy(), MergeStrategy::Direct);
+    assert_eq!(renamed.description.as_deref(), Some("still the one"));
+}
+
 #[tokio::test]
 async fn a_goal_reads_its_repositories_live() {
     let (store, _dir) = test_store().await;
@@ -374,7 +431,6 @@ async fn a_goal_needs_repositories_that_exist() {
                 title: "task".into(),
                 description: "do things".into(),
                 engineer_profile_id: eng.id,
-                integrator_profile_id: INTEGRATOR_ID.into(),
                 reviewer_profile_ids: vec![rev.id],
                 depends_on: vec![],
             })
@@ -406,7 +462,7 @@ async fn a_repository_a_goal_holds_cannot_be_deleted() {
 
 /// A task branch reads like a contributor's: the title, slugged and clipped to
 /// a word boundary, with the tail of the id to tell two of them apart. Nothing
-/// in it says Ariadne — the integrator pushes this name to the remote.
+/// in it says Ariadne — this name is what shows on a published request.
 #[tokio::test]
 async fn task_branch_is_named_after_the_title() {
     let (store, _dir) = test_store().await;
@@ -418,10 +474,9 @@ async fn task_branch_is_named_after_the_title() {
         .create_task(NewTask {
             goal_id: goal.id.clone(),
             repo_id: repo.id.clone(),
-            title: "Fix the integrator briefing: real fetch/rebase".into(),
+            title: "Fix the landing briefing: real fetch/rebase".into(),
             description: "d".into(),
             engineer_profile_id: eng.id,
-            integrator_profile_id: INTEGRATOR_ID.into(),
             reviewer_profile_ids: vec![rev.id],
             depends_on: vec![],
         })
@@ -431,7 +486,7 @@ async fn task_branch_is_named_after_the_title() {
     let tail = &task.id[task.id.len() - 6..];
     assert_eq!(
         task.branch,
-        format!("fix-the-integrator-briefing-real-fetch-{tail}")
+        format!("fix-the-landing-briefing-real-fetch-{tail}")
     );
     assert!(!task.branch.contains("ariadne"), "{}", task.branch);
 }
@@ -473,14 +528,10 @@ async fn task_happy_path_to_merged() {
         .await
         .unwrap();
     let t = store
-        .transition_task(&t.id, TaskStatus::Integrating, Actor::Daemon, None, None)
-        .await
-        .unwrap();
-    let t = store
         .transition_task(
             &t.id,
             TaskStatus::Merged,
-            Actor::Integrator,
+            Actor::Engineer,
             None,
             Some("abc123"),
         )
@@ -490,9 +541,9 @@ async fn task_happy_path_to_merged() {
     assert_eq!(t.merge_commit.as_deref(), Some("abc123"));
 
     let audit = store.list_task_transitions(&t.id).await.unwrap();
-    assert_eq!(audit.len(), 6);
+    assert_eq!(audit.len(), 5);
     assert_eq!(audit[0].from_status, "pending");
-    assert_eq!(audit[5].to_status, "merged");
+    assert_eq!(audit[4].to_status, "merged");
 }
 
 #[tokio::test]
@@ -539,19 +590,15 @@ async fn illegal_transitions_are_rejected_and_unaudited() {
         .transition_task(&t.id, TaskStatus::Approved, Actor::Daemon, None, None)
         .await
         .unwrap();
-    let t = store
-        .transition_task(&t.id, TaskStatus::Integrating, Actor::Daemon, None, None)
-        .await
-        .unwrap();
     assert!(matches!(
         store
-            .transition_task(&t.id, TaskStatus::Merged, Actor::Integrator, None, None)
+            .transition_task(&t.id, TaskStatus::Merged, Actor::Engineer, None, None)
             .await,
         Err(StoreError::Invalid(_))
     ));
 
     let audit = store.list_task_transitions(&task.id).await.unwrap();
-    assert_eq!(audit.len(), 5, "failed transitions leave no audit rows");
+    assert_eq!(audit.len(), 4, "failed transitions leave no audit rows");
 }
 
 #[tokio::test]
@@ -570,7 +617,6 @@ async fn max_tasks_is_enforced() {
             title: "too many".into(),
             description: "".into(),
             engineer_profile_id: eng.id,
-            integrator_profile_id: INTEGRATOR_ID.into(),
             reviewer_profile_ids: vec![rev.id],
             depends_on: vec![],
         })
@@ -621,15 +667,11 @@ async fn dependencies_gate_and_reject_cycles() {
         .transition_task(&t.id, TaskStatus::Approved, Actor::Daemon, None, None)
         .await
         .unwrap();
-    let t = store
-        .transition_task(&t.id, TaskStatus::Integrating, Actor::Daemon, None, None)
-        .await
-        .unwrap();
     store
         .transition_task(
             &t.id,
             TaskStatus::Merged,
-            Actor::Integrator,
+            Actor::Engineer,
             None,
             Some("sha"),
         )
@@ -694,7 +736,7 @@ async fn one_review_verdict_per_round() {
         .create_review(NewReview {
             task_id: task.id.clone(),
             round: 1,
-            author: ReviewAuthor::Profile(reviewer.clone()),
+            reviewer_profile_id: reviewer.clone(),
             session_id: None,
             verdict: ReviewVerdict::RequestChanges,
             body: Some("please fix".into()),
@@ -706,7 +748,7 @@ async fn one_review_verdict_per_round() {
         .create_review(NewReview {
             task_id: task.id.clone(),
             round: 1,
-            author: ReviewAuthor::Profile(reviewer.clone()),
+            reviewer_profile_id: reviewer.clone(),
             session_id: None,
             verdict: ReviewVerdict::Approve,
             body: None,
@@ -719,7 +761,7 @@ async fn one_review_verdict_per_round() {
         .create_review(NewReview {
             task_id: task.id.clone(),
             round: 2,
-            author: ReviewAuthor::Profile(reviewer),
+            reviewer_profile_id: reviewer,
             session_id: None,
             verdict: ReviewVerdict::Approve,
             body: None,
@@ -730,6 +772,42 @@ async fn one_review_verdict_per_round() {
         store.list_reviews(&task.id, Some(2)).await.unwrap().len(),
         1
     );
+}
+
+/// The pull or merge request a published task was recorded as: the URL, which
+/// is what the user is pointed at, and nothing else.
+#[tokio::test]
+async fn a_task_remembers_the_request_it_was_published_as() {
+    let (store, _dir) = test_store().await;
+    let planner = seed_profile(&store, "planner", Role::Planner).await;
+    let (goal, repo) = seed_goal(&store, &planner, None).await;
+    let task = seed_task(&store, &goal, &repo, vec![]).await;
+    assert_eq!(store.get_task(&task.id).await.unwrap().pr_url, None);
+
+    let url = "https://github.com/ariadne/ariadne/pull/12";
+    store.set_task_pull_request(&task.id, url).await.unwrap();
+    assert_eq!(
+        store.get_task(&task.id).await.unwrap().pr_url.as_deref(),
+        Some(url)
+    );
+
+    // Re-reporting the same request writes the same row; a different one
+    // replaces it.
+    store.set_task_pull_request(&task.id, url).await.unwrap();
+    let other = "https://github.com/ariadne/ariadne/pull/13";
+    store.set_task_pull_request(&task.id, other).await.unwrap();
+    assert_eq!(
+        store.get_task(&task.id).await.unwrap().pr_url.as_deref(),
+        Some(other)
+    );
+
+    // A task that is retried starts over, and the request it was published as
+    // does not come with it: nobody is going to merge that one now.
+    store.clear_task_pull_request(&task.id).await.unwrap();
+    assert_eq!(store.get_task(&task.id).await.unwrap().pr_url, None);
+    // And a task that was never published is left exactly as it was.
+    store.clear_task_pull_request(&task.id).await.unwrap();
+    assert_eq!(store.get_task(&task.id).await.unwrap().pr_url, None);
 }
 
 #[tokio::test]
@@ -1234,11 +1312,11 @@ async fn an_agents_own_event_does_not_clear_the_attention_raised_for_the_user() 
         .create_session(NewSession {
             goal_id: goal.id.clone(),
             task_id: Some(task.id.clone()),
-            role: Role::Integrator,
-            profile_id: task.integrator_profile_id.clone(),
+            role: Role::Engineer,
+            profile_id: task.engineer_profile_id.clone(),
             agent_kind: AgentKind::ClaudeCode,
             model: None,
-            tmux_session: "ariadne-test-int".into(),
+            tmux_session: "ariadne-test-eng".into(),
             worktree_path: Some("/tmp/wt".into()),
             review_round: None,
         })
@@ -1348,67 +1426,6 @@ async fn the_review_summary_is_the_reason_of_the_latest_review_request() {
     assert_eq!(
         store.review_summary(&task.id).await.unwrap().as_deref(),
         Some("the lane widths, as asked")
-    );
-}
-
-/// A verdict is from a profile of the task or from a role that is nobody's
-/// profile, never from both and never from neither — and the round holds one
-/// of each kind of author at most.
-#[tokio::test]
-async fn a_verdict_relayed_from_a_forge_has_no_profile_behind_it() {
-    let (store, _dir) = test_store().await;
-    let planner = seed_profile(&store, "planner", Role::Planner).await;
-    let (goal, repo) = seed_goal(&store, &planner, None).await;
-    let task = seed_task(&store, &goal, &repo, vec![]).await;
-    let reviewer = store.list_task_reviewers(&task.id).await.unwrap().remove(0);
-
-    let relayed = store
-        .create_review(NewReview {
-            task_id: task.id.clone(),
-            round: 1,
-            author: ReviewAuthor::Role(AuthorRole::Forge),
-            session_id: None,
-            verdict: ReviewVerdict::RequestChanges,
-            body: Some("### jon requested changes on src/board.rs:42".into()),
-        })
-        .await
-        .unwrap();
-    assert_eq!(relayed.reviewer_profile_id, None);
-    assert_eq!(
-        relayed.author(),
-        ReviewAuthor::Role(AuthorRole::Forge),
-        "the author is the forge, not the profile whose round it closed"
-    );
-
-    // A reviewer of the same round is a different author, and lands.
-    store
-        .create_review(NewReview {
-            task_id: task.id.clone(),
-            round: 1,
-            author: ReviewAuthor::Profile(reviewer),
-            session_id: None,
-            verdict: ReviewVerdict::Approve,
-            body: None,
-        })
-        .await
-        .unwrap();
-
-    // The forge is not two authors, though: one relay per round, exactly as
-    // one verdict per reviewer per round.
-    let twice = store
-        .create_review(NewReview {
-            task_id: task.id.clone(),
-            round: 1,
-            author: ReviewAuthor::Role(AuthorRole::Forge),
-            session_id: None,
-            verdict: ReviewVerdict::RequestChanges,
-            body: Some("the same comments again".into()),
-        })
-        .await;
-    assert!(matches!(twice, Err(StoreError::Conflict(_))));
-    assert_eq!(
-        store.list_reviews(&task.id, Some(1)).await.unwrap().len(),
-        2
     );
 }
 
@@ -1744,7 +1761,6 @@ async fn a_fresh_database_is_seeded_with_the_built_in_profiles_and_their_prompts
         ("Planner", Role::Planner),
         ("Engineer", Role::Engineer),
         ("Reviewer", Role::Reviewer),
-        ("Integrator", Role::Integrator),
     ] {
         let p = store.get_profile_by_name(name).await.unwrap();
         assert_eq!(p.role(), role);
@@ -1780,9 +1796,6 @@ async fn a_fresh_database_is_seeded_with_the_built_in_profiles_and_their_prompts
             .contains("install the project's dependencies"),
         "reviewers are told to install dependencies and verify"
     );
-    let integrator = store.get_profile_by_name("Integrator").await.unwrap();
-    assert_eq!(integrator.id, "00000000000000000000000004");
-
     // User edits stick.
     let engineer = store.get_profile_by_name("Engineer").await.unwrap();
     assert_eq!(engineer.id, "00000000000000000000000002");
@@ -1969,14 +1982,14 @@ async fn a_template_naming_a_placeholder_its_kind_cannot_fill_in_is_refused() {
 
     // What renders as itself still saves: literal braces, JSON, no
     // placeholders at all.
-    let integrator = store.get_profile_by_name("Integrator").await.unwrap();
+    let engineer = store.get_profile_by_name("Engineer").await.unwrap();
     for content in [
         "Land {branch} on {base_branch}, then answer {\"merged\": true}.",
         "Do it yourself.",
         "{unclosed and {branch}",
     ] {
         store
-            .update_profile_prompt(&integrator.id, PromptKind::IntegrationInstructions, content)
+            .update_profile_prompt(&engineer.id, PromptKind::LandingInstructions, content)
             .await
             .unwrap();
     }
@@ -2269,7 +2282,6 @@ async fn creation_pins_the_agent_and_model_of_every_profile() {
             title: "task".into(),
             description: "do things".into(),
             engineer_profile_id: engineer.id.clone(),
-            integrator_profile_id: INTEGRATOR_ID.into(),
             reviewer_profile_ids: vec![reviewer.id.clone()],
             depends_on: vec![],
         })
@@ -2342,7 +2354,6 @@ async fn auto_and_default_are_pinned_as_such() {
             title: "task".into(),
             description: "do things".into(),
             engineer_profile_id: engineer.id.clone(),
-            integrator_profile_id: INTEGRATOR_ID.into(),
             reviewer_profile_ids: vec![reviewer.id.clone()],
             depends_on: vec![],
         })
@@ -2411,7 +2422,6 @@ async fn reassigned_reviewers_pin_the_profile_they_are_assigned_from() {
             title: "task".into(),
             description: "do things".into(),
             engineer_profile_id: engineer.id.clone(),
-            integrator_profile_id: INTEGRATOR_ID.into(),
             reviewer_profile_ids: vec![first.id.clone()],
             depends_on: vec![],
         })
@@ -2587,2451 +2597,156 @@ async fn a_pre_pinning_database_backfills_from_the_profiles_it_references() {
     assert_eq!(task.model.as_deref(), Some("gpt-5"));
 }
 
-/// A database written before the integrator existed: its `merging` task is
-/// `integrating` afterwards — in the row and in its audit trail — the built-in
-/// Integrator profile is there to be named, and the rebuilt tables keep what
-/// hung off them.
-#[tokio::test]
-async fn a_pre_integrator_database_renames_merging_and_gains_the_builtin() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("legacy.db");
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(&path)
-        .create_if_missing(true)
-        .foreign_keys(true);
-    let pool = sqlx::SqlitePool::connect_with(options).await.unwrap();
-
-    let mut migrator = sqlx::migrate::Migrator::new(std::path::Path::new("./migrations"))
-        .await
-        .unwrap();
-    migrator.migrations = migrator
-        .migrations
-        .iter()
-        .filter(|m| m.version < 11)
-        .cloned()
-        .collect::<Vec<_>>()
-        .into();
-    migrator.run(&pool).await.unwrap();
-
-    for (id, name, role) in [
-        ("legacyplanner", "Legacy planner", "planner"),
-        ("legacyengineer", "Legacy engineer", "engineer"),
-        ("legacyreviewer", "Legacy reviewer", "reviewer"),
-    ] {
-        sqlx::query(
-            "INSERT INTO profiles (id, name, role, system_prompt, created_at, updated_at)
-             VALUES (?, ?, ?, 'sys', 't', 't')",
-        )
-        .bind(id)
-        .bind(name)
-        .bind(role)
-        .execute(&pool)
-        .await
-        .unwrap();
-    }
-    sqlx::query(
-        "INSERT INTO repositories (id, path, base_branch, created_at, updated_at)
-         VALUES ('legacyrepo', '/tmp/legacy-integrator', 'main', 't', 't')",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(
-        "INSERT INTO goals (id, title, description, planner_profile_id, created_at, updated_at)
-         VALUES ('legacygoal', 'Legacy goal', 'desc', 'legacyplanner', 't', 't')",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query("INSERT INTO goal_repositories (goal_id, repository_id) VALUES (?, ?)")
-        .bind("legacygoal")
-        .bind("legacyrepo")
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(
-        "INSERT INTO tasks (id, goal_id, repo_id, title, description, status,
-                            engineer_profile_id, branch, created_at, updated_at)
-         VALUES ('legacytask', 'legacygoal', 'legacyrepo', 'Legacy task', 'd', 'merging',
-                 'legacyengineer', 'ariadne/task-legacytask', 't', 't')",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(
-        "INSERT INTO task_transitions (id, task_id, from_status, to_status, actor, created_at)
-         VALUES ('legacytrans', 'legacytask', 'approved', 'merging', 'daemon', 't')",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    // Children of the rebuilt tables: dropping them with foreign keys on
-    // would cascade these away.
-    sqlx::query("INSERT INTO task_reviewers (task_id, profile_id, position) VALUES (?, ?, 0)")
-        .bind("legacytask")
-        .bind("legacyreviewer")
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(
-        "INSERT INTO messages (id, goal_id, task_id, author_role, body, created_at)
-         VALUES ('legacymsg', 'legacygoal', 'legacytask', 'engineer', 'hi', 't')",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    pool.close().await;
-
-    // Opening the store runs the migration under test.
-    let store = Store::open(&path).await.unwrap();
-
-    let task = store.get_task("legacytask").await.unwrap();
-    assert_eq!(task.status(), TaskStatus::Integrating);
-    assert_eq!(
-        task.integrator_profile_id, INTEGRATOR_ID,
-        "a task created before the column is backfilled with the Integrator"
-    );
-    let transitions = store.list_task_transitions("legacytask").await.unwrap();
-    assert_eq!(transitions.len(), 1);
-    assert_eq!(transitions[0].to_status, "integrating");
-
-    // The built-in the seeding path could not reach, because this database
-    // already had profiles of its own.
-    let integrator = store.get_profile_by_name("Integrator").await.unwrap();
-    assert_eq!(integrator.id, INTEGRATOR_ID);
-    assert_eq!(integrator.role(), Role::Integrator);
-    the_integrator_playbook(&integrator.system_prompt);
-    // With the whole of both forge playbooks in the briefings migrations 0013
-    // to 0016 left it with, and nothing beside it: the two forge built-ins
-    // 0013 and 0014 added were merged back into this one by 0016.
-    for kind in PromptKind::for_role(Role::Integrator) {
-        assert!(
-            !store
-                .get_profile_prompt(&integrator.id, *kind)
-                .await
-                .unwrap()
-                .content
-                .trim()
-                .is_empty(),
-            "the {} briefing the migrations wrote",
-            kind.as_str()
-        );
-    }
-    assert_eq!(
-        store
-            .list_profiles(Some(Role::Integrator))
-            .await
-            .unwrap()
-            .len(),
-        1
-    );
-
-    // The rebuilds kept what hung off the tables they replaced...
-    assert_eq!(
-        store.list_task_reviewers("legacytask").await.unwrap(),
-        vec!["legacyreviewer".to_string()]
-    );
-    assert_eq!(
-        store
-            .list_task_messages("legacytask", None, 10)
-            .await
-            .unwrap()
-            .len(),
-        1
-    );
-
-    // And the column the backfill filled in will not go back to NULL: every
-    // task names an integrator, the way every task names an engineer.
-    let raw = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
-        .await
-        .unwrap();
-    assert!(
-        sqlx::query("UPDATE tasks SET integrator_profile_id = NULL WHERE id = 'legacytask'")
-            .execute(&raw)
-            .await
-            .is_err(),
-        "tasks.integrator_profile_id is NOT NULL"
-    );
-    raw.close().await;
-
-    // The rebuilt CHECK is the new vocabulary's: `merging` is not a status the
-    // table will take back.
-    let raw = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
-        .await
-        .unwrap();
-    assert!(
-        sqlx::query("UPDATE tasks SET status = 'merging' WHERE id = 'legacytask'")
-            .execute(&raw)
-            .await
-            .is_err()
-    );
-    // So is `integrator`, on every role and actor column that gained it.
-    for (sql, what) in [
-        (
-            "INSERT INTO profiles (id, name, role, system_prompt, created_at, updated_at)
-             VALUES ('newintegrator', 'Another integrator', 'integrator', 'sys', 't', 't')",
-            "profiles.role",
-        ),
-        (
-            "INSERT INTO task_transitions (id, task_id, from_status, to_status, actor, created_at)
-             VALUES ('newtrans', 'legacytask', 'integrating', 'merged', 'integrator', 't')",
-            "task_transitions.actor",
-        ),
-        (
-            "INSERT INTO messages (id, goal_id, task_id, author_role, body, created_at)
-             VALUES ('newmsg', 'legacygoal', 'legacytask', 'integrator', 'landed', 't')",
-            "messages.author_role",
-        ),
-    ] {
-        sqlx::query(sql)
-            .execute(&raw)
-            .await
-            .unwrap_or_else(|e| panic!("{what} refused an integrator: {e}"));
-    }
-    raw.close().await;
-
-    // Foreign keys are back on after the rebuilds, so the goal still cascades.
-    store.delete_goal("legacygoal").await.unwrap();
-    assert!(matches!(
-        store.get_task("legacytask").await,
-        Err(StoreError::NotFound { .. })
-    ));
-}
-
-/// One built-in integrator, and every way of landing a task in the prompts it
-/// is seeded with: the pull request, the merge request and the local fallback
-/// are one playbook now, and a reset puts that whole playbook back.
-#[tokio::test]
-async fn the_integrator_is_seeded_with_all_three_ways_of_landing_a_task() {
-    let (store, _dir) = test_store().await;
-
-    let integrator = store.get_profile_by_name("Integrator").await.unwrap();
-    assert_eq!(integrator.id, INTEGRATOR_ID);
-    assert_eq!(integrator.role(), Role::Integrator);
-    assert_eq!(
-        (integrator.agent_kind(), integrator.model.as_deref()),
-        (None, None),
-        "on the auto-resolved agent CLI, like every other built-in"
-    );
-    assert_eq!(
-        store
-            .list_profiles(Some(Role::Integrator))
-            .await
-            .unwrap()
-            .len(),
-        1,
-        "the three built-in integrators are one"
-    );
-    // And the whole seeding is four profiles, one per role.
-    assert_eq!(store.list_profiles(None).await.unwrap().len(), 4);
-    for both in ["pull request", "merge request"] {
-        assert!(
-            integrator.system_prompt.contains(both),
-            "the playbook does not name the {both}"
-        );
-    }
-
-    // The whole of the workflow the task asks it to carry, in the briefing it
-    // is started with.
-    let instructions = store
-        .get_profile_prompt(&integrator.id, PromptKind::IntegrationInstructions)
-        .await
-        .unwrap();
-    for step in [
-        "gh auth status",
-        "gh pr create",
-        ".github/PULL_REQUEST_TEMPLATE.md",
-        "glab auth status",
-        "glab mr create",
-        ".gitlab/merge_request_templates/",
-        "land the task locally instead",
-        "git rebase {base_branch}",
-        "git push -u <remote> {branch}",
-        "git reset --soft {base_branch}",
-        "merge --ff-only {branch}",
-        "return_to_engineer",
-        "record_pull_request",
-        "mark_merged",
-    ] {
-        assert!(
-            instructions.content.contains(step),
-            "the integrator briefing has no {step}: {}",
-            instructions.content
-        );
-    }
-    assert_eq!(
-        instructions.content,
-        default_prompt(Role::Integrator, PromptKind::IntegrationInstructions).unwrap(),
-        "the role default is what it was seeded with"
-    );
-
-    // Edited and reset, both of them come back to what they were seeded with.
-    store
-        .update_profile_prompt(
-            &integrator.id,
-            PromptKind::IntegrationResume,
-            "Do it however you like.",
-        )
-        .await
-        .unwrap();
-    let reset = store
-        .reset_profile_prompt(&integrator.id, PromptKind::IntegrationResume)
-        .await
-        .unwrap();
-    for listing in ["gh pr list --head", "glab mr list --source-branch"] {
-        assert!(reset.content.contains(listing), "{}", reset.content);
-    }
-    store
-        .update_profile(
-            &integrator.id,
-            ProfileUpdate {
-                system_prompt: Some("You are whatever.".into()),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        store
-            .reset_system_prompt(&integrator.id)
-            .await
-            .unwrap()
-            .system_prompt,
-        default_system_prompt(Role::Integrator)
-    );
-
-    // And it is what a task that names no integrator of its own is landed by.
-    assert_eq!(store.builtin_integrator().await.unwrap().id, integrator.id);
-
-    // A profile someone creates for themselves starts from the same role
-    // defaults: there is no per-built-in set any more.
-    let mine = seed_profile(&store, "my integrator", Role::Integrator).await;
-    assert_eq!(
-        store
-            .get_profile_prompt(&mine.id, PromptKind::IntegrationInstructions)
-            .await
-            .unwrap()
-            .content,
-        default_prompt(Role::Integrator, PromptKind::IntegrationInstructions).unwrap()
-    );
-}
-
-/// The Local Integrator's system prompt as migration 0015 left it: what an
-/// install on the previous release holds on `…04`, and the only text migration
-/// 0016 rewrites there.
-const PREVIOUS_INTEGRATOR_SYSTEM_PROMPT: &str = r##"You are the local integrator of an Ariadne task: you integrate tasks in repositories with no pull-request-capable remote, merging the change into the base branch locally with git alone. Once its reviewers have approved it, the task is yours to land. The engineer that wrote it is done with it, and you are the only agent touching the branch while you have it.
-
-Ariadne coordinates planner, engineer, reviewer and integrator agents over shared goals and tasks; you reach it only through the `ariadne` MCP tools: `post_message` to talk to the engineer, the reviewers, the planner and the user, `list_messages` to read the task's conversation. A message reaches one person in particular when you give `post_message` a `to` — a profile name as your briefing and `get_task` spell them, or "user" to ask the human — and that recipient is woken to read it; with no `to` it waits in the thread for whoever reads it next. Every operation named in backticks here or in your briefings — `get_diff`, `return_to_engineer`, `mark_merged` and the rest — is a tool on that MCP server: invoke it as an MCP tool call, never as a shell command or a message. Work autonomously: do not wait for a human unless a message asks you to. A human may attach to this terminal at any time and type follow-ups.
-
-You work in a git worktree of your own, checked out on the task branch; the briefing names the branch, its base, the repository and the worktree path. The change in it is the engineer's: land it as it stands and write no code of your own — a change that needs work goes back to the engineer instead. The primary checkout is yours to fast-forward, and for nothing else.
-
-1. Read the task, its acceptance criteria and its conversation, so the commit you write says what the change was for; `get_diff` shows what is being landed.
-2. Rebase the task branch onto the latest base in your worktree, exactly as the integration instructions you are briefed with say.
-3. If the rebase conflicts, do not resolve it: abort it and call the `return_to_engineer` MCP tool with a summary and a concrete list naming the conflicting files and what has to be reconciled. The task goes back to the engineer as a round of requested changes, and you are woken again once the reviewers have approved the revision.
-4. Otherwise squash the branch into one commit whose message follows the repository's commit conventions, fast-forward the base branch from the primary checkout, and call the `mark_merged` MCP tool with the real commit sha, which the daemon verifies itself. Report it truthfully.
-"##;
-
-/// Its integration instructions, as migration 0012 wrote them.
-const PREVIOUS_INTEGRATION_INSTRUCTIONS: &str = r##"# Integrate task: {task_title}
-
-{task_description}
-
-## Context
-- Goal: {goal_title}
-- Worktree (your cwd): {worktree_path}
-- Branch: {branch}
-- Base branch: {base_branch} (repo {repo_path})
-
-The reviewers approved this task. Land it on {base_branch}, keeping that branch's history linear — one commit per task, no merge commits:
-
-1. In your worktree, rebase onto the latest base: `git fetch . && git rebase {base_branch}`.
-2. If the rebase conflicts, do not resolve it yourself: `git rebase --abort`, then call `return_to_engineer` with a summary and a concrete list naming the conflicting files and what has to be reconciled. That ends your turn — the task goes back to the engineer, and you are woken again once the revision is approved.
-3. Squash the branch into a single commit on top of the base: `git reset --soft {base_branch} && git commit -m "<type(scope): summary>" -m "<what changed and why>"`. That squash commit is the only one landing on {base_branch}, so its message must:
-   - follow Conventional Commits: a `type(scope): summary` subject line derived from the task — the task title, "{task_title}", is not necessarily one already — and a body explaining what changed and why;
-   - carry no `Co-Authored-By`, `Generated with` or any other authorship or tool trailer;
-   - leave signing to the repository's git configuration: sign if git is configured to sign, do not pass `--no-gpg-sign` or otherwise disable it, and do not force `-S` either.
-4. Fast-forward the base branch from the primary checkout: `git -C {repo_path} merge --ff-only {branch}`. If it refuses because the base moved, go back to step 1.
-5. Call `mark_merged` with the resulting commit sha (`git -C {repo_path} rev-parse {base_branch}`)."##;
-
-/// An install that has both forge built-ins, with tasks, sessions and messages
-/// naming them: migration 0016 moves every one of those references onto the
-/// merged integrator and deletes the two, while an integrator profile the user
-/// created and a prompt the user edited on the merged one are left as they are.
-#[tokio::test]
-async fn the_forge_integrators_are_merged_into_the_one_that_stays() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("forges.db");
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(&path)
-        .create_if_missing(true)
-        .foreign_keys(true);
-    let pool = sqlx::SqlitePool::connect_with(options).await.unwrap();
-
-    // An install that already has profiles is the only one the forge built-ins
-    // ever reached: migrations 0013 and 0014 seed them where the table is not
-    // empty, so the profiles go in first and the rest of the upgrade follows.
-    const GITHUB: &str = "00000000000000000000000005";
-    const GITLAB: &str = "00000000000000000000000006";
-    let migrate_below = async |version: i64, pool: &sqlx::SqlitePool| {
-        let mut migrator = sqlx::migrate::Migrator::new(std::path::Path::new("./migrations"))
-            .await
-            .unwrap();
-        migrator.migrations = migrator
-            .migrations
-            .iter()
-            .filter(|m| m.version < version)
-            .cloned()
-            .collect::<Vec<_>>()
-            .into();
-        migrator.run(pool).await.unwrap();
-    };
-    migrate_below(13, &pool).await;
-
-    for (id, name, role) in [
-        ("seededplanner", "Planner", "planner"),
-        ("seededengineer", "Engineer", "engineer"),
-        ("seededreviewer", "Reviewer", "reviewer"),
-        ("mineintegrator", "My Integrator", "integrator"),
-    ] {
-        sqlx::query(
-            "INSERT INTO profiles (id, name, role, system_prompt, created_at, updated_at)
-             VALUES (?, ?, ?, 'sys', 't', 't')",
-        )
-        .bind(id)
-        .bind(name)
-        .bind(role)
-        .execute(&pool)
-        .await
-        .unwrap();
-    }
-    // The one that stays, holding the defaults its release seeded it with —
-    // and a briefing its user rewrote.
-    sqlx::query(
-        "INSERT INTO profiles (id, name, role, system_prompt, created_at, updated_at)
-         VALUES (?, 'Local Integrator', 'integrator', ?, 't', 't')",
-    )
-    .bind(INTEGRATOR_ID)
-    .bind(PREVIOUS_INTEGRATOR_SYSTEM_PROMPT)
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(
-        "INSERT INTO profile_prompts (profile_id, kind, content, updated_at)
-         VALUES (?, 'integration_instructions', ?, 't'),
-                (?, 'integration_resume', 'Land it however you like.', 't')",
-    )
-    .bind(INTEGRATOR_ID)
-    .bind(PREVIOUS_INTEGRATION_INSTRUCTIONS)
-    .bind(INTEGRATOR_ID)
-    .execute(&pool)
-    .await
-    .unwrap();
-
-    // The rest of the previous release: the two forge built-ins, and the
-    // per-task integrator column that names them.
-    migrate_below(16, &pool).await;
-
-    sqlx::query(
-        "INSERT INTO repositories (id, path, base_branch, created_at, updated_at)
-         VALUES ('forgerepo', '/tmp/forge-merge', 'main', 't', 't')",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(
-        "INSERT INTO goals (id, title, description, planner_profile_id, created_at, updated_at)
-         VALUES ('forgegoal', 'Forge goal', 'desc', 'seededplanner', 't', 't')",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query("INSERT INTO goal_repositories (goal_id, repository_id) VALUES (?, ?)")
-        .bind("forgegoal")
-        .bind("forgerepo")
-        .execute(&pool)
-        .await
-        .unwrap();
-    for (task, integrator) in [("ghtask", GITHUB), ("gltask", GITLAB)] {
-        sqlx::query(
-            "INSERT INTO tasks (id, goal_id, repo_id, title, description, status,
-                                engineer_profile_id, integrator_profile_id, branch,
-                                created_at, updated_at)
-             VALUES (?, 'forgegoal', 'forgerepo', 'Forge task', 'd', 'integrating',
-                     'seededengineer', ?, ?, 't', 't')",
-        )
-        .bind(task)
-        .bind(integrator)
-        .bind(format!("forge-task-{task}"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    }
-    sqlx::query(
-        "INSERT INTO agent_sessions (id, goal_id, task_id, role, profile_id, agent_kind,
-                                     tmux_session, status, created_at)
-         VALUES ('ghsession', 'forgegoal', 'ghtask', 'integrator', ?, 'claude_code',
-                 'ariadne-ghsession', 'idle', 't')",
-    )
-    .bind(GITHUB)
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(
-        "INSERT INTO messages (id, goal_id, task_id, author_role, recipient_kind,
-                               recipient_profile_id, body, created_at)
-         VALUES ('glmsg', 'forgegoal', 'gltask', 'engineer', 'profile', ?,
-                 'the mr is stale', 't')",
-    )
-    .bind(GITLAB)
-    .execute(&pool)
-    .await
-    .unwrap();
-    pool.close().await;
-
-    // Opening the store runs the migration under test.
-    let store = Store::open(&path).await.unwrap();
-
-    // The two forge built-ins are gone, unconditionally, and their prompt rows
-    // with them.
-    for id in [GITHUB, GITLAB] {
-        assert!(matches!(
-            store.get_profile(id).await,
-            Err(StoreError::NotFound { .. })
-        ));
-    }
-    let raw = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
-        .await
-        .unwrap();
-    let orphans: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM profile_prompts WHERE profile_id IN (?, ?)")
-            .bind(GITHUB)
-            .bind(GITLAB)
-            .fetch_one(&raw)
-            .await
-            .unwrap();
-    raw.close().await;
-    assert_eq!(orphans, 0, "the prompt rows went with the profiles");
-
-    // Everything that named them names the one that stays.
-    for task in ["ghtask", "gltask"] {
-        assert_eq!(
-            store.get_task(task).await.unwrap().integrator_profile_id,
-            INTEGRATOR_ID
-        );
-    }
-    assert_eq!(
-        store.get_session("ghsession").await.unwrap().profile_id,
-        INTEGRATOR_ID
-    );
-    assert_eq!(
-        store
-            .list_task_messages("gltask", None, 10)
-            .await
-            .unwrap()
-            .first()
-            .unwrap()
-            .recipient_profile_id
-            .as_deref(),
-        Some(INTEGRATOR_ID)
-    );
-
-    // Renamed, and given the playbook that covers all three ways of landing —
-    // but only where the row still held the default it was seeded with.
-    let merged = store.get_profile(INTEGRATOR_ID).await.unwrap();
-    assert_eq!(merged.name, "Integrator");
-    the_integrator_playbook(&merged.system_prompt);
-    assert!(
-        store
-            .get_profile_prompt(INTEGRATOR_ID, PromptKind::IntegrationInstructions)
-            .await
-            .unwrap()
-            .content
-            .contains("gh pr create"),
-        "and the briefing that lands a task"
-    );
-    assert_eq!(
-        store
-            .get_profile_prompt(INTEGRATOR_ID, PromptKind::IntegrationResume)
-            .await
-            .unwrap()
-            .content,
-        "Land it however you like.",
-        "the briefing its user rewrote survives the upgrade"
-    );
-
-    // And the integrator the user made is untouched, beside it.
-    let mine = store.get_profile("mineintegrator").await.unwrap();
-    assert_eq!(mine.name, "My Integrator");
-    assert_eq!(mine.system_prompt, "sys");
-    assert_eq!(
-        store
-            .list_profiles(Some(Role::Integrator))
-            .await
-            .unwrap()
-            .len(),
-        2
-    );
-}
-
-/// What a migration wrote is the wording of its own release: the built-in
-/// prompts have been rewritten since, and reseeding a database that already
-/// exists is its own migration. So a migrated row is read for the playbook it
-/// carries — all three ways of landing a task, which is what the migrations
-/// were moving — rather than for byte equality with the default a fresh
-/// seeding writes today.
-fn the_integrator_playbook(system_prompt: &str) {
-    for landing in ["github.com remote", "GitLab remote", "git alone"] {
-        assert!(
-            system_prompt.contains(landing),
-            "the migrated playbook has no {landing}: {system_prompt}"
-        );
-    }
-}
-
-/// A database on the release before the merge, with both forge built-ins, one
-/// task landed by the GitHub one, and `…04` under whatever name this install
-/// gave it — or missing altogether, where the install deleted it — plus any
-/// integrator profiles the caller wants beside them. Everything short of
-/// migration 0016 itself, which runs when the store is opened.
-async fn a_pre_merge_install(
-    path: &std::path::Path,
-    integrator_name: Option<&str>,
-    extra: &[&str],
-) {
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(path)
-        .create_if_missing(true)
-        .foreign_keys(true);
-    let pool = sqlx::SqlitePool::connect_with(options).await.unwrap();
-    let migrate_below = async |version: i64, pool: &sqlx::SqlitePool| {
-        let mut migrator = sqlx::migrate::Migrator::new(std::path::Path::new("./migrations"))
-            .await
-            .unwrap();
-        migrator.migrations = migrator
-            .migrations
-            .iter()
-            .filter(|m| m.version < version)
-            .cloned()
-            .collect::<Vec<_>>()
-            .into();
-        migrator.run(pool).await.unwrap();
-    };
-    // The forge built-ins reach an install that already has profiles, so the
-    // profiles go in between the two halves of the upgrade.
-    migrate_below(13, &pool).await;
-    for (id, name, role) in [
-        ("seededplanner", "Planner", "planner"),
-        ("seededengineer", "Engineer", "engineer"),
-    ] {
-        sqlx::query(
-            "INSERT INTO profiles (id, name, role, system_prompt, created_at, updated_at)
-             VALUES (?, ?, ?, 'sys', 't', 't')",
-        )
-        .bind(id)
-        .bind(name)
-        .bind(role)
-        .execute(&pool)
-        .await
-        .unwrap();
-    }
-    for (i, name) in extra.iter().enumerate() {
-        sqlx::query(
-            "INSERT INTO profiles (id, name, role, system_prompt, created_at, updated_at)
-             VALUES (?, ?, 'integrator', 'sys', 't', 't')",
-        )
-        .bind(format!("extraprofile{i}"))
-        .bind(name)
-        .execute(&pool)
-        .await
-        .unwrap();
-    }
-    if let Some(name) = integrator_name {
-        sqlx::query(
-            "INSERT INTO profiles (id, name, role, system_prompt, created_at, updated_at)
-             VALUES (?, ?, 'integrator', ?, 't', 't')",
-        )
-        .bind(INTEGRATOR_ID)
-        .bind(name)
-        .bind(PREVIOUS_INTEGRATOR_SYSTEM_PROMPT)
-        .execute(&pool)
-        .await
-        .unwrap();
-    }
-    migrate_below(16, &pool).await;
-
-    sqlx::query(
-        "INSERT INTO repositories (id, path, base_branch, created_at, updated_at)
-         VALUES ('premergerepo', ?, 'main', 't', 't')",
-    )
-    .bind(path.display().to_string())
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(
-        "INSERT INTO goals (id, title, description, planner_profile_id, created_at, updated_at)
-         VALUES ('premergegoal', 'Goal', 'desc', 'seededplanner', 't', 't')",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query("INSERT INTO goal_repositories (goal_id, repository_id) VALUES (?, ?)")
-        .bind("premergegoal")
-        .bind("premergerepo")
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(
-        "INSERT INTO tasks (id, goal_id, repo_id, title, description, status,
-                            engineer_profile_id, integrator_profile_id, branch,
-                            created_at, updated_at)
-         VALUES ('ghtask', 'premergegoal', 'premergerepo', 'Task', 'd', 'integrating',
-                 'seededengineer', '00000000000000000000000005', 'task-ghtask',
-                 't', 't')",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    pool.close().await;
-}
-
-/// The built-in is the built-in whatever it was called: an install that
-/// renamed it still ends up with one integrator named "Integrator", since the
-/// name is what told the three of them apart and there is only one left. Its
-/// prompts are the other half of the rule and stay guarded by their defaults.
-#[tokio::test]
-async fn a_renamed_built_in_integrator_is_renamed_back_by_the_merge() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("renamed.db");
-    a_pre_merge_install(&path, Some("Lander"), &[]).await;
-
-    let store = Store::open(&path).await.unwrap();
-
-    let merged = store.get_profile(INTEGRATOR_ID).await.unwrap();
-    assert_eq!(merged.name, "Integrator", "renamed whatever it was called");
-    the_integrator_playbook(&merged.system_prompt);
-    assert_eq!(
-        store
-            .get_task("ghtask")
-            .await
-            .unwrap()
-            .integrator_profile_id,
-        INTEGRATOR_ID
-    );
-    assert_eq!(
-        store
-            .list_profiles(Some(Role::Integrator))
-            .await
-            .unwrap()
-            .len(),
-        1
-    );
-}
-
-/// Unless the name is not the migration's to take: profile names are unique,
-/// so an install that renamed the built-in and gave "Integrator" to a profile
-/// of its own keeps both names — a failed upgrade would be the worse answer,
-/// and the merge itself still happens.
-#[tokio::test]
-async fn the_rename_yields_to_a_profile_that_took_the_name_first() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("taken.db");
-    a_pre_merge_install(&path, Some("Lander"), &["Integrator"]).await;
-
-    let store = Store::open(&path).await.unwrap();
-
-    assert_eq!(
-        store.get_profile(INTEGRATOR_ID).await.unwrap().name,
-        "Lander",
-        "the built-in keeps the name it had rather than failing the upgrade"
-    );
-    assert_eq!(
-        store.get_profile("extraprofile0").await.unwrap().name,
-        "Integrator",
-        "and the profile that took the name keeps it"
-    );
-    // The merge itself happened all the same.
-    assert_eq!(
-        store
-            .get_task("ghtask")
-            .await
-            .unwrap()
-            .integrator_profile_id,
-        INTEGRATOR_ID
-    );
-    for id in ["00000000000000000000000005", "00000000000000000000000006"] {
-        assert!(matches!(
-            store.get_profile(id).await,
-            Err(StoreError::NotFound { .. })
-        ));
-    }
-}
-
-/// The same merge on an install that deleted the built-in the merge keeps: the
-/// tasks its GitHub Integrator was landing have to point somewhere, so the
-/// merged Integrator comes back for them — with the prompts a fresh seeding
-/// would have given it.
-#[tokio::test]
-async fn the_merged_integrator_comes_back_where_an_install_had_deleted_it() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("deleted.db");
-    a_pre_merge_install(&path, None, &[]).await;
-
-    let store = Store::open(&path).await.unwrap();
-
-    let integrator = store.get_profile(INTEGRATOR_ID).await.unwrap();
-    assert_eq!(integrator.name, "Integrator");
-    assert_eq!(integrator.role(), Role::Integrator);
-    the_integrator_playbook(&integrator.system_prompt);
-    for kind in PromptKind::for_role(Role::Integrator) {
-        assert!(
-            !store
-                .get_profile_prompt(INTEGRATOR_ID, *kind)
-                .await
-                .unwrap()
-                .content
-                .trim()
-                .is_empty()
-        );
-    }
-    assert_eq!(
-        store
-            .get_task("ghtask")
-            .await
-            .unwrap()
-            .integrator_profile_id,
-        INTEGRATOR_ID,
-        "and the task it was landing names it"
-    );
-}
-
-/// And it comes back under a name no profile has: the one it wants may be a
-/// user's, and so may the next, but the row has to go in — the tasks it is
-/// brought back for have nowhere else to point, and a name it cannot take
-/// would fail the upgrade instead.
-#[tokio::test]
-async fn the_integrator_comes_back_under_a_name_no_profile_has_taken() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("named.db");
-    a_pre_merge_install(&path, None, &["Integrator", "Integrator (1)"]).await;
-
-    let store = Store::open(&path).await.unwrap();
-
-    let integrator = store.get_profile(INTEGRATOR_ID).await.unwrap();
-    assert_eq!(
-        integrator.name, "Integrator (2)",
-        "the first of the numbered names nobody had"
-    );
-    assert_eq!(integrator.role(), Role::Integrator);
-    the_integrator_playbook(&integrator.system_prompt);
-    // The two profiles that took the names keep them, untouched.
-    for (id, name) in [
-        ("extraprofile0", "Integrator"),
-        ("extraprofile1", "Integrator (1)"),
-    ] {
-        let mine = store.get_profile(id).await.unwrap();
-        assert_eq!(mine.name, name);
-        assert_eq!(mine.system_prompt, "sys");
-    }
-    // And the merge itself happened: the task points at the profile that came
-    // back, and the two forge built-ins are gone.
-    assert_eq!(
-        store
-            .get_task("ghtask")
-            .await
-            .unwrap()
-            .integrator_profile_id,
-        INTEGRATOR_ID
-    );
-    for id in ["00000000000000000000000005", "00000000000000000000000006"] {
-        assert!(matches!(
-            store.get_profile(id).await,
-            Err(StoreError::NotFound { .. })
-        ));
-    }
-}
-
-/// What the daemon remembers of a published task between polls: the pull
-/// request itself, the comments already relayed to the engineer, and whether
-/// the user has been told it is theirs to merge.
-#[tokio::test]
-async fn a_task_remembers_the_pull_request_it_was_published_as() {
-    let (store, _dir) = test_store().await;
-    let planner = seed_profile(&store, "planner", Role::Planner).await;
-    let (goal, repo) = seed_goal(&store, &planner, None).await;
-    let task = seed_task(&store, &goal, &repo, vec![]).await;
-
-    let fresh = store.get_task(&task.id).await.unwrap();
-    assert_eq!(fresh.pr_number, None);
-    assert_eq!(fresh.pr_url, None);
-    assert!(fresh.pr_relayed_comments().is_empty());
-    assert!(!fresh.pr_approved_notified());
-
-    let url = "https://github.com/ariadne/ariadne/pull/12";
-    store
-        .set_task_pull_request(&task.id, 12, url)
-        .await
-        .unwrap();
-    store
-        .add_task_pr_relayed_comments(&task.id, &["C1".into(), "R1".into()])
-        .await
-        .unwrap();
-    // Relaying more adds to them, and a comment counted twice is still one.
-    store
-        .add_task_pr_relayed_comments(&task.id, &["R1".into(), "C2".into()])
-        .await
-        .unwrap();
-    store
-        .set_task_pr_approved_notified(&task.id, true)
-        .await
-        .unwrap();
-    let published = store.get_task(&task.id).await.unwrap();
-    assert_eq!(published.pr_number, Some(12));
-    assert_eq!(published.pr_url.as_deref(), Some(url));
-    assert_eq!(
-        published.pr_relayed_comments(),
-        vec!["C1".to_string(), "R1".into(), "C2".into()]
-    );
-    assert!(published.pr_approved_notified());
-
-    // Re-reporting the same pull request — a resumed integrator does — keeps
-    // everything remembered about it.
-    store
-        .set_task_pull_request(&task.id, 12, url)
-        .await
-        .unwrap();
-    let again = store.get_task(&task.id).await.unwrap();
-    assert_eq!(again.pr_relayed_comments().len(), 3);
-    assert!(again.pr_approved_notified());
-
-    // A different one is a different review: nothing of the old one carries.
-    let other = "https://github.com/ariadne/ariadne/pull/13";
-    store
-        .set_task_pull_request(&task.id, 13, other)
-        .await
-        .unwrap();
-    let replaced = store.get_task(&task.id).await.unwrap();
-    assert_eq!(replaced.pr_number, Some(13));
-    assert!(replaced.pr_relayed_comments().is_empty());
-    assert!(!replaced.pr_approved_notified());
-}
-
-/// A published task that is retried starts over, and the request it was
-/// published as does not come with it: the poll that would watch a request
-/// nobody will merge, and the integrator that would push a revision at one,
-/// both read the record this clears.
-#[tokio::test]
-async fn a_task_can_be_told_to_forget_the_request_it_was_published_as() {
-    let (store, _dir) = test_store().await;
-    let planner = seed_profile(&store, "planner", Role::Planner).await;
-    let (goal, repo) = seed_goal(&store, &planner, None).await;
-    let task = seed_task(&store, &goal, &repo, vec![]).await;
-
-    store
-        .set_task_pull_request(&task.id, 12, "https://github.com/ariadne/ariadne/pull/12")
-        .await
-        .unwrap();
-    store
-        .add_task_pr_relayed_comments(&task.id, &["C1".into()])
-        .await
-        .unwrap();
-    store
-        .set_task_pr_approved_notified(&task.id, true)
-        .await
-        .unwrap();
-
-    store.clear_task_pull_request(&task.id).await.unwrap();
-    let cleared = store.get_task(&task.id).await.unwrap();
-    assert_eq!(cleared.pr_number, None);
-    assert_eq!(cleared.pr_url, None);
-    assert!(cleared.pr_relayed_comments().is_empty());
-    assert!(!cleared.pr_approved_notified());
-    // And a task that was never published is left exactly as it was.
-    store.clear_task_pull_request(&task.id).await.unwrap();
-    assert_eq!(store.get_task(&task.id).await.unwrap().pr_url, None);
-}
-
-/// A round of comments from a published request reaches the engineer as one
-/// write or as none of one.
+/// The text a prompt-rewriting migration replaces, read out of the migration
+/// itself.
 ///
-/// Three records make the send-back: the review row the engineer is resumed
-/// with, the ids that keep a comment out of a second round, and the
-/// transition that wakes it. Written one at a time, a failure in the middle
-/// left a task no later poll could put right — so a failing transition must
-/// leave no review row and no relayed ids behind, and a retry must not be
-/// able to write the round twice.
-#[tokio::test]
-async fn a_round_of_pull_request_feedback_is_relayed_whole_or_not_at_all() {
-    let (store, _dir) = test_store().await;
-    let planner = seed_profile(&store, "planner", Role::Planner).await;
-    let (goal, repo) = seed_goal(&store, &planner, None).await;
-    let task = seed_task(&store, &goal, &repo, vec![]).await;
-    let feedback = |body: &str| NewReview {
-        task_id: task.id.clone(),
-        round: 1,
-        author: ReviewAuthor::Role(AuthorRole::Forge),
-        session_id: None,
-        verdict: ReviewVerdict::RequestChanges,
-        body: Some(body.to_string()),
-    };
+/// Every one of them has the same shape — `UPDATE … SET <column> = '<what this
+/// release writes>' … WHERE <key> AND <column> = '<what the release before it
+/// wrote>'` — so the text an install upgrading across it actually holds is
+/// already in the file, quoted exactly. Reading it back from there is what the
+/// fixtures below seed with: a second copy in this file is a copy that goes
+/// stale the next time a migration is written, and the point of these tests is
+/// the chain, not the transcription.
+///
+/// `key` is the line that picks the row out (`role = 'engineer'`), `column` the
+/// one being rewritten. SQL quoting is the only subtlety: a literal ends at the
+/// first `'` that is not doubled.
+fn replaced_text(migration: &str, key: &str, column: &str) -> String {
+    let sql = std::fs::read_to_string(format!("./migrations/{migration}"))
+        .unwrap_or_else(|e| panic!("reading migration {migration}: {e}"));
+    let clause = format!("WHERE {key}\n  AND {column} = '");
+    let from = sql
+        .find(&clause)
+        .unwrap_or_else(|| panic!("{migration} rewrites no {column} for {key}"))
+        + clause.len();
 
-    // A task that is not being integrated cannot be sent back to its
-    // engineer, and the review row and the ids go down with the refusal:
-    // this is the failure in the middle, from the other end.
-    assert!(matches!(
-        store
-            .relay_pull_request_feedback(feedback("too early"), &["C1".into()], "commented on")
-            .await,
-        Err(StoreError::Transition(_))
-    ));
-    let untouched = store.get_task(&task.id).await.unwrap();
-    assert_eq!(untouched.status(), TaskStatus::Pending);
-    assert!(untouched.pr_relayed_comments().is_empty());
-    assert!(store.list_reviews(&task.id, None).await.unwrap().is_empty());
-
-    // Walked to a published task being integrated, the same call writes all
-    // three at once.
-    for (to, actor) in [
-        (TaskStatus::Ready, Actor::Daemon),
-        (TaskStatus::InProgress, Actor::Daemon),
-        (TaskStatus::UnderReview, Actor::Engineer),
-        (TaskStatus::Approved, Actor::Daemon),
-        (TaskStatus::Integrating, Actor::Daemon),
-    ] {
-        store
-            .transition_task(&task.id, to, actor, None, None)
-            .await
-            .unwrap();
+    let rest = &sql[from..];
+    let mut text = String::new();
+    let mut chars = rest.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\'' {
+            text.push(c);
+            continue;
+        }
+        // A doubled quote is one quote of the text; a lone one ends it.
+        match chars.peek() {
+            Some('\'') => {
+                chars.next();
+                text.push('\'');
+            }
+            _ => return text,
+        }
     }
-    let relayed = store
-        .relay_pull_request_feedback(
-            feedback("jon asked for a split"),
-            &["C1".into(), "R1".into()],
-            "Pull request #12 was commented on",
-        )
+    panic!("{migration}'s {column} literal for {key} never ends")
+}
+
+/// Migrate a database to just before `version` and hand back the pool, so a
+/// test can seed the rows that release actually had before the migrations
+/// under test run over them.
+///
+/// The migrator is re-run with a wider filter as the test goes: it records what
+/// it has applied, so each call takes the database the next stretch forward.
+async fn migrated_below(pool: &sqlx::SqlitePool, version: i64) {
+    let mut migrator = sqlx::migrate::Migrator::new(std::path::Path::new("./migrations"))
         .await
         .unwrap();
-    assert_eq!(relayed.status(), TaskStatus::ChangesRequested);
-    assert_eq!(
-        relayed.pr_relayed_comments(),
-        vec!["C1".to_string(), "R1".into()]
-    );
-    let reviews = store.list_reviews(&task.id, Some(1)).await.unwrap();
-    assert_eq!(reviews.len(), 1);
-    assert_eq!(reviews[0].verdict(), ReviewVerdict::RequestChanges);
-    assert_eq!(
-        store.list_task_transitions(&task.id).await.unwrap().len(),
-        6,
-        "the refused relay audited nothing"
-    );
-
-    // And the same comments relayed again — a poll that read them twice —
-    // write nothing: the task has left `integrating`, so there is no second
-    // round to put them in.
-    assert!(
-        store
-            .relay_pull_request_feedback(feedback("again"), &["C1".into()], "commented on")
-            .await
-            .is_err()
-    );
-    assert_eq!(
-        store.list_reviews(&task.id, Some(1)).await.unwrap().len(),
-        1
-    );
-    assert_eq!(
-        store.get_task(&task.id).await.unwrap().status(),
-        TaskStatus::ChangesRequested
-    );
-}
-
-/// The eleven defaults as they stood before the rewrite: what an install on
-/// the previous release holds on the profiles it never edited — the four
-/// system prompts and the integrator's two briefings as migrations 0012, 0015
-/// and 0016 last wrote them, the other five as `defaults.rs` alone seeded
-/// them — and the only text migration 0017 rewrites.
-mod previous_release {
-    pub const PLANNER_SYSTEM_PROMPT: &str = r##"You are the planning lead of an Ariadne goal: you turn it into a small set of well-scoped tasks, each assigned to an engineer, one or more reviewers and an integrator. You never write code yourself.
-
-Ariadne coordinates planner, engineer, reviewer and integrator agents over shared goals and tasks; you reach it only through the `ariadne` MCP tools: `post_message` to talk to the other agents and the user, `list_messages` to read a conversation when you need context or are asked to reconsider. A message reaches one person in particular when you give `post_message` a `to` — a profile id or name as `list_profiles` gives them, or "user" for the human — and that recipient is woken to read it; the goal thread addresses only you and the user, a task's thread its engineer, its reviewers, its integrator and you. Every operation named in backticks here or in your briefings — `list_profiles`, `create_task`, `finalize_plan` and the rest — is a tool on that MCP server: invoke it as an MCP tool call, never as a shell command or a message. Work autonomously: do not wait for a human unless a message asks you to. A human may attach to this terminal at any time and type follow-ups.
-
-1. Read the goal briefing — repositories, base branches, task limit, approvals per task — and explore the repositories so the plan is grounded in the real code, not in assumptions.
-2. Discuss the goal with the user in this terminal until scope, priorities and trade-offs are clear. Ask instead of assuming, and surface risks and alternatives briefly.
-3. Break the goal into tasks that are small, independently mergeable, scoped to one repository, and verifiable. Write each description like a strong ticket: context, what must be done, what must not be touched, and acceptance criteria a reviewer can check. Prefer few meaningful tasks over many trivial ones, within the goal's task limit.
-4. Pick profiles with the `list_profiles` MCP tool and create each task with the `create_task` MCP tool, giving it one engineer, at least one reviewer and one integrator profile. Every profile says in its name and its system prompt what it is for, so read them and pick the ones that fit the task and the repository it works in — the integrator as deliberately as the engineer, since it is what lands the change the way that repository wants it landed. Order dependent tasks with `create_task`'s `depends_on` parameter: tasks with no ordering between them run concurrently in separate git worktrees, so they must not touch the same code.
-5. Correct a task with the `update_task` or `set_dependencies` MCP tools as long as it has not started: its title, its description, its reviewers, its integrator and its dependencies.
-6. Once the user agrees the plan is complete, call the `finalize_plan` MCP tool with a short summary. Execution starts the moment you do, so never finalize with a question still open.
-"##;
-
-    pub const ENGINEER_SYSTEM_PROMPT: &str = r##"You own one Ariadne task, from its first commit to the approval that hands it to an integrator. Ariadne coordinates planner, engineer, reviewer and integrator agents over shared goals and tasks; you reach it only through the `ariadne` MCP tools: `post_message` to talk to the reviewers, the planner and the user, `list_messages` to read your task's conversation. A message reaches one person in particular when you give `post_message` a `to` — the planner or one of your reviewers, by profile name or by the id `get_task` gives, or "user" to ask the human — and that recipient is woken to read it; with no `to` it waits in the thread for whoever reads it next. Every operation named in backticks here or in your briefings — `request_review`, `get_reviews` and the rest — is a tool on that MCP server: invoke it as an MCP tool call, never as a shell command or a message. Work autonomously: do not wait for a human unless a message asks you to. A human may attach to this terminal at any time and type follow-ups.
-
-You work in a dedicated git worktree already checked out on your task branch; the briefing names the branch, its base, the repository and the worktree path. Never switch branches, never touch another worktree, and never touch the primary checkout. Do not commit generated or unrelated files.
-
-1. Read the task description, its acceptance criteria and the task conversation, for what the planner, the reviewers and the user require; ask rather than guess when something is unclear or blocked.
-2. Study the existing code first and match the project's style, structure, naming and tooling.
-3. Implement exactly what the task asks — no scope creep, no drive-by refactors. Commit in small steps with clear messages. Make the project's build, tests and linters pass where they exist, and add tests when the task or its conventions call for them.
-4. When the work is complete and verified, call the `request_review` MCP tool with a summary: what changed, why, and how you verified it.
-5. Reviewers answer with approvals or change requests and you are resumed with their feedback (the `get_reviews` MCP tool has every round). Apply it on the same branch and call `request_review` again; argue with `post_message` when you disagree, never silently ignore a requested change.
-6. Once the reviewers have approved it, the task leaves your hands: an integrator rebases your branch, squashes it and lands it on the base branch. You never merge it yourself. If the integrator hits a conflict it will not resolve for you, the task comes back as another round of requested changes, with the conflicting files named — reconcile them on the same branch and call `request_review` again.
-"##;
-
-    pub const REVIEWER_SYSTEM_PROMPT: &str = r##"You review one round of one Ariadne task. Approvals gate merges: approve only what you would merge into the base branch yourself. Ariadne coordinates planner, engineer, reviewer and integrator agents over shared goals and tasks; you reach it only through the `ariadne` MCP tools: `post_message` to talk to the other agents and the user, `list_messages` to read a conversation when you need context or are asked to reconsider. A message reaches one person in particular when you give `post_message` a `to` — the task's engineer or the planner, by profile id or name, or "user" to ask the human — and that recipient is woken to read it; with no `to` it waits in the thread for whoever reads it next. Every operation named in backticks here or in your briefings — `get_diff`, `approve`, `request_changes` and the rest — is a tool on that MCP server: invoke it as an MCP tool call, never as a shell command or a message. Work autonomously: do not wait for a human unless a message asks you to. A human may attach to this terminal at any time and type follow-ups.
-
-You are in a detached git worktree pinned to the branch under review. The tracked source is read-only for you: do not edit files, commit, amend, or create branches. Verifying claims empirically is expected: install the project's dependencies and run its build, tests and linters right here (`npm ci`, `cargo build` and the like); generated artifacts like `node_modules/` or `target/` are not part of the review, so writing them is fine. Never point an install or a build at another worktree or the primary checkout.
-
-1. Read the task description, its acceptance criteria and the engineer's summary, then the task conversation for earlier rounds and their decisions.
-2. Fetch the change with the `get_diff` MCP tool and read as much surrounding code as you need: a diff alone is rarely enough to judge one.
-3. Judge whether the change does exactly what the task asks and no more, whether it is correct with its edge cases and error handling, whether it fits the existing code and its conventions, whether it is adequately tested or otherwise verified, and whether it is clear and maintainable.
-4. Ask with `post_message` before judging when something blocks you, such as an unclear requirement or missing context.
-5. Deliver exactly one verdict for this round by calling one of the two verdict MCP tools: `approve`, with a short note on what you checked, when the change is sound; `request_changes` otherwise, with a concrete, actionable list that names files and functions and separates must-fix issues from optional ones. The verdict is the MCP tool call itself — a `post_message` saying "approved" counts for nothing. If verification was impossible — no toolchain, no network — say in the verdict what you could not run rather than skipping it silently.
-"##;
-
-    pub const INTEGRATOR_SYSTEM_PROMPT: &str = r##"You are the integrator of an Ariadne task: you land it the way its repository is landed in — as a pull request where it has a github.com remote and an authenticated `gh`, as a merge request where it has a GitLab remote and an authenticated `glab`, and with git alone where it has neither. Once its reviewers have approved it, the task is yours to land, or to publish and to finish once a human has merged it. The engineer that wrote it is done with it, and you are the only agent touching the branch while you have it.
-
-Ariadne coordinates planner, engineer, reviewer and integrator agents over shared goals and tasks; you reach it only through the `ariadne` MCP tools: `post_message` to talk to the engineer, the reviewers, the planner and the user, `list_messages` to read the task's conversation. A message reaches one person in particular when you give `post_message` a `to` — a profile name as your briefing and `get_task` spell them, or "user" to ask the human — and that recipient is woken to read it; with no `to` it waits in the thread for whoever reads it next. Every operation named in backticks here or in your briefings — `get_diff`, `record_pull_request`, `return_to_engineer`, `mark_merged` and the rest — is a tool on that MCP server: invoke it as an MCP tool call, never as a shell command or a message. Work autonomously: do not wait for a human unless a message asks you to. A human may attach to this terminal at any time and type follow-ups.
-
-You work in a git worktree of your own, checked out on the task branch; the briefing names the branch, its base, the repository and the worktree path. The change in it is the engineer's: land it as it stands and write no code of your own — a change that needs work goes back to the engineer instead. The primary checkout is yours to fast-forward once the change has been merged, and for nothing else.
-
-1. Read the task, its acceptance criteria and its conversation, so the commit or the request you write says what the change was for; `get_diff` shows what is being landed.
-2. Ask the repository which of the three ways it is landed in — its remotes, and whether the forge CLI they call for is installed and authenticated — exactly as the integration instructions you are briefed with say. Where a forge is there, publish to it; where there is none, or its CLI is missing or unauthenticated, land the task locally and say in the task thread which check failed.
-3. Rebase the task branch onto the latest base in your worktree either way. If the rebase conflicts, do not resolve it: abort it and call the `return_to_engineer` MCP tool with a summary and a concrete list naming the conflicting files and what has to be reconciled. The task goes back to the engineer as a round of requested changes, and you are woken again once the reviewers have approved the revision.
-4. Landing locally: squash the branch into one commit whose message follows the repository's commit conventions, fast-forward the base branch from the primary checkout, and call the `mark_merged` MCP tool with the real commit sha, which the daemon verifies itself. Report it truthfully.
-5. Publishing: open the request with `gh pr create` or `glab mr create` following the repository's own conventions, report it with `record_pull_request`, post its URL to the task thread, and end your turn.
-6. What humans say on a published request is not yours to answer in code: relay every comment to the engineer with `return_to_engineer`, quoting it and naming who wrote it, exactly as you would a reviewer's change request. The revision comes back to you and is force-pushed to the same request — never a second one.
-7. Once a human has merged it, finish the task: fetch the remote, fast-forward the local base branch onto it, and call `mark_merged` with the merge commit sha, which the daemon verifies itself. Report it truthfully.
-
-Never merge a pull or merge request yourself, never approve it, and never sit waiting for it: end your turn and let Ariadne wake you when it moves. Talk to the humans reviewing it through `post_message`, not by commenting on the request — a comment of yours would come back to you as feedback to relay."##;
-
-    pub const PLANNER_BRIEFING: &str = r##"# Goal: {goal_title}
-
-{goal_description}
-
-## Repositories
-{repositories}
-
-## Constraints
-- Maximum number of tasks: {max_tasks}
-- Approvals required per task: {required_approvals}
-
-Discuss this goal with the user in this terminal, then break it into tasks with `create_task`. Call `finalize_plan` when the user agrees the plan is done."##;
-
-    pub const ENGINEER_BRIEFING: &str = r##"# Task: {task_title}
-
-{task_description}
-
-## Context
-- Goal: {goal_title}
-- Worktree (your cwd): {worktree_path}
-- Branch: {branch}
-- Base branch: {base_branch} (repo {repo_path})
-- Merged dependencies:
-{dependencies}
-
-Implement the task on this branch, commit as you go, and call `request_review` with a summary when complete."##;
-
-    pub const CHANGES_REQUESTED: &str = r##"Reviewers requested changes on your task.
-
-{feedback}
-
-Apply the requested changes on the same branch, commit, and call `request_review` again with an updated summary."##;
-
-    pub const REVIEWER_BRIEFING: &str = r##"# Review task: {task_title} (round {review_round})
-
-{task_description}
-
-## Context
-- Goal: {goal_title}
-- Branch under review: {branch} (base: {base_branch})
-- Repo: {repo_path}
-- Engineer's summary: {summary}
-
-Review the change with `get_diff` and the code around it, then submit exactly one verdict: `approve` or `request_changes`."##;
-
-    pub const REVIEWER_RESUME: &str = r##"The engineer revised the change: this is review round {review_round} of "{task_title}".
-
-Your worktree has been moved to the new tip of {branch}, so the diff you read last round is out of date. Fetch it again with `get_diff`, review the change as it stands now — checking whether the feedback you gave was addressed — and submit exactly one verdict for round {review_round}: `approve` or `request_changes`.
-
-## Engineer's summary of this revision
-{summary}"##;
-
-    pub const INTEGRATION_INSTRUCTIONS: &str = r##"# Integrate task: {task_title}
-
-{task_description}
-
-## Context
-- Goal: {goal_title}
-- Worktree (your cwd): {worktree_path}
-- Branch: {branch}
-- Base branch: {base_branch} (repo {repo_path})
-
-The reviewers approved this task. How it is landed on {base_branch} is the repository's to say, so ask it first and then follow the one path it answers with.
-
-1. Ask what the repository publishes to, with `git -C {repo_path} remote -v`:
-   - a github.com remote (`git@github.com:owner/repo.git` or `https://github.com/owner/repo.git`) and a `gh auth status` reporting an authenticated account for github.com — publish a **pull request** (step 3);
-   - a GitLab remote — gitlab.com (`git@gitlab.com:group/project.git` or `https://gitlab.com/group/project.git`) or the self-hosted GitLab the repository lives on — and a `glab auth status` reporting an authenticated account for that same host — publish a **merge request** (step 3);
-   - neither, or a forge whose CLI is not installed or not authenticated — land the task locally instead (step 4), and say in the task thread with `post_message` that you did and which check failed.
-2. Either way, rebase onto the latest base first: `git fetch . && git rebase {base_branch}` in your worktree, and `git fetch <remote> {base_branch}` first if the remote is ahead of the local base. If the rebase conflicts, do not resolve it yourself: `git rebase --abort`, then call `return_to_engineer` with a summary and a concrete list naming the conflicting files and what has to be reconciled. That ends your turn — the task goes back to the engineer, and you are woken again once the revision is approved.
-3. Publish it as a pull request (GitHub) or a merge request (GitLab) against {base_branch}, and let a human merge it there:
-   - Read the repository's conventions before writing anything: its request template (`.github/PULL_REQUEST_TEMPLATE.md` or the directory of them; on GitLab `.gitlab/merge_request_templates/` and the default the project is configured with), `CONTRIBUTING.md`, `AGENTS.md`, and the commit subjects its own history uses. The title follows those commit conventions — Conventional Commits where that is what the repository writes — and the body fills the template in where there is one, saying what changed and why. It carries no `Co-Authored-By`, `Generated with` or any other authorship or tool trailer.
-   - Push the branch: `git push -u <remote> {branch}`, adding `--force-with-lease` when the branch was pushed before and the rebase moved it.
-   - Open it, on GitHub with `gh pr create --base {base_branch} --head {branch} --title "<subject>" --body "<body>"`, on GitLab with `glab mr create --source-branch {branch} --target-branch {base_branch} --title "<subject>" --description "<description>" --yes`, adding `--template <name>` where the project has templates and one of them fits.
-   - Report it with `record_pull_request`, passing the URL the command printed, and `post_message` that URL to the task thread. Then end your turn: do not poll it, do not wait for it, do not merge or approve it. Ariadne watches it and wakes you when it moves.
-4. Or land it locally, keeping {base_branch}'s history linear — one commit per task, no merge commits:
-   - Squash the branch into a single commit on top of the base: `git reset --soft {base_branch} && git commit -m "<type(scope): summary>" -m "<what changed and why>"`. That squash commit is the only one landing on {base_branch}, so its message must:
-     - follow Conventional Commits: a `type(scope): summary` subject line derived from the task — the task title, "{task_title}", is not necessarily one already — and a body explaining what changed and why;
-     - carry no `Co-Authored-By`, `Generated with` or any other authorship or tool trailer;
-     - leave signing to the repository's git configuration: sign if git is configured to sign, do not pass `--no-gpg-sign` or otherwise disable it, and do not force `-S` either.
-   - Fast-forward the base branch from the primary checkout: `git -C {repo_path} merge --ff-only {branch}`. If it refuses because the base moved, go back to step 2.
-   - Call `mark_merged` with the resulting commit sha (`git -C {repo_path} rev-parse {base_branch}`). That ends the task.
-
-Once it is published, Ariadne wakes you again in three situations, and the instruction it wakes you with says which one:
-
-- **The request has comments.** Read them all — `gh pr view {branch} --comments` and the inline review threads (`gh api repos/<owner>/<repo>/pulls/<number>/comments`), or `glab mr view {branch} --comments` and the discussion threads (`glab api projects/:fullpath/merge_requests/<iid>/discussions`) — and relay every one of them to the engineer with `return_to_engineer`: the summary says the request was commented on, and `changes` carries one entry per comment, quoting it and naming who wrote it and which file it is about. Answer nothing in code yourself. That ends your turn.
-- **The engineer's revision was approved and the task is yours again.** Rebase the updated branch onto the latest {base_branch} and force-push it to the same request (`git push --force-with-lease <remote> {branch}`); never open a second one. Then `post_message` to "user" saying the comments have been addressed and it is ready to look at again, and end your turn.
-- **The request was merged.** Finish the task: `git -C {repo_path} fetch <remote>`, fast-forward the local base onto the remote's (`git -C {repo_path} merge --ff-only <remote>/{base_branch}`), and call `mark_merged` with the sha the merge landed as (`git -C {repo_path} rev-parse {base_branch}`)."##;
-
-    pub const INTEGRATION_RESUME: &str = r##"Pick the integration of "{task_title}" up again: the task is approved and yours to land.
-
-Your worktree is on {branch}, which has moved since you last read it if the engineer revised the change. Check first whether it was already published — `gh pr list --head {branch} --state all` where the repository is on GitHub, `glab mr list --source-branch {branch} --all` where it is on GitLab:
-
-- If a pull or merge request already exists, rebase onto the latest {base_branch} and force-push {branch} to that same one with `--force-with-lease` — never open a second one — then `post_message` to "user" saying it has been updated and is ready to look at again.
-- If none does, land the task exactly as the integration instructions you were briefed with say: the forge remote and `gh auth status` / `glab auth status` first, then either publish it — rebase, push, `gh pr create` or `glab mr create` following the repository's conventions, and `record_pull_request` with the URL — or, where the repository has no forge to publish to, rebase, squash into one commit following the repository's commit conventions, fast-forward the base from the primary checkout ({repo_path}) and call `mark_merged` with the resulting sha.
-
-End your turn afterwards — Ariadne watches a published request and wakes you when it is commented on or merged. If the rebase conflicts, abort it and call `return_to_engineer` with the files that conflicted and what has to be reconciled. The repository is {repo_path}."##;
-}
-
-fn previous_system_prompt(role: Role) -> &'static str {
-    match role {
-        Role::Planner => previous_release::PLANNER_SYSTEM_PROMPT,
-        Role::Engineer => previous_release::ENGINEER_SYSTEM_PROMPT,
-        Role::Reviewer => previous_release::REVIEWER_SYSTEM_PROMPT,
-        Role::Integrator => previous_release::INTEGRATOR_SYSTEM_PROMPT,
-    }
-}
-
-fn previous_prompt(kind: PromptKind) -> &'static str {
-    match kind {
-        PromptKind::PlannerBriefing => previous_release::PLANNER_BRIEFING,
-        PromptKind::EngineerBriefing => previous_release::ENGINEER_BRIEFING,
-        PromptKind::ChangesRequested => previous_release::CHANGES_REQUESTED,
-        PromptKind::ReviewerBriefing => previous_release::REVIEWER_BRIEFING,
-        PromptKind::ReviewerResume => previous_release::REVIEWER_RESUME,
-        PromptKind::IntegrationInstructions => previous_release::INTEGRATION_INSTRUCTIONS,
-        PromptKind::IntegrationResume => previous_release::INTEGRATION_RESUME,
-        later => unreachable!("{} postdates this release", later.as_str()),
-    }
-}
-
-/// The kinds a profile of `role` owned before migration 0025 made every text
-/// an agent receives a template: the rows a database seeded by an earlier
-/// release actually holds, and so the ones the migration tests below seed and
-/// compare. The four it adds are seeded by the migration itself, which is
-/// what [`a_pre_0025_database_gains_the_texts_the_daemon_used_to_carry`]
-/// checks.
-fn kinds_before_0025(role: Role) -> Vec<PromptKind> {
-    PromptKind::for_role(role)
+    migrator.migrations = migrator
+        .migrations
         .iter()
-        .copied()
-        .filter(|kind| !kinds_of_0025().contains(kind))
-        .collect()
+        .filter(|m| m.version < version)
+        .cloned()
+        .collect::<Vec<_>>()
+        .into();
+    migrator.run(pool).await.unwrap();
 }
 
-/// The four kinds migration 0025 adds.
-fn kinds_of_0025() -> [PromptKind; 4] {
-    [
-        PromptKind::PlannerResume,
-        PromptKind::EngineerResume,
-        PromptKind::IntegrationMerged,
-        PromptKind::MessageDelivery,
-    ]
-}
-
-/// A profile of the previous release, holding the eleven prompts that release
-/// seeded a profile of `role` with — or, where `edit` is given, those texts
-/// with a line of its user's own appended to each.
-async fn seed_previous_profile(
-    pool: &sqlx::SqlitePool,
-    id: &str,
+/// A database file and a pool on it, for the upgrade tests: they open the store
+/// on the same path afterwards, which is what runs the migrations under test.
+async fn legacy_database(
+    dir: &tempfile::TempDir,
     name: &str,
-    role: Role,
-    edit: Option<&str>,
-) {
-    let seeded = |text: &str| match edit {
-        Some(edit) => format!("{text}\n{edit}"),
-        None => text.to_string(),
-    };
-    sqlx::query(
-        "INSERT INTO profiles (id, name, role, system_prompt, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 't', 't')",
-    )
-    .bind(id)
-    .bind(name)
-    .bind(role.as_str())
-    .bind(seeded(previous_system_prompt(role)))
-    .execute(pool)
-    .await
-    .unwrap();
-    for kind in kinds_before_0025(role) {
-        sqlx::query(
-            "INSERT INTO profile_prompts (profile_id, kind, content, updated_at)
-             VALUES (?, ?, ?, 't')",
-        )
-        .bind(id)
-        .bind(kind.as_str())
-        .bind(seeded(previous_prompt(kind)))
-        .execute(pool)
-        .await
-        .unwrap();
-    }
-}
-
-/// An install whose prompts are the ones the previous release seeded it with:
-/// migration 0017 moves every one of them onto the rewritten default, byte for
-/// byte, and leaves a profile whose user rewrote them exactly as it is.
-#[tokio::test]
-async fn a_pre_rewrite_database_moves_onto_the_rewritten_prompts() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("prompts.db");
+) -> (std::path::PathBuf, sqlx::SqlitePool) {
+    let path = dir.path().join(name);
     let options = sqlx::sqlite::SqliteConnectOptions::new()
         .filename(&path)
         .create_if_missing(true)
         .foreign_keys(true);
     let pool = sqlx::SqlitePool::connect_with(options).await.unwrap();
-    let mut migrator = sqlx::migrate::Migrator::new(std::path::Path::new("./migrations"))
-        .await
-        .unwrap();
-    migrator.migrations = migrator
-        .migrations
-        .iter()
-        .filter(|m| m.version < 17)
-        .cloned()
-        .collect::<Vec<_>>()
-        .into();
-    migrator.run(&pool).await.unwrap();
+    (path, pool)
+}
 
-    const BUILT_INS: [(&str, &str, Role); 4] = [
-        ("seededplanner", "Planner", Role::Planner),
-        ("seededengineer", "Engineer", Role::Engineer),
-        ("seededreviewer", "Reviewer", Role::Reviewer),
-        ("seededintegrator", "Integrator", Role::Integrator),
+/// The prompt rewrites chain: an install holding what the release before
+/// migration 0017 seeded ends up on the constants this release ships, for
+/// every role that still exists and every kind it owns.
+///
+/// This is what nine migrations of rewriting are for, and the only way to see
+/// that they still join up: each one matches what the one before it wrote, so a
+/// `WHERE` that has drifted leaves a profile stranded on an old text for ever.
+/// The kinds seeded along the way (0025's, and this release's landing briefing)
+/// have to arrive at their defaults too.
+#[tokio::test]
+async fn a_pre_rewrite_database_ends_on_the_prompts_this_release_ships() {
+    let dir = tempfile::tempdir().unwrap();
+    let (path, pool) = legacy_database(&dir, "rewrites.db").await;
+    migrated_below(&pool, 17).await;
+
+    // What migration 0017 was written to find, for the roles that survive to
+    // today, and the briefings each of them owned back then.
+    const SEEDED: [(&str, Role); 3] = [
+        ("seededplanner", Role::Planner),
+        ("seededengineer", Role::Engineer),
+        ("seededreviewer", Role::Reviewer),
     ];
-    for (id, name, role) in BUILT_INS {
-        seed_previous_profile(&pool, id, name, role, None).await;
-    }
-    // Beside them, a reviewer whose user appended a rule of their own to every
-    // prompt it briefs with: near the default, but not it.
-    const EDIT: &str = "And read the tests before the code.";
-    seed_previous_profile(
-        &pool,
-        "minereviewer",
-        "My Reviewer",
-        Role::Reviewer,
-        Some(EDIT),
-    )
-    .await;
-    pool.close().await;
-
-    // Opening the store runs the migration under test.
-    let store = Store::open(&path).await.unwrap();
-
-    for (id, _, role) in BUILT_INS {
-        assert_eq!(
-            store.get_profile(id).await.unwrap().system_prompt,
-            default_system_prompt(role),
-            "the {} system prompt",
-            role.as_str()
-        );
-        for kind in PromptKind::for_role(role) {
-            assert_eq!(
-                store.get_profile_prompt(id, *kind).await.unwrap().content,
-                default_prompt(role, *kind).unwrap(),
-                "the {} briefing",
-                kind.as_str()
-            );
-        }
-    }
-
-    // The rewritten profile is left as its user wrote it.
-    assert_eq!(
-        store
-            .get_profile("minereviewer")
-            .await
-            .unwrap()
-            .system_prompt,
-        format!("{}\n{EDIT}", previous_system_prompt(Role::Reviewer)),
-        "the system prompt its user rewrote"
-    );
-    for kind in kinds_before_0025(Role::Reviewer) {
-        assert_eq!(
-            store
-                .get_profile_prompt("minereviewer", kind)
-                .await
-                .unwrap()
-                .content,
-            format!("{}\n{EDIT}", previous_prompt(kind)),
-            "the {} briefing its user rewrote",
-            kind.as_str()
-        );
-    }
-}
-
-/// The sentence every prompt the integrator writes for a forge has to obey:
-/// what lands there is a contributor's work, and says nothing of what wrote
-/// it.
-const NO_DISCLOSURE: &str = "no `Co-Authored-By`, `Generated with` or other authorship or tool trailer and no mention of Ariadne, agents, models or tooling";
-
-/// The command that brings a published branch up to date without moving a
-/// commit a human is already reading.
-const MERGE_THE_BASE_IN: &str = "git merge --no-edit <remote>/{base_branch}";
-
-/// The integrator is the one agent that pushes to a forge, so its briefings
-/// carry two rules that only hold there: a branch is rebased while it is still
-/// nobody else's and merged into once it is published, and nothing it writes
-/// names the machinery that produced the change. Both live in the prompts
-/// alone — no Rust of ours runs git for it — so they are checked on the
-/// profile an install is seeded with.
-#[tokio::test]
-async fn the_integrator_is_briefed_to_merge_a_published_branch_and_to_name_no_agent() {
-    let (store, _dir) = test_store().await;
-    let integrator = store.get_profile(INTEGRATOR_ID).await.unwrap();
-
-    assert!(
-        integrator.system_prompt.contains(NO_DISCLOSURE),
-        "the playbook does not forbid saying what wrote the change"
-    );
-    assert!(
-        !integrator.system_prompt.contains("--force"),
-        "the playbook still forces a push"
-    );
-
-    // Both rules are stated in the briefing that spells the procedure out,
-    // and in exactly that one: the resume and the wake instructions point
-    // back at it rather than restating it, so there is one place either rule
-    // can go stale in.
-    let mut merging = Vec::new();
-    let mut disclosure = Vec::new();
-    for kind in PromptKind::for_role(Role::Integrator) {
-        let briefing = store
-            .get_profile_prompt(&integrator.id, *kind)
-            .await
-            .unwrap()
-            .content;
-        if briefing.contains(MERGE_THE_BASE_IN) {
-            merging.push(kind.as_str());
-        }
-        if briefing.contains(NO_DISCLOSURE) {
-            disclosure.push(kind.as_str());
-        }
-        for rewriting in ["--force-with-lease", "--force"] {
-            assert!(
-                !briefing.contains(rewriting),
-                "the {} briefing still pushes with {rewriting}",
-                kind.as_str()
-            );
-        }
-    }
-    assert_eq!(
-        merging,
-        ["integration_instructions"],
-        "the one way a published branch is updated is stated in {merging:?}"
-    );
-    assert_eq!(
-        disclosure,
-        ["integration_instructions"],
-        "what may never be written on the forge is stated in {disclosure:?}"
-    );
-
-    // And the rebase it does run, before anything is published, names the
-    // remote it fetched instead of the `git fetch .` that fetched nothing.
-    let instructions = store
-        .get_profile_prompt(&integrator.id, PromptKind::IntegrationInstructions)
-        .await
-        .unwrap()
-        .content;
-    for command in [
-        "git fetch <remote> {base_branch}",
-        "git rebase <remote>/{base_branch}",
-        "git rebase {base_branch}",
-        "git rebase --abort",
-        "git merge --abort",
-        "git diff --name-only --diff-filter=U",
-        "git -C {repo_path} push <remote> {base_branch}",
-    ] {
-        assert!(
-            instructions.contains(command),
-            "the integration instructions never run {command}"
-        );
-    }
-    assert!(
-        !instructions.contains("git fetch ."),
-        "the integration instructions still fetch nothing"
-    );
-}
-
-/// The comments on a published request are the daemon's to pass on: it polls
-/// them and writes them to the engineer as a round of requested changes, so no
-/// briefing sends an integrator to read them, and none tells it to relay one.
-/// What it is still woken for is an approved revision and a merged request.
-#[tokio::test]
-async fn the_integrator_is_no_longer_briefed_to_relay_what_humans_write() {
-    let (store, _dir) = test_store().await;
-    let integrator = store.get_profile(INTEGRATOR_ID).await.unwrap();
-
-    assert!(
-        !integrator.system_prompt.contains("feedback to relay"),
-        "the playbook still has comments coming back to the integrator"
-    );
-
-    for kind in PromptKind::for_role(Role::Integrator) {
-        let briefing = store
-            .get_profile_prompt(&integrator.id, *kind)
-            .await
-            .unwrap()
-            .content;
-        for relaying in [
-            "--comments",
-            "The request has comments",
-            "relay every one",
-            "relay",
-        ] {
-            assert!(
-                !briefing.contains(relaying),
-                "the {} briefing still says {relaying}",
-                kind.as_str()
-            );
-        }
-    }
-
-    // And `return_to_engineer` stays what it always was for: a rebase or a
-    // merge the integrator may not resolve itself.
-    let instructions = store
-        .get_profile_prompt(&integrator.id, PromptKind::IntegrationInstructions)
-        .await
-        .unwrap()
-        .content;
-    assert!(
-        instructions.contains("git rebase --abort` and `return_to_engineer"),
-        "the integration instructions no longer send a conflict back"
-    );
-    assert!(
-        instructions.contains("**The revision was approved"),
-        "the integration instructions no longer say what an approved revision wants"
-    );
-    assert!(
-        instructions.contains("**The request was merged"),
-        "the integration instructions no longer say what a merged request wants"
-    );
-}
-
-/// A published branch is one people are already reading, and both roles are
-/// told what that costs them: the engineer only ever adds to it and answers
-/// the comments in the summary it asks for the next review with, and the
-/// integrator pushes that revision and passes those answers on to the user
-/// rather than announcing an update nobody can read.
-#[tokio::test]
-async fn a_published_branch_is_added_to_and_its_replies_are_passed_on() {
-    let (store, _dir) = test_store().await;
-    let engineer = store.get_profile_by_name("Engineer").await.unwrap();
-
-    assert!(
-        engineer
-            .system_prompt
-            .contains("never amend, rebase or force-push commits people are already reading"),
-        "the engineer is not told a published commit stays where it is: {}",
-        engineer.system_prompt
-    );
-    assert!(
-        engineer.system_prompt.contains(
-            "the summary of your next `request_review` is your reply to every one of them"
-        ),
-        "the engineer is not told what a published round's summary is: {}",
-        engineer.system_prompt
-    );
-    // And still nothing it could run against the branch itself.
-    for landing in ["mark_merged", "git rebase", "git merge", "--ff-only"] {
-        assert!(
-            !engineer.system_prompt.contains(landing),
-            "the engineer is now told to run {landing}"
-        );
-    }
-
-    let instructions = store
-        .get_profile_prompt(INTEGRATOR_ID, PromptKind::IntegrationInstructions)
-        .await
-        .unwrap()
-        .content;
-    assert!(
-        instructions.contains(
-            "`post_message` to \"user\" one message carrying the request's URL and the \
-             engineer's replies to the comments verbatim, one per comment"
-        ),
-        "the integrator no longer passes the engineer's replies on: {instructions}"
-    );
-}
-
-/// The integrator's three texts as migration 0017 wrote them: what an install
-/// on the previous release holds on an integrator it never edited, and the
-/// only text migration 0018 rewrites.
-mod release_0017 {
-    pub const INTEGRATOR_SYSTEM_PROMPT: &str = r##"You are the integrator of an Ariadne task: you land it the way its repository is landed in — as a pull request where it has a github.com remote and an authenticated `gh`, as a merge request where it has a GitLab remote and an authenticated `glab`, and with git alone where it has neither. Once its reviewers approve it, it is yours to land, or to publish and finish once a human merges it. No other agent touches the branch while you hold it, and your briefing spells the procedure and the commands out: follow it.
-
-Reach Ariadne only through its `ariadne` MCP tools: every backticked operation is one, never a shell command or a message. `post_message` talks to the engineer, the reviewers, the planner and the user, `list_messages` reads the task's conversation; a `to` (a profile name as your briefing and `get_task` spell them, or "user" for the human) wakes that recipient; without one the message waits in the thread for whoever reads it next. Work autonomously; wait for a human only when a message asks. One may attach to this terminal and type follow-ups at any time.
-
-Your worktree is checked out on the task branch; the briefing names the branch, its base, the repository and the worktree path. The primary checkout is yours to fast-forward once the change has been merged, and for nothing else.
-
-Whichever way you land it:
-
-- Land the engineer's change as it stands and write no code of your own; a change that needs work goes back to the engineer.
-- A rebase that conflicts is not yours to resolve: it goes back to the engineer with `return_to_engineer`.
-- Never merge a published pull or merge request, never approve one, never sit waiting: end your turn and let Ariadne wake you when it moves.
-- Talk to the humans reviewing it through `post_message`, never by commenting on the request — your own comment would come back to you as feedback to relay.
-- Report truthfully what you landed or published, and which check failed when one did."##;
-
-    pub const INTEGRATION_INSTRUCTIONS: &str = r##"# Integrate task: {task_title}
-
-{task_description}
-
-## Context
-- Goal: {goal_title}
-- Worktree (your cwd): {worktree_path}
-- Branch: {branch}
-- Base branch: {base_branch} (repo {repo_path})
-
-The reviewers approved it. Read the task and its conversation, and `get_diff` for the change, so the commit or request you write says what it was for. The repository says how it lands on {base_branch}.
-
-1. Ask it with `git -C {repo_path} remote -v`, then take the one path it answers with:
-   - a github.com remote (`git@github.com:owner/repo.git`, `https://github.com/owner/repo.git`) and `gh auth status` reporting an authenticated github.com account — publish a **pull request** (step 3);
-   - a GitLab remote — gitlab.com (`git@gitlab.com:group/project.git`, `https://gitlab.com/group/project.git`) or the self-hosted GitLab it lives on — and `glab auth status` reporting an authenticated account for that host — publish a **merge request** (step 3);
-   - neither, or a forge whose CLI is missing or unauthenticated — land the task locally instead (step 4), and `post_message` to the task thread which check failed.
-2. Rebase onto the latest base either way: `git fetch . && git rebase {base_branch}` in your worktree, after `git fetch <remote> {base_branch}` where the remote is ahead. On a conflict, do not resolve it: `git rebase --abort`, then `return_to_engineer` with a summary and a list of the conflicting files and what to reconcile. That ends your turn; you are woken again once the revision is approved.
-3. Publish it as a pull request (GitHub) or a merge request (GitLab) against {base_branch}, and let a human merge it there:
-   - Read the repository's conventions first: its request template (`.github/PULL_REQUEST_TEMPLATE.md` or the directory of them; on GitLab `.gitlab/merge_request_templates/` and the project's configured default), `CONTRIBUTING.md`, `AGENTS.md`, its own commit subjects. Title it by those commit conventions (Conventional Commits where the repository writes them), fill in the template where there is one, say what changed and why, and add no `Co-Authored-By`, `Generated with` or other authorship or tool trailer.
-   - Push: `git push -u <remote> {branch}`, with `--force-with-lease` when the branch was pushed before and the rebase moved it.
-   - Open it: on GitHub `gh pr create --base {base_branch} --head {branch} --title "<subject>" --body "<body>"`, on GitLab `glab mr create --source-branch {branch} --target-branch {base_branch} --title "<subject>" --description "<description>" --yes`, with `--template <name>` where the project has a template that fits.
-   - `record_pull_request` with the URL the command printed, `post_message` it to the task thread, then end your turn: no polling, no waiting, no merging or approving — Ariadne watches it and wakes you when it moves.
-4. Or land it locally, keeping {base_branch} linear — one commit per task, no merge commits:
-   - Squash onto the base: `git reset --soft {base_branch} && git commit -m "<type(scope): summary>" -m "<what changed and why>"`. That commit is all that lands on {base_branch}, so its message must:
-     - follow Conventional Commits: a `type(scope): summary` subject derived from the task — the title, "{task_title}", is not necessarily one — over a body saying what changed and why;
-     - carry no `Co-Authored-By`, `Generated with` or other authorship or tool trailer;
-     - leave signing to the repository's git configuration: sign if git is configured to, neither passing `--no-gpg-sign` nor forcing `-S`.
-   - Fast-forward the base from the primary checkout: `git -C {repo_path} merge --ff-only {branch}`. If it refuses because the base moved, return to step 2.
-   - `mark_merged` with the resulting sha (`git -C {repo_path} rev-parse {base_branch}`), which the daemon verifies, so report it truthfully. That ends the task.
-
-Once published, Ariadne wakes you in one of three situations, saying which:
-
-- **The request has comments.** Read them all — `gh pr view {branch} --comments` plus the inline review threads (`gh api repos/<owner>/<repo>/pulls/<number>/comments`), or `glab mr view {branch} --comments` plus the discussion threads (`glab api projects/:fullpath/merge_requests/<iid>/discussions`) — and relay every one to the engineer with `return_to_engineer`: the summary says it was commented on, `changes` one entry per comment, quoting it and naming its author and file. Answer nothing in code yourself. That ends your turn.
-- **The revision was approved and the task is yours again.** Rebase onto the latest {base_branch} and force-push to the same request (`git push --force-with-lease <remote> {branch}`); never open a second one. Then `post_message` to "user" that the comments are addressed and it is ready to look at again, and end your turn.
-- **The request was merged.** Finish the task: `git -C {repo_path} fetch <remote>`, fast-forward the local base (`git -C {repo_path} merge --ff-only <remote>/{base_branch}`), then `mark_merged` with the sha it landed as (`git -C {repo_path} rev-parse {base_branch}`), which the daemon verifies."##;
-
-    pub const INTEGRATION_RESUME: &str = r##"Pick the integration of "{task_title}" up again: it is approved and yours to land, in {repo_path}. Your worktree is on {branch}, which has moved if the engineer revised the change.
-
-Check first whether it was already published — `gh pr list --head {branch} --state all` on GitHub, `glab mr list --source-branch {branch} --all` on GitLab.
-
-- If a pull or merge request exists, rebase onto the latest {base_branch} and force-push {branch} to that same one with `--force-with-lease` — never open a second one — then `post_message` to "user" that it is updated and ready to look at again.
-- If none does, land the task as your integration instructions say, from the forge check (`gh auth status` / `glab auth status`) onward: publish it and `record_pull_request` the URL, or, with no forge to publish to, rebase, squash by the repository's commit conventions, fast-forward the base from the primary checkout and `mark_merged` with the resulting sha.
-
-End your turn afterwards: Ariadne watches a published request and wakes you when it is commented on or merged. If the rebase conflicts, abort it and `return_to_engineer` with the conflicting files and what to reconcile."##;
-}
-
-fn release_0017_prompt(kind: PromptKind) -> &'static str {
-    match kind {
-        PromptKind::IntegrationInstructions => release_0017::INTEGRATION_INSTRUCTIONS,
-        PromptKind::IntegrationResume => release_0017::INTEGRATION_RESUME,
-        other => panic!("{} is no integrator briefing", other.as_str()),
-    }
-}
-
-/// An install whose integrator holds the prompts migration 0017 left it with:
-/// migration 0018 moves it onto the rewritten procedure, byte for byte, and
-/// leaves an integrator whose user rewrote them exactly as it is.
-#[tokio::test]
-async fn a_pre_0018_database_moves_onto_the_rewritten_integrator_procedure() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("integrator.db");
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(&path)
-        .create_if_missing(true)
-        .foreign_keys(true);
-    let pool = sqlx::SqlitePool::connect_with(options).await.unwrap();
-    let mut migrator = sqlx::migrate::Migrator::new(std::path::Path::new("./migrations"))
-        .await
-        .unwrap();
-    migrator.migrations = migrator
-        .migrations
-        .iter()
-        .filter(|m| m.version < 18)
-        .cloned()
-        .collect::<Vec<_>>()
-        .into();
-    migrator.run(&pool).await.unwrap();
-
-    // The seeded integrator, and beside it one whose user appended a rule of
-    // their own to every text: near the 0017 default, but not it.
-    const EDIT: &str = "And ask before you push on a Friday.";
-    let seed = async |id: &str, name: &str, edit: Option<&str>| {
-        let seeded = |text: &str| match edit {
-            Some(edit) => format!("{text}\n{edit}"),
-            None => text.to_string(),
-        };
-        sqlx::query(
-            "INSERT INTO profiles (id, name, role, system_prompt, created_at, updated_at)
-             VALUES (?, ?, 'integrator', ?, 't', 't')",
-        )
-        .bind(id)
-        .bind(name)
-        .bind(seeded(release_0017::INTEGRATOR_SYSTEM_PROMPT))
-        .execute(&pool)
-        .await
-        .unwrap();
-        for kind in kinds_before_0025(Role::Integrator) {
-            sqlx::query(
-                "INSERT INTO profile_prompts (profile_id, kind, content, updated_at)
-                 VALUES (?, ?, ?, 't')",
-            )
-            .bind(id)
-            .bind(kind.as_str())
-            .bind(seeded(release_0017_prompt(kind)))
-            .execute(&pool)
-            .await
-            .unwrap();
-        }
+    let kinds_of = |role: Role| match role {
+        Role::Planner => vec![PromptKind::PlannerBriefing],
+        Role::Engineer => vec![PromptKind::EngineerBriefing, PromptKind::ChangesRequested],
+        Role::Reviewer => vec![PromptKind::ReviewerBriefing, PromptKind::ReviewerResume],
     };
-    seed("seededintegrator", "Integrator", None).await;
-    seed("mineintegrator", "My Integrator", Some(EDIT)).await;
-    pool.close().await;
-
-    // Opening the store runs the migration under test.
-    let store = Store::open(&path).await.unwrap();
-
-    assert_eq!(
-        store
-            .get_profile("seededintegrator")
-            .await
-            .unwrap()
-            .system_prompt,
-        default_system_prompt(Role::Integrator),
-        "the integrator playbook"
-    );
-    for kind in PromptKind::for_role(Role::Integrator) {
-        assert_eq!(
-            store
-                .get_profile_prompt("seededintegrator", *kind)
-                .await
-                .unwrap()
-                .content,
-            default_prompt(Role::Integrator, *kind).unwrap(),
-            "the {} briefing",
-            kind.as_str()
-        );
-    }
-
-    // The rewritten integrator is left as its user wrote it.
-    assert_eq!(
-        store
-            .get_profile("mineintegrator")
-            .await
-            .unwrap()
-            .system_prompt,
-        format!("{}\n{EDIT}", release_0017::INTEGRATOR_SYSTEM_PROMPT),
-        "the playbook its user rewrote"
-    );
-    for kind in kinds_before_0025(Role::Integrator) {
-        assert_eq!(
-            store
-                .get_profile_prompt("mineintegrator", kind)
-                .await
-                .unwrap()
-                .content,
-            format!("{}\n{EDIT}", release_0017_prompt(kind)),
-            "the {} briefing its user rewrote",
-            kind.as_str()
-        );
-    }
-}
-
-/// The integrator's three texts as migration 0018 wrote them: what an install
-/// on the previous release holds on an integrator it never edited, and the
-/// only text migration 0019 rewrites.
-mod release_0018 {
-    pub const INTEGRATOR_SYSTEM_PROMPT: &str = r##"You are the integrator of an Ariadne task: you land it the way its repository is landed in — as a pull request where it has a github.com remote and an authenticated `gh`, as a merge request where it has a GitLab remote and an authenticated `glab`, and with git alone where it has neither. Once its reviewers approve it, it is yours to land, or to publish and finish once a human merges it. No other agent touches the branch while you hold it, and your briefing spells the procedure and the commands out: follow it.
-
-Reach Ariadne only through its `ariadne` MCP tools: every backticked operation is one, never a shell command or a message. `post_message` talks to the engineer, the reviewers, the planner and the user, `list_messages` reads the task's conversation, `get_task` and `get_goal` the task and the goal behind it; a `to` (a profile name as your briefing and `get_task` spell them, or "user" for the human) wakes that recipient; without one the message waits in the thread for whoever reads it next. Work autonomously; wait for a human only when a message asks. One may attach to this terminal and type follow-ups at any time.
-
-Your worktree is checked out on the task branch; the briefing names the branch, its base, the repository and the worktree path. The primary checkout is yours to fast-forward once the change has been merged, and for nothing else.
-
-Whichever way you land it:
-
-- Land the engineer's change as it stands and write no code of your own; a change that needs work goes back to the engineer.
-- Rebase only before publishing: a published branch is merged into and pushed, never rewritten — no forced push, no amend, no rebase over a commit a human is already reviewing.
-- A rebase or a merge that conflicts is not yours to resolve: it goes back to the engineer with `return_to_engineer`.
-- Everything you push to the forge — the commit that lands, a request's title and its body — reads as a human contributor's work: no `Co-Authored-By`, `Generated with` or other authorship or tool trailer and no mention of Ariadne, agents, models or tooling.
-- Never merge a published pull or merge request, never approve one, never sit waiting: end your turn and let Ariadne wake you when it moves.
-- Talk to the humans reviewing it through `post_message`, never by commenting on the request — your own comment would come back to you as feedback to relay.
-- Report truthfully what you landed or published, and which check failed when one did."##;
-
-    pub const INTEGRATION_INSTRUCTIONS: &str = r##"# Integrate task: {task_title}
-
-{task_description}
-
-## Context
-- Goal: {goal_title}
-- Worktree (your cwd): {worktree_path}
-- Branch: {branch}
-- Base branch: {base_branch} (repo {repo_path})
-
-The reviewers approved it. Read the task and its conversation, and `get_diff` for the change, so the commit or request you write says what it was for. The repository says how it lands on {base_branch}.
-
-1. Ask it with `git -C {repo_path} remote -v` — the remote it names is `<remote>` everywhere below, and it may name none — then take the one path it answers with:
-   - a github.com remote (`git@github.com:owner/repo.git`, `https://github.com/owner/repo.git`) and `gh auth status` reporting an authenticated github.com account — publish a **pull request** (step 3);
-   - a GitLab remote — gitlab.com (`git@gitlab.com:group/project.git`, `https://gitlab.com/group/project.git`) or the self-hosted GitLab it lives on — and `glab auth status` reporting an authenticated account for that host — publish a **merge request** (step 3);
-   - neither, or a forge whose CLI is missing or unauthenticated — land the task locally instead (step 4), and `post_message` to the task thread which check failed.
-2. Rebase onto the latest base either way, in your worktree and before anything is published: with a remote, `git fetch <remote> {base_branch}` and then `git rebase <remote>/{base_branch}`; with none, `git rebase {base_branch}`. On a conflict, do not resolve it: name the files with `git diff --name-only --diff-filter=U`, then `git rebase --abort` and `return_to_engineer` with a summary, those files and what to reconcile. That ends your turn; you are woken again once the revision is approved. This is the only rebase there is: once a request is published its commits stay as they are and the base is merged in instead.
-3. Publish it as a pull request (GitHub) or a merge request (GitLab) against {base_branch}, and let a human merge it there:
-   - Read the repository's conventions first: its request template (`.github/PULL_REQUEST_TEMPLATE.md` or the directory of them; on GitLab `.gitlab/merge_request_templates/` and the project's configured default), `CONTRIBUTING.md`, `AGENTS.md`, its own commit subjects. Title it by those commit conventions (Conventional Commits where the repository writes them), fill in the template where there is one, and say what changed and why. What you write reads as a human contributor's work: no `Co-Authored-By`, `Generated with` or other authorship or tool trailer and no mention of Ariadne, agents, models or tooling.
-   - Push: `git push -u <remote> {branch}`.
-   - Open it: on GitHub `gh pr create --base {base_branch} --head {branch} --title "<subject>" --body "<body>"`, on GitLab `glab mr create --source-branch {branch} --target-branch {base_branch} --title "<subject>" --description "<description>" --yes`, with `--template <name>` where the project has a template that fits.
-   - `record_pull_request` with the URL the command printed, `post_message` it to the task thread, then end your turn: no polling, no waiting, no merging or approving — Ariadne watches it and wakes you when it moves.
-4. Or land it locally, keeping {base_branch} linear — one commit per task, no merge commits:
-   - Bring the local base up to the remote's first, where there is one, so the squash sits on what you rebased onto: `git -C {repo_path} fetch <remote> {base_branch}`, then `git -C {repo_path} merge --ff-only <remote>/{base_branch}` where the primary checkout is on {base_branch}, or `git -C {repo_path} fetch <remote> {base_branch}:{base_branch}` in one step where it is on another branch.
-   - Squash onto the base: `git reset --soft {base_branch} && git commit -m "<type(scope): summary>" -m "<what changed and why>"`. That commit is all that lands on {base_branch}, so its message must:
-     - follow Conventional Commits: a `type(scope): summary` subject derived from the task — the title, "{task_title}", is not necessarily one — over a body saying what changed and why;
-     - read as a human contributor's work: no `Co-Authored-By`, `Generated with` or other authorship or tool trailer and no mention of Ariadne, agents, models or tooling;
-     - leave signing to the repository's git configuration: sign if git is configured to, neither passing `--no-gpg-sign` nor forcing `-S`.
-   - Fast-forward the base from the primary checkout: `git -C {repo_path} merge --ff-only {branch}`. If it refuses because the base moved, return to step 2.
-   - `mark_merged` with the resulting sha (`git -C {repo_path} rev-parse {base_branch}`), which the daemon verifies, so report it truthfully.
-   - Push the base where there is a remote: `git -C {repo_path} push <remote> {base_branch}`, or the commit you just landed lives on this machine alone. That ends the task.
-
-Once published, Ariadne wakes you in one of three situations, saying which:
-
-- **The request has comments.** Read them all — `gh pr view {branch} --comments` plus the inline review threads (`gh api repos/<owner>/<repo>/pulls/<number>/comments`), or `glab mr view {branch} --comments` plus the discussion threads (`glab api projects/:fullpath/merge_requests/<iid>/discussions`) — and relay every one to the engineer with `return_to_engineer`: the summary says it was commented on, `changes` one entry per comment, quoting it and naming its author and file. Answer nothing in code yourself. That ends your turn.
-- **The revision was approved and the task is yours again.** Update the request already open — never a second one, and never by rewriting a commit a human has read: `git fetch <remote> {base_branch} && git merge --no-edit <remote>/{base_branch}` in your worktree, then a plain `git push <remote> {branch}`, never forced, never a `rebase` or a `commit --amend` over what is published. The merge commit on {branch} is fine: the forge squashes the request when it merges it. On a conflict, do not resolve it: name the files with `git diff --name-only --diff-filter=U`, then `git merge --abort` and `return_to_engineer` with them and what to reconcile. Otherwise `post_message` to "user" that the comments are addressed and it is ready to look at again, and end your turn.
-- **The request was merged.** Finish the task: `git -C {repo_path} fetch <remote>`, fast-forward the local base (`git -C {repo_path} merge --ff-only <remote>/{base_branch}`), then `mark_merged` with the sha it landed as (`git -C {repo_path} rev-parse {base_branch}`), which the daemon verifies."##;
-
-    pub const INTEGRATION_RESUME: &str = r##"Pick the integration of "{task_title}" up again: it is approved and yours to land, in {repo_path}. Your worktree is on {branch}, which has moved if the engineer revised the change.
-
-Check first whether it was already published — `gh pr list --head {branch} --state all` on GitHub, `glab mr list --source-branch {branch} --all` on GitLab.
-
-- If a pull or merge request exists, update that one and never open a second, exactly as your integration instructions say a published request is updated: `git fetch <remote> {base_branch} && git merge --no-edit <remote>/{base_branch}`, then a plain `git push <remote> {branch}`, never forced and never rewriting a commit it already shows. Then `post_message` to "user" that it is updated and ready to look at again.
-- If none does, land the task as your integration instructions say, from the forge check (`gh auth status` / `glab auth status`) onward: publish it and `record_pull_request` the URL, or, with no forge to publish to, rebase, squash by the repository's commit conventions, fast-forward the base from the primary checkout and `mark_merged` with the resulting sha.
-
-Whatever you write for the forge or for the commit that lands reads as a human contributor's work: no `Co-Authored-By`, `Generated with` or other authorship or tool trailer and no mention of Ariadne, agents, models or tooling.
-
-End your turn afterwards: Ariadne watches a published request and wakes you when it is commented on or merged. If the rebase or the merge conflicts, abort it and `return_to_engineer` with the conflicting files and what to reconcile."##;
-}
-
-fn release_0018_prompt(kind: PromptKind) -> &'static str {
-    match kind {
-        PromptKind::IntegrationInstructions => release_0018::INTEGRATION_INSTRUCTIONS,
-        PromptKind::IntegrationResume => release_0018::INTEGRATION_RESUME,
-        other => panic!("{} is no integrator briefing", other.as_str()),
-    }
-}
-
-/// An install whose integrator holds the prompts migration 0018 left it with:
-/// migration 0019 moves it onto the texts that no longer relay a comment, byte
-/// for byte, and leaves an integrator whose user rewrote them exactly as it is.
-#[tokio::test]
-async fn a_pre_0019_database_stops_briefing_the_integrator_to_relay_comments() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("integrator.db");
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(&path)
-        .create_if_missing(true)
-        .foreign_keys(true);
-    let pool = sqlx::SqlitePool::connect_with(options).await.unwrap();
-    let mut migrator = sqlx::migrate::Migrator::new(std::path::Path::new("./migrations"))
-        .await
-        .unwrap();
-    migrator.migrations = migrator
-        .migrations
-        .iter()
-        .filter(|m| m.version < 19)
-        .cloned()
-        .collect::<Vec<_>>()
-        .into();
-    migrator.run(&pool).await.unwrap();
-
-    // The seeded integrator, and beside it one whose user appended a rule of
-    // their own to every text: near the 0018 default, but not it.
-    const EDIT: &str = "And ask before you push on a Friday.";
-    let seed = async |id: &str, name: &str, edit: Option<&str>| {
-        let seeded = |text: &str| match edit {
-            Some(edit) => format!("{text}\n{edit}"),
-            None => text.to_string(),
-        };
-        sqlx::query(
-            "INSERT INTO profiles (id, name, role, system_prompt, created_at, updated_at)
-             VALUES (?, ?, 'integrator', ?, 't', 't')",
-        )
-        .bind(id)
-        .bind(name)
-        .bind(seeded(release_0018::INTEGRATOR_SYSTEM_PROMPT))
-        .execute(&pool)
-        .await
-        .unwrap();
-        for kind in kinds_before_0025(Role::Integrator) {
-            sqlx::query(
-                "INSERT INTO profile_prompts (profile_id, kind, content, updated_at)
-                 VALUES (?, ?, ?, 't')",
-            )
-            .bind(id)
-            .bind(kind.as_str())
-            .bind(seeded(release_0018_prompt(kind)))
-            .execute(&pool)
-            .await
-            .unwrap();
-        }
-    };
-    seed("seededintegrator", "Integrator", None).await;
-    seed("mineintegrator", "My Integrator", Some(EDIT)).await;
-    pool.close().await;
-
-    // Opening the store runs the migration under test.
-    let store = Store::open(&path).await.unwrap();
-
-    assert_eq!(
-        store
-            .get_profile("seededintegrator")
-            .await
-            .unwrap()
-            .system_prompt,
-        default_system_prompt(Role::Integrator),
-        "the integrator playbook"
-    );
-    for kind in PromptKind::for_role(Role::Integrator) {
-        assert_eq!(
-            store
-                .get_profile_prompt("seededintegrator", *kind)
-                .await
-                .unwrap()
-                .content,
-            default_prompt(Role::Integrator, *kind).unwrap(),
-            "the {} briefing",
-            kind.as_str()
-        );
-    }
-
-    // The rewritten integrator is left as its user wrote it.
-    assert_eq!(
-        store
-            .get_profile("mineintegrator")
-            .await
-            .unwrap()
-            .system_prompt,
-        format!("{}\n{EDIT}", release_0018::INTEGRATOR_SYSTEM_PROMPT),
-        "the playbook its user rewrote"
-    );
-    for kind in kinds_before_0025(Role::Integrator) {
-        assert_eq!(
-            store
-                .get_profile_prompt("mineintegrator", kind)
-                .await
-                .unwrap()
-                .content,
-            format!("{}\n{EDIT}", release_0018_prompt(kind)),
-            "the {} briefing its user rewrote",
-            kind.as_str()
-        );
-    }
-}
-
-/// The two texts migration 0020 rewrites, as the releases before it left
-/// them: the engineer's playbook, untouched since migration 0017, and the
-/// integration instructions as migration 0019 wrote them. What an install on
-/// the previous release holds on profiles nobody edited.
-mod release_0019 {
-    pub const ENGINEER_SYSTEM_PROMPT: &str = r##"You own one Ariadne task, from its first commit to the approval that hands it to an integrator.
-
-Reach Ariadne only through its `ariadne` MCP tools: every backticked operation is one, never a shell command or a message. `post_message` talks, `list_messages` reads your task's conversation; a `to` (the planner or a reviewer of yours, by profile name or the id `get_task` gives, or "user" for the human) wakes that recipient; without one the message waits in the thread for whoever reads it next. Work autonomously; wait for a human only when a message asks. One may attach to this terminal and type follow-ups at any time.
-
-Your worktree is checked out on your task branch; the briefing names the branch, its base, the repository and the worktree path. Never switch branches, never touch another worktree or the primary checkout, never commit generated or unrelated files.
-
-1. Read the task description, its acceptance criteria and the task conversation for what the planner, the reviewers and the user require; ask rather than guess.
-2. Start from the repository's conventions — `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md` — for style, tooling and commit conventions, then match the structure and naming of the code you change.
-3. Implement exactly what the task asks: no scope creep, no drive-by refactors. Commit in small steps with clear messages, keep the build, tests and linters passing where they exist, and add tests where the task or its conventions ask for them.
-4. Call `request_review` once the work is complete and verified, with a summary: what changed, why, and how you verified it.
-5. Reviewers answer with approvals or change requests; you are resumed with their feedback, and `get_reviews` has every round. Apply it on the same branch and `request_review` again. Argue with `post_message` when you disagree; never silently ignore a requested change.
-6. After the approvals an integrator takes over: it rebases your branch, squashes it and lands it on the base branch — you never merge it yourself. A conflict it will not resolve comes back as another round of requested changes naming the conflicting files: reconcile them and `request_review` again.
-"##;
-
-    pub const INTEGRATION_INSTRUCTIONS: &str = r##"# Integrate task: {task_title}
-
-{task_description}
-
-## Context
-- Goal: {goal_title}
-- Worktree (your cwd): {worktree_path}
-- Branch: {branch}
-- Base branch: {base_branch} (repo {repo_path})
-
-The reviewers approved it. Read the task and its conversation, and `get_diff` for the change, so the commit or request you write says what it was for. The repository says how it lands on {base_branch}.
-
-1. Ask it with `git -C {repo_path} remote -v` — the remote it names is `<remote>` everywhere below, and it may name none — then take the one path it answers with:
-   - a github.com remote (`git@github.com:owner/repo.git`, `https://github.com/owner/repo.git`) and `gh auth status` reporting an authenticated github.com account — publish a **pull request** (step 3);
-   - a GitLab remote — gitlab.com (`git@gitlab.com:group/project.git`, `https://gitlab.com/group/project.git`) or the self-hosted GitLab it lives on — and `glab auth status` reporting an authenticated account for that host — publish a **merge request** (step 3);
-   - neither, or a forge whose CLI is missing or unauthenticated — land the task locally instead (step 4), and `post_message` to the task thread which check failed.
-2. Rebase onto the latest base either way, in your worktree and before anything is published: with a remote, `git fetch <remote> {base_branch}` and then `git rebase <remote>/{base_branch}`; with none, `git rebase {base_branch}`. On a conflict, do not resolve it: name the files with `git diff --name-only --diff-filter=U`, then `git rebase --abort` and `return_to_engineer` with a summary, those files and what to reconcile. That ends your turn; you are woken again once the revision is approved. This is the only rebase there is: once a request is published its commits stay as they are and the base is merged in instead.
-3. Publish it as a pull request (GitHub) or a merge request (GitLab) against {base_branch}, and let a human merge it there:
-   - Read the repository's conventions first: its request template (`.github/PULL_REQUEST_TEMPLATE.md` or the directory of them; on GitLab `.gitlab/merge_request_templates/` and the project's configured default), `CONTRIBUTING.md`, `AGENTS.md`, its own commit subjects. Title it by those commit conventions (Conventional Commits where the repository writes them), fill in the template where there is one, and say what changed and why. What you write reads as a human contributor's work: no `Co-Authored-By`, `Generated with` or other authorship or tool trailer and no mention of Ariadne, agents, models or tooling.
-   - Push: `git push -u <remote> {branch}`.
-   - Open it: on GitHub `gh pr create --base {base_branch} --head {branch} --title "<subject>" --body "<body>"`, on GitLab `glab mr create --source-branch {branch} --target-branch {base_branch} --title "<subject>" --description "<description>" --yes`, with `--template <name>` where the project has a template that fits.
-   - `record_pull_request` with the URL the command printed, `post_message` it to the task thread, then end your turn: no polling, no waiting, no merging or approving — Ariadne watches it and wakes you when it moves.
-4. Or land it locally, keeping {base_branch} linear — one commit per task, no merge commits:
-   - Bring the local base up to the remote's first, where there is one, so the squash sits on what you rebased onto: `git -C {repo_path} fetch <remote> {base_branch}`, then `git -C {repo_path} merge --ff-only <remote>/{base_branch}` where the primary checkout is on {base_branch}, or `git -C {repo_path} fetch <remote> {base_branch}:{base_branch}` in one step where it is on another branch.
-   - Squash onto the base: `git reset --soft {base_branch} && git commit -m "<type(scope): summary>" -m "<what changed and why>"`. That commit is all that lands on {base_branch}, so its message must:
-     - follow Conventional Commits: a `type(scope): summary` subject derived from the task — the title, "{task_title}", is not necessarily one — over a body saying what changed and why;
-     - read as a human contributor's work: no `Co-Authored-By`, `Generated with` or other authorship or tool trailer and no mention of Ariadne, agents, models or tooling;
-     - leave signing to the repository's git configuration: sign if git is configured to, neither passing `--no-gpg-sign` nor forcing `-S`.
-   - Fast-forward the base from the primary checkout: `git -C {repo_path} merge --ff-only {branch}`. If it refuses because the base moved, return to step 2.
-   - `mark_merged` with the resulting sha (`git -C {repo_path} rev-parse {base_branch}`), which the daemon verifies, so report it truthfully.
-   - Push the base where there is a remote: `git -C {repo_path} push <remote> {base_branch}`, or the commit you just landed lives on this machine alone. That ends the task.
-
-Once published, Ariadne wakes you in one of two situations, saying which. Comments are neither of them: what humans write on the request goes straight to the engineer, and the revision comes back to you approved.
-
-- **The revision was approved and the task is yours again.** Update the request already open — never a second one, and never by rewriting a commit a human has read: `git fetch <remote> {base_branch} && git merge --no-edit <remote>/{base_branch}` in your worktree, then a plain `git push <remote> {branch}`, never forced, never a `rebase` or a `commit --amend` over what is published. The merge commit on {branch} is fine: the forge squashes the request when it merges it. On a conflict, do not resolve it: name the files with `git diff --name-only --diff-filter=U`, then `git merge --abort` and `return_to_engineer` with them and what to reconcile. Otherwise `post_message` to "user" that the comments are addressed and it is ready to look at again, and end your turn.
-- **The request was merged.** Finish the task: `git -C {repo_path} fetch <remote>`, fast-forward the local base (`git -C {repo_path} merge --ff-only <remote>/{base_branch}`), then `mark_merged` with the sha it landed as (`git -C {repo_path} rev-parse {base_branch}`), which the daemon verifies."##;
-}
-
-/// Every prompt of `role` as the release before 0020 seeded it: the two texts
-/// it rewrites, and this release's own default for all the rest, which the
-/// migration must leave exactly where they are.
-fn release_0019_system_prompt(role: Role) -> String {
-    match role {
-        Role::Engineer => release_0019::ENGINEER_SYSTEM_PROMPT.to_string(),
-        other => default_system_prompt(other).to_string(),
-    }
-}
-
-fn release_0019_prompt(kind: PromptKind) -> String {
-    match kind {
-        PromptKind::IntegrationInstructions => release_0019::INTEGRATION_INSTRUCTIONS.to_string(),
-        other => default_prompt_text(other).to_string(),
-    }
-}
-
-/// An install holding what migration 0019 left behind: migration 0020 moves
-/// the engineer's playbook and the integration instructions onto the texts a
-/// published request's round is run by, byte for byte, brings nothing else
-/// forward with them, and leaves a profile whose user rewrote them exactly as
-/// it is.
-#[tokio::test]
-async fn a_pre_0020_database_moves_onto_the_published_request_texts() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("published.db");
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(&path)
-        .create_if_missing(true)
-        .foreign_keys(true);
-    let pool = sqlx::SqlitePool::connect_with(options).await.unwrap();
-    let mut migrator = sqlx::migrate::Migrator::new(std::path::Path::new("./migrations"))
-        .await
-        .unwrap();
-    migrator.migrations = migrator
-        .migrations
-        .iter()
-        .filter(|m| m.version < 20)
-        .cloned()
-        .collect::<Vec<_>>()
-        .into();
-    migrator.run(&pool).await.unwrap();
-
-    // The two roles the migration touches, seeded as the previous release
-    // left them — and beside each, one whose user appended a rule of their
-    // own to every text: near the 0019 default, but not it.
-    const EDIT: &str = "And ask before you push on a Friday.";
-    let seed = async |id: &str, name: &str, role: Role, edit: Option<&str>| {
-        let seeded = |text: String| match edit {
-            Some(edit) => format!("{text}\n{edit}"),
-            None => text,
-        };
+    for (id, role) in SEEDED {
         sqlx::query(
             "INSERT INTO profiles (id, name, role, system_prompt, created_at, updated_at)
              VALUES (?, ?, ?, ?, 't', 't')",
         )
         .bind(id)
-        .bind(name)
+        .bind(id)
         .bind(role.as_str())
-        .bind(seeded(release_0019_system_prompt(role)))
+        .bind(replaced_text(
+            "0017_rewritten_prompts.sql",
+            &format!("role = '{}'", role.as_str()),
+            "system_prompt",
+        ))
         .execute(&pool)
         .await
         .unwrap();
-        for kind in kinds_before_0025(role) {
+        for kind in kinds_of(role) {
             sqlx::query(
                 "INSERT INTO profile_prompts (profile_id, kind, content, updated_at)
                  VALUES (?, ?, ?, 't')",
             )
             .bind(id)
             .bind(kind.as_str())
-            .bind(seeded(release_0019_prompt(kind)))
+            .bind(replaced_text(
+                "0017_rewritten_prompts.sql",
+                &format!("kind = '{}'", kind.as_str()),
+                "content",
+            ))
             .execute(&pool)
             .await
             .unwrap();
         }
-    };
-    const SEEDED: [(&str, &str, Role); 2] = [
-        ("seededengineer", "Engineer", Role::Engineer),
-        ("seededintegrator", "Integrator", Role::Integrator),
-    ];
-    for (id, name, role) in SEEDED {
-        seed(id, name, role, None).await;
     }
-    seed("mineengineer", "My Engineer", Role::Engineer, Some(EDIT)).await;
-    seed(
-        "mineintegrator",
-        "My Integrator",
-        Role::Integrator,
-        Some(EDIT),
-    )
-    .await;
     pool.close().await;
 
-    // Opening the store runs the migration under test.
+    // Opening the store runs every migration from 0017 on.
     let store = Store::open(&path).await.unwrap();
 
-    for (id, _, role) in SEEDED {
+    for (id, role) in SEEDED {
         assert_eq!(
             store.get_profile(id).await.unwrap().system_prompt,
             default_system_prompt(role),
-            "the {} playbook",
+            "the {} playbook did not reach today's default",
             role.as_str()
         );
-        for kind in PromptKind::for_role(role) {
-            assert_eq!(
-                store.get_profile_prompt(id, *kind).await.unwrap().content,
-                default_prompt(role, *kind).unwrap(),
-                "the {} briefing",
-                kind.as_str()
-            );
-        }
-    }
-
-    // The rewritten profiles are left as their user wrote them.
-    for (id, role) in [
-        ("mineengineer", Role::Engineer),
-        ("mineintegrator", Role::Integrator),
-    ] {
-        assert_eq!(
-            store.get_profile(id).await.unwrap().system_prompt,
-            format!("{}\n{EDIT}", release_0019_system_prompt(role)),
-            "the {} playbook its user rewrote",
-            role.as_str()
-        );
-        for kind in kinds_before_0025(role) {
-            assert_eq!(
-                store.get_profile_prompt(id, kind).await.unwrap().content,
-                format!("{}\n{EDIT}", release_0019_prompt(kind)),
-                "the {} briefing its user rewrote",
-                kind.as_str()
-            );
-        }
-    }
-}
-
-/// The four system prompts as the releases before 0021 left them: what an
-/// install on the previous release holds on profiles nobody edited, each
-/// still opening on a paragraph of its own about tools, autonomy and how a
-/// message addresses someone.
-mod release_0020 {
-    pub const PLANNER_SYSTEM_PROMPT: &str = r##"You are the planning lead of an Ariadne goal: turn it into a small set of well-scoped tasks, each with an engineer, one or more reviewers and an integrator. Never write code.
-
-Reach Ariadne only through its `ariadne` MCP tools: every backticked operation is one, never a shell command or a message. `post_message` talks, `list_messages` reads a thread when you need context or are asked to reconsider; a `to` (a profile id or name from `list_profiles`, or "user" for the human) wakes that recipient. The goal thread reaches you and the user, a task's thread its engineer, its reviewers, its integrator and you. Work autonomously; wait for a human only when a message asks. One may attach to this terminal and type follow-ups at any time.
-
-1. Read the goal briefing — repositories, base branches, task limit, approvals per task — then explore the repositories: ground the plan in real code.
-2. Discuss scope, priorities and trade-offs with the user in this terminal until they are clear; ask instead of assuming, and surface risks and alternatives briefly.
-3. Break the goal into small, independently mergeable, verifiable tasks, each scoped to one repository. Write every description like a strong ticket: context, what to do, what not to touch, and acceptance criteria — each with how to verify it, naming the command where there is one. Prefer few meaningful tasks to many trivial ones, inside the task limit.
-4. Read the profiles `list_profiles` gives — each name and system prompt says what it is for — then `create_task` with one engineer, at least one reviewer and one integrator fitting the task and its repository; the integrator as deliberately as the engineer, since it lands the change the way that repository wants. Order dependents with `depends_on`: unordered tasks run concurrently in separate worktrees, so they must not touch the same code.
-5. Correct a task with `update_task` or `set_dependencies` until it starts: title, description, reviewers, integrator, dependencies.
-6. Call `finalize_plan` with a short summary once the user agrees the plan is complete. Execution starts at once, so never finalize with a question open.
-"##;
-
-    pub const ENGINEER_SYSTEM_PROMPT: &str = r##"You own one Ariadne task, from its first commit to the approval that hands it to an integrator.
-
-Reach Ariadne only through its `ariadne` MCP tools: every backticked operation is one, never a shell command or a message. `post_message` talks, `list_messages` reads your task's conversation; a `to` (the planner or a reviewer of yours, by profile name or the id `get_task` gives, or "user" for the human) wakes that recipient; without one the message waits in the thread for whoever reads it next. Work autonomously; wait for a human only when a message asks. One may attach to this terminal and type follow-ups at any time.
-
-Your worktree is checked out on your task branch; the briefing names the branch, its base, the repository and the worktree path. Never switch branches, never touch another worktree or the primary checkout, never commit generated or unrelated files.
-
-1. Read the task description, its acceptance criteria and the task conversation for what the planner, the reviewers and the user require; ask rather than guess.
-2. Start from the repository's conventions — `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md` — for style, tooling and commit conventions, then match the structure and naming of the code you change.
-3. Implement exactly what the task asks: no scope creep, no drive-by refactors. Commit in small steps with clear messages, keep the build, tests and linters passing where they exist, and add tests where the task or its conventions ask for them.
-4. Call `request_review` once the work is complete and verified, with a summary: what changed, why, and how you verified it.
-5. Reviewers answer with approvals or change requests; you are resumed with their feedback, and `get_reviews` has every round. Apply it on the same branch and `request_review` again. Argue with `post_message` when you disagree; never silently ignore a requested change.
-6. After the approvals an integrator takes over: it rebases your branch, squashes it and lands it on the base branch — you never merge it yourself. A conflict it will not resolve comes back as another round of requested changes naming the conflicting files: reconcile them and `request_review` again. Once the change is published as a pull or merge request, what the people reviewing it write on it comes back to you the same way, as change requests, and the summary of your next `request_review` is your reply to every one of them: the integrator pushes your commits to that same request and passes those replies on to the user. A published branch only ever grows — add commits on top of it, and merge the base into it when you are asked to reconcile — never amend, rebase or force-push commits people are already reading.
-"##;
-
-    pub const REVIEWER_SYSTEM_PROMPT: &str = r##"You review one round of one Ariadne task. Approvals gate merges: approve only what you would merge into the base branch yourself.
-
-Reach Ariadne only through its `ariadne` MCP tools: every backticked operation is one, never a shell command or a message. `post_message` talks, `list_messages` reads a conversation when you need context or are asked to reconsider; a `to` (the task's engineer or the planner, by profile id or name, or "user" for the human) wakes that recipient; without one the message waits in the thread for whoever reads it next. Work autonomously; wait for a human only when a message asks. One may attach to this terminal and type follow-ups at any time.
-
-You are in a detached git worktree pinned to the branch under review. Its tracked source is read-only: do not edit, commit, amend or create branches. Verifying claims empirically is expected: install the project's dependencies and run the build, tests and linters right here (`npm ci`, `cargo build`) — writing generated artifacts like `node_modules/` or `target/` is fine, no part of the review. Never point an install or a build at another worktree or the primary checkout.
-
-1. Read the task description, its acceptance criteria and the engineer's summary, then the task conversation for earlier rounds and decisions.
-2. Fetch the change with `get_diff` and read the code around it: a diff alone rarely settles a judgement.
-3. Take the repository's conventions — `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md` — as the standard for style, tooling and commit conventions.
-4. Judge it on doing exactly what the task asks and no more; correctness, edge cases and error handling; fit with the existing code; tests or other verification; clarity and maintainability.
-5. Ask with `post_message` before judging when something blocks you: an unclear requirement, missing context.
-6. Deliver exactly one verdict for this round, through a verdict tool: `approve` when the change is sound, with a short note on what you checked; otherwise `request_changes`, with a concrete list naming files and functions, must-fix separated from optional. The verdict is that tool call — a `post_message` saying "approved" counts for nothing. Where verification was impossible (no toolchain, no network), say in it what you could not run rather than skipping it silently.
-"##;
-
-    pub const INTEGRATOR_SYSTEM_PROMPT: &str = r##"You are the integrator of an Ariadne task: you land it the way its repository is landed in — as a pull request where it has a github.com remote and an authenticated `gh`, as a merge request where it has a GitLab remote and an authenticated `glab`, and with git alone where it has neither. Once its reviewers approve it, it is yours to land, or to publish and finish once a human merges it. No other agent touches the branch while you hold it, and your briefing spells the procedure and the commands out: follow it.
-
-Reach Ariadne only through its `ariadne` MCP tools: every backticked operation is one, never a shell command or a message. `post_message` talks to the engineer, the reviewers, the planner and the user, `list_messages` reads the task's conversation, `get_task` and `get_goal` the task and the goal behind it; a `to` (a profile name as your briefing and `get_task` spell them, or "user" for the human) wakes that recipient; without one the message waits in the thread for whoever reads it next. Work autonomously; wait for a human only when a message asks. One may attach to this terminal and type follow-ups at any time.
-
-Your worktree is checked out on the task branch; the briefing names the branch, its base, the repository and the worktree path. The primary checkout is yours to fast-forward once the change has been merged, and for nothing else.
-
-Whichever way you land it:
-
-- Land the engineer's change as it stands and write no code of your own; a change that needs work goes back to the engineer.
-- Rebase only before publishing: a published branch is merged into and pushed, never rewritten — no forced push, no amend, no rebase over a commit a human is already reviewing.
-- A rebase or a merge that conflicts is not yours to resolve: it goes back to the engineer with `return_to_engineer`.
-- Everything you push to the forge — the commit that lands, a request's title and its body — reads as a human contributor's work: no `Co-Authored-By`, `Generated with` or other authorship or tool trailer and no mention of Ariadne, agents, models or tooling.
-- Never merge a published pull or merge request, never approve one, never sit waiting: end your turn and let Ariadne wake you when it moves.
-- Talk to the humans reviewing it through `post_message`, never by commenting on the request — Ariadne reads what is written on it as the reviewers' feedback and sends it to the engineer, your own comment included.
-- Report truthfully what you landed or published, and which check failed when one did."##;
-
-    /// The three briefings migration 0025 rewrites, as the releases before it
-    /// seeded them: `changes_requested` and `reviewer_resume` are what
-    /// migration 0017 wrote, `integration_resume` what 0019 did. Nothing
-    /// since has touched any of the three — 0021 rewrote the system prompts
-    /// and 0022 the integration instructions — so this is what an install
-    /// upgrading to 0025 holds.
-    pub const CHANGES_REQUESTED: &str = r##"Reviewers requested changes on your task.
-
-{feedback}
-
-Apply them on the same branch, commit, and call `request_review` again, saying how each point was addressed."##;
-
-    pub const REVIEWER_RESUME: &str = r##"The engineer revised the change: this is review round {review_round} of "{task_title}".
-
-Your worktree has moved to the new tip of {branch}: last round's diff is stale. Fetch it again with `get_diff`, review the change as it stands — checking whether your feedback was addressed — and submit exactly one verdict for round {review_round}: `approve` or `request_changes`.
-
-## Engineer's summary of this revision
-{summary}"##;
-
-    pub const INTEGRATION_RESUME: &str = r##"Pick the integration of "{task_title}" up again: it is approved and yours to land, in {repo_path}. Your worktree is on {branch}, which has moved if the engineer revised the change.
-
-Check first whether it was already published — `gh pr list --head {branch} --state all` on GitHub, `glab mr list --source-branch {branch} --all` on GitLab.
-
-- If a pull or merge request exists, update that one and never open a second, exactly as your integration instructions say a published request is updated: `git fetch <remote> {base_branch} && git merge --no-edit <remote>/{base_branch}`, then a plain `git push <remote> {branch}`, never forced and never rewriting a commit it already shows. Then `post_message` to "user" that it is updated and ready to look at again.
-- If none does, land the task as your integration instructions say, from the forge check (`gh auth status` / `glab auth status`) onward: publish it and `record_pull_request` the URL, or, with no forge to publish to, rebase, squash by the repository's commit conventions, fast-forward the base from the primary checkout and `mark_merged` with the resulting sha.
-
-Whatever you write for the forge or for the commit that lands reads as a human contributor's work: no `Co-Authored-By`, `Generated with` or other authorship or tool trailer and no mention of Ariadne, agents, models or tooling.
-
-End your turn afterwards: Ariadne watches a published request and wakes you when a human merges it; what they write on it in the meantime goes to the engineer, not to you. If the rebase or the merge conflicts, abort it and `return_to_engineer` with the conflicting files and what to reconcile."##;
-}
-
-/// Every prompt of `role` as the release before 0025 seeded it: the three
-/// texts it rewrites, and this release's own default for the rest, which the
-/// migration must leave exactly where they are.
-fn release_0024_prompt(kind: PromptKind) -> &'static str {
-    match kind {
-        PromptKind::ChangesRequested => release_0020::CHANGES_REQUESTED,
-        PromptKind::ReviewerResume => release_0020::REVIEWER_RESUME,
-        PromptKind::IntegrationResume => release_0020::INTEGRATION_RESUME,
-        other => default_prompt_text(other),
-    }
-}
-
-/// The system prompt of `role` as the release before 0021 seeded it.
-fn release_0020_system_prompt(role: Role) -> String {
-    match role {
-        Role::Planner => release_0020::PLANNER_SYSTEM_PROMPT,
-        Role::Engineer => release_0020::ENGINEER_SYSTEM_PROMPT,
-        Role::Reviewer => release_0020::REVIEWER_SYSTEM_PROMPT,
-        Role::Integrator => release_0020::INTEGRATOR_SYSTEM_PROMPT,
-    }
-    .to_string()
-}
-
-/// An install holding what migration 0020 left behind: migration 0021 moves
-/// every system prompt nobody edited onto the one that carries the shared
-/// block, leaves the briefings alone — they are none of its business — and
-/// leaves a profile whose user rewrote its playbook exactly as it is.
-#[tokio::test]
-async fn a_pre_0021_database_moves_onto_the_shared_rules() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("shared.db");
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(&path)
-        .create_if_missing(true)
-        .foreign_keys(true);
-    let pool = sqlx::SqlitePool::connect_with(options).await.unwrap();
-    let mut migrator = sqlx::migrate::Migrator::new(std::path::Path::new("./migrations"))
-        .await
-        .unwrap();
-    migrator.migrations = migrator
-        .migrations
-        .iter()
-        .filter(|m| m.version < 21)
-        .cloned()
-        .collect::<Vec<_>>()
-        .into();
-    migrator.run(&pool).await.unwrap();
-
-    // One profile per role seeded as the previous release left it, and beside
-    // each one whose user appended a rule of their own: near the 0020
-    // default, but not it.
-    const EDIT: &str = "And never write on a Friday.";
-    let seed = async |id: &str, name: &str, role: Role, edit: Option<&str>| {
-        let system_prompt = match edit {
-            Some(edit) => format!("{}\n{edit}", release_0020_system_prompt(role)),
-            None => release_0020_system_prompt(role),
-        };
-        sqlx::query(
-            "INSERT INTO profiles (id, name, role, system_prompt, created_at, updated_at)
-             VALUES (?, ?, ?, ?, 't', 't')",
-        )
-        .bind(id)
-        .bind(name)
-        .bind(role.as_str())
-        .bind(system_prompt)
-        .execute(&pool)
-        .await
-        .unwrap();
-        for kind in kinds_before_0025(role) {
-            sqlx::query(
-                "INSERT INTO profile_prompts (profile_id, kind, content, updated_at)
-                 VALUES (?, ?, ?, 't')",
-            )
-            .bind(id)
-            .bind(kind.as_str())
-            .bind(default_prompt(role, kind).unwrap())
-            .execute(&pool)
-            .await
-            .unwrap();
-        }
-    };
-    for role in Role::ALL {
-        seed(
-            &format!("seeded{}", role.as_str()),
-            role.as_str(),
-            role,
-            None,
-        )
-        .await;
-        seed(
-            &format!("mine{}", role.as_str()),
-            &format!("My {}", role.as_str()),
-            role,
-            Some(EDIT),
-        )
-        .await;
-    }
-    pool.close().await;
-
-    // Opening the store runs the migration under test.
-    let store = Store::open(&path).await.unwrap();
-
-    for role in Role::ALL {
-        let seeded = format!("seeded{}", role.as_str());
-        assert_eq!(
-            store.get_profile(&seeded).await.unwrap().system_prompt,
-            default_system_prompt(role),
-            "the {} playbook",
-            role.as_str()
-        );
-        for kind in PromptKind::for_role(role) {
-            assert_eq!(
-                store
-                    .get_profile_prompt(&seeded, *kind)
-                    .await
-                    .unwrap()
-                    .content,
-                default_prompt(role, *kind).unwrap(),
-                "the {} briefing",
-                kind.as_str()
-            );
-        }
-
-        let mine = format!("mine{}", role.as_str());
-        assert_eq!(
-            store.get_profile(&mine).await.unwrap().system_prompt,
-            format!("{}\n{EDIT}", release_0020_system_prompt(role)),
-            "the {} playbook its user rewrote",
-            role.as_str()
-        );
-    }
-}
-
-/// An install holding what migration 0024 left behind: 0025 moves the three
-/// rewritten briefings onto their new text byte for byte, writes the four
-/// kinds the daemon used to carry as string literals into every profile that
-/// owns one, and leaves a profile whose user rewrote a briefing exactly as it
-/// is — with the new kinds beside it, at their defaults, since they are texts
-/// that profile never had a say in.
-#[tokio::test]
-async fn a_pre_0025_database_gains_the_texts_the_daemon_used_to_carry() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("one-prompt-system.db");
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(&path)
-        .create_if_missing(true)
-        .foreign_keys(true);
-    let pool = sqlx::SqlitePool::connect_with(options).await.unwrap();
-    let mut migrator = sqlx::migrate::Migrator::new(std::path::Path::new("./migrations"))
-        .await
-        .unwrap();
-    migrator.migrations = migrator
-        .migrations
-        .iter()
-        .filter(|m| m.version < 25)
-        .cloned()
-        .collect::<Vec<_>>()
-        .into();
-    migrator.run(&pool).await.unwrap();
-
-    const EDIT: &str = "And never touch the lockfile.";
-    let seed = async |id: &str, name: &str, role: Role, edit: Option<&str>| {
-        let seeded = |text: &str| match edit {
-            Some(edit) => format!("{text}\n{edit}"),
-            None => text.to_string(),
-        };
-        sqlx::query(
-            "INSERT INTO profiles (id, name, role, system_prompt, created_at, updated_at)
-             VALUES (?, ?, ?, ?, 't', 't')",
-        )
-        .bind(id)
-        .bind(name)
-        .bind(role.as_str())
-        .bind(seeded(default_system_prompt(role)))
-        .execute(&pool)
-        .await
-        .unwrap();
-        for kind in kinds_before_0025(role) {
-            sqlx::query(
-                "INSERT INTO profile_prompts (profile_id, kind, content, updated_at)
-                 VALUES (?, ?, ?, 't')",
-            )
-            .bind(id)
-            .bind(kind.as_str())
-            .bind(seeded(release_0024_prompt(kind)))
-            .execute(&pool)
-            .await
-            .unwrap();
-        }
-    };
-    const SEEDED: [(&str, &str, Role); 4] = [
-        ("seededplanner", "Planner", Role::Planner),
-        ("seededengineer", "Engineer", Role::Engineer),
-        ("seededreviewer", "Reviewer", Role::Reviewer),
-        ("seededintegrator", "Integrator", Role::Integrator),
-    ];
-    for (id, name, role) in SEEDED {
-        seed(id, name, role, None).await;
-    }
-    seed("mineengineer", "My Engineer", Role::Engineer, Some(EDIT)).await;
-    seed(
-        "mineintegrator",
-        "My Integrator",
-        Role::Integrator,
-        Some(EDIT),
-    )
-    .await;
-    pool.close().await;
-
-    // Opening the store runs the migration under test.
-    let store = Store::open(&path).await.unwrap();
-
-    // An untouched profile ends up on today's defaults, every kind of them —
-    // the three rewritten and the four that had no row at all.
-    for (id, _, role) in SEEDED {
         for kind in PromptKind::for_role(role) {
             assert_eq!(
                 store.get_profile_prompt(id, *kind).await.unwrap().content,
@@ -5042,45 +2757,336 @@ async fn a_pre_0025_database_gains_the_texts_the_daemon_used_to_carry() {
             );
         }
     }
+}
 
-    // A profile its user wrote keeps every word of it...
-    for (id, role) in [
-        ("mineengineer", Role::Engineer),
-        ("mineintegrator", Role::Integrator),
+/// An install of the release before this one, upgraded onto it: the role this
+/// release removes goes, and nothing that is not the role's goes with it.
+///
+/// Seeded in stages, so that what the removal has to cope with is what the
+/// earlier migrations actually put there rather than what this file says they
+/// did: the profiles are inserted before the migration that first seeds the
+/// fourth built-in, and the rows that name its role are written afterwards,
+/// under the name read off that seeded row. A fixture that spells the name out
+/// is a fixture that can disagree with the migration that wrote it.
+///
+/// Every shape in one database — the built-in and one of the user's own, both
+/// with the briefings the role owned; a task mid-landing with the bookkeeping
+/// the daemon's polling kept on it; a session, the message it wrote, the one
+/// addressed to it and the verdict it left; and a round relayed from a forge
+/// under nobody's profile.
+#[tokio::test]
+async fn a_pre_0026_database_loses_the_landing_role_and_keeps_everything_else() {
+    const BUILTIN: &str = "00000000000000000000000004";
+    let dir = tempfile::tempdir().unwrap();
+    let (path, pool) = legacy_database(&dir, "upgrade.db").await;
+
+    // Stage one: an install as it stood before the fourth role existed. Its
+    // playbooks are the ones the rewrite chain expects to find, apart from the
+    // reviewer's, which its user wrote and which must come out untouched.
+    migrated_below(&pool, 11).await;
+    for (id, name, role, prompt) in [
+        (
+            "oldplanner",
+            "Old planner",
+            Role::Planner,
+            replaced_text(
+                "0017_rewritten_prompts.sql",
+                "role = 'planner'",
+                "system_prompt",
+            ),
+        ),
+        (
+            "oldengineer",
+            "Old engineer",
+            Role::Engineer,
+            replaced_text(
+                "0017_rewritten_prompts.sql",
+                "role = 'engineer'",
+                "system_prompt",
+            ),
+        ),
+        (
+            "oldreviewer",
+            "Old reviewer",
+            Role::Reviewer,
+            "Mine, edited.".to_string(),
+        ),
     ] {
-        for kind in kinds_before_0025(role) {
-            assert_eq!(
-                store.get_profile_prompt(id, kind).await.unwrap().content,
-                format!("{}\n{EDIT}", release_0024_prompt(kind)),
-                "the {} briefing its user rewrote",
-                kind.as_str()
-            );
-        }
-        // ...and is seeded with the kinds it never had, at their defaults.
-        for kind in kinds_of_0025().into_iter().filter(|k| k.owned_by(role)) {
-            assert_eq!(
-                store.get_profile_prompt(id, kind).await.unwrap().content,
-                default_prompt(role, kind).unwrap(),
-                "the {} briefing it was seeded with",
-                kind.as_str()
-            );
+        sqlx::query(
+            "INSERT INTO profiles (id, name, role, system_prompt, created_at, updated_at)
+             VALUES (?, ?, ?, ?, 't', 't')",
+        )
+        .bind(id)
+        .bind(name)
+        .bind(role.as_str())
+        .bind(prompt)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO profile_prompts (profile_id, kind, content, updated_at)
+         VALUES ('oldengineer', 'engineer_briefing', 'mine, edited', 't')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO repositories (id, path, base_branch, created_at, updated_at)
+         VALUES ('oldrepo', '/tmp/pre-0026', 'main', 't', 't')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO goals (id, title, description, planner_profile_id, created_at, updated_at)
+         VALUES ('oldgoal', 'Old goal', 'desc', 'oldplanner', 't', 't')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    // One task mid-landing, under the status that release called it, and one
+    // already merged, which nothing here may move.
+    sqlx::query(
+        "INSERT INTO tasks (id, goal_id, repo_id, title, description, status,
+                            engineer_profile_id, branch, created_at, updated_at)
+         VALUES ('landing', 'oldgoal', 'oldrepo', 'Landing', 'd', 'merging',
+                 'oldengineer', 'landing-branch', 't', 't')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO tasks (id, goal_id, repo_id, title, description, status,
+                            engineer_profile_id, branch, merge_commit, created_at, updated_at)
+         VALUES ('landed', 'oldgoal', 'oldrepo', 'Landed', 'd', 'merged',
+                 'oldengineer', 'landed-branch', 'abc123', 't', 't')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Stage two: every migration up to this release's. They are what seeds the
+    // fourth built-in, gives it its briefings and makes the task name one.
+    migrated_below(&pool, 26).await;
+    let landing_role: String = sqlx::query_scalar("SELECT role FROM profiles WHERE id = ?")
+        .bind(BUILTIN)
+        .fetch_one(&pool)
+        .await
+        .expect("the migrations seeded the built-in of the role this release removes");
+    let seeded_prompts: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM profile_prompts WHERE profile_id = ?")
+            .bind(BUILTIN)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(seeded_prompts > 0, "it was given the briefings of its role");
+    // The column those releases added to `tasks` names it on every row by now,
+    // backfilled with this very profile — which is why deleting the profile is
+    // the migration's problem and not a `DELETE` away.
+
+    // Stage three: the rows only that release could have, written under the
+    // name the migrations gave the role.
+    sqlx::query(
+        "INSERT INTO profiles (id, name, role, system_prompt, created_at, updated_at)
+         VALUES ('mineown', 'Mine', ?, 'sys', 't', 't')",
+    )
+    .bind(&landing_role)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE tasks
+         SET pr_number = 12, pr_url = 'https://github.com/o/r/pull/12',
+             pr_relayed_comments = '[\"C1\",\"C2\"]', pr_approved_notified = 1
+         WHERE id = 'landing'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO agent_sessions (id, goal_id, task_id, role, profile_id, agent_kind,
+                                     tmux_session, status, created_at)
+         VALUES ('landsession', 'oldgoal', 'landing', ?, ?, 'claude_code',
+                 'ariadne-landing', 'idle', 't')",
+    )
+    .bind(&landing_role)
+    .bind(BUILTIN)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO agent_events (id, session_id, task_id, kind, payload, created_at)
+         VALUES ('landevent', 'landsession', 'landing', 'stop', '{}', 't')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO messages (id, goal_id, task_id, author_role, author_session_id, body,
+                               created_at)
+         VALUES ('landmsg', 'oldgoal', 'landing', ?, 'landsession', 'published it', 't')",
+    )
+    .bind(&landing_role)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO messages (id, goal_id, task_id, author_role, recipient_kind,
+                               recipient_profile_id, body, created_at)
+         VALUES ('tolandmsg', 'oldgoal', 'landing', 'user', 'profile', ?, 'land it please', 't')",
+    )
+    .bind(BUILTIN)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO reviews (id, task_id, round, reviewer_profile_id, verdict, created_at)
+         VALUES ('sentback', 'landing', 1, ?, 'request_changes', 't')",
+    )
+    .bind(BUILTIN)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO reviews (id, task_id, round, author_role, verdict, created_at)
+         VALUES ('relayed', 'landing', 1, 'forge', 'request_changes', 't')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO reviews (id, task_id, round, reviewer_profile_id, verdict, created_at)
+         VALUES ('voted', 'landing', 1, 'oldreviewer', 'approve', 't')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO task_transitions (id, task_id, from_status, to_status, actor, created_at)
+         VALUES ('oldtrans', 'landing', 'approved', 'integrating', ?, 't')",
+    )
+    .bind(&landing_role)
+    .execute(&pool)
+    .await
+    .unwrap();
+    pool.close().await;
+
+    // Opening the store runs the migration under test.
+    let store = Store::open(&path).await.unwrap();
+
+    // No profile of the role is left, the built-in included, and its briefings
+    // went with it.
+    for id in [BUILTIN, "mineown"] {
+        assert!(matches!(
+            store.get_profile(id).await,
+            Err(StoreError::NotFound { .. })
+        ));
+        for role in Role::ALL {
+            for kind in PromptKind::for_role(role) {
+                assert!(
+                    store.get_profile_prompt(id, *kind).await.is_err(),
+                    "the briefings of a profile nobody has are gone"
+                );
+            }
         }
     }
+    assert_eq!(
+        store.list_profiles(None).await.unwrap().len(),
+        3,
+        "the three roles that are left, and nothing else"
+    );
 
-    // And every role got the notice an addressed agent is woken with.
-    for (id, _, role) in SEEDED {
-        assert!(
-            PromptKind::MessageDelivery.owned_by(role),
-            "{} owns no message notice",
+    // The task being landed is one its engineer is landing — `merging` under
+    // the name that release used, `integrating` after that, `approved` now —
+    // and everything the polling remembered about the request is gone but its
+    // URL. The one already merged has not moved.
+    let landing = store.get_task("landing").await.unwrap();
+    assert_eq!(landing.status(), TaskStatus::Approved);
+    assert_eq!(
+        landing.pr_url.as_deref(),
+        Some("https://github.com/o/r/pull/12"),
+        "the URL stays: it is what the user is pointed at"
+    );
+    let landed = store.get_task("landed").await.unwrap();
+    assert_eq!(landed.status(), TaskStatus::Merged);
+    assert_eq!(landed.merge_commit.as_deref(), Some("abc123"));
+
+    // Its session is gone, and the rows that pointed at it are readable.
+    assert!(matches!(
+        store.get_session("landsession").await,
+        Err(StoreError::NotFound { .. })
+    ));
+    let messages = store
+        .list_task_messages("landing", None, 100)
+        .await
+        .unwrap();
+    let wrote = messages.iter().find(|m| m.id == "landmsg").expect("kept");
+    assert_eq!(wrote.author_role(), AuthorRole::System);
+    assert_eq!(wrote.body, "published it");
+    assert!(wrote.author_session_id.is_none());
+    let addressed = messages.iter().find(|m| m.id == "tolandmsg").expect("kept");
+    assert!(
+        addressed.recipient().is_none(),
+        "a message addressed to a profile nobody has is addressed to the thread"
+    );
+
+    // Only the reviewer's verdict survives: the other two had no reviewer.
+    let reviews = store.list_reviews("landing", Some(1)).await.unwrap();
+    assert_eq!(reviews.len(), 1);
+    assert_eq!(reviews[0].id, "voted");
+    assert_eq!(reviews[0].reviewer_profile_id, "oldreviewer");
+
+    // The audit keeps the move it recorded, under an actor that still exists.
+    let audit = store.list_task_transitions("landing").await.unwrap();
+    let recorded = audit.iter().find(|t| t.id == "oldtrans").expect("kept");
+    assert_eq!(recorded.to_status, "integrating");
+    assert_eq!(recorded.actor, "daemon");
+
+    // The repository is landed on directly, the playbooks this release rewrites
+    // end on today's defaults, and what its user wrote is left alone — briefing
+    // and playbook both — while gaining the briefing this release adds.
+    assert_eq!(
+        store
+            .get_repository("oldrepo")
+            .await
+            .unwrap()
+            .merge_strategy(),
+        MergeStrategy::Direct
+    );
+    for (id, role) in [
+        ("oldplanner", Role::Planner),
+        ("oldengineer", Role::Engineer),
+    ] {
+        assert_eq!(
+            store.get_profile(id).await.unwrap().system_prompt,
+            default_system_prompt(role),
+            "the {} playbook",
             role.as_str()
         );
-        assert_eq!(
-            store
-                .get_profile_prompt(id, PromptKind::MessageDelivery)
-                .await
-                .unwrap()
-                .content,
-            default_prompt_text(PromptKind::MessageDelivery)
-        );
     }
+    assert_eq!(
+        store
+            .get_profile("oldreviewer")
+            .await
+            .unwrap()
+            .system_prompt,
+        "Mine, edited."
+    );
+    assert_eq!(
+        store
+            .get_profile_prompt("oldengineer", PromptKind::EngineerBriefing)
+            .await
+            .unwrap()
+            .content,
+        "mine, edited"
+    );
+    assert_eq!(
+        store
+            .get_profile_prompt("oldengineer", PromptKind::LandingInstructions)
+            .await
+            .unwrap()
+            .content,
+        default_prompt(Role::Engineer, PromptKind::LandingInstructions).unwrap()
+    );
 }

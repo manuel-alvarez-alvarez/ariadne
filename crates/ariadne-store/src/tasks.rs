@@ -7,8 +7,7 @@ use ariadne_core::id::new_id;
 use ariadne_core::{Actor, AttentionReason, TaskStatus, check_transition};
 
 use crate::{
-    Change, NewReview, Result, Store, StoreError, Task, TaskReviewer, TaskTransition, not_found,
-    now,
+    Change, Result, Store, StoreError, Task, TaskReviewer, TaskTransition, not_found, now,
 };
 
 #[derive(Debug, Clone)]
@@ -18,8 +17,6 @@ pub struct NewTask {
     pub title: String,
     pub description: String,
     pub engineer_profile_id: String,
-    /// Profile that lands the task once it is approved.
-    pub integrator_profile_id: String,
     pub reviewer_profile_ids: Vec<String>,
     pub depends_on: Vec<String>,
 }
@@ -29,7 +26,6 @@ pub struct TaskUpdate {
     pub title: Option<String>,
     pub description: Option<String>,
     pub reviewer_profile_ids: Option<Vec<String>>,
-    pub integrator_profile_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -49,9 +45,9 @@ const SLUG_MAX: usize = 40;
 const ID_TAIL: usize = 6;
 
 /// The branch a task is created on: a slug of its title, then the tail of its
-/// id — `fix-the-integrator-briefing-real-fetch-r9jr7c`. The branch is what
-/// shows on the pull request the integrator opens, so it names the change and
-/// nothing else: no prefix, no `ariadne` anywhere in it.
+/// id — `fix-the-landing-briefing-real-fetch-r9jr7c`. The branch is what shows
+/// on a published request, so it names the change and nothing else: no prefix,
+/// no `ariadne` anywhere in it.
 ///
 /// Only ASCII letters and digits survive; every run of anything else becomes a
 /// single `-`, which keeps the result a valid git ref (`git check-ref-format
@@ -160,9 +156,9 @@ impl Store {
 
         sqlx::query(
             "INSERT INTO tasks (id, goal_id, repo_id, title, description, status,
-                                engineer_profile_id, integrator_profile_id, agent_kind,
-                                model, branch, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)",
+                                engineer_profile_id, agent_kind, model, branch,
+                                created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&goal.id)
@@ -170,7 +166,6 @@ impl Store {
         .bind(&new.title)
         .bind(&new.description)
         .bind(&new.engineer_profile_id)
-        .bind(&new.integrator_profile_id)
         .bind(&engineer.agent_kind)
         .bind(&engineer.model)
         .bind(&branch)
@@ -337,20 +332,12 @@ impl Store {
         }
         let title = update.title.unwrap_or(task.title);
         let description = update.description.unwrap_or(task.description);
-        // The integrator is reassignable while the task has not started, the
-        // way the reviewers below are: nothing of it is pinned onto the task,
-        // so the swap is the id and nothing else.
-        let integrator = update
-            .integrator_profile_id
-            .unwrap_or(task.integrator_profile_id);
         sqlx::query(
-            "UPDATE tasks SET title = ?, description = ?, integrator_profile_id = ?,
-                              updated_at = ?
+            "UPDATE tasks SET title = ?, description = ?, updated_at = ?
              WHERE id = ?",
         )
         .bind(&title)
         .bind(&description)
-        .bind(&integrator)
         .bind(now())
         .bind(id)
         .execute(&mut *tx)
@@ -601,151 +588,39 @@ impl Store {
         self.publish_task_update(task_id, n).await
     }
 
-    /// Record the pull request a task was published as, in full: the number
-    /// the daemon polls with and the URL that says which forge it is on.
+    /// Record the pull or merge request a task was published as.
     ///
-    /// Idempotent by construction — the integrator reports the pull request it
-    /// opened, and re-reporting the same one writes the same row. Recording a
-    /// *different* pull request resets the bookkeeping with it: the comments
-    /// relayed and the approval announced belonged to the old one.
-    pub async fn set_task_pull_request(&self, task_id: &str, number: i64, url: &str) -> Result<()> {
-        let task = self.get_task(task_id).await?;
-        let same = task.pr_url.as_deref() == Some(url);
-        let n = sqlx::query(
-            "UPDATE tasks
-             SET pr_number = ?, pr_url = ?, pr_relayed_comments = ?,
-                 pr_approved_notified = ?, updated_at = ?
-             WHERE id = ?",
-        )
-        .bind(number)
-        .bind(url)
-        .bind(same.then(|| task.pr_relayed_comments.clone()).flatten())
-        .bind(i64::from(same && task.pr_approved_notified()))
-        .bind(now())
-        .bind(task_id)
-        .execute(self.w())
-        .await?
-        .rows_affected();
+    /// Idempotent by construction — the engineer reports the request it
+    /// opened, and re-reporting the same one writes the same row. The URL is
+    /// the whole of it: nothing polls the request but the engineer's own
+    /// session, and the URL is what the UI and the CLI show.
+    pub async fn set_task_pull_request(&self, task_id: &str, url: &str) -> Result<()> {
+        let n = sqlx::query("UPDATE tasks SET pr_url = ?, updated_at = ? WHERE id = ?")
+            .bind(url)
+            .bind(now())
+            .bind(task_id)
+            .execute(self.w())
+            .await?
+            .rows_affected();
         self.publish_task_update(task_id, n).await
     }
 
-    /// Forget the pull request a task was published as, and everything
-    /// remembered about it.
+    /// Forget the request a task was published as.
     ///
-    /// A published task is one with a request recorded on it: that is what
-    /// makes the daemon poll a forge, and what makes its integrator push a
-    /// revision to a request rather than open one. A task that is starting
-    /// over — retried after the request it was published as was closed
-    /// unmerged — is not that task any more, and leaving the record on it
-    /// would send the next integrator to push at a request nobody will merge.
-    ///
-    /// The counterpart of [`Store::set_task_pull_request`]'s reset: recording
-    /// a *different* request drops the same bookkeeping, for the same reason.
+    /// A task that is starting over — retried after the request it was
+    /// published as was closed unmerged — is not that task any more, and
+    /// leaving the record on it would show the user a request nobody will
+    /// merge.
     pub async fn clear_task_pull_request(&self, task_id: &str) -> Result<()> {
         let n = sqlx::query(
-            "UPDATE tasks
-             SET pr_number = NULL, pr_url = NULL, pr_relayed_comments = NULL,
-                 pr_approved_notified = 0, updated_at = ?
-             WHERE id = ? AND (pr_number IS NOT NULL OR pr_url IS NOT NULL)",
+            "UPDATE tasks SET pr_url = NULL, updated_at = ?
+             WHERE id = ? AND pr_url IS NOT NULL",
         )
         .bind(now())
         .bind(task_id)
         .execute(self.w())
         .await?
         .rows_affected();
-        self.publish_task_update(task_id, n).await
-    }
-
-    /// Mark what a poll of the pull request has handed to the engineer as
-    /// relayed — a comment, a failing check, a conflict with the base —
-    /// adding to whatever was relayed before: what keeps the daemon from
-    /// relaying the same one twice as it polls.
-    pub async fn add_task_pr_relayed_comments(&self, task_id: &str, ids: &[String]) -> Result<()> {
-        let task = self.get_task(task_id).await?;
-        let n =
-            sqlx::query("UPDATE tasks SET pr_relayed_comments = ?, updated_at = ? WHERE id = ?")
-                .bind(relayed_with(&task, ids))
-                .bind(now())
-                .bind(task_id)
-                .execute(self.w())
-                .await?
-                .rows_affected();
-        self.publish_task_update(task_id, n).await
-    }
-
-    /// Hand a round of what a published request said to the engineer — the
-    /// comments on it, a branch that no longer merges, a check that failed —
-    /// in one write or in none.
-    ///
-    /// Three records make one send-back: the review row the engineer is
-    /// resumed with, the ids that keep any of it from being relayed into a
-    /// second round, and the transition that wakes it. Written one after
-    /// another, a daemon that failed halfway left the task in a state no
-    /// later poll could repair — the ids marked relayed with no round
-    /// carrying them, or a second round of the same failure — so they are one
-    /// transaction, and a failure leaves the task exactly as the next poll
-    /// expects to find it: still `integrating`, with nothing relayed.
-    ///
-    /// `relayed_ids` are added to whatever was relayed before, the way
-    /// [`Store::add_task_pr_relayed_comments`] adds them; `reason` is the
-    /// transition's own audit line. Returns the task as it now stands.
-    pub async fn relay_pull_request_feedback(
-        &self,
-        review: NewReview,
-        relayed_ids: &[String],
-        reason: &str,
-    ) -> Result<Task> {
-        let mut tx = self.w().begin().await?;
-        let task = Self::get_task_in_tx(&mut tx, &review.task_id).await?;
-        let created = Self::insert_review_in_tx(&mut tx, &review).await?;
-
-        sqlx::query("UPDATE tasks SET pr_relayed_comments = ?, updated_at = ? WHERE id = ?")
-            .bind(relayed_with(&task, relayed_ids))
-            .bind(now())
-            .bind(&task.id)
-            .execute(&mut *tx)
-            .await?;
-
-        let transition = Self::transition_in_tx(
-            &mut tx,
-            &task,
-            TaskStatus::ChangesRequested,
-            Actor::Daemon,
-            Some(reason),
-            None,
-        )
-        .await?;
-        tx.commit().await?;
-
-        let task = self.get_task(&review.task_id).await?;
-        self.publish(Change::ReviewCreated(created));
-        self.publish(Change::TaskUpdated {
-            task: task.clone(),
-            transition: Some(transition),
-        });
-        Ok(task)
-    }
-
-    /// Whether the user has been told this pull request is theirs: set when
-    /// they are told, cleared when whatever made it theirs goes away again, so
-    /// a second approval is announced and a poll that changes nothing is not.
-    ///
-    /// Two tellings set it, because they are the same news at different
-    /// moments. One is the approval, announced as a poll reads it. The other
-    /// is the request being opened at all — on a repository that gates
-    /// nothing there is no approval coming, and the notice that goes out with
-    /// the recorded URL is the whole of it. Where a review *is* required the
-    /// first poll reads the request as unapproved and clears this again, and
-    /// the approval is announced when it arrives.
-    pub async fn set_task_pr_approved_notified(&self, task_id: &str, notified: bool) -> Result<()> {
-        let n =
-            sqlx::query("UPDATE tasks SET pr_approved_notified = ?, updated_at = ? WHERE id = ?")
-                .bind(notified as i64)
-                .bind(now())
-                .bind(task_id)
-                .execute(self.w())
-                .await?
-                .rows_affected();
         self.publish_task_update(task_id, n).await
     }
 
@@ -808,23 +683,6 @@ impl Store {
     }
 }
 
-/// What a task remembers as relayed once `ids` have been handed over:
-/// whatever it remembered already plus what this round adds, each of them
-/// once, as the column stores it.
-///
-/// Shared by the two writers of that column — the standalone one and the
-/// transaction a whole send-back goes down in — because a comment relayed
-/// twice and a comment counted twice are the same bug.
-fn relayed_with(task: &Task, ids: &[String]) -> String {
-    let mut relayed = task.pr_relayed_comments();
-    for id in ids {
-        if !relayed.contains(id) {
-            relayed.push(id.clone());
-        }
-    }
-    serde_json::to_string(&relayed).unwrap_or_else(|_| "[]".into())
-}
-
 #[cfg(test)]
 mod tests {
     use std::process::Command;
@@ -836,10 +694,10 @@ mod tests {
     #[test]
     fn branch_is_the_title_slugged_and_the_id_tail() {
         assert_eq!(
-            branch_name("Fix the integrator briefing: real fetch/rebase", ID),
+            branch_name("Fix the landing briefing: real fetch/rebase", ID),
             // 45 characters of slug is over the budget, and cutting at 40
             // would land inside `rebase`, so the whole word goes.
-            "fix-the-integrator-briefing-real-fetch-r9jr7c"
+            "fix-the-landing-briefing-real-fetch-r9jr7c"
         );
         assert_eq!(
             branch_name("Add a health check", ID),
@@ -893,7 +751,7 @@ mod tests {
     #[test]
     fn every_branch_name_is_a_valid_git_ref() {
         let titles = [
-            "Fix the integrator briefing: real fetch/rebase",
+            "Fix the landing briefing: real fetch/rebase",
             "",
             "   ",
             "!!!",

@@ -55,7 +55,6 @@ const TASK: TaskDto = {
   branch: "wire-the-strip-000001",
   depends_on: [],
   engineer_profile_id: "01JPROF0000000000000000ENG",
-  integrator_profile_id: "01INTEGRATOR",
   reviewers: [],
   review_round: 0,
   stalled: false,

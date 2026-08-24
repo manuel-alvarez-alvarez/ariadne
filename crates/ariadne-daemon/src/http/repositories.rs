@@ -34,6 +34,7 @@ pub async fn create(
             path: req.path,
             base_branch,
             description: req.description,
+            merge_strategy: req.merge_strategy.unwrap_or_default(),
         })
         .await?;
     Ok((StatusCode::CREATED, Json(repository_dto(repository))))
@@ -97,6 +98,7 @@ pub async fn update(
                     true => None,
                     false => Some(d),
                 }),
+                merge_strategy: req.merge_strategy,
             },
         )
         .await?;

@@ -1,5 +1,6 @@
 //! Repository DTOs.
 
+use ariadne_core::MergeStrategy;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -10,6 +11,8 @@ pub struct RepositoryDto {
     pub path: String,
     pub base_branch: String,
     pub description: Option<String>,
+    /// How a task lands on `base_branch` here.
+    pub merge_strategy: MergeStrategy,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -22,6 +25,8 @@ pub struct CreateRepositoryRequest {
     /// Omit for the repo's currently checked-out branch.
     pub base_branch: Option<String>,
     pub description: Option<String>,
+    /// Omit for `direct`.
+    pub merge_strategy: Option<MergeStrategy>,
 }
 
 /// Partial update; absent fields stay unchanged.
@@ -31,4 +36,5 @@ pub struct UpdateRepositoryRequest {
     pub base_branch: Option<String>,
     /// New description, or empty to clear it. Absent = unchanged.
     pub description: Option<String>,
+    pub merge_strategy: Option<MergeStrategy>,
 }

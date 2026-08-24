@@ -18,7 +18,7 @@ export const BOARD_STATUSES = [
   "pending",
   "in_progress",
   "under_review",
-  "integrating",
+  "approved",
   "merged",
 ] as const satisfies readonly TaskStatus[]
 
@@ -27,8 +27,8 @@ export const OFF_BOARD_STATUSES = ["cancelled", "failed"] as const satisfies rea
 
 /**
  * The daemon statuses the UI folds into a primary one: `ready` is a phase of
- * `pending`, `changes_requested` is a phase of `in_progress`, `approved` is a
- * phase of `integrating`. The raw status stays visible as a sub-status badge.
+ * `pending` and `changes_requested` a phase of `in_progress`. The raw status
+ * stays visible as a sub-status badge.
  *
  * `ready` is folded because the daemon spawns the engineer in the same
  * reconcile pass that made the task ready — nothing queues there, so a column
@@ -36,16 +36,13 @@ export const OFF_BOARD_STATUSES = ["cancelled", "failed"] as const satisfies rea
  * goal, daemon down, engineer spawn failing, a failure just retried) is
  * exactly what the badge on the Pending card says.
  *
- * `approved` is folded for the same reason, and forwards rather than back: the
- * approvals are in, the reviewers are done, and the same reconcile pass hands
- * the task to its integrator — so it belongs to the landing, not to the review
- * it just left. A task parked there is one whose integrator never started, and
- * the badge on the Integrating card is what says so.
+ * `approved` is not folded: it is the whole of the landing stage now, and a
+ * task sits in it for as long as its engineer takes to squash the change onto
+ * the base branch — or for as long as a published request waits on a human.
  */
 const SUB_STATUS_OF = {
   ready: "pending",
   changes_requested: "in_progress",
-  approved: "integrating",
 } as const satisfies Partial<Record<TaskStatus, TaskStatus>>
 
 /** The column a status belongs to: itself, unless it is a sub-status. */
@@ -77,14 +74,14 @@ interface StatusMeta {
 
 /**
  * Which step of the ramp each status takes. The pipeline reads left to right —
- * pending grey, in progress accent, review violet, integrating teal-green,
+ * pending grey, in progress accent, review violet, approved teal-green,
  * merged green — with the folded sub-statuses on the step of the column they
  * sit in (`ready` teal, one shade off its grey column, because a task parked
- * there is not simply waiting). Integrating takes the step between the review
- * and the merge it is on its way to, which is what the last active stage of
- * the pipeline should look like. The two statuses that mean "something is
- * wrong" (changes requested, failed) are the only warm ones, so a stalled task
- * is never mistaken for a waiting one.
+ * there is not simply waiting). Approved takes the step between the review and
+ * the merge it is on its way to, which is what the last active stage of the
+ * pipeline should look like. The two statuses that mean "something is wrong"
+ * (changes requested, failed) are the only warm ones, so a stalled task is
+ * never mistaken for a waiting one.
  */
 export const TASK_STATUS_META: Record<TaskStatus, StatusMeta> = {
   pending: {
@@ -119,15 +116,9 @@ export const TASK_STATUS_META: Record<TaskStatus, StatusMeta> = {
   },
   approved: {
     label: "Approved",
-    hint: "Enough approvals collected; the integrator is about to take the task over.",
-    badge: "bg-status-integrating-soft text-status-integrating-fg",
-    dot: "bg-status-integrating",
-  },
-  integrating: {
-    label: "Integrating",
-    hint: "An integrator session has the task: rebasing it onto its base branch and landing it, or waiting on the pull request it opened to be merged.",
-    badge: "bg-status-integrating-soft text-status-integrating-fg",
-    dot: "bg-status-integrating",
+    hint: "Enough approvals collected; its engineer is landing it — squashing it onto the base branch, or waiting on the pull request it published to be merged.",
+    badge: "bg-status-approved-soft text-status-approved-fg",
+    dot: "bg-status-approved",
   },
   merged: {
     label: "Merged",
@@ -152,24 +143,23 @@ export const TASK_STATUS_META: Record<TaskStatus, StatusMeta> = {
 /**
  * How loudly each status asks for a person, lowest first.
  *
- * A failure is waiting for a decision, so it leads. Integrating comes next
+ * A failure is waiting for a decision, so it leads. Approved comes next
  * because it is the one stage whose next step can be a *person's*: an
- * integrator that published the change as a pull request has done all it can,
- * and the task sits there until somebody merges it. `approved` follows it,
- * being the moment before the same thing. Then what the agents are still
- * working on, then what has not started, then what is done with.
+ * engineer that published the change as a pull request has done all it can
+ * itself, and the task sits there until somebody merges it. Then what the
+ * agents are still working on, then what has not started, then what is done
+ * with.
  */
 const ATTENTION_RANK = {
   failed: 0,
-  integrating: 1,
-  approved: 2,
-  changes_requested: 3,
-  under_review: 4,
-  in_progress: 5,
-  ready: 6,
-  pending: 7,
-  merged: 8,
-  cancelled: 9,
+  approved: 1,
+  changes_requested: 2,
+  under_review: 3,
+  in_progress: 4,
+  ready: 5,
+  pending: 6,
+  merged: 7,
+  cancelled: 8,
 } as const satisfies Record<TaskStatus, number>
 
 /**

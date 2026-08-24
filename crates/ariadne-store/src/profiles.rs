@@ -5,9 +5,8 @@ use std::collections::HashMap;
 use ariadne_core::id::new_id;
 use ariadne_core::{AgentKind, PromptKind, Role};
 
-use crate::defaults::INTEGRATOR_ID;
 use crate::prompts::{check_placeholders, check_role_kind};
-use crate::{Change, Profile, Result, Store, StoreError, Task, not_found, now};
+use crate::{Change, Profile, Result, Store, StoreError, not_found, now};
 
 #[derive(Debug, Clone)]
 pub struct NewProfile {
@@ -107,26 +106,6 @@ impl Store {
             .ok_or_else(|| not_found("profile", name))
     }
 
-    /// The built-in Integrator, while it is still there.
-    ///
-    /// The integrator a task is landed by unless another was named, and what a
-    /// migrated task that named none was backfilled with. Looked up by id
-    /// rather than by name because a profile can be renamed; `None` when it
-    /// was deleted — allowed, and permanent.
-    pub async fn builtin_integrator(&self) -> Option<Profile> {
-        self.get_profile(INTEGRATOR_ID).await.ok()
-    }
-
-    /// The profile that lands `task`, the one it was assigned at creation.
-    ///
-    /// Everything that asks who the integrator of a task is asks here — the
-    /// launcher that spawns the session, and the thread that has to be able to
-    /// address it — so that the two can never disagree about who is landing
-    /// it.
-    pub async fn task_integrator(&self, task: &Task) -> Result<Profile> {
-        self.get_profile(&task.integrator_profile_id).await
-    }
-
     /// Resolve a profile by id or by unique name (CLI convenience).
     pub async fn resolve_profile(&self, id_or_name: &str) -> Result<Profile> {
         match self.get_profile(id_or_name).await {
@@ -190,32 +169,20 @@ impl Store {
     /// with nowhere to look.
     pub async fn delete_profile(&self, id: &str) -> Result<()> {
         self.get_profile(id).await?;
-        let (goals, tasks, integrations, reviews, sessions, messages): (
-            i64,
-            i64,
-            i64,
-            i64,
-            i64,
-            i64,
-        ) = sqlx::query_as(
-            "SELECT (SELECT COUNT(*) FROM goals WHERE planner_profile_id = ?1),
-                    (SELECT COUNT(*) FROM tasks WHERE engineer_profile_id = ?1),
-                    (SELECT COUNT(*) FROM tasks WHERE integrator_profile_id = ?1),
-                    (SELECT COUNT(*) FROM task_reviewers WHERE profile_id = ?1),
-                    (SELECT COUNT(*) FROM agent_sessions WHERE profile_id = ?1),
-                    (SELECT COUNT(*) FROM messages WHERE recipient_profile_id = ?1)",
-        )
-        .bind(id)
-        .fetch_one(self.r())
-        .await?;
+        let (goals, tasks, reviews, sessions, messages): (i64, i64, i64, i64, i64) =
+            sqlx::query_as(
+                "SELECT (SELECT COUNT(*) FROM goals WHERE planner_profile_id = ?1),
+                        (SELECT COUNT(*) FROM tasks WHERE engineer_profile_id = ?1),
+                        (SELECT COUNT(*) FROM task_reviewers WHERE profile_id = ?1),
+                        (SELECT COUNT(*) FROM agent_sessions WHERE profile_id = ?1),
+                        (SELECT COUNT(*) FROM messages WHERE recipient_profile_id = ?1)",
+            )
+            .bind(id)
+            .fetch_one(self.r())
+            .await?;
         let holders = [
             (goals, "goal", "goals"),
             (tasks, "task", "tasks"),
-            (
-                integrations,
-                "task as its integrator",
-                "tasks as their integrator",
-            ),
             (reviews, "task as a reviewer", "tasks as a reviewer"),
             (sessions, "agent session", "agent sessions"),
             (

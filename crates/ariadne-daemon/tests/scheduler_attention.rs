@@ -41,7 +41,7 @@ use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_daemon::tmux::{TmuxManager, session_name};
 use ariadne_store::{
     AgentSession, Goal, Message, NewAgentEvent, NewGoal, NewMessage, NewProfile, NewRepository,
-    NewReview, NewSession, NewTask, Recipient, ReviewAuthor, SessionFilter, Store, Task,
+    NewReview, NewSession, NewTask, Recipient, SessionFilter, Store, Task,
 };
 
 /// Idle long enough to be past both thresholds (nudge at 300s, flag at 900s).
@@ -200,6 +200,7 @@ impl Harness {
                 path: self.dir.path().join("repo").display().to_string(),
                 base_branch: "main".into(),
                 description: None,
+                merge_strategy: Default::default(),
             })
             .await
             .unwrap();
@@ -243,7 +244,6 @@ impl Harness {
                 title: "task".into(),
                 description: "do things".into(),
                 engineer_profile_id: engineer.clone(),
-                integrator_profile_id: ariadne_store::defaults::INTEGRATOR_ID.into(),
                 reviewer_profile_ids: vec![reviewer.clone()],
                 depends_on: vec![],
             })
@@ -294,7 +294,6 @@ impl Harness {
                 title: title.into(),
                 description: "do things".into(),
                 engineer_profile_id: engineer.to_string(),
-                integrator_profile_id: ariadne_store::defaults::INTEGRATOR_ID.into(),
                 reviewer_profile_ids: vec![reviewer.to_string()],
                 depends_on: vec![],
             })
@@ -987,7 +986,7 @@ async fn a_vanished_reviewer_pane_after_its_verdict_is_not_raised() {
         .create_review(NewReview {
             task_id: task.id.clone(),
             round: task.review_round,
-            author: ReviewAuthor::Profile(reviewer.clone()),
+            reviewer_profile_id: reviewer.clone(),
             session_id: Some(session.id.clone()),
             verdict: ReviewVerdict::Approve,
             body: None,
@@ -1658,7 +1657,6 @@ async fn a_completed_goal_says_so_in_its_thread() {
         (TaskStatus::InProgress, Actor::Daemon),
         (TaskStatus::UnderReview, Actor::Engineer),
         (TaskStatus::Approved, Actor::Daemon),
-        (TaskStatus::Integrating, Actor::Daemon),
     ] {
         h.store
             .transition_task(&task.id, status, actor, None, None)
@@ -1669,7 +1667,7 @@ async fn a_completed_goal_says_so_in_its_thread() {
         .transition_task(
             &task.id,
             TaskStatus::Merged,
-            Actor::Integrator,
+            Actor::Engineer,
             None,
             Some("cafe1234"),
         )

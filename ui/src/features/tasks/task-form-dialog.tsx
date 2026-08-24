@@ -16,9 +16,7 @@
  *
  * The engineer and the repo can only be chosen at creation — `PATCH
  * /v1/tasks/{id}` carries neither — so edit mode leaves those fields out; the
- * task panel's facts card keeps showing what they are. The integrator is not
- * one of them: nothing of it is pinned onto the task, so it is reassignable
- * while the task waits, exactly as the reviewers are.
+ * task panel's facts card keeps showing what they are.
  */
 
 import { zodResolver } from "@hookform/resolvers/zod"
@@ -64,14 +62,13 @@ import { taskListQueryOptions, useCreateTask, useUpdateTask } from "./queries"
  * One schema for both modes. The repo is required only when the goal has more
  * than one (with a single repo the daemon infers it and the field is not even
  * shown), and the engineer only on create — edit mode neither shows nor sends
- * it. The integrator is required in both, the way the daemon requires it.
+ * it.
  */
 function makeFormSchema(opts: { creating: boolean; requireRepo: boolean }) {
   return z.object({
     title: z.string().trim().min(1, "Give the task a title."),
     description: z.string(),
     engineer_profile: opts.creating ? z.string().min(1, "Choose an engineer profile.") : z.string(),
-    integrator_profile: z.string().min(1, "Choose an integrator profile."),
     reviewers: z
       .array(z.object({ profile: z.string().min(1, "Choose a reviewer profile.") }))
       .min(1, "A task needs at least one reviewer.")
@@ -97,20 +94,10 @@ function makeFormSchema(opts: { creating: boolean; requireRepo: boolean }) {
 
 type TaskFormValues = z.infer<ReturnType<typeof makeFormSchema>>
 
-/**
- * The built-in integrator, `ariadne-store`'s `INTEGRATOR_ID`: the one that
- * lands a task whichever way its repository is landed in, and what a task
- * nobody assigned an integrator to has always been landed by. Preselected by
- * id rather than by name, since a profile can be renamed — this is the one
- * that has to keep being found.
- */
-const INTEGRATOR_ID = "00000000000000000000000004"
-
 const CREATE_DEFAULTS: TaskFormValues = {
   title: "",
   description: "",
   engineer_profile: "",
-  integrator_profile: "",
   reviewers: [{ profile: "" }],
   repo_id: "",
   depends_on: [],
@@ -161,7 +148,6 @@ function TaskFormDialog({
 }) {
   const goalId = goal?.id ?? editing?.goal_id ?? ""
   const engineers = useQuery({ ...profilesQueryOptions("engineer"), enabled: open && !editing })
-  const integrators = useQuery({ ...profilesQueryOptions("integrator"), enabled: open })
   const reviewers = useQuery({ ...profilesQueryOptions("reviewer"), enabled: open })
   // The dependency choices are the goal's own tasks — the same query the Tasks
   // tab behind this dialog holds, so it is usually already cached.
@@ -183,7 +169,6 @@ function TaskFormDialog({
             title: editing.title,
             description: editing.description,
             engineer_profile: editing.engineer_profile_id,
-            integrator_profile: editing.integrator_profile_id,
             reviewers: editing.reviewers.map((reviewer) => ({ profile: reviewer.profile_id })),
             repo_id: "",
             depends_on: editing.depends_on.map((task) => ({ task })),
@@ -216,10 +201,6 @@ function TaskFormDialog({
     () => [...(engineers.data ?? [])].sort((a, b) => a.name.localeCompare(b.name)),
     [engineers.data],
   )
-  const integratorOptions = useMemo(
-    () => [...(integrators.data ?? [])].sort((a, b) => a.name.localeCompare(b.name)),
-    [integrators.data],
-  )
   const reviewerOptions = useMemo(
     () => [...(reviewers.data ?? [])].sort((a, b) => a.name.localeCompare(b.name)),
     [reviewers.data],
@@ -227,10 +208,6 @@ function TaskFormDialog({
   const engineerItems = useMemo(
     () => engineerOptions.map((profile) => ({ label: profile.name, value: profile.id })),
     [engineerOptions],
-  )
-  const integratorItems = useMemo(
-    () => integratorOptions.map((profile) => ({ label: profile.name, value: profile.id })),
-    [integratorOptions],
   )
   const reviewerItems = useMemo(
     () => reviewerOptions.map((profile) => ({ label: profile.name, value: profile.id })),
@@ -250,10 +227,10 @@ function TaskFormDialog({
     [dependencyChoices],
   )
 
-  // The daemon ships built-in "Engineer", "Integrator" and "Reviewer"
-  // profiles; preselect them (or the only choice there is) so the common case
-  // is one click, the same way the goal form preselects its planner. Create
-  // only: an edited task already has all three.
+  // The daemon ships built-in "Engineer" and "Reviewer" profiles; preselect
+  // them (or the only choice there is) so the common case is one click, the
+  // same way the goal form preselects its planner. Create only: an edited task
+  // already has both.
   const selectedEngineer = form.watch("engineer_profile")
   useEffect(() => {
     if (!open || editing || !engineerOptions.length || selectedEngineer) return
@@ -261,14 +238,6 @@ function TaskFormDialog({
       engineerOptions.find((profile) => profile.name === "Engineer") ?? engineerOptions[0]
     if (preferred) form.setValue("engineer_profile", preferred.id)
   }, [open, editing, engineerOptions, selectedEngineer, form.setValue])
-
-  const selectedIntegrator = form.watch("integrator_profile")
-  useEffect(() => {
-    if (!open || editing || !integratorOptions.length || selectedIntegrator) return
-    const preferred =
-      integratorOptions.find((profile) => profile.id === INTEGRATOR_ID) ?? integratorOptions[0]
-    if (preferred) form.setValue("integrator_profile", preferred.id)
-  }, [open, editing, integratorOptions, selectedIntegrator, form.setValue])
 
   const firstReviewer = form.watch("reviewers.0.profile")
   useEffect(() => {
@@ -297,7 +266,6 @@ function TaskFormDialog({
           title: values.title.trim(),
           description: values.description,
           reviewer_profiles: values.reviewers.map((row) => row.profile),
-          integrator_profile: values.integrator_profile,
           depends_on: dependsOn,
         }
         const task = await updateTask.mutateAsync(body)
@@ -308,7 +276,6 @@ function TaskFormDialog({
           title: values.title.trim(),
           description: values.description,
           engineer_profile: values.engineer_profile,
-          integrator_profile: values.integrator_profile,
           reviewer_profiles: values.reviewers.map((row) => row.profile),
           repo_id: multiRepo ? values.repo_id : null,
           depends_on: dependsOn,
@@ -395,38 +362,6 @@ function TaskFormDialog({
               <FieldError>{form.formState.errors.engineer_profile?.message}</FieldError>
             </Field>
           ) : null}
-
-          <Field data-invalid={form.formState.errors.integrator_profile ? "" : undefined}>
-            <FieldLabel htmlFor="task-integrator">Integrator profile</FieldLabel>
-            <Controller
-              control={form.control}
-              name="integrator_profile"
-              render={({ field }) => (
-                <Select
-                  value={field.value || null}
-                  onValueChange={(value) => field.onChange(value ?? "")}
-                  disabled={!integratorOptions.length}
-                  items={integratorItems}
-                >
-                  <SelectTrigger id="task-integrator" className="w-full">
-                    <SelectValue placeholder={profilePlaceholder(integrators, "integrator")} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {integratorOptions.map((profile) => (
-                      <SelectItem key={profile.id} value={profile.id}>
-                        {profile.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            />
-            <FieldDescription>
-              Who lands the task once its reviewers approve it: onto the base branch with git, or as
-              a pull request for a person to merge.
-            </FieldDescription>
-            <FieldError>{form.formState.errors.integrator_profile?.message}</FieldError>
-          </Field>
 
           <Field>
             <FieldLabel>Reviewer profiles</FieldLabel>

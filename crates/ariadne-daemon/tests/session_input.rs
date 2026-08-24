@@ -98,6 +98,7 @@ impl Harness {
                 path: "/tmp/repo".into(),
                 base_branch: "main".into(),
                 description: None,
+                merge_strategy: Default::default(),
             })
             .await
             .unwrap();

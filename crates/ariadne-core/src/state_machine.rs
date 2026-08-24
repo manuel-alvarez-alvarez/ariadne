@@ -26,10 +26,8 @@ pub enum TaskStatus {
     UnderReview,
     /// At least one reviewer requested changes this round.
     ChangesRequested,
-    /// Enough approvals collected; waiting for merge instruction.
+    /// Enough approvals collected; the engineer is landing it.
     Approved,
-    /// The task was told to merge into the base branch.
-    Integrating,
     /// Merge verified on the base branch. Terminal.
     Merged,
     /// Cancelled by the user. Terminal.
@@ -46,7 +44,6 @@ pub enum Actor {
     Planner,
     Engineer,
     Reviewer,
-    Integrator,
     Daemon,
     User,
 }
@@ -96,11 +93,11 @@ fn explain(from: TaskStatus, to: TaskStatus, actor: Option<Actor>) -> String {
             None => format!("a {f} task can no longer be cancelled"),
         },
         S::Ready if from != S::Failed => format!("only failed tasks can be retried (task is {f})"),
-        S::UnderReview if from != S::InProgress => {
-            format!("only an in-progress task can be sent for review (task is {f})")
+        S::UnderReview if !matches!(from, S::InProgress | S::Approved) => {
+            format!("only an in-progress or approved task can be sent for review (task is {f})")
         }
-        S::Merged if from != S::Integrating => {
-            format!("only a task that was told to merge can be marked merged (task is {f})")
+        S::Merged if from != S::Approved => {
+            format!("only an approved task can be marked merged (task is {f})")
         }
         _ => match actor {
             Some(a) => format!("the {} may not move a task from {f} to {t}", a.as_str()),
@@ -122,21 +119,19 @@ impl TaskStatus {
             TaskStatus::UnderReview => "under_review",
             TaskStatus::ChangesRequested => "changes_requested",
             TaskStatus::Approved => "approved",
-            TaskStatus::Integrating => "integrating",
             TaskStatus::Merged => "merged",
             TaskStatus::Cancelled => "cancelled",
             TaskStatus::Failed => "failed",
         }
     }
 
-    pub const ALL: [TaskStatus; 10] = [
+    pub const ALL: [TaskStatus; 9] = [
         TaskStatus::Pending,
         TaskStatus::Ready,
         TaskStatus::InProgress,
         TaskStatus::UnderReview,
         TaskStatus::ChangesRequested,
         TaskStatus::Approved,
-        TaskStatus::Integrating,
         TaskStatus::Merged,
         TaskStatus::Cancelled,
         TaskStatus::Failed,
@@ -159,7 +154,6 @@ impl Actor {
             Actor::Planner => "planner",
             Actor::Engineer => "engineer",
             Actor::Reviewer => "reviewer",
-            Actor::Integrator => "integrator",
             Actor::Daemon => "daemon",
             Actor::User => "user",
         }
@@ -173,7 +167,6 @@ impl std::str::FromStr for Actor {
             "planner" => Ok(Actor::Planner),
             "engineer" => Ok(Actor::Engineer),
             "reviewer" => Ok(Actor::Reviewer),
-            "integrator" => Ok(Actor::Integrator),
             "daemon" => Ok(Actor::Daemon),
             "user" => Ok(Actor::User),
             other => Err(format!("unknown actor: {other}")),
@@ -195,9 +188,8 @@ impl std::str::FromStr for Actor {
 /// | under_review        | changes_requested  | daemon               |
 /// | under_review        | approved           | daemon               |
 /// | changes_requested   | in_progress        | daemon               |
-/// | approved            | integrating        | daemon               |
-/// | integrating         | merged             | integrator           |
-/// | integrating         | changes_requested  | integrator, daemon   |
+/// | approved            | merged             | engineer             |
+/// | approved            | under_review       | engineer             |
 /// | any non-terminal    | cancelled          | user                 |
 /// | any non-terminal    | failed             | daemon               |
 /// | failed              | ready              | user (retry)         |
@@ -237,14 +229,12 @@ pub fn check_transition(
         (S::UnderReview, S::ChangesRequested) => &[A::Daemon],
         (S::UnderReview, S::Approved) => &[A::Daemon],
         (S::ChangesRequested, S::InProgress) => &[A::Daemon],
-        (S::Approved, S::Integrating) => &[A::Daemon],
-        // Landing the change is the integrator's alone: the engineer's task
-        // ends at the approval that hands it over.
-        (S::Integrating, S::Merged) => &[A::Integrator],
-        // Sending an integrating task back to the engineer: a conflict the
-        // integrator will not resolve for it, or a comment on the pull
-        // request.
-        (S::Integrating, S::ChangesRequested) => &[A::Integrator, A::Daemon],
+        // Landing the change is the engineer's own: an approved task is one
+        // it is landing, and `mark_merged` is the only way out of it.
+        (S::Approved, S::Merged) => &[A::Engineer],
+        // And back to the reviewers when the people on a published request
+        // ask for changes: that revision is reviewed like any other round.
+        (S::Approved, S::UnderReview) => &[A::Engineer],
         (S::Failed, S::Ready) => &[A::User],
         _ => return Err(TransitionError::IllegalTransition { from, to }),
     };
@@ -262,14 +252,7 @@ mod tests {
     use super::TaskStatus as S;
     use super::*;
 
-    const ACTORS: [Actor; 6] = [
-        A::Planner,
-        A::Engineer,
-        A::Reviewer,
-        A::Integrator,
-        A::Daemon,
-        A::User,
-    ];
+    const ACTORS: [Actor; 5] = [A::Planner, A::Engineer, A::Reviewer, A::Daemon, A::User];
 
     /// The complete set of legal (from, to, actor) triples.
     const LEGAL: &[(S, S, A)] = &[
@@ -281,10 +264,8 @@ mod tests {
         (S::UnderReview, S::ChangesRequested, A::Daemon),
         (S::UnderReview, S::Approved, A::Daemon),
         (S::ChangesRequested, S::InProgress, A::Daemon),
-        (S::Approved, S::Integrating, A::Daemon),
-        (S::Integrating, S::Merged, A::Integrator),
-        (S::Integrating, S::ChangesRequested, A::Integrator),
-        (S::Integrating, S::ChangesRequested, A::Daemon),
+        (S::Approved, S::Merged, A::Engineer),
+        (S::Approved, S::UnderReview, A::Engineer),
         (S::Failed, S::Ready, A::User),
     ];
 
@@ -333,7 +314,7 @@ mod tests {
     fn error_distinguishes_forbidden_actor_from_illegal_edge() {
         // Legal edge, wrong actor.
         assert!(matches!(
-            check_transition(S::Integrating, S::Merged, A::Reviewer),
+            check_transition(S::Approved, S::Merged, A::Reviewer),
             Err(TransitionError::Forbidden { .. })
         ));
         // Edge that exists for no actor.
@@ -370,16 +351,16 @@ mod tests {
         // Agent-side verbs get the same treatment.
         assert_eq!(
             human(S::Pending, S::UnderReview, A::Engineer),
-            "only an in-progress task can be sent for review (task is pending)"
+            "only an in-progress or approved task can be sent for review (task is pending)"
         );
         assert_eq!(
             human(S::InProgress, S::Merged, A::Engineer),
-            "only a task that was told to merge can be marked merged (task is in_progress)"
+            "only an approved task can be marked merged (task is in_progress)"
         );
         // Anything else still names the move, in wire spelling.
         assert_eq!(
-            human(S::Integrating, S::Merged, A::Reviewer),
-            "the reviewer may not move a task from integrating to merged"
+            human(S::Approved, S::Merged, A::Reviewer),
+            "the reviewer may not move a task from approved to merged"
         );
     }
 

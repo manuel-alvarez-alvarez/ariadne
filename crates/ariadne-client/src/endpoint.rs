@@ -53,16 +53,6 @@ pub struct FileConfig {
     pub delete_merged_worktrees: Option<bool>,
     /// Keep the machine awake while agent sessions are live (default true).
     pub prevent_sleep: Option<bool>,
-    /// Path to the GitHub CLI the daemon watches pull requests with
-    /// (default: "gh" on PATH).
-    pub gh_bin: Option<String>,
-    /// Path to the GitLab CLI the daemon watches merge requests with
-    /// (default: "glab" on PATH).
-    pub glab_bin: Option<String>,
-    /// How often an integrating task's pull request is looked at, in seconds
-    /// (default 180). It is reviewed by humans, so polling it faster buys
-    /// nothing but API calls.
-    pub pr_poll_secs: Option<u64>,
     /// How long a running agent may report nothing before it is raised for
     /// the user, in seconds (default 1200). A turn that has stopped saying
     /// anything is measured from the last thing the agent reported, so a long

@@ -19,8 +19,7 @@ use ariadne_api::messages::{CreateMessageRequest, MessageDto};
 use ariadne_api::profiles::ProfileDto;
 use ariadne_api::reviews::CreateReviewRequest;
 use ariadne_api::tasks::{
-    CreateTaskRequest, RecordPullRequestRequest, ReturnToEngineerRequest, TransitionRequest,
-    UpdateTaskRequest,
+    CreateTaskRequest, RecordPullRequestRequest, TransitionRequest, UpdateTaskRequest,
 };
 use ariadne_client::{Client, ClientError};
 use ariadne_core::{ReviewVerdict, TaskStatus};
@@ -30,7 +29,6 @@ enum McpRole {
     Planner,
     Engineer,
     Reviewer,
-    Integrator,
 }
 
 #[derive(Clone)]
@@ -75,8 +73,6 @@ pub struct CreateTaskReq {
     pub description: String,
     /// Engineer profile id or name that will own the task.
     pub engineer_profile: String,
-    /// Integrator profile id or name that will integrate the task.
-    pub integrator_profile: String,
     /// Reviewer profile ids or names, in review order (at least one).
     pub reviewer_profiles: Vec<String>,
     /// Ids of tasks that must merge before this one starts.
@@ -92,8 +88,6 @@ pub struct UpdateTaskReq {
     pub title: Option<String>,
     pub description: Option<String>,
     pub reviewer_profiles: Option<Vec<String>>,
-    /// Integrator profile id or name that will integrate the task.
-    pub integrator_profile: Option<String>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -107,7 +101,7 @@ pub struct SetDependenciesReq {
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub struct ListProfilesReq {
-    /// Filter: planner | engineer | reviewer | integrator
+    /// Filter: planner | engineer | reviewer
     pub role: Option<String>,
 }
 
@@ -138,15 +132,6 @@ pub struct RecordPullRequestReq {
     /// URL of the pull request, as `gh pr create` or `glab mr create`
     /// printed it.
     pub url: String,
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
-pub struct ReturnToEngineerReq {
-    /// Why the task is coming back, in one or two sentences.
-    pub summary: String,
-    /// What has to change, concretely: one entry per file or decision.
-    pub changes: Vec<String>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -209,13 +194,12 @@ fn named_participants(
     let Some(fields) = task.as_object_mut() else {
         return task;
     };
-    for (id, name) in [
-        ("engineer_profile_id", "engineer_profile_name"),
-        ("integrator_profile_id", "integrator_profile_name"),
-    ] {
-        if let Some(named) = fields.get(id).and_then(|v| v.as_str()).and_then(name_of) {
-            fields.insert(name.to_string(), named);
-        }
+    if let Some(named) = fields
+        .get("engineer_profile_id")
+        .and_then(|v| v.as_str())
+        .and_then(name_of)
+    {
+        fields.insert("engineer_profile_name".to_string(), named);
     }
     if let Some(named) = name_of(planner_profile_id) {
         fields.insert("planner_profile_name".to_string(), named);
@@ -248,7 +232,6 @@ impl AriadneMcp {
             "planner" => McpRole::Planner,
             "engineer" => McpRole::Engineer,
             "reviewer" => McpRole::Reviewer,
-            "integrator" => McpRole::Integrator,
             other => anyhow::bail!("unknown ARIADNE_ROLE: {other:?}"),
         };
         Ok(Self {
@@ -278,10 +261,13 @@ impl AriadneMcp {
             McpRole::Engineer => &[
                 "get_task",
                 "get_goal",
+                "get_diff",
                 "list_messages",
                 "post_message",
                 "request_review",
                 "get_reviews",
+                "record_pull_request",
+                "mark_merged",
             ],
             McpRole::Reviewer => &[
                 "get_task",
@@ -291,16 +277,6 @@ impl AriadneMcp {
                 "get_diff",
                 "approve",
                 "request_changes",
-            ],
-            McpRole::Integrator => &[
-                "get_task",
-                "get_goal",
-                "get_diff",
-                "list_messages",
-                "post_message",
-                "mark_merged",
-                "record_pull_request",
-                "return_to_engineer",
             ],
         }
     }
@@ -345,7 +321,7 @@ impl AriadneMcp {
 #[tool_router]
 impl AriadneMcp {
     #[tool(
-        description = "Read a task: status, branch, dependencies, and the profile names of its engineer, its reviewers, its integrator and the planner — the names `post_message` addresses them by."
+        description = "Read a task: status, branch, dependencies, and the profile names of its engineer, its reviewers and the planner — the names `post_message` addresses them by."
     )]
     async fn get_task(
         &self,
@@ -416,7 +392,7 @@ impl AriadneMcp {
     // ---- planner ----
 
     #[tool(
-        description = "Create one task in the goal, owned by one engineer profile, gated by at least one reviewer profile and landed by one integrator profile. Every profile says what it is for in its name and its system prompt, which `list_profiles` returns: pick the integrator that fits the repository the task works in, the way you pick the engineer."
+        description = "Create one task in the goal, owned by one engineer profile and gated by at least one reviewer profile. Every profile says what it is for in its name and its system prompt, which `list_profiles` returns: pick the ones that fit the task and the repository it works in."
     )]
     async fn create_task(
         &self,
@@ -427,7 +403,6 @@ impl AriadneMcp {
             description: req.description,
             repo_id: req.repo_id,
             engineer_profile: req.engineer_profile,
-            integrator_profile: req.integrator_profile,
             reviewer_profiles: req.reviewer_profiles,
             depends_on: req.depends_on.unwrap_or_default(),
         };
@@ -449,7 +424,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Edit a task's title, description, reviewers or integrator. Only accepted while the task has not started."
+        description = "Edit a task's title, description or reviewers. Only accepted while the task has not started."
     )]
     async fn update_task(
         &self,
@@ -459,7 +434,6 @@ impl AriadneMcp {
             title: req.title,
             description: req.description,
             reviewer_profiles: req.reviewer_profiles,
-            integrator_profile: req.integrator_profile,
             depends_on: None,
         };
         let value = self
@@ -490,7 +464,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "List the agent profiles a task can be assigned to, each with the name, model and system prompt that say what it is for. Filter by role with `role`: planner, engineer, reviewer or integrator."
+        description = "List the agent profiles a task can be assigned to, each with the name, model and system prompt that say what it is for. Filter by role with `role`: planner, engineer or reviewer."
     )]
     async fn list_profiles(
         &self,
@@ -522,7 +496,7 @@ impl AriadneMcp {
     // ---- engineer ----
 
     #[tool(
-        description = "Submit your task for review: the summary is what the reviewers read first. Call it when the work is complete and verified, and again after each round of requested changes."
+        description = "Submit your task for review: the summary is what the reviewers read first. Call it when the work is complete and verified, again after each round of requested changes, and again for a revision you made to a published pull or merge request."
     )]
     async fn request_review(
         &self,
@@ -560,10 +534,8 @@ impl AriadneMcp {
         json_result(self.get(&format!("/v1/tasks/{task}/reviews")).await?)
     }
 
-    // ---- integrator ----
-
     #[tool(
-        description = "Report the merge you have already made. The daemon checks the branch really is merged into its base before accepting the sha, so report it truthfully."
+        description = "Report the merge you have already made, which ends the task. The daemon checks the branch really is merged into its base branch in the primary checkout before accepting the sha, so report it truthfully."
     )]
     async fn mark_merged(
         &self,
@@ -584,7 +556,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Report the pull request or merge request you opened for this task, by the URL `gh pr create` or `glab mr create` printed. Ariadne watches it from there — it sends what people write on the request to the engineer, wakes you when the revision they asked for is approved or the request is merged, and tells the user when it is approved and ready for them to merge — so report it as soon as it exists and then end your turn instead of waiting on it."
+        description = "Report the pull request or merge request you opened for this task, by the URL `gh pr create` or `glab mr create` printed. It is what the user is pointed at to merge, so report it as soon as it exists — then keep waiting on it yourself, the way your landing briefing says."
     )]
     async fn record_pull_request(
         &self,
@@ -595,26 +567,6 @@ impl AriadneMcp {
             .post(
                 &format!("/v1/tasks/{task}/pull-request"),
                 &RecordPullRequestRequest { url: req.url },
-            )
-            .await?;
-        json_result(value)
-    }
-
-    #[tool(
-        description = "Hand the task back to its engineer instead of landing it: a rebase conflict you will not resolve, or something the landing showed to be wrong. The summary says what happened and `changes` names what has to change, file by file; both reach the engineer as a round of requested changes, exactly as a reviewer's would. Your turn ends here — the task comes back to you once the revision is approved."
-    )]
-    async fn return_to_engineer(
-        &self,
-        Parameters(req): Parameters<ReturnToEngineerReq>,
-    ) -> Result<CallToolResult, McpError> {
-        let task = self.own_task(None)?;
-        let value = self
-            .post(
-                &format!("/v1/tasks/{task}/return-to-engineer"),
-                &ReturnToEngineerRequest {
-                    summary: req.summary,
-                    changes: req.changes,
-                },
             )
             .await?;
         json_result(value)
@@ -667,7 +619,6 @@ impl ServerHandler for AriadneMcp {
                 McpRole::Planner => "planner",
                 McpRole::Engineer => "engineer",
                 McpRole::Reviewer => "reviewer",
-                McpRole::Integrator => "integrator",
             },
             self.session_id,
             self.goal_id,
@@ -783,33 +734,27 @@ mod tests {
     }
 
     /// The prompts tell every agent to address the others by profile name, so
-    /// the task it reads has to spell them: its engineer, every reviewer
-    /// slot, the integrator that lands it and the planner that wrote it, none
-    /// of which the task row itself names.
+    /// the task it reads has to spell them: its engineer, every reviewer slot
+    /// and the planner that wrote it, none of which the task row itself
+    /// names.
     #[test]
     fn a_read_task_names_everyone_a_message_can_be_addressed_to() {
         let named = named_participants(
             serde_json::json!({
                 "id": "01TASK",
                 "engineer_profile_id": "01ENG",
-                "integrator_profile_id": "01INT",
                 "reviewers": [{"profile_id": "01REV"}],
             }),
             "01PLAN",
             &[
                 profile("01ENG", "Engineer", Role::Engineer),
                 profile("01REV", "Reviewer", Role::Reviewer),
-                profile("01INT", "Integrator", Role::Integrator),
                 profile("01PLAN", "Planner", Role::Planner),
             ],
         );
         assert_eq!(
             named["engineer_profile_name"],
             serde_json::json!("Engineer")
-        );
-        assert_eq!(
-            named["integrator_profile_name"],
-            serde_json::json!("Integrator")
         );
         assert_eq!(named["planner_profile_name"], serde_json::json!("Planner"));
         assert_eq!(
@@ -847,23 +792,34 @@ mod tests {
         }
     }
 
-    /// The integrator lands a task it did not write, so the goal behind it is
-    /// as much context as the task itself — and every other role already
-    /// reads both. A tool it is not allowed is a tool it never sees, so the
-    /// omission was invisible from inside the session.
+    /// The task and the goal behind it are context every role reads, and a
+    /// tool a role is not allowed is a tool it never sees — so an omission
+    /// here is invisible from inside the session.
     #[test]
-    fn the_integrator_reads_the_goal_its_task_belongs_to() {
-        let integrator = server(McpRole::Integrator).allowed_tools();
-        for reading in ["get_task", "get_goal"] {
-            assert!(
-                integrator.contains(&reading),
-                "the integrator cannot {reading}: {integrator:?}"
-            );
+    fn every_role_reads_its_task_and_the_goal_behind_it() {
+        for role in [McpRole::Planner, McpRole::Engineer, McpRole::Reviewer] {
+            let tools = server(role.clone()).allowed_tools();
+            for reading in ["get_task", "get_goal"] {
+                assert!(tools.contains(&reading), "{role:?} cannot {reading}");
+            }
+        }
+    }
+
+    /// The engineer owns its task from the first commit to the merge, so the
+    /// tools that land one are its own — and the send-back a fourth role
+    /// once had is gone with it.
+    #[test]
+    fn the_engineer_has_the_tools_that_land_its_task() {
+        let engineer = server(McpRole::Engineer).allowed_tools();
+        for landing in ["record_pull_request", "mark_merged", "request_review"] {
+            assert!(engineer.contains(&landing), "the engineer cannot {landing}");
         }
         for role in [McpRole::Planner, McpRole::Engineer, McpRole::Reviewer] {
             assert!(
-                server(role.clone()).allowed_tools().contains(&"get_goal"),
-                "{role:?} cannot get_goal"
+                !server(role.clone())
+                    .allowed_tools()
+                    .contains(&"return_to_engineer"),
+                "{role:?} still has return_to_engineer"
             );
         }
     }

@@ -16,12 +16,7 @@ import type { AgentKind, PromptKind, Role } from "@/api"
 import { AGENT_KIND_LABELS, ROLE_LABELS } from "@/lib/labels"
 
 /** Roles, in the order the orchestration runs them. */
-export const ROLES = [
-  "planner",
-  "engineer",
-  "reviewer",
-  "integrator",
-] as const satisfies readonly Role[]
+export const ROLES = ["planner", "engineer", "reviewer"] as const satisfies readonly Role[]
 
 /** Agent CLIs, in the order the daemon probes them when resolving `auto`. */
 export const AGENT_KINDS = [
@@ -63,9 +58,7 @@ export const PROMPT_KIND_LABELS: Record<PromptKind, string> = {
   changes_requested: "Changes requested",
   reviewer_briefing: "Reviewer briefing",
   reviewer_resume: "Reviewer resume",
-  integration_instructions: "Integration instructions",
-  integration_resume: "Integration resume",
-  integration_merged: "Integration merged",
+  landing_instructions: "Landing instructions",
   message_delivery: "Message delivery",
 }
 
@@ -83,9 +76,7 @@ export const PROMPT_KINDS = [
   "changes_requested",
   "reviewer_briefing",
   "reviewer_resume",
-  "integration_instructions",
-  "integration_resume",
-  "integration_merged",
+  "landing_instructions",
   "message_delivery",
 ] as const satisfies readonly PromptKind[]
 
@@ -99,10 +90,8 @@ export const PROMPT_KIND_HINTS: Record<PromptKind, string> = {
     "Resumes the engineer with a round of requested changes, from the reviewers or from a published request.",
   reviewer_briefing: "Starts a reviewer on a task under review.",
   reviewer_resume: "Picks a reviewer up again: a new round, or one it has gone quiet in.",
-  integration_instructions: "Starts the integrator on a task its reviewers approved.",
-  integration_resume:
-    "Picks the integrator up again: a task still to land, or a published request to push the revision to.",
-  integration_merged: "Wakes the integrator once a human has merged the published request.",
+  landing_instructions:
+    "Hands the engineer of an approved task the procedure its repository's merge strategy names.",
   message_delivery: "Wakes any agent with a message addressed to it.",
 }
 

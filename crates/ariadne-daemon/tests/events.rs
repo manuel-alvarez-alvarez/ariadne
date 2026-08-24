@@ -26,9 +26,7 @@ use ariadne_daemon::launcher::Launcher;
 use ariadne_daemon::logbuf::LogBuffer;
 use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_daemon::tmux::TmuxManager;
-use ariadne_store::{
-    Goal, NewGoal, NewProfile, NewRepository, NewTask, Profile, ReviewAuthor, Store, Task,
-};
+use ariadne_store::{Goal, NewGoal, NewProfile, NewRepository, NewTask, Profile, Store, Task};
 
 /// How long a test waits for an event before giving up.
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -144,6 +142,7 @@ impl Harness {
                 path: self.dir.path().join("repo").display().to_string(),
                 base_branch: "main".into(),
                 description: None,
+                merge_strategy: Default::default(),
             })
             .await
             .unwrap();
@@ -167,7 +166,6 @@ impl Harness {
                 title: "task".into(),
                 description: "do things".into(),
                 engineer_profile_id: engineer.id,
-                integrator_profile_id: ariadne_store::defaults::INTEGRATOR_ID.into(),
                 reviewer_profile_ids: vec![reviewer.id],
                 depends_on: vec![],
             })
@@ -1012,7 +1010,7 @@ async fn a_reviewer_that_already_voted_raises_no_attention() {
         .create_review(ariadne_store::NewReview {
             task_id: task.id.clone(),
             round: task.review_round,
-            author: ReviewAuthor::Profile(reviewer.clone()),
+            reviewer_profile_id: reviewer.clone(),
             session_id: Some(session.id.clone()),
             verdict: ReviewVerdict::Approve,
             body: None,

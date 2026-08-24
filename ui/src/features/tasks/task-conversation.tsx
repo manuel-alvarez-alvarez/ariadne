@@ -11,7 +11,7 @@
  * the task exists), where it waits in the thread like any `task msg` would.
  *
  * The compose box may address anyone working the task — its engineer, its
- * reviewers, the integrator that lands it and the planner that wrote it —
+ * reviewers and the planner that wrote it —
  * which is the set the daemon
  * resolves `to` against (`http/recipients.rs`), read off the task and its goal
  * so the picker offers nobody the daemon would refuse.
@@ -43,14 +43,10 @@ export function TaskConversation({ taskId }: { taskId: string }) {
   })
   const post = usePostTaskMessage(taskId)
   // The daemon's own list, in its order (`http/recipients.rs`): engineer,
-  // reviewers, the integrator that lands it, the planner that wrote it.
+  // reviewers, the planner that wrote it.
   const addressees = useAddressees([
     ...(task.data
-      ? [
-          task.data.engineer_profile_id,
-          ...task.data.reviewers.map((slot) => slot.profile_id),
-          task.data.integrator_profile_id,
-        ]
+      ? [task.data.engineer_profile_id, ...task.data.reviewers.map((slot) => slot.profile_id)]
       : []),
     ...(goal.data ? [goal.data.planner_profile_id] : []),
   ])

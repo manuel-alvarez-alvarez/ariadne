@@ -374,7 +374,6 @@ mod tests {
             description: String::new(),
             status,
             engineer_profile_id: "01PROFILE".into(),
-            integrator_profile_id: ariadne_store::defaults::INTEGRATOR_ID.into(),
             agent_kind: None,
             model: None,
             reviewers: Vec::new(),
@@ -384,7 +383,6 @@ mod tests {
             review_round: 0,
             stalled,
             merge_commit: None,
-            pr_number: None,
             pr_url: None,
             created_at: "2026-08-18T10:00:00Z".into(),
             updated_at: "2026-08-18T10:00:00Z".into(),
@@ -450,17 +448,16 @@ mod tests {
         assert_eq!(reason(TaskStatus::Merged, false), None);
     }
 
-    /// An integrating task is on its way out under its own power, pull
-    /// request or not: the daemon raises no reason of its own for one waiting
-    /// to be merged, and inventing one here from the bare status is exactly
-    /// the disagreement with the UI this list exists not to have. If the
-    /// integrator goes quiet, the stall is what says so.
+    /// An approved task is on its way out under its own power, published or
+    /// not: the daemon raises no reason of its own for one its engineer is
+    /// landing, and inventing one here from the bare status is exactly the
+    /// disagreement with the UI this list exists not to have. If that
+    /// engineer goes quiet, the stall is what says so.
     #[test]
-    fn a_task_its_integrator_is_landing_is_left_alone() {
+    fn a_task_its_engineer_is_landing_is_left_alone() {
         let published = |stalled| TaskDto {
-            pr_number: Some(12),
             pr_url: Some("https://github.com/owner/repo/pull/12".into()),
-            ..task("01T", "01G", TaskStatus::Integrating, stalled)
+            ..task("01T", "01G", TaskStatus::Approved, stalled)
         };
         assert_eq!(task_reason(&published(false)), None);
         assert_eq!(task_reason(&published(true)), Some(Reason::Stalled));

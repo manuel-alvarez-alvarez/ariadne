@@ -26,26 +26,61 @@ pub enum Role {
     Planner,
     Engineer,
     Reviewer,
-    /// Takes an approved task over from the engineer and lands it on the base
-    /// branch.
-    Integrator,
 }
 
 impl Role {
-    pub const ALL: [Role; 4] = [
-        Role::Planner,
-        Role::Engineer,
-        Role::Reviewer,
-        Role::Integrator,
-    ];
+    pub const ALL: [Role; 3] = [Role::Planner, Role::Engineer, Role::Reviewer];
 
     pub fn as_str(&self) -> &'static str {
         match self {
             Role::Planner => "planner",
             Role::Engineer => "engineer",
             Role::Reviewer => "reviewer",
-            Role::Integrator => "integrator",
         }
+    }
+}
+
+/// How a repository takes the change a task lands on its base branch: the one
+/// thing about a repository the engineer that finishes a task has to be told,
+/// since the commands it runs at the end differ entirely between the two.
+///
+/// Which forge a published request goes to is *not* here: `origin` says
+/// whether it is GitHub or GitLab, and asking the remote at landing time
+/// cannot go stale the way a second copy of the answer would.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(
+    feature = "clap",
+    derive(clap::ValueEnum),
+    value(rename_all = "snake_case")
+)]
+#[serde(rename_all = "snake_case")]
+pub enum MergeStrategy {
+    /// Squashed onto the base branch with git alone, in the primary checkout.
+    #[default]
+    Direct,
+    /// Published as a pull or merge request for a human to merge.
+    PullRequest,
+}
+
+impl MergeStrategy {
+    pub const ALL: [MergeStrategy; 2] = [MergeStrategy::Direct, MergeStrategy::PullRequest];
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MergeStrategy::Direct => "direct",
+            MergeStrategy::PullRequest => "pull_request",
+        }
+    }
+}
+
+impl std::str::FromStr for MergeStrategy {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        MergeStrategy::ALL
+            .into_iter()
+            .find(|v| v.as_str() == s)
+            .ok_or_else(|| format!("unknown merge strategy: {s}"))
     }
 }
 
@@ -92,33 +127,24 @@ pub enum PromptKind {
     /// What a reviewer that owes a verdict is picked up with: a later round of
     /// the same task, and a round it has gone quiet in.
     ReviewerResume,
-    /// Initial briefing of an integrator session: how the approved change is
-    /// landed on its base branch.
-    IntegrationInstructions,
-    /// What an integrator holding an unlanded task is picked up with: a task
-    /// whose landing nobody has started, and a published request the engineer
-    /// has just answered.
-    IntegrationResume,
-    /// What the integrator of a published request is woken with once a human
-    /// has merged it.
-    IntegrationMerged,
+    /// What the engineer of an approved task is briefed with: how its
+    /// repository takes the change, and what lands it there.
+    LandingInstructions,
     /// The notice an agent of any role is woken with when a message in its
     /// thread addresses it.
     MessageDelivery,
 }
 
 impl PromptKind {
-    pub const ALL: [PromptKind; 11] = [
+    pub const ALL: [PromptKind; 9] = [
         PromptKind::PlannerBriefing,
         PromptKind::PlannerResume,
         PromptKind::EngineerBriefing,
         PromptKind::EngineerResume,
         PromptKind::ChangesRequested,
+        PromptKind::LandingInstructions,
         PromptKind::ReviewerBriefing,
         PromptKind::ReviewerResume,
-        PromptKind::IntegrationInstructions,
-        PromptKind::IntegrationResume,
-        PromptKind::IntegrationMerged,
         PromptKind::MessageDelivery,
     ];
 
@@ -131,9 +157,7 @@ impl PromptKind {
             PromptKind::ChangesRequested => "changes_requested",
             PromptKind::ReviewerBriefing => "reviewer_briefing",
             PromptKind::ReviewerResume => "reviewer_resume",
-            PromptKind::IntegrationInstructions => "integration_instructions",
-            PromptKind::IntegrationResume => "integration_resume",
-            PromptKind::IntegrationMerged => "integration_merged",
+            PromptKind::LandingInstructions => "landing_instructions",
             PromptKind::MessageDelivery => "message_delivery",
         }
     }
@@ -141,7 +165,7 @@ impl PromptKind {
     /// The roles whose profiles own this prompt.
     ///
     /// One for every kind that briefs a role through its own lifecycle, and
-    /// all four for [`PromptKind::MessageDelivery`]: an addressed message
+    /// all three for [`PromptKind::MessageDelivery`]: an addressed message
     /// reaches whoever it names, so every role owns the notice it is woken
     /// with and can word it its own way.
     pub fn roles(&self) -> &'static [Role] {
@@ -149,11 +173,9 @@ impl PromptKind {
             PromptKind::PlannerBriefing | PromptKind::PlannerResume => &[Role::Planner],
             PromptKind::EngineerBriefing
             | PromptKind::EngineerResume
-            | PromptKind::ChangesRequested => &[Role::Engineer],
+            | PromptKind::ChangesRequested
+            | PromptKind::LandingInstructions => &[Role::Engineer],
             PromptKind::ReviewerBriefing | PromptKind::ReviewerResume => &[Role::Reviewer],
-            PromptKind::IntegrationInstructions
-            | PromptKind::IntegrationResume
-            | PromptKind::IntegrationMerged => &[Role::Integrator],
             PromptKind::MessageDelivery => &Role::ALL,
         }
     }
@@ -177,17 +199,12 @@ impl PromptKind {
                 PromptKind::EngineerBriefing,
                 PromptKind::EngineerResume,
                 PromptKind::ChangesRequested,
+                PromptKind::LandingInstructions,
                 PromptKind::MessageDelivery,
             ],
             Role::Reviewer => &[
                 PromptKind::ReviewerBriefing,
                 PromptKind::ReviewerResume,
-                PromptKind::MessageDelivery,
-            ],
-            Role::Integrator => &[
-                PromptKind::IntegrationInstructions,
-                PromptKind::IntegrationResume,
-                PromptKind::IntegrationMerged,
                 PromptKind::MessageDelivery,
             ],
         }
@@ -221,10 +238,25 @@ impl PromptKind {
                 "branch",
                 "base_branch",
                 "repo_path",
+                // How that repository takes the change the task ends in,
+                // said once at the start as well as in the landing briefing:
+                // a branch that will be published is written differently
+                // from one that is squashed away.
+                "merge_strategy",
                 "dependencies",
             ],
             PromptKind::EngineerResume => &["task_title", "branch"],
             PromptKind::ChangesRequested => &["feedback"],
+            // The repository's `merge_strategy` decides which half of the
+            // landing procedure applies, so the briefing that carries it
+            // names it as a value rather than making the agent go and ask.
+            PromptKind::LandingInstructions => &[
+                "task_title",
+                "branch",
+                "base_branch",
+                "repo_path",
+                "merge_strategy",
+            ],
             PromptKind::ReviewerBriefing => &[
                 "task_title",
                 "review_round",
@@ -239,33 +271,6 @@ impl PromptKind {
             // moved under it, and the goal and the repository are things it
             // already read last round.
             PromptKind::ReviewerResume => &["review_round", "task_title", "branch", "summary"],
-            PromptKind::IntegrationInstructions => &[
-                "task_title",
-                "task_description",
-                "goal_title",
-                "worktree_path",
-                "branch",
-                "base_branch",
-                "repo_path",
-            ],
-            // Fewer than the initial briefing, for the reviewer's reason, plus
-            // the two values that say what has happened since: `request` is
-            // the pull or merge request Ariadne has recorded for this task (or
-            // that there is none yet), and `summary` the engineer's own words
-            // about the revision — its replies to the people reading a
-            // published request.
-            PromptKind::IntegrationResume => &[
-                "task_title",
-                "branch",
-                "base_branch",
-                "repo_path",
-                "request",
-                "noun",
-                "summary",
-            ],
-            PromptKind::IntegrationMerged => {
-                &["task_title", "request", "forge", "base_branch", "repo_path"]
-            }
             PromptKind::MessageDelivery => &["author", "thread", "body"],
         }
     }
@@ -665,25 +670,17 @@ pub enum AuthorRole {
     Planner,
     Engineer,
     Reviewer,
-    Integrator,
     User,
     System,
-    /// The forge a task was published to: what the people reading a pull or
-    /// merge request wrote there, relayed by the daemon. Not an Ariadne agent
-    /// and not one of the task's profiles — the humans on the request, under
-    /// the name of the thing they wrote on.
-    Forge,
 }
 
 impl AuthorRole {
-    pub const ALL: [AuthorRole; 7] = [
+    pub const ALL: [AuthorRole; 5] = [
         AuthorRole::Planner,
         AuthorRole::Engineer,
         AuthorRole::Reviewer,
-        AuthorRole::Integrator,
         AuthorRole::User,
         AuthorRole::System,
-        AuthorRole::Forge,
     ];
 
     pub fn as_str(&self) -> &'static str {
@@ -691,10 +688,8 @@ impl AuthorRole {
             AuthorRole::Planner => "planner",
             AuthorRole::Engineer => "engineer",
             AuthorRole::Reviewer => "reviewer",
-            AuthorRole::Integrator => "integrator",
             AuthorRole::User => "user",
             AuthorRole::System => "system",
-            AuthorRole::Forge => "forge",
         }
     }
 }
@@ -783,7 +778,7 @@ mod tests {
     }
 
     /// The one notice every role receives: a message addressed to an agent
-    /// reaches whichever role it names, so all four own the text they are
+    /// reaches whichever role it names, so all three own the text they are
     /// woken with.
     #[test]
     fn the_message_notice_belongs_to_every_role() {
@@ -889,7 +884,7 @@ mod tests {
     #[test]
     fn a_template_may_use_none_of_its_placeholders() {
         assert_eq!(
-            PromptKind::IntegrationInstructions.validate_template("Land it yourself."),
+            PromptKind::LandingInstructions.validate_template("Land it yourself."),
             Ok(())
         );
     }

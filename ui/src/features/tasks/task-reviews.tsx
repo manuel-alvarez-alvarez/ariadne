@@ -90,20 +90,11 @@ function ReviewCard({ review }: { review: ReviewDto }) {
       <header className="mb-1.5 flex flex-wrap items-center gap-2 text-xs">
         <StatusBadge size="sm" label={label} tone={badge} icon={<Icon className="size-3" />} />
         {/* Who said it: a round can hold several verdicts, and two ULIDs are
-            the same string to a reader. A round the daemon relayed off a
-            published request has no profile behind it — the humans who wrote
-            it are named on the comments in the body — so it says where it
-            came from instead. */}
-        {review.reviewer_profile_id ? (
-          <ProfileName
-            profileId={review.reviewer_profile_id}
-            className="font-medium text-foreground"
-          />
-        ) : (
-          <span className="font-medium text-foreground">
-            {review.author_role === "forge" ? "The published request" : "Ariadne"}
-          </span>
-        )}
+            the same string to a reader. */}
+        <ProfileName
+          profileId={review.reviewer_profile_id}
+          className="font-medium text-foreground"
+        />
         {review.session_id && <SessionLink sessionId={review.session_id} />}
         <When at={review.created_at} className="ml-auto text-muted-foreground" />
       </header>
