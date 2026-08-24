@@ -1888,13 +1888,16 @@ impl Scheduler {
         Ok(())
     }
 
-    /// A message for an agent: nudged into its pane if it has one, and
+    /// A message for an agent: typed into its pane if it has one, and
     /// otherwise resumed with the message as its instruction.
     ///
-    /// An addressee with no session to deliver to at all — a reviewer between
-    /// rounds, an engineer whose task has not started — is not a failure and
-    /// not a message lost: it stays in the thread, and the briefings send
-    /// every agent to read the conversation when it next starts.
+    /// An addressee that never had a session to deliver to — a reviewer
+    /// between rounds, an engineer whose task has not started — is not a
+    /// failure and not a message lost: it stays in the thread, and the
+    /// briefings send every agent to read the conversation when it next
+    /// starts. What comes back is one of [`Wake`]; the caller keeps the count
+    /// of what a message has spent, since only it knows how many passes have
+    /// been made at this one.
     async fn wake_profile(&mut self, message: &Message, profile_id: &str) -> anyhow::Result<Wake> {
         let Some(session) = self.recipient_session(message, profile_id).await? else {
             // One whose session went away with a delivery still owed is
