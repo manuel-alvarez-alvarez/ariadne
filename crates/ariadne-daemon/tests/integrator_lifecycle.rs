@@ -674,3 +674,84 @@ async fn the_send_back_belongs_to_the_integrator_of_an_integrating_task() {
         String::from_utf8_lossy(&body)
     );
 }
+
+/// A task nobody has published still waits for its reviewers: a request for
+/// review starts one, and the task sits under review until a verdict is in.
+///
+/// This is the other half of what a published request changes. There, the
+/// people reading it are the round's reviewers and the reviewer profiles are
+/// skipped; here there is no request, so the approvals are the only thing
+/// that can hand the task to its integrator.
+#[tokio::test]
+async fn an_unpublished_task_still_waits_for_its_reviewers() {
+    let h = harness().await;
+    let (task, reviewer) = h.task().await;
+    h.notify(&task.id);
+    eventually("the engineer to be spawned", async || {
+        h.status(&task.id).await == TaskStatus::InProgress
+            && h.live_session(&task.id, Role::Engineer).await.is_some()
+    })
+    .await;
+    let worktree = PathBuf::from(
+        h.store
+            .get_task(&task.id)
+            .await
+            .unwrap()
+            .worktree_path
+            .unwrap(),
+    );
+    sh(
+        &worktree,
+        "echo change > feature.txt && git add . && \
+         git -c user.email=t@t -c user.name=t commit -qm 'wip: the change'",
+    );
+
+    // Up for review, with nobody having judged it: a reviewer is started for
+    // the round, and the task stays where it is.
+    let under_review: TaskDto = h
+        .json(
+            as_session(
+                &format!("/v1/tasks/{}/transitions", task.id),
+                &h.live_session(&task.id, Role::Engineer).await.unwrap().id,
+                serde_json::json!({"to": "under_review", "reason": "the board renders"}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(under_review.status, TaskStatus::UnderReview);
+    eventually("the reviewer to be started for the round", async || {
+        h.live_session(&task.id, Role::Reviewer).await.is_some()
+    })
+    .await;
+    for _ in 0..3 {
+        h.notify(&task.id);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(
+        h.status(&task.id).await,
+        TaskStatus::UnderReview,
+        "an unpublished task was approved without a verdict"
+    );
+    assert!(
+        h.sessions(&task.id, Role::Integrator).await.is_empty(),
+        "an integrator was handed a task no reviewer has approved"
+    );
+
+    // And the verdict is what moves it.
+    h.store
+        .create_review(NewReview {
+            task_id: task.id.clone(),
+            round: h.store.get_task(&task.id).await.unwrap().review_round,
+            reviewer_profile_id: reviewer,
+            session_id: None,
+            verdict: ReviewVerdict::Approve,
+            body: Some("looks right".into()),
+        })
+        .await
+        .unwrap();
+    h.notify(&task.id);
+    eventually("the integrator to take the task over", async || {
+        h.status(&task.id).await == TaskStatus::Integrating
+    })
+    .await;
+}
