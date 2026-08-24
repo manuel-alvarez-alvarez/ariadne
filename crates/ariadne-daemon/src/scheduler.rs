@@ -2455,6 +2455,99 @@ mod tests {
         assert!(one.contains("1 new comment from the humans"), "{one}");
     }
 
+    /// The same for what the forge says is failing rather than what a person
+    /// wrote: every check named as the forge names it, where its run is read,
+    /// and the rule a published branch is answered under.
+    #[test]
+    fn the_send_back_names_every_check_the_forge_reported_as_failed() {
+        let review = pr_checks_review(
+            &pull_request(),
+            &[
+                FailedCheck {
+                    id: "CHKabc123:test".into(),
+                    name: "test".into(),
+                    conclusion: "FAILURE".into(),
+                    url: Some("https://github.com/owner/repo/actions/runs/17".into()),
+                },
+                // A forge that answered with no URL and no verdict still
+                // answers with a name, which is what the engineer looks for.
+                FailedCheck {
+                    id: "CHKabc123:lint".into(),
+                    name: "lint".into(),
+                    conclusion: String::new(),
+                    url: None,
+                },
+            ],
+        );
+        assert!(review.contains("Pull request #12"), "{review}");
+        assert!(review.contains("2 failing checks"), "{review}");
+        assert!(
+            review.contains("- test (FAILURE) — https://github.com/owner/repo/actions/runs/17"),
+            "{review}"
+        );
+        assert!(review.contains("\n- lint\n"), "{review}");
+        assert!(review.contains("`request_review`"), "{review}");
+        assert!(review.contains("no `commit --amend`"), "{review}");
+        assert!(!review.contains("  "), "{review}");
+
+        let one = pr_checks_review(
+            &merge_request(),
+            &[FailedCheck {
+                id: "CHKabc123:pipeline".into(),
+                name: "pipeline".into(),
+                conclusion: "failed".into(),
+                url: None,
+            }],
+        );
+        assert!(one.contains("1 failing check on the commit"), "{one}");
+        assert!(one.contains("merge request is published"), "{one}");
+    }
+
+    /// And for a branch that no longer merges: the base to bring in, since
+    /// neither forge names the files, and the same rule about how.
+    #[test]
+    fn the_send_back_for_a_conflict_names_the_base_to_merge_in() {
+        let review = pr_conflict_review(&pull_request(), "main");
+        assert!(
+            review.contains(
+                "Pull request #12 (https://github.com/owner/repo/pull/12) no longer \
+                             merges into main"
+            ),
+            "{review}"
+        );
+        assert!(
+            review.contains("git merge --no-edit <remote>/main"),
+            "{review}"
+        );
+        assert!(review.contains("`request_review`"), "{review}");
+        assert!(review.contains("no `commit --amend`"), "{review}");
+        assert!(!review.contains("  "), "{review}");
+
+        // The branch the forge named, and the repository's own base where it
+        // named none.
+        let repo = repository();
+        assert_eq!(
+            conflict_base(
+                &Conflict {
+                    id: "MRGabc123".into(),
+                    base: Some("release/2".into()),
+                },
+                &repo
+            ),
+            "release/2"
+        );
+        assert_eq!(
+            conflict_base(
+                &Conflict {
+                    id: "MRGabc123".into(),
+                    base: None,
+                },
+                &repo
+            ),
+            repo.base_branch
+        );
+    }
+
     /// The delivery nudge carries the message itself, not a pointer to go
     /// and read it, and names both tools it hands the woken agent as the MCP
     /// tool calls they are.

@@ -542,7 +542,8 @@ fn as_session(uri: &str, session_id: &str, body: serde_json::Value) -> Request<B
 }
 
 /// An open pull request with nothing on it, in the shape `gh pr view --json`
-/// answers with.
+/// answers with: green, mergeable, and open against `main` at the head every
+/// check and conflict on it is keyed by.
 fn open_pull_request() -> serde_json::Value {
     serde_json::json!({
         "number": 12,
@@ -552,7 +553,39 @@ fn open_pull_request() -> serde_json::Value {
         "reviewDecision": "REVIEW_REQUIRED",
         "reviews": [],
         "comments": [],
+        "statusCheckRollup": [],
+        "mergeable": "MERGEABLE",
+        "mergeStateStatus": "CLEAN",
+        "baseRefName": "main",
+        "headRefOid": HEAD,
     })
+}
+
+/// The commit the pull request is open at, until a test pushes a revision.
+const HEAD: &str = "abc123";
+
+/// One check run GitHub reports as failed, in the shape the rollup carries an
+/// Actions job in.
+fn failing_check(name: &str) -> serde_json::Value {
+    serde_json::json!({
+        "__typename": "CheckRun",
+        "name": name,
+        "status": "COMPLETED",
+        "conclusion": "FAILURE",
+        "startedAt": "2026-08-24T09:55:00Z",
+        "completedAt": "2026-08-24T09:58:12Z",
+        "detailsUrl": format!("https://github.com/ariadne/ariadne/actions/runs/17/job/{name}"),
+        "workflowName": "CI",
+    })
+}
+
+/// An approved pull request whose checks are red at `head`.
+fn red_pull_request(head: &str) -> serde_json::Value {
+    let mut pr = open_pull_request();
+    pr["reviewDecision"] = "APPROVED".into();
+    pr["headRefOid"] = head.into();
+    pr["statusCheckRollup"] = serde_json::json!([failing_check("test")]);
+    pr
 }
 
 /// The whole GitHub path: the integrator is briefed to publish rather than to
@@ -1090,6 +1123,10 @@ async fn pull_request_comments_reach_the_engineer_once_each() {
 /// engineer's answers, the push that carries them and the two — exactly two —
 /// messages the user gets out of it, one from the integrator with the replies
 /// in it and one from the daemon when GitHub says the request is approved.
+///
+/// Three in the thread altogether, the first being the notice the pull
+/// request was opened at all, which is written as it is recorded and belongs
+/// to no round.
 #[tokio::test]
 async fn a_published_round_pushes_the_replies_and_addresses_the_user_twice() {
     let h = harness().await;
@@ -1169,8 +1206,8 @@ async fn a_published_round_pushes_the_replies_and_addresses_the_user_twice() {
     .await;
     h.goes_idle(&integrator.id).await;
     let told = h.user_messages(&task.id).await;
-    assert_eq!(told.len(), 1, "{told:?}");
-    assert!(told[0].body.contains(REPLIES), "{}", told[0].body);
+    assert_eq!(told.len(), 2, "{told:?}");
+    assert!(told[1].body.contains(REPLIES), "{}", told[1].body);
 
     // GitHub says it is approved: the daemon tells the user once, and that is
     // the second and last thing it hears about this round.
@@ -1182,7 +1219,7 @@ async fn a_published_round_pushes_the_replies_and_addresses_the_user_twice() {
     h.pull_request(approved);
     h.notify(&task.id);
     eventually("the user to be told it is theirs to merge", async || {
-        h.user_messages(&task.id).await.len() == 2
+        h.user_messages(&task.id).await.len() == 3
     })
     .await;
     for _ in 0..3 {
@@ -1190,8 +1227,8 @@ async fn a_published_round_pushes_the_replies_and_addresses_the_user_twice() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     let told = h.user_messages(&task.id).await;
-    assert_eq!(told.len(), 2, "the user was addressed again: {told:?}");
-    assert!(told[1].body.contains("ready for you to merge"), "{told:?}");
+    assert_eq!(told.len(), 3, "the user was addressed again: {told:?}");
+    assert!(told[2].body.contains("ready for you to merge"), "{told:?}");
 
     // And the merge finishes the task off the base branch, as it always did.
     let repo = h.repo_path();
@@ -1228,7 +1265,7 @@ async fn a_published_round_pushes_the_replies_and_addresses_the_user_twice() {
     assert_eq!(landed.status, TaskStatus::Merged);
     assert_eq!(
         h.user_messages(&task.id).await.len(),
-        2,
+        3,
         "the round addressed the user more than twice"
     );
 }
@@ -1402,5 +1439,299 @@ async fn a_pull_request_on_another_forge_is_recorded_but_not_watched() {
         String::from_utf8_lossy(&body).contains("not a pull request URL"),
         "{}",
         String::from_utf8_lossy(&body)
+    );
+}
+
+/// A pull request GitHub says is red is the engineer's, however approved it
+/// is: the failing check goes back as a round of requested changes naming it,
+/// the user is never told a request nobody can merge is theirs to merge, the
+/// same failure is not sent back twice — and the failure on the revision that
+/// was supposed to fix it is.
+#[tokio::test]
+async fn a_failing_check_goes_to_the_engineer_rather_than_to_the_user() {
+    let h = harness().await;
+    let (task, reviewer) = h.task().await;
+    let integrator = h.hand_to_the_integrator(&task, &reviewer).await;
+    let _: TaskDto = h
+        .json(
+            as_session(
+                &format!("/v1/tasks/{}/pull-request", task.id),
+                &integrator.id,
+                serde_json::json!({"url": PR_URL}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    h.goes_idle(&integrator.id).await;
+    let integrator_launched_at = h
+        .store
+        .get_session(&integrator.id)
+        .await
+        .unwrap()
+        .launched_at;
+
+    // Approved on GitHub, and failing its checks: the engineer is the one
+    // woken for it, with the check named.
+    h.pull_request(red_pull_request(HEAD));
+    h.notify(&task.id);
+    eventually(
+        "the engineer to be resumed with the failing check",
+        async || {
+            h.status(&task.id).await == TaskStatus::InProgress
+                && h.live_session(&task.id, Role::Engineer).await.is_some()
+        },
+    )
+    .await;
+    let engineer = h.live_session(&task.id, Role::Engineer).await.unwrap();
+    let argv = h.launched_argv(&engineer.id);
+    for quoted in [
+        PR_URL,
+        "1 failing check",
+        "- test (FAILURE)",
+        "https://github.com/ariadne/ariadne/actions/runs/17/job/test",
+        "no rebase, no forced push",
+        "request_review",
+    ] {
+        assert!(
+            argv.contains(quoted),
+            "the briefing has no {quoted}: {argv}"
+        );
+    }
+
+    // Written by the daemon itself, with no agent woken to carry it across.
+    let sent_back: Vec<_> = h
+        .store
+        .list_reviews(&task.id, None)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.verdict() == ReviewVerdict::RequestChanges)
+        .collect();
+    assert_eq!(sent_back.len(), 1);
+    assert_eq!(sent_back[0].session_id, None);
+    let sent_back_by_the_daemon = h
+        .store
+        .list_task_transitions(&task.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|t| t.to_status == "changes_requested")
+        .expect("the task went back to its engineer");
+    assert_eq!(sent_back_by_the_daemon.actor, "daemon");
+    assert_eq!(
+        sent_back_by_the_daemon.reason.as_deref(),
+        Some("Pull request #12's checks are failing")
+    );
+    assert_eq!(
+        h.store
+            .get_session(&integrator.id)
+            .await
+            .unwrap()
+            .launched_at,
+        integrator_launched_at,
+        "the integrator was woken for a check the engineer fixes"
+    );
+
+    // And the user was told nothing: the only message it has is the one that
+    // said the pull request was open.
+    let told = h.user_messages(&task.id).await;
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert!(told[0].body.contains("is open"), "{}", told[0].body);
+
+    // Polled again on the same failure, nothing happens twice.
+    let engineer_launched_at = h.store.get_session(&engineer.id).await.unwrap().launched_at;
+    for _ in 0..3 {
+        h.notify(&task.id);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(
+        h.store
+            .list_reviews(&task.id, None)
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| r.verdict() == ReviewVerdict::RequestChanges)
+            .count(),
+        1,
+        "the same failing check was sent back a second time"
+    );
+    assert_eq!(
+        h.store.get_session(&engineer.id).await.unwrap().launched_at,
+        engineer_launched_at,
+        "the engineer was resumed for a failure it had already been given"
+    );
+    assert_eq!(h.user_messages(&task.id).await.len(), 1);
+
+    // The engineer answers, the branch goes back to the integrator, and the
+    // build fails again on the revision that was supposed to fix it: a new
+    // commit is a new failure, and it is sent back like the first.
+    let worktree = PathBuf::from(
+        h.store
+            .get_task(&task.id)
+            .await
+            .unwrap()
+            .worktree_path
+            .unwrap(),
+    );
+    sh(
+        &worktree,
+        "echo fixed > feature.txt && git add . && \
+         git -c user.email=t@t -c user.name=t commit -qm 'fix: make the test pass'",
+    );
+    h.request_review(&task.id, &engineer.id, REPLIES).await;
+    eventually("the integrator to be handed the task again", async || {
+        h.status(&task.id).await == TaskStatus::Integrating
+            && h.resume_instruction(&integrator.id).contains(REPLIES)
+    })
+    .await;
+    h.goes_idle(&integrator.id).await;
+
+    h.pull_request(red_pull_request("def456"));
+    h.notify(&task.id);
+    eventually(
+        "the engineer to be resumed with the new failure",
+        async || {
+            h.status(&task.id).await == TaskStatus::InProgress
+                && h.store
+                    .list_reviews(&task.id, None)
+                    .await
+                    .unwrap()
+                    .iter()
+                    .filter(|r| r.verdict() == ReviewVerdict::RequestChanges)
+                    .count()
+                    == 2
+        },
+    )
+    .await;
+    let engineer = h.live_session(&task.id, Role::Engineer).await.unwrap();
+    assert!(h.launched_argv(&engineer.id).contains("- test (FAILURE)"));
+    assert_eq!(h.user_messages(&task.id).await.len(), 1);
+
+    // Fixed for good: the checks are green, GitHub still says approved, and
+    // now — and only now — the user is told it is theirs to merge, once.
+    sh(
+        &worktree,
+        "echo green > feature.txt && git add . && \
+         git -c user.email=t@t -c user.name=t commit -qm 'fix: really make it pass'",
+    );
+    h.request_review(&task.id, &engineer.id, REPLIES).await;
+    eventually("the integrator to be woken with the fix", async || {
+        h.status(&task.id).await == TaskStatus::Integrating
+            && h.live_session(&task.id, Role::Integrator).await.is_some()
+    })
+    .await;
+    h.goes_idle(&integrator.id).await;
+
+    let mut green = open_pull_request();
+    green["reviewDecision"] = "APPROVED".into();
+    green["headRefOid"] = "789abc".into();
+    green["statusCheckRollup"] = serde_json::json!([{
+        "__typename": "CheckRun", "name": "test", "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/ariadne/ariadne/actions/runs/19/job/test",
+    }]);
+    h.pull_request(green);
+    h.notify(&task.id);
+    eventually("the user to be told it is theirs to merge", async || {
+        h.user_messages(&task.id).await.len() == 2
+    })
+    .await;
+    for _ in 0..3 {
+        h.notify(&task.id);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let told = h.user_messages(&task.id).await;
+    assert_eq!(told.len(), 2, "the user was addressed again: {told:?}");
+    assert!(told[1].body.contains("ready for you to merge"), "{told:?}");
+}
+
+/// And a pull request that stopped merging into its base goes the same way,
+/// with the one thing only the engineer can do about it: merge the base in on
+/// top of the commits people are already reading.
+#[tokio::test]
+async fn a_conflicting_pull_request_goes_to_the_engineer_with_the_base_to_merge() {
+    let h = harness().await;
+    let (task, reviewer) = h.task().await;
+    let integrator = h.hand_to_the_integrator(&task, &reviewer).await;
+    let _: TaskDto = h
+        .json(
+            as_session(
+                &format!("/v1/tasks/{}/pull-request", task.id),
+                &integrator.id,
+                serde_json::json!({"url": PR_URL}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    h.goes_idle(&integrator.id).await;
+
+    // The base moved under the branch while the humans were reading it.
+    let mut conflicting = open_pull_request();
+    conflicting["reviewDecision"] = "APPROVED".into();
+    conflicting["mergeable"] = "CONFLICTING".into();
+    conflicting["mergeStateStatus"] = "DIRTY".into();
+    h.pull_request(conflicting);
+    h.notify(&task.id);
+
+    eventually("the engineer to be resumed with the conflict", async || {
+        h.status(&task.id).await == TaskStatus::InProgress
+            && h.live_session(&task.id, Role::Engineer).await.is_some()
+    })
+    .await;
+    let engineer = h.live_session(&task.id, Role::Engineer).await.unwrap();
+    let argv = h.launched_argv(&engineer.id);
+    for quoted in [
+        PR_URL,
+        "no longer merges into main",
+        "git merge --no-edit <remote>/main",
+        "no rebase, no forced push",
+        "request_review",
+    ] {
+        assert!(
+            argv.contains(quoted),
+            "the briefing has no {quoted}: {argv}"
+        );
+    }
+    let sent_back_by_the_daemon = h
+        .store
+        .list_task_transitions(&task.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|t| t.to_status == "changes_requested")
+        .expect("the task went back to its engineer");
+    assert_eq!(sent_back_by_the_daemon.actor, "daemon");
+    assert_eq!(
+        sent_back_by_the_daemon.reason.as_deref(),
+        Some("Pull request #12 no longer merges into main")
+    );
+
+    // Once, however often it is polled, and never as news for the user.
+    let engineer_launched_at = h.store.get_session(&engineer.id).await.unwrap().launched_at;
+    for _ in 0..3 {
+        h.notify(&task.id);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(
+        h.store
+            .list_reviews(&task.id, None)
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| r.verdict() == ReviewVerdict::RequestChanges)
+            .count(),
+        1,
+        "the same conflict was sent back a second time"
+    );
+    assert_eq!(
+        h.store.get_session(&engineer.id).await.unwrap().launched_at,
+        engineer_launched_at
+    );
+    let told = h.user_messages(&task.id).await;
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert!(
+        !told[0].body.contains("ready for you to merge"),
+        "{}",
+        told[0].body
     );
 }
