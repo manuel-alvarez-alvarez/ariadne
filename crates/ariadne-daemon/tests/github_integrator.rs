@@ -110,6 +110,13 @@ async fn harness() -> Harness {
 }
 
 /// A `tmux` with no sessions that records every command it is given.
+///
+/// Its panes are gone as far as `has-session` is concerned, which is what
+/// lets the liveness sweep retire the sessions a test has finished with. A
+/// test about an agent that is *working* wants the opposite — a pane that
+/// answers, so the session stays live for as long as the test needs it —
+/// and writes a `tmux-alive` file to say so (see
+/// [`Harness::tmux_keeps_sessions_alive`]).
 fn write_tmux_stub(dir: &Path) -> TmuxManager {
     use std::os::unix::fs::PermissionsExt;
 
@@ -118,10 +125,11 @@ fn write_tmux_stub(dir: &Path) -> TmuxManager {
         "#!/bin/sh\n\
          echo \"$@\" >> '{log}'\n\
          case \"$1\" in\n\
-         \x20 has-session) exit 1 ;;\n\
+         \x20 has-session) if [ -f '{alive}' ]; then exit 0; else exit 1; fi ;;\n\
          esac\n\
          exit 0\n",
         log = dir.join("tmux-commands.log").display(),
+        alive = dir.join("tmux-alive").display(),
     );
     std::fs::write(&bin, script).unwrap();
     std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -334,6 +342,14 @@ impl Harness {
     /// pages of review comments as `--paginate` writes them.
     fn review_comments(&self, pages: &str) {
         std::fs::write(self.dir.path().join("review-comments.json"), pages).unwrap();
+    }
+
+    /// Keep every session's pane answering `has-session`, so the liveness
+    /// sweep leaves the sessions where they are: what a test about an agent
+    /// mid-turn needs, since a session the sweep has retired is no longer one
+    /// anything has to work around.
+    fn tmux_keeps_sessions_alive(&self) {
+        std::fs::write(self.dir.path().join("tmux-alive"), "").unwrap();
     }
 
     /// Everything `gh` has been asked, one invocation per line.
@@ -1504,6 +1520,61 @@ async fn a_pull_request_closed_unmerged_fails_the_task_and_tells_the_user() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert_eq!(h.gh_log().matches("pr view").count(), polls);
+}
+
+/// The same, with the integrator still mid-turn.
+///
+/// Every other thing a poll says is left for a working agent to finish, on
+/// the grounds that what it is doing right now is more current than the poll
+/// — and a closed request is the one answer that cannot be: there is nothing
+/// left for the turn to push to. A task that waited for its integrator to
+/// come back before it could be failed is a task nobody hears has ended.
+#[tokio::test]
+async fn a_closed_pull_request_ends_the_task_even_mid_turn() {
+    let h = harness().await;
+    h.tmux_keeps_sessions_alive();
+    let (task, reviewer) = h.task().await;
+    let integrator = h.hand_to_the_integrator(&task, &reviewer).await;
+    let _: TaskDto = h
+        .json(
+            as_session(
+                &format!("/v1/tasks/{}/pull-request", task.id),
+                &integrator.id,
+                serde_json::json!({"url": PR_URL}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    // No `goes_idle`: the integrator is working, exactly as it is for the
+    // whole turn in which it opens the request and reports it — and its pane
+    // answers, so it stays that way rather than being retired out from under
+    // the poll.
+    assert_eq!(
+        h.store.get_session(&integrator.id).await.unwrap().status(),
+        SessionStatus::Running
+    );
+    let opened = h.user_messages(&task.id).await.len();
+
+    let mut closed = open_pull_request();
+    closed["state"] = "CLOSED".into();
+    h.pull_request(closed);
+    h.notify(&task.id);
+    eventually("the task to be failed", async || {
+        h.status(&task.id).await == TaskStatus::Failed
+    })
+    .await;
+    let told = h.user_messages(&task.id).await;
+    assert_eq!(told.len(), opened + 1, "{told:?}");
+    assert!(told[opened].body.contains(PR_URL), "{told:?}");
+    eventually("the working integrator to be stood down", async || {
+        !h.store
+            .get_session(&integrator.id)
+            .await
+            .unwrap()
+            .status()
+            .is_live()
+    })
+    .await;
 }
 
 /// A `gh` that cannot read the pull request at all: the failure nobody could

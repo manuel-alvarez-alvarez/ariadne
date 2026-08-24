@@ -1080,7 +1080,10 @@ impl Scheduler {
     /// An integrator mid-turn is left to finish it: resuming an agent means
     /// relaunching its pane, and whatever it is doing on the branch right now
     /// is more current than a poll taken a moment ago. The next poll asks
-    /// again.
+    /// again. The closed request is the exception, and the only one: there is
+    /// nothing for a turn to be more current about once the request it would
+    /// push to is closed, and a task waiting for its integrator to finish
+    /// before it can be failed is a task nobody hears has ended.
     ///
     /// The poll comes before any of that, and before an integrator is started
     /// for a task that has none — a daemon that restarts on a request with
@@ -1159,6 +1162,24 @@ impl Scheduler {
                 .set_task_pr_approved_notified(&task.id, false)
                 .await?;
         }
+        // A request closed without being merged is the end of the task, and
+        // the one thing a poll can say that no later poll will take back:
+        // nothing in Ariadne reopens one, and nobody is coming to press the
+        // button. Read as quiet — as it was — the task sat in `integrating`
+        // being polled every few minutes with nothing to show for it, and no
+        // stall watch running either, since this arm replaces it.
+        //
+        // Read before the integrator is left to its turn, and the only thing
+        // that is: everything else a poll says is work for somebody, and an
+        // agent mid-turn is left to finish because what it is doing is more
+        // current than the poll. Here there is nothing to finish — the
+        // request it would push to is closed — so a turn left running is a
+        // turn spent against a review that is over, on a task nobody would
+        // hear had ended.
+        if poll.state == PrState::Closed {
+            info!(task = %task.id, pr = number, "the review was closed without being merged; failing the task");
+            return self.fail_on_closed_request(task, watched).await;
+        }
         if poll.state != PrState::Quiet
             && let Some(working) = integrator
                 .as_ref()
@@ -1166,16 +1187,6 @@ impl Scheduler {
         {
             info!(task = %task.id, pr = number, session = %working.id, "the review moved while its integrator is working; leaving it to finish");
             return Ok(());
-        }
-        // A request closed without being merged is the end of the task, and
-        // the one thing a poll can say that no later poll will take back:
-        // nothing in Ariadne reopens one, and nobody is coming to press the
-        // button. Read as quiet — as it was — the task sat in `integrating`
-        // being polled every few minutes with nothing to show for it, and no
-        // stall watch running either, since this arm replaces it.
-        if poll.state == PrState::Closed {
-            info!(task = %task.id, pr = number, "the review was closed without being merged; failing the task");
-            return self.fail_on_closed_request(task, watched).await;
         }
         // Comments wake nobody: they are the engineer's to answer, and the
         // task is about to be its own again. Whether an integrator is running
@@ -1321,9 +1332,10 @@ impl Scheduler {
             .await?;
         self.deliver_message(&notice.id).await;
         // The agents on it are stood down the way a finished task stands them
-        // down, worktree and branch kept: a retry puts the engineer back on
-        // that branch, and a task nobody retries may still hold work worth
-        // reading.
+        // down — mid-turn ones included, since what a turn on this task would
+        // push to is a request nobody will merge — with the worktree and the
+        // branch kept: a retry puts the engineer back on that branch, and a
+        // task nobody retries may still hold work worth reading.
         self.launcher.cleanup_task(&task.id, false, false).await?;
         self.pr_polled.remove(&task.id);
         self.poll_failures.remove(&task.id);
