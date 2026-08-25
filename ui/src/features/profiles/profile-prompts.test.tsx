@@ -78,8 +78,14 @@ const STORED: Record<string, ProfilePromptDto[]> = {
       updated_at: STAMP,
     },
     {
-      kind: "landing_instructions",
-      content: "Stored landing instructions.",
+      kind: "landing_direct",
+      content: "Stored direct landing.",
+      is_default: false,
+      updated_at: STAMP,
+    },
+    {
+      kind: "landing_pull_request",
+      content: "Stored published landing.",
       is_default: false,
       updated_at: STAMP,
     },
@@ -171,8 +177,9 @@ describe("ProfilePrompts", () => {
     expect((await shown("Changes requested")).textContent).toBe("Stored changes requested.")
     // The notice every role is woken with for a message addressed to it.
     expect((await shown("Message delivery")).textContent).toBe("Stored message delivery.")
-    // The procedure it lands the task with, which is the engineer's own.
-    expect((await shown("Landing instructions")).textContent).toBe("Stored landing instructions.")
+    // One landing procedure per merge strategy, both the engineer's own.
+    expect((await shown("Landing (direct)")).textContent).toBe("Stored direct landing.")
+    expect((await shown("Landing (pull request)")).textContent).toBe("Stored published landing.")
     // A kind of another role is a kind the daemon never sent.
     expect(screen.queryByLabelText("Reviewer briefing")).toBeNull()
   })

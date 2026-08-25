@@ -1848,7 +1848,7 @@ async fn an_agent_that_reports_nothing_is_flagged_and_then_relaunched() {
         "the relaunch resumes the conversation it was having: {argv}"
     );
     assert!(
-        argv.contains(&task.branch) && argv.contains("request_review"),
+        argv.contains(&task.branch) && argv.contains("Pick \"task\" up again"),
         "and carries the resume its role is picked up with, rendered for this \
          task: {argv}"
     );

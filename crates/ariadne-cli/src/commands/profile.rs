@@ -48,8 +48,8 @@ pub enum ProfileCommand {
     /// Both are repeatable and take each kind once. `<kind>` is `system` for
     /// the profile's own system prompt, or one of the briefings its role owns
     /// (planner: planner_briefing; engineer: engineer_briefing,
-    /// changes_requested, landing_instructions; reviewer: reviewer_briefing,
-    /// reviewer_resume). Whatever is not given starts as the role default.
+    /// changes_requested, landing_direct, landing_pull_request; reviewer:
+    /// reviewer_briefing, reviewer_resume). Whatever is not given starts as the role default.
     ///
     /// A briefing may use only the `{placeholder}` tokens its kind fills in;
     /// one that names another is refused, with the allowed ones listed.
@@ -97,8 +97,8 @@ pub enum ProfileCommand {
     /// and `--prompt-file <kind>=<path>` flags `profile create` takes:
     /// `system` for the profile's own system prompt, or one of the briefings
     /// its role owns (planner: planner_briefing; engineer: engineer_briefing,
-    /// changes_requested, landing_instructions; reviewer: reviewer_briefing,
-    /// reviewer_resume). Both are repeatable and take each kind once; a prompt
+    /// changes_requested, landing_direct, landing_pull_request; reviewer:
+    /// reviewer_briefing, reviewer_resume). Both are repeatable and take each kind once; a prompt
     /// nobody names is left exactly as it is.
     ///
     /// A briefing may use only the `{placeholder}` tokens its kind fills in;
@@ -157,7 +157,7 @@ pub enum ProfileCommand {
 ///
 /// The kind is one of the prompts the profile's role owns (planner:
 /// `planner_briefing`; engineer: `engineer_briefing`, `changes_requested`,
-/// `landing_instructions`; reviewer: `reviewer_briefing`,
+/// `landing_direct`, `landing_pull_request`; reviewer: `reviewer_briefing`,
 /// `reviewer_resume`), or `system` for the profile's own system prompt.
 #[derive(Subcommand)]
 pub enum PromptCommand {
@@ -947,7 +947,8 @@ mod tests {
                 "engineer_briefing",
                 "engineer_resume",
                 "changes_requested",
-                "landing_instructions",
+                "landing_direct",
+                "landing_pull_request",
                 "message_delivery"
             ]
         );
@@ -1043,7 +1044,7 @@ mod tests {
         let q = reset_question(&p, &owned(p.role), true);
         assert_eq!(
             q,
-            "Reset all 6 prompts of Engineer (01PROFILE) to the engineer defaults?"
+            "Reset all 7 prompts of Engineer (01PROFILE) to the engineer defaults?"
         );
     }
 
@@ -1063,7 +1064,10 @@ mod tests {
         .expect_err("unfillable");
         let err = format!("{err:#}");
         assert!(err.contains("the changes_requested prompt"), "{err}");
-        assert!(err.contains("{feedbcak}") && err.contains("{feedback}"), "{err}");
+        assert!(
+            err.contains("{feedbcak}") && err.contains("{feedback}"),
+            "{err}"
+        );
     }
 
     /// The flags are one list: text and files together, each kind once, in
@@ -1307,7 +1311,10 @@ mod tests {
     #[test]
     fn a_default_has_no_timestamp_to_show() {
         let mut p = profile(Role::Engineer);
-        assert_eq!(Prompt::system(&p).updated_at.as_deref(), Some(p.updated_at.as_str()));
+        assert_eq!(
+            Prompt::system(&p).updated_at.as_deref(),
+            Some(p.updated_at.as_str())
+        );
         p.system_prompt_is_default = true;
         assert_eq!(Prompt::system(&p).updated(), "-");
     }

@@ -3282,7 +3282,8 @@
           "changes_requested",
           "reviewer_briefing",
           "reviewer_resume",
-          "landing_instructions",
+          "landing_direct",
+          "landing_pull_request",
           "message_delivery"
         ]
       },

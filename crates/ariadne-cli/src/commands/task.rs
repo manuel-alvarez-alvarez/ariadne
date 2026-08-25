@@ -136,9 +136,8 @@ pub enum TaskCommand {
         /// Message body
         body: String,
         /// Address the message: the task's engineer, one of its reviewers,
-        /// or the goal's planner, by profile id
-        /// or name, or "user" for the human. An addressed recipient is woken
-        /// to read it.
+        /// or the goal's planner, by profile id or name, or "user" to reach
+        /// the human. An addressed recipient is woken to read it.
         #[arg(long, value_name = "PROFILE|user", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_message_recipients))]
         to: Option<String>,
     },

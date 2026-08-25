@@ -127,26 +127,42 @@ pub enum PromptKind {
     /// What a reviewer that owes a verdict is picked up with: a later round of
     /// the same task, and a round it has gone quiet in.
     ReviewerResume,
-    /// What the engineer of an approved task is briefed with: how its
-    /// repository takes the change, and what lands it there.
-    LandingInstructions,
+    /// What the engineer of an approved task is briefed with where its
+    /// repository squashes the change onto the base branch itself.
+    LandingDirect,
+    /// What the engineer of an approved task is briefed with where its
+    /// repository takes the change as a pull or merge request.
+    LandingPullRequest,
     /// The notice an agent of any role is woken with when a message in its
     /// thread addresses it.
     MessageDelivery,
 }
 
 impl PromptKind {
-    pub const ALL: [PromptKind; 9] = [
+    pub const ALL: [PromptKind; 10] = [
         PromptKind::PlannerBriefing,
         PromptKind::PlannerResume,
         PromptKind::EngineerBriefing,
         PromptKind::EngineerResume,
         PromptKind::ChangesRequested,
-        PromptKind::LandingInstructions,
+        PromptKind::LandingDirect,
+        PromptKind::LandingPullRequest,
         PromptKind::ReviewerBriefing,
         PromptKind::ReviewerResume,
         PromptKind::MessageDelivery,
     ];
+
+    /// The landing briefing a repository on `strategy` hands its engineer.
+    ///
+    /// One kind per strategy rather than one text with two halves: the daemon
+    /// knows which it is when it renders, so what reaches the engineer is the
+    /// procedure it runs and nothing of the other.
+    pub fn landing_for(strategy: MergeStrategy) -> PromptKind {
+        match strategy {
+            MergeStrategy::Direct => PromptKind::LandingDirect,
+            MergeStrategy::PullRequest => PromptKind::LandingPullRequest,
+        }
+    }
 
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -157,7 +173,8 @@ impl PromptKind {
             PromptKind::ChangesRequested => "changes_requested",
             PromptKind::ReviewerBriefing => "reviewer_briefing",
             PromptKind::ReviewerResume => "reviewer_resume",
-            PromptKind::LandingInstructions => "landing_instructions",
+            PromptKind::LandingDirect => "landing_direct",
+            PromptKind::LandingPullRequest => "landing_pull_request",
             PromptKind::MessageDelivery => "message_delivery",
         }
     }
@@ -174,7 +191,8 @@ impl PromptKind {
             PromptKind::EngineerBriefing
             | PromptKind::EngineerResume
             | PromptKind::ChangesRequested
-            | PromptKind::LandingInstructions => &[Role::Engineer],
+            | PromptKind::LandingDirect
+            | PromptKind::LandingPullRequest => &[Role::Engineer],
             PromptKind::ReviewerBriefing | PromptKind::ReviewerResume => &[Role::Reviewer],
             PromptKind::MessageDelivery => &Role::ALL,
         }
@@ -199,7 +217,8 @@ impl PromptKind {
                 PromptKind::EngineerBriefing,
                 PromptKind::EngineerResume,
                 PromptKind::ChangesRequested,
-                PromptKind::LandingInstructions,
+                PromptKind::LandingDirect,
+                PromptKind::LandingPullRequest,
                 PromptKind::MessageDelivery,
             ],
             Role::Reviewer => &[
@@ -247,16 +266,11 @@ impl PromptKind {
             ],
             PromptKind::EngineerResume => &["task_title", "branch"],
             PromptKind::ChangesRequested => &["feedback"],
-            // The repository's `merge_strategy` decides which half of the
-            // landing procedure applies, so the briefing that carries it
-            // names it as a value rather than making the agent go and ask.
-            PromptKind::LandingInstructions => &[
-                "task_title",
-                "branch",
-                "base_branch",
-                "repo_path",
-                "merge_strategy",
-            ],
+            // Which procedure applies is the kind, not a value inside it, so
+            // a landing briefing names only what its commands act on.
+            PromptKind::LandingDirect | PromptKind::LandingPullRequest => {
+                &["task_title", "branch", "base_branch", "repo_path"]
+            }
             PromptKind::ReviewerBriefing => &[
                 "task_title",
                 "review_round",
@@ -884,7 +898,7 @@ mod tests {
     #[test]
     fn a_template_may_use_none_of_its_placeholders() {
         assert_eq!(
-            PromptKind::LandingInstructions.validate_template("Land it yourself."),
+            PromptKind::LandingDirect.validate_template("Land it yourself."),
             Ok(())
         );
     }

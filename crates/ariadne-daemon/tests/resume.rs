@@ -794,7 +794,7 @@ async fn a_reviewer_reuses_its_session_across_review_rounds() {
         "round 2 resumed the stored conversation: {argv}"
     );
     assert!(
-        argv.contains("review round 2"),
+        argv.contains("Round 2 of"),
         "and was told which round it is reviewing: {argv}"
     );
     // One console log, appended to across both rounds.

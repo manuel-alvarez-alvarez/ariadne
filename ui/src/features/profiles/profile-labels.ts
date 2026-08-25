@@ -58,7 +58,8 @@ export const PROMPT_KIND_LABELS: Record<PromptKind, string> = {
   changes_requested: "Changes requested",
   reviewer_briefing: "Reviewer briefing",
   reviewer_resume: "Reviewer resume",
-  landing_instructions: "Landing instructions",
+  landing_direct: "Landing (direct)",
+  landing_pull_request: "Landing (pull request)",
   message_delivery: "Message delivery",
 }
 
@@ -76,7 +77,8 @@ export const PROMPT_KINDS = [
   "changes_requested",
   "reviewer_briefing",
   "reviewer_resume",
-  "landing_instructions",
+  "landing_direct",
+  "landing_pull_request",
   "message_delivery",
 ] as const satisfies readonly PromptKind[]
 
@@ -90,8 +92,10 @@ export const PROMPT_KIND_HINTS: Record<PromptKind, string> = {
     "Resumes the engineer with a round of requested changes, from the reviewers or from a published request.",
   reviewer_briefing: "Starts a reviewer on a task under review.",
   reviewer_resume: "Picks a reviewer up again: a new round, or one it has gone quiet in.",
-  landing_instructions:
-    "Hands the engineer of an approved task the procedure its repository's merge strategy names.",
+  landing_direct:
+    "Lands an approved task where its repository squashes the change onto the base branch itself.",
+  landing_pull_request:
+    "Lands an approved task where its repository takes the change as a pull or merge request.",
   message_delivery: "Wakes any agent with a message addressed to it.",
 }
 

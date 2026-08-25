@@ -227,12 +227,13 @@ pub fn changes_requested_briefing(template: &str, feedback: &[(String, String)])
     render(template, &[("feedback", &items)])
 }
 
-/// What the engineer of an approved task is briefed with: how its repository
-/// takes the change, and the branch and checkout the commands below act on.
+/// What the engineer of an approved task is briefed with: the branch, the base
+/// and the checkout the procedure's commands act on.
 ///
-/// The one place the merge strategy reaches an agent as a value rather than as
-/// a thing to go and ask for, so the briefing can name the half of the
-/// procedure that applies and the agent has nothing to decide.
+/// Which procedure that is comes from the kind the caller read the template
+/// for — [`PromptKind::landing_for`] picks it off the repository's merge
+/// strategy — so the text rendered here is the one the engineer runs and
+/// carries nothing of the other.
 pub fn landing_briefing(template: &str, task: &Task, repo: &Repository) -> String {
     render(
         template,
@@ -241,7 +242,6 @@ pub fn landing_briefing(template: &str, task: &Task, repo: &Repository) -> Strin
             ("branch", &task.branch),
             ("base_branch", &repo.base_branch),
             ("repo_path", &repo.path),
-            ("merge_strategy", repo.merge_strategy().as_str()),
         ],
     )
 }
@@ -411,7 +411,9 @@ mod tests {
                 PromptKind::ReviewerResume => {
                     reviewer_resume_briefing(&template, &task, Some("done"))
                 }
-                PromptKind::LandingInstructions => landing_briefing(&template, &task, &repo),
+                PromptKind::LandingDirect | PromptKind::LandingPullRequest => {
+                    landing_briefing(&template, &task, &repo)
+                }
                 PromptKind::MessageDelivery => message_delivery(&template, &message()),
             };
             assert!(
@@ -563,14 +565,23 @@ mod tests {
                 ],
             ),
             (
-                PromptKind::LandingInstructions,
-                landing_briefing(default(PromptKind::LandingInstructions), &task, &repo),
+                PromptKind::LandingDirect,
+                landing_briefing(default(PromptKind::LandingDirect), &task, &repo),
                 vec![
                     ("task_title", &task.title),
                     ("branch", &task.branch),
                     ("base_branch", &repo.base_branch),
                     ("repo_path", &repo.path),
-                    ("merge_strategy", "direct"),
+                ],
+            ),
+            (
+                PromptKind::LandingPullRequest,
+                landing_briefing(default(PromptKind::LandingPullRequest), &task, &repo),
+                vec![
+                    ("task_title", &task.title),
+                    ("branch", &task.branch),
+                    ("base_branch", &repo.base_branch),
+                    ("repo_path", &repo.path),
                 ],
             ),
             (
@@ -648,37 +659,44 @@ mod tests {
             "{changes}"
         );
 
-        let landing = landing_briefing(default(PromptKind::LandingInstructions), &task, &repo);
+        let landing = landing_briefing(default(PromptKind::LandingDirect), &task, &repo);
         assert!(landing.starts_with(&format!("# Land task: {}", task.title)));
-        assert!(
-            landing.contains("merge strategy is **direct**"),
-            "the repository's own strategy is named as a value: {landing}"
-        );
     }
 
-    /// The landing briefing renders for either strategy, saying which one the
-    /// repository has and carrying both procedures: the half that does not
-    /// apply is what the agent skips, not what it is left to guess at.
+    /// A repository's merge strategy picks the landing kind, and the kind is
+    /// the whole of what the engineer reads: the branch, the base and the
+    /// checkout its commands act on, and one procedure, not two.
     #[test]
-    fn the_landing_briefing_names_the_strategy_of_its_repository() {
+    fn the_merge_strategy_picks_the_landing_briefing() {
         let task = task();
-        let template = default(PromptKind::LandingInstructions);
+        let repo = repo();
+        assert_eq!(
+            PromptKind::landing_for(repo.merge_strategy()),
+            PromptKind::LandingDirect
+        );
+        let published_repo = Repository {
+            merge_strategy: "pull_request".into(),
+            ..repo.clone()
+        };
+        assert_eq!(
+            PromptKind::landing_for(published_repo.merge_strategy()),
+            PromptKind::LandingPullRequest
+        );
 
-        let direct = landing_briefing(template, &task, &repo());
-        assert!(direct.contains("merge strategy is **direct**"), "{direct}");
+        let direct = landing_briefing(default(PromptKind::LandingDirect), &task, &repo);
+        assert!(direct.contains("git reset --soft main"), "{direct}");
+        assert!(!direct.contains("gh pr"), "{direct}");
 
         let published = landing_briefing(
-            template,
+            default(PromptKind::LandingPullRequest),
             &task,
-            &Repository {
-                merge_strategy: "pull_request".into(),
-                ..repo()
-            },
+            &published_repo,
         );
         assert!(
-            published.contains("merge strategy is **pull_request**"),
+            published.contains("gh pr create --base main"),
             "{published}"
         );
+        assert!(!published.contains("reset --soft"), "{published}");
 
         // The branch, the base and the checkout the commands act on.
         for value in [task.branch.as_str(), "main", "/repos/ariadne"] {
@@ -688,8 +706,7 @@ mod tests {
     }
 
     /// The notice a woken agent reads carries the message itself, not a
-    /// pointer to go and read it, and names both tools it hands the agent as
-    /// the MCP tool calls they are.
+    /// pointer to go and read it, and names the two calls it hands the agent.
     #[test]
     fn the_delivery_notice_quotes_the_message_and_names_its_tools() {
         let template = default(PromptKind::MessageDelivery);
@@ -703,7 +720,7 @@ mod tests {
             "{text}"
         );
         assert!(
-            text.contains("`list_messages`, answer with `post_message` — both MCP tools"),
+            text.contains("`list_messages` reads the rest of it, `post_message` answers"),
             "{text}"
         );
         assert!(!text.contains("  "), "{text}");

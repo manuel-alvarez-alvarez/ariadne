@@ -995,10 +995,12 @@ impl Scheduler {
     async fn resume_text(&self, task: &Task, _role: Role) -> anyhow::Result<String> {
         if task.status() == TaskStatus::Approved {
             let repo = self.store.get_repository(&task.repo_id).await?;
+            // One landing briefing per merge strategy, and the repository says
+            // which: what reaches the engineer is the procedure it runs.
             let template = prompts::template_for(
                 &self.store,
                 &task.engineer_profile_id,
-                PromptKind::LandingInstructions,
+                PromptKind::landing_for(repo.merge_strategy()),
             )
             .await;
             return Ok(prompts::landing_briefing(&template, task, &repo));

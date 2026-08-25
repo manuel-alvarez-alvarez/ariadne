@@ -458,13 +458,20 @@ async fn an_approved_task_is_landed_by_its_own_engineer() {
         task.branch
     );
 
-    // And the briefing it was picked up with names the strategy it is to
-    // follow, rather than leaving it to guess.
+    // And the briefing it was picked up with is this repository's procedure,
+    // whole: the squash it is about to run, and not a word of the forge half
+    // it would have had to skip.
     let argv = h.launched_argv(&engineer.id);
     assert!(
-        argv.contains("merge strategy is **direct**"),
-        "the landing briefing does not name the repository's strategy: {argv}"
+        argv.contains("git reset --soft main"),
+        "the landing briefing does not carry the squash: {argv}"
     );
+    for published in ["gh ", "glab ", "pull request", "merge request"] {
+        assert!(
+            !argv.contains(published),
+            "the direct landing briefing names {published}: {argv}"
+        );
+    }
 
     // What the briefing tells it to do, done: rebase, squash, fast-forward.
     sh(&worktree, "git rebase -q main");
@@ -654,12 +661,22 @@ async fn a_squashed_request_lands_on_the_sha_the_engineer_fast_forwarded_to() {
     h.publish_instead().await;
     let (worktree, engineer) = h.walk_to_approved(&task, &reviewer).await;
 
-    // The briefing says which half of the procedure applies.
+    // The briefing is the publishing procedure, and only that: no squash onto
+    // the base for the engineer to run by mistake.
+    let argv = h.launched_argv(&engineer.id);
     assert!(
-        h.launched_argv(&engineer.id)
-            .contains("merge strategy is **pull_request**"),
-        "the engineer was not briefed to publish it"
+        argv.contains("gh pr create --base main"),
+        "the engineer was not briefed to publish it: {argv}"
     );
+    for squashed in [
+        "reset --soft".to_string(),
+        format!("merge --ff-only {}", task.branch),
+    ] {
+        assert!(
+            !argv.contains(&squashed),
+            "the published landing briefing names {squashed}: {argv}"
+        );
+    }
 
     // What a squash merge on the forge leaves behind, reproduced with git: a
     // commit on the base that no branch points at, and a task branch that is

@@ -1740,8 +1740,8 @@ async fn a_fresh_database_is_seeded_with_the_built_in_profiles_on_every_default(
             "{name} is briefed with the role default system prompt"
         );
         assert!(
-            p.effective_system_prompt().contains("`ariadne` MCP tools"),
-            "{name}'s system prompt says how to reach the orchestrator"
+            p.effective_system_prompt().contains("Ariadne"),
+            "{name}'s system prompt says what it is the role of"
         );
         // Exactly the role's prompt kinds, each of them the default itself.
         let prompts = store.list_profile_prompts(&p.id).await.unwrap();
@@ -1766,7 +1766,7 @@ async fn a_fresh_database_is_seeded_with_the_built_in_profiles_on_every_default(
     assert!(
         reviewer
             .effective_system_prompt()
-            .contains("install the project's dependencies"),
+            .contains("install dependencies and run the build"),
         "reviewers are told to install dependencies and verify"
     );
     // User edits stick.
@@ -1859,7 +1859,10 @@ async fn a_new_profile_starts_on_the_role_defaults_and_stores_none_of_them() {
     assert!(prompts.iter().all(|p| p.is_default));
     assert_eq!(prompt_rows(&_dir).await, 0);
     // Its system prompt is the one it was created with, not the role default.
-    assert_eq!(reviewer.system_prompt.as_deref(), Some("You are rev-strict."));
+    assert_eq!(
+        reviewer.system_prompt.as_deref(),
+        Some("You are rev-strict.")
+    );
     assert!(!reviewer.system_prompt_is_default());
 
     // Created without one, it follows its role's instead.
@@ -1987,7 +1990,7 @@ async fn a_template_naming_a_placeholder_its_kind_cannot_fill_in_is_refused() {
         "{unclosed and {branch}",
     ] {
         store
-            .update_profile_prompt(&engineer.id, PromptKind::LandingInstructions, content)
+            .update_profile_prompt(&engineer.id, PromptKind::LandingDirect, content)
             .await
             .unwrap();
     }
@@ -2637,6 +2640,38 @@ fn replaced_text(migration: &str, key: &str, column: &str) -> String {
     panic!("{migration}'s {column} literal for {key} never ends")
 }
 
+/// The system prompt migration 0028 nulls out for `role`, read out of the
+/// migration itself, for the same reason as [`deleted_copy`]: what a pre-0028
+/// install holds is that text, not the one `defaults.rs` ships today.
+fn nulled_system_prompt(role: Role) -> String {
+    const START: &str = "SET system_prompt = NULL\nWHERE system_prompt = '";
+    let sql = std::fs::read_to_string("./migrations/0028_prompts_are_overrides.sql")
+        .expect("reading migration 0028");
+    let mut rest = sql.as_str();
+    while let Some(at) = rest.find(START) {
+        rest = &rest[at + START.len()..];
+        let mut text = String::new();
+        let mut chars = rest.char_indices().peekable();
+        while let Some((i, c)) = chars.next() {
+            if c != '\'' {
+                text.push(c);
+                continue;
+            }
+            if let Some((_, '\'')) = chars.peek() {
+                chars.next();
+                text.push('\'');
+                continue;
+            }
+            rest = &rest[i + 1..];
+            break;
+        }
+        if rest.starts_with(&format!("\n  AND role = '{}';", role.as_str())) {
+            return text;
+        }
+    }
+    panic!("migration 0028 nulls no {} system prompt", role.as_str())
+}
+
 /// The copy of a default that migration 0028 strikes off, read out of the
 /// migration itself.
 ///
@@ -2646,7 +2681,7 @@ fn replaced_text(migration: &str, key: &str, column: &str) -> String {
 /// not whatever `defaults.rs` says today — a default reworded after 0028 was
 /// written is exactly the case a fixture seeded from the constants would get
 /// wrong, and call a prompt somebody had written.
-fn deleted_copy(kind: PromptKind) -> String {
+fn deleted_copy(kind: &str) -> String {
     const START: &str = "DELETE FROM profile_prompts\nWHERE content = '";
     let sql = std::fs::read_to_string("./migrations/0028_prompts_are_overrides.sql")
         .expect("reading migration 0028");
@@ -2669,11 +2704,11 @@ fn deleted_copy(kind: PromptKind) -> String {
             rest = &rest[i + 1..];
             break;
         }
-        if rest.starts_with(&format!("\n  AND kind = '{}';", kind.as_str())) {
+        if rest.starts_with(&format!("\n  AND kind = '{kind}';")) {
             return text;
         }
     }
-    panic!("migration 0028 deletes no copy of {}", kind.as_str())
+    panic!("migration 0028 deletes no copy of {kind}")
 }
 
 /// Migrate a database to just before `version` and hand back the pool, so a
@@ -3129,11 +3164,11 @@ async fn a_pre_0026_database_loses_the_landing_role_and_keeps_everything_else() 
     );
     assert_eq!(
         store
-            .get_profile_prompt("oldengineer", PromptKind::LandingInstructions)
+            .get_profile_prompt("oldengineer", PromptKind::LandingDirect)
             .await
             .unwrap()
             .content,
-        default_prompt(Role::Engineer, PromptKind::LandingInstructions).unwrap()
+        default_prompt(Role::Engineer, PromptKind::LandingDirect).unwrap()
     );
 }
 
@@ -3153,8 +3188,8 @@ async fn a_pre_0028_database_keeps_only_the_prompts_somebody_wrote() {
     // Two profiles as that release stored them: one untouched, holding copies
     // of the defaults, and one its user rewrote.
     for (id, name, system) in [
-        ("copies", "Copies", default_system_prompt(Role::Engineer)),
-        ("edited", "Edited", "You are mine."),
+        ("copies", "Copies", nulled_system_prompt(Role::Engineer)),
+        ("edited", "Edited", "You are mine.".to_string()),
     ] {
         sqlx::query(
             "INSERT INTO profiles (id, name, role, system_prompt, created_at, updated_at)
@@ -3166,17 +3201,26 @@ async fn a_pre_0028_database_keeps_only_the_prompts_somebody_wrote() {
         .execute(&pool)
         .await
         .unwrap();
-        for kind in PromptKind::for_role(Role::Engineer) {
+        // The kinds an engineer owned at 0028, spelled as that release
+        // spelled them: `landing_instructions` was still one text with a
+        // half per merge strategy.
+        for kind in [
+            "engineer_briefing",
+            "engineer_resume",
+            "changes_requested",
+            "landing_instructions",
+            "message_delivery",
+        ] {
             let content = match (id, kind) {
-                ("edited", PromptKind::ChangesRequested) => "Fix it. {feedback}".to_string(),
-                _ => deleted_copy(*kind),
+                ("edited", "changes_requested") => "Fix it. {feedback}".to_string(),
+                _ => deleted_copy(kind),
             };
             sqlx::query(
                 "INSERT INTO profile_prompts (profile_id, kind, content, updated_at)
                  VALUES (?, ?, ?, 't')",
             )
             .bind(id)
-            .bind(kind.as_str())
+            .bind(kind)
             .bind(content)
             .execute(&pool)
             .await
@@ -3215,16 +3259,73 @@ async fn a_pre_0028_database_keeps_only_the_prompts_somebody_wrote() {
                 assert_eq!(prompt.content, "Fix it. {feedback}");
             }
             kind => {
-                assert!(
-                    prompt.is_default,
-                    "{} was kept as a copy",
-                    kind.as_str()
+                assert!(prompt.is_default, "{} was kept as a copy", kind.as_str());
+                assert_eq!(
+                    prompt.content,
+                    default_prompt(Role::Engineer, kind).unwrap()
                 );
-                assert_eq!(prompt.content, default_prompt(Role::Engineer, kind).unwrap());
             }
         }
     }
 
     // One prompt was written across the whole install, so one row is left.
+    assert_eq!(prompt_rows_at(&path).await, 1);
+}
+
+/// A database from before the landing briefing split in two: the override
+/// somebody wrote for the retired kind goes, and the engineer is briefed with
+/// the two kinds that replaced it.
+///
+/// What is dropped is a text written against a briefing that carried both
+/// procedures, half of it about the strategy this repository does not have.
+/// Keeping it would leave an engineer landing on a template nothing renders.
+#[tokio::test]
+async fn a_pre_0029_database_loses_the_landing_briefing_that_carried_both() {
+    let dir = tempfile::tempdir().unwrap();
+    let (path, pool) = legacy_database(&dir, "landing.db").await;
+    migrated_below(&pool, 29).await;
+
+    sqlx::query(
+        "INSERT INTO profiles (id, name, role, created_at, updated_at)
+         VALUES ('mine', 'Mine', 'engineer', 't', 't')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    for (kind, content) in [
+        ("landing_instructions", "Land {branch} my way."),
+        ("changes_requested", "Fix it. {feedback}"),
+    ] {
+        sqlx::query(
+            "INSERT INTO profile_prompts (profile_id, kind, content, updated_at)
+             VALUES ('mine', ?, ?, 't')",
+        )
+        .bind(kind)
+        .bind(content)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    pool.close().await;
+
+    let store = Store::open(&path).await.unwrap();
+
+    // Both landing kinds are the defaults of the code, and every other prompt
+    // this profile wrote is untouched.
+    for prompt in store.list_profile_prompts("mine").await.unwrap() {
+        match prompt.kind() {
+            PromptKind::ChangesRequested => {
+                assert!(!prompt.is_default);
+                assert_eq!(prompt.content, "Fix it. {feedback}");
+            }
+            kind => {
+                assert!(prompt.is_default, "{} is not the default", kind.as_str());
+                assert_eq!(
+                    prompt.content,
+                    default_prompt(Role::Engineer, kind).unwrap()
+                );
+            }
+        }
+    }
     assert_eq!(prompt_rows_at(&path).await, 1);
 }

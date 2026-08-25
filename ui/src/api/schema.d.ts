@@ -1274,7 +1274,7 @@ export interface components {
          *     (see [`PromptKind::roles`]).
          * @enum {string}
          */
-        PromptKind: "planner_briefing" | "planner_resume" | "engineer_briefing" | "engineer_resume" | "changes_requested" | "reviewer_briefing" | "reviewer_resume" | "landing_instructions" | "message_delivery";
+        PromptKind: "planner_briefing" | "planner_resume" | "engineer_briefing" | "engineer_resume" | "changes_requested" | "reviewer_briefing" | "reviewer_resume" | "landing_direct" | "landing_pull_request" | "message_delivery";
         /**
          * @description Who a conversation message is addressed to: one agent profile, or the
          *     human user. Orthogonal to the author role, and optional — a message with

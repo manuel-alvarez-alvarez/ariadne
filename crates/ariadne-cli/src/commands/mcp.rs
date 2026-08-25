@@ -387,9 +387,7 @@ impl AriadneMcp {
         json_result(self.get(&path).await?)
     }
 
-    #[tool(
-        description = "Finalize the plan, which makes the goal active and starts its tasks."
-    )]
+    #[tool(description = "Finalize the plan, which makes the goal active and starts its tasks.")]
     async fn finalize_plan(
         &self,
         Parameters(req): Parameters<FinalizePlanReq>,
@@ -405,9 +403,7 @@ impl AriadneMcp {
 
     // ---- engineer ----
 
-    #[tool(
-        description = "Submit your task for review, with the summary the reviewers read first."
-    )]
+    #[tool(description = "Submit your task for review, with the summary the reviewers read first.")]
     async fn request_review(
         &self,
         Parameters(req): Parameters<RequestReviewReq>,
@@ -465,9 +461,7 @@ impl AriadneMcp {
         json_result(value)
     }
 
-    #[tool(
-        description = "Report the URL of the pull or merge request you opened for this task."
-    )]
+    #[tool(description = "Report the URL of the pull or merge request you opened for this task.")]
     async fn record_pull_request(
         &self,
         Parameters(req): Parameters<RecordPullRequestReq>,
@@ -505,17 +499,37 @@ impl AriadneMcp {
     ) -> Result<CallToolResult, McpError> {
         let task = self.own_task(None)?;
         let body = review_request(req.verdict, req.body)?;
-        json_result(self.post(&format!("/v1/tasks/{task}/reviews"), &body).await?)
+        json_result(
+            self.post(&format!("/v1/tasks/{task}/reviews"), &body)
+                .await?,
+        )
     }
 }
 
+/// The rules that hold whoever is reading them: what Ariadne is reached
+/// through, and how a message addresses someone.
+///
+/// One block, appended to the server's instructions above, which every session
+/// of every role receives before its first prompt. It used to be pasted into
+/// the three system prompts instead, where it was three copies to keep in step
+/// and a profile's own text for a user to edit away.
+const SESSION_RULES: &str = r#"Reach Ariadne only through them: every backticked operation in your prompts is one of these tools, never a shell command. `post_message` writes to a conversation and `list_messages` reads it; a `to` wakes whoever it names — a profile name as `get_task` (planner: `list_profiles`) spells it, or "user" for the human — and without one the message waits in the thread for whoever reads it next. Work autonomously; wait for a human only when a message asks. One may attach to this terminal and type follow-ups at any time."#;
+
 impl ServerHandler for AriadneMcp {
+    /// The server's own instructions, which every session receives before its
+    /// first prompt: what this session is, and the rules that hold for every
+    /// role alike.
+    ///
+    /// The rules used to be a block pasted into all three system prompts.
+    /// They are here instead because this is the one text an agent of any
+    /// role is handed, and because a profile's prompts are the developer's to
+    /// edit: what Ariadne *is* should not be something an edit can delete.
     fn get_info(&self) -> ServerInfo {
         let mut info = ServerInfo::default();
         info.instructions = Some(format!(
             "Ariadne orchestrator tools for this {} session: session {}, goal {}{}. \
              The tools listed here are the ones your role may call, and every \
-             call acts as this session.",
+             call acts as this session. {SESSION_RULES}",
             match self.role {
                 McpRole::Planner => "planner",
                 McpRole::Engineer => "engineer",
@@ -788,7 +802,13 @@ mod tests {
                     let head = &text[..head_end];
                     let length: usize = head
                         .lines()
-                        .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:")?.trim().parse().ok())
+                        .find_map(|l| {
+                            l.to_ascii_lowercase()
+                                .strip_prefix("content-length:")?
+                                .trim()
+                                .parse()
+                                .ok()
+                        })
                         .unwrap_or(0);
                     if text.len() < head_end + 4 + length {
                         continue;
@@ -892,6 +912,28 @@ mod tests {
         let approved = review_request(Verdict::Approve, None).expect("approval");
         assert_eq!(approved.verdict, ReviewVerdict::Approve);
         assert!(approved.body.is_none());
+    }
+
+    /// The rules that hold for every role are the server's instructions, and
+    /// every session gets them whatever its role and whatever its profile's
+    /// prompts have been edited into.
+    #[test]
+    fn every_session_is_told_how_ariadne_is_reached() {
+        for role in [McpRole::Planner, McpRole::Engineer, McpRole::Reviewer] {
+            let mcp = server_at(
+                role.clone(),
+                Client::resolve(Some("http://127.0.0.1:1"), None),
+            );
+            let instructions = mcp.get_info().instructions.expect("instructions");
+            for rule in [
+                "Reach Ariadne only through them",
+                "`post_message` writes to a conversation",
+                "\"user\" for the human",
+                "Work autonomously",
+            ] {
+                assert!(instructions.contains(rule), "{role:?}: {instructions}");
+            }
+        }
     }
 
     /// The daemon refuses an addressee with the sentence that says which ones
