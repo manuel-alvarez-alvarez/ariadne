@@ -2,10 +2,9 @@
 //!
 //! Events are *fat*: each one carries the full updated DTO so a client can
 //! patch its state without a refetch. There is no replay — a client that
-//! (re)connects bootstraps over REST and then follows the stream.
-//!
-//! Besides the [`DomainEvent`] kinds, the stream has one control event,
-//! `resync` (see [`ResyncDto`]), sent when a connection has lost events.
+//! (re)connects bootstraps over REST and then follows the stream. Besides the
+//! [`DomainEvent`] kinds there is one control event, `resync` ([`ResyncDto`]),
+//! sent when a connection has lost events.
 
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};

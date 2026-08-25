@@ -3,7 +3,7 @@
 use ariadne_core::GoalStatus;
 use ariadne_core::id::new_id;
 
-use crate::{Change, Goal, Repository, Result, Store, StoreError, not_found, now};
+use crate::{Change, Goal, Profile, Repository, Result, Store, StoreError, not_found, now};
 
 #[derive(Debug, Clone)]
 pub struct NewGoal {
@@ -42,7 +42,8 @@ impl Store {
         // The planner's agent and model are copied onto the goal here and
         // never re-read: editing the profile later must not move a goal that
         // is already being planned.
-        let planner = Self::get_profile_in_tx(&mut tx, &new.planner_profile_id).await?;
+        let planner: Profile =
+            Self::fetch_by_in_tx(&mut tx, "profile", "profiles", &new.planner_profile_id).await?;
         sqlx::query(
             "INSERT INTO goals (id, title, description, status, max_tasks, required_approvals,
                                 planner_profile_id, agent_kind, model, created_at, updated_at)
@@ -74,11 +75,7 @@ impl Store {
     }
 
     pub async fn get_goal(&self, id: &str) -> Result<Goal> {
-        sqlx::query_as::<_, Goal>("SELECT * FROM goals WHERE id = ?")
-            .bind(id)
-            .fetch_optional(self.r())
-            .await?
-            .ok_or_else(|| not_found("goal", id))
+        self.fetch_by("goal", "goals", "id", id).await
     }
 
     /// List goals, narrowed to `statuses` (a goal matches any one of them).
@@ -120,10 +117,9 @@ impl Store {
         Ok(goal)
     }
 
-    /// Hard-delete a goal and (via ON DELETE CASCADE) all its children.
-    /// The normal lifecycle uses cancel; deleting is what drops a finished
-    /// goal for good, so the children go with it and nothing is left to
-    /// refetch — the event carries the id alone.
+    /// Hard-delete a goal and, via ON DELETE CASCADE, all its children. The
+    /// normal lifecycle uses cancel; deleting drops a finished goal for good,
+    /// so nothing is left to refetch and the event carries the id alone.
     pub async fn delete_goal(&self, id: &str) -> Result<()> {
         let n = sqlx::query("DELETE FROM goals WHERE id = ?")
             .bind(id)
@@ -138,8 +134,8 @@ impl Store {
     }
 
     /// The repositories a goal works in, as they stand right now: the goal
-    /// holds references, not copies, so this is always the current path and
-    /// base branch. Ordered like [`Store::list_repositories`].
+    /// holds references, not copies. Ordered like
+    /// [`Store::list_repositories`].
     pub async fn list_goal_repositories(&self, goal_id: &str) -> Result<Vec<Repository>> {
         Ok(sqlx::query_as::<_, Repository>(
             "SELECT r.* FROM goal_repositories gr

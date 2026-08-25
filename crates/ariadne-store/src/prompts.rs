@@ -1,12 +1,11 @@
 //! Profile prompt repository.
 //!
-//! A prompt is stored only when someone sets it. A profile owns the system
-//! prompt and one briefing per [`PromptKind`] of its role, and every one of
-//! them answers with the text set on the profile or, while none is, with the
-//! default the kind ships with (see [`crate::defaults`]) — which is what a
-//! reset goes back to by deleting the row. Editing is free apart from one
-//! rule: a briefing may only name the `{placeholder}`s its kind knows how to
-//! fill in, since anything else would reach the agent as literal text.
+//! A prompt is stored only when someone sets it: a profile answers with the
+//! text set on it or, while none is, with the default its kind ships (see
+//! [`crate::defaults`]) — which is what a reset goes back to by deleting the
+//! row. Editing is free apart from one rule: a briefing may only name the
+//! `{placeholder}`s its kind knows how to fill in, since anything else would
+//! reach the agent as literal text.
 
 use std::str::FromStr;
 
@@ -31,14 +30,12 @@ pub fn parse_prompt_kind(kind: &str) -> Result<PromptKind> {
 }
 
 impl Store {
-    /// Seed the built-in profiles into an empty database.
+    /// Seed the built-in profiles into an empty database, on the defaults of
+    /// their roles, so a rewritten default reaches them without any database
+    /// being touched.
     ///
-    /// They are seeded on the defaults of their roles — no prompt of their own,
-    /// no system prompt — so a rewritten default reaches them without any
-    /// database ever being touched.
-    ///
-    /// Emptiness is the only trigger: once a database has profiles, deleting a
-    /// built-in stays deleted and an edited prompt stays edited.
+    /// Emptiness is the only trigger: once a database has profiles, deleting
+    /// a built-in stays deleted and an edited prompt stays edited.
     pub(crate) async fn seed_builtin_profiles(&self) -> Result<()> {
         let mut tx = self.w().begin().await?;
         let profiles: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM profiles")
@@ -99,8 +96,8 @@ impl Store {
     ///
     /// A template naming a `{placeholder}` the kind has no value for is
     /// refused here rather than at spawn time: rendering would carry the token
-    /// through to the agent as literal text, and the save is the last moment
-    /// anyone is looking.
+    /// through to the agent as text, and the save is the last moment anyone is
+    /// looking.
     pub async fn update_profile_prompt(
         &self,
         profile_id: &str,

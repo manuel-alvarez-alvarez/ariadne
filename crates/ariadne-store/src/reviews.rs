@@ -3,6 +3,7 @@
 use ariadne_core::ReviewVerdict;
 use ariadne_core::id::new_id;
 
+use crate::query::Filtered;
 use crate::{Change, Result, Review, Store, StoreError, now};
 
 #[derive(Debug, Clone)]
@@ -68,23 +69,10 @@ impl Store {
     }
 
     pub async fn list_reviews(&self, task_id: &str, round: Option<i64>) -> Result<Vec<Review>> {
-        let rows = match round {
-            Some(r) => {
-                sqlx::query_as::<_, Review>(
-                    "SELECT * FROM reviews WHERE task_id = ? AND round = ? ORDER BY id",
-                )
-                .bind(task_id)
-                .bind(r)
-                .fetch_all(self.r())
-                .await?
-            }
-            None => {
-                sqlx::query_as::<_, Review>("SELECT * FROM reviews WHERE task_id = ? ORDER BY id")
-                    .bind(task_id)
-                    .fetch_all(self.r())
-                    .await?
-            }
-        };
-        Ok(rows)
+        Filtered::new("reviews")
+            .maybe(" AND task_id = ?", Some(task_id))
+            .maybe(" AND round = ?", round.map(|r| r.to_string()))
+            .fetch(self, " ORDER BY id", &[])
+            .await
     }
 }

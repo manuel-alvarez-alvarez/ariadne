@@ -1,9 +1,6 @@
-//! Curated model catalogs per agent CLI.
-//!
-//! Single source of truth for the model candidates the CLI completes and the
-//! daemon serves (`GET /v1/models`). Claude Code and Codex ship curated
-//! tables; OpenCode discovers its models at runtime (`opencode models`), so
-//! its curated list is empty.
+//! Curated model catalogs per agent CLI: what the CLI completes and the
+//! daemon serves (`GET /v1/models`). OpenCode discovers its models at runtime
+//! (`opencode models`), so its curated list is empty.
 
 use crate::AgentKind;
 
@@ -14,8 +11,7 @@ pub struct ModelInfo {
     pub description: &'static str,
 }
 
-/// The curated models of an agent CLI (empty for OpenCode, whose models are
-/// discovered, not curated).
+/// The curated models of an agent CLI.
 pub fn curated_models(kind: AgentKind) -> &'static [ModelInfo] {
     match kind {
         AgentKind::ClaudeCode => CLAUDE_CODE,

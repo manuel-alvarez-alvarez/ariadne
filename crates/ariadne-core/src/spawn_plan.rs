@@ -1,10 +1,9 @@
 //! The spawn plan file: how the daemon tells the `ariadne` CLI what to exec.
 //!
 //! An agent used to ride into tmux as `tmux new-session … -e K=V … -- <argv>`,
-//! which puts the whole briefing and every environment variable into one tmux
-//! command — and tmux ships a command to its server in a single imsg message
-//! capped near 16KB. A 5KB reviewer briefing was enough to make `new-session`
-//! fail with "command too long" and take the task down with it.
+//! and tmux ships a command to its server in a single imsg message capped near
+//! 16KB: a 5KB reviewer briefing was enough to fail the spawn with "command
+//! too long" and take the task down with it.
 //!
 //! So the argv no longer travels through tmux at all. The daemon writes it
 //! here and tmux runs the constant-size `ariadne _spawn <plan>`, which applies
@@ -12,10 +11,9 @@
 //! itself ends up as the pane's root process, exactly as before.
 //!
 //! Like [`crate::codex_hooks`], this lives in the domain crate because both
-//! ends have to agree on it and neither may depend on the other. That is also
-//! why it stays deliberately small: a daemon and a CLI from different builds
-//! do meet in the wild (the daemon runs for weeks), and the fewer fields there
-//! are, the less there is to disagree about. [`VERSION`] catches the rest.
+//! ends have to agree on it and neither may depend on the other, and it stays
+//! deliberately small for the same reason: a daemon and a CLI from different
+//! builds do meet in the wild, and [`VERSION`] is what catches the rest.
 
 use std::path::PathBuf;
 
@@ -70,8 +68,7 @@ impl SpawnPlanFile {
     }
 
     /// Render the plan for writing. Pretty-printed: it stays in the run dir
-    /// after the spawn as the record of how the session was launched, and
-    /// somebody reads it.
+    /// afterwards as the record of how the session was launched.
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string_pretty(self)
     }

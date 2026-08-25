@@ -14,6 +14,7 @@ mod goals;
 mod messages;
 mod profiles;
 mod prompts;
+mod query;
 mod repositories;
 mod reviews;
 mod sessions;
@@ -76,11 +77,11 @@ pub(crate) fn not_found(entity: &'static str, id: &str) -> StoreError {
     }
 }
 
-/// Whether the database at `path` was written before the 29 migrations were
-/// squashed into one, which is the only thing that stops this release opening
-/// a database it otherwise understands. `Some` is the sentence to show; `None`
-/// is a database this release can open, a file that is not one of ours and a
-/// path with nothing on it — a report never calls anything old on a guess.
+/// Whether the database at `path` predates the squash of the 29 migrations
+/// into one, which is the only thing that stops this release opening a
+/// database it otherwise understands. `Some` is the sentence to show; a file
+/// that is not one of ours and a path with nothing on it are both `None` — a
+/// report never calls anything old on a guess.
 ///
 /// For `ariadne doctor`, which is asked why the daemon will not start and is
 /// the only thing still running to answer it.
@@ -105,11 +106,9 @@ pub async fn pre_squash_database(path: impl AsRef<Path>) -> Option<String> {
 }
 
 /// Whether `_sqlx_migrations` records a migration this release does not ship —
-/// a later version of the chain that was squashed away, or a version 1 whose
-/// checksum is the old `0001_init.sql`. Either way sqlx refuses to run, and
-/// the database is one from before the squash.
-///
-/// A database with no `_sqlx_migrations` table at all is a fresh one.
+/// a later version of the squashed-away chain, or a version 1 whose checksum
+/// is the old `0001_init.sql`. Either way sqlx refuses to run over it. A
+/// database with no `_sqlx_migrations` table at all is a fresh one.
 async fn applied_elsewhere(pool: &Pool<Sqlite>) -> Result<bool> {
     let recorded: Option<String> = sqlx::query_scalar(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
@@ -130,9 +129,8 @@ async fn applied_elsewhere(pool: &Pool<Sqlite>) -> Result<bool> {
     }))
 }
 
-/// What a user holding one is told. Ariadne is pre-1.0: a database is
-/// recreated rather than migrated, so the fix is one file to delete — named in
-/// full, since it is wherever `db_path` puts it.
+/// What a user holding one is told: the fix is one file to delete, named in
+/// full since it is wherever `db_path` puts it.
 fn pre_squash_message(path: &Path) -> String {
     let path = path.display();
     format!(
@@ -181,12 +179,10 @@ impl Store {
             .map_err(|e| StoreError::Invalid(format!("migration failed: {e}")))?;
 
         // Opened after the migrations, not before: a connection that read the
-        // schema first keeps the old column set, and a migration that adds a
-        // column would then have every `SELECT *` on that table read short by
-        // one until the process restarts.
-        //
-        // Safe to open read-only: the write pool above connected with
-        // `create_if_missing`, so the file already exists.
+        // schema first keeps the old column set, so every `SELECT *` on a
+        // table a migration widened would read short by one until the process
+        // restarts. Read-only is safe here — the write pool above connected
+        // with `create_if_missing`, so the file exists.
         let read = SqlitePoolOptions::new()
             .max_connections(4)
             .connect_with(options.read_only(true))
@@ -204,10 +200,9 @@ impl Store {
 
     /// Subscribe to committed writes (see [`Change`]).
     ///
-    /// Returns `None` when a watcher is already installed: there is exactly
-    /// one consumer, the daemon's event bus, installed at startup. Changes
-    /// written before it is installed — or with no watcher at all — are
-    /// dropped, since clients bootstrap their state over REST anyway.
+    /// `None` when a watcher is already installed: there is exactly one
+    /// consumer, the daemon's event bus. Changes written before it is
+    /// installed are dropped, since clients bootstrap over REST anyway.
     pub fn watch_changes(&self) -> Option<mpsc::UnboundedReceiver<Change>> {
         let (tx, rx) = mpsc::unbounded_channel();
         self.changes.set(tx).ok()?;

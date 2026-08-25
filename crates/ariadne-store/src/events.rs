@@ -3,6 +3,7 @@
 use ariadne_core::AgentKind;
 use ariadne_core::id::new_id;
 
+use crate::query::Filtered;
 use crate::{AgentEvent, Change, Result, Store, now};
 
 #[derive(Debug, Clone)]
@@ -47,28 +48,15 @@ impl Store {
     }
 
     pub async fn list_events(&self, filter: EventFilter) -> Result<Vec<AgentEvent>> {
-        let mut sql = String::from("SELECT * FROM agent_events WHERE id > ?");
-        if filter.session_id.is_some() {
-            sql.push_str(" AND session_id = ?");
-        }
-        if filter.task_id.is_some() {
-            sql.push_str(" AND task_id = ?");
-        }
-        sql.push_str(" ORDER BY id LIMIT ?");
-        // Safe: only fixed clause fragments are appended; values are bound.
-        let mut q = sqlx::query_as::<_, AgentEvent>(sqlx::AssertSqlSafe(sql))
-            .bind(filter.after.unwrap_or_default());
-        if let Some(s) = &filter.session_id {
-            q = q.bind(s.clone());
-        }
-        if let Some(t) = &filter.task_id {
-            q = q.bind(t.clone());
-        }
-        let limit = if filter.limit <= 0 {
-            50
-        } else {
-            filter.limit.min(200)
+        let limit = match filter.limit {
+            n if n <= 0 => 50,
+            n => n.min(200),
         };
-        Ok(q.bind(limit).fetch_all(self.r()).await?)
+        Filtered::new("agent_events")
+            .maybe(" AND id > ?", Some(filter.after.unwrap_or_default()))
+            .maybe(" AND session_id = ?", filter.session_id)
+            .maybe(" AND task_id = ?", filter.task_id)
+            .fetch(self, " ORDER BY id LIMIT ?", &[limit])
+            .await
     }
 }

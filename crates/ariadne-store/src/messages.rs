@@ -3,7 +3,7 @@
 use ariadne_core::AuthorRole;
 use ariadne_core::id::new_id;
 
-use crate::{Change, Message, Recipient, Result, Store, not_found, now};
+use crate::{Change, Message, Recipient, Result, Store, now};
 
 #[derive(Debug, Clone)]
 pub struct NewMessage {
@@ -48,11 +48,7 @@ impl Store {
     /// One message by id: what a posted-message notification is resolved
     /// against before it is delivered to whoever it addresses.
     pub async fn get_message(&self, id: &str) -> Result<Message> {
-        sqlx::query_as::<_, Message>("SELECT * FROM messages WHERE id = ?")
-            .bind(id)
-            .fetch_optional(self.r())
-            .await?
-            .ok_or_else(|| not_found("message", id))
+        self.fetch_by("message", "messages", "id", id).await
     }
 
     /// Messages of a task thread, keyset-paginated by id.

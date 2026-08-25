@@ -56,6 +56,108 @@ async fn seed_goal(store: &Store, planner: &Profile, max_tasks: Option<i64>) -> 
     (goal, repo)
 }
 
+/// The ramp almost every test starts on: a fresh database holding one planner
+/// profile, one goal, the repository that goal works in, and one task on it.
+struct World {
+    store: Store,
+    planner: Profile,
+    goal: Goal,
+    repo: Repository,
+    task: Task,
+    /// Kept for its Drop: the database lives in it.
+    _dir: tempfile::TempDir,
+}
+
+impl World {
+    async fn new() -> Self {
+        let (store, dir) = test_store().await;
+        let planner = seed_profile(&store, "planner", Role::Planner).await;
+        let (goal, repo) = seed_goal(&store, &planner, None).await;
+        let task = seed_task(&store, &goal, &repo, vec![]).await;
+        Self {
+            store,
+            planner,
+            goal,
+            repo,
+            task,
+            _dir: dir,
+        }
+    }
+
+    /// A session in this world's goal, on its task unless `task_id` says
+    /// otherwise — a planner's has none.
+    async fn session(
+        &self,
+        tmux: &str,
+        role: Role,
+        profile_id: &str,
+        task_id: Option<&str>,
+    ) -> AgentSession {
+        self.store
+            .create_session(NewSession {
+                goal_id: self.goal.id.clone(),
+                task_id: task_id.map(str::to_string),
+                role,
+                profile_id: profile_id.to_string(),
+                agent_kind: AgentKind::ClaudeCode,
+                model: None,
+                tmux_session: tmux.into(),
+                worktree_path: Some("/tmp/wt".into()),
+                review_round: None,
+            })
+            .await
+            .unwrap()
+    }
+
+    /// The engineer session of this world's task.
+    async fn engineer_session(&self) -> AgentSession {
+        let profile = self.task.engineer_profile_id.clone();
+        self.session(
+            "ariadne-test-eng",
+            Role::Engineer,
+            &profile,
+            Some(&self.task.id),
+        )
+        .await
+    }
+
+    /// This world's task as it now stands.
+    async fn task(&self) -> Task {
+        self.store.get_task(&self.task.id).await.unwrap()
+    }
+}
+
+/// The happy path, one move at a time: what a task does between `pending` and
+/// `merged`, and who does each of them.
+const HAPPY_PATH: [(TaskStatus, Actor); 5] = [
+    (TaskStatus::Ready, Actor::Daemon),
+    (TaskStatus::InProgress, Actor::Daemon),
+    (TaskStatus::UnderReview, Actor::Engineer),
+    (TaskStatus::Approved, Actor::Daemon),
+    (TaskStatus::Merged, Actor::Engineer),
+];
+
+/// Walk a task up the happy path from wherever it is to `upto`.
+async fn walk_to(store: &Store, task_id: &str, upto: TaskStatus) -> Task {
+    let now = store.get_task(task_id).await.unwrap().status();
+    let from = HAPPY_PATH
+        .iter()
+        .position(|(status, _)| *status == now)
+        .map_or(0, |at| at + 1);
+    let mut task = store.get_task(task_id).await.unwrap();
+    for (status, actor) in &HAPPY_PATH[from..] {
+        let merge_commit = (*status == TaskStatus::Merged).then_some("abc123");
+        task = store
+            .transition_task(task_id, *status, *actor, None, merge_commit)
+            .await
+            .unwrap();
+        if *status == upto {
+            break;
+        }
+    }
+    task
+}
+
 async fn seed_task(store: &Store, goal: &Goal, repo: &Repository, deps: Vec<String>) -> Task {
     let eng = seed_profile(
         store,
@@ -96,30 +198,21 @@ async fn agent_configs_are_seeded_with_the_defaults() {
     for config in configs {
         assert_eq!(config.extra_flags(), config.default_flags());
     }
-    assert_eq!(
-        store
-            .get_agent_config(AgentKind::ClaudeCode)
-            .await
-            .unwrap()
-            .extra_flags(),
-        vec!["--dangerously-skip-permissions".to_string()]
-    );
-    assert_eq!(
-        store
-            .get_agent_config(AgentKind::Codex)
-            .await
-            .unwrap()
-            .extra_flags(),
-        vec!["--dangerously-bypass-approvals-and-sandbox".to_string()]
-    );
-    assert_eq!(
-        store
-            .get_agent_config(AgentKind::Opencode)
-            .await
-            .unwrap()
-            .extra_flags(),
-        vec!["--auto".to_string()]
-    );
+    // The bypass each CLI spells its own way, spelled out: this is what an
+    // unconfigured Ariadne launches them with.
+    for (kind, flag) in [
+        (AgentKind::ClaudeCode, "--dangerously-skip-permissions"),
+        (
+            AgentKind::Codex,
+            "--dangerously-bypass-approvals-and-sandbox",
+        ),
+        (AgentKind::Opencode, "--auto"),
+    ] {
+        assert_eq!(
+            store.get_agent_config(kind).await.unwrap().extra_flags(),
+            vec![flag.to_string()]
+        );
+    }
 }
 
 /// The flags are the user's to replace, emptying them included, and the
@@ -142,22 +235,13 @@ async fn agent_config_flags_are_replaced_whole() {
         updated.default_flags(),
         vec!["--dangerously-skip-permissions".to_string()]
     );
-    // Re-opening the same database reads back the edit, not the seed.
-    assert_eq!(
-        store
-            .get_agent_config(AgentKind::ClaudeCode)
-            .await
-            .unwrap()
-            .extra_flags(),
-        vec!["--permission-mode=acceptEdits".to_string()]
-    );
-
     let emptied = store
         .update_agent_config(AgentKind::Codex, vec![])
         .await
         .unwrap();
     assert!(emptied.extra_flags().is_empty());
-    // One agent's flags are its own.
+    // The edit is read back from the database, and one agent's flags are its
+    // own: emptying codex left claude alone.
     assert_eq!(
         store
             .get_agent_config(AgentKind::ClaudeCode)
@@ -441,12 +525,9 @@ async fn a_goal_needs_repositories_that_exist() {
 /// nothing, so the refusal names who is holding it.
 #[tokio::test]
 async fn a_repository_a_goal_holds_cannot_be_deleted() {
-    let (store, _dir) = test_store().await;
-    let planner = seed_profile(&store, "planner", Role::Planner).await;
-    let (goal, repo) = seed_goal(&store, &planner, None).await;
-    seed_task(&store, &goal, &repo, vec![]).await;
+    let w = World::new().await;
 
-    let err = store.delete_repository(&repo.id).await.unwrap_err();
+    let err = w.store.delete_repository(&w.repo.id).await.unwrap_err();
     let StoreError::Conflict(message) = err else {
         panic!("expected a conflict, got {err:?}");
     };
@@ -454,8 +535,8 @@ async fn a_repository_a_goal_holds_cannot_be_deleted() {
     assert!(message.contains("1 task"), "{message}");
 
     // Nothing holds it once the goal (and with it the task) is gone.
-    store.delete_goal(&goal.id).await.unwrap();
-    store.delete_repository(&repo.id).await.unwrap();
+    w.store.delete_goal(&w.goal.id).await.unwrap();
+    w.store.delete_repository(&w.repo.id).await.unwrap();
 }
 
 /// A task branch reads like a contributor's: the title, slugged and clipped to
@@ -463,15 +544,14 @@ async fn a_repository_a_goal_holds_cannot_be_deleted() {
 /// in it says Ariadne — this name is what shows on a published request.
 #[tokio::test]
 async fn task_branch_is_named_after_the_title() {
-    let (store, _dir) = test_store().await;
-    let planner = seed_profile(&store, "planner", Role::Planner).await;
-    let (goal, repo) = seed_goal(&store, &planner, None).await;
-    let eng = seed_profile(&store, "eng", Role::Engineer).await;
-    let rev = seed_profile(&store, "rev", Role::Reviewer).await;
-    let task = store
+    let w = World::new().await;
+    let eng = seed_profile(&w.store, "eng", Role::Engineer).await;
+    let rev = seed_profile(&w.store, "rev", Role::Reviewer).await;
+    let task = w
+        .store
         .create_task(NewTask {
-            goal_id: goal.id.clone(),
-            repo_id: repo.id.clone(),
+            goal_id: w.goal.id.clone(),
+            repo_id: w.repo.id.clone(),
             title: "Fix the landing briefing: real fetch/rebase".into(),
             description: "d".into(),
             engineer_profile_id: eng.id,
@@ -491,54 +571,17 @@ async fn task_branch_is_named_after_the_title() {
 
 #[tokio::test]
 async fn task_happy_path_to_merged() {
-    let (store, _dir) = test_store().await;
-    let planner = seed_profile(&store, "planner", Role::Planner).await;
-    let (goal, repo) = seed_goal(&store, &planner, None).await;
-    let task = seed_task(&store, &goal, &repo, vec![]).await;
-    assert_eq!(task.status(), TaskStatus::Pending);
-    // The branch is the title slugged plus the tail of the id, and nothing else.
-    assert_eq!(
-        task.branch,
-        format!("task-{}", &task.id[task.id.len() - 6..])
-    );
+    let w = World::new().await;
+    assert_eq!(w.task.status(), TaskStatus::Pending);
 
-    let t = store
-        .transition_task(&task.id, TaskStatus::Ready, Actor::Daemon, None, None)
-        .await
-        .unwrap();
-    let t = store
-        .transition_task(&t.id, TaskStatus::InProgress, Actor::Daemon, None, None)
-        .await
-        .unwrap();
-    let t = store
-        .transition_task(
-            &t.id,
-            TaskStatus::UnderReview,
-            Actor::Engineer,
-            Some("review please"),
-            None,
-        )
-        .await
-        .unwrap();
+    let t = walk_to(&w.store, &w.task.id, TaskStatus::UnderReview).await;
     assert_eq!(t.review_round, 1, "review round bumps on under_review");
-    let t = store
-        .transition_task(&t.id, TaskStatus::Approved, Actor::Daemon, None, None)
-        .await
-        .unwrap();
-    let t = store
-        .transition_task(
-            &t.id,
-            TaskStatus::Merged,
-            Actor::Engineer,
-            None,
-            Some("abc123"),
-        )
-        .await
-        .unwrap();
+
+    let t = walk_to(&w.store, &w.task.id, TaskStatus::Merged).await;
     assert_eq!(t.status(), TaskStatus::Merged);
     assert_eq!(t.merge_commit.as_deref(), Some("abc123"));
 
-    let audit = store.list_task_transitions(&t.id).await.unwrap();
+    let audit = w.store.list_task_transitions(&t.id).await.unwrap();
     assert_eq!(audit.len(), 5);
     assert_eq!(audit[0].from_status, "pending");
     assert_eq!(audit[4].to_status, "merged");
@@ -546,14 +589,12 @@ async fn task_happy_path_to_merged() {
 
 #[tokio::test]
 async fn illegal_transitions_are_rejected_and_unaudited() {
-    let (store, _dir) = test_store().await;
-    let planner = seed_profile(&store, "planner", Role::Planner).await;
-    let (goal, repo) = seed_goal(&store, &planner, None).await;
-    let task = seed_task(&store, &goal, &repo, vec![]).await;
+    let w = World::new().await;
+    let task = &w.task;
 
     // Illegal edge.
     assert!(matches!(
-        store
+        w.store
             .transition_task(
                 &task.id,
                 TaskStatus::Merged,
@@ -566,36 +607,21 @@ async fn illegal_transitions_are_rejected_and_unaudited() {
     ));
     // Legal edge, wrong actor.
     assert!(matches!(
-        store
+        w.store
             .transition_task(&task.id, TaskStatus::Ready, Actor::Reviewer, None, None)
             .await,
         Err(StoreError::Transition(_))
     ));
     // Merged requires a commit.
-    let t = store
-        .transition_task(&task.id, TaskStatus::Ready, Actor::Daemon, None, None)
-        .await
-        .unwrap();
-    let t = store
-        .transition_task(&t.id, TaskStatus::InProgress, Actor::Daemon, None, None)
-        .await
-        .unwrap();
-    let t = store
-        .transition_task(&t.id, TaskStatus::UnderReview, Actor::Engineer, None, None)
-        .await
-        .unwrap();
-    let t = store
-        .transition_task(&t.id, TaskStatus::Approved, Actor::Daemon, None, None)
-        .await
-        .unwrap();
+    let t = walk_to(&w.store, &task.id, TaskStatus::Approved).await;
     assert!(matches!(
-        store
+        w.store
             .transition_task(&t.id, TaskStatus::Merged, Actor::Engineer, None, None)
             .await,
         Err(StoreError::Invalid(_))
     ));
 
-    let audit = store.list_task_transitions(&task.id).await.unwrap();
+    let audit = w.store.list_task_transitions(&task.id).await.unwrap();
     assert_eq!(audit.len(), 4, "failed transitions leave no audit rows");
 }
 
@@ -624,11 +650,9 @@ async fn max_tasks_is_enforced() {
 
 #[tokio::test]
 async fn dependencies_gate_and_reject_cycles() {
-    let (store, _dir) = test_store().await;
-    let planner = seed_profile(&store, "planner", Role::Planner).await;
-    let (goal, repo) = seed_goal(&store, &planner, None).await;
-    let a = seed_task(&store, &goal, &repo, vec![]).await;
-    let b = seed_task(&store, &goal, &repo, vec![a.id.clone()]).await;
+    let w = World::new().await;
+    let (store, a) = (&w.store, &w.task);
+    let b = seed_task(store, &w.goal, &w.repo, vec![a.id.clone()]).await;
 
     assert!(store.task_dependencies_merged(&a.id).await.unwrap());
     assert!(!store.task_dependencies_merged(&b.id).await.unwrap());
@@ -649,42 +673,15 @@ async fn dependencies_gate_and_reject_cycles() {
     ));
 
     // Merge a; b's deps become satisfied.
-    let t = store
-        .transition_task(&a.id, TaskStatus::Ready, Actor::Daemon, None, None)
-        .await
-        .unwrap();
-    let t = store
-        .transition_task(&t.id, TaskStatus::InProgress, Actor::Daemon, None, None)
-        .await
-        .unwrap();
-    let t = store
-        .transition_task(&t.id, TaskStatus::UnderReview, Actor::Engineer, None, None)
-        .await
-        .unwrap();
-    let t = store
-        .transition_task(&t.id, TaskStatus::Approved, Actor::Daemon, None, None)
-        .await
-        .unwrap();
-    store
-        .transition_task(
-            &t.id,
-            TaskStatus::Merged,
-            Actor::Engineer,
-            None,
-            Some("sha"),
-        )
-        .await
-        .unwrap();
+    walk_to(store, &a.id, TaskStatus::Merged).await;
     assert!(store.task_dependencies_merged(&b.id).await.unwrap());
 }
 
 #[tokio::test]
 async fn setting_the_dependencies_of_a_ready_task_downgrades_it_with_audit() {
-    let (store, _dir) = test_store().await;
-    let planner = seed_profile(&store, "planner", Role::Planner).await;
-    let (goal, repo) = seed_goal(&store, &planner, None).await;
-    let dep = seed_task(&store, &goal, &repo, vec![]).await;
-    let task = seed_task(&store, &goal, &repo, vec![]).await;
+    let w = World::new().await;
+    let (store, dep) = (&w.store, &w.task);
+    let task = seed_task(store, &w.goal, &w.repo, vec![]).await;
 
     store
         .transition_task(&task.id, TaskStatus::Ready, Actor::Daemon, None, None)
@@ -724,10 +721,8 @@ async fn setting_the_dependencies_of_a_ready_task_downgrades_it_with_audit() {
 
 #[tokio::test]
 async fn one_review_verdict_per_round() {
-    let (store, _dir) = test_store().await;
-    let planner = seed_profile(&store, "planner", Role::Planner).await;
-    let (goal, repo) = seed_goal(&store, &planner, None).await;
-    let task = seed_task(&store, &goal, &repo, vec![]).await;
+    let w = World::new().await;
+    let (store, task) = (&w.store, &w.task);
     let reviewer = store.list_task_reviewers(&task.id).await.unwrap().remove(0);
 
     store
@@ -776,10 +771,8 @@ async fn one_review_verdict_per_round() {
 /// is what the user is pointed at, and nothing else.
 #[tokio::test]
 async fn a_task_remembers_the_request_it_was_published_as() {
-    let (store, _dir) = test_store().await;
-    let planner = seed_profile(&store, "planner", Role::Planner).await;
-    let (goal, repo) = seed_goal(&store, &planner, None).await;
-    let task = seed_task(&store, &goal, &repo, vec![]).await;
+    let w = World::new().await;
+    let (store, task) = (&w.store, &w.task);
     assert_eq!(store.get_task(&task.id).await.unwrap().pr_url, None);
 
     let url = "https://github.com/ariadne/ariadne/pull/12";
@@ -810,25 +803,10 @@ async fn a_task_remembers_the_request_it_was_published_as() {
 
 #[tokio::test]
 async fn messages_sessions_events_round_trip() {
-    let (store, _dir) = test_store().await;
-    let planner = seed_profile(&store, "planner", Role::Planner).await;
-    let (goal, repo) = seed_goal(&store, &planner, None).await;
-    let task = seed_task(&store, &goal, &repo, vec![]).await;
+    let w = World::new().await;
+    let (store, goal, task) = (&w.store, &w.goal, &w.task);
 
-    let session = store
-        .create_session(NewSession {
-            goal_id: goal.id.clone(),
-            task_id: Some(task.id.clone()),
-            role: Role::Engineer,
-            profile_id: task.engineer_profile_id.clone(),
-            agent_kind: AgentKind::ClaudeCode,
-            model: None,
-            tmux_session: "ariadne-test-eng".into(),
-            worktree_path: Some("/tmp/wt".into()),
-            review_round: None,
-        })
-        .await
-        .unwrap();
+    let session = w.engineer_session().await;
     store
         .set_session_internal_id(&session.id, "uuid-1234")
         .await
@@ -896,10 +874,8 @@ async fn messages_sessions_events_round_trip() {
 /// trip through the list a thread is read with.
 #[tokio::test]
 async fn a_message_can_be_addressed_to_a_profile_or_to_the_user() {
-    let (store, _dir) = test_store().await;
-    let planner = seed_profile(&store, "planner", Role::Planner).await;
-    let (goal, repo) = seed_goal(&store, &planner, None).await;
-    let task = seed_task(&store, &goal, &repo, vec![]).await;
+    let w = World::new().await;
+    let (store, goal, task, planner) = (&w.store, &w.goal, &w.task, &w.planner);
     let engineer = Recipient::Profile(task.engineer_profile_id.clone());
 
     for (recipient, body) in [
@@ -966,11 +942,10 @@ async fn a_message_can_be_addressed_to_a_profile_or_to_the_user() {
 /// is, rather than leaving the message pointing at nothing.
 #[tokio::test]
 async fn a_profile_a_message_addresses_cannot_be_deleted() {
-    let (store, _dir) = test_store().await;
-    let planner = seed_profile(&store, "planner", Role::Planner).await;
-    let (goal, _repo) = seed_goal(&store, &planner, None).await;
+    let w = World::new().await;
+    let (store, goal) = (&w.store, &w.goal);
     // A profile nothing else references, so only the message can hold it.
-    let bystander = seed_profile(&store, "bystander", Role::Reviewer).await;
+    let bystander = seed_profile(store, "bystander", Role::Reviewer).await;
 
     store
         .create_message(NewMessage {
@@ -999,25 +974,10 @@ async fn a_profile_a_message_addresses_cannot_be_deleted() {
 /// the silence it measures this run's rather than the row's.
 #[tokio::test]
 async fn every_launch_of_a_session_is_dated() {
-    let (store, _dir) = test_store().await;
-    let planner = seed_profile(&store, "planner", Role::Planner).await;
-    let (goal, repo) = seed_goal(&store, &planner, None).await;
-    let task = seed_task(&store, &goal, &repo, vec![]).await;
+    let w = World::new().await;
+    let store = &w.store;
 
-    let session = store
-        .create_session(NewSession {
-            goal_id: goal.id.clone(),
-            task_id: Some(task.id.clone()),
-            role: Role::Engineer,
-            profile_id: task.engineer_profile_id.clone(),
-            agent_kind: AgentKind::ClaudeCode,
-            model: None,
-            tmux_session: "ariadne-test-eng".into(),
-            worktree_path: Some("/tmp/wt".into()),
-            review_round: None,
-        })
-        .await
-        .unwrap();
+    let session = w.engineer_session().await;
     assert_eq!(
         session.launched_at, None,
         "a row that was created but never launched is dated by nothing"
@@ -1048,25 +1008,10 @@ async fn every_launch_of_a_session_is_dated() {
 /// relaunch from a first launch.
 #[tokio::test]
 async fn restarting_a_session_reopens_the_same_row() {
-    let (store, _dir) = test_store().await;
-    let planner = seed_profile(&store, "planner", Role::Planner).await;
-    let (goal, repo) = seed_goal(&store, &planner, None).await;
-    let task = seed_task(&store, &goal, &repo, vec![]).await;
+    let w = World::new().await;
+    let (store, task) = (&w.store, &w.task);
 
-    let session = store
-        .create_session(NewSession {
-            goal_id: goal.id.clone(),
-            task_id: Some(task.id.clone()),
-            role: Role::Engineer,
-            profile_id: task.engineer_profile_id.clone(),
-            agent_kind: AgentKind::ClaudeCode,
-            model: None,
-            tmux_session: "ariadne-test-eng".into(),
-            worktree_path: Some("/tmp/wt".into()),
-            review_round: None,
-        })
-        .await
-        .unwrap();
+    let session = w.engineer_session().await;
     store
         .set_session_internal_id(&session.id, "uuid-1234")
         .await
@@ -1146,25 +1091,10 @@ async fn restarting_a_session_reopens_the_same_row() {
 /// than restarting it.
 #[tokio::test]
 async fn session_attention_is_raised_kept_and_cleared() {
-    let (store, _dir) = test_store().await;
-    let planner = seed_profile(&store, "planner", Role::Planner).await;
-    let (goal, repo) = seed_goal(&store, &planner, None).await;
-    let task = seed_task(&store, &goal, &repo, vec![]).await;
+    let w = World::new().await;
+    let store = &w.store;
 
-    let session = store
-        .create_session(NewSession {
-            goal_id: goal.id.clone(),
-            task_id: Some(task.id.clone()),
-            role: Role::Engineer,
-            profile_id: task.engineer_profile_id.clone(),
-            agent_kind: AgentKind::ClaudeCode,
-            model: None,
-            tmux_session: "ariadne-test-eng".into(),
-            worktree_path: Some("/tmp/wt".into()),
-            review_round: None,
-        })
-        .await
-        .unwrap();
+    let session = w.engineer_session().await;
     let fresh = store.get_session(&session.id).await.unwrap();
     assert_eq!(fresh.attention_reason(), None);
     assert_eq!(fresh.attention_since, None);
@@ -1265,24 +1195,9 @@ async fn session_attention_is_raised_kept_and_cleared() {
 /// dealt with it. Only the clear the sweep makes drops that one.
 #[tokio::test]
 async fn an_agents_own_event_does_not_clear_the_attention_raised_for_the_user() {
-    let (store, _dir) = test_store().await;
-    let planner = seed_profile(&store, "planner", Role::Planner).await;
-    let (goal, repo) = seed_goal(&store, &planner, None).await;
-    let task = seed_task(&store, &goal, &repo, vec![]).await;
-    let session = store
-        .create_session(NewSession {
-            goal_id: goal.id.clone(),
-            task_id: Some(task.id.clone()),
-            role: Role::Engineer,
-            profile_id: task.engineer_profile_id.clone(),
-            agent_kind: AgentKind::ClaudeCode,
-            model: None,
-            tmux_session: "ariadne-test-eng".into(),
-            worktree_path: Some("/tmp/wt".into()),
-            review_round: None,
-        })
-        .await
-        .unwrap();
+    let w = World::new().await;
+    let store = &w.store;
+    let session = w.engineer_session().await;
 
     // What the agent raised for itself, the agent takes back down.
     store
@@ -1335,55 +1250,40 @@ async fn an_agents_own_event_does_not_clear_the_attention_raised_for_the_user() 
 /// with what was submitted for it and not for the first.
 #[tokio::test]
 async fn the_review_summary_is_the_reason_of_the_latest_review_request() {
-    let (store, _dir) = test_store().await;
-    let planner = seed_profile(&store, "planner", Role::Planner).await;
-    let (goal, repo) = seed_goal(&store, &planner, None).await;
-    let task = seed_task(&store, &goal, &repo, vec![]).await;
+    let w = World::new().await;
+    let (store, task) = (&w.store, &w.task);
     assert_eq!(store.review_summary(&task.id).await.unwrap(), None);
 
-    let round = async |summary: &str| {
-        for (status, actor, reason) in [
-            (TaskStatus::Ready, Actor::Daemon, None),
-            (TaskStatus::InProgress, Actor::Daemon, None),
-            (TaskStatus::UnderReview, Actor::Engineer, Some(summary)),
-        ] {
-            store
-                .transition_task(&task.id, status, actor, reason, None)
-                .await
-                .unwrap();
-        }
+    let ask = async |summary: &str| {
+        store
+            .transition_task(
+                &task.id,
+                TaskStatus::UnderReview,
+                Actor::Engineer,
+                Some(summary),
+                None,
+            )
+            .await
+            .unwrap();
     };
-    round("the first pass, with a test per lane").await;
+    walk_to(store, &task.id, TaskStatus::InProgress).await;
+    ask("the first pass, with a test per lane").await;
     assert_eq!(
         store.review_summary(&task.id).await.unwrap().as_deref(),
         Some("the first pass, with a test per lane")
     );
 
     // A round of changes, and a second request with its own summary.
-    store
-        .transition_task(
-            &task.id,
-            TaskStatus::ChangesRequested,
-            Actor::Daemon,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-    store
-        .transition_task(&task.id, TaskStatus::InProgress, Actor::Daemon, None, None)
-        .await
-        .unwrap();
-    store
-        .transition_task(
-            &task.id,
-            TaskStatus::UnderReview,
-            Actor::Engineer,
-            Some("the lane widths, as asked"),
-            None,
-        )
-        .await
-        .unwrap();
+    for (status, actor) in [
+        (TaskStatus::ChangesRequested, Actor::Daemon),
+        (TaskStatus::InProgress, Actor::Daemon),
+    ] {
+        store
+            .transition_task(&task.id, status, actor, None, None)
+            .await
+            .unwrap();
+    }
+    ask("the lane widths, as asked").await;
     assert_eq!(
         store.review_summary(&task.id).await.unwrap().as_deref(),
         Some("the lane widths, as asked")
@@ -1395,40 +1295,18 @@ async fn the_review_summary_is_the_reason_of_the_latest_review_request() {
 /// projection of it, written by the attention change and by nothing else.
 #[tokio::test]
 async fn a_task_is_stalled_while_one_of_its_agents_is() {
-    let (store, _dir) = test_store().await;
-    let planner = seed_profile(&store, "planner", Role::Planner).await;
-    let (goal, repo) = seed_goal(&store, &planner, None).await;
-    let task = seed_task(&store, &goal, &repo, vec![]).await;
-    let session = |name: &str, role: Role, profile: String, of: Option<String>| {
-        store.create_session(NewSession {
-            goal_id: goal.id.clone(),
-            task_id: of,
-            role,
-            profile_id: profile,
-            agent_kind: AgentKind::ClaudeCode,
-            model: None,
-            tmux_session: name.into(),
-            worktree_path: Some("/tmp/wt".into()),
-            review_round: None,
-        })
-    };
-    let engineer = session(
-        "ariadne-test-eng",
-        Role::Engineer,
-        task.engineer_profile_id.clone(),
-        Some(task.id.clone()),
-    )
-    .await
-    .unwrap();
-    let reviewer = session(
-        "ariadne-test-rev",
-        Role::Reviewer,
-        planner.id.clone(),
-        Some(task.id.clone()),
-    )
-    .await
-    .unwrap();
-    assert!(!store.get_task(&task.id).await.unwrap().is_stalled());
+    let w = World::new().await;
+    let (store, task) = (&w.store, &w.task);
+    let engineer = w.engineer_session().await;
+    let reviewer = w
+        .session(
+            "ariadne-test-rev",
+            Role::Reviewer,
+            &w.planner.id.clone(),
+            Some(&task.id),
+        )
+        .await;
+    assert!(!w.task().await.is_stalled());
 
     store
         .set_session_attention(&engineer.id, AttentionReason::Stalled)
@@ -1477,9 +1355,14 @@ async fn a_task_is_stalled_while_one_of_its_agents_is() {
     assert!(!store.get_task(&task.id).await.unwrap().is_stalled());
 
     // A planner has no task to project onto, and says so on its own row.
-    let alone = session("ariadne-test-plan", Role::Planner, planner.id.clone(), None)
-        .await
-        .unwrap();
+    let alone = w
+        .session(
+            "ariadne-test-plan",
+            Role::Planner,
+            &w.planner.id.clone(),
+            None,
+        )
+        .await;
     store
         .set_session_attention(&alone.id, AttentionReason::Stalled)
         .await
@@ -1501,23 +1384,10 @@ async fn a_task_is_stalled_while_one_of_its_agents_is() {
 /// *carrying* exactly where it is.
 #[tokio::test]
 async fn retiring_a_session_drops_the_prompt_it_can_no_longer_answer() {
-    let (store, _dir) = test_store().await;
-    let planner = seed_profile(&store, "planner", Role::Planner).await;
-    let (goal, repo) = seed_goal(&store, &planner, None).await;
-    let task = seed_task(&store, &goal, &repo, vec![]).await;
-    let new_session = || NewSession {
-        goal_id: goal.id.clone(),
-        task_id: Some(task.id.clone()),
-        role: Role::Engineer,
-        profile_id: task.engineer_profile_id.clone(),
-        agent_kind: AgentKind::ClaudeCode,
-        model: None,
-        tmux_session: "ariadne-test-eng".into(),
-        worktree_path: Some("/tmp/wt".into()),
-        review_round: None,
-    };
+    let w = World::new().await;
+    let store = &w.store;
 
-    let session = store.create_session(new_session()).await.unwrap();
+    let session = w.engineer_session().await;
     store
         .set_session_attention(&session.id, AttentionReason::WaitingPermission)
         .await
@@ -1552,7 +1422,7 @@ async fn retiring_a_session_drops_the_prompt_it_can_no_longer_answer() {
 
     // What a session ended reporting is not a dialog: it stays up, and stays
     // up through a further status write.
-    let failed = store.create_session(new_session()).await.unwrap();
+    let failed = w.engineer_session().await;
     store
         .set_session_attention(&failed.id, AttentionReason::AgentError)
         .await
@@ -1574,25 +1444,12 @@ async fn retiring_a_session_drops_the_prompt_it_can_no_longer_answer() {
 /// the `UPDATE`, not in whatever its caller last read.
 #[tokio::test]
 async fn a_prompt_is_only_ever_raised_on_a_session_that_is_still_live() {
-    let (store, _dir) = test_store().await;
-    let planner = seed_profile(&store, "planner", Role::Planner).await;
-    let (goal, repo) = seed_goal(&store, &planner, None).await;
-    let task = seed_task(&store, &goal, &repo, vec![]).await;
-    let new_session = || NewSession {
-        goal_id: goal.id.clone(),
-        task_id: Some(task.id.clone()),
-        role: Role::Engineer,
-        profile_id: task.engineer_profile_id.clone(),
-        agent_kind: AgentKind::ClaudeCode,
-        model: None,
-        tmux_session: "ariadne-test-eng".into(),
-        worktree_path: Some("/tmp/wt".into()),
-        review_round: None,
-    };
+    let w = World::new().await;
+    let store = &w.store;
 
     // The interleaving spelled out: a caller holding a session it read while
     // it was live, and the retirement landing before it gets to the raise.
-    let session = store.create_session(new_session()).await.unwrap();
+    let session = w.engineer_session().await;
     let as_read = store.get_session(&session.id).await.unwrap();
     assert!(as_read.status().is_live());
     store
@@ -1638,7 +1495,7 @@ async fn a_prompt_is_only_ever_raised_on_a_session_that_is_still_live() {
     // And with the two writes actually racing, either order is fine: the
     // raise loses, or it wins and the retirement takes it down after it.
     for _ in 0..5 {
-        let racing = store.create_session(new_session()).await.unwrap();
+        let racing = w.engineer_session().await;
         let (retired, raised) = tokio::join!(
             store.set_session_status(&racing.id, SessionStatus::Exited),
             store.set_session_attention(&racing.id, AttentionReason::WaitingInput),
@@ -1703,14 +1560,11 @@ async fn list_goals_filters_by_any_of_the_given_statuses() {
 
 #[tokio::test]
 async fn goal_cascade_delete_cleans_children() {
-    let (store, _dir) = test_store().await;
-    let planner = seed_profile(&store, "planner", Role::Planner).await;
-    let (goal, repo) = seed_goal(&store, &planner, None).await;
-    let task = seed_task(&store, &goal, &repo, vec![]).await;
+    let w = World::new().await;
 
-    store.delete_goal(&goal.id).await.unwrap();
+    w.store.delete_goal(&w.goal.id).await.unwrap();
     assert!(matches!(
-        store.get_task(&task.id).await,
+        w.store.get_task(&w.task.id).await,
         Err(StoreError::NotFound { .. })
     ));
 }

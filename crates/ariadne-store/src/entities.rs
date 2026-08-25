@@ -1,5 +1,6 @@
 //! Row types. Enum-typed columns are stored as TEXT and surfaced as `String`;
-//! use the typed accessors to convert into `ariadne-core` enums.
+//! [`enum_columns`] below is where each of them is read back as its
+//! `ariadne-core` enum.
 
 use std::str::FromStr;
 
@@ -10,6 +11,53 @@ use ariadne_core::{
 
 use crate::defaults::default_system_prompt;
 
+/// The typed reading of a TEXT column that holds a core enum. The accessor
+/// and the column share a name; brackets mark a nullable column, which reads
+/// back as `Option`.
+///
+/// A spelling the enum does not know is a schema violation rather than an
+/// input error — nothing outside this crate writes these columns — so it
+/// panics instead of widening every caller's error type.
+macro_rules! enum_columns {
+    ($($entity:ident { $($name:ident: $ty:tt),+ $(,)? })+) => {
+        $(impl $entity {
+            $(enum_columns!(@one $name: $ty);)+
+        })+
+    };
+    (@one $name:ident: [$ty:ty]) => {
+        pub fn $name(&self) -> Option<$ty> {
+            self.$name.as_deref().map(|v| {
+                <$ty>::from_str(v)
+                    .unwrap_or_else(|_| panic!(concat!("invalid ", stringify!($name), " in db")))
+            })
+        }
+    };
+    (@one $name:ident: $ty:ty) => {
+        pub fn $name(&self) -> $ty {
+            <$ty>::from_str(&self.$name)
+                .unwrap_or_else(|_| panic!(concat!("invalid ", stringify!($name), " in db")))
+        }
+    };
+}
+
+enum_columns! {
+    Profile { role: Role, agent_kind: [AgentKind] }
+    AgentConfig { agent_kind: AgentKind }
+    ProfilePrompt { kind: PromptKind }
+    Repository { merge_strategy: MergeStrategy }
+    Goal { status: GoalStatus, agent_kind: [AgentKind] }
+    Task { status: TaskStatus, agent_kind: [AgentKind] }
+    TaskReviewer { agent_kind: [AgentKind] }
+    AgentSession {
+        role: Role,
+        agent_kind: AgentKind,
+        status: SessionStatus,
+        attention_reason: [AttentionReason],
+    }
+    Message { author_role: AuthorRole }
+    Review { verdict: ReviewVerdict }
+}
+
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Profile {
     pub id: String,
@@ -19,18 +67,14 @@ pub struct Profile {
     pub agent_kind: Option<String>,
     pub model: Option<String>,
     /// The system prompt set on this profile, or NULL while it runs on the
-    /// default of its role. Read it through [`Profile::effective_system_prompt`]
-    /// rather than directly: what the agent is spawned with is the one or the
-    /// other.
+    /// default of its role. Read through [`Profile::effective_system_prompt`],
+    /// which is what the agent is spawned with.
     pub system_prompt: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
 
 impl Profile {
-    pub fn role(&self) -> Role {
-        Role::from_str(&self.role).expect("valid role in db")
-    }
     /// The system prompt this profile is spawned with: the one set on it, or
     /// the default of its role.
     pub fn effective_system_prompt(&self) -> &str {
@@ -42,11 +86,6 @@ impl Profile {
     /// than a text set on this profile.
     pub fn system_prompt_is_default(&self) -> bool {
         self.system_prompt.is_none()
-    }
-    pub fn agent_kind(&self) -> Option<AgentKind> {
-        self.agent_kind
-            .as_deref()
-            .map(|s| AgentKind::from_str(s).expect("valid agent kind in db"))
     }
 }
 
@@ -60,9 +99,6 @@ pub struct AgentConfig {
 }
 
 impl AgentConfig {
-    pub fn agent_kind(&self) -> AgentKind {
-        AgentKind::from_str(&self.agent_kind).expect("valid agent kind in db")
-    }
     pub fn extra_flags(&self) -> Vec<String> {
         serde_json::from_str(&self.extra_flags).unwrap_or_default()
     }
@@ -93,12 +129,6 @@ pub struct ProfilePrompt {
     pub updated_at: Option<String>,
 }
 
-impl ProfilePrompt {
-    pub fn kind(&self) -> PromptKind {
-        PromptKind::from_str(&self.kind).expect("valid prompt kind in db")
-    }
-}
-
 /// A git repository registered once, globally, and named by id from there on.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Repository {
@@ -112,12 +142,6 @@ pub struct Repository {
     pub merge_strategy: String,
     pub created_at: String,
     pub updated_at: String,
-}
-
-impl Repository {
-    pub fn merge_strategy(&self) -> MergeStrategy {
-        MergeStrategy::from_str(&self.merge_strategy).expect("valid merge strategy in db")
-    }
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -138,17 +162,6 @@ pub struct Goal {
     pub model: Option<String>,
     pub created_at: String,
     pub updated_at: String,
-}
-
-impl Goal {
-    pub fn status(&self) -> GoalStatus {
-        GoalStatus::from_str(&self.status).expect("valid goal status in db")
-    }
-    pub fn agent_kind(&self) -> Option<AgentKind> {
-        self.agent_kind
-            .as_deref()
-            .map(|s| AgentKind::from_str(s).expect("valid agent kind in db"))
-    }
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -173,24 +186,15 @@ pub struct Task {
     pub stalled: i64,
     pub merge_commit: Option<String>,
     /// URL of the pull or merge request this task was published as, once its
-    /// engineer has reported one. None while there is none — every task
-    /// landed directly, and every task before its request was opened.
+    /// engineer has reported one. None for a task landed directly.
     pub pr_url: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
 
 impl Task {
-    pub fn status(&self) -> TaskStatus {
-        TaskStatus::from_str(&self.status).expect("valid task status in db")
-    }
     pub fn is_stalled(&self) -> bool {
         self.stalled != 0
-    }
-    pub fn agent_kind(&self) -> Option<AgentKind> {
-        self.agent_kind
-            .as_deref()
-            .map(|s| AgentKind::from_str(s).expect("valid agent kind in db"))
     }
 }
 
@@ -210,14 +214,6 @@ pub struct TaskReviewer {
     pub model: Option<String>,
 }
 
-impl TaskReviewer {
-    pub fn agent_kind(&self) -> Option<AgentKind> {
-        self.agent_kind
-            .as_deref()
-            .map(|s| AgentKind::from_str(s).expect("valid agent kind in db"))
-    }
-}
-
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct AgentSession {
     pub id: String,
@@ -226,10 +222,9 @@ pub struct AgentSession {
     pub role: String,
     pub profile_id: String,
     pub agent_kind: String,
-    /// Model this session runs on, as handed to the agent CLI. None = no
-    /// model was asked for, i.e. the CLI's own default. Taken from the pin its
-    /// role carries (the task, the reviewer slot, the goal) when the session
-    /// is created and never rewritten afterwards, so neither a profile edit
+    /// Model this session runs on. None = the CLI's own default. Taken from
+    /// the pin its role carries — the task, the reviewer slot, the goal — when
+    /// the session is created and never rewritten, so neither a profile edit
     /// nor a resume moves a running conversation onto another model.
     pub model: Option<String>,
     pub internal_session_id: Option<String>,
@@ -246,29 +241,11 @@ pub struct AgentSession {
     /// When the current `attention_reason` was first raised.
     pub attention_since: Option<String>,
     pub last_activity_at: Option<String>,
-    /// When this session's agent process was last started. Every launch of
-    /// the row — the first spawn and every resume after it — moves it, so it
-    /// dates the run the session is in rather than the row.
+    /// When this session's agent process was last started. Every launch moves
+    /// it, so it dates the run the session is in rather than the row.
     pub launched_at: Option<String>,
     pub created_at: String,
     pub ended_at: Option<String>,
-}
-
-impl AgentSession {
-    pub fn role(&self) -> Role {
-        Role::from_str(&self.role).expect("valid role in db")
-    }
-    pub fn agent_kind(&self) -> AgentKind {
-        AgentKind::from_str(&self.agent_kind).expect("valid agent kind in db")
-    }
-    pub fn status(&self) -> SessionStatus {
-        SessionStatus::from_str(&self.status).expect("valid session status in db")
-    }
-    pub fn attention_reason(&self) -> Option<AttentionReason> {
-        self.attention_reason
-            .as_deref()
-            .map(|r| AttentionReason::from_str(r).expect("valid attention reason in db"))
-    }
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -287,10 +264,6 @@ pub struct Message {
 }
 
 impl Message {
-    pub fn author_role(&self) -> AuthorRole {
-        AuthorRole::from_str(&self.author_role).expect("valid author role in db")
-    }
-
     /// The addressee, rebuilt from the two columns that hold it.
     pub fn recipient(&self) -> Option<Recipient> {
         let kind = RecipientKind::from_str(self.recipient_kind.as_deref()?)
@@ -341,12 +314,6 @@ pub struct Review {
     pub verdict: String,
     pub body: Option<String>,
     pub created_at: String,
-}
-
-impl Review {
-    pub fn verdict(&self) -> ReviewVerdict {
-        ReviewVerdict::from_str(&self.verdict).expect("valid verdict in db")
-    }
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]

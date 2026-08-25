@@ -1,9 +1,9 @@
-//! Change notifications.
+//! Change notifications: every mutating [`Store`](crate::Store) method
+//! announces the row it just committed here.
 //!
-//! Every mutating [`Store`](crate::Store) method announces the row it just
-//! committed here. Emission lives in the repository layer on purpose: HTTP
-//! handlers, the scheduler and the launcher all write through the same
-//! methods, so no state change can reach the database without a notification.
+//! Emission lives in the repository layer on purpose: the HTTP handlers, the
+//! scheduler and the launcher all write through these methods, so no state
+//! change can reach the database unannounced.
 
 use crate::{
     AgentEvent, AgentSession, Goal, Message, Profile, Repository, Review, Task, TaskTransition,

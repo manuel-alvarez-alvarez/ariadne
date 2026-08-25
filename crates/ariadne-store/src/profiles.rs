@@ -3,7 +3,8 @@
 use ariadne_core::id::new_id;
 use ariadne_core::{AgentKind, Role};
 
-use crate::{Change, Profile, Result, Store, StoreError, not_found, now};
+use crate::query::Filtered;
+use crate::{Change, Profile, Result, Store, StoreError, now};
 
 #[derive(Debug, Clone)]
 pub struct NewProfile {
@@ -30,8 +31,7 @@ pub struct ProfileUpdate {
 
 impl Store {
     /// Create a profile on the prompts of its role: nothing of its own is
-    /// stored, so every default it runs on stays the one in the code. Setting
-    /// a prompt afterwards is what gives it one.
+    /// stored, so every default it runs on stays the one in the code.
     pub async fn create_profile(&self, new: NewProfile) -> Result<Profile> {
         let id = new_id();
         let ts = now();
@@ -49,45 +49,18 @@ impl Store {
         .bind(&ts)
         .execute(self.w())
         .await
-        .map_err(|e| match e {
-            sqlx::Error::Database(ref db) if db.is_unique_violation() => {
-                StoreError::Conflict(format!("profile name already exists: {}", new.name))
-            }
-            other => StoreError::Db(other),
-        })?;
+        .map_err(|e| taken(e, &new.name))?;
         let profile = self.get_profile(&id).await?;
         self.publish(Change::ProfileCreated(profile.clone()));
         Ok(profile)
     }
 
-    /// Read a profile through an open write transaction, for callers that
-    /// copy values off it into rows they are writing: the read pool could
-    /// hand back a version older than the one the transaction is holding.
-    pub(crate) async fn get_profile_in_tx(
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-        id: &str,
-    ) -> Result<Profile> {
-        sqlx::query_as::<_, Profile>("SELECT * FROM profiles WHERE id = ?")
-            .bind(id)
-            .fetch_optional(&mut **tx)
-            .await?
-            .ok_or_else(|| not_found("profile", id))
-    }
-
     pub async fn get_profile(&self, id: &str) -> Result<Profile> {
-        sqlx::query_as::<_, Profile>("SELECT * FROM profiles WHERE id = ?")
-            .bind(id)
-            .fetch_optional(self.r())
-            .await?
-            .ok_or_else(|| not_found("profile", id))
+        self.fetch_by("profile", "profiles", "id", id).await
     }
 
     pub async fn get_profile_by_name(&self, name: &str) -> Result<Profile> {
-        sqlx::query_as::<_, Profile>("SELECT * FROM profiles WHERE name = ?")
-            .bind(name)
-            .fetch_optional(self.r())
-            .await?
-            .ok_or_else(|| not_found("profile", name))
+        self.fetch_by("profile", "profiles", "name", name).await
     }
 
     /// Resolve a profile by id or by unique name (CLI convenience).
@@ -99,20 +72,10 @@ impl Store {
     }
 
     pub async fn list_profiles(&self, role: Option<Role>) -> Result<Vec<Profile>> {
-        let rows = match role {
-            Some(r) => {
-                sqlx::query_as::<_, Profile>("SELECT * FROM profiles WHERE role = ? ORDER BY name")
-                    .bind(r.as_str())
-                    .fetch_all(self.r())
-                    .await?
-            }
-            None => {
-                sqlx::query_as::<_, Profile>("SELECT * FROM profiles ORDER BY name")
-                    .fetch_all(self.r())
-                    .await?
-            }
-        };
-        Ok(rows)
+        Filtered::new("profiles")
+            .maybe(" AND role = ?", role.map(|r| r.as_str()))
+            .fetch(self, " ORDER BY name", &[])
+            .await
     }
 
     pub async fn update_profile(&self, id: &str, update: ProfileUpdate) -> Result<Profile> {
@@ -136,21 +99,14 @@ impl Store {
         .bind(id)
         .execute(self.w())
         .await
-        .map_err(|e| match e {
-            sqlx::Error::Database(ref db) if db.is_unique_violation() => {
-                StoreError::Conflict(format!("profile name already exists: {name}"))
-            }
-            other => StoreError::Db(other),
-        })?;
+        .map_err(|e| taken(e, &name))?;
         let profile = self.get_profile(id).await?;
         self.publish(Change::ProfileUpdated(profile.clone()));
         Ok(profile)
     }
 
-    /// Delete a profile; fails with `Conflict` while anything references it.
-    ///
-    /// The refusal names what holds the profile — a bare count leaves the user
-    /// with nowhere to look.
+    /// Delete a profile; fails with `Conflict` while anything references it,
+    /// naming what holds it — a bare count leaves the user nowhere to look.
     pub async fn delete_profile(&self, id: &str) -> Result<()> {
         self.get_profile(id).await?;
         let (goals, tasks, reviews, sessions, messages): (i64, i64, i64, i64, i64) =
@@ -187,6 +143,16 @@ impl Store {
             .await?;
         self.publish(Change::ProfileDeleted(id.to_string()));
         Ok(())
+    }
+}
+
+/// The `UNIQUE (name)` violation, said in the terms the caller used.
+fn taken(e: sqlx::Error, name: &str) -> StoreError {
+    match e {
+        sqlx::Error::Database(ref db) if db.is_unique_violation() => {
+            StoreError::Conflict(format!("profile name already exists: {name}"))
+        }
+        other => StoreError::Db(other),
     }
 }
 

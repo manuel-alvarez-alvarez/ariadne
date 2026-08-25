@@ -6,6 +6,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::wire_enum;
+
 /// Task lifecycle status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
@@ -106,93 +108,35 @@ fn explain(from: TaskStatus, to: TaskStatus, actor: Option<Actor>) -> String {
     }
 }
 
+wire_enum! { TaskStatus, "task status", [
+    Pending = "pending",
+    Ready = "ready",
+    InProgress = "in_progress",
+    UnderReview = "under_review",
+    ChangesRequested = "changes_requested",
+    Approved = "approved",
+    Merged = "merged",
+    Cancelled = "cancelled",
+    Failed = "failed",
+]}
+
+wire_enum! { Actor, "actor", [
+    Planner = "planner",
+    Engineer = "engineer",
+    Reviewer = "reviewer",
+    Daemon = "daemon",
+    User = "user",
+]}
+
 impl TaskStatus {
     pub fn is_terminal(&self) -> bool {
         matches!(self, TaskStatus::Merged | TaskStatus::Cancelled)
     }
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            TaskStatus::Pending => "pending",
-            TaskStatus::Ready => "ready",
-            TaskStatus::InProgress => "in_progress",
-            TaskStatus::UnderReview => "under_review",
-            TaskStatus::ChangesRequested => "changes_requested",
-            TaskStatus::Approved => "approved",
-            TaskStatus::Merged => "merged",
-            TaskStatus::Cancelled => "cancelled",
-            TaskStatus::Failed => "failed",
-        }
-    }
-
-    pub const ALL: [TaskStatus; 9] = [
-        TaskStatus::Pending,
-        TaskStatus::Ready,
-        TaskStatus::InProgress,
-        TaskStatus::UnderReview,
-        TaskStatus::ChangesRequested,
-        TaskStatus::Approved,
-        TaskStatus::Merged,
-        TaskStatus::Cancelled,
-        TaskStatus::Failed,
-    ];
 }
 
-impl std::str::FromStr for TaskStatus {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        TaskStatus::ALL
-            .into_iter()
-            .find(|v| v.as_str() == s)
-            .ok_or_else(|| format!("unknown task status: {s}"))
-    }
-}
-
-impl Actor {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Actor::Planner => "planner",
-            Actor::Engineer => "engineer",
-            Actor::Reviewer => "reviewer",
-            Actor::Daemon => "daemon",
-            Actor::User => "user",
-        }
-    }
-}
-
-impl std::str::FromStr for Actor {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "planner" => Ok(Actor::Planner),
-            "engineer" => Ok(Actor::Engineer),
-            "reviewer" => Ok(Actor::Reviewer),
-            "daemon" => Ok(Actor::Daemon),
-            "user" => Ok(Actor::User),
-            other => Err(format!("unknown actor: {other}")),
-        }
-    }
-}
-
-/// Validate a transition. Returns `Ok(())` when `actor` may move a task from
-/// `from` to `to`.
-///
-/// The table mirrors the plan:
-///
-/// | from                | to                 | actor                |
-/// |---------------------|--------------------|----------------------|
-/// | pending             | ready              | daemon               |
-/// | ready               | pending            | planner, daemon      |
-/// | ready               | in_progress        | daemon               |
-/// | in_progress         | under_review       | engineer             |
-/// | under_review        | changes_requested  | daemon               |
-/// | under_review        | approved           | daemon               |
-/// | changes_requested   | in_progress        | daemon               |
-/// | approved            | merged             | engineer             |
-/// | approved            | under_review       | engineer             |
-/// | any non-terminal    | cancelled          | user                 |
-/// | any non-terminal    | failed             | daemon               |
-/// | failed              | ready              | user (retry)         |
+/// Validate a transition: `Ok(())` when `actor` may move a task from `from`
+/// to `to`. The table below is the whole of it, and `exhaustive_transition_table`
+/// checks every (from, to, actor) triple against a second reading of it.
 pub fn check_transition(
     from: TaskStatus,
     to: TaskStatus,

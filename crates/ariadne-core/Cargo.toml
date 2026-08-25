@@ -7,11 +7,18 @@ license.workspace = true
 
 [dependencies]
 clap = { workspace = true, optional = true }
+rustix = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true }
 ulid = { workspace = true }
 utoipa = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile = "3"
+# `start_paused`: the probe timeout is asserted without waiting it out.
+tokio = { workspace = true, features = ["test-util"] }
 
 [features]
 # Derives utoipa::ToSchema on the public enums for OpenAPI generation.

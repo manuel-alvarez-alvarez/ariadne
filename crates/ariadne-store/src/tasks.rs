@@ -6,8 +6,9 @@ use std::collections::{HashMap, HashSet};
 use ariadne_core::id::new_id;
 use ariadne_core::{Actor, AttentionReason, TaskStatus, check_transition};
 
+use crate::query::Filtered;
 use crate::{
-    Change, Result, Store, StoreError, Task, TaskReviewer, TaskTransition, not_found, now,
+    Change, Profile, Result, Store, StoreError, Task, TaskReviewer, TaskTransition, not_found, now,
 };
 
 #[derive(Debug, Clone)]
@@ -49,10 +50,9 @@ const ID_TAIL: usize = 6;
 /// on a published request, so it names the change and nothing else: no prefix,
 /// no `ariadne` anywhere in it.
 ///
-/// Only ASCII letters and digits survive; every run of anything else becomes a
-/// single `-`, which keeps the result a valid git ref (`git check-ref-format
-/// --branch`) whatever the title was. A title with nothing to slug — one with
-/// no ASCII alphanumerics at all — falls back to `task-<tail>`.
+/// Only ASCII letters and digits survive, which keeps the result a valid git
+/// ref (`git check-ref-format --branch`) whatever the title was. A title with
+/// nothing to slug falls back to `task-<tail>`.
 fn branch_name(title: &str, id: &str) -> String {
     let tail = id_tail(id);
     let slug = slug(title);
@@ -152,7 +152,8 @@ impl Store {
         // The engineer's agent and model are copied onto the task here and
         // never re-read: editing the profile later must not move a task that
         // is already defined, let alone one mid-flight.
-        let engineer = Self::get_profile_in_tx(&mut tx, &new.engineer_profile_id).await?;
+        let engineer: Profile =
+            Self::fetch_by_in_tx(&mut tx, "profile", "profiles", &new.engineer_profile_id).await?;
 
         sqlx::query(
             "INSERT INTO tasks (id, goal_id, repo_id, title, description, status,
@@ -191,7 +192,7 @@ impl Store {
         let mut tx = self.w().begin().await?;
         // Status is validated on the row inside the write transaction: a check
         // against the read pool could be stale by the time we hold the lock.
-        let task = Self::get_task_in_tx(&mut tx, task_id).await?;
+        let task: Task = Self::fetch_by_in_tx(&mut tx, "task", "tasks", task_id).await?;
         if !matches!(task.status(), TaskStatus::Pending | TaskStatus::Ready) {
             return Err(StoreError::Conflict(format!(
                 "dependencies can only change while pending/ready, task is {}",
@@ -292,38 +293,22 @@ impl Store {
     }
 
     pub async fn get_task(&self, id: &str) -> Result<Task> {
-        sqlx::query_as::<_, Task>("SELECT * FROM tasks WHERE id = ?")
-            .bind(id)
-            .fetch_optional(self.r())
-            .await?
-            .ok_or_else(|| not_found("task", id))
+        self.fetch_by("task", "tasks", "id", id).await
     }
 
     pub async fn list_tasks(&self, filter: TaskFilter) -> Result<Vec<Task>> {
-        let mut sql = String::from("SELECT * FROM tasks WHERE 1=1");
-        if filter.goal_id.is_some() {
-            sql.push_str(" AND goal_id = ?");
-        }
-        if filter.status.is_some() {
-            sql.push_str(" AND status = ?");
-        }
-        sql.push_str(" ORDER BY id");
-        // Safe: only fixed clause fragments are appended; values are bound.
-        let mut q = sqlx::query_as::<_, Task>(sqlx::AssertSqlSafe(sql));
-        if let Some(g) = &filter.goal_id {
-            q = q.bind(g.clone());
-        }
-        if let Some(s) = filter.status {
-            q = q.bind(s.as_str());
-        }
-        Ok(q.fetch_all(self.r()).await?)
+        Filtered::new("tasks")
+            .maybe(" AND goal_id = ?", filter.goal_id)
+            .maybe(" AND status = ?", filter.status.map(|s| s.as_str()))
+            .fetch(self, " ORDER BY id", &[])
+            .await
     }
 
     pub async fn update_task(&self, id: &str, update: TaskUpdate) -> Result<Task> {
         let mut tx = self.w().begin().await?;
         // Status is validated on the row inside the write transaction: a check
         // against the read pool could be stale by the time we hold the lock.
-        let task = Self::get_task_in_tx(&mut tx, id).await?;
+        let task: Task = Self::fetch_by_in_tx(&mut tx, "task", "tasks", id).await?;
         if !matches!(task.status(), TaskStatus::Pending | TaskStatus::Ready) {
             return Err(StoreError::Conflict(format!(
                 "task can only be edited while pending/ready, it is {}",
@@ -379,7 +364,7 @@ impl Store {
         merge_commit: Option<&str>,
     ) -> Result<Task> {
         let mut tx = self.w().begin().await?;
-        let task = Self::get_task_in_tx(&mut tx, id).await?;
+        let task: Task = Self::fetch_by_in_tx(&mut tx, "task", "tasks", id).await?;
         let transition =
             Self::transition_in_tx(&mut tx, &task, to, actor, reason, merge_commit).await?;
         tx.commit().await?;
@@ -389,19 +374,6 @@ impl Store {
             transition: Some(transition),
         });
         Ok(task)
-    }
-
-    /// Fetch a task row inside an open write transaction, so status checks see
-    /// the state the transaction will actually commit against.
-    async fn get_task_in_tx(
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-        id: &str,
-    ) -> Result<Task> {
-        sqlx::query_as::<_, Task>("SELECT * FROM tasks WHERE id = ?")
-            .bind(id)
-            .fetch_optional(&mut **tx)
-            .await?
-            .ok_or_else(|| not_found("task", id))
     }
 
     /// Validate against the state machine, apply the status change with its
@@ -432,8 +404,7 @@ impl Store {
         };
 
         // The stall is not reset here: it belongs to the agent that stopped
-        // working, and it comes down when that agent's own flag does — a
-        // status change is not by itself news about the session
+        // working and comes down when that agent's own flag does
         // (`sync_task_stall`).
         sqlx::query(
             "UPDATE tasks SET status = ?, review_round = ?, merge_commit = COALESCE(?, merge_commit),
@@ -487,10 +458,8 @@ impl Store {
     /// open now: the reason of the most recent `under_review` transition.
     ///
     /// The round records it because the round is what it belongs to. Read off
-    /// the conversation instead — the last thing an engineer happened to say —
-    /// it would be whatever it wrote after asking, and what the reviewers and
-    /// the people on a published request are handed has to be what it
-    /// submitted.
+    /// the conversation it would be whatever the engineer happened to write
+    /// last, and what the reviewers are handed has to be what it submitted.
     pub async fn review_summary(&self, task_id: &str) -> Result<Option<String>> {
         Ok(sqlx::query_scalar::<_, Option<String>>(
             "SELECT reason FROM task_transitions
@@ -526,16 +495,17 @@ impl Store {
     }
 
     /// Write one reviewer slot per profile, in the order given, pinning each
-    /// profile's agent and model onto the slot. Read inside the transaction
-    /// that writes the slots, so a profile edited in between cannot land
-    /// half-applied across them.
+    /// profile's agent and model onto the slot. The profiles are read inside
+    /// the transaction that writes the slots, so an edit in between cannot
+    /// land half-applied across them.
     async fn insert_reviewers(
         tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
         task_id: &str,
         reviewer_profile_ids: &[String],
     ) -> Result<()> {
         for (position, profile_id) in reviewer_profile_ids.iter().enumerate() {
-            let profile = Self::get_profile_in_tx(tx, profile_id).await?;
+            let profile: Profile =
+                Self::fetch_by_in_tx(tx, "profile", "profiles", profile_id).await?;
             sqlx::query(
                 "INSERT INTO task_reviewers (task_id, profile_id, position, agent_kind, model)
                  VALUES (?, ?, ?, ?, ?)",
@@ -590,10 +560,8 @@ impl Store {
 
     /// Record the pull or merge request a task was published as.
     ///
-    /// Idempotent by construction — the engineer reports the request it
-    /// opened, and re-reporting the same one writes the same row. The URL is
-    /// the whole of it: nothing polls the request but the engineer's own
-    /// session, and the URL is what the UI and the CLI show.
+    /// The URL is the whole of it: nothing polls the request but the
+    /// engineer's own session, and the URL is what the UI and the CLI show.
     pub async fn set_task_pull_request(&self, task_id: &str, url: &str) -> Result<()> {
         let n = sqlx::query("UPDATE tasks SET pr_url = ?, updated_at = ? WHERE id = ?")
             .bind(url)
@@ -605,12 +573,9 @@ impl Store {
         self.publish_task_update(task_id, n).await
     }
 
-    /// Forget the request a task was published as.
-    ///
-    /// A task that is starting over — retried after the request it was
-    /// published as was closed unmerged — is not that task any more, and
-    /// leaving the record on it would show the user a request nobody will
-    /// merge.
+    /// Forget the request a task was published as: a task retried after its
+    /// request was closed unmerged would otherwise show the user a request
+    /// nobody will merge.
     pub async fn clear_task_pull_request(&self, task_id: &str) -> Result<()> {
         let n = sqlx::query(
             "UPDATE tasks SET pr_url = NULL, updated_at = ?
@@ -627,15 +592,11 @@ impl Store {
     /// Bring a task's stall into line with what its agents' own flags say.
     ///
     /// A stalled task *is* a task whose agent stopped working: one condition,
-    /// which used to be written down twice — on the session by the watchdog
-    /// that noticed, and on the task by the scheduler beside it — and so in
-    /// two places that could disagree about the same thing. The session's
-    /// attention is where it is decided; the task's column is this projection
-    /// of it, kept by every write that can change what a session's attention
-    /// says and by nothing else, so that the two cannot drift apart.
-    ///
-    /// A session with no task — a planner's — has nothing to project onto and
-    /// carries its stall on its own row alone.
+    /// decided by the session's attention. The task's column is this
+    /// projection of it, written by every write that can change what a
+    /// session's attention says and by nothing else, so the two cannot drift
+    /// apart. A planner's session has no task to project onto and carries its
+    /// stall on its own row alone.
     pub(crate) async fn sync_task_stall(&self, session_id: &str) -> Result<()> {
         let task_id: Option<String> =
             sqlx::query_scalar("SELECT task_id FROM agent_sessions WHERE id = ?")

@@ -1,9 +1,8 @@
-//! ULID-based identifiers.
+//! ULID-based identifiers, in their canonical 26-char string form.
 //!
-//! Ids are stored and transported as their canonical 26-char string form.
 //! ULIDs are lexicographically time-sortable, which the API layer relies on
 //! for keyset pagination (`?after=<id>`) and audit ordering. Generation is
-//! monotonic within the process (the daemon is the sole id creator), so ids
+//! monotonic within the process — the daemon is the sole id creator — so ids
 //! created in the same millisecond still sort in creation order.
 
 use std::sync::Mutex;

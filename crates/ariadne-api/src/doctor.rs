@@ -2,9 +2,7 @@
 //!
 //! What `ariadned` itself sees, which is not what the shell that asks sees: a
 //! daemon started by launchd or systemd gets the PATH its service file bakes
-//! in, so an agent CLI installed after the service was registered can be on
-//! the user's PATH and invisible to the process that spawns sessions. The
-//! daemon is the one that spawns them, so its view is the one that decides.
+//! in, and it is the one that spawns sessions, so its view decides.
 
 use ariadne_core::AgentKind;
 use serde::{Deserialize, Serialize};

@@ -1,8 +1,8 @@
-//! REST client for the Ariadne daemon.
-//!
-//! Talks to `ariadned` over its unix socket (default, docker-style) or over
-//! TCP when the daemon exposes one. Used by the CLI and the MCP server.
+//! REST client for the Ariadne daemon: its unix socket (the default,
+//! docker-style) or TCP where the daemon exposes one. Used by the CLI and the
+//! MCP server.
 
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -34,8 +34,8 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// Everything that can go wrong talking to the daemon.
 ///
 /// `Display` is the diagnostic spelling — transport detail included — and is
-/// what logs and the MCP server surface. Anything a person reads at a terminal
-/// goes through [`ClientError::human`] instead.
+/// what logs and the MCP server surface; anything a person reads at a terminal
+/// goes through [`ClientError::human`].
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
     #[error("cannot reach the ariadne daemon at {endpoint}: {source}")]
@@ -58,8 +58,8 @@ pub enum ClientError {
 
 impl ClientError {
     /// One line for a human: no transport plumbing, no repetition of the
-    /// error envelope the daemon already spelled out in prose. The advice, if
-    /// there is any, is [`ClientError::hint`] — callers decide where to put it.
+    /// envelope the daemon already spelled out in prose. The advice, if there
+    /// is any, is [`ClientError::hint`].
     pub fn human(&self) -> String {
         match self {
             // The hyper source ("client error (Connect)") says nothing a user
@@ -183,7 +183,7 @@ impl Client {
 
     /// Client for the daemon of a home, deliberately deaf to endpoint
     /// overrides: `ariadned` is only ever told a home, so whoever starts one
-    /// must address the socket that home resolves to and no other.
+    /// must address the socket that home resolves to.
     pub fn for_home(home_override: Option<PathBuf>) -> Self {
         Self::unix(Self::socket_path(home_override))
     }
@@ -212,9 +212,9 @@ impl Client {
     }
 
     /// What the daemon's own environment looks like: the binaries on its
-    /// PATH, and the state of the directories it works in. The daemon spawns
-    /// the sessions, so this — not the caller's shell — is what decides
-    /// whether an agent can be launched.
+    /// PATH and the state of the directories it works in. The daemon spawns
+    /// the sessions, so this — not the caller's shell — decides whether an
+    /// agent can be launched.
     pub async fn daemon_report(&self) -> Result<DaemonReportDto, ClientError> {
         self.get_json("/v1/doctor").await
     }
@@ -225,8 +225,8 @@ impl Client {
         self.get_json("/v1/agents").await
     }
 
-    /// Replace one agent kind's flags. The list is replaced whole; sending the
-    /// kind's `default_flags` back is how it is restored to the default.
+    /// Replace one agent kind's flags, whole; sending the kind's
+    /// `default_flags` back is how it is restored to the default.
     pub async fn update_agent_config(
         &self,
         kind: AgentKind,
@@ -240,8 +240,8 @@ impl Client {
     }
 
     /// A profile's briefing prompts, in briefing order, each as it takes
-    /// effect and saying whether that is its kind's default. `profile` is an
-    /// id or a unique profile name, as everywhere under `/v1/profiles`.
+    /// effect. `profile` is an id or a unique name, as everywhere under
+    /// `/v1/profiles`.
     pub async fn list_profile_prompts(
         &self,
         profile: &str,
@@ -332,7 +332,6 @@ impl Client {
         path: &str,
         body: Option<&B>,
     ) -> Result<(), ClientError> {
-        // Reuses `request` with a Value target, tolerating empty bodies.
         match self
             .request::<serde_json::Value, B>(method, path, body)
             .await
@@ -380,31 +379,13 @@ impl Client {
         let response = match &self.transport {
             Transport::Unix { client, socket } => {
                 let uri: http::Uri = UnixUri::new(socket, path).into();
-                let req = builder
-                    .uri(uri)
-                    .body(Full::new(payload))
-                    .expect("valid request");
-                tokio::time::timeout(REQUEST_TIMEOUT, client.request(req))
-                    .await
-                    .map_err(|_| ClientError::Timeout)?
-                    .map_err(|e| ClientError::Unreachable {
-                        endpoint: self.endpoint.clone(),
-                        source: Box::new(e),
-                    })?
+                self.awaiting(client.request(request(builder, uri, payload)))
+                    .await?
             }
             Transport::Tcp { client, base } => {
                 let uri: http::Uri = format!("{base}{path}").parse().expect("valid TCP uri");
-                let req = builder
-                    .uri(uri)
-                    .body(Full::new(payload))
-                    .expect("valid request");
-                tokio::time::timeout(REQUEST_TIMEOUT, client.request(req))
-                    .await
-                    .map_err(|_| ClientError::Timeout)?
-                    .map_err(|e| ClientError::Unreachable {
-                        endpoint: self.endpoint.clone(),
-                        source: Box::new(e),
-                    })?
+                self.awaiting(client.request(request(builder, uri, payload)))
+                    .await?
             }
         };
 
@@ -413,10 +394,7 @@ impl Client {
             .into_body()
             .collect()
             .await
-            .map_err(|e| ClientError::Unreachable {
-                endpoint: self.endpoint.clone(),
-                source: Box::new(e),
-            })?
+            .map_err(|e| self.unreachable(e))?
             .to_bytes();
 
         if status.is_success() {
@@ -438,10 +416,45 @@ impl Client {
         }
     }
 
+    /// Wait out one in-flight request, mapping both ways it can fail — the
+    /// wait running out and the transport refusing — onto errors that name
+    /// this client's endpoint.
+    async fn awaiting<T, E>(
+        &self,
+        call: impl Future<Output = Result<T, E>>,
+    ) -> Result<T, ClientError>
+    where
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        tokio::time::timeout(REQUEST_TIMEOUT, call)
+            .await
+            .map_err(|_| ClientError::Timeout)?
+            .map_err(|e| self.unreachable(e))
+    }
+
+    fn unreachable(&self, source: impl std::error::Error + Send + Sync + 'static) -> ClientError {
+        ClientError::Unreachable {
+            endpoint: self.endpoint.clone(),
+            source: Box::new(source),
+        }
+    }
+
     #[cfg(test)]
     fn is_tcp(&self) -> bool {
         matches!(self.transport, Transport::Tcp { .. })
     }
+}
+
+/// The same request either transport sends, at the uri that transport spells.
+fn request(
+    builder: http::request::Builder,
+    uri: http::Uri,
+    payload: Bytes,
+) -> Request<Full<Bytes>> {
+    builder
+        .uri(uri)
+        .body(Full::new(payload))
+        .expect("valid request")
 }
 
 #[cfg(test)]

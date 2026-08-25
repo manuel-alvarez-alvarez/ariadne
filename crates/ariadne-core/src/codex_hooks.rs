@@ -6,29 +6,24 @@
 //! no worktree or session in it — so one approval covers every future session,
 //! in any directory, as long as the definition is byte-identical.
 //!
-//! That is the whole reason this lives in the domain crate: the daemon's codex
-//! adapter builds these flags for each spawn, and the CLI's `setup codex-hooks`
-//! builds them to raise the trust prompt at install time. If the two ever
-//! drifted, every spawned session would sit at an unanswerable prompt. Nothing
-//! that varies per session may appear here — the session id and everything
-//! else comes from the hook's stdin payload.
+//! That is why this lives in the domain crate: the daemon's codex adapter
+//! builds these flags for each spawn and the CLI's `setup codex-hooks` builds
+//! them to raise the trust prompt at install time, and a drift between the two
+//! would leave every spawned session at an unanswerable prompt. Nothing that
+//! varies per session may appear here — the session id and the rest come from
+//! the hook's stdin payload.
 
 /// The events Ariadne asks Codex to report.
 ///
-/// `SessionStart` is the one that matters: its payload carries `session_id`
-/// before the first turn begins, which is the only chance to record it for a
-/// session that may be killed mid-turn. Most of the rest are liveness —
-/// prompts and tool calls mean running, `Stop` means idle, `SessionEnd` means
-/// gone.
+/// `SessionStart` carries `session_id` before the first turn begins, which is
+/// the only chance to record it for a session that may be killed mid-turn.
+/// Most of the rest are liveness. `PermissionRequest` fires when codex is
+/// about to ask the user to approve a command, which is the only moment a
+/// blocked session is distinguishable from an idle one.
 ///
-/// `PermissionRequest` is the exception: it fires when codex is about to ask
-/// the user to approve a command, which is the only moment a blocked session
-/// is distinguishable from an idle one. Codex 0.147 declares eleven hook
-/// events in all (`PreToolUse`, `PermissionRequest`, `PostToolUse`,
-/// `PreCompact`, `PostCompact`, `SessionStart`, `SessionEnd`,
-/// `UserPromptSubmit`, `SubagentStart`, `SubagentStop`, `Stop`) and none of
-/// them reports a failed turn — an API or auth error reaches the TUI as a
-/// thread event and never a hook — so `agent_error` has no codex source yet.
+/// Of the eleven events codex 0.147 declares, none reports a failed turn — an
+/// API or auth error reaches the TUI as a thread event and never a hook — so
+/// `agent_error` has no codex source yet.
 pub const EVENTS: [&str; 7] = [
     "SessionStart",
     "UserPromptSubmit",
@@ -71,10 +66,10 @@ pub const TRUST_SOURCE: &str = "/<session-flags>/config.toml";
 
 /// The `hooks.state` key holding codex's verdict on one declared event.
 ///
-/// Trust is granted per event, not per declaration: adding an event to
-/// [`EVENTS`] leaves the others trusted and makes codex ask about the new one
-/// alone — at the start of the next session, where nobody is watching. That
-/// is what `ariadne doctor` reads these keys to catch.
+/// Trust is granted per event: adding one to [`EVENTS`] leaves the others
+/// trusted and makes codex ask about the new one alone, at the start of the
+/// next session where nobody is watching. That is what `ariadne doctor` reads
+/// these keys to catch.
 pub fn trust_key(event: &str) -> String {
     format!("{TRUST_SOURCE}:{}:0:0", event_kind(event))
 }

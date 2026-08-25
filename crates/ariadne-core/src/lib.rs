@@ -1,17 +1,53 @@
-//! Ariadne domain types.
+//! Ariadne domain types: what the daemon, the store, the API DTOs and the
+//! CLI all have to agree on.
 //!
-//! Pure domain layer: no IO, no async. Everything here is shared by the
-//! daemon, the store, the API DTOs and the CLI.
+//! Pure domain apart from [`probe`], which asks the host about the binaries
+//! Ariadne runs — shared for the same reason as the rest, that two callers
+//! answering the same question differently is the bug.
 
 pub mod codex_hooks;
 pub mod id;
 pub mod models;
+pub mod probe;
 pub mod spawn_plan;
 pub mod state_machine;
 
+pub use probe::{
+    PROBE_TIMEOUT, PathState, is_executable, path_state, probe_auth, probe_status, probe_version,
+    which,
+};
 pub use state_machine::{Actor, TaskStatus, TransitionError, check_transition};
 
 use serde::{Deserialize, Serialize};
+
+/// The three things every enum that crosses the wire answers to: the spelling
+/// it is stored and transported under, the whole set of variants in the order
+/// anything listing them uses, and the parse back. `$noun` is how a refused
+/// string is named in the error.
+macro_rules! wire_enum {
+    ($name:ident, $noun:literal, [$($variant:ident = $text:literal),+ $(,)?]) => {
+        impl $name {
+            pub const ALL: [$name; [$(stringify!($variant)),+].len()] = [$($name::$variant),+];
+
+            pub fn as_str(&self) -> &'static str {
+                match self {
+                    $($name::$variant => $text,)+
+                }
+            }
+        }
+
+        impl std::str::FromStr for $name {
+            type Err = String;
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                $name::ALL
+                    .into_iter()
+                    .find(|v| v.as_str() == s)
+                    .ok_or_else(|| format!(concat!("unknown ", $noun, ": {}"), s))
+            }
+        }
+    };
+}
+pub(crate) use wire_enum;
 
 /// The role an agent plays in the orchestration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -28,17 +64,11 @@ pub enum Role {
     Reviewer,
 }
 
-impl Role {
-    pub const ALL: [Role; 3] = [Role::Planner, Role::Engineer, Role::Reviewer];
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Role::Planner => "planner",
-            Role::Engineer => "engineer",
-            Role::Reviewer => "reviewer",
-        }
-    }
-}
+wire_enum! { Role, "role", [
+    Planner = "planner",
+    Engineer = "engineer",
+    Reviewer = "reviewer",
+]}
 
 /// How a repository takes the change a task lands on its base branch: the one
 /// thing about a repository the engineer that finishes a task has to be told,
@@ -63,36 +93,9 @@ pub enum MergeStrategy {
     PullRequest,
 }
 
-impl MergeStrategy {
-    pub const ALL: [MergeStrategy; 2] = [MergeStrategy::Direct, MergeStrategy::PullRequest];
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            MergeStrategy::Direct => "direct",
-            MergeStrategy::PullRequest => "pull_request",
-        }
-    }
-}
-
-impl std::str::FromStr for MergeStrategy {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        MergeStrategy::ALL
-            .into_iter()
-            .find(|v| v.as_str() == s)
-            .ok_or_else(|| format!("unknown merge strategy: {s}"))
-    }
-}
-
-impl std::str::FromStr for Role {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Role::ALL
-            .into_iter()
-            .find(|v| v.as_str() == s)
-            .ok_or_else(|| format!("unknown role: {s}"))
-    }
-}
+wire_enum! { MergeStrategy, "merge strategy", [
+    Direct = "direct", PullRequest = "pull_request",
+]}
 
 /// A prompt a profile owns beside its system prompt: one of the texts an
 /// agent of that role is started, resumed or nudged with. Every text Ariadne
@@ -114,48 +117,42 @@ pub enum PromptKind {
     PlannerResume,
     /// Initial briefing of an engineer session.
     EngineerBriefing,
-    /// What an engineer with unfinished work in front of it is picked up
-    /// with: the session that ended and is started again, and the one that is
-    /// merely sitting idle.
+    /// What an engineer with unfinished work is picked up with, whether its
+    /// session ended or is merely sitting idle.
     EngineerResume,
-    /// Engineer resume briefing carrying a round of requested changes,
-    /// whether the reviewers wrote them or the people on a published request
-    /// did.
+    /// Engineer resume briefing carrying a round of requested changes, from
+    /// the reviewers or from the people on a published request.
     ChangesRequested,
     /// Initial briefing of a reviewer session.
     ReviewerBriefing,
-    /// What a reviewer that owes a verdict is picked up with: a later round of
-    /// the same task, and a round it has gone quiet in.
+    /// What a reviewer that owes a verdict is picked up with.
     ReviewerResume,
-    /// What the engineer of an approved task is briefed with where its
-    /// repository squashes the change onto the base branch itself.
+    /// Landing briefing of a repository that squashes onto its base branch.
     LandingDirect,
-    /// What the engineer of an approved task is briefed with where its
-    /// repository takes the change as a pull or merge request.
+    /// Landing briefing of a repository that takes a pull or merge request.
     LandingPullRequest,
-    /// The notice an agent of any role is woken with when a message in its
-    /// thread addresses it.
+    /// The notice an agent is woken with when a message addresses it.
     MessageDelivery,
 }
 
-impl PromptKind {
-    pub const ALL: [PromptKind; 10] = [
-        PromptKind::PlannerBriefing,
-        PromptKind::PlannerResume,
-        PromptKind::EngineerBriefing,
-        PromptKind::EngineerResume,
-        PromptKind::ChangesRequested,
-        PromptKind::LandingDirect,
-        PromptKind::LandingPullRequest,
-        PromptKind::ReviewerBriefing,
-        PromptKind::ReviewerResume,
-        PromptKind::MessageDelivery,
-    ];
+wire_enum! { PromptKind, "prompt kind", [
+    PlannerBriefing = "planner_briefing",
+    PlannerResume = "planner_resume",
+    EngineerBriefing = "engineer_briefing",
+    EngineerResume = "engineer_resume",
+    ChangesRequested = "changes_requested",
+    LandingDirect = "landing_direct",
+    LandingPullRequest = "landing_pull_request",
+    ReviewerBriefing = "reviewer_briefing",
+    ReviewerResume = "reviewer_resume",
+    MessageDelivery = "message_delivery",
+]}
 
+impl PromptKind {
     /// The landing briefing a repository on `strategy` hands its engineer.
     ///
     /// One kind per strategy rather than one text with two halves: the daemon
-    /// knows which it is when it renders, so what reaches the engineer is the
+    /// knows which it is when it renders, so the engineer is handed the
     /// procedure it runs and nothing of the other.
     pub fn landing_for(strategy: MergeStrategy) -> PromptKind {
         match strategy {
@@ -164,27 +161,9 @@ impl PromptKind {
         }
     }
 
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            PromptKind::PlannerBriefing => "planner_briefing",
-            PromptKind::PlannerResume => "planner_resume",
-            PromptKind::EngineerBriefing => "engineer_briefing",
-            PromptKind::EngineerResume => "engineer_resume",
-            PromptKind::ChangesRequested => "changes_requested",
-            PromptKind::ReviewerBriefing => "reviewer_briefing",
-            PromptKind::ReviewerResume => "reviewer_resume",
-            PromptKind::LandingDirect => "landing_direct",
-            PromptKind::LandingPullRequest => "landing_pull_request",
-            PromptKind::MessageDelivery => "message_delivery",
-        }
-    }
-
-    /// The roles whose profiles own this prompt.
-    ///
-    /// One for every kind that briefs a role through its own lifecycle, and
-    /// all three for [`PromptKind::MessageDelivery`]: an addressed message
-    /// reaches whoever it names, so every role owns the notice it is woken
-    /// with and can word it its own way.
+    /// The roles whose profiles own this prompt. All three for
+    /// [`PromptKind::MessageDelivery`]: an addressed message reaches whoever
+    /// it names, so every role words its own notice.
     pub fn roles(&self) -> &'static [Role] {
         match self {
             PromptKind::PlannerBriefing | PromptKind::PlannerResume => &[Role::Planner],
@@ -203,9 +182,7 @@ impl PromptKind {
         self.roles().contains(&role)
     }
 
-    /// The prompts a profile of `role` owns, in briefing order: what starts a
-    /// session first, what picks it up again after, and the message notice
-    /// every role shares last.
+    /// The prompts a profile of `role` owns, in briefing order.
     pub fn for_role(role: Role) -> &'static [PromptKind] {
         match role {
             Role::Planner => &[
@@ -230,13 +207,12 @@ impl PromptKind {
     }
 
     /// The placeholders the daemon fills in when it renders this kind's
-    /// template, in the order its briefing builder passes them.
+    /// template.
     ///
-    /// This list is the contract between the templates and the `prompts`
-    /// builders in the daemon: a `{token}` outside it is one nothing will ever
-    /// substitute, which is why [`PromptKind::validate_template`] refuses it
-    /// when a template is saved. Adding a value to a builder means adding its
-    /// name here.
+    /// The contract between the templates and the daemon's `prompts`
+    /// builders: a `{token}` outside this list is one nothing will ever
+    /// substitute, which is what [`PromptKind::validate_template`] refuses.
+    /// Adding a value to a builder means adding its name here.
     pub fn placeholders(&self) -> &'static [&'static str] {
         match self {
             PromptKind::PlannerBriefing => &[
@@ -294,13 +270,11 @@ impl PromptKind {
     /// Rendering is lenient by design — an unknown `{token}` reaches the agent
     /// as literal text rather than failing its spawn — so a typo like
     /// `{task_titel}` is invisible until someone reads a briefing. Saving is
-    /// where it is caught instead, and only there: this is never called on the
-    /// way to an agent.
+    /// where it is caught instead, and only there.
     ///
     /// Only what rendering would treat as a placeholder is checked, and of
-    /// that only plain identifiers. A brace that never closes, a `{}` and a
-    /// JSON snippet are all text as far as rendering is concerned, so they are
-    /// text here too.
+    /// that only plain identifiers: an unclosed brace, a `{}` and a JSON
+    /// snippet are text to rendering, so they are text here too.
     pub fn validate_template(&self, template: &str) -> Result<(), UnknownPlaceholders> {
         let mut unknown: Vec<String> = Vec::new();
         for name in placeholder_names(template) {
@@ -371,8 +345,7 @@ fn placeholder_names(template: &str) -> Vec<&str> {
                 names.push(&after[..end]);
                 rest = &after[end + 1..];
             }
-            // An unclosed brace, or one closed only after another `{`: not a
-            // placeholder, so the scan carries on from just after it.
+            // An unclosed brace, or one closed only after another `{`: text.
             _ => rest = after,
         }
     }
@@ -389,16 +362,6 @@ fn is_identifier(name: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-impl std::str::FromStr for PromptKind {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        PromptKind::ALL
-            .into_iter()
-            .find(|v| v.as_str() == s)
-            .ok_or_else(|| format!("unknown prompt kind: {s}"))
-    }
-}
-
 /// Which coding-agent CLI a profile runs on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
@@ -409,17 +372,13 @@ pub enum AgentKind {
     Opencode,
 }
 
+wire_enum! { AgentKind, "agent kind", [
+    ClaudeCode = "claude_code",
+    Codex = "codex",
+    Opencode = "opencode",
+]}
+
 impl AgentKind {
-    pub const ALL: [AgentKind; 3] = [AgentKind::ClaudeCode, AgentKind::Codex, AgentKind::Opencode];
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            AgentKind::ClaudeCode => "claude_code",
-            AgentKind::Codex => "codex",
-            AgentKind::Opencode => "opencode",
-        }
-    }
-
     /// The executable this agent CLI is launched as, and the name anything
     /// looking for it on a `PATH` searches for.
     pub fn binary(&self) -> &'static str {
@@ -434,11 +393,11 @@ impl AgentKind {
     /// the permission bypass each one spells its own way, so an agent working
     /// unattended in a throwaway worktree is not left waiting at a prompt.
     ///
-    /// This is what a fresh database seeds the agent's flag list with and what
-    /// restoring the defaults puts back; from there the list is the user's,
-    /// edited over `/v1/agents`. Only flags a user may reasonably drop belong
-    /// here — the structural ones (session ids, MCP and hook config, the
-    /// system prompt, the model) are the adapters' own and are not negotiable.
+    /// What a fresh database seeds the flag list with and what restoring the
+    /// defaults puts back; from there the list is the user's. Only flags a
+    /// user may reasonably drop belong here — the structural ones (session
+    /// ids, MCP and hook config, the system prompt, the model) are the
+    /// adapters' own.
     pub fn default_flags(&self) -> &'static [&'static str] {
         match self {
             AgentKind::ClaudeCode => &["--dangerously-skip-permissions"],
@@ -449,16 +408,6 @@ impl AgentKind {
             // asks for approval outside it.
             AgentKind::Opencode => &["--auto"],
         }
-    }
-}
-
-impl std::str::FromStr for AgentKind {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        AgentKind::ALL
-            .into_iter()
-            .find(|v| v.as_str() == s)
-            .ok_or_else(|| format!("unknown agent kind: {s}"))
     }
 }
 
@@ -481,37 +430,18 @@ pub enum GoalStatus {
     Cancelled,
 }
 
-impl GoalStatus {
-    pub const ALL: [GoalStatus; 4] = [
-        GoalStatus::Planning,
-        GoalStatus::Active,
-        GoalStatus::Completed,
-        GoalStatus::Cancelled,
-    ];
+wire_enum! { GoalStatus, "goal status", [
+    Planning = "planning",
+    Active = "active",
+    Completed = "completed",
+    Cancelled = "cancelled",
+]}
 
-    /// Nothing more will happen to this goal: no session of its own, no task
-    /// left to move it. What may be deleted, and what cancelling refuses.
+impl GoalStatus {
+    /// Nothing more will happen to this goal: what may be deleted, and what
+    /// cancelling refuses.
     pub fn is_terminal(&self) -> bool {
         matches!(self, GoalStatus::Completed | GoalStatus::Cancelled)
-    }
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            GoalStatus::Planning => "planning",
-            GoalStatus::Active => "active",
-            GoalStatus::Completed => "completed",
-            GoalStatus::Cancelled => "cancelled",
-        }
-    }
-}
-
-impl std::str::FromStr for GoalStatus {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        GoalStatus::ALL
-            .into_iter()
-            .find(|v| v.as_str() == s)
-            .ok_or_else(|| format!("unknown goal status: {s}"))
     }
 }
 
@@ -537,40 +467,20 @@ pub enum SessionStatus {
     Failed,
 }
 
-impl SessionStatus {
-    pub const ALL: [SessionStatus; 5] = [
-        SessionStatus::Starting,
-        SessionStatus::Running,
-        SessionStatus::Idle,
-        SessionStatus::Exited,
-        SessionStatus::Failed,
-    ];
+wire_enum! { SessionStatus, "session status", [
+    Starting = "starting",
+    Running = "running",
+    Idle = "idle",
+    Exited = "exited",
+    Failed = "failed",
+]}
 
+impl SessionStatus {
     pub fn is_live(&self) -> bool {
         matches!(
             self,
             SessionStatus::Starting | SessionStatus::Running | SessionStatus::Idle
         )
-    }
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            SessionStatus::Starting => "starting",
-            SessionStatus::Running => "running",
-            SessionStatus::Idle => "idle",
-            SessionStatus::Exited => "exited",
-            SessionStatus::Failed => "failed",
-        }
-    }
-}
-
-impl std::str::FromStr for SessionStatus {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        SessionStatus::ALL
-            .into_iter()
-            .find(|v| v.as_str() == s)
-            .ok_or_else(|| format!("unknown session status: {s}"))
     }
 }
 
@@ -587,11 +497,11 @@ pub enum AttentionReason {
     WaitingPermission,
     /// The agent asked the user something and is idle until answered.
     WaitingInput,
-    /// Something addressed to the user that no agent can do for them:
-    /// a message written to them, a published request that is theirs to
-    /// merge. Raised on the session the work is with, since that is the row
-    /// the task's attention is read from — but not by that agent and not the
-    /// agent's to take down, which is what tells it apart from the two above.
+    /// Something addressed to the user that no agent can do for them: a
+    /// message written to them, a published request that is theirs to merge.
+    /// Raised on the session the work is with, but not by that agent and not
+    /// the agent's to take down, which is what tells it apart from the two
+    /// above.
     WaitingUser,
     /// The agent reported an error (API error, crash, `session.error`).
     AgentError,
@@ -601,49 +511,27 @@ pub enum AttentionReason {
     Stalled,
 }
 
-impl AttentionReason {
-    pub const ALL: [AttentionReason; 6] = [
-        AttentionReason::WaitingPermission,
-        AttentionReason::WaitingInput,
-        AttentionReason::WaitingUser,
-        AttentionReason::AgentError,
-        AttentionReason::Disconnected,
-        AttentionReason::Stalled,
-    ];
+wire_enum! { AttentionReason, "attention reason", [
+    WaitingPermission = "waiting_permission",
+    WaitingInput = "waiting_input",
+    WaitingUser = "waiting_user",
+    AgentError = "agent_error",
+    Disconnected = "disconnected",
+    Stalled = "stalled",
+]}
 
+impl AttentionReason {
     /// Whether this reason describes a dialog on the agent's own terminal.
     ///
-    /// Only a live session can be sitting on one: a permission prompt and a
-    /// question are things somebody types an answer into, and a pane that is
-    /// gone has neither. The other reasons are the ones a session ends
-    /// *carrying* — an error it reported, a disconnect, a stall, something
-    /// left for the user — and they stay true after the agent has stopped.
+    /// Only a live session can be sitting on one: a prompt is something
+    /// somebody types an answer into, and a pane that is gone has none. The
+    /// other reasons are the ones a session ends *carrying*, and they stay
+    /// true after the agent has stopped.
     pub fn is_prompt(&self) -> bool {
         matches!(
             self,
             AttentionReason::WaitingPermission | AttentionReason::WaitingInput
         )
-    }
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            AttentionReason::WaitingPermission => "waiting_permission",
-            AttentionReason::WaitingInput => "waiting_input",
-            AttentionReason::WaitingUser => "waiting_user",
-            AttentionReason::AgentError => "agent_error",
-            AttentionReason::Disconnected => "disconnected",
-            AttentionReason::Stalled => "stalled",
-        }
-    }
-}
-
-impl std::str::FromStr for AttentionReason {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        AttentionReason::ALL
-            .into_iter()
-            .find(|v| v.as_str() == s)
-            .ok_or_else(|| format!("unknown attention reason: {s}"))
     }
 }
 
@@ -656,25 +544,9 @@ pub enum ReviewVerdict {
     RequestChanges,
 }
 
-impl ReviewVerdict {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            ReviewVerdict::Approve => "approve",
-            ReviewVerdict::RequestChanges => "request_changes",
-        }
-    }
-}
-
-impl std::str::FromStr for ReviewVerdict {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "approve" => Ok(ReviewVerdict::Approve),
-            "request_changes" => Ok(ReviewVerdict::RequestChanges),
-            other => Err(format!("unknown review verdict: {other}")),
-        }
-    }
-}
+wire_enum! { ReviewVerdict, "review verdict", [
+    Approve = "approve", RequestChanges = "request_changes",
+]}
 
 /// Author of a conversation message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -688,35 +560,13 @@ pub enum AuthorRole {
     System,
 }
 
-impl AuthorRole {
-    pub const ALL: [AuthorRole; 5] = [
-        AuthorRole::Planner,
-        AuthorRole::Engineer,
-        AuthorRole::Reviewer,
-        AuthorRole::User,
-        AuthorRole::System,
-    ];
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            AuthorRole::Planner => "planner",
-            AuthorRole::Engineer => "engineer",
-            AuthorRole::Reviewer => "reviewer",
-            AuthorRole::User => "user",
-            AuthorRole::System => "system",
-        }
-    }
-}
-
-impl std::str::FromStr for AuthorRole {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        AuthorRole::ALL
-            .into_iter()
-            .find(|v| v.as_str() == s)
-            .ok_or_else(|| format!("unknown author role: {s}"))
-    }
-}
+wire_enum! { AuthorRole, "author role", [
+    Planner = "planner",
+    Engineer = "engineer",
+    Reviewer = "reviewer",
+    User = "user",
+    System = "system",
+]}
 
 /// Who a conversation message is addressed to: one agent profile, or the
 /// human user. Orthogonal to the author role, and optional — a message with
@@ -729,26 +579,9 @@ pub enum RecipientKind {
     User,
 }
 
-impl RecipientKind {
-    pub const ALL: [RecipientKind; 2] = [RecipientKind::Profile, RecipientKind::User];
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            RecipientKind::Profile => "profile",
-            RecipientKind::User => "user",
-        }
-    }
-}
-
-impl std::str::FromStr for RecipientKind {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        RecipientKind::ALL
-            .into_iter()
-            .find(|v| v.as_str() == s)
-            .ok_or_else(|| format!("unknown recipient kind: {s}"))
-    }
-}
+wire_enum! { RecipientKind, "recipient kind", [
+    Profile = "profile", User = "user",
+]}
 
 #[cfg(test)]
 mod tests {

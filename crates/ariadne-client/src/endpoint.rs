@@ -2,10 +2,10 @@
 //!
 //! The CLI, the MCP server and `ariadned` itself must land on the same socket
 //! for a given environment, so the ordering lives here and nowhere else:
-//! `--home` > `ARIADNE_HOME` > `~/.ariadne` for the home directory, then that
-//! home's `config.toml` `socket_path` > `<home>/ariadne.sock` for the socket.
-//! Explicit endpoint overrides (`--endpoint` / `ARIADNE_SOCKET`) sit in front of
-//! all of it — see [`Client::resolve`](crate::Client::resolve).
+//! `--home` > `ARIADNE_HOME` > `~/.ariadne` for the home, then that home's
+//! `config.toml` `socket_path` > `<home>/ariadne.sock` for the socket. Explicit
+//! endpoint overrides sit in front of all of it — see
+//! [`Client::resolve`](crate::Client::resolve).
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -23,12 +23,12 @@ struct SocketOnly {
     socket_path: Option<PathBuf>,
 }
 
-/// Everything `<home>/config.toml` may set.
+/// Everything `<home>/config.toml` may set, read strictly: an unknown key is
+/// an error rather than a silently ignored line.
 ///
-/// This is the strict reading — an unknown key is an error, not a silently
-/// ignored line — and it lives here rather than in the daemon because the
-/// daemon is not the only one that has to answer for it: `ariadne doctor`
-/// reports on a config whose daemon refuses to start because of it.
+/// It lives here rather than in the daemon because the daemon is not the only
+/// one that has to answer for it — `ariadne doctor` reports on a config whose
+/// daemon refuses to start because of it.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FileConfig {
@@ -77,9 +77,8 @@ pub fn config_file(home: &Path) -> PathBuf {
     home.join("config.toml")
 }
 
-/// Read `<home>/config.toml` the way the daemon reads it: strictly, so a
-/// misspelled key is reported rather than ignored. `Ok(None)` means there is
-/// no config file at all, which is the ordinary case.
+/// Read `<home>/config.toml` the way the daemon reads it. `Ok(None)` means
+/// there is no config file at all, which is the ordinary case.
 pub fn parse_config(home: &Path) -> Result<Option<FileConfig>, ConfigError> {
     let path = config_file(home);
     if !path.exists() {
@@ -121,7 +120,7 @@ pub fn default_socket_path(home: &Path) -> PathBuf {
 
 /// Socket the daemon of this home listens on: `config.toml` `socket_path`,
 /// else `<home>/ariadne.sock`. A missing or unparseable config.toml resolves
-/// to the default — the daemon is the one that reports a broken config.
+/// to the default — reporting a broken config is the daemon's job.
 pub fn socket_path(home: &Path) -> PathBuf {
     file_config(home)
         .socket_path

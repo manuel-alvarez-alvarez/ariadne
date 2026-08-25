@@ -4,7 +4,7 @@ use ariadne_core::MergeStrategy;
 use ariadne_core::id::new_id;
 
 use crate::profiles::plural_list;
-use crate::{Change, Repository, Result, Store, StoreError, not_found, now};
+use crate::{Change, Repository, Result, Store, StoreError, now};
 
 #[derive(Debug, Clone)]
 pub struct NewRepository {
@@ -51,11 +51,7 @@ impl Store {
     }
 
     pub async fn get_repository(&self, id: &str) -> Result<Repository> {
-        sqlx::query_as::<_, Repository>("SELECT * FROM repositories WHERE id = ?")
-            .bind(id)
-            .fetch_optional(self.r())
-            .await?
-            .ok_or_else(|| not_found("repository", id))
+        self.fetch_by("repository", "repositories", "id", id).await
     }
 
     pub async fn list_repositories(&self) -> Result<Vec<Repository>> {
@@ -100,10 +96,7 @@ impl Store {
     }
 
     /// Delete a repository; fails with `Conflict` while a goal or a task
-    /// still references it.
-    ///
-    /// As with profiles, the refusal names what holds the repository — a bare
-    /// count leaves the user with nowhere to look.
+    /// still references it, naming which, as [`Store::delete_profile`] does.
     pub async fn delete_repository(&self, id: &str) -> Result<()> {
         self.get_repository(id).await?;
         let (goals, tasks): (i64, i64) = sqlx::query_as(
