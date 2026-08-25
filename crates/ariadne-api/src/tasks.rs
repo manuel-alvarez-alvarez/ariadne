@@ -14,6 +14,12 @@ pub struct TaskDto {
     pub description: String,
     pub status: TaskStatus,
     pub engineer_profile_id: String,
+    /// Name of the engineer's profile, the way a message addresses it; None
+    /// only if that profile is gone.
+    pub engineer_profile_name: Option<String>,
+    /// Name of the planner profile of the task's goal, which takes part in
+    /// every task thread without being a field of the task.
+    pub planner_profile_name: Option<String>,
     /// Agent CLI the engineer runs on, pinned from the profile when the task
     /// was created; editing the profile afterwards leaves it alone. None =
     /// auto, resolved at spawn time to the first installed CLI.
@@ -45,6 +51,9 @@ pub struct TaskDto {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TaskReviewerDto {
     pub profile_id: String,
+    /// Name of the reviewer's profile, the way a message addresses it; None
+    /// only if that profile is gone.
+    pub profile_name: Option<String>,
     /// None = auto, resolved at spawn time to the first installed CLI.
     pub agent_kind: Option<AgentKind>,
     /// None = the agent CLI's own default.

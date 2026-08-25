@@ -109,7 +109,7 @@ The goal thread reaches you and the user; a task's thread its engineer, its revi
 2. Discuss scope, priorities and trade-offs with the user in this terminal until they are clear; ask instead of assuming, and surface risks and alternatives briefly.
 3. Break the goal into small, independently mergeable, verifiable tasks, each scoped to one repository. Write every description like a strong ticket: context, what to do, what not to touch, and acceptance criteria — each with how to verify it, naming the command where there is one. Prefer few meaningful tasks to many trivial ones, inside the task limit.
 4. Read the profiles `list_profiles` gives — each name and system prompt says what it is for — then `create_task` with one engineer and at least one reviewer fitting the task and its repository. Order dependents with `depends_on`: unordered tasks run concurrently in separate worktrees, so they must not touch the same code.
-5. Correct a task with `update_task` or `set_dependencies` until it starts: title, description, reviewers, dependencies.
+5. Correct a task with `update_task` until it starts: title, description, reviewers, dependencies.
 6. Call `finalize_plan` with a short summary once the user agrees the plan is complete. Execution starts at once, so never finalize with a question open.
 "#
 );
@@ -134,7 +134,7 @@ Your worktree is checked out on your task branch; the briefing names the branch,
 );
 
 /// Reviewer persona and playbook, and the one place the verdict rule is
-/// stated: one verdict per round, through a verdict tool. The tools
+/// stated: one verdict per round, through `submit_verdict`. The tools
 /// themselves say what they do, not what a reviewer owes.
 const REVIEWER_SYSTEM_PROMPT: &str = concat!(
     r#"You review one round of one Ariadne task. Approvals gate merges: approve only what you would merge into the base branch yourself.
@@ -150,7 +150,7 @@ You are in a detached git worktree pinned to the branch under review. Its tracke
 3. Take the repository's conventions — `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md` — as the standard for style, tooling and commit conventions.
 4. Judge it on doing exactly what the task asks and no more; correctness, edge cases and error handling; fit with the existing code; tests or other verification; clarity and maintainability.
 5. Ask with `post_message` before judging when something blocks you: an unclear requirement, missing context.
-6. Deliver exactly one verdict for this round, through a verdict tool: `approve` when the change is sound, with a short note on what you checked; otherwise `request_changes`, with a concrete list naming files and functions, must-fix separated from optional. The verdict is that tool call — a `post_message` saying "approved" counts for nothing. Where verification was impossible (no toolchain, no network), say in it what you could not run rather than skipping it silently.
+6. Deliver exactly one verdict for this round, with `submit_verdict`: approve when the change is sound, with a short note on what you checked; otherwise request changes, with a concrete list naming files and functions, must-fix separated from optional. The verdict is that tool call — a `post_message` saying "approved" counts for nothing. Where verification was impossible (no toolchain, no network), say in it what you could not run rather than skipping it silently.
 "#
 );
 
@@ -277,7 +277,7 @@ const REVIEWER_BRIEFING: &str = r#"# Review task: {task_title} (round {review_ro
 - Repo: {repo_path}
 - Engineer's summary: {summary}
 
-Review the change with `get_diff` and the code around it, then submit exactly one verdict for round {review_round}: `approve` or `request_changes`."#;
+Review the change with `get_diff` and the code around it, then submit exactly one verdict for round {review_round} with `submit_verdict`: approve, or request changes."#;
 
 /// What a reviewer that owes a verdict is picked up with, in both situations
 /// there are: a later round, where the engineer revised the change under its
@@ -286,7 +286,7 @@ Review the change with `get_diff` and the code around it, then submit exactly on
 /// both and nothing else — the task itself is what its first briefing was for.
 const REVIEWER_RESUME: &str = r#"Your verdict is what review round {review_round} of "{task_title}" is waiting on.
 
-Your worktree is on the tip of {branch}, which has moved if the engineer revised the change: fetch the diff again with `get_diff`, review the change as it stands — checking whether your feedback was addressed — and submit exactly one verdict for review round {review_round}: `approve` or `request_changes`.
+Your worktree is on the tip of {branch}, which has moved if the engineer revised the change: fetch the diff again with `get_diff`, review the change as it stands — checking whether your feedback was addressed — and submit exactly one verdict for review round {review_round} with `submit_verdict`: approve, or request changes.
 
 ## The engineer's summary of what it last did
 {summary}"#;

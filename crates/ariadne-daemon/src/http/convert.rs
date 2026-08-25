@@ -72,18 +72,24 @@ pub fn goal_dto(g: store::Goal, repos: Vec<store::Repository>) -> GoalDto {
     }
 }
 
-fn task_reviewer_dto(r: store::TaskReviewer) -> TaskReviewerDto {
+/// `profile_name` is the reviewer profile's name, which the caller loads.
+fn task_reviewer_dto(r: store::TaskReviewer, profile_name: Option<String>) -> TaskReviewerDto {
     TaskReviewerDto {
         agent_kind: r.agent_kind(),
         profile_id: r.profile_id,
+        profile_name,
         model: r.model,
     }
 }
 
-pub fn task_dto(
+/// The names come from the caller, which loads them: the engineer's, the
+/// planner's of the task's goal, and one per reviewer slot in slot order.
+fn task_dto(
     t: store::Task,
-    reviewers: Vec<store::TaskReviewer>,
+    reviewers: Vec<(store::TaskReviewer, Option<String>)>,
     depends_on: Vec<String>,
+    engineer_profile_name: Option<String>,
+    planner_profile_name: Option<String>,
 ) -> TaskDto {
     TaskDto {
         status: t.status(),
@@ -95,8 +101,13 @@ pub fn task_dto(
         title: t.title,
         description: t.description,
         engineer_profile_id: t.engineer_profile_id,
+        engineer_profile_name,
+        planner_profile_name,
         model: t.model,
-        reviewers: reviewers.into_iter().map(task_reviewer_dto).collect(),
+        reviewers: reviewers
+            .into_iter()
+            .map(|(r, name)| task_reviewer_dto(r, name))
+            .collect(),
         depends_on,
         branch: t.branch,
         worktree_path: t.worktree_path,
@@ -106,6 +117,34 @@ pub fn task_dto(
         created_at: t.created_at,
         updated_at: t.updated_at,
     }
+}
+
+/// The name a message addresses one profile by, or None where the profile is
+/// gone — which a profile a task names cannot be, the store refusing to delete
+/// one anything references, so this leaves a task readable rather than failing
+/// the read.
+async fn profile_name(store: &Store, id: &str) -> Option<String> {
+    store.get_profile(id).await.ok().map(|p| p.name)
+}
+
+/// [`task_dto`] with everything it needs loaded from the store: the reviewer
+/// slots, the dependencies, and the profile names an agent addresses the task's
+/// participants by — the engineer's, every reviewer's, and the planner's of its
+/// goal, which takes part in the thread without being a field of the task.
+///
+/// A name beside every id is what a task is read for: `to` takes a name, and no
+/// prompt can teach an agent to read an id.
+pub async fn task_dto_of(store: &Store, task: store::Task) -> Result<TaskDto, StoreError> {
+    let mut reviewers = Vec::new();
+    for pin in store.list_task_reviewer_pins(&task.id).await? {
+        let name = profile_name(store, &pin.profile_id).await;
+        reviewers.push((pin, name));
+    }
+    let depends_on = store.list_task_dependencies(&task.id).await?;
+    let engineer = profile_name(store, &task.engineer_profile_id).await;
+    let planner_id = store.get_goal(&task.goal_id).await?.planner_profile_id;
+    let planner = profile_name(store, &planner_id).await;
+    Ok(task_dto(task, reviewers, depends_on, engineer, planner))
 }
 
 pub fn transition_dto(t: store::TaskTransition) -> TaskTransitionDto {

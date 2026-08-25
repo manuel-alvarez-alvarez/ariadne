@@ -35,8 +35,9 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    `fix-the-landing-briefing-real-fetch-r9jr7c` — implements, commits and
    calls `request_review`.
 4. **Reviewers** spawn in read-only detached worktrees, inspect the diff and
-   `approve` or `request_changes`. Change requests resume the engineer with
-   the feedback; enough approvals move the task to `approved`.
+   `submit_verdict`, approving or requesting changes. Change requests resume
+   the engineer with the feedback; enough approvals move the task to
+   `approved`.
 5. The task never leaves the engineer that wrote it: it keeps its session and
    its worktree, and is briefed to land the change the way the repository's
    **merge strategy** says (`ariadne repo add --merge-strategy`, default

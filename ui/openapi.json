@@ -3770,6 +3770,13 @@
           "engineer_profile_id": {
             "type": "string"
           },
+          "engineer_profile_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Name of the engineer's profile, the way a message addresses it; None\nonly if that profile is gone."
+          },
           "goal_id": {
             "type": "string"
           },
@@ -3788,6 +3795,13 @@
               "null"
             ],
             "description": "Model the engineer runs on, pinned like `agent_kind`. None = the agent\nCLI's own default."
+          },
+          "planner_profile_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Name of the planner profile of the task's goal, which takes part in\nevery task thread without being a field of the task."
           },
           "pr_url": {
             "type": [
@@ -3859,6 +3873,13 @@
           },
           "profile_id": {
             "type": "string"
+          },
+          "profile_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Name of the reviewer's profile, the way a message addresses it; None\nonly if that profile is gone."
           }
         }
       },

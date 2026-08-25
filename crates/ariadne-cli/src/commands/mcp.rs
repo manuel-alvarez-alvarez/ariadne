@@ -14,9 +14,8 @@ use rmcp::model::*;
 use rmcp::service::{RequestContext, RoleServer};
 use rmcp::{ErrorData as McpError, ServiceExt, schemars, tool, tool_router};
 
-use ariadne_api::goals::{FinalizePlanRequest, GoalDto};
+use ariadne_api::goals::FinalizePlanRequest;
 use ariadne_api::messages::{CreateMessageRequest, MessageDto};
-use ariadne_api::profiles::ProfileDto;
 use ariadne_api::reviews::CreateReviewRequest;
 use ariadne_api::tasks::{
     CreateTaskRequest, RecordPullRequestRequest, TransitionRequest, UpdateTaskRequest,
@@ -88,14 +87,8 @@ pub struct UpdateTaskReq {
     pub title: Option<String>,
     pub description: Option<String>,
     pub reviewer_profiles: Option<Vec<String>>,
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
-pub struct SetDependenciesReq {
-    pub task_id: String,
-    /// Full replacement list of dependency task ids.
-    pub depends_on: Vec<String>,
+    /// Full replacement list of the ids of the tasks that must merge first.
+    pub depends_on: Option<Vec<String>>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -134,10 +127,23 @@ pub struct RecordPullRequestReq {
     pub url: String,
 }
 
+/// The two verdicts a review round can end in, as the one verdict tool takes
+/// them.
+#[derive(Clone, Copy, Debug, serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+#[serde(rename_all = "snake_case")]
+pub enum Verdict {
+    Approve,
+    RequestChanges,
+}
+
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub struct VerdictReq {
-    /// Reasoning / feedback accompanying the verdict.
+pub struct SubmitVerdictReq {
+    /// approve | request_changes
+    pub verdict: Verdict,
+    /// The note that goes with an approval; the feedback the engineer is
+    /// resumed with on a change request, where it is required.
     pub body: Option<String>,
 }
 
@@ -173,49 +179,26 @@ fn addressed_message(message: &MessageDto) -> serde_json::Value {
     })
 }
 
-/// One task as an agent reads it: every profile it names spelled by name
-/// beside its id, since a name is what `post_message`'s `to` takes and an id
-/// is not something a prompt can teach anyone to read.
-///
-/// The planner is one of them: it takes part in every task thread without
-/// being a field of the task, so it is looked up from the goal and named
-/// here too.
-fn named_participants(
-    mut task: serde_json::Value,
-    planner_profile_id: &str,
-    profiles: &[ProfileDto],
-) -> serde_json::Value {
-    let name_of = |id: &str| {
-        profiles
-            .iter()
-            .find(|p| p.id == id)
-            .map(|p| serde_json::Value::String(p.name.clone()))
-    };
-    let Some(fields) = task.as_object_mut() else {
-        return task;
-    };
-    if let Some(named) = fields
-        .get("engineer_profile_id")
-        .and_then(|v| v.as_str())
-        .and_then(name_of)
-    {
-        fields.insert("engineer_profile_name".to_string(), named);
-    }
-    if let Some(named) = name_of(planner_profile_id) {
-        fields.insert("planner_profile_name".to_string(), named);
-    }
-    if let Some(reviewers) = fields.get_mut("reviewers").and_then(|v| v.as_array_mut()) {
-        for slot in reviewers.iter_mut().filter_map(|r| r.as_object_mut()) {
-            if let Some(named) = slot
-                .get("profile_id")
-                .and_then(|v| v.as_str())
-                .and_then(name_of)
-            {
-                slot.insert("profile_name".to_string(), named);
-            }
+/// The review the daemon records for a verdict, refusing a change request
+/// with nothing in it: the body is what the engineer is resumed with, so a
+/// round that asks for changes and says nothing asks for nothing.
+fn review_request(verdict: Verdict, body: Option<String>) -> Result<CreateReviewRequest, McpError> {
+    let body = body.filter(|b| !b.trim().is_empty());
+    let verdict = match verdict {
+        Verdict::Approve => ReviewVerdict::Approve,
+        Verdict::RequestChanges if body.is_none() => {
+            return Err(McpError::invalid_params(
+                "request_changes needs a body: the feedback the engineer is resumed with",
+                None,
+            ));
         }
-    }
-    task
+        Verdict::RequestChanges => ReviewVerdict::RequestChanges,
+    };
+    Ok(CreateReviewRequest {
+        verdict,
+        body,
+        reviewer_profile: None,
+    })
 }
 
 fn json_result(v: serde_json::Value) -> Result<CallToolResult, McpError> {
@@ -248,35 +231,29 @@ impl AriadneMcp {
         match self.role {
             McpRole::Planner => &[
                 "get_task",
-                "get_goal",
                 "list_messages",
                 "post_message",
                 "create_task",
-                "list_tasks",
                 "update_task",
-                "set_dependencies",
                 "list_profiles",
                 "finalize_plan",
             ],
             McpRole::Engineer => &[
                 "get_task",
-                "get_goal",
-                "get_diff",
                 "list_messages",
                 "post_message",
                 "request_review",
                 "get_reviews",
-                "record_pull_request",
                 "mark_merged",
+                "record_pull_request",
+                "get_diff",
             ],
             McpRole::Reviewer => &[
                 "get_task",
-                "get_goal",
                 "list_messages",
                 "post_message",
                 "get_diff",
-                "approve",
-                "request_changes",
+                "submit_verdict",
             ],
         }
     }
@@ -297,60 +274,23 @@ impl AriadneMcp {
     ) -> Result<serde_json::Value, McpError> {
         self.client.post_json(path, body).await.map_err(to_mcp_err)
     }
-
-    async fn submit_verdict(
-        &self,
-        verdict: ReviewVerdict,
-        body: Option<String>,
-    ) -> Result<CallToolResult, McpError> {
-        let task = self.own_task(None)?;
-        let value = self
-            .post(
-                &format!("/v1/tasks/{task}/reviews"),
-                &CreateReviewRequest {
-                    verdict,
-                    body,
-                    reviewer_profile: None,
-                },
-            )
-            .await?;
-        json_result(value)
-    }
 }
 
 #[tool_router]
 impl AriadneMcp {
     #[tool(
-        description = "Read a task: status, branch, dependencies, and the profile names of its engineer, its reviewers and the planner — the names `post_message` addresses them by."
+        description = "Read a task: its status, its branch, its dependencies and the profile names of its engineer, its reviewers and the planner."
     )]
     async fn get_task(
         &self,
         Parameters(req): Parameters<TaskIdOpt>,
     ) -> Result<CallToolResult, McpError> {
         let id = self.own_task(req.task_id)?;
-        let task: serde_json::Value = self.get(&format!("/v1/tasks/{id}")).await?;
-        let goal_id = task
-            .get("goal_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or(&self.goal_id);
-        let goal: GoalDto = self.get(&format!("/v1/goals/{goal_id}")).await?;
-        let profiles: Vec<ProfileDto> = self.get("/v1/profiles").await?;
-        json_result(named_participants(
-            task,
-            &goal.planner_profile_id,
-            &profiles,
-        ))
+        json_result(self.get(&format!("/v1/tasks/{id}")).await?)
     }
 
     #[tool(
-        description = "Read the goal this session belongs to: title, repositories, task limit, approvals required per task."
-    )]
-    async fn get_goal(&self, Parameters(_): Parameters<Empty>) -> Result<CallToolResult, McpError> {
-        json_result(self.get(&format!("/v1/goals/{}", self.goal_id)).await?)
-    }
-
-    #[tool(
-        description = "Read a task's conversation, for what the other agents and the user said. Without task_id, a planner reads the goal thread. A message that addressed someone carries the `to` it named."
+        description = "Read a task's conversation, or the goal thread when a planner passes no task_id."
     )]
     async fn list_messages(
         &self,
@@ -367,7 +307,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Write into a task's conversation, the way to reach the other agents and the user: `to` addresses one of them as your system prompt spells it, and without task_id a planner posts to the goal thread instead."
+        description = "Write a message into a task's conversation, or into the goal thread when a planner passes no task_id."
     )]
     async fn post_message(
         &self,
@@ -392,7 +332,7 @@ impl AriadneMcp {
     // ---- planner ----
 
     #[tool(
-        description = "Create one task in the goal, owned by one engineer profile and gated by at least one reviewer profile. Every profile says what it is for in its name and its system prompt, which `list_profiles` returns: pick the ones that fit the task and the repository it works in."
+        description = "Create one task in the goal, owned by one engineer profile and gated by at least one reviewer profile."
     )]
     async fn create_task(
         &self,
@@ -412,19 +352,8 @@ impl AriadneMcp {
         )
     }
 
-    #[tool(description = "List the goal's tasks with their statuses.")]
-    async fn list_tasks(
-        &self,
-        Parameters(_): Parameters<Empty>,
-    ) -> Result<CallToolResult, McpError> {
-        json_result(
-            self.get(&format!("/v1/tasks?goal={}", self.goal_id))
-                .await?,
-        )
-    }
-
     #[tool(
-        description = "Edit a task's title, description or reviewers. Only accepted while the task has not started."
+        description = "Edit a task's title, description, reviewers or dependencies, as long as it has not started."
     )]
     async fn update_task(
         &self,
@@ -434,7 +363,7 @@ impl AriadneMcp {
             title: req.title,
             description: req.description,
             reviewer_profiles: req.reviewer_profiles,
-            depends_on: None,
+            depends_on: req.depends_on,
         };
         let value = self
             .client
@@ -445,26 +374,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Replace a task's dependency list. Only accepted while the task has not started."
-    )]
-    async fn set_dependencies(
-        &self,
-        Parameters(req): Parameters<SetDependenciesReq>,
-    ) -> Result<CallToolResult, McpError> {
-        let body = UpdateTaskRequest {
-            depends_on: Some(req.depends_on),
-            ..Default::default()
-        };
-        let value = self
-            .client
-            .patch_json(&format!("/v1/tasks/{}", req.task_id), &body)
-            .await
-            .map_err(to_mcp_err)?;
-        json_result(value)
-    }
-
-    #[tool(
-        description = "List the agent profiles a task can be assigned to, each with the name, model and system prompt that say what it is for. Filter by role with `role`: planner, engineer or reviewer."
+        description = "List the agent profiles a task can be assigned to, each with the name, model and system prompt that say what it is for."
     )]
     async fn list_profiles(
         &self,
@@ -478,7 +388,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Finalize the plan: the goal becomes active and its tasks start executing immediately. Call it only once the user agrees the plan is complete, with no question left open."
+        description = "Finalize the plan, which makes the goal active and starts its tasks."
     )]
     async fn finalize_plan(
         &self,
@@ -496,7 +406,7 @@ impl AriadneMcp {
     // ---- engineer ----
 
     #[tool(
-        description = "Submit your task for review: the summary is what the reviewers read first. Call it when the work is complete and verified, again after each round of requested changes, and again for a revision you made to a published pull or merge request."
+        description = "Submit your task for review, with the summary the reviewers read first."
     )]
     async fn request_review(
         &self,
@@ -535,7 +445,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Report the merge you have already made, which ends the task. The daemon checks the branch really is merged into its base branch in the primary checkout before accepting the sha, so report it truthfully."
+        description = "Report the sha your branch landed on its base branch as, which ends the task."
     )]
     async fn mark_merged(
         &self,
@@ -556,7 +466,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Report the pull request or merge request you opened for this task, by the URL `gh pr create` or `glab mr create` printed. It is what the user is pointed at to merge, so report it as soon as it exists — then keep waiting on it yourself, the way your landing briefing says."
+        description = "Report the URL of the pull or merge request you opened for this task."
     )]
     async fn record_pull_request(
         &self,
@@ -587,24 +497,15 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Approve the change under review; the body is the note that goes with it."
+        description = "Deliver your verdict on the change under review, approving it or requesting changes with the feedback the engineer is resumed with."
     )]
-    async fn approve(
+    async fn submit_verdict(
         &self,
-        Parameters(req): Parameters<VerdictReq>,
+        Parameters(req): Parameters<SubmitVerdictReq>,
     ) -> Result<CallToolResult, McpError> {
-        self.submit_verdict(ReviewVerdict::Approve, req.body).await
-    }
-
-    #[tool(
-        description = "Request changes on the change under review; the body is the feedback the engineer is resumed with."
-    )]
-    async fn request_changes(
-        &self,
-        Parameters(req): Parameters<VerdictReq>,
-    ) -> Result<CallToolResult, McpError> {
-        self.submit_verdict(ReviewVerdict::RequestChanges, req.body)
-            .await
+        let task = self.own_task(None)?;
+        let body = review_request(req.verdict, req.body)?;
+        json_result(self.post(&format!("/v1/tasks/{task}/reviews"), &body).await?)
     }
 }
 
@@ -688,7 +589,7 @@ mod tests {
     use super::*;
 
     use ariadne_api::messages::MessageRecipientDto;
-    use ariadne_core::{AuthorRole, RecipientKind, Role};
+    use ariadne_core::{AuthorRole, RecipientKind};
 
     fn message(recipient: Option<MessageRecipientDto>) -> MessageDto {
         MessageDto {
@@ -720,70 +621,9 @@ mod tests {
         assert_eq!(to_the_thread["to"], serde_json::Value::Null);
     }
 
-    fn profile(id: &str, name: &str, role: Role) -> ProfileDto {
-        ProfileDto {
-            id: id.into(),
-            name: name.into(),
-            role,
-            agent_kind: None,
-            model: None,
-            system_prompt: String::new(),
-            created_at: "2026-01-01T00:00:00Z".into(),
-            updated_at: "2026-01-01T00:00:00Z".into(),
-        }
-    }
-
-    /// The prompts tell every agent to address the others by profile name, so
-    /// the task it reads has to spell them: its engineer, every reviewer slot
-    /// and the planner that wrote it, none of which the task row itself
-    /// names.
-    #[test]
-    fn a_read_task_names_everyone_a_message_can_be_addressed_to() {
-        let named = named_participants(
-            serde_json::json!({
-                "id": "01TASK",
-                "engineer_profile_id": "01ENG",
-                "reviewers": [{"profile_id": "01REV"}],
-            }),
-            "01PLAN",
-            &[
-                profile("01ENG", "Engineer", Role::Engineer),
-                profile("01REV", "Reviewer", Role::Reviewer),
-                profile("01PLAN", "Planner", Role::Planner),
-            ],
-        );
-        assert_eq!(
-            named["engineer_profile_name"],
-            serde_json::json!("Engineer")
-        );
-        assert_eq!(named["planner_profile_name"], serde_json::json!("Planner"));
-        assert_eq!(
-            named["reviewers"][0]["profile_name"],
-            serde_json::json!("Reviewer")
-        );
-        // The ids it was read with are still there, and so is everything else.
-        assert_eq!(named["engineer_profile_id"], serde_json::json!("01ENG"));
-        assert_eq!(named["id"], serde_json::json!("01TASK"));
-    }
-
-    /// A profile the task names and the daemon no longer has — deleted since
-    /// the task was created — leaves the task readable, with the id it always
-    /// carried and no name beside it.
-    #[test]
-    fn a_profile_that_is_gone_leaves_the_task_readable() {
-        let named = named_participants(
-            serde_json::json!({"engineer_profile_id": "01GONE", "reviewers": []}),
-            "01PLAN",
-            &[],
-        );
-        assert_eq!(named["engineer_profile_id"], serde_json::json!("01GONE"));
-        assert!(named.get("engineer_profile_name").is_none(), "{named}");
-        assert!(named.get("planner_profile_name").is_none(), "{named}");
-    }
-
-    fn server(role: McpRole) -> AriadneMcp {
+    fn server_at(role: McpRole, client: Client) -> AriadneMcp {
         AriadneMcp {
-            client: std::sync::Arc::new(Client::from_env()),
+            client: std::sync::Arc::new(client),
             role,
             session_id: "01SESSION".into(),
             goal_id: "01GOAL".into(),
@@ -792,17 +632,102 @@ mod tests {
         }
     }
 
-    /// The task and the goal behind it are context every role reads, and a
-    /// tool a role is not allowed is a tool it never sees — so an omission
-    /// here is invisible from inside the session.
+    fn server(role: McpRole) -> AriadneMcp {
+        server_at(role, Client::from_env())
+    }
+
+    /// The whole tool surface, and which role sees which part of it: a tool a
+    /// role is not allowed is a tool it never sees, so an omission here is
+    /// invisible from inside the session and an extra one is surface nothing
+    /// asks for.
     #[test]
-    fn every_role_reads_its_task_and_the_goal_behind_it() {
-        for role in [McpRole::Planner, McpRole::Engineer, McpRole::Reviewer] {
-            let tools = server(role.clone()).allowed_tools();
-            for reading in ["get_task", "get_goal"] {
-                assert!(tools.contains(&reading), "{role:?} cannot {reading}");
-            }
+    fn every_role_reads_its_task_and_has_the_tools_its_playbook_names() {
+        for (role, tools) in [
+            (
+                McpRole::Planner,
+                &[
+                    "get_task",
+                    "list_messages",
+                    "post_message",
+                    "create_task",
+                    "update_task",
+                    "list_profiles",
+                    "finalize_plan",
+                ][..],
+            ),
+            (
+                McpRole::Engineer,
+                &[
+                    "get_task",
+                    "list_messages",
+                    "post_message",
+                    "request_review",
+                    "get_reviews",
+                    "mark_merged",
+                    "record_pull_request",
+                    "get_diff",
+                ][..],
+            ),
+            (
+                McpRole::Reviewer,
+                &[
+                    "get_task",
+                    "list_messages",
+                    "post_message",
+                    "get_diff",
+                    "submit_verdict",
+                ][..],
+            ),
+        ] {
+            let allowed = server(role.clone()).allowed_tools();
+            assert_eq!(allowed, tools, "the tools of the {role:?}");
         }
+
+        assert_eq!(distinct_tools(), EVERY_TOOL);
+    }
+
+    /// Every tool the three roles are allowed between them, in one list, so a
+    /// tool added or dropped is a line of this file.
+    const EVERY_TOOL: &[&str] = &[
+        "create_task",
+        "finalize_plan",
+        "get_diff",
+        "get_reviews",
+        "get_task",
+        "list_messages",
+        "list_profiles",
+        "mark_merged",
+        "post_message",
+        "record_pull_request",
+        "request_review",
+        "submit_verdict",
+        "update_task",
+    ];
+
+    /// The tools of the three roles together, deduplicated and sorted.
+    fn distinct_tools() -> Vec<&'static str> {
+        let mut tools: Vec<&str> = [McpRole::Planner, McpRole::Engineer, McpRole::Reviewer]
+            .iter()
+            .flat_map(|role| server(role.clone()).allowed_tools().iter().copied())
+            .collect();
+        tools.sort_unstable();
+        tools.dedup();
+        tools
+    }
+
+    /// Every tool a role is allowed is a tool the router really has, and every
+    /// tool the router has is one some role may call: a name that has drifted
+    /// from its `#[tool]` is filtered out of the listing and refused when
+    /// called, which is invisible until an agent needs it.
+    #[test]
+    fn every_allowed_tool_is_one_the_router_serves() {
+        let mut served: Vec<String> = AriadneMcp::tool_router()
+            .list_all()
+            .into_iter()
+            .map(|t| t.name.to_string())
+            .collect();
+        served.sort();
+        assert_eq!(served, distinct_tools());
     }
 
     /// The engineer owns its task from the first commit to the merge, so the
@@ -822,6 +747,151 @@ mod tests {
                 "{role:?} still has return_to_engineer"
             );
         }
+    }
+
+    /// One request as a fake daemon read it.
+    #[derive(Clone, Debug)]
+    struct Seen {
+        method: String,
+        path: String,
+        body: String,
+    }
+
+    /// A daemon that records what reaches it and answers every call with an
+    /// empty JSON object: enough to count the requests one tool call makes and
+    /// to read what it sent.
+    async fn recording_daemon() -> (String, std::sync::Arc<std::sync::Mutex<Vec<Seen>>>) {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let endpoint = format!("http://{}", listener.local_addr().expect("addr"));
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded = seen.clone();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let mut raw = Vec::new();
+                let mut buf = [0u8; 1024];
+                // Read until the headers are in and then to the end of the
+                // body the content-length announces.
+                loop {
+                    let read = match socket.read(&mut buf).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => n,
+                    };
+                    raw.extend_from_slice(&buf[..read]);
+                    let text = String::from_utf8_lossy(&raw).to_string();
+                    let Some(head_end) = text.find("\r\n\r\n") else {
+                        continue;
+                    };
+                    let head = &text[..head_end];
+                    let length: usize = head
+                        .lines()
+                        .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:")?.trim().parse().ok())
+                        .unwrap_or(0);
+                    if text.len() < head_end + 4 + length {
+                        continue;
+                    }
+                    let mut start = head.lines().next().unwrap_or_default().split_whitespace();
+                    recorded.lock().expect("lock").push(Seen {
+                        method: start.next().unwrap_or_default().to_string(),
+                        path: start.next().unwrap_or_default().to_string(),
+                        body: text[head_end + 4..].to_string(),
+                    });
+                    break;
+                }
+                let _ = socket
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 2\r\n\r\n{}",
+                    )
+                    .await;
+            }
+        });
+        (endpoint, seen)
+    }
+
+    /// Reading a task is one round trip: the daemon names the profiles on it,
+    /// so nothing here has to fetch the goal and the profile list to spell
+    /// them. An agent reads its task on every wake-up, so each extra call is a
+    /// call the whole run pays.
+    #[tokio::test]
+    async fn reading_a_task_asks_the_daemon_once() {
+        let (endpoint, seen) = recording_daemon().await;
+        let mcp = server_at(
+            McpRole::Engineer,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        mcp.get_task(Parameters(TaskIdOpt { task_id: None }))
+            .await
+            .expect("read the task");
+
+        let seen = seen.lock().expect("lock").clone();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert_eq!(seen[0].method, "GET");
+        assert_eq!(seen[0].path, "/v1/tasks/01TASK");
+    }
+
+    /// One tool for both verdicts writes the review row each of the two wrote:
+    /// the same route, the same verdict word, the same body.
+    #[tokio::test]
+    async fn a_verdict_is_recorded_the_way_each_of_the_two_tools_recorded_it() {
+        for (verdict, word) in [
+            (Verdict::Approve, "approve"),
+            (Verdict::RequestChanges, "request_changes"),
+        ] {
+            let (endpoint, seen) = recording_daemon().await;
+            let mcp = server_at(
+                McpRole::Reviewer,
+                Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+            );
+            mcp.submit_verdict(Parameters(SubmitVerdictReq {
+                verdict,
+                body: Some("rebase first".into()),
+            }))
+            .await
+            .expect("verdict");
+
+            let seen = seen.lock().expect("lock").clone();
+            assert_eq!(seen.len(), 1, "{seen:?}");
+            assert_eq!(seen[0].method, "POST");
+            assert_eq!(seen[0].path, "/v1/tasks/01TASK/reviews");
+            let sent: serde_json::Value = serde_json::from_str(&seen[0].body).expect("json");
+            assert_eq!(sent["verdict"], serde_json::json!(word));
+            assert_eq!(sent["body"], serde_json::json!("rebase first"));
+        }
+    }
+
+    /// The body of a change request is what the engineer is resumed with, so
+    /// one with nothing in it is refused here rather than sent: a round that
+    /// asks for changes and says nothing asks for nothing.
+    #[tokio::test]
+    async fn a_change_request_with_nothing_in_it_is_refused_before_it_is_sent() {
+        for body in [None, Some(String::new()), Some("  \n ".into())] {
+            let err = review_request(Verdict::RequestChanges, body.clone())
+                .expect_err("empty change request");
+            assert!(err.message.contains("needs a body"), "{}", err.message);
+            assert_eq!(err.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+
+            let (endpoint, seen) = recording_daemon().await;
+            let mcp = server_at(
+                McpRole::Reviewer,
+                Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+            );
+            mcp.submit_verdict(Parameters(SubmitVerdictReq {
+                verdict: Verdict::RequestChanges,
+                body,
+            }))
+            .await
+            .expect_err("empty change request");
+            assert!(seen.lock().expect("lock").is_empty());
+        }
+
+        // An approval carries a note or nothing: it is not what a round is
+        // resumed on.
+        let approved = review_request(Verdict::Approve, None).expect("approval");
+        assert_eq!(approved.verdict, ReviewVerdict::Approve);
+        assert!(approved.body.is_none());
     }
 
     /// The daemon refuses an addressee with the sentence that says which ones

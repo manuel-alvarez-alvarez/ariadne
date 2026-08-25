@@ -681,7 +681,7 @@ async fn dependencies_gate_and_reject_cycles() {
 }
 
 #[tokio::test]
-async fn set_dependencies_on_ready_task_downgrades_with_audit() {
+async fn setting_the_dependencies_of_a_ready_task_downgrades_it_with_audit() {
     let (store, _dir) = test_store().await;
     let planner = seed_profile(&store, "planner", Role::Planner).await;
     let (goal, repo) = seed_goal(&store, &planner, None).await;

@@ -1454,6 +1454,11 @@ export interface components {
             depends_on: string[];
             description: string;
             engineer_profile_id: string;
+            /**
+             * @description Name of the engineer's profile, the way a message addresses it; None
+             *     only if that profile is gone.
+             */
+            engineer_profile_name?: string | null;
             goal_id: string;
             id: string;
             merge_commit?: string | null;
@@ -1462,6 +1467,11 @@ export interface components {
              *     CLI's own default.
              */
             model?: string | null;
+            /**
+             * @description Name of the planner profile of the task's goal, which takes part in
+             *     every task thread without being a field of the task.
+             */
+            planner_profile_name?: string | null;
             /**
              * @description URL of the pull or merge request the task was published as, once its
              *     engineer has reported one; None for a task landed directly.
@@ -1491,6 +1501,11 @@ export interface components {
             /** @description None = the agent CLI's own default. */
             model?: string | null;
             profile_id: string;
+            /**
+             * @description Name of the reviewer's profile, the way a message addresses it; None
+             *     only if that profile is gone.
+             */
+            profile_name?: string | null;
         };
         /**
          * @description Task lifecycle status.

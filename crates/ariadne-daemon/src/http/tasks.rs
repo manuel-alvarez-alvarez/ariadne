@@ -16,15 +16,13 @@ use ariadne_store::{NewMessage, NewReview, NewTask, Store, Task, TaskFilter, Tas
 
 use super::AppState;
 use super::auth::{CallCtx, call_ctx, ensure_task_scope};
-use super::convert::{message_dto_of, message_dtos, review_dto, task_dto, transition_dto};
+use super::convert::{message_dto_of, message_dtos, review_dto, task_dto_of, transition_dto};
 use super::error::{ApiError, ApiResult};
 use super::recipients;
 use crate::notify;
 
 async fn to_dto(store: &Store, task: Task) -> ApiResult<TaskDto> {
-    let reviewers = store.list_task_reviewer_pins(&task.id).await?;
-    let deps = store.list_task_dependencies(&task.id).await?;
-    Ok(task_dto(task, reviewers, deps))
+    Ok(task_dto_of(store, task).await?)
 }
 
 /// Resolve a list of profile ids-or-names, checking each has `role`.

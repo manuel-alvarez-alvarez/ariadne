@@ -20,7 +20,7 @@ use ariadne_store::{AgentSession, Change, Goal, Result, Store, Task};
 
 use crate::http::convert::{
     event_dto, goal_dto, message_dto_of, profile_dto, repository_dto, review_dto, session_dto,
-    task_dto, transition_dto,
+    task_dto_of, transition_dto,
 };
 
 /// Events buffered per subscriber before it is considered too slow.
@@ -120,7 +120,7 @@ async fn fatten(store: &Store, change: Change) -> Result<BusEvent> {
             event: DomainEvent::GoalDeleted(DeletedDto { id }),
         },
         Change::TaskCreated(task) => {
-            let (dto, keys) = task_dto_of(store, task).await?;
+            let (dto, keys) = task_event_of(store, task).await?;
             BusEvent {
                 event: DomainEvent::TaskCreated(dto),
                 goal_id: Some(keys.0),
@@ -128,7 +128,7 @@ async fn fatten(store: &Store, change: Change) -> Result<BusEvent> {
             }
         }
         Change::TaskUpdated { task, transition } => {
-            let (dto, keys) = task_dto_of(store, task).await?;
+            let (dto, keys) = task_event_of(store, task).await?;
             BusEvent {
                 event: DomainEvent::TaskUpdated(TaskUpdatedDto {
                     task: dto,
@@ -201,14 +201,12 @@ async fn goal_event(
 }
 
 /// Task DTO plus its `(goal_id, task_id)` routing keys.
-async fn task_dto_of(
+async fn task_event_of(
     store: &Store,
     task: Task,
 ) -> Result<(ariadne_api::tasks::TaskDto, (String, String))> {
-    let reviewers = store.list_task_reviewer_pins(&task.id).await?;
-    let deps = store.list_task_dependencies(&task.id).await?;
     let keys = (task.goal_id.clone(), task.id.clone());
-    Ok((task_dto(task, reviewers, deps), keys))
+    Ok((task_dto_of(store, task).await?, keys))
 }
 
 fn session_event(session: AgentSession, wrap: fn(SessionDto) -> DomainEvent) -> BusEvent {

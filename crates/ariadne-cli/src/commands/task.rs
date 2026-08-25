@@ -641,6 +641,8 @@ mod tests {
             description: String::new(),
             status: TaskStatus::InProgress,
             engineer_profile_id: "01ENG".into(),
+            engineer_profile_name: Some("Engineer".into()),
+            planner_profile_name: Some("Planner".into()),
             agent_kind: None,
             model: None,
             reviewers: vec![],

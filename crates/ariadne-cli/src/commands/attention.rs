@@ -374,6 +374,8 @@ mod tests {
             description: String::new(),
             status,
             engineer_profile_id: "01PROFILE".into(),
+            engineer_profile_name: Some("Engineer".into()),
+            planner_profile_name: Some("Planner".into()),
             agent_kind: None,
             model: None,
             reviewers: Vec::new(),

@@ -465,8 +465,7 @@ pub fn session_name(
 mod tests {
     use super::*;
 
-    const NUDGE: &str =
-        "Finish reviewing this round and submit your verdict with `approve` or `request_changes`.";
+    const NUDGE: &str = "Finish reviewing this round and submit your verdict with `submit_verdict`.";
 
     /// Codex, message unsent: the Enter it swallowed became the empty row the
     /// cursor is on, one under the message.
@@ -492,7 +491,8 @@ mod tests {
     /// each holds a slice of it, and the last one can be a few characters.
     #[test]
     fn a_wrapped_message_is_seen_by_its_tail() {
-        let screen = "\u{203a} Finish reviewing this round and submit your verdict with `approve` or `req\nuest_changes.`\n";
+        let screen =
+            "\u{203a} Finish reviewing this round and submit your verdict with `submit_verd\nict`.\n";
         assert!(composer_holds(screen, 1, 1, NUDGE));
     }
 
