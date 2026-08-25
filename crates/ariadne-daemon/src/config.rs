@@ -28,8 +28,6 @@ pub struct Config {
     pub delete_merged_worktrees: bool,
     pub prevent_sleep: bool,
     pub typed_input_window: Duration,
-    pub running_quiet_flag_secs: u64,
-    pub running_quiet_resume_secs: u64,
 }
 
 /// How long a freshly launched pane is watched for a TUI to type a resume
@@ -41,16 +39,6 @@ pub struct Config {
 /// on it. There is no `config.toml` key behind it: nothing about it is the
 /// user's to choose.
 const DEFAULT_TYPED_INPUT_WINDOW: Duration = Duration::from_secs(120);
-/// How long a running agent may report nothing before the user is told about
-/// it: twenty minutes, which is long enough for the slowest turn an agent
-/// takes between two things worth reporting and short enough that a wedged
-/// one is not left there for the afternoon.
-const DEFAULT_RUNNING_QUIET_FLAG_SECS: u64 = 1_200;
-
-/// And how long before that agent is relaunched: three quarters of an hour,
-/// which is the flag plus enough of a wait for a person to have looked at it
-/// first.
-const DEFAULT_RUNNING_QUIET_RESUME_SECS: u64 = 2_700;
 
 /// Default `ariadne` CLI: sibling of the running ariadned, else PATH lookup.
 fn default_cli_bin() -> String {
@@ -95,12 +83,6 @@ impl Config {
             delete_merged_worktrees: file.delete_merged_worktrees.unwrap_or(true),
             prevent_sleep: file.prevent_sleep.unwrap_or(true),
             typed_input_window: DEFAULT_TYPED_INPUT_WINDOW,
-            running_quiet_flag_secs: file
-                .running_quiet_flag_secs
-                .unwrap_or(DEFAULT_RUNNING_QUIET_FLAG_SECS),
-            running_quiet_resume_secs: file
-                .running_quiet_resume_secs
-                .unwrap_or(DEFAULT_RUNNING_QUIET_RESUME_SECS),
             root,
         };
 
@@ -124,20 +106,25 @@ mod tests {
         dir
     }
 
+    /// What the file does not say keeps its default — and what it may say is
+    /// only ever what `FileConfig` names, since the reading is strict: a key
+    /// this daemon no longer has stops it rather than being ignored (see
+    /// `endpoint::parse_config`).
     #[test]
-    fn the_watchdog_thresholds_default_to_twenty_and_forty_five_minutes() {
+    fn a_config_file_that_says_nothing_keeps_every_default() {
         let dir = home_with("");
         let config = Config::load(Some(dir.path().join("home"))).unwrap();
-        assert_eq!(config.running_quiet_flag_secs, 1_200);
-        assert_eq!(config.running_quiet_resume_secs, 2_700);
+        assert!(config.delete_merged_worktrees);
+        assert!(config.delete_merged_branches);
+        assert!(config.prevent_sleep);
     }
 
     #[test]
-    fn the_watchdog_thresholds_are_read_from_the_config_file() {
-        let dir = home_with("running_quiet_flag_secs = 60\nrunning_quiet_resume_secs = 120\n");
+    fn a_config_file_is_read_into_the_daemons_own_shape() {
+        let dir = home_with("log_filter = \"debug\"\nprevent_sleep = false\n");
         let config = Config::load(Some(dir.path().join("home"))).unwrap();
-        assert_eq!(config.running_quiet_flag_secs, 60);
-        assert_eq!(config.running_quiet_resume_secs, 120);
+        assert_eq!(config.log_filter, "debug");
+        assert!(!config.prevent_sleep);
         assert!(
             config.delete_merged_worktrees,
             "and what the file does not say keeps its default"

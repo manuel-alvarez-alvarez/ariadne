@@ -1,14 +1,18 @@
 //! What the scheduler notices about agents that stopped working.
 //!
-//! Every role can go quiet, so every role is watched: the planner of a goal
-//! still being planned, the reviewers a round is waiting on, and the engineer
-//! — which is the only one whose task carries a flag of its own next to the
+//! One clock — how long since the session was last heard from at all — and
+//! one timeline on it: a nudge at five minutes, the user at fifteen, and at
+//! forty-five the pane killed and the agent put back on its feet. Every role
+//! is under it, since every role can go quiet: the planner of a goal still
+//! being planned, the reviewers a round is waiting on, and the engineer —
+//! which is the only one whose task carries a flag of its own next to the
 //! session's. A pane that disappears while its work is still going says so
-//! too, rather than ending quietly, and an agent that never started its turn
-//! at all — the instruction still sitting in its composer — is unstuck with a
-//! keystroke before the user is told about it — and one that did start its
-//! turn and then stopped reporting anything at all is raised and, if that
-//! changes nothing, killed and put back on its feet.
+//! too, rather than ending quietly.
+//!
+//! What the nudge is, the pane decides: an idle agent is told to get on with
+//! the work, a pane whose composer is still holding the instruction it was
+//! launched with gets the Enter that submits it, and an agent in the middle
+//! of a turn is left alone until the thresholds behind the nudge.
 //!
 //! None of it waits on the keystrokes themselves: typing into a pane settles
 //! for a second or two, and a pass with three agents to nudge sends all three
@@ -19,11 +23,10 @@
 //!
 //! No tmux and no agent CLI: `tmux` is a stub script whose sessions are the
 //! ones a test lists as alive, and which writes down every `send-keys` it is
-//! handed — which is how "this agent was nudged" is asserted. Both clocks are
-//! moved by backdating the database column they are read from
-//! (`last_activity_at` for an idle stall, `launched_at` for a turn that never
-//! started), since the store only ever stamps them "now" and a threshold is
-//! minutes away.
+//! handed — which is how "this agent was nudged" is asserted. The clock is
+//! moved by backdating the database columns it is read from
+//! (`last_activity_at` and `launched_at`), since the store only ever stamps
+//! them "now" and a threshold is minutes away.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -44,20 +47,11 @@ use ariadne_store::{
     NewReview, NewSession, NewTask, Recipient, SessionFilter, Store, Task,
 };
 
-/// Idle long enough to be past both thresholds (nudge at 300s, flag at 900s).
-const LONG_IDLE_SECS: i64 = 1_000;
-/// Launched long enough ago to be past both of the other watchdog's
-/// thresholds (Enter at 300s, flag at 900s) — the same clock, read from the
-/// launch rather than from the last thing the agent did.
-const LONG_SILENCE_SECS: i64 = 1_000;
-/// The first of those thresholds, for a test that wants the nudge and not the
-/// escalation behind it.
-const STALL_NUDGE_SECS: i64 = 300;
-/// The daemon's defaults for the third watchdog's two thresholds — the one
-/// that measures a running agent by what it has reported since its turn
-/// started (`running_quiet_flag_secs` / `running_quiet_resume_secs`).
-const RUNNING_QUIET_FLAG_SECS: i64 = 1_200;
-const RUNNING_QUIET_RESUME_SECS: i64 = 2_700;
+/// The watchdog's timeline, as `scheduler.rs` has it: one nudge, then the
+/// user, then the pane killed and the agent put back on its feet.
+const NUDGE_SECS: i64 = 300;
+const FLAG_SECS: i64 = 900;
+const RELAUNCH_SECS: i64 = 2_700;
 /// How long a test waits for a reconciliation to reach the store. Generous
 /// because some of what is waited on is not the daemon thinking: a nudge no
 /// composer will let go of spends several seconds of widening backoff before
@@ -84,6 +78,12 @@ struct Harness {
     store: Store,
     launcher: Arc<Launcher>,
     dir: tempfile::TempDir,
+    /// One connection of this test's own to the database the store is on, for
+    /// the columns a test writes behind the store's back. One, opened with the
+    /// harness and kept: a pool per write would be a handful of file
+    /// descriptors opened and closed for every clock a test moves, and thirty
+    /// tests doing that at once run a machine out of them.
+    db: sqlx::SqlitePool,
     _bus: ariadne_daemon::bus::EventBus,
 }
 
@@ -107,7 +107,47 @@ enum Spawns {
     Fail,
 }
 
+/// The open files this binary needs, asked for once before the first daemon
+/// starts.
+///
+/// Every test here runs a daemon of its own — a store with its pools, a tmux
+/// stub, a scheduler — and libtest runs as many at once as the machine has
+/// cores. Sixteen of them want around three hundred descriptors between them,
+/// where a shell's default soft limit is two hundred and fifty-six, and what
+/// that shortfall looks like is not "too many open files" on the test that
+/// happened to ask last: it is a store that cannot be opened, a connection
+/// that spends its busy timeout retrying, and a suite that fails somewhere
+/// else entirely.
+///
+/// So the process raises its own soft limit towards its hard one. A machine
+/// that will not have it is left exactly as it was — this makes a run
+/// reliable, it does not make one possible.
+fn raise_open_file_limit() {
+    use rustix::process::{Resource, Rlimit, getrlimit, setrlimit};
+
+    // Not the hard limit itself, which is "unlimited" on macOS where the
+    // kernel refuses anything over `kern.maxfilesperproc`: a few thousand is
+    // under every such cap and many times what a full run holds at once.
+    const WANTED: u64 = 4_096;
+    static ONCE: std::sync::Once = std::sync::Once::new();
+
+    ONCE.call_once(|| {
+        let limit = getrlimit(Resource::Nofile);
+        if limit.current.is_some_and(|current| current >= WANTED) {
+            return;
+        }
+        let _ = setrlimit(
+            Resource::Nofile,
+            Rlimit {
+                current: Some(limit.maximum.map_or(WANTED, |max| max.min(WANTED))),
+                maximum: limit.maximum,
+            },
+        );
+    });
+}
+
 async fn harness_with(spawns: Spawns) -> Harness {
+    raise_open_file_limit();
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(dir.path().join("test.db")).await.unwrap();
     let bus = ariadne_daemon::bus::start(store.clone());
@@ -122,10 +162,19 @@ async fn harness_with(spawns: Spawns) -> Harness {
         tmux: write_tmux_stub(dir.path()),
         git: GitManager,
     });
+    let db = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&format!(
+            "sqlite://{}",
+            dir.path().join("test.db").display()
+        ))
+        .await
+        .unwrap();
     Harness {
         store,
         launcher,
         dir,
+        db,
         _bus: bus,
     }
 }
@@ -323,51 +372,42 @@ impl Harness {
             .set_session_status(&session.id, SessionStatus::Idle)
             .await
             .unwrap();
-        self.backdate("last_activity_at", session, secs).await;
+        self.backdate(&["last_activity_at"], session, secs).await;
     }
 
-    /// An agent launched `secs` ago and running ever since — which, until it
-    /// reports something a turn is made of, is exactly what an agent holding
-    /// an unsubmitted instruction looks like from outside its pane.
+    /// An agent launched `secs` ago, running ever since and silent all the
+    /// while: what a turn that never ends and an instruction nobody submitted
+    /// both look like from outside the pane, which is why what the pane draws
+    /// is the only thing that tells them apart.
     async fn launched_ago(&self, session: &AgentSession, secs: i64) {
         self.store
             .set_session_status(&session.id, SessionStatus::Running)
             .await
             .unwrap();
-        self.backdate("launched_at", session, secs).await;
+        self.backdate(&["launched_at", "last_activity_at"], session, secs)
+            .await;
     }
 
-    /// Move one of a session's clocks back, since the store only ever stamps
-    /// them "now" and every threshold here is minutes away.
-    async fn backdate(&self, column: &str, session: &AgentSession, secs: i64) {
+    /// Move the columns the watchdog's clock is read from back, since the
+    /// store only ever stamps them "now" and every threshold here is minutes
+    /// away.
+    async fn backdate(&self, columns: &[&str], session: &AgentSession, secs: i64) {
         let when = (chrono::Utc::now() - chrono::Duration::seconds(secs))
             .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-        let pool = sqlx::SqlitePool::connect(&format!(
-            "sqlite://{}",
-            self.dir.path().join("test.db").display()
-        ))
-        .await
-        .unwrap();
-        sqlx::query(sqlx::AssertSqlSafe(format!(
-            "UPDATE agent_sessions SET {column} = ? WHERE id = ?"
-        )))
-        .bind(when)
-        .bind(&session.id)
-        .execute(&pool)
-        .await
-        .unwrap();
-        pool.close().await;
-    }
-
-    /// An agent that started its turn and has reported nothing for `secs`:
-    /// running, one tool call to its name, and silent ever since. What a
-    /// wedged agent looks like from outside its pane, and what a working one
-    /// never looks like — every hook and plugin event stamps
-    /// `last_activity_at`.
-    async fn wedged_for(&self, session: &AgentSession, secs: i64) {
-        self.launched_ago(session, secs).await;
-        self.reports(session, "pre_tool_use").await;
-        self.backdate("last_activity_at", session, secs).await;
+        let set = columns
+            .iter()
+            .map(|column| format!("{column} = ?"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        // Safe: only the column names vary, and they are this file's own
+        // literals; every value is bound.
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE agent_sessions SET {set} WHERE id = ?"
+        )));
+        for _ in columns {
+            query = query.bind(when.clone());
+        }
+        query.bind(&session.id).execute(&self.db).await.unwrap();
     }
 
     /// What a relaunch needs to find: an agent conversation to resume and a
@@ -429,22 +469,15 @@ impl Harness {
     /// store, which now refuses to raise a prompt on a session that has
     /// ended — which is why there are rows like this to heal at all.
     async fn stale_attention(&self, session: &AgentSession, reason: AttentionReason) {
-        let pool = sqlx::SqlitePool::connect(&format!(
-            "sqlite://{}",
-            self.dir.path().join("test.db").display()
-        ))
-        .await
-        .unwrap();
         sqlx::query(
             "UPDATE agent_sessions SET attention_reason = ?, attention_since = ? WHERE id = ?",
         )
         .bind(reason.as_str())
         .bind(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
         .bind(&session.id)
-        .execute(&pool)
+        .execute(&self.db)
         .await
         .unwrap();
-        pool.close().await;
     }
 
     /// Tell the stub tmux this pane exists.
@@ -508,9 +541,9 @@ async fn a_planner_idle_past_the_threshold_is_raised_on_its_session() {
     let (goal, planner) = h.planning_goal().await;
     let session = h.session(&goal, None, Role::Planner, &planner).await;
     h.pane_exists(&session);
-    h.idle_for(&session, LONG_IDLE_SECS).await;
+    h.idle_for(&session, NUDGE_SECS + 60).await;
 
-    // Two passes: the first spends the one nudge, the second escalates.
+    // One pass per threshold: the nudge, and then the escalation behind it.
     let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
     sched
         .send(SchedEvent::GoalChanged(goal.id.clone()))
@@ -519,6 +552,7 @@ async fn a_planner_idle_past_the_threshold_is_raised_on_its_session() {
         h.keystrokes(&session) > 0
     })
     .await;
+    h.idle_for(&session, FLAG_SECS + 60).await;
     sched
         .send(SchedEvent::GoalChanged(goal.id.clone()))
         .unwrap();
@@ -538,7 +572,7 @@ async fn a_reviewer_idle_past_the_threshold_is_raised_on_its_session() {
         .session(&goal, Some(&task), Role::Reviewer, &reviewer)
         .await;
     h.pane_exists(&session);
-    h.idle_for(&session, LONG_IDLE_SECS).await;
+    h.idle_for(&session, NUDGE_SECS + 60).await;
 
     let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
     sched
@@ -548,6 +582,7 @@ async fn a_reviewer_idle_past_the_threshold_is_raised_on_its_session() {
         h.keystrokes(&session) > 0
     })
     .await;
+    h.idle_for(&session, FLAG_SECS + 60).await;
     sched
         .send(SchedEvent::TaskChanged(task.id.clone()))
         .unwrap();
@@ -567,7 +602,7 @@ async fn an_engineer_stall_flags_the_task_and_its_session() {
         .session(&goal, Some(&task), Role::Engineer, &engineer)
         .await;
     h.pane_exists(&session);
-    h.idle_for(&session, LONG_IDLE_SECS).await;
+    h.idle_for(&session, NUDGE_SECS + 60).await;
 
     let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
     sched
@@ -577,6 +612,7 @@ async fn an_engineer_stall_flags_the_task_and_its_session() {
         h.keystrokes(&session) > 0
     })
     .await;
+    h.idle_for(&session, FLAG_SECS + 60).await;
     sched
         .send(SchedEvent::TaskChanged(task.id.clone()))
         .unwrap();
@@ -588,6 +624,67 @@ async fn an_engineer_stall_flags_the_task_and_its_session() {
         h.attention(&session).await,
         Some(AttentionReason::Stalled),
         "and the session carries the reason as well"
+    );
+}
+
+/// One nudge per situation, however many passes see the same silence. The
+/// agent has been told; what follows a nudge nobody acts on is the user, not
+/// another copy of the same words.
+#[tokio::test]
+async fn an_idle_agent_is_nudged_once_for_the_situation_it_went_quiet_in() {
+    let h = harness().await;
+    let (goal, task, engineer, reviewer) = h.active_goal_with_task().await;
+    h.advance(&task, TaskStatus::InProgress).await;
+    let session = h
+        .session(&goal, Some(&task), Role::Engineer, &engineer)
+        .await;
+    h.pane_exists(&session);
+    h.idle_for(&session, NUDGE_SECS + 60).await;
+
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
+    sched
+        .send(SchedEvent::TaskChanged(task.id.clone()))
+        .unwrap();
+    eventually("the engineer to be nudged", async || {
+        h.keystrokes(&session) > 0
+    })
+    .await;
+    // The delivery settles a paste and an Enter before the scheduler hears
+    // anything; nothing is counted until it has.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let nudged = h.keystrokes(&session);
+
+    // A second task's agent, quiet in the same way from now on: its nudge is
+    // what says the passes the first one went through are over.
+    let control_task = h.extra_task(&goal, &engineer, &reviewer, "control").await;
+    h.advance(&control_task, TaskStatus::InProgress).await;
+    let control = h
+        .session(&goal, Some(&control_task), Role::Engineer, &engineer)
+        .await;
+    h.pane_exists(&control);
+    h.idle_for(&control, NUDGE_SECS + 60).await;
+    // And the first one is as quiet as ever, still in the situation it was
+    // nudged for.
+    h.idle_for(&session, NUDGE_SECS + 120).await;
+    for _ in 0..2 {
+        for id in [&task.id, &control_task.id] {
+            sched.send(SchedEvent::TaskChanged(id.clone())).unwrap();
+        }
+        eventually("the other agent to be nudged", async || {
+            h.keystrokes(&control) > 0
+        })
+        .await;
+    }
+
+    assert_eq!(
+        h.keystrokes(&session),
+        nudged,
+        "nothing more was typed at an agent that has already been nudged"
+    );
+    assert_eq!(
+        h.attention(&session).await,
+        None,
+        "and the escalation behind the nudge is the next threshold's, not this pass's"
     );
 }
 
@@ -607,7 +704,7 @@ async fn a_nudge_that_never_submits_raises_the_session() {
     h.pane_exists(&session);
     // Past the nudge threshold and nowhere near the flag one: the only route
     // to a raised session here is the delivery that could not be confirmed.
-    h.idle_for(&session, STALL_NUDGE_SECS + 60).await;
+    h.idle_for(&session, NUDGE_SECS + 60).await;
     // The engineer's resume template, as its profile has it: the pane is
     // holding the very words the daemon is about to type into it.
     h.composer_keeps(r#"Pick "task" up again: your worktree is on"#);
@@ -643,7 +740,7 @@ async fn a_session_waiting_on_a_person_is_never_nudged() {
         .session(&goal, Some(&task), Role::Engineer, &engineer)
         .await;
     h.pane_exists(&session);
-    h.idle_for(&session, LONG_IDLE_SECS).await;
+    h.idle_for(&session, NUDGE_SECS + 60).await;
     h.store
         .set_session_attention(&session.id, AttentionReason::WaitingPermission)
         .await
@@ -656,7 +753,7 @@ async fn a_session_waiting_on_a_person_is_never_nudged() {
         .session(&goal, Some(&control_task), Role::Engineer, &engineer)
         .await;
     h.pane_exists(&control);
-    h.idle_for(&control, LONG_IDLE_SECS).await;
+    h.idle_for(&control, NUDGE_SECS + 60).await;
 
     let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
     sched
@@ -687,22 +784,24 @@ async fn a_session_waiting_on_a_person_is_never_nudged() {
 }
 
 /// A resume whose instruction never left the composer: the agent is running,
-/// has reported nothing at all, and would sit there for ever. One Enter — what
-/// a human does on finding such a pane — and, if that did not start it either,
-/// the user.
+/// has reported nothing at all, and would sit there for ever. The pane says
+/// which it is — the instruction is still drawn in the composer — and what
+/// that wants is the Enter a human would press, not another copy of what is
+/// already there. If that did not start it either, the user.
 #[tokio::test]
-async fn a_resume_that_never_starts_its_turn_gets_one_enter_and_then_the_flag() {
+async fn a_composer_still_holding_its_instruction_gets_the_enter_alone() {
     let h = harness().await;
-    let (goal, task, _engineer, reviewer) = h.active_goal_with_task().await;
-    h.advance(&task, TaskStatus::UnderReview).await;
+    let (goal, task, engineer, _reviewer) = h.active_goal_with_task().await;
+    h.advance(&task, TaskStatus::InProgress).await;
     let session = h
-        .session(&goal, Some(&task), Role::Reviewer, &reviewer)
+        .session(&goal, Some(&task), Role::Engineer, &engineer)
         .await;
     h.pane_exists(&session);
-    h.launched_ago(&session, LONG_SILENCE_SECS).await;
+    h.launched_ago(&session, NUDGE_SECS + 60).await;
+    // The engineer's resume template, as its profile has it: the instruction
+    // the launch put there, still drawn where it was pasted.
+    h.composer_keeps(r#"Pick "task" up again: your worktree is on"#);
 
-    // Two passes, as with the idle stall: the first spends the keystroke, the
-    // second escalates.
     let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
     sched
         .send(SchedEvent::TaskChanged(task.id.clone()))
@@ -711,6 +810,18 @@ async fn a_resume_that_never_starts_its_turn_gets_one_enter_and_then_the_flag() 
         h.keystrokes(&session) > 0
     })
     .await;
+    // Whatever else that pass had to say would have been said by now.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        h.keystrokes(&session),
+        1,
+        "one keystroke: the Enter, and not the whole instruction pasted over \
+         the copy already in the composer"
+    );
+
+    // Still nothing reported a threshold later, and the keystroke was not the
+    // answer: only a person can say why.
+    h.launched_ago(&session, FLAG_SECS + 60).await;
     sched
         .send(SchedEvent::TaskChanged(task.id.clone()))
         .unwrap();
@@ -721,67 +832,43 @@ async fn a_resume_that_never_starts_its_turn_gets_one_enter_and_then_the_flag() 
     assert_eq!(
         h.keystrokes(&session),
         1,
-        "one Enter per launch, however many passes see the same silence"
+        "and the Enter is not pressed again for the same launch"
     );
 }
 
-/// A lifecycle event is a TUI that came up, not a turn that started: codex
-/// reports `session_start` before there is any conversation to speak of, so it
-/// buys the agent nothing here.
+/// An agent in the middle of a turn is left alone at the first threshold: its
+/// composer is empty, so there is nothing to submit, and typing into a turn is
+/// how work gets interrupted. A turn that never ends is what the thresholds
+/// behind the nudge are for.
 #[tokio::test]
-async fn a_lifecycle_event_after_the_launch_is_not_turn_activity() {
-    let h = harness().await;
-    let (goal, task, _engineer, reviewer) = h.active_goal_with_task().await;
-    h.advance(&task, TaskStatus::UnderReview).await;
-    let session = h
-        .session(&goal, Some(&task), Role::Reviewer, &reviewer)
-        .await;
-    h.pane_exists(&session);
-    h.launched_ago(&session, LONG_SILENCE_SECS).await;
-    h.reports(&session, "session_start").await;
-
-    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
-    sched
-        .send(SchedEvent::TaskChanged(task.id.clone()))
-        .unwrap();
-    eventually("the stuck composer to be submitted anyway", async || {
-        h.keystrokes(&session) > 0
-    })
-    .await;
-}
-
-/// And an agent that did start its turn is none of this watchdog's business,
-/// however quiet it goes afterwards: a turn can take a long time between tool
-/// calls, and typing into one is how work gets interrupted.
-#[tokio::test]
-async fn a_launch_followed_by_turn_activity_is_left_alone() {
+async fn an_agent_in_the_middle_of_a_turn_is_not_nudged() {
     let h = harness().await;
     let (goal, task, engineer, reviewer) = h.active_goal_with_task().await;
-    h.advance(&task, TaskStatus::UnderReview).await;
+    h.advance(&task, TaskStatus::InProgress).await;
     let session = h
-        .session(&goal, Some(&task), Role::Reviewer, &reviewer)
+        .session(&goal, Some(&task), Role::Engineer, &engineer)
         .await;
     h.pane_exists(&session);
-    h.launched_ago(&session, LONG_SILENCE_SECS).await;
-    h.reports(&session, "pre_tool_use").await;
-    // A second reviewer, silent since its own launch: its Enter is what says
-    // the pass the working one went through is over.
+    h.launched_ago(&session, NUDGE_SECS + 60).await;
+    // Nothing written into the stub's composer at all: every look at the pane
+    // comes back empty, which is what a TUI drawing a transcript looks like
+    // from here.
+
+    // A second task's engineer, idle in the same silence: its nudge is what
+    // says the pass the working one went through is over.
     let control_task = h.extra_task(&goal, &engineer, &reviewer, "control").await;
-    h.advance(&control_task, TaskStatus::UnderReview).await;
+    h.advance(&control_task, TaskStatus::InProgress).await;
     let control = h
-        .session(&goal, Some(&control_task), Role::Reviewer, &reviewer)
+        .session(&goal, Some(&control_task), Role::Engineer, &engineer)
         .await;
     h.pane_exists(&control);
-    h.launched_ago(&control, LONG_SILENCE_SECS).await;
+    h.idle_for(&control, NUDGE_SECS + 60).await;
 
     let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
-    sched
-        .send(SchedEvent::TaskChanged(task.id.clone()))
-        .unwrap();
-    sched
-        .send(SchedEvent::TaskChanged(control_task.id.clone()))
-        .unwrap();
-    eventually("the silent reviewer to be submitted", async || {
+    for id in [&task.id, &control_task.id] {
+        sched.send(SchedEvent::TaskChanged(id.clone())).unwrap();
+    }
+    eventually("the idle engineer to be nudged", async || {
         h.keystrokes(&control) > 0
     })
     .await;
@@ -794,83 +881,63 @@ async fn a_launch_followed_by_turn_activity_is_left_alone() {
     assert_eq!(
         h.attention(&session).await,
         None,
-        "nor is a working agent raised for the user"
+        "nor is it raised for the user this early"
     );
 }
 
-/// A failed turn is a turn. OpenCode reports one as `session.error` and the
-/// session stays running with the error raised for the user — which is not a
-/// composer anybody has to submit, and not a reason the user is better off
-/// hearing as a stall.
+/// An agent that reported an error is already asking for the user by name.
+/// OpenCode reports a failed turn as `session.error` and the ingest leaves the
+/// session running with the error raised — which is not a composer anybody has
+/// to submit, and not a reason the user is better off hearing as a stall.
 #[tokio::test]
-async fn a_launch_followed_by_a_failed_turn_is_left_alone() {
+async fn an_agent_that_reported_an_error_is_left_alone() {
     let h = harness().await;
     let (goal, task, engineer, reviewer) = h.active_goal_with_task().await;
-    h.advance(&task, TaskStatus::UnderReview).await;
-    // What the ingest leaves behind for a failed turn: the event, and the
-    // error raised on a session that is still running.
+    h.advance(&task, TaskStatus::InProgress).await;
     let errored = h
-        .session(&goal, Some(&task), Role::Reviewer, &reviewer)
+        .session(&goal, Some(&task), Role::Engineer, &engineer)
         .await;
     h.pane_exists(&errored);
-    h.launched_ago(&errored, LONG_SILENCE_SECS).await;
-    h.reports(&errored, "session.error").await;
+    h.launched_ago(&errored, RELAUNCH_SECS + 60).await;
+    h.composer_keeps(r#"Pick "task" up again: your worktree is on"#);
     h.store
         .set_session_attention(&errored.id, AttentionReason::AgentError)
         .await
         .unwrap();
-    // The same failure with nothing on the session to show for it — a flag
-    // the sweep took down, say. The event alone still speaks for the turn.
-    let event_only_task = h
-        .extra_task(&goal, &engineer, &reviewer, "event only")
-        .await;
-    h.advance(&event_only_task, TaskStatus::UnderReview).await;
-    let event_only = h
-        .session(&goal, Some(&event_only_task), Role::Reviewer, &reviewer)
-        .await;
-    h.pane_exists(&event_only);
-    h.launched_ago(&event_only, LONG_SILENCE_SECS).await;
-    h.reports(&event_only, "session.error").await;
-    // And a silent reviewer, whose Enter says the passes are over.
+    // And an agent whose silence nothing explains, whose flag says the passes
+    // are over.
     let control_task = h.extra_task(&goal, &engineer, &reviewer, "control").await;
-    h.advance(&control_task, TaskStatus::UnderReview).await;
+    h.advance(&control_task, TaskStatus::InProgress).await;
     let control = h
-        .session(&goal, Some(&control_task), Role::Reviewer, &reviewer)
+        .session(&goal, Some(&control_task), Role::Engineer, &engineer)
         .await;
     h.pane_exists(&control);
-    h.launched_ago(&control, LONG_SILENCE_SECS).await;
+    h.launched_ago(&control, FLAG_SECS + 60).await;
 
-    // Two passes, which is what it would take to reach the flag.
+    let launched = h.launched_at(&errored).await;
     let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
-    for _ in 0..2 {
-        for id in [&task.id, &event_only_task.id, &control_task.id] {
-            sched.send(SchedEvent::TaskChanged(id.clone())).unwrap();
-        }
+    for id in [&task.id, &control_task.id] {
+        sched.send(SchedEvent::TaskChanged(id.clone())).unwrap();
     }
-    eventually("the silent reviewer to be submitted", async || {
-        h.keystrokes(&control) > 0
+    eventually("the silent agent to be raised", async || {
+        h.attention(&control).await == Some(AttentionReason::Stalled)
     })
     .await;
-    // Whatever those passes had to say about the other two would have been
-    // said by now.
-    tokio::time::sleep(Duration::from_millis(300)).await;
 
-    for errored in [&errored, &event_only] {
-        assert_eq!(
-            h.keystrokes(errored),
-            0,
-            "nothing is typed into an agent whose turn failed"
-        );
-    }
+    assert_eq!(
+        h.keystrokes(&errored),
+        0,
+        "nothing is typed into an agent whose turn failed"
+    );
     assert_eq!(
         h.attention(&errored).await,
         Some(AttentionReason::AgentError),
-        "and what it reported is not overwritten with a stall"
+        "what it reported is not overwritten with a stall"
     );
     assert_eq!(
-        h.attention(&event_only).await,
-        None,
-        "nor is one raised where the event alone said the turn ran"
+        h.launched_at(&errored).await,
+        launched,
+        "and its pane is not killed out from under the failure"
     );
 }
 
@@ -1459,7 +1526,7 @@ async fn a_pass_with_three_agents_to_nudge_does_not_wait_on_the_keystrokes() {
             .session(&goal, Some(task), Role::Engineer, &engineer)
             .await;
         h.pane_exists(&session);
-        h.idle_for(&session, STALL_NUDGE_SECS + 60).await;
+        h.idle_for(&session, NUDGE_SECS + 60).await;
         sessions.push(session);
     }
 
@@ -1495,7 +1562,7 @@ async fn a_pass_with_three_agents_to_nudge_does_not_wait_on_the_keystrokes() {
 /// A message that reached an agent is a nudge, and a better one: it says what
 /// to do rather than asking why nothing is being done. So the pass that would
 /// have nudged this session leaves it alone, and the escalation behind the
-/// nudge does not happen either — the idle clock runs from the delivery.
+/// nudge does not happen either — the clock runs from the delivery.
 #[tokio::test]
 async fn a_delivered_message_stands_in_for_the_stall_nudge() {
     let h = harness().await;
@@ -1514,7 +1581,7 @@ async fn a_delivered_message_stands_in_for_the_stall_nudge() {
         .session(&goal, Some(&other), Role::Engineer, &engineer)
         .await;
     h.pane_exists(&canary);
-    h.idle_for(&canary, LONG_IDLE_SECS).await;
+    h.idle_for(&canary, NUDGE_SECS + 60).await;
 
     let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
     let message = h
@@ -1542,8 +1609,9 @@ async fn a_delivered_message_stands_in_for_the_stall_nudge() {
     let after_delivery = h.keystrokes(&session);
 
     // And now what the agent's own clock says: nothing since long before the
-    // message. Two passes, which is a nudge and then the flag behind it.
-    h.idle_for(&session, LONG_IDLE_SECS).await;
+    // message — long enough to have been nudged, raised and relaunched, had
+    // the delivery not been the freshest thing that happened to it.
+    h.idle_for(&session, RELAUNCH_SECS + 60).await;
     for _ in 0..2 {
         sched
             .send(SchedEvent::TaskChanged(task.id.clone()))
@@ -1570,6 +1638,10 @@ async fn a_delivered_message_stands_in_for_the_stall_nudge() {
     assert!(
         !h.store.get_task(&task.id).await.unwrap().is_stalled(),
         "nor was its task"
+    );
+    assert!(
+        h.pane_is_alive(&session),
+        "and its pane was left where it is"
     );
 }
 
@@ -1694,17 +1766,16 @@ async fn a_completed_goal_says_so_in_its_thread() {
     assert!(thread[0].body.contains(&goal.title), "{}", thread[0].body);
 }
 
-/// An agent that started its turn and then wedged inside it: a model stream
-/// that never ends, a subprocess that never returns, hooks that stopped
-/// firing. The session stays `running` and reports nothing, which no other
-/// watchdog looks at — the idle stall never measures a running session, and
-/// the turn did start, so the composer watchdog is finished with it.
+/// An agent wedged inside a turn: a model stream that never ends, a
+/// subprocess that never returns, hooks that stopped firing. The session stays
+/// `running`, its composer is empty — there is nothing to submit — and it
+/// reports nothing at all.
 ///
 /// The user first, because a person may know what the pane is doing; and if
 /// the flag changes nothing, the pane is killed and the same session put back
 /// on the conversation it was already having.
 #[tokio::test]
-async fn a_running_agent_that_stopped_reporting_is_flagged_and_then_relaunched() {
+async fn an_agent_that_reports_nothing_is_flagged_and_then_relaunched() {
     let h = harness().await;
     let (goal, task, engineer, _reviewer) = h.active_goal_with_task().await;
     h.advance(&task, TaskStatus::InProgress).await;
@@ -1713,7 +1784,7 @@ async fn a_running_agent_that_stopped_reporting_is_flagged_and_then_relaunched()
         .await;
     h.pane_exists(&session);
     h.resumable(&task, &session).await;
-    h.wedged_for(&session, RUNNING_QUIET_FLAG_SECS + 60).await;
+    h.launched_ago(&session, FLAG_SECS + 60).await;
     let launched = h.launched_at(&session).await;
 
     let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
@@ -1731,11 +1802,11 @@ async fn a_running_agent_that_stopped_reporting_is_flagged_and_then_relaunched()
     assert_eq!(
         h.launched_at(&session).await,
         launched,
-        "the flag comes first: nothing is relaunched at the first threshold"
+        "the flag comes first: nothing is relaunched at that threshold"
     );
 
     // Still silent a threshold later, and the flag was not the answer.
-    h.wedged_for(&session, RUNNING_QUIET_RESUME_SECS + 60).await;
+    h.launched_ago(&session, RELAUNCH_SECS + 60).await;
     let launched = h.launched_at(&session).await;
     sched
         .send(SchedEvent::TaskChanged(task.id.clone()))
@@ -1797,8 +1868,7 @@ async fn a_running_agent_that_keeps_reporting_is_left_alone() {
     h.pane_exists(&session);
     h.resumable(&task, &session).await;
     // Launched long before both thresholds, and still saying so.
-    h.launched_ago(&session, RUNNING_QUIET_RESUME_SECS * 2)
-        .await;
+    h.launched_ago(&session, RELAUNCH_SECS * 2).await;
     h.reports(&session, "pre_tool_use").await;
     h.store.touch_session(&session.id).await.unwrap();
     let launched = h.launched_at(&session).await;
@@ -1810,7 +1880,7 @@ async fn a_running_agent_that_keeps_reporting_is_left_alone() {
         .session(&goal, Some(&control_task), Role::Engineer, &engineer)
         .await;
     h.pane_exists(&control);
-    h.wedged_for(&control, RUNNING_QUIET_FLAG_SECS + 60).await;
+    h.launched_ago(&control, FLAG_SECS + 60).await;
 
     let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
     sched
@@ -1853,7 +1923,7 @@ async fn a_running_agent_waiting_on_a_person_is_never_relaunched() {
         .await;
     h.pane_exists(&blocked);
     h.resumable(&task, &blocked).await;
-    h.wedged_for(&blocked, RUNNING_QUIET_RESUME_SECS + 60).await;
+    h.launched_ago(&blocked, RELAUNCH_SECS + 60).await;
     h.store
         .set_session_attention(&blocked.id, AttentionReason::WaitingPermission)
         .await
@@ -1866,7 +1936,7 @@ async fn a_running_agent_waiting_on_a_person_is_never_relaunched() {
         .session(&goal, Some(&asked_task), Role::Engineer, &engineer)
         .await;
     h.pane_exists(&asked);
-    h.wedged_for(&asked, RUNNING_QUIET_RESUME_SECS + 60).await;
+    h.launched_ago(&asked, RELAUNCH_SECS + 60).await;
     h.store
         .set_session_attention(&asked.id, AttentionReason::WaitingInput)
         .await
@@ -1878,7 +1948,7 @@ async fn a_running_agent_waiting_on_a_person_is_never_relaunched() {
         .session(&goal, Some(&control_task), Role::Engineer, &engineer)
         .await;
     h.pane_exists(&control);
-    h.wedged_for(&control, RUNNING_QUIET_FLAG_SECS + 60).await;
+    h.launched_ago(&control, FLAG_SECS + 60).await;
 
     let launched = [h.launched_at(&blocked).await, h.launched_at(&asked).await];
     let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
@@ -1925,7 +1995,7 @@ async fn an_agent_that_wedges_after_every_relaunch_fails_its_task() {
     let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
     // Two relaunches out of the budget of three, each one wedging again.
     for relaunch in 1..=2 {
-        h.wedged_for(&session, RUNNING_QUIET_RESUME_SECS + 60).await;
+        h.launched_ago(&session, RELAUNCH_SECS + 60).await;
         let launched = h.launched_at(&session).await;
         sched
             .send(SchedEvent::TaskChanged(task.id.clone()))
@@ -1942,7 +2012,7 @@ async fn an_agent_that_wedges_after_every_relaunch_fails_its_task() {
     );
 
     // And it wedges once more.
-    h.wedged_for(&session, RUNNING_QUIET_RESUME_SECS + 60).await;
+    h.launched_ago(&session, RELAUNCH_SECS + 60).await;
     let launched = h.launched_at(&session).await;
     sched
         .send(SchedEvent::TaskChanged(task.id.clone()))
@@ -2074,7 +2144,7 @@ async fn a_wedged_agent_is_not_killed_while_a_message_is_going_into_its_pane() {
     h.resumable(&task, &session).await;
     // Past the flag and nowhere near the relaunch, so the first pass only
     // raises it: what the relaunch has to wait for is set up after that.
-    h.wedged_for(&session, RUNNING_QUIET_FLAG_SECS + 60).await;
+    h.launched_ago(&session, FLAG_SECS + 60).await;
 
     let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
     sched
@@ -2108,7 +2178,7 @@ async fn a_wedged_agent_is_not_killed_while_a_message_is_going_into_its_pane() {
 
     // Now it is past the relaunch threshold too, and every pass while the
     // pane is being typed into leaves it exactly where it is.
-    h.wedged_for(&session, RUNNING_QUIET_RESUME_SECS + 60).await;
+    h.launched_ago(&session, RELAUNCH_SECS + 60).await;
     let launched = h.launched_at(&session).await;
     for _ in 0..6 {
         sched
@@ -2158,7 +2228,7 @@ async fn a_wedged_agent_flagged_for_the_user_keeps_the_flag_and_is_relaunched() 
         .await;
     h.pane_exists(&session);
     h.resumable(&task, &session).await;
-    h.wedged_for(&session, RUNNING_QUIET_FLAG_SECS + 60).await;
+    h.launched_ago(&session, FLAG_SECS + 60).await;
     h.store
         .set_session_attention(&session.id, AttentionReason::WaitingUser)
         .await
@@ -2171,7 +2241,7 @@ async fn a_wedged_agent_flagged_for_the_user_keeps_the_flag_and_is_relaunched() 
         .session(&goal, Some(&control_task), Role::Engineer, &engineer)
         .await;
     h.pane_exists(&control);
-    h.wedged_for(&control, RUNNING_QUIET_FLAG_SECS + 60).await;
+    h.launched_ago(&control, FLAG_SECS + 60).await;
 
     let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
     for id in [&task.id, &control_task.id] {
@@ -2191,7 +2261,7 @@ async fn a_wedged_agent_flagged_for_the_user_keeps_the_flag_and_is_relaunched() 
     // is put back on its feet like any other — and what the user is owed
     // comes back up with it, since a relaunch is not the user having merged
     // the request or read the message.
-    h.wedged_for(&session, RUNNING_QUIET_RESUME_SECS + 60).await;
+    h.launched_ago(&session, RELAUNCH_SECS + 60).await;
     let launched = h.launched_at(&session).await;
     sched
         .send(SchedEvent::TaskChanged(task.id.clone()))

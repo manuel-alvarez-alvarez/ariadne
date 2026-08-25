@@ -12,12 +12,16 @@
 //! `has-session` is not an agent that has ended, so nothing is relaunched on
 //! top of it and the message is not spent on the pass that could not be made:
 //! it waits, and goes in the moment tmux answers again.
+//!
+//! And for the watchdog over an agent that has reported nothing: what it does
+//! at the first threshold turns on what the pane is drawing, and a pane that
+//! cannot be read says nothing about that either.
 
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use ariadne_core::{Actor, AgentKind, AuthorRole, GoalStatus, Role, TaskStatus};
+use ariadne_core::{Actor, AgentKind, AuthorRole, GoalStatus, Role, SessionStatus, TaskStatus};
 use ariadne_daemon::config::Config;
 use ariadne_daemon::gitwt::GitManager;
 use ariadne_daemon::launcher::Launcher;
@@ -42,8 +46,9 @@ fn unrunnable_tmux(dir: &Path) -> TmuxManager {
 }
 
 /// Put a working `tmux` where the unrunnable one was: its sessions are all
-/// there, its panes draw nothing (so a delivery is confirmed on the first
-/// Enter), and it writes down every `send-keys` it is handed.
+/// there, its panes draw whatever a test wrote into `composer` (nothing,
+/// unless it wrote one — so a delivery is confirmed on the first Enter), and
+/// it writes down every `send-keys` it is handed.
 fn tmux_comes_back(dir: &Path) {
     use std::os::unix::fs::PermissionsExt;
 
@@ -52,9 +57,11 @@ fn tmux_comes_back(dir: &Path) {
         "#!/bin/sh\n\
          case \"$1\" in\n\
         \x20 display-message) echo '80x24 0,0' ;;\n\
+        \x20 capture-pane) cat '{composer}' 2>/dev/null ;;\n\
         \x20 send-keys) echo \"$@\" >> '{sent}' ;;\n\
          esac\n\
          exit 0\n",
+        composer = dir.join("composer").display(),
         sent = dir.join("send-keys.log").display(),
     );
     std::fs::write(&bin, script).unwrap();
@@ -359,4 +366,103 @@ async fn a_message_for_an_unreachable_pane_waits_rather_than_relaunching_its_age
         None,
         "a message that got there in the end raises nothing"
     );
+}
+
+/// A pane nobody can read is not a pane with nothing in it. The watchdog's
+/// first threshold has passed, and what it does about a silent agent depends
+/// on what its composer is holding — which is exactly the question an
+/// unrunnable tmux answers neither way. So nothing is typed and nothing is
+/// spent: the moment tmux answers again, the composer decides, and here it is
+/// still holding the instruction that was never submitted.
+#[tokio::test]
+async fn a_silent_agent_whose_pane_cannot_be_read_is_left_for_the_next_pass() {
+    let dir = tempfile::tempdir().unwrap();
+    let World {
+        store,
+        launcher,
+        task,
+        session,
+        ..
+    } = world(dir.path()).await;
+    for status in [TaskStatus::Ready, TaskStatus::InProgress] {
+        store
+            .transition_task(&task.id, status, Actor::Daemon, None, None)
+            .await
+            .unwrap();
+    }
+    // Running and silent for longer than the nudge threshold, which the store
+    // only ever stamps "now": the columns the one clock is read from are moved
+    // back by hand.
+    store
+        .set_session_status(&session.id, SessionStatus::Running)
+        .await
+        .unwrap();
+    silent_for(dir.path(), &session, 360).await;
+
+    let sched = scheduler::start(store.clone(), launcher.clone(), false);
+    sched
+        .send(SchedEvent::TaskChanged(task.id.clone()))
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    assert!(
+        !dir.path().join("send-keys.log").exists(),
+        "nothing was typed at a pane nobody could read"
+    );
+    assert_eq!(
+        store
+            .get_session(&session.id)
+            .await
+            .unwrap()
+            .attention_reason(),
+        None,
+        "and the user is not told about a silence that was never confirmed"
+    );
+
+    // tmux comes back, and the pane it could not answer for is still holding
+    // the instruction the launch put there — as the engineer's resume template
+    // words it.
+    std::fs::write(
+        dir.path().join("composer"),
+        "> Pick \"task\" up again: your worktree is on\n",
+    )
+    .unwrap();
+    tmux_comes_back(dir.path());
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        sched
+            .send(SchedEvent::TaskChanged(task.id.clone()))
+            .unwrap();
+        let sent = std::fs::read_to_string(dir.path().join("send-keys.log")).unwrap_or_default();
+        if sent.contains("Enter") {
+            assert_eq!(
+                sent.lines().count(),
+                1,
+                "the nudge the outage never spent is one Enter, not a paste: {sent}"
+            );
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for the composer to be submitted once tmux answered"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// Move the columns the watchdog's clock is read from back by `secs`.
+async fn silent_for(dir: &Path, session: &AgentSession, secs: i64) {
+    let when = (chrono::Utc::now() - chrono::Duration::seconds(secs))
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", dir.join("test.db").display()))
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agent_sessions SET launched_at = ?, last_activity_at = ? WHERE id = ?")
+        .bind(&when)
+        .bind(&when)
+        .bind(&session.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
 }

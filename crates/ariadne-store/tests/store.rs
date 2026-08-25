@@ -994,11 +994,11 @@ async fn a_profile_a_message_addresses_cannot_be_deleted() {
     );
 }
 
-/// What a launch is dated for: asking whether *this* run of an agent has
-/// reported anything of a given kind since it started. A relaunch moves the
-/// date, which is what makes the question about the run rather than the row.
+/// What a launch is dated for: the one clock a watchdog reads when a session
+/// has reported nothing at all. A relaunch moves the date, which is what makes
+/// the silence it measures this run's rather than the row's.
 #[tokio::test]
-async fn a_launch_is_dated_and_what_followed_it_can_be_asked_for() {
+async fn every_launch_of_a_session_is_dated() {
     let (store, _dir) = test_store().await;
     let planner = seed_profile(&store, "planner", Role::Planner).await;
     let (goal, repo) = seed_goal(&store, &planner, None).await;
@@ -1030,38 +1030,8 @@ async fn a_launch_is_dated_and_what_followed_it_can_be_asked_for() {
         .unwrap()
         .launched_at
         .expect("the launch is dated");
-    let event = |kind: &str| NewAgentEvent {
-        session_id: Some(session.id.clone()),
-        task_id: Some(task.id.clone()),
-        agent_kind: Some(AgentKind::ClaudeCode),
-        kind: kind.into(),
-        payload: serde_json::json!({}),
-    };
-    store.create_event(event("session_start")).await.unwrap();
-    store.create_event(event("pre_tool_use")).await.unwrap();
 
-    assert!(
-        store
-            .session_reported_since(&session.id, &first, &["pre_tool_use", "user_prompt_submit"])
-            .await
-            .unwrap()
-    );
-    assert!(
-        !store
-            .session_reported_since(&session.id, &first, &["user_prompt_submit"])
-            .await
-            .unwrap(),
-        "kinds outside the asked-for set are not an answer"
-    );
-    assert!(
-        !store
-            .session_reported_since(&session.id, &first, &[])
-            .await
-            .unwrap(),
-        "and asking for nothing finds nothing"
-    );
-
-    // Launched again — a resume — with everything above now behind it.
+    // Launched again — a resume.
     tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     store.mark_session_launched(&session.id).await.unwrap();
     let second = store
@@ -1071,13 +1041,6 @@ async fn a_launch_is_dated_and_what_followed_it_can_be_asked_for() {
         .launched_at
         .expect("the relaunch is dated too");
     assert!(second > first, "every launch moves the date");
-    assert!(
-        !store
-            .session_reported_since(&session.id, &second, &["pre_tool_use"])
-            .await
-            .unwrap(),
-        "what the previous run did says nothing about this one"
-    );
 }
 
 /// A resumed agent conversation keeps its one session row: restarting puts
@@ -2674,6 +2637,45 @@ fn replaced_text(migration: &str, key: &str, column: &str) -> String {
     panic!("{migration}'s {column} literal for {key} never ends")
 }
 
+/// The copy of a default that migration 0028 strikes off, read out of the
+/// migration itself.
+///
+/// Same reasoning as [`replaced_text`], for the statement that ends the chain:
+/// `DELETE FROM profile_prompts WHERE content = '<what the release before it
+/// seeded>' AND kind = '<kind>'`. What a pre-0028 install holds is that text,
+/// not whatever `defaults.rs` says today — a default reworded after 0028 was
+/// written is exactly the case a fixture seeded from the constants would get
+/// wrong, and call a prompt somebody had written.
+fn deleted_copy(kind: PromptKind) -> String {
+    const START: &str = "DELETE FROM profile_prompts\nWHERE content = '";
+    let sql = std::fs::read_to_string("./migrations/0028_prompts_are_overrides.sql")
+        .expect("reading migration 0028");
+    let mut rest = sql.as_str();
+    while let Some(at) = rest.find(START) {
+        rest = &rest[at + START.len()..];
+        let mut text = String::new();
+        let mut chars = rest.char_indices().peekable();
+        while let Some((i, c)) = chars.next() {
+            if c != '\'' {
+                text.push(c);
+                continue;
+            }
+            // A doubled quote is one quote of the text; a lone one ends it.
+            if let Some((_, '\'')) = chars.peek() {
+                chars.next();
+                text.push('\'');
+                continue;
+            }
+            rest = &rest[i + 1..];
+            break;
+        }
+        if rest.starts_with(&format!("\n  AND kind = '{}';", kind.as_str())) {
+            return text;
+        }
+    }
+    panic!("migration 0028 deletes no copy of {}", kind.as_str())
+}
+
 /// Migrate a database to just before `version` and hand back the pool, so a
 /// test can seed the rows that release actually had before the migrations
 /// under test run over them.
@@ -3167,7 +3169,7 @@ async fn a_pre_0028_database_keeps_only_the_prompts_somebody_wrote() {
         for kind in PromptKind::for_role(Role::Engineer) {
             let content = match (id, kind) {
                 ("edited", PromptKind::ChangesRequested) => "Fix it. {feedback}".to_string(),
-                _ => default_prompt(Role::Engineer, *kind).unwrap().to_string(),
+                _ => deleted_copy(*kind),
             };
             sqlx::query(
                 "INSERT INTO profile_prompts (profile_id, kind, content, updated_at)

@@ -363,6 +363,22 @@ impl TmuxManager {
         self.tmux(&["capture-pane", "-p", "-t", name]).await
     }
 
+    /// Whether this pane's composer is holding `text` that nobody submitted,
+    /// asked of the pane itself — the same reading [`Self::send_submitted`]
+    /// confirms a delivery by, one delivery later.
+    ///
+    /// What a watchdog does about a session that has reported nothing depends
+    /// on the answer: a composer still holding the instruction the launch put
+    /// there never ran a turn and wants the Enter a human would press, and an
+    /// empty one is a turn nobody should type into. One row above the cursor
+    /// is read as well as the cursor's own, since the Enter that was
+    /// swallowed left its newline behind.
+    pub async fn composer_holds(&self, name: &str, text: &str) -> Result<bool> {
+        let screen = self.capture_screen(name).await?;
+        let cursor = self.pane_geometry(name).await?.cursor_y;
+        Ok(composer_holds(&screen, cursor, 1, text))
+    }
+
     /// Press Enter in the session (accepts pre-selected TUI dialogs).
     pub async fn send_enter(&self, name: &str) -> Result<()> {
         self.tmux(&["send-keys", "-t", name, "Enter"])

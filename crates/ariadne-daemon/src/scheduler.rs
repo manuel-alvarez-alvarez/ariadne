@@ -95,60 +95,38 @@ const SPAWN_RETRY_BUDGET: u32 = 3;
 /// but neither is it retried for ever, or nobody would ever hear that it is
 /// stuck.
 const DELIVERY_ATTEMPTS: u32 = 3;
-/// Idle time after which an agent with work in front of it gets one nudge.
-const STALL_NUDGE_SECS: i64 = 300;
-/// Idle time after which the stall is raised for the user (post-nudge).
-const STALL_FLAG_SECS: i64 = 900;
-/// Time since a launch after which an agent that never started its turn has
-/// Enter pressed into its pane. The same clock as an idle stall, for the same
-/// reason: long enough that a slow start is not read as a stuck one.
-const UNSTARTED_ENTER_SECS: i64 = STALL_NUDGE_SECS;
-/// Time since a launch after which that agent is raised for the user
-/// (post-Enter).
-const UNSTARTED_FLAG_SECS: i64 = STALL_FLAG_SECS;
-/// Event kinds only an agent whose turn actually started can have reported.
-///
-/// What is missing from the set is the point of it. Lifecycle alone proves
-/// nothing: codex reports `session_start` for a TUI that has merely come up,
-/// and opencode keeps emitting `session.updated` whether or not anything is
-/// happening — neither says a prompt was ever submitted. Measured against
-/// codex 0.148: a resumed thread whose instruction is left sitting in the
-/// composer fires no hook whatsoever, and the single Enter that submits it
-/// fires `SessionStart`, `UserPromptSubmit` and `Stop` together — so even
-/// `session_start` arrives *with* the turn rather than ahead of it there. The
-/// discriminator is therefore a prompt, a tool call or a dialog: things that
-/// only happen inside a turn.
-const TURN_ACTIVITY: [&str; 13] = [
-    // Codex and Claude Code hooks.
-    "user_prompt_submit",
-    "pre_tool_use",
-    "post_tool_use",
-    "permission_request",
-    // OpenCode's plugin. `session.idle` and `stop` are deliberately absent:
-    // they end a turn, and a session that reported one is `idle` rather than
-    // `running` — the other watchdog's, not this one's.
-    //
-    // `session.error` is here for the opposite reason: a failed turn is a
-    // turn. It leaves the session running (the ingest maps it to no status at
-    // all) with the failure raised for the user, and an agent that got far
-    // enough to report one is not an agent sitting on an unsubmitted
-    // instruction.
-    "session.error",
-    "tool.execute.before",
-    "tool.execute.after",
-    "permission.asked",
-    "permission.updated",
-    "permission.replied",
-    "question.asked",
-    "question.replied",
-    "question.rejected",
-];
+/// How long a session may report nothing before it is nudged: told to get on
+/// with the work in front of it, or given the Enter its composer is waiting
+/// for. Long enough that a slow start or a long tool call is not read as a
+/// stuck one.
+const QUIET_NUDGE_SECS: i64 = 300;
+/// And before the silence is raised for the user, whom the nudge did not
+/// spare.
+const QUIET_FLAG_SECS: i64 = 900;
+/// And before the pane is killed and the agent put back on its feet: the flag
+/// plus enough of a wait for a person to have looked at it first.
+const QUIET_RELAUNCH_SECS: i64 = 2_700;
 
-/// How far the never-started-turn watchdog has taken one session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Unstarted {
-    EnterPressed,
-    Flagged,
+/// What the watchdog has already done about one session's silence.
+///
+/// One record per session. `situation` is what keeps the nudge to one per
+/// situation rather than one per session for ever: an agent whose task moved
+/// on — a new status, a new review round — has a fresh reason to get on with
+/// it, and so has one that was just put back on its feet.
+#[derive(Debug, Default)]
+struct Quiet {
+    /// The status and round the two steps below were taken in: the task's for
+    /// an engineer or a reviewer, the goal's for a planner.
+    situation: (String, i64),
+    /// Whether the one nudge for that situation has been spent.
+    nudged: bool,
+    /// Whether the user has been told about it.
+    flagged: bool,
+    /// Relaunches spent on this session, which no change of situation gives
+    /// back. Bounded by [`SPAWN_RETRY_BUDGET`] like a task's spawn attempts
+    /// are: an agent that goes quiet again after every relaunch is not one
+    /// more relaunch away from working.
+    relaunches: u32,
 }
 
 pub struct Scheduler {
@@ -157,20 +135,9 @@ pub struct Scheduler {
     /// Spawn failures per task (in-memory: resets on daemon restart, which is
     /// fine — a restart is exactly when a retry is warranted).
     spawn_failures: HashMap<String, u32>,
-    /// Sessions nudged in the (status, round) they were nudged for, keyed by
-    /// session id; a transition changes the key, which is what allows the one
-    /// nudge per situation rather than one per session for ever.
-    nudged: HashMap<String, (String, i64)>,
-    /// Sessions this watchdog has acted on and the launch (`launched_at`) it
-    /// acted on, keyed by session id: a relaunch changes the key the same way
-    /// a transition changes `nudged`'s, which is what keeps it to one Enter
-    /// and one flag per launch rather than one per tick.
-    unstarted: HashMap<String, (String, Unstarted)>,
-    /// Relaunches spent on a session that wedged mid-turn, by session id.
-    /// In memory like the maps above, and bounded by [`SPAWN_RETRY_BUDGET`]
-    /// like a task's spawn attempts are: an agent that wedges again after
-    /// every relaunch is not one more relaunch away from working.
-    wedged: HashMap<String, u32>,
+    /// What the quiet-clock watchdog has done about each session it has had
+    /// to act on, by session id (in memory like the map above).
+    quiet: HashMap<String, Quiet>,
     /// Tasks whose engineer has been handed the landing briefing, by task id.
     /// In memory like the maps above: what it prevents is briefing the same
     /// approved task twice while the daemon that approved it is running, and
@@ -192,8 +159,8 @@ pub struct Scheduler {
     typing: HashSet<String>,
     /// When each session was last confirmed to have been handed something,
     /// by session id. A delivery is a nudge, and a better one — the agent has
-    /// just been told what to do — so the stall watch counts idle time from
-    /// here as well as from what the agent itself last reported.
+    /// just been told what to do — so the watchdog's clock counts from here
+    /// as well as from what the agent itself last reported.
     delivered_at: HashMap<String, chrono::DateTime<chrono::Utc>>,
     /// Where a delivery that ran off the loop reports back to.
     reports: mpsc::UnboundedSender<DeliveryReport>,
@@ -219,9 +186,7 @@ pub fn start(
         store,
         launcher,
         spawn_failures: HashMap::new(),
-        nudged: HashMap::new(),
-        unstarted: HashMap::new(),
-        wedged: HashMap::new(),
+        quiet: HashMap::new(),
         landing_briefed: HashSet::new(),
         delivered: HashSet::new(),
         attempts: HashMap::new(),
@@ -473,7 +438,7 @@ impl Scheduler {
                     )
                     .await;
                     let nudge = prompts::planner_resume_briefing(&template, &goal);
-                    self.check_session_stall(&planner, (goal.status.clone(), 0), &nudge)
+                    self.check_session_quiet(&planner, (goal.status.clone(), 0), &nudge)
                         .await?;
                 }
             }
@@ -829,7 +794,7 @@ impl Scheduler {
                     // the others is not a stall. There is no task-level flag
                     // for this — the session's own is the signal.
                     if let Some(reviewer) = running {
-                        self.check_session_stall(
+                        self.check_session_quiet(
                             &reviewer,
                             (task.status.clone(), task.review_round),
                             &resume,
@@ -973,9 +938,9 @@ impl Scheduler {
     ///
     /// `role` is whose turn it is, which is the engineer's from the first
     /// commit to the merge.
-    /// A task with no live session of that role gets one started; one that is
-    /// idle too long gets exactly one tmux nudge per (status, round), and if it
-    /// stays idle its session is flagged for the user (never an endless loop).
+    /// A task with no live session of that role gets one started; one that has
+    /// reported nothing for too long goes under [`Self::check_session_quiet`],
+    /// which is one nudge per (status, round), then the user, then a relaunch.
     /// The task shows that stall too, but nothing here writes it: the flag on
     /// the session is the record of it, and the task's own column is the
     /// store's projection of that (`sync_task_stall`).
@@ -1003,7 +968,7 @@ impl Scheduler {
         // gone quiet with the work still in front of it and one whose session
         // ended are in the same situation, and there is one text for it.
         let nudge = self.resume_text(task, role).await?;
-        self.check_session_stall(agent, (task.status.clone(), task.review_round), &nudge)
+        self.check_session_quiet(agent, (task.status.clone(), task.review_round), &nudge)
             .await
     }
 
@@ -1070,156 +1035,51 @@ impl Scheduler {
         }
     }
 
-    /// One agent that is not getting on with the work in front of it.
+    /// One agent that has reported nothing for too long.
     ///
-    /// There are two ways to be doing nothing and they want opposite
-    /// remedies. An idle agent finished a turn and stopped: it is measured
-    /// against the stall thresholds below — a single nudge at
-    /// [`STALL_NUDGE_SECS`], and at [`STALL_FLAG_SECS`] the session is raised
-    /// for the user. A running one is in a turn, and whether that turn ever
-    /// started decides which of the two watchdogs behind
-    /// [`Self::check_running_session`] it belongs to; neither of them types
-    /// another message into a pane that is already holding one.
+    /// One clock and one timeline, whatever the shape of the silence.
+    /// [`Self::last_heard_from`] says when this session was last heard from at
+    /// all, and three thresholds are read off it: a nudge at
+    /// [`QUIET_NUDGE_SECS`], the user at [`QUIET_FLAG_SECS`], and at
+    /// [`QUIET_RELAUNCH_SECS`] the pane killed and the agent put back on its
+    /// feet. Each of them is done once for the situation the agent is in, and
+    /// a pass that arrives late does what the clock says now rather than going
+    /// back for the steps it never had a chance to take.
     ///
-    /// `key` is the situation the nudge is spent on — the status and round the
-    /// agent was idle in — so moving on earns a fresh one, and `nudge` is
-    /// both what it is nudged with and what it is revived with if it wedges.
-    async fn check_session_stall(
+    /// What the nudge is, the pane decides. An agent that is idle finished a
+    /// turn and stopped with the work still in front of it, so it is told to
+    /// get on with it, in the words it would be started again with. A running
+    /// one whose composer is still holding an instruction is one that never
+    /// submitted it — the Enter a TUI swallowed, or `codex resume <thread>
+    /// <instruction>`, which hands the prompt to the composer through argv and
+    /// leaves it there for somebody to send — and what that wants is the Enter
+    /// a human would press on finding such a pane. A running one whose
+    /// composer is empty is inside a turn, and typing into a turn is how work
+    /// gets interrupted: it is left alone until the thresholds behind the
+    /// nudge, which is where a turn that never ends is answered for.
+    ///
+    /// `situation` is what the nudge and the flag are spent on — the status
+    /// and round the agent went quiet in — so moving on earns fresh ones, and
+    /// `resume` is both what it is nudged with and what it is revived with.
+    async fn check_session_quiet(
         &mut self,
         session: &AgentSession,
-        key: (String, i64),
-        nudge: &str,
+        situation: (String, i64),
+        resume: &str,
     ) -> anyhow::Result<()> {
-        if session.status() == SessionStatus::Running {
-            return self.check_running_session(session, nudge).await;
-        }
-        if session.status() != SessionStatus::Idle {
-            return Ok(());
-        }
-        // An agent waiting on a person is not stalled, it is blocked, and the
-        // attention entry already says so. Nudging it would type into whatever
-        // it is waiting on — a permission prompt takes Enter for an answer —
-        // so neither the keystroke nor the escalation behind it applies here.
-        if matches!(
-            session.attention_reason(),
-            Some(AttentionReason::WaitingPermission | AttentionReason::WaitingInput)
+        if !matches!(
+            session.status(),
+            SessionStatus::Idle | SessionStatus::Running
         ) {
             return Ok(());
         }
-        let Some(last) = &session.last_activity_at else {
-            return Ok(());
-        };
-        let Ok(last) = chrono::DateTime::parse_from_rfc3339(last) else {
-            return Ok(());
-        };
-        // A confirmed delivery is the freshest thing that happened to this
-        // agent, and it is a nudge in its own right: whichever of the two is
-        // later is what the idle time is counted from, so an agent told
-        // something a moment ago is not asked why it has stopped.
-        let mut since = last.with_timezone(&chrono::Utc);
-        if let Some(delivered) = self.delivered_at.get(&session.id) {
-            since = since.max(*delivered);
-        }
-        let idle_secs = (chrono::Utc::now() - since).num_seconds();
-        let already_nudged = self.nudged.get(&session.id) == Some(&key);
-
-        if idle_secs >= STALL_FLAG_SECS && already_nudged {
-            warn!(session = %session.id, role = %session.role, idle_secs, "session stalled, flagging for user attention");
-            self.store
-                .set_session_attention(&session.id, AttentionReason::Stalled)
-                .await?;
-            return Ok(());
-        }
-        if idle_secs >= STALL_NUDGE_SECS && !already_nudged {
-            // A pane already being typed into is being nudged by that: this
-            // one waits for the next pass rather than interleaving with it.
-            if self.typing.contains(&session.id) {
-                return Ok(());
-            }
-            info!(session = %session.id, role = %session.role, idle_secs, "nudging idle agent");
-            // Spent as the delivery goes out, and off the loop: a pane that
-            // takes the nudge and will not submit it is raised for the user
-            // rather than nudged again, and one tmux would not take at all
-            // gives the nudge back — see [`Self::delivery_settled`].
-            self.nudged.insert(session.id.clone(), key);
-            self.spawn_delivery(session, nudge.to_string(), None);
-        }
-        Ok(())
-    }
-
-    /// The watchdogs a running agent is under, and which of them has it.
-    ///
-    /// A launched agent that is doing nothing is doing one of two things, and
-    /// the turn tells them apart: one that never started it is holding its
-    /// instruction in a composer nobody submitted, and a keystroke is what
-    /// that wants ([`Self::check_unstarted_turn`]); one that started it and
-    /// then went quiet is wedged inside it, and only a relaunch gets it out
-    /// ([`Self::check_running_quiet`]). Every running session is under
-    /// exactly one of them, which is the point of asking here rather than in
-    /// either.
-    ///
-    /// `revival` is the resume its profile renders — the same text the caller
-    /// would nudge it with, since an agent that has gone quiet and one whose
-    /// session ended are in the same situation.
-    async fn check_running_session(
-        &mut self,
-        session: &AgentSession,
-        revival: &str,
-    ) -> anyhow::Result<()> {
-        if self.turn_started(session).await? {
-            self.check_running_quiet(session, revival).await
-        } else {
-            self.check_unstarted_turn(session).await
-        }
-    }
-
-    /// Whether this launch of the agent got as far as a turn.
-    ///
-    /// Read off what the session reported since it was launched, and only
-    /// [`TURN_ACTIVITY`] counts — a launch nobody dated says nothing either
-    /// way, and is answered as no turn for the watchdog that knows what to do
-    /// about a launch it cannot measure.
-    async fn turn_started(&self, session: &AgentSession) -> anyhow::Result<bool> {
-        let Some(launched) = &session.launched_at else {
-            return Ok(false);
-        };
-        Ok(self
-            .store
-            .session_reported_since(&session.id, launched, &TURN_ACTIVITY)
-            .await?)
-    }
-
-    /// One agent that started its turn and stopped moving inside it: the
-    /// user at `running_quiet_flag_secs`, and a relaunch at
-    /// `running_quiet_resume_secs` (both daemon config, beside
-    /// `pr_poll_secs`).
-    ///
-    /// A model stream that never ends, a subprocess that never returns, hooks
-    /// that stopped firing: from outside the pane they look alike, and they
-    /// all look like work. The session is `running`, so the idle stall never
-    /// measures it; the turn started, so the watchdog for an unsubmitted
-    /// composer is finished with it. Until this one, the only thing that
-    /// rescued such a session was its pane dying.
-    ///
-    /// What it measures is not how long the turn has taken — a single tool
-    /// call may run for an hour — but how long the agent has said nothing
-    /// about it. Every hook and every plugin event stamps `last_activity_at`,
-    /// so an agent that is working keeps its own clock reset however slowly
-    /// it works, and a wedged one is exactly the one that cannot.
-    ///
-    /// The remedy is the user's choice: the flag first, because a person may
-    /// know what the pane is doing, and then the pane is killed and the same
-    /// session put back on the conversation it was already having — there is
-    /// nothing to type into a turn that is not reading its composer.
-    async fn check_running_quiet(
-        &mut self,
-        session: &AgentSession,
-        revival: &str,
-    ) -> anyhow::Result<()> {
-        // Blocked rather than wedged, for the reasons the watchdog below
-        // spells out: an agent waiting on a person is waiting on the one
-        // decision the daemon must not make for it, and one that reported an
-        // error has already said something more useful than a stall would.
+        // An agent waiting on a person is blocked, not quiet. Typing into it
+        // would answer whatever it is waiting on — a permission prompt takes
+        // Enter for a yes — which is the one decision the daemon must not make
+        // for it, and killing its pane would throw the dialog away. An agent
+        // that reported an error is already asking for the user by name, and
+        // overwriting that with a stall would take away the more useful half
+        // of what it said.
         if matches!(
             session.attention_reason(),
             Some(
@@ -1230,88 +1090,125 @@ impl Scheduler {
         ) {
             return Ok(());
         }
-        let Some(last) = &session.last_activity_at else {
+        let Some(since) = self.last_heard_from(session) else {
             return Ok(());
         };
-        let Ok(last) = chrono::DateTime::parse_from_rfc3339(last) else {
-            return Ok(());
-        };
-        let quiet_secs = (chrono::Utc::now() - last.with_timezone(&chrono::Utc)).num_seconds();
-        if quiet_secs < self.launcher.cfg.running_quiet_flag_secs as i64 {
+        let quiet_secs = (chrono::Utc::now() - since).num_seconds();
+        if quiet_secs < QUIET_NUDGE_SECS {
             return Ok(());
         }
-        // A flag raised for the user is left where it is: what
-        // `waiting_user` says — a message written to them, a request that is
-        // theirs to merge — is more use to them than "stalled", and it is not
-        // the daemon's to take down on the agent's behalf. The silence is
-        // measured all the same, and the relaunch below still happens.
-        if session.attention_reason() != Some(AttentionReason::WaitingUser) {
-            if session.attention_reason() != Some(AttentionReason::Stalled) {
-                warn!(session = %session.id, role = %session.role, quiet_secs, "the agent's turn has reported nothing, flagging for user attention");
-            }
-            self.store
-                .set_session_attention(&session.id, AttentionReason::Stalled)
-                .await?;
-        }
-        if quiet_secs < self.launcher.cfg.running_quiet_resume_secs as i64 {
-            return Ok(());
-        }
-        // A pane with a delivery going into it is not a pane to kill: the
-        // paste and the Enter behind it would come back as a message nobody
-        // could be given, and the user would be told about a composer that
-        // was only ever interrupted. It waits for the next pass, which is
-        // where a delivery that settles in between is answered for.
-        //
-        // A delivery that did land is not counted as activity, though — this
-        // is the one thing the idle stall beside it does differently. A
-        // composer that took a paste says the TUI is reading keystrokes, not
-        // that the turn it is wedged in has moved, and what the agent was
-        // told is in its thread for it to read when it comes back up.
+        // A pane already being typed into is being nudged by that, and is no
+        // pane to kill either: the paste and the Enter behind it would come
+        // back as a message nobody could be given, and the user would be told
+        // about a composer that was only ever interrupted. It waits for the
+        // pass after the delivery has settled.
         if self.typing.contains(&session.id) {
             return Ok(());
         }
-        // The flag did not move it either. The relaunch is spent out of a
-        // budget for the same reason a spawn is: an agent that wedges, is put
-        // back and wedges again is not one more relaunch away from working,
-        // and a task whose agent will not run is failed rather than restarted
-        // for ever. A planner has no task to fail — its own flag is what is
-        // left, and it stands.
-        let spent = self.wedged.entry(session.id.clone()).or_default();
-        *spent += 1;
-        let spent = *spent;
-        if spent >= SPAWN_RETRY_BUDGET {
-            warn!(session = %session.id, role = %session.role, relaunches = spent - 1, "the agent wedged again after every relaunch");
-            if let Some(task_id) = session.task_id.clone() {
-                if let Err(e) = self.launcher.kill_session(&session.id).await {
-                    warn!(session = %session.id, error = %e, "killing the wedged session failed");
-                }
-                // Told to the user like every other ending the daemon
-                // decides, and by the same call: a task nobody is coming
-                // back to is worth a line in its thread whichever watchdog
-                // gave up on it.
-                let reason = "its agent stopped mid-turn after every relaunch";
-                if let Ok(task) = self
-                    .store
-                    .transition_task(
-                        &task_id,
-                        TaskStatus::Failed,
-                        Actor::Daemon,
-                        Some(reason),
-                        None,
-                    )
-                    .await
-                {
-                    self.announce_ending(&task, Some(reason)).await;
-                }
+        let done = self.quiet.entry(session.id.clone()).or_default();
+        if done.situation != situation {
+            done.situation = situation;
+            done.nudged = false;
+            done.flagged = false;
+        }
+        if quiet_secs >= QUIET_RELAUNCH_SECS {
+            return self.relaunch_wedged(session, resume).await;
+        }
+        if quiet_secs >= QUIET_FLAG_SECS {
+            // A flag raised for the user is left where it is: what
+            // `waiting_user` says — a message written to them, a request that
+            // is theirs to merge — is more use to them than "stalled", and it
+            // is not the daemon's to take down on the agent's behalf. Nothing
+            // is written down either, so a session that is still silent once
+            // the user has had what they were owed is raised then. The silence
+            // is measured all the same, and the relaunch above still happens.
+            if session.attention_reason() == Some(AttentionReason::WaitingUser) {
+                return Ok(());
             }
+            if std::mem::replace(&mut done.flagged, true) {
+                return Ok(());
+            }
+            warn!(session = %session.id, role = %session.role, quiet_secs, "the agent has reported nothing, flagging for user attention");
+            self.store
+                .set_session_attention(&session.id, AttentionReason::Stalled)
+                .await?;
             return Ok(());
         }
-        info!(session = %session.id, role = %session.role, quiet_secs, relaunch = spent, "the agent has been silent mid-turn, relaunching it");
-        self.relaunch_wedged(session, revival).await
+        if done.nudged {
+            return Ok(());
+        }
+        // A running agent is asked before the nudge is spent, so that a turn
+        // nobody may interrupt costs it nothing: an empty composer is left
+        // where it is, with its nudge still to come if something turns up in
+        // there later. An unreachable tmux answers neither way, and is left
+        // for the next pass too.
+        let enter = session.status() == SessionStatus::Running;
+        if enter
+            && !self
+                .launcher
+                .tmux
+                .composer_holds(&session.tmux_session, resume)
+                .await
+                .unwrap_or(false)
+        {
+            return Ok(());
+        }
+        self.quiet.entry(session.id.clone()).or_default().nudged = true;
+        if enter {
+            info!(session = %session.id, role = %session.role, quiet_secs, "the agent's composer is still holding its instruction, pressing Enter into the pane");
+            // Spent whether or not tmux took it: a pane that refused the
+            // keystroke this pass will refuse the next.
+            return self.launcher.tmux.send_enter(&session.tmux_session).await;
+        }
+        info!(session = %session.id, role = %session.role, quiet_secs, "nudging idle agent");
+        // Spent as the delivery goes out, and off the loop: a pane that takes
+        // the nudge and will not submit it is raised for the user rather than
+        // nudged again, and one tmux would not take at all gives the nudge
+        // back — see [`Self::delivery_settled`].
+        self.spawn_delivery(session, resume.to_string(), None);
+        Ok(())
+    }
+
+    /// The one clock: when this session was last heard from at all.
+    ///
+    /// Three things count, and the latest of them is the answer. What the
+    /// agent reported is the plain one — every hook and every plugin event
+    /// stamps `last_activity_at`, so an agent that is working keeps its own
+    /// clock reset however slowly it works, and a wedged one is exactly the
+    /// one that cannot. A confirmed delivery counts because it is a nudge in
+    /// its own right, and a better one: an agent told what to do a moment ago
+    /// is not asked why it has stopped. And the launch counts because a
+    /// session that has reported nothing at all still has to be measured from
+    /// something — an instruction left sitting in a composer fires no hook
+    /// whatsoever.
+    ///
+    /// `None` when none of the three is known, which is a session nothing is
+    /// concluded about.
+    fn last_heard_from(&self, session: &AgentSession) -> Option<chrono::DateTime<chrono::Utc>> {
+        let stamped = |at: &Option<String>| {
+            at.as_deref()
+                .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+                .map(|at| at.with_timezone(&chrono::Utc))
+        };
+        [
+            stamped(&session.last_activity_at),
+            stamped(&session.launched_at),
+            self.delivered_at.get(&session.id).copied(),
+        ]
+        .into_iter()
+        .flatten()
+        .max()
     }
 
     /// Put a wedged agent back on its feet: the pane killed, and the same
     /// session row relaunched on the agent conversation it was already having.
+    ///
+    /// The relaunch is spent out of a budget for the same reason a spawn is:
+    /// an agent that goes quiet, is put back and goes quiet again is not one
+    /// more relaunch away from working, so [`SPAWN_RETRY_BUDGET`] of them is
+    /// what there is and a task whose agent will not run is failed rather than
+    /// restarted for ever. A planner has no task to fail — its own flag is
+    /// what is left, and it stands.
     ///
     /// An engineer is started the way a task with no live engineer is started
     /// — [`Self::start_role`], which renders what it is picked up with, the
@@ -1334,6 +1231,42 @@ impl Scheduler {
         session: &AgentSession,
         revival: &str,
     ) -> anyhow::Result<()> {
+        let done = self.quiet.entry(session.id.clone()).or_default();
+        done.relaunches += 1;
+        // A relaunched agent is a fresh instruction that may be stuck in its
+        // own right, so the steps taken for the situation come back with the
+        // launch: the clock starts again, and so does the timeline on it.
+        done.nudged = false;
+        done.flagged = false;
+        let spent = done.relaunches;
+        if spent >= SPAWN_RETRY_BUDGET {
+            warn!(session = %session.id, role = %session.role, relaunches = spent - 1, "the agent went quiet again after every relaunch");
+            let Some(task_id) = session.task_id.clone() else {
+                return Ok(());
+            };
+            if let Err(e) = self.launcher.kill_session(&session.id).await {
+                warn!(session = %session.id, error = %e, "killing the wedged session failed");
+            }
+            // Told to the user like every other ending the daemon decides,
+            // and by the same call: a task nobody is coming back to is worth
+            // a line in its thread.
+            let reason = "its agent stopped mid-turn after every relaunch";
+            if let Ok(task) = self
+                .store
+                .transition_task(
+                    &task_id,
+                    TaskStatus::Failed,
+                    Actor::Daemon,
+                    Some(reason),
+                    None,
+                )
+                .await
+            {
+                self.announce_ending(&task, Some(reason)).await;
+            }
+            return Ok(());
+        }
+        info!(session = %session.id, role = %session.role, relaunch = spent, "the agent has reported nothing for too long, relaunching it");
         let for_the_user = session.attention_reason() == Some(AttentionReason::WaitingUser);
         self.launcher.kill_session(&session.id).await?;
         if let Some(task_id) = session.task_id.clone()
@@ -1367,87 +1300,6 @@ impl Scheduler {
             .and_then(|mut live| live.pop())
             .map(|live| live.id)
             .unwrap_or_else(|| session.id.clone())
-    }
-
-    /// One launched agent that never started its turn: an Enter at
-    /// [`UNSTARTED_ENTER_SECS`], and the user at [`UNSTARTED_FLAG_SECS`].
-    ///
-    /// The instruction a resume carries can end up composed but unsent — an
-    /// Enter the TUI swallowed, or `codex resume <thread> <instruction>`,
-    /// which hands the prompt to the composer through argv and leaves it
-    /// there for somebody to submit. The agent then runs no turn and reports
-    /// nothing, and since the launch marked it `running` it stays that way for
-    /// ever: the idle stall never looks at a running session, so nothing else
-    /// in the daemon can see this at all. What a human does on finding such a
-    /// pane is press Enter, so that is what happens here — it submits a held
-    /// message and does nothing to an empty composer. If the turn has still
-    /// not started a threshold later, the session is raised instead: the
-    /// keystroke was not the answer and only a person can say why.
-    ///
-    /// "Started" is read off what the session reported since its launch, and
-    /// only [`TURN_ACTIVITY`] counts — lifecycle events fire on a TUI that is
-    /// merely up.
-    async fn check_unstarted_turn(&mut self, session: &AgentSession) -> anyhow::Result<()> {
-        // An agent waiting on a person is blocked, not stuck: an Enter into a
-        // pane holding a dialog answers it, which is the one thing the daemon
-        // must not decide (same reasoning as the idle nudge above). An agent
-        // that reported an error is already asking for the user by name, and
-        // overwriting that reason with a stall would take away the more
-        // useful half of what it said.
-        if matches!(
-            session.attention_reason(),
-            Some(
-                AttentionReason::WaitingPermission
-                    | AttentionReason::WaitingInput
-                    | AttentionReason::AgentError
-            )
-        ) {
-            return Ok(());
-        }
-        // A launch nobody dated is a launch nothing is concluded from.
-        let Some(launched) = session.launched_at.clone() else {
-            return Ok(());
-        };
-        let Ok(at) = chrono::DateTime::parse_from_rfc3339(&launched) else {
-            return Ok(());
-        };
-        let silent_secs = (chrono::Utc::now() - at.with_timezone(&chrono::Utc)).num_seconds();
-        if silent_secs < UNSTARTED_ENTER_SECS {
-            return Ok(());
-        }
-        if self
-            .store
-            .session_reported_since(&session.id, &launched, &TURN_ACTIVITY)
-            .await?
-        {
-            return Ok(());
-        }
-        // Only what was done for *this* launch counts: a relaunched session
-        // is a fresh instruction that may be stuck in its own right.
-        let done = self
-            .unstarted
-            .get(&session.id)
-            .filter(|(l, _)| *l == launched)
-            .map(|(_, step)| *step);
-
-        if silent_secs >= UNSTARTED_FLAG_SECS && done == Some(Unstarted::EnterPressed) {
-            warn!(session = %session.id, role = %session.role, silent_secs, "the agent never started its turn, flagging for user attention");
-            self.store
-                .set_session_attention(&session.id, AttentionReason::Stalled)
-                .await?;
-            self.unstarted
-                .insert(session.id.clone(), (launched, Unstarted::Flagged));
-            return Ok(());
-        }
-        if done.is_none() {
-            info!(session = %session.id, role = %session.role, silent_secs, "no turn since the launch, pressing Enter into the pane");
-            // Spent whether or not tmux took it, exactly as the nudge is: a
-            // pane that refused the keystroke this pass will refuse the next.
-            self.unstarted
-                .insert(session.id.clone(), (launched, Unstarted::EnterPressed));
-            self.launcher.tmux.send_enter(&session.tmux_session).await?;
-        }
-        Ok(())
     }
 
     /// Take a posted message to whoever it addresses.
@@ -1584,11 +1436,13 @@ impl Scheduler {
                     info!(message = %message_id, session = %report.session_id, "the addressed agent has the message");
                     self.attempts.remove(message_id);
                     self.delivered.insert(message_id.clone());
-                    // This agent has just been told what to do: the idle
+                    // This agent has just been told what to do: the quiet
                     // clock starts again here and the nudge that may have
                     // been spent comes back, so that nothing tells it to get
                     // on with what it was asked to do a moment ago.
-                    self.nudged.remove(&report.session_id);
+                    if let Some(done) = self.quiet.get_mut(&report.session_id) {
+                        done.nudged = false;
+                    }
                     self.delivered_at
                         .insert(report.session_id.clone(), chrono::Utc::now());
                 }
@@ -1621,7 +1475,9 @@ impl Scheduler {
                 // Nothing was typed, so the nudge is unspent rather than
                 // lost: the next pass over this session sends it again.
                 None => {
-                    self.nudged.remove(&report.session_id);
+                    if let Some(done) = self.quiet.get_mut(&report.session_id) {
+                        done.nudged = false;
+                    }
                 }
             },
         }

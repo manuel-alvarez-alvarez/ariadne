@@ -53,16 +53,6 @@ pub struct FileConfig {
     pub delete_merged_worktrees: Option<bool>,
     /// Keep the machine awake while agent sessions are live (default true).
     pub prevent_sleep: Option<bool>,
-    /// How long a running agent may report nothing before it is raised for
-    /// the user, in seconds (default 1200). A turn that has stopped saying
-    /// anything is measured from the last thing the agent reported, so a long
-    /// tool call is not a stall — nothing being reported at all is.
-    pub running_quiet_flag_secs: Option<u64>,
-    /// How long a running agent may report nothing before its pane is killed
-    /// and the same session relaunched, in seconds (default 2700). Longer
-    /// than `running_quiet_flag_secs`: the flag comes first, and the relaunch
-    /// is what happens when nobody acted on it.
-    pub running_quiet_resume_secs: Option<u64>,
 }
 
 /// Why `<home>/config.toml` could not be read as configuration.

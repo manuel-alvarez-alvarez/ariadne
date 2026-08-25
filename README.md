@@ -338,14 +338,14 @@ delete_merged_branches = true      # only applies when worktrees are deleted too
 prevent_sleep = true               # hold a system sleep inhibition while any agent
                                    # session is live, so the box does not idle-sleep
                                    # out from under a working agent (default)
-running_quiet_flag_secs = 1200     # how long an agent may be mid-turn without
-                                   # reporting anything before it is raised for you
-                                   # (default); what it measures is silence, not how
-                                   # long the turn takes
-running_quiet_resume_secs = 2700   # and how long before its pane is killed and the
-                                   # same session put back on the conversation it was
-                                   # having (default)
 ```
+
+The file is read strictly — an unknown key stops the daemon rather than being
+ignored — so a `config.toml` naming `running_quiet_flag_secs` or
+`running_quiet_resume_secs` has to drop them: the watchdog that reads how long
+a session has reported nothing is on one timeline of its own (a nudge at five
+minutes, the flag at fifteen, a relaunch at forty-five) and no longer takes
+either key.
 
 `ARIADNE_HOME` moves the whole home directory: daemon and CLI alike resolve
 the socket from it (`--home` > `ARIADNE_HOME` > `~/.ariadne`, then that home's

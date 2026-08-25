@@ -222,10 +222,10 @@ Apply them on the same branch and commit, then `request_review` again, answering
 ///
 /// Waiting on a published request happens inside this session, in a poll and
 /// sleep loop, and the sleep is capped at five minutes for the daemon's sake:
-/// `running_quiet_flag_secs` (1200 s) flags a session that has reported
-/// nothing as stalled and the relaunch follows at 2700 s, while every poll
-/// counts as activity. A `sleep 300` between polls keeps the session plainly
-/// alive; a `sleep 1800` would have it killed and restarted mid-wait.
+/// a session that has reported nothing for 900 s is flagged as stalled and the
+/// relaunch follows at 2700 s, while every poll counts as activity. A
+/// `sleep 300` between polls keeps the session plainly alive; a `sleep 1800`
+/// would have it killed and restarted mid-wait.
 const LANDING_INSTRUCTIONS: &str = r#"# Land task: {task_title}
 
 Your task is approved. Your worktree is on {branch}, and it lands on {base_branch} in {repo_path}. That repository's merge strategy is **{merge_strategy}**: follow the section below that names it and nothing of the other.
@@ -255,7 +255,7 @@ The remote's URL says which forge it is and which CLI drives it: github.com take
 4. Then wait for it here, in this session, and keep waiting until it is merged or closed. Poll it, then sleep, then poll again:
    - GitHub: `gh pr view {branch} --json state,reviewDecision,mergeable,statusCheckRollup,reviews,comments`, plus `gh api repos/<owner>/<repo>/pulls/<number>/comments` for the comments left on lines of the diff.
    - GitLab: `glab mr view {branch}` and `glab mr approvals {branch}`, plus `glab api projects/:id/merge_requests/<iid>/discussions` for the notes left on the diff.
-   - Between two polls, `sleep 300` — five minutes, and never more in one call. Ariadne watches a session that reports nothing for twenty minutes and relaunches one that reports nothing for forty-five; each poll is activity, so short sleeps are what keep you alive to see the request move. Sleep, poll, repeat: do not end your turn while the request is open.
+   - Between two polls, `sleep 300` — five minutes, and never more in one call. Ariadne watches a session that reports nothing for fifteen minutes and relaunches one that reports nothing for forty-five; each poll is activity, so short sleeps are what keep you alive to see the request move. Sleep, poll, repeat: do not end your turn while the request is open.
 5. Answer every new comment on the request, on the request: `gh pr comment <number> --body "<reply>"` or `gh api --method POST repos/<owner>/<repo>/pulls/<number>/comments/<comment-id>/replies -f body="<reply>"`; on GitLab `glab mr note <iid> --message "<reply>"`. Say what you changed, or why the code stays as it is.
 6. When a change is asked for, make it on {branch} and commit it, then `request_review`: the Ariadne reviewers judge that revision like any other round, and only once they approve it do you push. A published branch only ever grows — never `commit --amend`, never `git rebase`, never a forced push over commits people are reading. Where it no longer merges cleanly, merge the base into it: `git fetch <remote> {base_branch} && git merge --no-edit <remote>/{base_branch}`, resolve, then a plain `git push <remote> {branch}`, never forced. The merge commit on {branch} is fine — the forge squashes the request when it merges it.
 7. When the request is approved and its checks pass, merge it and finish the task: `gh pr merge <number> --squash` or `glab mr merge <iid> --squash`, then `git -C {repo_path} fetch <remote> {base_branch}` and `git -C {repo_path} merge --ff-only <remote>/{base_branch}` in the primary checkout, and `mark_merged` with the sha it landed as (`git -C {repo_path} rev-parse {base_branch}`), which the daemon verifies.
