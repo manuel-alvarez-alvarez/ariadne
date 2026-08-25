@@ -34,6 +34,40 @@ pub fn print_json<T: Serialize>(value: &T) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// What a command answers with: the daemon's own payload for a script, or
+/// `table` for a person.
+///
+/// Nearly every command is this shape — fetch, then render one way or the
+/// other — and writing the `match` out each time is how the two halves drift.
+pub fn print<T: Serialize>(format: Format, payload: &T, table: impl FnOnce()) -> anyhow::Result<()> {
+    match format {
+        Format::Json => print_json(payload),
+        Format::Table => {
+            table();
+            Ok(())
+        }
+    }
+}
+
+/// A listing: the payload as json, an aligned table otherwise — with `empty`
+/// said to the terminal when no row came back, since an empty table on its own
+/// does not say whether that is a filter or an empty system.
+pub fn print_list<T: Serialize>(
+    format: Format,
+    items: &[T],
+    columns: &[Column],
+    no_trunc: bool,
+    row: impl Fn(&T) -> Vec<String>,
+    empty: &str,
+) -> anyhow::Result<()> {
+    print(format, &items, || {
+        print_table(columns, &items.iter().map(row).collect::<Vec<_>>(), no_trunc);
+        if items.is_empty() && !empty.is_empty() {
+            note(empty);
+        }
+    })
+}
+
 /// Print rows as an aligned table with an uppercase header.
 pub fn print_table(columns: &[Column], rows: &[Vec<String>], no_trunc: bool) {
     for line in table_lines(columns, rows, no_trunc) {
@@ -100,6 +134,24 @@ pub fn print_kv(pairs: &[(&str, String)]) {
     }
 }
 
+/// An optional cell: the value, or a dash where there is none.
+pub fn dash(value: Option<&str>) -> String {
+    value.unwrap_or("-").to_string()
+}
+
+/// An optional timestamp, in local time, or a dash.
+pub fn at(rfc3339: Option<&str>) -> String {
+    rfc3339.map_or_else(|| "-".to_string(), local_time)
+}
+
+/// A flag as a cell: `yes`, or `no_word` — `-` in a table, `no` in a block.
+pub fn yes_no(flag: bool, no_word: &str) -> String {
+    match flag {
+        true => "yes".into(),
+        false => no_word.into(),
+    }
+}
+
 /// A word to the person at the terminal — "no tasks yet", "aborted" — never
 /// part of the output a script is reading. Always stderr, so `ls | wc -l`
 /// counts rows and nothing else.
@@ -153,22 +205,15 @@ mod tests {
         vec![id.into(), title.into(), status.into()]
     }
 
-    #[test]
-    fn a_long_cell_is_cut_to_the_cap_with_an_ellipsis() {
-        assert_eq!(fit("a title far too long to fit", 10), "a title f…");
-        assert_eq!(fit("a title f", 10), "a title f");
-    }
-
-    /// Cutting on bytes would both cut an accented title short and risk
+    /// One line, at most `cap` characters — counted in characters, since
+    /// cutting on bytes would both cut an accented title short and risk
     /// splitting a character in half.
     #[test]
-    fn a_cell_is_cut_by_characters_not_bytes() {
+    fn a_cell_is_flattened_to_one_line_and_cut_to_its_cap() {
+        assert_eq!(fit("a title far too long to fit", 10), "a title f…");
+        assert_eq!(fit("a title f", 10), "a title f");
         assert_eq!(fit("ááááááááá", 10), "ááááááááá");
         assert_eq!(fit("ááááááááááá", 10), "ááááááááá…");
-    }
-
-    #[test]
-    fn a_multiline_cell_stays_on_one_line() {
         assert_eq!(fit("first\nsecond", UNCAPPED), "first second");
     }
 

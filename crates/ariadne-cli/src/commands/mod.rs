@@ -5,6 +5,8 @@ pub mod agent_event;
 pub mod attach;
 pub mod attention;
 pub mod doctor;
+#[cfg(test)]
+pub mod fixtures;
 pub mod goal;
 pub mod mcp;
 pub mod profile;
@@ -15,7 +17,7 @@ pub mod spawn;
 pub mod task;
 
 use std::io::{IsTerminal, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -25,34 +27,32 @@ use serde_json::json;
 use ariadne_api::messages::{MessageDto, MessageRecipientDto};
 use ariadne_api::profiles::ProfileDto;
 use ariadne_client::{Client, endpoint};
-use ariadne_core::{AgentKind, RecipientKind};
+use ariadne_core::{AgentKind, RecipientKind, probe};
 
-use crate::output::{Format, local_time, print_json};
+use crate::output::{Format, local_time, note, print};
 
 /// `ariadne version` — client version always, daemon version when reachable.
+///
+/// A daemon that did not answer is not a failure of `version` itself, so it
+/// stays on stdout — but it is still a line a person reads, so no "client
+/// error (Connect)" in it.
 pub async fn version(client: &Client, format: Format) -> Result<()> {
     let daemon = client.version().await;
-    match format {
-        Format::Json => print_json(&json!({
-            "client": {"name": "ariadne", "version": env!("CARGO_PKG_VERSION")},
-            "daemon": match &daemon {
-                Ok(v) => json!({"name": v.name, "version": v.version}),
-                Err(e) => json!({"error": e.human()}),
-            },
-            "endpoint": client.endpoint(),
-        }))?,
-        Format::Table => {
-            println!("client:  ariadne {}", env!("CARGO_PKG_VERSION"));
-            match daemon {
-                Ok(v) => println!("daemon:  {} {}", v.name, v.version),
-                // Not a failure of `version` itself, so it stays on stdout —
-                // but it is still a line a person reads, so no "client error
-                // (Connect)" in it.
-                Err(e) => println!("daemon:  {}", e.human()),
-            }
+    let payload = json!({
+        "client": {"name": "ariadne", "version": env!("CARGO_PKG_VERSION")},
+        "daemon": match &daemon {
+            Ok(v) => json!({"name": v.name, "version": v.version}),
+            Err(e) => json!({"error": e.human()}),
+        },
+        "endpoint": client.endpoint(),
+    });
+    print(format, &payload, || {
+        println!("client:  ariadne {}", env!("CARGO_PKG_VERSION"));
+        match daemon {
+            Ok(v) => println!("daemon:  {} {}", v.name, v.version),
+            Err(e) => println!("daemon:  {}", e.human()),
         }
-    }
-    Ok(())
+    })
 }
 
 /// `ariadne daemon status`
@@ -61,38 +61,31 @@ pub async fn version(client: &Client, format: Format) -> Result<()> {
 /// on top of "cannot reach the ariadne daemon at X" said the endpoint twice.
 pub async fn daemon_status(client: &Client, format: Format) -> Result<()> {
     let h = client.health().await?;
-    match format {
-        Format::Json => print_json(&json!({
-            "status": h.status,
-            "uptime_secs": h.uptime_secs,
-            "endpoint": client.endpoint(),
-        }))?,
-        Format::Table => {
-            println!("status:  {}", h.status);
-            println!("uptime:  {}s", h.uptime_secs);
-            println!("socket:  {}", client.endpoint());
-        }
-    }
-    Ok(())
+    let payload = json!({
+        "status": h.status,
+        "uptime_secs": h.uptime_secs,
+        "endpoint": client.endpoint(),
+    });
+    print(format, &payload, || {
+        println!("status:  {}", h.status);
+        println!("uptime:  {}s", h.uptime_secs);
+        println!("socket:  {}", client.endpoint());
+    })
 }
 
 /// `ariadne daemon start` — spawn ariadned detached and wait for it to answer.
 ///
 /// Builds its own client for `home` rather than taking the caller's: the
 /// daemon it spawns listens on that home's socket, and `--endpoint` /
-/// `ARIADNE_SOCKET` — which are never passed to ariadned — would send both the
+/// `ARIADNE_SOCKET` — never passed to ariadned — would send both the
 /// already-running check and the readiness poll at a different daemon.
 pub async fn daemon_start(home: Option<PathBuf>, format: Format) -> Result<()> {
     let client = Client::for_home(home.clone());
     if client.health().await.is_ok() {
-        match format {
-            Format::Json => print_json(&json!({
-                "started": false,
-                "endpoint": client.endpoint(),
-            }))?,
-            Format::Table => println!("daemon already running at {}", client.endpoint()),
-        }
-        return Ok(());
+        let payload = json!({"started": false, "endpoint": client.endpoint()});
+        return print(format, &payload, || {
+            println!("daemon already running at {}", client.endpoint())
+        });
     }
 
     let binary = find_ariadned()?;
@@ -119,15 +112,11 @@ pub async fn daemon_start(home: Option<PathBuf>, format: Format) -> Result<()> {
     for _ in 0..50 {
         tokio::time::sleep(Duration::from_millis(100)).await;
         if client.health().await.is_ok() {
-            match format {
-                Format::Json => print_json(&json!({
-                    "started": true,
-                    "pid": child.id(),
-                    "endpoint": client.endpoint(),
-                }))?,
-                Format::Table => println!("ariadned started (pid {})", child.id()),
-            }
-            return Ok(());
+            let payload =
+                json!({"started": true, "pid": child.id(), "endpoint": client.endpoint()});
+            return print(format, &payload, || {
+                println!("ariadned started (pid {})", child.id())
+            });
         }
     }
     bail!(
@@ -160,11 +149,9 @@ pub fn daemon_stop(format: Format) -> Result<()> {
             pid_file.display()
         );
     }
-    match format {
-        Format::Json => print_json(&json!({"signalled": "SIGTERM", "pid": pid}))?,
-        Format::Table => println!("sent SIGTERM to ariadned (pid {pid})"),
-    }
-    Ok(())
+    print(format, &json!({"signalled": "SIGTERM", "pid": pid}), || {
+        println!("sent SIGTERM to ariadned (pid {pid})")
+    })
 }
 
 /// `ariadne daemon logs [-f]` — show the daemon log via tail.
@@ -240,16 +227,29 @@ pub fn message_line(message: &MessageDto) -> String {
     )
 }
 
+/// A conversation as `goal messages` and `task messages` print it: the
+/// daemon's own list for a script, one line per message for a person.
+pub fn print_messages(messages: &[MessageDto], format: Format) -> Result<()> {
+    print(format, &messages, || {
+        for message in messages {
+            println!("{}", message_line(message));
+        }
+        if messages.is_empty() {
+            note("no messages yet");
+        }
+    })
+}
+
 /// Profile ids paired with the names they are known by.
 ///
 /// Profiles are name-addressable everywhere else in the CLI, so an inspect
 /// block that prints a bare ULID names nobody.
+#[derive(Default)]
 pub struct ProfileNames(std::collections::HashMap<String, String>);
 
 impl ProfileNames {
     /// One list call for the whole block. A name is a courtesy: a daemon that
-    /// will not answer this leaves the ids bare rather than failing the
-    /// inspect that asked for them.
+    /// will not answer leaves the ids bare rather than failing the inspect.
     pub async fn fetch(client: &Client) -> Self {
         let profiles: Vec<ProfileDto> = client.get_json("/v1/profiles").await.unwrap_or_default();
         Self(profiles.into_iter().map(|p| (p.id, p.name)).collect())
@@ -263,6 +263,15 @@ impl ProfileNames {
         Self(pairs.into_iter().collect())
     }
 
+    /// The names for a block that is about to be rendered, or nothing to look
+    /// up: `--format json` prints the daemon's payload, where ids are ids.
+    pub async fn for_format(client: &Client, format: Format) -> Self {
+        match format {
+            Format::Table => Self::fetch(client).await,
+            Format::Json => Self::default(),
+        }
+    }
+
     /// `Name (id)`, or the bare id when no profile answers to it.
     pub fn label(&self, id: &str) -> String {
         match self.0.get(id) {
@@ -274,12 +283,10 @@ impl ProfileNames {
     /// `Name (id) · agent · model`: the mention, plus what the agent behind it
     /// is pinned to run on.
     ///
-    /// A profile is editable and a pin is not, so the two answers drift: what
-    /// a task's engineer, a task's reviewer or a goal's planner runs on is the
-    /// snapshot taken when it was assigned, not what the profile says today.
-    /// No agent kind pinned means auto — the first installed CLI, resolved at
-    /// spawn time — and no model means that CLI's own default, the same two
-    /// words `profile inspect` and the web use.
+    /// A profile is editable and a pin is not, so the two drift: what a task's
+    /// engineer, a task's reviewer or a goal's planner runs on is the snapshot
+    /// taken when it was assigned, not what the profile says today. `auto` and
+    /// `default` are the same two words `profile inspect` and the web use.
     pub fn pinned_label(&self, id: &str, agent: Option<AgentKind>, model: Option<&str>) -> String {
         format!(
             "{} · {} · {}",
@@ -301,44 +308,66 @@ pub fn find_ariadned() -> Result<PathBuf> {
         && let Some(dir) = me.parent()
     {
         let sibling = dir.join("ariadned");
-        if is_executable(&sibling) {
+        if probe::is_executable(&sibling) {
             return Ok(sibling);
         }
     }
-    which("ariadned").context("ariadned not found next to ariadne or on PATH")
+    on_path("ariadned").context("ariadned not found next to ariadne or on PATH")
 }
 
-/// First entry of `PATH` holding an executable of that name.
-pub fn which(name: &str) -> Option<PathBuf> {
-    which_in(&std::env::var_os("PATH")?, name)
-}
-
-/// The same lookup against a given `PATH`, so it can be tested without
-/// rewriting the environment of the process running the tests.
-fn which_in(path: &std::ffi::OsStr, name: &str) -> Option<PathBuf> {
-    std::env::split_paths(path)
-        .map(|dir| dir.join(name))
-        .find(|candidate| is_executable(candidate))
-}
-
-/// A file that can actually be run.
+/// A runnable binary of that name on *this shell's* `PATH`.
 ///
-/// Presence is not enough: a `codex` on PATH with no execute bit is a file,
-/// not an agent, and every caller here is about to run what it finds — or,
-/// in `ariadne doctor`, to report that something else can.
-fn is_executable(path: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    // Follows symlinks on purpose: what matters is what running it reaches.
-    std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+/// [`ariadne_core::probe`] takes the `PATH` as a parameter because the daemon's
+/// is not this one; everything on this side of the wire means the environment's.
+pub fn on_path(name: &str) -> Option<PathBuf> {
+    probe::which(&std::env::var_os("PATH")?, name)
+}
+
+/// Append `query` to `base` as a URL-encoded query string. Filters that are
+/// `None` are omitted; when nothing remains, `base` is returned untouched
+/// (no stray `?`).
+pub fn query_path(base: &str, query: &impl serde::Serialize) -> Result<String> {
+    let qs = serde_urlencoded::to_string(query)?;
+    Ok(match qs.is_empty() {
+        true => base.to_string(),
+        false => format!("{base}?{qs}"),
+    })
+}
+
+/// One caller-typed value as a single path segment.
+///
+/// Profiles answer to their name as well as their id, and a name is free text
+/// — a profile named `My Reviewer` has a space in it, and a space is not a
+/// character a URI may carry: `ariadne profile inspect "My Reviewer"` used
+/// to reach the client with it raw and panic on the URI it could not build.
+/// Everything outside the unreserved set (RFC 3986 §2.3) is escaped rather
+/// than only what is known to hurt, and `/` with it: the value is one
+/// whole segment, so a slash inside it is data, never structure.
+pub fn path_segment(value: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(byte as char);
+            }
+            _ => {
+                out.push('%');
+                out.push(HEX[(byte >> 4) as usize] as char);
+                out.push(HEX[(byte & 0xf) as usize] as char);
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use std::os::unix::fs::PermissionsExt;
-
-    use ariadne_core::AuthorRole;
+    use ariadne_api::sessions::SessionListQuery;
+    use ariadne_api::tasks::TaskListQuery;
+    use ariadne_core::{AuthorRole, SessionStatus, TaskStatus};
 
     fn message(recipient: Option<MessageRecipientDto>) -> MessageDto {
         MessageDto {
@@ -362,12 +391,17 @@ mod tests {
     }
 
     /// The addressee reads as the word that would have addressed it, so what a
-    /// listing shows is what `--to` takes.
+    /// listing shows is what `--to` takes — and a profile that is gone leaves
+    /// its id, which still names somebody.
     #[test]
     fn a_recipient_reads_as_the_name_that_addresses_it() {
         assert_eq!(
             recipient_label(&profile_recipient(Some("01PROF"), Some("Reviewer"))),
             "Reviewer"
+        );
+        assert_eq!(
+            recipient_label(&profile_recipient(Some("01PROF"), None)),
+            "01PROF"
         );
         assert_eq!(
             recipient_label(&MessageRecipientDto {
@@ -376,15 +410,6 @@ mod tests {
                 profile_name: None,
             }),
             "user"
-        );
-    }
-
-    /// A profile that is gone leaves no name, and the id still names somebody.
-    #[test]
-    fn a_nameless_profile_falls_back_to_its_id() {
-        assert_eq!(
-            recipient_label(&profile_recipient(Some("01PROF"), None)),
-            "01PROF"
         );
     }
 
@@ -405,45 +430,55 @@ mod tests {
         );
     }
 
-    fn write(path: &Path, mode: u32) {
-        std::fs::write(path, "").unwrap();
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+    /// `-y` answers for the caller: nothing is read, and nothing blocks.
+    #[test]
+    fn yes_skips_the_confirmation() {
+        assert!(confirm("Delete it?", true).is_ok());
     }
 
-    /// `which` answers for callers that are about to run what it finds, so a
-    /// file without an execute bit is not an answer.
+    /// Filters that were not given leave no trace, and the ones that were are
+    /// URL-encoded in the daemon's own spelling.
     #[test]
-    fn a_file_with_no_execute_bit_is_not_executable() {
-        let dir = tempfile::tempdir().unwrap();
-        let plain = dir.path().join("codex");
-        write(&plain, 0o644);
-        assert!(!is_executable(&plain));
-        std::fs::set_permissions(&plain, std::fs::Permissions::from_mode(0o755)).unwrap();
-        assert!(is_executable(&plain));
+    fn a_query_carries_only_the_filters_that_were_given() {
+        assert_eq!(
+            query_path("/v1/tasks", &TaskListQuery::default()).unwrap(),
+            "/v1/tasks"
+        );
+        assert_eq!(
+            query_path(
+                "/v1/tasks",
+                &TaskListQuery {
+                    goal: Some("a b&c".into()),
+                    status: Some(TaskStatus::UnderReview),
+                }
+            )
+            .unwrap(),
+            "/v1/tasks?goal=a+b%26c&status=under_review"
+        );
+        assert_eq!(
+            query_path(
+                "/v1/sessions",
+                &SessionListQuery {
+                    status: Some(SessionStatus::Failed),
+                    ..SessionListQuery::default()
+                }
+            )
+            .unwrap(),
+            "/v1/sessions?status=failed"
+        );
     }
 
+    /// Ids pass through untouched; a name — free text, which is what made
+    /// this necessary — is escaped whole, so nothing in it reads as structure.
     #[test]
-    fn a_directory_is_never_executable() {
-        let dir = tempfile::tempdir().unwrap();
-        let named = dir.path().join("ariadned");
-        std::fs::create_dir(&named).unwrap();
-        assert!(!is_executable(&named));
-    }
-
-    /// PATH order stands, but a non-executable entry is skipped rather than
-    /// shadowing the real thing further along.
-    #[test]
-    fn a_non_executable_entry_does_not_shadow_a_later_one() {
-        let dir = tempfile::tempdir().unwrap();
-        let (first, second) = (dir.path().join("a"), dir.path().join("b"));
-        std::fs::create_dir_all(&first).unwrap();
-        std::fs::create_dir_all(&second).unwrap();
-        write(&first.join("codex"), 0o644);
-        write(&second.join("codex"), 0o755);
-
-        let path = std::env::join_paths([&first, &second]).unwrap();
-        assert_eq!(which_in(&path, "codex"), Some(second.join("codex")));
-        let only_first = std::env::join_paths([&first]).unwrap();
-        assert_eq!(which_in(&only_first, "codex"), None);
+    fn a_path_segment_escapes_everything_that_is_not_unreserved() {
+        assert_eq!(
+            path_segment("01M0R9EPJK7QYAGYCN31E8EF58"),
+            "01M0R9EPJK7QYAGYCN31E8EF58"
+        );
+        assert_eq!(path_segment("My Reviewer"), "My%20Reviewer");
+        assert_eq!(path_segment("../goals/01G"), "..%2Fgoals%2F01G");
+        assert_eq!(path_segment("a?b#c"), "a%3Fb%23c");
+        assert_eq!(path_segment("Revisor Estrícto"), "Revisor%20Estr%C3%ADcto");
     }
 }

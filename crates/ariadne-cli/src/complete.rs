@@ -1,9 +1,9 @@
 //! Dynamic shell-completion candidates.
 //!
-//! Invoked by the completion shim (`COMPLETE=zsh ariadne`) on TAB: each
-//! function queries the daemon and returns live candidates with a
-//! description column (title/status/role). Fail-safe: a dead daemon just
-//! yields no candidates, never an error in the user's shell.
+//! Invoked by the completion shim (`COMPLETE=zsh ariadne`) on TAB. Fail-safe
+//! throughout: a daemon that is down or slow leaves the shell with no
+//! candidates, never an error — and no runtime exists yet, so every lookup
+//! blocks on one of its own.
 
 use std::ffi::OsStr;
 use std::time::Duration;
@@ -11,21 +11,12 @@ use std::time::Duration;
 use clap_complete::engine::{CompletionCandidate, PathCompleter, ValueCompleter};
 
 use ariadne_client::Client;
+use ariadne_core::AgentKind;
 
 /// Completion must be snappy: local unix socket, hard budget.
 const BUDGET: Duration = Duration::from_millis(800);
 
-/// Fetch a JSON list from the daemon, blocking (no runtime exists yet:
-/// completion is handled before the CLI enters tokio).
-fn fetch(path: &str) -> Vec<serde_json::Value> {
-    match fetch_value(path) {
-        Some(serde_json::Value::Array(items)) => items,
-        _ => Vec::new(),
-    }
-}
-
-/// One JSON document from the daemon, blocking, or nothing at all: a daemon
-/// that is down or slow leaves the shell with no candidates, never an error.
+/// One JSON document from the daemon, or nothing at all.
 fn fetch_value(path: &str) -> Option<serde_json::Value> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -45,6 +36,14 @@ fn fetch_value(path: &str) -> Option<serde_json::Value> {
     })
 }
 
+/// A JSON list from the daemon; anything else is no candidates.
+fn fetch(path: &str) -> Vec<serde_json::Value> {
+    match fetch_value(path) {
+        Some(serde_json::Value::Array(items)) => items,
+        _ => Vec::new(),
+    }
+}
+
 fn s<'a>(v: &'a serde_json::Value, key: &str) -> &'a str {
     v.get(key).and_then(|x| x.as_str()).unwrap_or("")
 }
@@ -53,68 +52,46 @@ fn candidate(value: &str, help: String) -> CompletionCandidate {
     CompletionCandidate::new(value).help(Some(help.into()))
 }
 
-fn task_candidates() -> Vec<CompletionCandidate> {
-    fetch("/v1/tasks")
+/// Every row of `path` as a candidate on its id, described by `help`.
+fn by_id(path: &str, help: impl Fn(&serde_json::Value) -> String) -> Vec<CompletionCandidate> {
+    fetch(path)
         .iter()
-        .map(|t| {
-            candidate(
-                s(t, "id"),
-                format!("[{}] {}", s(t, "status"), s(t, "title")),
-            )
-        })
-        .collect()
-}
-
-fn goal_candidates() -> Vec<CompletionCandidate> {
-    fetch("/v1/goals")
-        .iter()
-        .map(|g| {
-            candidate(
-                s(g, "id"),
-                format!("[{}] {}", s(g, "status"), s(g, "title")),
-            )
-        })
+        .map(|row| candidate(s(row, "id"), help(row)))
         .collect()
 }
 
 /// Task ids (task subcommands).
 pub fn task_ids() -> Vec<CompletionCandidate> {
-    task_candidates()
+    by_id("/v1/tasks", |t| {
+        format!("[{}] {}", s(t, "status"), s(t, "title"))
+    })
 }
 
 /// Goal ids (goal subcommands and --goal filters).
 pub fn goal_ids() -> Vec<CompletionCandidate> {
-    goal_candidates()
-}
-
-/// Session, task and goal ids (top-level `ariadne attach`).
-pub fn attach_ids() -> Vec<CompletionCandidate> {
-    let mut out = task_candidates();
-    out.extend(goal_candidates());
-    out.extend(session_candidates());
-    out
-}
-
-fn session_candidates() -> Vec<CompletionCandidate> {
-    fetch("/v1/sessions")
-        .iter()
-        .map(|x| {
-            candidate(
-                s(x, "id"),
-                format!(
-                    "[{}] {} {}",
-                    s(x, "status"),
-                    s(x, "role"),
-                    s(x, "agent_kind")
-                ),
-            )
-        })
-        .collect()
+    by_id("/v1/goals", |g| {
+        format!("[{}] {}", s(g, "status"), s(g, "title"))
+    })
 }
 
 /// Session ids (session subcommands).
 pub fn session_ids() -> Vec<CompletionCandidate> {
-    session_candidates()
+    by_id("/v1/sessions", |x| {
+        format!(
+            "[{}] {} {}",
+            s(x, "status"),
+            s(x, "role"),
+            s(x, "agent_kind")
+        )
+    })
+}
+
+/// Session, task and goal ids (top-level `ariadne attach`).
+pub fn attach_ids() -> Vec<CompletionCandidate> {
+    let mut out = task_ids();
+    out.extend(goal_ids());
+    out.extend(session_ids());
+    out
 }
 
 fn profiles(role: Option<&str>) -> Vec<CompletionCandidate> {
@@ -182,16 +159,14 @@ pub fn repo_ids() -> Vec<CompletionCandidate> {
 /// Only that goal's repositories are candidates, so the id has to come off the
 /// command line the same way `--model` reads `--agent` from it.
 pub fn goal_repositories() -> Vec<CompletionCandidate> {
-    let Some(goal) = goal_on_the_line() else {
+    let Some(goal) = ulid_after("create") else {
         return Vec::new();
     };
-    let Some(goal) = fetch_value(&format!("/v1/goals/{goal}")) else {
-        return Vec::new();
-    };
-    let Some(repos) = goal.get("repos").and_then(|r| r.as_array()) else {
-        return Vec::new();
-    };
-    repos.iter().map(repository).collect()
+    fetch_value(&format!("/v1/goals/{goal}"))
+        .as_ref()
+        .and_then(|g| g.get("repos")?.as_array())
+        .map(|repos| repos.iter().map(repository).collect())
+        .unwrap_or_default()
 }
 
 /// One repository as a candidate: the id, described by the checkout it stands
@@ -205,12 +180,12 @@ fn repository(r: &serde_json::Value) -> CompletionCandidate {
     candidate(s(r, "id"), help)
 }
 
-/// The goal id typed on a `task create` line: its first ULID-shaped word,
-/// which is how ids of every kind are spelled here. Flags and their values
-/// cannot be told apart without the parser, and none of them look like this.
-fn goal_on_the_line() -> Option<String> {
+/// The first ULID-shaped word after `verb` on the line being completed, which
+/// is how ids of every kind are spelled here. Flags and their values cannot be
+/// told apart without the parser, and none of them look like this.
+fn ulid_after(verb: &str) -> Option<String> {
     let words: Vec<String> = std::env::args().collect();
-    let i = words.iter().position(|w| w == "create")?;
+    let i = words.iter().position(|w| w == verb)?;
     words[i + 1..]
         .iter()
         .find(|w| w.len() == 26 && w.chars().all(|c| c.is_ascii_alphanumeric()))
@@ -219,10 +194,19 @@ fn goal_on_the_line() -> Option<String> {
 
 /// Agent kinds for `profile create --agent`.
 pub fn agent_kinds() -> Vec<CompletionCandidate> {
-    ariadne_core::AgentKind::ALL
+    AgentKind::ALL
         .into_iter()
         .map(|kind| CompletionCandidate::new(kind.as_str()))
         .collect()
+}
+
+/// Agent kinds plus "auto" for `profile update --agent`.
+pub fn agent_kinds_or_auto() -> Vec<CompletionCandidate> {
+    let mut out = agent_kinds();
+    out.push(
+        CompletionCandidate::new("auto").help(Some("first installed CLI at spawn time".into())),
+    );
+    out
 }
 
 /// Prompt kinds for `profile prompt get|set|reset`, plus "system".
@@ -283,35 +267,25 @@ fn assignment_kinds(current: &str) -> Vec<CompletionCandidate> {
         .collect()
 }
 
-/// Agent kinds plus "auto" for `profile update --agent`.
-pub fn agent_kinds_or_auto() -> Vec<CompletionCandidate> {
-    let mut out = agent_kinds();
-    out.push(
-        CompletionCandidate::new("auto").help(Some("first installed CLI at spawn time".into())),
-    );
-    out
-}
-
 /// Model candidates for `--model`, scoped to the agent in play: an explicit
 /// `--agent` earlier on the line wins; otherwise, when updating an existing
 /// profile, its stored agent kind; otherwise the union of all agents.
 ///
 /// The catalog comes from the daemon (`GET /v1/models`, the list the UI
-/// offers, opencode discovery included) when it answers within the budget;
-/// a daemon that is down or slow leaves the compiled-in curated lists.
+/// offers, opencode discovery included) when it answers within the budget; a
+/// daemon that is down or slow leaves the compiled-in curated lists, and
+/// opencode's own `opencode models` for the one agent that lists them itself.
 pub fn models() -> Vec<CompletionCandidate> {
-    use ariadne_core::AgentKind;
     let hint = agent_hint();
     if let Some(from_daemon) = daemon_models(hint) {
         return from_daemon;
     }
     match hint {
-        Some(AgentKind::ClaudeCode) => claude_models(),
-        Some(AgentKind::Codex) => codex_models(),
         Some(AgentKind::Opencode) => opencode_models(),
+        Some(kind) => curated_models(kind),
         None => {
-            let mut out = claude_models();
-            out.extend(codex_models());
+            let mut out = curated_models(AgentKind::ClaudeCode);
+            out.extend(curated_models(AgentKind::Codex));
             out.extend(opencode_models());
             out
         }
@@ -321,14 +295,13 @@ pub fn models() -> Vec<CompletionCandidate> {
 /// The daemon's model catalog, or nothing at all when it will not answer —
 /// telling "no daemon" from "a daemon with no models" so only the former
 /// falls back to the curated lists.
-fn daemon_models(kind: Option<ariadne_core::AgentKind>) -> Option<Vec<CompletionCandidate>> {
+fn daemon_models(kind: Option<AgentKind>) -> Option<Vec<CompletionCandidate>> {
     let path = match kind {
         Some(k) => format!("/v1/models?agent={}", k.as_str()),
         None => "/v1/models".to_string(),
     };
-    let models = match fetch_value(&path)? {
-        serde_json::Value::Array(models) => models,
-        _ => return None,
+    let serde_json::Value::Array(models) = fetch_value(&path)? else {
+        return None;
     };
     Some(
         models
@@ -345,9 +318,9 @@ fn daemon_models(kind: Option<ariadne_core::AgentKind>) -> Option<Vec<Completion
     )
 }
 
-/// The completion request carries the full command line (after `--`):
-/// scan it for context instead of guessing.
-fn agent_hint() -> Option<ariadne_core::AgentKind> {
+/// The completion request carries the full command line (after `--`): scan it
+/// for context instead of guessing.
+fn agent_hint() -> Option<AgentKind> {
     let words: Vec<String> = std::env::args().collect();
     // Explicit --agent on the line.
     if let Some(i) = words.iter().position(|w| w == "--agent")
@@ -359,39 +332,12 @@ fn agent_hint() -> Option<ariadne_core::AgentKind> {
     // `profile update <name>`: the profile's stored agent kind.
     let i = words.iter().position(|w| w == "update")?;
     let name = words.get(i + 1).filter(|w| !w.starts_with('-'))?;
-    let profile = {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .ok()?;
-        rt.block_on(async {
-            let client = Client::from_env();
-            tokio::time::timeout(
-                BUDGET,
-                client.get_json::<serde_json::Value>(&format!(
-                    "/v1/profiles/{}",
-                    crate::query::path_segment(name)
-                )),
-            )
-            .await
-            .ok()?
-            .ok()
-        })?
-    };
-    profile.get("agent_kind")?.as_str()?.parse().ok()
+    let path = format!("/v1/profiles/{}", crate::commands::path_segment(name));
+    fetch_value(&path)?.get("agent_kind")?.as_str()?.parse().ok()
 }
 
-/// Claude Code model catalog (curated in ariadne-core, no discovery).
-fn claude_models() -> Vec<CompletionCandidate> {
-    curated_models(ariadne_core::AgentKind::ClaudeCode)
-}
-
-/// Codex model catalog (curated in ariadne-core, no discovery).
-fn codex_models() -> Vec<CompletionCandidate> {
-    curated_models(ariadne_core::AgentKind::Codex)
-}
-
-fn curated_models(kind: ariadne_core::AgentKind) -> Vec<CompletionCandidate> {
+/// A curated catalog from ariadne-core, for the agents that discover nothing.
+fn curated_models(kind: AgentKind) -> Vec<CompletionCandidate> {
     ariadne_core::models::curated_models(kind)
         .iter()
         .map(|m| candidate(m.id, format!("{} — {}", kind.as_str(), m.description)))
@@ -408,7 +354,7 @@ fn opencode_models() -> Vec<CompletionCandidate> {
     };
     let output = rt.block_on(async {
         tokio::time::timeout(
-            std::time::Duration::from_secs(3),
+            Duration::from_secs(3),
             tokio::process::Command::new("opencode")
                 .arg("models")
                 .kill_on_drop(true)

@@ -7,7 +7,7 @@ use ariadne_api::agents::AgentConfigDto;
 use ariadne_client::Client;
 use ariadne_core::AgentKind;
 
-use crate::output::{Column, Format, UNCAPPED, note, print_json, print_table};
+use crate::output::{Column, Format, UNCAPPED, note, print, print_list};
 
 /// Columns of `agent list`.
 const LS: &[Column] = &[("agent", UNCAPPED), ("flags", 44), ("defaults", 44)];
@@ -102,23 +102,20 @@ pub async fn run(client: &Client, cmd: AgentCommand, format: Format) -> Result<(
     match cmd {
         AgentCommand::List { no_trunc } => {
             let configs: Vec<AgentConfigDto> = client.list_agent_configs().await?;
-            match format {
-                Format::Json => print_json(&configs)?,
-                Format::Table => print_table(
-                    LS,
-                    &configs
-                        .iter()
-                        .map(|c| {
-                            vec![
-                                c.agent_kind.as_str().into(),
-                                flags_cell(&c.extra_flags),
-                                flags_cell(&c.default_flags),
-                            ]
-                        })
-                        .collect::<Vec<_>>(),
-                    no_trunc,
-                ),
-            }
+            print_list(
+                format,
+                &configs,
+                LS,
+                no_trunc,
+                |c| {
+                    vec![
+                        c.agent_kind.as_str().into(),
+                        flags_cell(&c.extra_flags),
+                        flags_cell(&c.default_flags),
+                    ]
+                },
+                "",
+            )?;
         }
         AgentCommand::Update {
             kind,
@@ -134,13 +131,10 @@ pub async fn run(client: &Client, cmd: AgentCommand, format: Format) -> Result<(
                 false => flags,
             };
             let config = client.update_agent_config(kind, extra_flags).await?;
-            match format {
-                Format::Json => print_json(&config)?,
-                Format::Table => {
-                    println!("{}", config.agent_kind.as_str());
-                    note(&format!("flags: {}", flags_cell(&config.extra_flags)));
-                }
-            }
+            print(format, &config, || {
+                println!("{}", config.agent_kind.as_str());
+                note(&format!("flags: {}", flags_cell(&config.extra_flags)));
+            })?;
         }
     }
     Ok(())

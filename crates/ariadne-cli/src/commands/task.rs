@@ -1,24 +1,20 @@
 //! `ariadne task ...`
 
-use anyhow::{Result, bail};
+mod edit;
+
+use anyhow::Result;
 use clap::Subcommand;
 use serde_json::json;
 
-use ariadne_api::goals::GoalDto;
 use ariadne_api::messages::{CreateMessageRequest, MessageDto};
-use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::reviews::ReviewDto;
-use ariadne_api::tasks::{
-    CreateTaskRequest, TaskDto, TaskListQuery, TaskTransitionDto, UpdateTaskRequest,
-};
+use ariadne_api::tasks::{CreateTaskRequest, TaskDto, TaskListQuery, TaskTransitionDto};
 use ariadne_client::Client;
 use ariadne_core::TaskStatus;
 
-use super::{ProfileNames, confirm, message_line};
-use crate::output::{
-    Column, Format, UNCAPPED, local_time, note, print_json, print_kv, print_table,
-};
-use crate::query::query_path;
+use edit::{resolve_repo, update_request};
+use super::{ProfileNames, confirm, print_messages, query_path};
+use crate::output::{Column, Format, UNCAPPED, dash, local_time, note, print, print_kv, print_list, yes_no};
 
 /// Columns of `task ls`. Titles and branches are the long ones: a task whose
 /// title runs to a paragraph would otherwise push status and round off-screen.
@@ -225,10 +221,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                     },
                 )
                 .await?;
-            match format {
-                Format::Json => print_json(&t)?,
-                Format::Table => println!("{}", t.id),
-            }
+            print(format, &t, || println!("{}", t.id))?;
         }
         TaskCommand::Update {
             id,
@@ -239,11 +232,8 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             clear_depends_on,
         } => {
             let body = update_request(title, description, reviewers, depends_on, clear_depends_on)?;
-            let t: TaskDto = client.patch_json(&format!("/v1/tasks/{id}"), &body).await?;
-            match format {
-                Format::Json => print_json(&t)?,
-                Format::Table => println!("updated {}", t.id),
-            }
+            let t: TaskDto = client.patch_json(&task_path(&id), &body).await?;
+            print(format, &t, || println!("updated {}", t.id))?;
         }
         TaskCommand::Ls {
             goal,
@@ -253,100 +243,77 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             let filtered = goal.is_some() || status.is_some();
             let path = query_path("/v1/tasks", &TaskListQuery { goal, status })?;
             let tasks: Vec<TaskDto> = client.get_json(&path).await?;
-            match format {
-                Format::Json => print_json(&tasks)?,
-                Format::Table => {
-                    print_table(LS, &tasks.iter().map(ls_row).collect::<Vec<_>>(), no_trunc);
-                    if tasks.is_empty() {
-                        // An empty list under a filter is not an empty
-                        // system, and saying so would send the reader
-                        // looking for tasks that are right there.
-                        note(if filtered {
-                            "no tasks match that filter"
-                        } else {
-                            "no tasks yet — the planner creates them from a goal"
-                        });
-                    }
-                }
-            }
+            print_list(
+                format,
+                &tasks,
+                LS,
+                no_trunc,
+                ls_row,
+                // An empty list under a filter is not an empty system, and
+                // saying so would send the reader looking for tasks that are
+                // right there.
+                match filtered {
+                    true => "no tasks match that filter",
+                    false => "no tasks yet — the planner creates them from a goal",
+                },
+            )?;
         }
         TaskCommand::Inspect { id } => {
-            let t: TaskDto = client.get_json(&format!("/v1/tasks/{id}")).await?;
-            match format {
-                Format::Json => print_json(&t)?,
-                Format::Table => {
-                    let profiles = ProfileNames::fetch(client).await;
-                    print_kv(&[
-                        ("id", t.id),
-                        ("goal", t.goal_id),
-                        ("title", t.title),
-                        ("status", t.status.as_str().into()),
-                        (
-                            "engineer",
-                            profiles.pinned_label(
-                                &t.engineer_profile_id,
-                                t.agent_kind,
-                                t.model.as_deref(),
-                            ),
+            let t: TaskDto = client.get_json(&task_path(&id)).await?;
+            let profiles = ProfileNames::for_format(client, format).await;
+            print(format, &t, || {
+                print_kv(&[
+                    ("id", t.id.clone()),
+                    ("goal", t.goal_id.clone()),
+                    ("title", t.title.clone()),
+                    ("status", t.status.as_str().into()),
+                    (
+                        "engineer",
+                        profiles.pinned_label(
+                            &t.engineer_profile_id,
+                            t.agent_kind,
+                            t.model.as_deref(),
                         ),
-                        (
-                            "reviewers",
-                            // One reviewer per line: each is now a mention and
-                            // the two facts after it, and the review order is
-                            // what the column reads down.
-                            t.reviewers
-                                .iter()
-                                .map(|r| {
-                                    profiles.pinned_label(
-                                        &r.profile_id,
-                                        r.agent_kind,
-                                        r.model.as_deref(),
-                                    )
-                                })
-                                .collect::<Vec<_>>()
-                                .join("\n             "),
-                        ),
-                        (
-                            "depends_on",
-                            if t.depends_on.is_empty() {
-                                "-".into()
-                            } else {
-                                t.depends_on.join(", ")
-                            },
-                        ),
-                        ("branch", t.branch),
-                        ("worktree", t.worktree_path.unwrap_or_else(|| "-".into())),
-                        ("round", t.review_round.to_string()),
-                        (
-                            "stalled",
-                            if t.stalled { "yes".into() } else { "no".into() },
-                        ),
-                        ("merge", t.merge_commit.unwrap_or_else(|| "-".into())),
-                        // The forge's own link, where the rest of a published
-                        // task's story is; only an engineer that opened one
-                        // reports it.
-                        ("pull_request", t.pr_url.unwrap_or_else(|| "-".into())),
-                        ("created", local_time(&t.created_at)),
-                        ("description", format!("\n---\n{}", t.description)),
-                    ]);
-                }
-            }
+                    ),
+                    (
+                        "reviewers",
+                        // One reviewer per line: each is a mention and the two
+                        // facts after it, and the review order is what the
+                        // column reads down.
+                        t.reviewers
+                            .iter()
+                            .map(|r| {
+                                profiles.pinned_label(&r.profile_id, r.agent_kind, r.model.as_deref())
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n             "),
+                    ),
+                    (
+                        "depends_on",
+                        match t.depends_on.is_empty() {
+                            true => "-".into(),
+                            false => t.depends_on.join(", "),
+                        },
+                    ),
+                    ("branch", t.branch.clone()),
+                    ("worktree", dash(t.worktree_path.as_deref())),
+                    ("round", t.review_round.to_string()),
+                    ("stalled", yes_no(t.stalled, "no")),
+                    ("merge", dash(t.merge_commit.as_deref())),
+                    // The forge's own link, where the rest of a published
+                    // task's story is; only an engineer that opened one
+                    // reports it.
+                    ("pull_request", dash(t.pr_url.as_deref())),
+                    ("created", local_time(&t.created_at)),
+                    ("description", format!("\n---\n{}", t.description)),
+                ])
+            })?;
         }
         TaskCommand::Messages { id } => {
             let msgs: Vec<MessageDto> = client
                 .get_json(&format!("/v1/tasks/{id}/messages?limit=200"))
                 .await?;
-            match format {
-                Format::Json => print_json(&msgs)?,
-                Format::Table => {
-                    for m in &msgs {
-                        println!("{}", message_line(m));
-                    }
-                    if msgs.is_empty() {
-                        note("no messages yet");
-                    }
-                }
-            }
+            print_messages(&msgs, format)?;
         }
         TaskCommand::Msg { id, body, to } => {
             let m: MessageDto = client
@@ -355,67 +322,53 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                     &CreateMessageRequest { body, to },
                 )
                 .await?;
-            match format {
-                Format::Json => print_json(&m)?,
-                Format::Table => println!("posted {}", m.id),
-            }
+            print(format, &m, || println!("posted {}", m.id))?;
         }
         TaskCommand::Reviews { id, no_trunc } => {
             let reviews: Vec<ReviewDto> =
                 client.get_json(&format!("/v1/tasks/{id}/reviews")).await?;
-            match format {
-                Format::Json => print_json(&reviews)?,
-                Format::Table => {
-                    let profiles = ProfileNames::fetch(client).await;
-                    print_table(
-                        REVIEWS,
-                        &reviews
-                            .iter()
-                            .map(|r| {
-                                vec![
-                                    r.round.to_string(),
-                                    review_author(&profiles, r),
-                                    r.verdict.as_str().into(),
-                                    r.body.clone().unwrap_or_else(|| "-".into()),
-                                ]
-                            })
-                            .collect::<Vec<_>>(),
-                        no_trunc,
-                    );
-                    if reviews.is_empty() {
-                        note("no reviews yet");
-                    }
-                }
-            }
+            let profiles = ProfileNames::for_format(client, format).await;
+            print_list(
+                format,
+                &reviews,
+                REVIEWS,
+                no_trunc,
+                |r| {
+                    vec![
+                        r.round.to_string(),
+                        profiles.label(&r.reviewer_profile_id),
+                        r.verdict.as_str().into(),
+                        r.body.clone().unwrap_or_else(|| "-".into()),
+                    ]
+                },
+                "no reviews yet",
+            )?;
         }
         TaskCommand::History { id } => {
             let rows: Vec<TaskTransitionDto> = client
                 .get_json(&format!("/v1/tasks/{id}/transitions"))
                 .await?;
-            match format {
-                Format::Json => print_json(&rows)?,
-                Format::Table => {
-                    for t in &rows {
-                        println!(
-                            "[{}] {} -> {} by {}{}",
-                            local_time(&t.created_at),
-                            t.from_status,
-                            t.to_status,
-                            t.actor,
-                            t.reason
-                                .as_ref()
-                                .map(|r| format!(" ({r})"))
-                                .unwrap_or_default()
-                        );
-                    }
-                    if rows.is_empty() {
-                        note("no transitions yet");
-                    }
+            print(format, &rows, || {
+                for t in &rows {
+                    println!(
+                        "[{}] {} -> {} by {}{}",
+                        local_time(&t.created_at),
+                        t.from_status,
+                        t.to_status,
+                        t.actor,
+                        t.reason
+                            .as_ref()
+                            .map(|r| format!(" ({r})"))
+                            .unwrap_or_default()
+                    );
                 }
-            }
+                if rows.is_empty() {
+                    note("no transitions yet");
+                }
+            })?;
         }
         TaskCommand::Cancel { id, yes } => {
-            let t: TaskDto = client.get_json(&format!("/v1/tasks/{id}")).await?;
+            let t: TaskDto = client.get_json(&task_path(&id)).await?;
             confirm(&cancel_question(&t), yes)?;
             let t: TaskDto = client.post_empty(&format!("/v1/tasks/{id}/cancel")).await?;
             print_status(&t, format)?;
@@ -426,12 +379,11 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
         }
         TaskCommand::Diff { id } => {
             let diff = client.get_text(&format!("/v1/tasks/{id}/diff")).await?;
-            match format {
-                // A diff is text, not a document; json mode still has to be
-                // parseable, so it travels as one.
-                Format::Json => print_json(&json!({"task_id": id, "diff": diff}))?,
-                Format::Table => print!("{diff}"),
-            }
+            // A diff is text, not a document; json mode still has to be
+            // parseable, so it travels as one.
+            print(format, &json!({"task_id": id, "diff": diff}), || {
+                print!("{diff}")
+            })?;
         }
         TaskCommand::Attach { id, role } => {
             crate::commands::attach::attach(client, &id, role).await?;
@@ -441,18 +393,14 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             let logs: ariadne_api::sessions::SessionLogsResponse = client
                 .get_json(&format!("/v1/sessions/{}/logs", session.id))
                 .await?;
-            match format {
-                Format::Json => print_json(&logs)?,
-                Format::Table => print!("{}", logs.logs),
-            }
+            print(format, &logs, || print!("{}", logs.logs))?;
         }
     }
     Ok(())
 }
 
-/// Who a verdict is from, for the `reviewer` column: the profile that voted.
-fn review_author(profiles: &ProfileNames, review: &ReviewDto) -> String {
-    profiles.label(&review.reviewer_profile_id)
+fn task_path(id: &str) -> String {
+    format!("/v1/tasks/{id}")
 }
 
 /// One row of `task ls`, in [`LS`]'s order.
@@ -462,12 +410,8 @@ fn ls_row(t: &TaskDto) -> Vec<String> {
         t.title.clone(),
         t.status.as_str().into(),
         t.review_round.to_string(),
-        if t.stalled { "yes".into() } else { "-".into() },
-        if t.pr_url.is_some() {
-            "yes".into()
-        } else {
-            "-".into()
-        },
+        yes_no(t.stalled, "-"),
+        yes_no(t.pr_url.is_some(), "-"),
         t.branch.clone(),
     ]
 }
@@ -479,181 +423,25 @@ fn cancel_question(t: &TaskDto) -> String {
     format!("Cancel task \"{}\" ({})?", t.title, t.status.as_str())
 }
 
-/// What a mutation prints: the task it produced, or a sentence about it.
+/// What a mutation prints: the task it produced, or where it got to.
 fn print_status(t: &TaskDto, format: Format) -> Result<()> {
-    match format {
-        Format::Json => print_json(t)?,
-        Format::Table => println!("task {} is now {}", t.id, t.status.as_str()),
-    }
-    Ok(())
-}
-
-/// The PATCH body of `task update`, or the reason there is nothing to send.
-///
-/// A flag that was not given is `None` — the field keeps what the task has.
-/// The two list flags are all-or-nothing by design: they replace the list they
-/// name, and `--clear-depends-on` is how an empty one is spelled, since a
-/// repeatable flag cannot be given zero times on purpose.
-fn update_request(
-    title: Option<String>,
-    description: Option<String>,
-    reviewers: Vec<String>,
-    depends_on: Vec<String>,
-    clear_depends_on: bool,
-) -> Result<UpdateTaskRequest> {
-    let req = UpdateTaskRequest {
-        title,
-        description,
-        reviewer_profiles: (!reviewers.is_empty()).then_some(reviewers),
-        depends_on: match (clear_depends_on, depends_on.is_empty()) {
-            (true, _) => Some(Vec::new()),
-            (false, true) => None,
-            (false, false) => Some(depends_on),
-        },
-    };
-    // An empty PATCH would still reach the daemon and still be refused on a
-    // started task, which reads as a failure the caller never asked for.
-    if req.title.is_none()
-        && req.description.is_none()
-        && req.reviewer_profiles.is_none()
-        && req.depends_on.is_none()
-    {
-        bail!(
-            "nothing to update — pass --title, --description, --reviewer \
-             or --depends-on"
-        );
-    }
-    Ok(req)
-}
-
-/// A `--repo` argument as the repo id the API wants.
-///
-/// The goal's repositories answer to their id or to their registered path —
-/// the two spellings `goal inspect` prints — because nobody types a ULID they
-/// have not been given.
-async fn resolve_repo(client: &Client, goal_id: &str, spec: &str) -> Result<String> {
-    let g: GoalDto = client.get_json(&format!("/v1/goals/{goal_id}")).await?;
-    match pick_repo(&g.repos, spec) {
-        Some(id) => Ok(id),
-        None => bail!(
-            "goal {goal_id} has no repo \"{spec}\" — it has {}",
-            g.repos
-                .iter()
-                .map(|r| format!("{} ({})", r.path, r.id))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-    }
-}
-
-/// The id of the goal repository a `--repo` argument names, by id or by path.
-fn pick_repo(repos: &[RepositoryDto], spec: &str) -> Option<String> {
-    repos
-        .iter()
-        .find(|r| r.id == spec || r.path == spec)
-        .map(|r| r.id.clone())
+    print(format, t, || {
+        println!("task {} is now {}", t.id, t.status.as_str())
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use ariadne_core::{MergeStrategy, ReviewVerdict};
-
     use super::*;
 
-    fn repos() -> Vec<RepositoryDto> {
-        let repo = |id: &str, path: &str| RepositoryDto {
-            id: id.into(),
-            path: path.into(),
-            base_branch: "main".into(),
-            merge_strategy: MergeStrategy::Direct,
-            description: None,
-            created_at: "2026-01-01T00:00:00Z".into(),
-            updated_at: "2026-01-01T00:00:00Z".into(),
-        };
-        vec![
-            repo("01REPOAPI", "/home/me/api"),
-            repo("01REPOUI", "/home/me/ui"),
-        ]
-    }
-
-    #[test]
-    fn a_repo_is_named_by_id_or_by_path() {
-        assert_eq!(pick_repo(&repos(), "01REPOUI").as_deref(), Some("01REPOUI"));
-        assert_eq!(
-            pick_repo(&repos(), "/home/me/api").as_deref(),
-            Some("01REPOAPI")
-        );
-        assert_eq!(pick_repo(&repos(), "/home/me/other"), None);
-    }
-
-    /// The lists replace rather than extend, so an absent flag must not send
-    /// an empty list and wipe what the task has.
-    #[test]
-    fn a_flag_that_was_not_given_is_left_alone() {
-        let req = update_request(Some("new".into()), None, vec![], vec![], false).expect("body");
-        assert_eq!(req.title.as_deref(), Some("new"));
-        assert!(req.description.is_none());
-        assert!(req.reviewer_profiles.is_none());
-        assert!(req.depends_on.is_none());
-    }
-
-    #[test]
-    fn the_lists_are_replaced_by_what_was_given() {
-        let req = update_request(
-            None,
-            None,
-            vec!["Reviewer".into(), "rev-strict".into()],
-            vec!["01TASK".into()],
-            false,
-        )
-        .expect("body");
-        assert_eq!(
-            req.reviewer_profiles.as_deref(),
-            Some(["Reviewer".to_string(), "rev-strict".to_string()].as_slice())
-        );
-        assert_eq!(
-            req.depends_on.as_deref(),
-            Some(["01TASK".to_string()].as_slice())
-        );
-    }
-
-    /// The one thing the repeatable flag cannot say on its own.
-    #[test]
-    fn clearing_the_dependencies_sends_an_empty_list() {
-        let req = update_request(None, None, vec![], vec![], true).expect("body");
-        assert_eq!(req.depends_on.as_deref(), Some([].as_slice()));
-    }
-
-    #[test]
-    fn an_update_with_no_flags_is_refused_before_it_is_sent() {
-        let err = update_request(None, None, vec![], vec![], false).expect_err("no-op");
-        assert!(err.to_string().starts_with("nothing to update"), "{err}");
-    }
+    use crate::commands::fixtures;
 
     /// A plain task, for the blocks that render one.
     fn dto() -> TaskDto {
         TaskDto {
-            id: "01TASK".into(),
-            goal_id: "01GOAL".into(),
-            repo_id: "01REPO".into(),
             title: "Add the frobnicator".into(),
-            description: String::new(),
-            status: TaskStatus::InProgress,
-            engineer_profile_id: "01ENG".into(),
-            engineer_profile_name: Some("Engineer".into()),
-            planner_profile_name: Some("Planner".into()),
-            agent_kind: None,
-            model: None,
-            reviewers: vec![],
-            depends_on: vec![],
             branch: "add-the-frobnicator-01task".into(),
-            worktree_path: None,
-            review_round: 0,
-            stalled: false,
-            merge_commit: None,
-            pr_url: None,
-            created_at: "2026-08-17T08:00:00Z".into(),
-            updated_at: "2026-08-17T08:00:00Z".into(),
+            ..fixtures::task("01TASK", "01GOAL")
         }
     }
 
@@ -667,39 +455,26 @@ mod tests {
         );
     }
 
-    /// A verdict is a reviewer's, named the way every other mention of a
-    /// profile is, with the bare id where the daemon would not name it.
+    /// A profile is mentioned by the name that addresses it, with the bare id
+    /// where the daemon would not name it — the `reviewer` column, and every
+    /// other mention of a profile in the CLI.
     #[test]
-    fn a_verdict_is_named_after_the_reviewer_that_left_it() {
-        let review = |profile_id: &str| ReviewDto {
-            id: "01REVIEW".into(),
-            task_id: "01TASK".into(),
-            round: 1,
-            reviewer_profile_id: profile_id.into(),
-            session_id: None,
-            verdict: ReviewVerdict::Approve,
-            body: None,
-            created_at: "2026-08-17T08:00:00Z".into(),
-        };
+    fn a_profile_is_mentioned_by_name_and_falls_back_to_its_id() {
         let profiles = ProfileNames::from_pairs([("01REV".to_string(), "My Reviewer".to_string())]);
-        assert_eq!(
-            review_author(&profiles, &review("01REV")),
-            "My Reviewer (01REV)"
-        );
-        assert_eq!(review_author(&profiles, &review("01GONE")), "01GONE");
+        assert_eq!(profiles.label("01REV"), "My Reviewer (01REV)");
+        assert_eq!(profiles.label("01GONE"), "01GONE");
     }
 
     /// A published task says so in the list, which is the question a table
     /// answers; the link itself is `task inspect`'s.
     #[test]
     fn the_list_says_whether_a_task_was_published() {
-        let t = TaskDto {
+        let published = TaskDto {
             status: TaskStatus::Approved,
             pr_url: Some("https://github.com/owner/repo/pull/12".into()),
             ..dto()
         };
-
-        let row = ls_row(&t);
+        let row = ls_row(&published);
         assert_eq!(row.len(), LS.len(), "a row per column, in LS's order");
         assert_eq!(
             row,
@@ -713,11 +488,6 @@ mod tests {
                 "add-the-frobnicator-01task",
             ]
         );
-
-        assert_eq!(
-            ls_row(&dto())[5],
-            "-",
-            "and a task nobody published says nothing"
-        );
+        assert_eq!(ls_row(&dto())[5], "-", "and a task nobody published says nothing");
     }
 }

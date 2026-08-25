@@ -12,22 +12,13 @@ use ariadne_client::Client;
 use ariadne_core::{AttentionReason, Role, SessionStatus};
 
 use super::attention::reason_label;
-use super::{ProfileNames, confirm};
-use crate::output::{
-    Column, Format, UNCAPPED, local_time, note, print_json, print_kv, print_table,
-};
-use crate::query::query_path;
+use super::{ProfileNames, confirm, query_path};
+use crate::output::{Column, Format, UNCAPPED, at, dash, local_time, print, print_kv, print_list};
 
-/// Columns of `session ls`.
-///
-/// `context` is the one written by a human — a goal or task title runs as long
-/// as it likes — so it is capped the way `task ls` caps its titles; what it is
-/// cut to still says which work the row is about.
-///
-/// `attention` is next to `status` because the two are orthogonal: an agent
-/// blocked on a permission prompt is still `running`, and the status alone
-/// says nothing about it. It is `-` for a healthy session, and its wording is
-/// `ariadne attention`'s, which is the UI's.
+/// Columns of `session ls`. `context` is the one written by a human, so it is
+/// capped the way `task ls` caps its titles. `attention` is next to `status`
+/// because the two are orthogonal: an agent blocked on a permission prompt is
+/// still `running`, and the status alone says nothing about it.
 const LS: &[Column] = &[
     ("id", UNCAPPED),
     ("context", 40),
@@ -117,137 +108,112 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
                 .get_json(&query_path("/v1/sessions", &query)?)
                 .await?;
             let sessions = visible(sessions, all, status, role);
-            match format {
-                Format::Json => print_json(&sessions)?,
-                Format::Table => {
-                    let context = SessionContext::fetch_for(client, &sessions).await;
-                    print_table(
-                        LS,
-                        &sessions
-                            .iter()
-                            .map(|s| {
-                                vec![
-                                    s.id.clone(),
-                                    context.label(s),
-                                    s.role.as_str().into(),
-                                    s.agent_kind.as_str().into(),
-                                    s.status.as_str().into(),
-                                    attention_label(s.attention_reason),
-                                    s.tmux_session.clone(),
-                                    s.internal_session_id.clone().unwrap_or_else(|| "-".into()),
-                                ]
-                            })
-                            .collect::<Vec<_>>(),
-                        no_trunc,
-                    );
-                    if sessions.is_empty() {
-                        // A named status already says which sessions were
-                        // asked for, so --all has nothing left to offer.
-                        note(match (filtered, all || status.is_some()) {
-                            (true, true) => "no sessions match that filter",
-                            (true, false) => {
-                                "no live sessions match that filter — finished ones are behind --all"
-                            }
-                            (false, true) => "no sessions yet",
-                            (false, false) => "no live sessions — finished ones are behind --all",
-                        });
+            let context = match format {
+                Format::Table => SessionContext::fetch_for(client, &sessions).await,
+                Format::Json => SessionContext::default(),
+            };
+            print_list(
+                format,
+                &sessions,
+                LS,
+                no_trunc,
+                |s| {
+                    vec![
+                        s.id.clone(),
+                        context.label(s),
+                        s.role.as_str().into(),
+                        s.agent_kind.as_str().into(),
+                        s.status.as_str().into(),
+                        attention_label(s.attention_reason),
+                        s.tmux_session.clone(),
+                        s.internal_session_id.clone().unwrap_or_else(|| "-".into()),
+                    ]
+                },
+                // A named status already says which sessions were asked for,
+                // so --all has nothing left to offer.
+                match (filtered, all || status.is_some()) {
+                    (true, true) => "no sessions match that filter",
+                    (true, false) => {
+                        "no live sessions match that filter — finished ones are behind --all"
                     }
-                }
-            }
+                    (false, true) => "no sessions yet",
+                    (false, false) => "no live sessions — finished ones are behind --all",
+                },
+            )?;
         }
         SessionCommand::Inspect { id } => {
-            let s: SessionDto = client.get_json(&format!("/v1/sessions/{id}")).await?;
-            match format {
-                Format::Json => print_json(&s)?,
-                Format::Table => {
-                    let profiles = ProfileNames::fetch(client).await;
-                    print_kv(&[
-                        ("id", s.id),
-                        ("goal", s.goal_id),
-                        ("task", s.task_id.unwrap_or_else(|| "-".into())),
-                        ("role", s.role.as_str().into()),
-                        ("profile", profiles.label(&s.profile_id)),
-                        ("agent", s.agent_kind.as_str().into()),
-                        // Recorded at launch, so it is what this session runs
-                        // on even if the profile has moved on since.
-                        ("model", s.model.unwrap_or_else(|| "default".into())),
-                        ("status", s.status.as_str().into()),
-                        ("attention", attention_label(s.attention_reason)),
-                        (
-                            "attention since",
-                            s.attention_since.as_deref().map_or("-".into(), local_time),
-                        ),
-                        ("tmux", s.tmux_session),
-                        ("worktree", s.worktree_path.unwrap_or_else(|| "-".into())),
-                        (
-                            "round",
-                            s.review_round.map_or("-".into(), |r| r.to_string()),
-                        ),
-                        (
-                            "internal id",
-                            s.internal_session_id.unwrap_or_else(|| "-".into()),
-                        ),
-                        (
-                            "activity",
-                            s.last_activity_at.as_deref().map_or("-".into(), local_time),
-                        ),
-                        ("created", local_time(&s.created_at)),
-                        (
-                            "ended",
-                            s.ended_at.as_deref().map_or("-".into(), local_time),
-                        ),
-                    ]);
-                }
-            }
+            let s: SessionDto = client.get_json(&session_path(&id)).await?;
+            let profiles = ProfileNames::for_format(client, format).await;
+            print(format, &s, || {
+                print_kv(&[
+                    ("id", s.id.clone()),
+                    ("goal", s.goal_id.clone()),
+                    ("task", dash(s.task_id.as_deref())),
+                    ("role", s.role.as_str().into()),
+                    ("profile", profiles.label(&s.profile_id)),
+                    ("agent", s.agent_kind.as_str().into()),
+                    // Recorded at launch, so it is what this session runs on
+                    // even if the profile has moved on since.
+                    ("model", s.model.clone().unwrap_or_else(|| "default".into())),
+                    ("status", s.status.as_str().into()),
+                    ("attention", attention_label(s.attention_reason)),
+                    ("attention since", at(s.attention_since.as_deref())),
+                    ("tmux", s.tmux_session.clone()),
+                    ("worktree", dash(s.worktree_path.as_deref())),
+                    (
+                        "round",
+                        s.review_round.map_or("-".into(), |r| r.to_string()),
+                    ),
+                    ("internal id", dash(s.internal_session_id.as_deref())),
+                    ("activity", at(s.last_activity_at.as_deref())),
+                    ("created", local_time(&s.created_at)),
+                    ("ended", at(s.ended_at.as_deref())),
+                ])
+            })?;
         }
         SessionCommand::Logs { id } => {
             let logs: ariadne_api::sessions::SessionLogsResponse =
                 client.get_json(&format!("/v1/sessions/{id}/logs")).await?;
-            match format {
-                Format::Json => print_json(&logs)?,
-                Format::Table => print!("{}", logs.logs),
-            }
+            print(format, &logs, || print!("{}", logs.logs))?;
         }
         SessionCommand::Resume { id } => {
             // The daemon answers with this same session either way: relaunched
             // when it really resumed it, or untouched when its pane turned out
             // to be alive already. What the row said before the call is what
             // tells a relaunch from a session that never needed one.
-            let before: SessionDto = client.get_json(&format!("/v1/sessions/{id}")).await?;
+            let before: SessionDto = client.get_json(&session_path(&id)).await?;
             let s: SessionDto = client
                 .post_empty(&format!("/v1/sessions/{id}/resume"))
                 .await?;
             let resumed = !before.status.is_live() && s.status.is_live();
-            match format {
-                Format::Json => print_json(&serde_json::json!({
-                    "resumed": resumed,
-                    "session": s,
-                }))?,
-                Format::Table => {
-                    if resumed {
-                        println!("session {} resumed ({})", s.id, s.tmux_session);
-                    } else {
-                        println!(
-                            "session {} already has a running agent ({}); nothing to resume",
-                            s.id, s.tmux_session
-                        );
-                    }
-                }
-            }
+            print(
+                format,
+                &serde_json::json!({"resumed": resumed, "session": s}),
+                || match resumed {
+                    true => println!("session {} resumed ({})", s.id, s.tmux_session),
+                    false => println!(
+                        "session {} already has a running agent ({}); nothing to resume",
+                        s.id, s.tmux_session
+                    ),
+                },
+            )?;
         }
         SessionCommand::Kill { id, yes } => {
-            let s: SessionDto = client.get_json(&format!("/v1/sessions/{id}")).await?;
+            let s: SessionDto = client.get_json(&session_path(&id)).await?;
             confirm(&kill_question(&s), yes)?;
             let s: SessionDto = client
                 .post_empty(&format!("/v1/sessions/{id}/kill"))
                 .await?;
-            match format {
-                Format::Json => print_json(&s)?,
-                Format::Table => println!("session {} is now {}", s.id, s.status.as_str()),
-            }
+            print(format, &s, || {
+                println!("session {} is now {}", s.id, s.status.as_str())
+            })?;
         }
     }
     Ok(())
+}
+
+fn session_path(id: &str) -> String {
+    format!("/v1/sessions/{id}")
 }
 
 /// Which of the sessions the daemon answered with `session ls` shows.
@@ -255,11 +221,8 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
 /// The default is docker's: live sessions, history behind --all. A named
 /// status is that same choice made precisely, so it takes over — `--status
 /// exited` that then dropped every row for not being live would answer
-/// nothing at all.
-///
-/// The role is narrower than either and applies on top of both: `GET
-/// /v1/sessions` takes no role, so — like the UI's own role filter — it is
-/// applied to the answer rather than asked for.
+/// nothing. The role narrows whatever those settled on: `GET /v1/sessions`
+/// takes none, so it is applied to the answer rather than asked for.
 fn visible(
     sessions: Vec<SessionDto>,
     all: bool,
@@ -273,13 +236,10 @@ fn visible(
         .collect()
 }
 
-/// The goal and task titles behind the sessions of a table, for its context
-/// column: which piece of work each agent was run for, which the ids on the
-/// row cannot say.
-///
-/// One list call each for the whole table, the way [`ProfileNames`] resolves
-/// profile names. A title is a courtesy: a daemon that will not answer these
-/// leaves the ids in place rather than failing the `ls` that asked for them.
+/// The goal and task titles behind a table's sessions: which piece of work
+/// each agent was run for, which the ids cannot say. One list call each, the
+/// way [`ProfileNames`] resolves profile names, and a title is a courtesy — a
+/// daemon that will not answer leaves the ids in place.
 #[derive(Default)]
 struct SessionContext {
     goals: HashMap<String, String>,
@@ -337,7 +297,9 @@ fn kill_question(s: &SessionDto) -> String {
 mod tests {
     use super::*;
 
-    use ariadne_core::{AgentKind, Role};
+    use ariadne_core::Role;
+
+    use crate::commands::fixtures::session;
 
     fn context() -> SessionContext {
         SessionContext {
@@ -346,32 +308,10 @@ mod tests {
         }
     }
 
-    fn session(goal: &str, task: Option<&str>) -> SessionDto {
-        SessionDto {
-            id: "01SESS".into(),
-            goal_id: goal.into(),
-            task_id: task.map(Into::into),
-            role: Role::Engineer,
-            profile_id: "01PROF".into(),
-            agent_kind: AgentKind::ClaudeCode,
-            model: None,
-            internal_session_id: None,
-            tmux_session: "ariadne-01SESS".into(),
-            worktree_path: None,
-            review_round: None,
-            status: SessionStatus::Running,
-            attention_reason: None,
-            attention_since: None,
-            last_activity_at: None,
-            created_at: "2026-01-01T00:00:00Z".into(),
-            ended_at: None,
-        }
-    }
-
     #[test]
     fn a_session_on_a_task_is_named_by_the_task() {
         assert_eq!(
-            context().label(&session("01GOAL", Some("01TASK"))),
+            context().label(&session("01SESS", "01GOAL", Some("01TASK"))),
             "Wire the screen"
         );
     }
@@ -381,7 +321,7 @@ mod tests {
     #[test]
     fn a_planner_session_is_named_by_its_goal() {
         assert_eq!(
-            context().label(&session("01GOAL", None)),
+            context().label(&session("01SESS", "01GOAL", None)),
             "goal: Ship the board"
         );
     }
@@ -391,20 +331,18 @@ mod tests {
     #[test]
     fn an_unknown_id_stands_in_for_its_title() {
         let empty = SessionContext::default();
-        assert_eq!(empty.label(&session("01GOAL", Some("01OTHER"))), "01OTHER");
-        assert_eq!(empty.label(&session("01GOAL", None)), "goal: 01GOAL");
+        assert_eq!(empty.label(&session("01SESS", "01GOAL", Some("01OTHER"))), "01OTHER");
+        assert_eq!(empty.label(&session("01SESS", "01GOAL", None)), "goal: 01GOAL");
     }
 
     /// One session per role and per liveness, as `session ls` receives them
     /// from the daemon: the planner is running, the engineer has exited.
     fn listed() -> Vec<SessionDto> {
-        let mut planner = session("01GOAL", None);
-        planner.id = "01PLAN".into();
-        planner.role = Role::Planner;
-        let mut engineer = session("01GOAL", Some("01TASK"));
-        engineer.id = "01ENG".into();
-        engineer.status = SessionStatus::Exited;
-        vec![planner, engineer]
+        let engineer = SessionDto {
+            status: SessionStatus::Exited,
+            ..session("01ENG", "01GOAL", Some("01TASK"))
+        };
+        vec![session("01PLAN", "01GOAL", None), engineer]
     }
 
     fn ids(sessions: Vec<SessionDto>) -> Vec<String> {

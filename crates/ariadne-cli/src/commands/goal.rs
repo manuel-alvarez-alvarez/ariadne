@@ -12,11 +12,9 @@ use ariadne_api::tasks::{TaskDto, TaskListQuery};
 use ariadne_client::Client;
 use ariadne_core::GoalStatus;
 
-use super::{ProfileNames, confirm, message_line};
-use crate::output::{
-    Column, Format, UNCAPPED, local_time, note, print_json, print_kv, print_table,
-};
-use crate::query::query_path;
+use super::{ProfileNames, confirm, print_messages};
+use crate::output::{Column, Format, UNCAPPED, local_time, print, print_kv, print_list};
+use super::query_path;
 
 /// Columns of `goal ls`.
 const LS: &[Column] = &[
@@ -156,88 +154,73 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                     },
                 )
                 .await?;
-            match format {
-                Format::Json => print_json(&goal)?,
-                Format::Table => println!("{}", goal.id),
-            }
+            print(format, &goal, || println!("{}", goal.id))?;
         }
         GoalCommand::Ls { statuses, no_trunc } => {
             let goals: Vec<GoalDto> = client.get_json(&goals_path(&statuses)?).await?;
-            match format {
-                Format::Json => print_json(&goals)?,
-                Format::Table => {
-                    print_table(
-                        LS,
-                        &goals
+            print_list(
+                format,
+                &goals,
+                LS,
+                no_trunc,
+                |g| {
+                    vec![
+                        g.id.clone(),
+                        g.title.clone(),
+                        g.status.as_str().into(),
+                        g.required_approvals.to_string(),
+                        g.repos
                             .iter()
-                            .map(|g| {
-                                vec![
-                                    g.id.clone(),
-                                    g.title.clone(),
-                                    g.status.as_str().into(),
-                                    g.required_approvals.to_string(),
-                                    g.repos
-                                        .iter()
-                                        .map(|r| r.path.as_str())
-                                        .collect::<Vec<_>>()
-                                        .join(","),
-                                ]
-                            })
-                            .collect::<Vec<_>>(),
-                        no_trunc,
-                    );
-                    if goals.is_empty() {
-                        // An empty list under a filter is not an empty
-                        // system, and telling the reader to create a goal
-                        // would hide the ones that are right there.
-                        note(if statuses.is_empty() {
-                            "no goals yet — create one with: ariadne goal create"
-                        } else {
-                            "no goals match that filter"
-                        });
-                    }
-                }
-            }
+                            .map(|r| r.path.as_str())
+                            .collect::<Vec<_>>()
+                            .join(","),
+                    ]
+                },
+                // An empty list under a filter is not an empty system, and
+                // telling the reader to create a goal would hide the ones that
+                // are right there.
+                match statuses.is_empty() {
+                    true => "no goals yet — create one with: ariadne goal create",
+                    false => "no goals match that filter",
+                },
+            )?;
         }
         GoalCommand::Inspect { id } => {
-            let g: GoalDto = client.get_json(&format!("/v1/goals/{id}")).await?;
-            match format {
-                Format::Json => print_json(&g)?,
-                Format::Table => {
-                    let profiles = ProfileNames::fetch(client).await;
-                    print_kv(&[
-                        ("id", g.id),
-                        ("title", g.title),
-                        ("status", g.status.as_str().into()),
-                        (
-                            "planner",
-                            profiles.pinned_label(
-                                &g.planner_profile_id,
-                                g.agent_kind,
-                                g.model.as_deref(),
-                            ),
+            let g: GoalDto = client.get_json(&goal_path(&id)).await?;
+            let profiles = ProfileNames::for_format(client, format).await;
+            print(format, &g, || {
+                print_kv(&[
+                    ("id", g.id.clone()),
+                    ("title", g.title.clone()),
+                    ("status", g.status.as_str().into()),
+                    (
+                        "planner",
+                        profiles.pinned_label(
+                            &g.planner_profile_id,
+                            g.agent_kind,
+                            g.model.as_deref(),
                         ),
-                        ("approvals", g.required_approvals.to_string()),
-                        (
-                            "max_tasks",
-                            g.max_tasks.map_or("unbounded".into(), |m| m.to_string()),
-                        ),
-                        (
-                            "repos",
-                            g.repos
-                                .iter()
-                                .map(|r| format!("{} [{}] ({})", r.path, r.base_branch, r.id))
-                                .collect::<Vec<_>>()
-                                .join("\n           "),
-                        ),
-                        ("created", local_time(&g.created_at)),
-                        ("description", format!("\n---\n{}", g.description)),
-                    ]);
-                }
-            }
+                    ),
+                    ("approvals", g.required_approvals.to_string()),
+                    (
+                        "max_tasks",
+                        g.max_tasks.map_or("unbounded".into(), |m| m.to_string()),
+                    ),
+                    (
+                        "repos",
+                        g.repos
+                            .iter()
+                            .map(|r| format!("{} [{}] ({})", r.path, r.base_branch, r.id))
+                            .collect::<Vec<_>>()
+                            .join("\n           "),
+                    ),
+                    ("created", local_time(&g.created_at)),
+                    ("description", format!("\n---\n{}", g.description)),
+                ])
+            })?;
         }
         GoalCommand::Finalize { id, summary, yes } => {
-            let g: GoalDto = client.get_json(&format!("/v1/goals/{id}")).await?;
+            let g: GoalDto = client.get_json(&goal_path(&id)).await?;
             confirm(&finalize_question(client, &g).await, yes)?;
             let g: GoalDto = client
                 .post_json(
@@ -245,22 +228,16 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                     &FinalizePlanRequest { summary },
                 )
                 .await?;
-            match format {
-                Format::Json => print_json(&g)?,
-                Format::Table => println!("goal {} is now {}", g.id, g.status.as_str()),
-            }
+            print_status(&g, format)?;
         }
         GoalCommand::Cancel { id, yes } => {
-            let g: GoalDto = client.get_json(&format!("/v1/goals/{id}")).await?;
+            let g: GoalDto = client.get_json(&goal_path(&id)).await?;
             confirm(&cancel_question(client, &g).await, yes)?;
             let g: GoalDto = client.post_empty(&format!("/v1/goals/{id}/cancel")).await?;
-            match format {
-                Format::Json => print_json(&g)?,
-                Format::Table => println!("goal {} is now {}", g.id, g.status.as_str()),
-            }
+            print_status(&g, format)?;
         }
         GoalCommand::Rm { id, yes } => {
-            let g: GoalDto = client.get_json(&format!("/v1/goals/{id}")).await?;
+            let g: GoalDto = client.get_json(&goal_path(&id)).await?;
             // The daemon decides this too (and answers 409 if the goal moves
             // between these two calls); asking here is what turns the refusal
             // into the command that unblocks it.
@@ -272,14 +249,13 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
             }
             confirm(&rm_question(client, &g).await, yes)?;
             client
-                .send_no_content::<()>(http::Method::DELETE, &format!("/v1/goals/{id}"), None)
+                .send_no_content::<()>(http::Method::DELETE, &goal_path(&id), None)
                 .await?;
-            match format {
-                // Nothing is left to print: what the caller asked about, and
-                // that it happened.
-                Format::Json => print_json(&json!({"goal": id, "deleted": true}))?,
-                Format::Table => println!("deleted {id}"),
-            }
+            // Nothing is left to print: what the caller asked about, and that
+            // it happened.
+            print(format, &json!({"goal": id, "deleted": true}), || {
+                println!("deleted {id}")
+            })?;
         }
         GoalCommand::Attach { id } => {
             crate::commands::attach::attach(client, &id, None).await?;
@@ -288,17 +264,7 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
             let msgs: Vec<MessageDto> = client
                 .get_json(&format!("/v1/goals/{id}/messages?limit=200"))
                 .await?;
-            match format {
-                Format::Json => print_json(&msgs)?,
-                Format::Table => {
-                    for m in &msgs {
-                        println!("{}", message_line(m));
-                    }
-                    if msgs.is_empty() {
-                        note("no messages yet");
-                    }
-                }
-            }
+            print_messages(&msgs, format)?;
         }
         GoalCommand::Msg { id, body, to } => {
             let m: MessageDto = client
@@ -307,25 +273,33 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                     &CreateMessageRequest { body, to },
                 )
                 .await?;
-            match format {
-                Format::Json => print_json(&m)?,
-                Format::Table => println!("posted {}", m.id),
-            }
+            print(format, &m, || println!("posted {}", m.id))?;
         }
     }
     Ok(())
 }
 
-/// The one filter `GET /v1/goals` takes: the statuses to match, as the daemon
-/// spells them — several of them in a single comma-separated `status=`, the
-/// way the goals board asks for them.
+fn goal_path(id: &str) -> String {
+    format!("/v1/goals/{id}")
+}
+
+/// What a goal-level transition prints: the goal it produced, or where it got
+/// to.
+fn print_status(g: &GoalDto, format: Format) -> Result<()> {
+    print(format, g, || {
+        println!("goal {} is now {}", g.id, g.status.as_str())
+    })
+}
+
+/// The one filter `GET /v1/goals` takes: several statuses in a single
+/// comma-separated `status=`, the way the goals board asks for them.
 #[derive(Serialize)]
 struct GoalListQuery {
     status: Option<String>,
 }
 
-/// The path `goal ls` reads: `/v1/goals` untouched when no status was named,
-/// so a plain `ls` asks exactly what it always did.
+/// `/v1/goals` untouched when no status was named, so a plain `ls` asks
+/// exactly what it always did.
 fn goals_path(statuses: &[GoalStatus]) -> Result<String> {
     let status = (!statuses.is_empty()).then(|| {
         statuses
@@ -340,8 +314,7 @@ fn goals_path(statuses: &[GoalStatus]) -> Result<String> {
 /// What `goal finalize` asks before execution starts: agents are spawned and
 /// start writing code, so the question names how much of it is about to run.
 async fn finalize_question(client: &Client, goal: &GoalDto) -> String {
-    let tasks = goal_tasks(client, &goal.id).await.len();
-    let tail = match tasks {
+    let tail = match goal_tasks(client, &goal.id).await.len() {
         1 => "1 task starts running".into(),
         n => format!("{n} tasks start running"),
     };
@@ -352,21 +325,19 @@ async fn finalize_question(client: &Client, goal: &GoalDto) -> String {
 /// takes every task that has not finished with it, so the question names both.
 async fn cancel_question(client: &Client, goal: &GoalDto) -> String {
     let tasks = goal_tasks(client, &goal.id).await;
-    let live = tasks.iter().filter(|t| !t.status.is_terminal()).count();
-    let tail = match live {
+    let tail = match tasks.iter().filter(|t| !t.status.is_terminal()).count() {
         0 => "no task is still running".into(),
         1 => "1 live task will be cancelled too".into(),
         n => format!("{n} live tasks will be cancelled too"),
     };
-    format!("Cancel goal \"{}\" ({})?", goal.title, tail)
+    format!("Cancel goal \"{}\" ({tail})?", goal.title)
 }
 
 /// What `goal rm` asks before it deletes: the goal's tasks, messages and
 /// review history go with it and none of it comes back, so the question names
 /// how much history is about to be dropped.
 async fn rm_question(client: &Client, goal: &GoalDto) -> String {
-    let tasks = goal_tasks(client, &goal.id).await.len();
-    let tail = match tasks {
+    let tail = match goal_tasks(client, &goal.id).await.len() {
         0 => "no tasks".into(),
         1 => "1 task".into(),
         n => format!("{n} tasks"),
@@ -391,9 +362,8 @@ async fn goal_tasks(client: &Client, goal_id: &str) -> Vec<TaskDto> {
     }
 }
 
-/// The ids the `--repo` arguments name, looked up among the registered
-/// repositories: a goal references repositories now, so nothing here can
-/// register one on the fly.
+/// The ids the `--repo` arguments name, among the registered repositories:
+/// nothing here registers one on the fly.
 async fn resolve_repositories(client: &Client, specs: &[String]) -> Result<Vec<String>> {
     let registered: Vec<RepositoryDto> = client.get_json("/v1/repositories").await?;
     specs
@@ -428,27 +398,15 @@ fn pick_repository(repos: &[RepositoryDto], spec: &str) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use ariadne_core::MergeStrategy;
-
     use super::*;
 
-    fn repo(id: &str, path: &str, base_branch: &str) -> RepositoryDto {
-        RepositoryDto {
-            id: id.into(),
-            path: path.into(),
-            base_branch: base_branch.into(),
-            merge_strategy: MergeStrategy::Direct,
-            description: None,
-            created_at: "2026-01-01T00:00:00Z".into(),
-            updated_at: "2026-01-01T00:00:00Z".into(),
-        }
-    }
+    use crate::commands::fixtures::repository;
 
     fn repos() -> Vec<RepositoryDto> {
         vec![
-            repo("01REPOAPI", "/home/me/api", "main"),
-            repo("01REPOUI", "/home/me/ui", "main"),
-            repo("01REPOUINEXT", "/home/me/ui", "next"),
+            repository("01REPOAPI", "/home/me/api", "main"),
+            repository("01REPOUI", "/home/me/ui", "main"),
+            repository("01REPOUINEXT", "/home/me/ui", "next"),
         ]
     }
 

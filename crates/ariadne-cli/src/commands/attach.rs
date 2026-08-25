@@ -1,26 +1,16 @@
 //! Attach/logs helpers: resolve an Ariadne id to a tmux session and exec.
 //!
-//! The id is a session, task or goal id: a session id attaches to that exact
-//! session, a task or goal id to the session of the wanted role (default
-//! engineer for tasks, planner for goals).
-//!
-//! When no tmux is alive for the id, attach revives the most recent matching
-//! session through the daemon (`POST /v1/sessions/{id}/resume`): a fresh tmux
-//! is created resuming the same agent conversation, and we attach to that.
+//! The id is a session, task or goal id — a task or goal one resolves to the
+//! session of the wanted role (default engineer for tasks, planner for goals).
+//! With no tmux alive for it, attach revives the most recent matching session
+//! (`POST /v1/sessions/{id}/resume`) and attaches to the fresh tmux that
+//! resumes the same agent conversation.
 
 use anyhow::{Result, bail};
 
 use ariadne_api::sessions::SessionDto;
 use ariadne_client::{Client, ClientError};
 use ariadne_core::Role;
-
-/// All sessions (any status) for a query string like `task=<id>` / `goal=<id>`.
-async fn sessions_for(client: &Client, query: &str) -> Result<Vec<SessionDto>> {
-    client
-        .get_json(&format!("/v1/sessions?{query}"))
-        .await
-        .map_err(Into::into)
-}
 
 /// Sessions matching the id, plus the role to attach to: task first (default
 /// engineer), then goal (default planner).
@@ -33,34 +23,39 @@ async fn candidates(
     id: &str,
     role: Option<Role>,
 ) -> Result<(Vec<SessionDto>, Role)> {
-    let sessions = sessions_for(client, &format!("task={id}")).await?;
-    if !sessions.is_empty() {
-        return Ok((sessions, role.unwrap_or(Role::Engineer)));
+    for (query, default) in [("task", Role::Engineer), ("goal", Role::Planner)] {
+        let sessions: Vec<SessionDto> = client
+            .get_json(&format!("/v1/sessions?{query}={id}"))
+            .await?;
+        if !sessions.is_empty() {
+            return Ok((sessions, role.unwrap_or(default)));
+        }
     }
-    let sessions = sessions_for(client, &format!("goal={id}")).await?;
-    if !sessions.is_empty() {
-        return Ok((sessions, role.unwrap_or(Role::Planner)));
+    for (kind, default) in [("tasks", Role::Engineer), ("goals", Role::Planner)] {
+        if found::<serde_json::Value>(client, &format!("/v1/{kind}/{id}"))
+            .await?
+            .is_some()
+        {
+            return Ok((vec![], role.unwrap_or(default)));
+        }
     }
-    if exists(client, &format!("/v1/tasks/{id}")).await? {
-        Ok((vec![], role.unwrap_or(Role::Engineer)))
-    } else if exists(client, &format!("/v1/goals/{id}")).await? {
-        Ok((vec![], role.unwrap_or(Role::Planner)))
-    } else {
-        bail!("no such task, goal or session: {id}")
-    }
+    bail!("no such task, goal or session: {id}")
 }
 
-/// Whether a GET on `path` finds anything (404 = no).
-async fn exists(client: &Client, path: &str) -> Result<bool> {
-    match client.get_json::<serde_json::Value>(path).await {
-        Ok(_) => Ok(true),
-        Err(ClientError::Api { status, .. }) if status == http::StatusCode::NOT_FOUND => Ok(false),
+/// What a GET on `path` answers with, or nothing at all when it 404s.
+async fn found<T: serde::de::DeserializeOwned>(
+    client: &Client,
+    path: &str,
+) -> Result<Option<T>> {
+    match client.get_json::<T>(path).await {
+        Ok(value) => Ok(Some(value)),
+        Err(ClientError::Api { status, .. }) if status == http::StatusCode::NOT_FOUND => Ok(None),
         Err(e) => Err(e.into()),
     }
 }
 
-/// True when the tmux session actually exists (the DB may lag: the
-/// liveness sweep marks dead sessions every 15s).
+/// Whether the tmux session actually exists — the database may lag it by up
+/// to the 15s liveness sweep.
 fn tmux_alive(name: &str) -> bool {
     std::process::Command::new("tmux")
         .args(["has-session", "-t", name])
@@ -117,11 +112,10 @@ pub fn exec_tmux_attach(tmux_session: &str) -> Result<()> {
     bail!("failed to exec tmux attach -t {tmux_session}: {err}");
 }
 
-/// A terminal task whose worktrees were removed has no agents left to attach
-/// to — fail with pointers to the history instead of a raw revive conflict.
-/// That is the normal end of a merged task now (`delete_merged_worktrees`
-/// defaults to true); with the policy off the worktree is kept, and reviving
-/// the agent to inspect the merged work is allowed.
+/// A terminal task whose worktrees were removed — the normal end of a merged
+/// task, since `delete_merged_worktrees` defaults to true — has no agents left
+/// to attach to: fail with pointers to the history instead of a raw revive
+/// conflict. With the policy off the worktree is kept and a revive is allowed.
 async fn ensure_task_not_finished(client: &Client, id: &str) -> Result<()> {
     use ariadne_api::tasks::TaskDto;
     use ariadne_core::TaskStatus;
@@ -142,23 +136,9 @@ async fn ensure_task_not_finished(client: &Client, id: &str) -> Result<()> {
     Ok(())
 }
 
-/// The session with this id, or `None` when the id is not a session one (the
-/// caller then tries it as a task or goal id).
-async fn session_by_id(client: &Client, id: &str) -> Result<Option<SessionDto>> {
-    match client
-        .get_json::<SessionDto>(&format!("/v1/sessions/{id}"))
-        .await
-    {
-        Ok(session) => Ok(Some(session)),
-        Err(ClientError::Api { status, .. }) if status == http::StatusCode::NOT_FOUND => Ok(None),
-        Err(e) => Err(e.into()),
-    }
-}
-
 /// Attach to one specific session: its own tmux when alive, else revive it.
-/// The tmux itself decides — the persisted status can be stale in either
-/// direction, and the daemon's resume treats tmux existence as authoritative
-/// too. A worktree that is gone surfaces the daemon's revive error as-is.
+/// The tmux itself decides — the persisted status can be stale either way, and
+/// the daemon's resume treats tmux existence as authoritative too.
 async fn attach_session(client: &Client, session: SessionDto) -> Result<()> {
     let session = if tmux_alive(&session.tmux_session) {
         session
@@ -190,7 +170,7 @@ pub async fn attach(client: &Client, id: &str, role: Option<Role>) -> Result<()>
 
 /// `ariadne attach <id>`: session, task or goal id.
 pub async fn attach_any(client: &Client, id: &str, role: Option<Role>) -> Result<()> {
-    if let Some(session) = session_by_id(client, id).await? {
+    if let Some(session) = found::<SessionDto>(client, &format!("/v1/sessions/{id}")).await? {
         if role.is_some() {
             bail!(
                 "--role does not apply to a session id: {id} is already the {} session \

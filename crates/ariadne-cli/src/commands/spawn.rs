@@ -1,13 +1,11 @@
 //! `ariadne _spawn <plan>` — become the agent a spawn plan describes.
 //!
-//! The daemon's side of this is in `ariadne_core::spawn_plan`: tmux is handed a
-//! constant-size command so that neither the briefing nor the environment has
-//! to fit in a tmux command line. This end reads the plan, applies it, and
-//! `exec`s — so the pane's root process is the agent itself and nothing about
-//! pane liveness or the scheduler's reading of it changes.
-//!
-//! Every failure lands on stderr and exits non-zero, which in a pane means the
-//! session's console log: the one place somebody debugging a dead pane looks.
+//! The daemon's side is `ariadne_core::spawn_plan`: tmux is handed a
+//! constant-size command so neither the briefing nor the environment has to
+//! fit in a tmux command line. This end reads the plan, applies it and
+//! `exec`s, so the pane's root process is the agent itself. Every failure
+//! lands on stderr, which in a pane is the session's console log — the one
+//! place somebody debugging a dead pane looks.
 
 use std::os::unix::process::CommandExt;
 use std::path::Path;

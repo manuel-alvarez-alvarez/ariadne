@@ -9,9 +9,7 @@ use ariadne_core::MergeStrategy;
 use serde_json::json;
 
 use super::confirm;
-use crate::output::{
-    Column, Format, UNCAPPED, local_time, note, print_json, print_kv, print_table,
-};
+use crate::output::{Column, Format, UNCAPPED, local_time, print, print_kv, print_list};
 
 /// Columns of `repo ls`.
 const LS: &[Column] = &[
@@ -99,52 +97,43 @@ pub async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Result<()
                     },
                 )
                 .await?;
-            match format {
-                Format::Json => print_json(&repo)?,
-                Format::Table => println!("{}", repo.id),
-            }
+            print(format, &repo, || println!("{}", repo.id))?;
         }
         RepoCommand::Ls { no_trunc } => {
             let repos: Vec<RepositoryDto> = client.get_json("/v1/repositories").await?;
-            match format {
-                Format::Json => print_json(&repos)?,
-                Format::Table => {
-                    print_table(
-                        LS,
-                        &repos
-                            .iter()
-                            .map(|r| {
-                                vec![
-                                    r.id.clone(),
-                                    r.path.clone(),
-                                    r.base_branch.clone(),
-                                    r.merge_strategy.as_str().into(),
-                                    r.description.clone().unwrap_or_else(|| "-".into()),
-                                ]
-                            })
-                            .collect::<Vec<_>>(),
-                        no_trunc,
-                    );
-                    if repos.is_empty() {
-                        note("no repositories yet — add one with: ariadne repo add <path>");
-                    }
-                }
-            }
+            print_list(
+                format,
+                &repos,
+                LS,
+                no_trunc,
+                |r| {
+                    vec![
+                        r.id.clone(),
+                        r.path.clone(),
+                        r.base_branch.clone(),
+                        r.merge_strategy.as_str().into(),
+                        r.description.clone().unwrap_or_else(|| "-".into()),
+                    ]
+                },
+                "no repositories yet — add one with: ariadne repo add <path>",
+            )?;
         }
         RepoCommand::Inspect { id } => {
-            let r: RepositoryDto = client.get_json(&format!("/v1/repositories/{id}")).await?;
-            match format {
-                Format::Json => print_json(&r)?,
-                Format::Table => print_kv(&[
-                    ("id", r.id),
-                    ("path", r.path),
-                    ("branch", r.base_branch),
+            let r: RepositoryDto = client.get_json(&repo_path(&id)).await?;
+            print(format, &r, || {
+                print_kv(&[
+                    ("id", r.id.clone()),
+                    ("path", r.path.clone()),
+                    ("branch", r.base_branch.clone()),
                     ("merge_strategy", r.merge_strategy.as_str().into()),
-                    ("description", r.description.unwrap_or_else(|| "-".into())),
+                    (
+                        "description",
+                        r.description.clone().unwrap_or_else(|| "-".into()),
+                    ),
                     ("created", local_time(&r.created_at)),
                     ("updated", local_time(&r.updated_at)),
-                ]),
-            }
+                ])
+            })?;
         }
         RepoCommand::Edit {
             id,
@@ -155,7 +144,7 @@ pub async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Result<()
         } => {
             let r: RepositoryDto = client
                 .put_json(
-                    &format!("/v1/repositories/{id}"),
+                    &repo_path(&id),
                     &UpdateRepositoryRequest {
                         path,
                         base_branch: branch,
@@ -164,30 +153,26 @@ pub async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Result<()
                     },
                 )
                 .await?;
-            match format {
-                Format::Json => print_json(&r)?,
-                Format::Table => println!("{}", r.id),
-            }
+            print(format, &r, || println!("{}", r.id))?;
         }
         RepoCommand::Rm { id, yes } => {
-            let r: RepositoryDto = client.get_json(&format!("/v1/repositories/{id}")).await?;
+            let r: RepositoryDto = client.get_json(&repo_path(&id)).await?;
             confirm(&rm_question(&r), yes)?;
             client
-                .send_no_content::<()>(
-                    http::Method::DELETE,
-                    &format!("/v1/repositories/{id}"),
-                    None,
-                )
+                .send_no_content::<()>(http::Method::DELETE, &repo_path(&id), None)
                 .await?;
-            match format {
-                // The repository is gone, so there is no DTO left to print:
-                // what the caller asked about, and that it happened.
-                Format::Json => print_json(&json!({"repository": id, "deleted": true}))?,
-                Format::Table => println!("deleted {id}"),
-            }
+            // The repository is gone, so there is no DTO left to print: what
+            // the caller asked about, and that it happened.
+            print(format, &json!({"repository": id, "deleted": true}), || {
+                println!("deleted {id}")
+            })?;
         }
     }
     Ok(())
+}
+
+fn repo_path(id: &str) -> String {
+    format!("/v1/repositories/{id}")
 }
 
 /// What `repo rm` asks before it deletes: the checkout on disk is untouched,

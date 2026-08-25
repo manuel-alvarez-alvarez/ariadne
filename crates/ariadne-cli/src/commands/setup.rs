@@ -2,12 +2,12 @@
 //! cannot do for itself.
 
 use std::io::IsTerminal;
-use std::path::PathBuf;
 use std::process::Command;
 
 use anyhow::{Context, Result};
 
 use crate::codex_trust::Trust;
+use crate::commands::on_path;
 
 /// `ariadne setup codex-hooks` — have the user trust Ariadne's Codex hooks.
 ///
@@ -15,9 +15,8 @@ use crate::codex_trust::Trust;
 /// overrides ([`ariadne_core::codex_hooks`]). What is missing on a fresh
 /// machine is codex's *trust* in them, which only a human can grant and only
 /// at the start of a session. So this opens one, carrying exactly the flags
-/// the daemon will spawn with — codex asks, the user answers once, and the
-/// verdict is stored under a key with no worktree or session in it, so every
-/// later session is covered.
+/// the daemon will spawn with; the verdict is stored under a key with no
+/// worktree or session in it, so every later session is covered.
 pub fn codex_hooks(cli_bin: Option<String>) -> Result<()> {
     let cli_bin = cli_bin.unwrap_or_else(default_cli_bin);
     let flags = ariadne_core::codex_hooks::config_flags(&cli_bin);
@@ -38,14 +37,12 @@ pub fn codex_hooks(cli_bin: Option<String>) -> Result<()> {
     );
 
     // Trust is per event, so an Ariadne that declares one the last run of
-    // this command did not leaves the rest working and that one silent. Say
-    // which those are before opening codex, and check again afterwards.
-    let before = trust();
-    if let Some(before) = &before {
-        report_trust(before);
+    // this command did not leaves the rest working and that one silent.
+    if let Some(before) = trust() {
+        report_trust(&before);
     }
 
-    if which("codex").is_none() {
+    if on_path("codex").is_none() {
         println!(
             "\ncodex is not on PATH. Install it, then run this command again — \
              until then\ncodex sessions would run without reporting anything back."
@@ -81,8 +78,8 @@ pub fn codex_hooks(cli_bin: Option<String>) -> Result<()> {
     }
 
     // Codex records the verdict as it takes it, so its own config is the only
-    // honest answer to whether this worked — saying "done" on an exit status
-    // alone is how a half-trusted install goes unnoticed.
+    // honest answer — "done" on an exit status alone is how a half-trusted
+    // install goes unnoticed.
     match trust() {
         Some(after) if after.is_complete() => {
             println!("\nDone. Ariadne's codex sessions will report from now on.");
@@ -136,11 +133,4 @@ fn default_cli_bin() -> String {
         .ok()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "ariadne".to_string())
-}
-
-fn which(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .map(|d| d.join(name))
-        .find(|c| c.is_file())
 }
