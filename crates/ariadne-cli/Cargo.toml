@@ -13,6 +13,10 @@ path = "src/main.rs"
 ariadne-api = { workspace = true }
 ariadne-client = { workspace = true }
 ariadne-core = { workspace = true, features = ["clap"] }
+# For one question only: whether the database `ariadned` refuses to open is one
+# from before the schema was squashed. `ariadne doctor` is what is left running
+# to answer it, and answering it takes reading the file.
+ariadne-store = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
@@ -27,6 +31,9 @@ tokio = { workspace = true }
 toml = { workspace = true }
 
 [dev-dependencies]
+# Only to plant the migration row that makes a database a pre-squash one, for
+# the doctor check that reports it.
+sqlx = { workspace = true }
 tempfile = "3"
 
 [lints]

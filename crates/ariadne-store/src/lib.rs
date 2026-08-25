@@ -35,11 +35,17 @@ use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+use sqlx::migrate::Migrator;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Pool, Sqlite};
 use tokio::sync::mpsc;
 
 use ariadne_core::TransitionError;
+
+/// The one migration this release ships. There is exactly one: the schema is
+/// squashed, and prompts are overrides, so nothing rewrites a default in SQL
+/// any more (see `migrations/0001_init.sql`).
+static MIGRATIONS: Migrator = sqlx::migrate!("./migrations");
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -70,6 +76,73 @@ pub(crate) fn not_found(entity: &'static str, id: &str) -> StoreError {
     }
 }
 
+/// Whether the database at `path` was written before the 29 migrations were
+/// squashed into one, which is the only thing that stops this release opening
+/// a database it otherwise understands. `Some` is the sentence to show; `None`
+/// is a database this release can open, a file that is not one of ours and a
+/// path with nothing on it — a report never calls anything old on a guess.
+///
+/// For `ariadne doctor`, which is asked why the daemon will not start and is
+/// the only thing still running to answer it.
+pub async fn pre_squash_database(path: impl AsRef<Path>) -> Option<String> {
+    let path = path.as_ref();
+    if !path.is_file() {
+        return None;
+    }
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(path)
+                .create_if_missing(false)
+                .read_only(true),
+        )
+        .await
+        .ok()?;
+    let old = applied_elsewhere(&pool).await.ok()?;
+    pool.close().await;
+    old.then(|| pre_squash_message(path))
+}
+
+/// Whether `_sqlx_migrations` records a migration this release does not ship —
+/// a later version of the chain that was squashed away, or a version 1 whose
+/// checksum is the old `0001_init.sql`. Either way sqlx refuses to run, and
+/// the database is one from before the squash.
+///
+/// A database with no `_sqlx_migrations` table at all is a fresh one.
+async fn applied_elsewhere(pool: &Pool<Sqlite>) -> Result<bool> {
+    let recorded: Option<String> = sqlx::query_scalar(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
+    )
+    .fetch_optional(pool)
+    .await?;
+    if recorded.is_none() {
+        return Ok(false);
+    }
+    let applied: Vec<(i64, Vec<u8>)> =
+        sqlx::query_as("SELECT version, checksum FROM _sqlx_migrations")
+            .fetch_all(pool)
+            .await?;
+    Ok(applied.iter().any(|(version, checksum)| {
+        !MIGRATIONS
+            .iter()
+            .any(|m| m.version == *version && *m.checksum == checksum[..])
+    }))
+}
+
+/// What a user holding one is told. Ariadne is pre-1.0: a database is
+/// recreated rather than migrated, so the fix is one file to delete — named in
+/// full, since it is wherever `db_path` puts it.
+fn pre_squash_message(path: &Path) -> String {
+    let path = path.display();
+    format!(
+        "{path} predates the squashed schema: it was written by a release whose \
+         migrations this one no longer ships, and there is no upgrade from it. \
+         Delete {path} (and its -wal and -shm files, if any) and start again — \
+         Ariadne is pre-1.0, so a database is recreated rather than migrated."
+    )
+}
+
 #[derive(Clone)]
 pub struct Store {
     /// Single-connection pool: every write serializes here.
@@ -97,7 +170,12 @@ impl Store {
             .connect_with(options.clone())
             .await?;
 
-        sqlx::migrate!("./migrations")
+        // Before sqlx gets to refuse it with a checksum, in a sentence naming
+        // what to do about it.
+        if applied_elsewhere(&write).await? {
+            return Err(StoreError::Invalid(pre_squash_message(path.as_ref())));
+        }
+        MIGRATIONS
             .run(&write)
             .await
             .map_err(|e| StoreError::Invalid(format!("migration failed: {e}")))?;

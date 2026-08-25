@@ -340,6 +340,15 @@ prevent_sleep = true               # hold a system sleep inhibition while any ag
                                    # out from under a working agent (default)
 ```
 
+`db_path` has to be deleted before this version is started for the first
+time: the schema's 29 migrations are squashed into one, so a database written
+by an earlier release records migrations this one no longer ships and cannot be
+opened. There is no upgrade from it — Ariadne is pre-1.0, and a database is
+recreated rather than migrated. Delete `~/.ariadne/ariadne.db` (wherever
+`db_path` puts it) along with its `-wal` and `-shm` files, and the daemon
+writes a fresh one on its next start. `ariadned` and `ariadne doctor` both say
+so, by name, if it is still there.
+
 The file is read strictly — an unknown key stops the daemon rather than being
 ignored — so a `config.toml` naming `running_quiet_flag_secs` or
 `running_quiet_resume_secs` has to drop them: the watchdog that reads how long

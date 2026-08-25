@@ -1,8 +1,21 @@
--- Ariadne initial schema. Schema only: the built-in profiles and their default
--- prompts are seeded from Rust constants after the migrations run, so a prompt
--- default can change without a migration (see `ariadne_store::defaults`).
+-- Ariadne initial schema, and the only migration: what came before it was 29
+-- files, most of them prompt text, and none of that history says anything a
+-- fresh database needs. Prompts are overrides now (`profile_prompts` holds a
+-- row only where somebody wrote one), so a reworded default never touches the
+-- database again and this file never has to grow a successor for one.
+--
+-- Schema only: the built-in profiles and the per-agent launch flags are seeded
+-- from Rust constants after the migrations run (`seed_builtin_profiles`,
+-- `seed_agent_configs`), so a default can change without a migration.
+--
 -- Ids are lowercase ULIDs (TEXT, 26 chars); timestamps are ISO-8601 UTC TEXT.
 
+-- Who an agent session runs as: its role, the CLI and model it is launched
+-- with, and the system prompt it is briefed with.
+--
+-- NULL `system_prompt` is the default of the role (see `ariadne_store::
+-- defaults`); text is what its user wrote instead, which is also what a reset
+-- goes back to by clearing.
 CREATE TABLE profiles (
     id            TEXT PRIMARY KEY,
     name          TEXT NOT NULL UNIQUE,
@@ -10,17 +23,18 @@ CREATE TABLE profiles (
     -- NULL = auto: resolved at spawn time to the first installed agent CLI
     -- (claude_code, then codex, then opencode).
     agent_kind    TEXT CHECK (agent_kind IN ('claude_code', 'codex', 'opencode')),
+    -- NULL = the agent CLI's own default.
     model         TEXT,
-    system_prompt TEXT NOT NULL,
-    extra_flags   TEXT NOT NULL DEFAULT '[]',   -- JSON array of argv strings
+    -- NULL = the default system prompt of `role`.
+    system_prompt TEXT,
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL
 );
 
--- Prompts a profile owns beside its system prompt: one row per briefing the
--- daemon renders for that profile's role. Which kinds are valid for which role
--- is enforced in Rust (`ariadne_core::PromptKind`), not here, so the set can
--- grow without a migration.
+-- The briefings a profile owns beside its system prompt, one row per kind it
+-- was given text of its own for. Which kinds are valid for which role is
+-- enforced in Rust (`ariadne_core::PromptKind`), not here, so the set can grow
+-- without a migration — and a kind with no row is briefed with its default.
 CREATE TABLE profile_prompts (
     profile_id TEXT NOT NULL REFERENCES profiles (id) ON DELETE CASCADE,
     kind       TEXT NOT NULL,
@@ -29,6 +43,41 @@ CREATE TABLE profile_prompts (
     PRIMARY KEY (profile_id, kind)
 );
 
+-- Per-agent-kind launch configuration: how an agent CLI is allowed to run is
+-- a property of that CLI, not of the persona a profile describes. Read on
+-- every spawn and resume.
+CREATE TABLE agent_configs (
+    agent_kind  TEXT PRIMARY KEY CHECK (agent_kind IN ('claude_code', 'codex', 'opencode')),
+    extra_flags TEXT NOT NULL,                  -- JSON array of argv strings
+    updated_at  TEXT NOT NULL
+);
+
+-- A checkout, registered once globally and named by id from there on, so that
+-- editing it moves every goal that works in it.
+--
+-- `merge_strategy` is how a task lands on `base_branch`: `direct` squashes and
+-- fast-forwards with git alone, `pull_request` publishes a request for a human
+-- to merge.
+CREATE TABLE repositories (
+    id             TEXT PRIMARY KEY,
+    path           TEXT NOT NULL,               -- absolute repo path
+    base_branch    TEXT NOT NULL,
+    description    TEXT,                        -- NULL = none given
+    created_at     TEXT NOT NULL,
+    updated_at     TEXT NOT NULL,
+    merge_strategy TEXT NOT NULL DEFAULT 'direct'
+                   CHECK (merge_strategy IN ('direct', 'pull_request')),
+    -- The same checkout can be registered once per base branch.
+    UNIQUE (path, base_branch)
+);
+
+-- The agent and model columns on `goals`, `tasks` and `task_reviewers` are
+-- pins: creation snapshots them off the profile it names, and the row is what
+-- the launcher reads from there on, so a profile edit only reaches work
+-- created after it. Both NULLs are meaningful — NULL agent_kind means auto,
+-- NULL model means the CLI's own default — exactly as on `profiles`. The
+-- system prompt is deliberately not pinned: rewording a briefing is meant to
+-- reach running work.
 CREATE TABLE goals (
     id                  TEXT PRIMARY KEY,
     title               TEXT NOT NULL,
@@ -39,33 +88,41 @@ CREATE TABLE goals (
     required_approvals  INTEGER NOT NULL DEFAULT 1 CHECK (required_approvals >= 1),
     planner_profile_id  TEXT NOT NULL REFERENCES profiles (id),
     created_at          TEXT NOT NULL,
-    updated_at          TEXT NOT NULL
+    updated_at          TEXT NOT NULL,
+    agent_kind          TEXT
+                        CHECK (agent_kind IN ('claude_code', 'codex', 'opencode')),
+    model               TEXT
 );
 
-CREATE TABLE goal_repos (
-    id          TEXT PRIMARY KEY,
-    goal_id     TEXT NOT NULL REFERENCES goals (id) ON DELETE CASCADE,
-    path        TEXT NOT NULL,                  -- absolute repo path
-    base_branch TEXT NOT NULL
+-- Which repositories a goal works in, by reference.
+CREATE TABLE goal_repositories (
+    goal_id       TEXT NOT NULL REFERENCES goals (id) ON DELETE CASCADE,
+    repository_id TEXT NOT NULL REFERENCES repositories (id),
+    PRIMARY KEY (goal_id, repository_id)
 );
-CREATE INDEX idx_goal_repos_goal ON goal_repos (goal_id);
+-- Deleting a repository asks who still holds it, which reads this way round.
+CREATE INDEX idx_goal_repositories_repository ON goal_repositories (repository_id);
 
 CREATE TABLE tasks (
     id                  TEXT PRIMARY KEY,
     goal_id             TEXT NOT NULL REFERENCES goals (id) ON DELETE CASCADE,
-    repo_id             TEXT NOT NULL REFERENCES goal_repos (id),
+    repo_id             TEXT NOT NULL REFERENCES repositories (id),
     title               TEXT NOT NULL,
     description         TEXT NOT NULL,
     status              TEXT NOT NULL DEFAULT 'pending'
                         CHECK (status IN ('pending', 'ready', 'in_progress', 'under_review',
-                                          'changes_requested', 'approved', 'merging', 'merged',
+                                          'changes_requested', 'approved', 'merged',
                                           'cancelled', 'failed')),
     engineer_profile_id TEXT NOT NULL REFERENCES profiles (id),
-    branch              TEXT NOT NULL,          -- ariadne/task-<id>
+    agent_kind          TEXT CHECK (agent_kind IN ('claude_code', 'codex', 'opencode')),
+    model               TEXT,
+    branch              TEXT NOT NULL,
     worktree_path       TEXT,
     review_round        INTEGER NOT NULL DEFAULT 0,
     stalled             INTEGER NOT NULL DEFAULT 0,
     merge_commit        TEXT,
+    -- The pull or merge request the engineer published, where it published one.
+    pr_url              TEXT,
     created_at          TEXT NOT NULL,
     updated_at          TEXT NOT NULL
 );
@@ -76,6 +133,9 @@ CREATE TABLE task_reviewers (
     task_id    TEXT NOT NULL REFERENCES tasks (id) ON DELETE CASCADE,
     profile_id TEXT NOT NULL REFERENCES profiles (id),
     position   INTEGER NOT NULL,
+    agent_kind TEXT
+               CHECK (agent_kind IN ('claude_code', 'codex', 'opencode')),
+    model      TEXT,
     PRIMARY KEY (task_id, profile_id)
 );
 
@@ -87,6 +147,15 @@ CREATE TABLE task_dependencies (
 );
 CREATE INDEX idx_task_deps_on ON task_dependencies (depends_on_task_id);
 
+-- One run of one agent. `attention_reason` is orthogonal to `status`: a
+-- session blocked on a permission prompt is still `running`, it just cannot
+-- make progress until someone looks at it, and `waiting_user` is the one
+-- nobody but the user clears. `attention_since` is when the current reason was
+-- first raised, so re-raising the same reason leaves it alone.
+--
+-- `launched_at` is when this run of the agent process started — not the row's
+-- `created_at`, and not the `last_activity_at` the agent moves — since a
+-- session is relaunched under its own id on every resume.
 CREATE TABLE agent_sessions (
     id                  TEXT PRIMARY KEY,       -- == ARIADNE_SESSION_ID env of the agent
     goal_id             TEXT NOT NULL REFERENCES goals (id) ON DELETE CASCADE,
@@ -102,20 +171,38 @@ CREATE TABLE agent_sessions (
                         CHECK (status IN ('starting', 'running', 'idle', 'exited', 'failed')),
     last_activity_at    TEXT,
     created_at          TEXT NOT NULL,
-    ended_at            TEXT
+    ended_at            TEXT,
+    attention_reason    TEXT
+                        CHECK (attention_reason IN ('waiting_permission', 'waiting_input',
+                                                    'waiting_user', 'agent_error',
+                                                    'disconnected', 'stalled')),
+    attention_since     TEXT,
+    model               TEXT,
+    launched_at         TEXT
 );
 CREATE INDEX idx_sessions_task ON agent_sessions (task_id);
 CREATE INDEX idx_sessions_status ON agent_sessions (status);
+CREATE INDEX idx_sessions_attention ON agent_sessions (attention_reason);
 
+-- A conversation line. NULL `recipient_kind` is said to the thread, addressed
+-- to nobody in particular; a profile addressee carries its id and the user has
+-- none, hence the two checks tying the id to the kind (written with `IS`,
+-- since a comparison against a NULL kind would be NULL, and a NULL check
+-- passes).
 CREATE TABLE messages (
-    id                TEXT PRIMARY KEY,
-    goal_id           TEXT NOT NULL REFERENCES goals (id) ON DELETE CASCADE,
-    task_id           TEXT REFERENCES tasks (id) ON DELETE CASCADE,   -- NULL = goal-level thread
-    author_role       TEXT NOT NULL
-                      CHECK (author_role IN ('planner', 'engineer', 'reviewer', 'user', 'system')),
-    author_session_id TEXT REFERENCES agent_sessions (id),
-    body              TEXT NOT NULL,
-    created_at        TEXT NOT NULL
+    id                   TEXT PRIMARY KEY,
+    goal_id              TEXT NOT NULL REFERENCES goals (id) ON DELETE CASCADE,
+    task_id              TEXT REFERENCES tasks (id) ON DELETE CASCADE,  -- NULL = goal-level thread
+    author_role          TEXT NOT NULL
+                         CHECK (author_role IN ('planner', 'engineer', 'reviewer',
+                                                'user', 'system')),
+    author_session_id    TEXT REFERENCES agent_sessions (id),
+    body                 TEXT NOT NULL,
+    created_at           TEXT NOT NULL,
+    recipient_kind       TEXT CHECK (recipient_kind IN ('profile', 'user')),
+    recipient_profile_id TEXT REFERENCES profiles (id)
+                         CHECK (recipient_profile_id IS NULL OR recipient_kind IS 'profile')
+                         CHECK (recipient_kind IS NOT 'profile' OR recipient_profile_id IS NOT NULL)
 );
 CREATE INDEX idx_messages_task ON messages (task_id, id);
 CREATE INDEX idx_messages_goal ON messages (goal_id, id);
@@ -150,7 +237,8 @@ CREATE TABLE task_transitions (
     task_id     TEXT NOT NULL REFERENCES tasks (id) ON DELETE CASCADE,
     from_status TEXT NOT NULL,
     to_status   TEXT NOT NULL,
-    actor       TEXT NOT NULL CHECK (actor IN ('planner', 'engineer', 'reviewer', 'daemon', 'user')),
+    actor       TEXT NOT NULL
+                CHECK (actor IN ('planner', 'engineer', 'reviewer', 'daemon', 'user')),
     reason      TEXT,
     created_at  TEXT NOT NULL
 );

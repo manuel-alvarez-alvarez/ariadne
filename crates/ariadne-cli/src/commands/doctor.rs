@@ -265,7 +265,7 @@ async fn examine(client: &Client) -> Report {
         client.endpoint(),
         vec![
             Section::new("client", client_checks(&ariadned, reachable)),
-            Section::new("home", home_checks(home.as_deref(), config)),
+            Section::new("home", home_checks(home.as_deref(), config).await),
             Section::new(
                 "daemon",
                 daemon_checks(client, &health, version, home.as_deref()).await,
@@ -426,7 +426,7 @@ fn client_checks(ariadned: &Local, daemon_reachable: bool) -> Vec<Check> {
     checks
 }
 
-fn home_checks(
+async fn home_checks(
     home: Option<&Path>,
     config: Option<Result<Option<FileConfig>, ConfigError>>,
 ) -> Vec<Check> {
@@ -466,11 +466,19 @@ fn home_checks(
         .flatten()
         .and_then(|c| c.db_path)
         .unwrap_or_else(|| home.join("ariadne.db"));
-    checks.push(match db.is_file() {
-        true => Check::ok("database", db.display().to_string()),
-        false => Check::warn("database", format!("{} does not exist yet", db.display()))
-            .hint("the daemon creates it on its first start"),
-    });
+    // A database from before the schema was squashed is why a daemon that used
+    // to start does not, and nothing else in the report would say so: the
+    // daemon refuses to open it, so the only thing left to look is this one.
+    checks.push(
+        match (db.is_file(), ariadne_store::pre_squash_database(&db).await) {
+            (_, Some(why)) => Check::fail("database", why).hint(format!("rm {}", db.display())),
+            (true, None) => Check::ok("database", db.display().to_string()),
+            (false, None) => {
+                Check::warn("database", format!("{} does not exist yet", db.display()))
+                    .hint("the daemon creates it on its first start")
+            }
+        },
+    );
 
     let pid_file = endpoint::pid_file(home);
     checks.push(match std::fs::read_to_string(&pid_file) {
@@ -1495,11 +1503,11 @@ mod tests {
         assert!(!manifest.contains_key("ARIADNE_APP"));
     }
 
-    #[test]
-    fn a_home_with_a_broken_config_fails_the_config_check() {
+    #[tokio::test]
+    async fn a_home_with_a_broken_config_fails_the_config_check() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("config.toml"), "prevent_slep = false\n").unwrap();
-        let checks = home_checks(Some(dir.path()), Some(endpoint::parse_config(dir.path())));
+        let checks = home_checks(Some(dir.path()), Some(endpoint::parse_config(dir.path()))).await;
         let config = checks.iter().find(|c| c.name == "config.toml").unwrap();
         assert_eq!(config.status, Status::Fail);
         assert!(config.detail.contains("prevent_slep"), "{config:?}");
@@ -1507,23 +1515,65 @@ mod tests {
 
     /// A config that moves the database moves what is reported: a check on
     /// the default path would be about a file the daemon never opens.
-    #[test]
-    fn the_database_check_follows_the_configured_path() {
+    #[tokio::test]
+    async fn the_database_check_follows_the_configured_path() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("config.toml"),
             "db_path = \"/scratch/elsewhere.db\"\n",
         )
         .unwrap();
-        let checks = home_checks(Some(dir.path()), Some(endpoint::parse_config(dir.path())));
+        let checks = home_checks(Some(dir.path()), Some(endpoint::parse_config(dir.path()))).await;
         let db = checks.iter().find(|c| c.name == "database").unwrap();
         assert!(db.detail.contains("/scratch/elsewhere.db"), "{db:?}");
     }
 
-    #[test]
-    fn a_home_without_a_config_is_fine() {
+    /// A database from before the schema was squashed fails the check, by the
+    /// name of the file to delete. It is the one thing in the report the daemon
+    /// cannot answer for: it refuses to open such a database, so it is not
+    /// running to be asked, and this shell reads the file itself.
+    #[tokio::test]
+    async fn a_database_from_before_the_squash_fails_the_check() {
         let dir = tempfile::tempdir().unwrap();
-        let checks = home_checks(Some(dir.path()), Some(endpoint::parse_config(dir.path())));
+        let db = dir.path().join("ariadne.db");
+        drop(ariadne_store::Store::open(&db).await.unwrap());
+
+        let checks = home_checks(Some(dir.path()), Some(endpoint::parse_config(dir.path()))).await;
+        let check = checks.iter().find(|c| c.name == "database").unwrap();
+        assert_eq!(check.status, Status::Ok, "{check:?}");
+
+        // A migration this release does not ship is what every database of
+        // that era has, and what sqlx then refuses to run over.
+        let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", db.display()))
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO _sqlx_migrations (version, description, installed_on, success,
+                                           checksum, execution_time)
+             VALUES (2, 'repositories', '2025-01-01 00:00:00', 1, x'00', 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+
+        let checks = home_checks(Some(dir.path()), Some(endpoint::parse_config(dir.path()))).await;
+        let check = checks.iter().find(|c| c.name == "database").unwrap();
+        assert_eq!(check.status, Status::Fail, "{check:?}");
+        assert!(
+            check.detail.contains(&db.display().to_string()),
+            "{check:?}"
+        );
+        assert!(
+            check.hint.as_deref().is_some_and(|h| h.contains("rm ")),
+            "and says what to do about it: {check:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_home_without_a_config_is_fine() {
+        let dir = tempfile::tempdir().unwrap();
+        let checks = home_checks(Some(dir.path()), Some(endpoint::parse_config(dir.path()))).await;
         let config = checks.iter().find(|c| c.name == "config.toml").unwrap();
         assert_eq!(config.status, Status::Ok);
     }
