@@ -22,7 +22,7 @@
  */
 
 /** cmdk's `filter`: `0` hides the row, and bigger is higher up the list. */
-export type PaletteScore = (value: string, search: string, keywords?: string[]) => number
+type PaletteScore = (value: string, search: string, keywords?: string[]) => number
 
 /** What one word of the query is worth, by where it was found. */
 const EXACT = 1

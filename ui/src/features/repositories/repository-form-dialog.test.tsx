@@ -14,34 +14,18 @@
  * says "bad request" over a form that looks fine.
  */
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, render, screen, waitFor } from "@testing-library/react"
+import { screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { RepositoryDto } from "@/api"
-
+import { aRepository } from "@/test/fixtures"
+import { daemonFetch, errorResponse, renderScreen } from "@/test/harness"
 import { RepositoryFormDialog } from "./repository-form-dialog"
 
-/** Hoisted for the reason `repositories-page.test.tsx` gives: the client takes
- * its `fetch` when `@/api` is imported, so a later stub is one it never sees. */
-const { daemonFetch } = vi.hoisted(() => {
-  const daemonFetch = vi.fn()
-  globalThis.fetch = daemonFetch as unknown as typeof fetch
-  return { daemonFetch }
-})
-
-const STAMP = "2026-01-01T00:00:00Z"
-
-const REPOSITORY: RepositoryDto = {
+const REPOSITORY: RepositoryDto = aRepository({
   id: "01JREPO00000000000000ARI",
-  path: "/home/me/dev/ariadne",
-  base_branch: "main",
-  merge_strategy: "direct",
-  description: "The orchestrator itself.",
-  created_at: STAMP,
-  updated_at: STAMP,
-}
+})
 
 interface Recorded {
   method: string
@@ -66,11 +50,8 @@ function stubDaemon(failure?: { status: number; code: string; message: string })
     requests.push({ method: request.method, path: pathname, body })
 
     if (failure) {
-      const { status, ...error } = failure
-      return new Response(JSON.stringify({ error }), {
-        status,
-        headers: { "content-type": "application/json" },
-      })
+      const { status, code, message } = failure
+      return errorResponse(status, code, message)
     }
     return new Response(JSON.stringify({ ...REPOSITORY, ...body }), {
       status: request.method === "POST" ? 201 : 200,
@@ -83,32 +64,14 @@ function renderDialog(
   repository: RepositoryDto | null,
   onOpenChange: (open: boolean) => void = () => {},
 ) {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <RepositoryFormDialog open onOpenChange={onOpenChange} repository={repository} />
-    </QueryClientProvider>,
+  return renderScreen(
+    <RepositoryFormDialog open onOpenChange={onOpenChange} repository={repository} />,
   )
 }
 
 beforeEach(() => {
-  Element.prototype.scrollIntoView = vi.fn()
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    },
-  )
   requests = []
-  daemonFetch.mockReset()
   stubDaemon()
-})
-
-afterEach(() => {
-  cleanup()
-  vi.unstubAllGlobals()
 })
 
 describe("registering a repository", () => {

@@ -22,8 +22,7 @@ import type { AuthorRole, MessageDto, MessageRecipientDto } from "@/api"
 import { Markdown } from "@/components/markdown"
 import { StatusBadge } from "@/components/status-badge"
 import { When } from "@/components/when"
-import { AUTHOR_ROLE_LABELS } from "@/lib/labels"
-import { cn } from "@/lib/utils"
+import { AUTHOR_ROLE_LABELS, cn } from "@/lib/format"
 
 const ROLE_TONES: Record<AuthorRole, { badge: string; card: string }> = {
   planner: {

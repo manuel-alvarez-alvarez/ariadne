@@ -13,17 +13,14 @@
  * `queries.ts`'s story, not this one's.
  */
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, render, screen } from "@testing-library/react"
+import { screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { MemoryRouter } from "react-router-dom"
-import { afterEach, expect, it } from "vitest"
+import { expect, it } from "vitest"
 
 import { type GoalDto, type ProfileDto, qk, type TaskDto } from "@/api"
-
+import { aGoal, aTask } from "@/test/fixtures"
+import { renderScreen } from "@/test/harness"
 import { TaskConversation } from "./task-conversation"
-
-afterEach(cleanup)
 
 function profile(id: string, name: string, role: ProfileDto["role"]): ProfileDto {
   return {
@@ -45,53 +42,35 @@ const PROFILES: ProfileDto[] = [
   profile("01OTHER", "Bystander", "reviewer"),
 ]
 
-const GOAL: GoalDto = {
+const GOAL: GoalDto = aGoal({
   id: "01GOAL",
   title: "Ship it",
   description: "Ship it, all of it",
-  status: "active",
   planner_profile_id: "01PLANNER",
-  required_approvals: 1,
-  repos: [],
-  created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T00:00:00Z",
-}
+})
 
-const TASK: TaskDto = {
+const TASK: TaskDto = aTask({
   id: "01TASK",
-  goal_id: GOAL.id,
   repo_id: "01REPO",
   title: "Do the thing",
-  description: "",
-  status: "in_progress",
   branch: "do-the-thing-01task",
-  depends_on: [],
   engineer_profile_id: "01ENGINEER",
   reviewers: [{ profile_id: "01REVIEWER", agent_kind: null, model: null }],
-  review_round: 0,
-  stalled: false,
-  created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T00:00:00Z",
-}
+  goal_id: GOAL.id,
+})
 
 function mount() {
   // Seeded data is never stale here: a background refetch would reach a daemon
   // that is not there, and its failure re-renders the thread out from under an
   // open picker.
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+  renderScreen(<TaskConversation taskId={TASK.id} />, {
+    seed: (client) => {
+      client.setQueryData(qk.tasks.detail(TASK.id), TASK)
+      client.setQueryData(qk.tasks.messages(TASK.id), [])
+      client.setQueryData(qk.goals.detail(GOAL.id), GOAL)
+      client.setQueryData(qk.profiles.list({}), PROFILES)
+    },
   })
-  client.setQueryData(qk.tasks.detail(TASK.id), TASK)
-  client.setQueryData(qk.tasks.messages(TASK.id), [])
-  client.setQueryData(qk.goals.detail(GOAL.id), GOAL)
-  client.setQueryData(qk.profiles.list({}), PROFILES)
-  render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter>
-        <TaskConversation taskId={TASK.id} />
-      </MemoryRouter>
-    </QueryClientProvider>,
-  )
 }
 
 it("offers the engineer, the reviewers and the planner, and no one else", async () => {

@@ -19,7 +19,7 @@ import { useSearchParams } from "react-router-dom"
 import { ErrorState } from "@/components/error-state"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
-import { shortId } from "@/lib/ids"
+import { shortId } from "@/lib/format"
 import { sessionPanelTo } from "@/routes/paths"
 
 import { sessionQueryOptions } from "./queries"

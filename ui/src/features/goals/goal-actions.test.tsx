@@ -16,26 +16,13 @@
  * goal tests are pure and have no business paying for a DOM.
  */
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react"
+import { screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { GoalDto, GoalStatus } from "@/api"
-
+import { daemonFetch, errorResponse, renderScreen } from "@/test/harness"
 import { GoalActions } from "./goal-actions"
-
-/**
- * Hoisted, and not `vi.stubGlobal`: `openapi-fetch` takes its `fetch` when the
- * client is built, which is when `@/api` is imported — a stub installed after
- * that is a stub the daemon client never sees, and the test would go looking
- * for a real daemon.
- */
-const { daemonFetch } = vi.hoisted(() => {
-  const daemonFetch = vi.fn()
-  globalThis.fetch = daemonFetch as unknown as typeof fetch
-  return { daemonFetch }
-})
 
 const STAMP = "2026-01-01T00:00:00Z"
 
@@ -61,11 +48,8 @@ function stubDaemon() {
   daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(String(input), init)
     if (request.method === "DELETE" && deleteFailure) {
-      const { status, ...error } = deleteFailure
-      return new Response(JSON.stringify({ error }), {
-        status,
-        headers: { "content-type": "application/json" },
-      })
+      const { status, code, message } = deleteFailure
+      return errorResponse(status, code, message)
     }
     return new Response(null, { status: 204 })
   })
@@ -81,12 +65,7 @@ function wire(): { method: string; path: string }[] {
 }
 
 function renderActions(status: GoalStatus, onDeleted = vi.fn()) {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
-  render(
-    <QueryClientProvider client={queryClient}>
-      <GoalActions goal={goal(status)} onDeleted={onDeleted} />
-    </QueryClientProvider>,
-  )
+  renderScreen(<GoalActions goal={goal(status)} onDeleted={onDeleted} />)
   return { onDeleted }
 }
 
@@ -97,26 +76,11 @@ async function confirmDelete() {
 }
 
 beforeEach(() => {
-  // jsdom lays nothing out, so it implements neither of these.
-  Element.prototype.scrollIntoView = vi.fn()
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    },
-  )
-  daemonFetch.mockReset()
   stubDaemon()
 })
 
 // Testing Library only unmounts by itself under `globals: true`, which this
 // project does not use — without this every screen stays in the document.
-afterEach(() => {
-  cleanup()
-  vi.unstubAllGlobals()
-})
 
 describe("deleting a goal", () => {
   it.each(["planning", "active"] as const)("is not offered on a %s goal", (status) => {

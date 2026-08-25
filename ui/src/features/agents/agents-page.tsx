@@ -16,29 +16,23 @@ import { useQuery } from "@tanstack/react-query"
 import { PencilIcon } from "lucide-react"
 import { useState } from "react"
 
-import { type AgentConfigDto, ApiError } from "@/api"
+import type { AgentConfigDto } from "@/api"
+import { DataTable, RowAction } from "@/components/data-table"
 import { EmptyState } from "@/components/empty-state"
-import { ErrorState } from "@/components/error-state"
 import { PageHeader } from "@/components/page-header"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Skeleton } from "@/components/ui/skeleton"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { AGENT_KIND_LABELS } from "@/lib/labels"
-import { plural } from "@/lib/plural"
-
+import { TableCell, TableRow } from "@/components/ui/table"
+import { AGENT_KIND_LABELS, plural } from "@/lib/format"
 import { AgentFlagsDialog } from "./agent-flags-dialog"
 import { sameFlags } from "./agent-flags-values"
 import { agentConfigsQueryOptions } from "./queries"
 
-const COLUMN_COUNT = 4
+const COLUMNS = [
+  { header: "Agent" },
+  { header: "Extra flags" },
+  { header: "Defaults" },
+  { className: "w-12 text-right" },
+]
 
 export function AgentsPage() {
   // The dialog keeps its subject after closing so the exit animation still has
@@ -64,53 +58,14 @@ export function AgentsPage() {
         <p className="text-sm text-muted-foreground">{plural(configs.data.length, "agent")}</p>
       ) : null}
 
-      {configs.isError ? (
-        <ErrorState
-          title="Could not load the agents"
-          error={configs.error}
-          // A daemon that never answered has nothing to say about why.
-          description={
-            ApiError.is(configs.error) && configs.error.isNetworkError
-              ? "The daemon is not answering. Check the URL in settings and that it is listening on TCP."
-              : undefined
-          }
-          onRetry={() => void configs.refetch()}
-        />
-      ) : (
-        <div className="overflow-hidden rounded-xl border">
-          <Table>
-            <TableHeader>
-              <TableRow className="hover:bg-transparent">
-                <TableHead>Agent</TableHead>
-                <TableHead>Extra flags</TableHead>
-                <TableHead>Defaults</TableHead>
-                <TableHead className="w-12 text-right">
-                  <span className="sr-only">Actions</span>
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {configs.isPending ? (
-                <LoadingRows />
-              ) : configs.data.length === 0 ? (
-                <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={COLUMN_COUNT} className="p-0">
-                    <NoAgents />
-                  </TableCell>
-                </TableRow>
-              ) : (
-                configs.data.map((config) => (
-                  <AgentRow
-                    key={config.agent_kind}
-                    config={config}
-                    onEdit={() => openEdit(config)}
-                  />
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </div>
-      )}
+      <DataTable
+        query={configs}
+        errorTitle="Could not load the agents"
+        columns={COLUMNS}
+        empty={<NoAgents />}
+        rowKey={(config) => config.agent_kind}
+        renderRow={(config) => <AgentRow config={config} onEdit={() => openEdit(config)} />}
+      />
 
       <AgentFlagsDialog open={editOpen} onOpenChange={setEditOpen} config={editing} />
     </div>
@@ -156,33 +111,8 @@ function AgentRow({ config, onEdit }: { config: AgentConfigDto; onEdit: () => vo
         )}
       </TableCell>
       <TableCell className="text-right">
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label={`Edit ${label} flags`}
-          title={`Edit ${label} flags`}
-          onClick={onEdit}
-        >
-          <PencilIcon />
-        </Button>
+        <RowAction icon={<PencilIcon />} label={`Edit ${label} flags`} onClick={onEdit} />
       </TableCell>
     </TableRow>
-  )
-}
-
-function LoadingRows() {
-  return (
-    <>
-      {[0, 1, 2].map((row) => (
-        <TableRow key={row} className="hover:bg-transparent">
-          {Array.from({ length: COLUMN_COUNT }, (_, column) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: placeholder cells have no identity
-            <TableCell key={column}>
-              <Skeleton className="h-4 w-full" />
-            </TableCell>
-          ))}
-        </TableRow>
-      ))}
-    </>
   )
 }

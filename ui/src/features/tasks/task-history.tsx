@@ -15,7 +15,7 @@ import { ErrorState } from "@/components/error-state"
 import { StatusBadge } from "@/components/status-badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { When } from "@/components/when"
-import { cn } from "@/lib/utils"
+import { cn } from "@/lib/format"
 import { taskTransitionsQueryOptions } from "./queries"
 import { displayLabel, TASK_STATUS_META } from "./status"
 

@@ -10,7 +10,7 @@
 
 import { useCallback, useState } from "react"
 
-export const COLLAPSED_LANES_KEY = "ariadne.goals.collapsed-lanes"
+const COLLAPSED_LANES_KEY = "ariadne.goals.collapsed-lanes"
 
 /** Ids out of a stored value; anything that is not a list of ids reads as none. */
 export function parseCollapsed(raw: string | null): Set<string> {

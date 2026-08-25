@@ -34,7 +34,7 @@ import {
   CommandList,
 } from "@/components/ui/command"
 import { inputClassName } from "@/components/ui/input"
-import { cn } from "@/lib/utils"
+import { cn } from "@/lib/format"
 
 import { type AgentKindChoice, AUTO_AGENT_KIND } from "./profile-form-values"
 import { AGENT_KINDS, agentKindLabel } from "./profile-labels"

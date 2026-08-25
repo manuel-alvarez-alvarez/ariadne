@@ -1,49 +1,31 @@
 import { describe, expect, it } from "vitest"
 
 import type { GoalDto, ProfileDto, SessionDto, TaskDto } from "@/api"
-
+import { aGoal, aProfile, aSession, aTask } from "@/test/fixtures"
 import { buildPaletteEntries, paletteTargetTo } from "./entries"
 
-const GOAL: GoalDto = {
+const GOAL: GoalDto = aGoal({
   id: "01JGOAL00000000000000000A",
   title: "Ship the palette",
-  description: "",
-  status: "active",
   planner_profile_id: "01JPROF0000000000000000AA",
-  repos: [],
-  required_approvals: 1,
-  created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T00:00:00Z",
-}
+})
 
-const TASK: TaskDto = {
+const TASK: TaskDto = aTask({
   id: "01JTASK00000000000000000B",
-  goal_id: GOAL.id,
   title: "Add the command palette",
-  description: "",
-  status: "in_progress",
   branch: "add-the-command-palette-01jtask",
-  depends_on: [],
   engineer_profile_id: "01JPROF0000000000000000AA",
   repo_id: "01JREPO0000000000000000AA",
-  review_round: 0,
-  reviewers: [],
-  stalled: false,
-  created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T00:00:00Z",
-}
+  goal_id: GOAL.id,
+})
 
-const SESSION: SessionDto = {
+const SESSION: SessionDto = aSession({
   id: "01JSESS00000000000000000C",
   goal_id: GOAL.id,
   task_id: TASK.id,
-  role: "engineer",
-  status: "running",
-  agent_kind: "claude_code",
   profile_id: "01JPROF0000000000000000AA",
   tmux_session: "ariadne-eng-01jsess",
-  created_at: "2026-01-01T00:00:00Z",
-}
+})
 
 const PLANNER_SESSION: SessionDto = {
   ...SESSION,
@@ -53,17 +35,13 @@ const PLANNER_SESSION: SessionDto = {
   tmux_session: "ariadne-plan-01jsess",
 }
 
-const PROFILE: ProfileDto = {
+const PROFILE: ProfileDto = aProfile({
   id: "01JPROF0000000000000000AA",
   name: "Reviewer (strict)",
   role: "reviewer",
   agent_kind: "codex",
   model: "gpt-5",
-  system_prompt: "",
-  system_prompt_is_default: false,
-  created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T00:00:00Z",
-}
+})
 
 const SOURCE = {
   goals: [GOAL],

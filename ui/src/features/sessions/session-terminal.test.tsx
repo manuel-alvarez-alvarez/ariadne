@@ -30,14 +30,25 @@
  * real `openapi-fetch` path behind a controllable `fetch`.
  */
 
-import { cleanup, render, screen } from "@testing-library/react"
+import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { useLayoutEffect } from "react"
-import { afterEach, beforeEach, expect, it, vi } from "vitest"
+import { expect, it, vi } from "vitest"
 
-import { DEFAULT_BASE_URL, setApiBaseUrl } from "@/api"
+import {
+  connections,
+  emulator,
+  frameResizedTo,
+  installTerminalEnvironment,
+  keyboardOf,
+  keystrokes,
+  resizes,
+  resizeTargets,
+  settle,
+  streams,
+  stub,
+} from "@/test/terminal-harness"
 
-import type { PaneSize } from "./log-stream"
 import { SessionTerminal } from "./session-terminal"
 
 // The one thing in the fit that needs a laid-out frame. Its own arithmetic is
@@ -45,50 +56,10 @@ import { SessionTerminal } from "./session-terminal"
 vi.mock("./pane-fit", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./pane-fit")>()),
   paneFit: () => {
-    fits += 1
-    return roomForPane
+    stub.fits += 1
+    return stub.roomForPane
   },
 }))
-
-const SESSION = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-/** Anywhere but a real daemon: these requests must never leave the process. */
-const BASE_URL = "http://daemon.test"
-
-/** One log-stream connection, and whether it is still open. */
-interface Connection {
-  url: string
-  closed: boolean
-}
-
-let connections: Connection[]
-/** The streams themselves, for the tests that deliver something down one. */
-let streams: StubEventSource[]
-/** The `data` of every keystroke request the terminal made, oldest first. */
-let keystrokes: string[]
-/** The grid of every resize request it made, oldest first. */
-let resizes: PaneSize[]
-/** The session each of those resizes was addressed to. */
-let resizeTargets: string[]
-/** What the frame would measure to, if this environment measured anything. */
-let roomForPane: PaneSize | null
-/** How many times the frame was measured at all. */
-let fits: number
-/** Whether the daemon refuses to resize the pane. */
-let resizeFails: boolean
-/** The `ResizeObserver` callbacks watching a frame, in the order they started. */
-let frameObservers: Array<(entries: { contentRect: { width: number; height: number } }[]) => void>
-let originalFetch: typeof globalThis.fetch
-
-/** What the page answers when something asks the canvas for a context. */
-let webglContext: WebGL2RenderingContext | null
-/** Whether the addon refuses to load, the way it does with no context to draw into. */
-let webglRefuses: boolean
-/** How many times the addon was asked for, and how many times it took. */
-let webglRequests: number
-let webglLoads: number
-let webglDisposals: number
-/** Takes the context back, the way a driver reset does. */
-let loseWebglContext: (() => void) | null
 
 // The real addon is a WebGL renderer, which is exactly the thing this
 // environment does not have; what these tests are about is what the component
@@ -96,161 +67,31 @@ let loseWebglContext: (() => void) | null
 vi.mock("@xterm/addon-webgl", () => ({
   WebglAddon: class {
     constructor() {
-      webglRequests += 1
+      stub.webglRequests += 1
     }
 
     activate(): void {
-      if (webglRefuses) throw new Error("WebGL2 is not supported")
-      webglLoads += 1
+      if (stub.webglRefuses) throw new Error("WebGL2 is not supported")
+      stub.webglLoads += 1
     }
 
     dispose(): void {
-      webglDisposals += 1
+      stub.webglDisposals += 1
     }
 
     onContextLoss(handler: () => void): { dispose: () => void } {
-      loseWebglContext = handler
+      stub.loseWebglContext = handler
       return { dispose: () => {} }
     }
   },
 }))
 
-const realGetContext = HTMLCanvasElement.prototype.getContext
+const SESSION = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
 
-beforeEach(() => {
-  connections = []
-  streams = []
-  keystrokes = []
-  resizes = []
-  resizeTargets = []
-  roomForPane = { cols: 137, rows: 41 }
-  fits = 0
-  resizeFails = false
-  frameObservers = []
-  webglContext = {
-    getExtension: () => ({ loseContext: () => {} }),
-  } as unknown as WebGL2RenderingContext
-  webglRefuses = false
-  webglRequests = 0
-  webglLoads = 0
-  webglDisposals = 0
-  loseWebglContext = null
-  originalFetch = globalThis.fetch
-  globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const request = input instanceof Request ? input : new Request(String(input), init)
-    const body = JSON.parse(await request.clone().text())
-    if (request.url.endsWith("/resize")) {
-      if (resizeFails) return new Response(null, { status: 409 })
-      resizes.push(body)
-      resizeTargets.push(request.url.split("/sessions/")[1]?.replace("/resize", "") ?? "")
-    } else {
-      keystrokes.push(body.data)
-    }
-    return new Response(null, { status: 204 })
-  }) as typeof globalThis.fetch
-  // `openapi-fetch` captures `globalThis.fetch` when the client is built, so
-  // the client has to be rebuilt after the stub is in place.
-  setApiBaseUrl(BASE_URL)
-  vi.stubGlobal("EventSource", StubEventSource)
-  // xterm measures the device pixel ratio and watches the frame; neither
-  // exists here, and neither is what these tests are about.
-  vi.stubGlobal("matchMedia", (query: string) => ({
-    matches: false,
-    media: query,
-    onchange: null,
-    addEventListener() {},
-    removeEventListener() {},
-    addListener() {},
-    removeListener() {},
-    dispatchEvent: () => false,
-  }))
-  // Real enough to be driven: the terminal fits itself to what this reports,
-  // and a frame that moves twice in quick succession is the whole point of the
-  // debounce.
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      readonly #notify: (typeof frameObservers)[number]
-
-      constructor(notify: (typeof frameObservers)[number]) {
-        this.#notify = notify
-      }
-
-      observe(): void {
-        frameObservers.push(this.#notify)
-      }
-
-      unobserve(): void {}
-
-      disconnect(): void {
-        frameObservers = frameObservers.filter((notify) => notify !== this.#notify)
-      }
-    },
-  )
-  // jsdom has no canvas at all, and says so on every call; the answer to the
-  // one question the component asks it is what decides the renderer.
-  HTMLCanvasElement.prototype.getContext = ((id: string) =>
-    id === "webgl2" ? webglContext : null) as typeof HTMLCanvasElement.prototype.getContext
-})
-
-// `globals` is off, so nothing unmounts a screen between tests but this.
-afterEach(() => {
-  cleanup()
-  vi.unstubAllGlobals()
-  HTMLCanvasElement.prototype.getContext = realGetContext
-  globalThis.fetch = originalFetch
-  setApiBaseUrl(DEFAULT_BASE_URL)
-})
-
-/** Enough of `EventSource` for the stream to open, deliver and be closed. */
-class StubEventSource {
-  onopen: ((event: Event) => void) | null = null
-  onerror: ((event: Event) => void) | null = null
-  readonly #connection: Connection
-  readonly #listeners = new Map<string, (event: MessageEvent) => void>()
-
-  constructor(url: string) {
-    this.#connection = { url, closed: false }
-    connections.push(this.#connection)
-    streams.push(this)
-  }
-
-  addEventListener(type: string, handler: (event: MessageEvent) => void): void {
-    this.#listeners.set(type, handler)
-  }
-
-  /** Deliver one event, the way the daemon's stream would. */
-  emit(type: string, payload: unknown): void {
-    this.#listeners.get(type)?.({ data: JSON.stringify(payload) } as MessageEvent)
-  }
-
-  close(): void {
-    this.#connection.closed = true
-  }
-}
+installTerminalEnvironment()
 
 function expand(): Promise<void> {
   return userEvent.setup().click(screen.getByRole("button", { name: /expand the terminal/i }))
-}
-
-/** xterm's own input, which is what a focused terminal actually is. */
-function keyboardOf(container: HTMLElement): HTMLTextAreaElement {
-  const textarea = container.querySelector("textarea")
-  if (!textarea) throw new Error("the emulator has no keyboard")
-  return textarea
-}
-
-/** The one emulator on the page — there is never a second one. */
-function emulator(): HTMLElement {
-  const found = document.querySelectorAll<HTMLElement>(".xterm")
-  const only = found.length === 1 ? found[0] : undefined
-  if (!only) throw new Error(`expected one emulator on the page, found ${found.length}`)
-  return only
-}
-
-/** Tell the terminal its frame is now this big, the way the browser would. */
-function frameResizedTo(width: number, height: number): void {
-  for (const notify of frameObservers) notify([{ contentRect: { width, height } }])
 }
 
 /**
@@ -264,13 +105,6 @@ function FireTimersOnCommit({ armed }: { armed: boolean }) {
     if (armed) vi.advanceTimersByTime(500)
   })
   return null
-}
-
-/** A turn of the event loop: long enough for the addon's import to have landed. */
-function settle(): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, 0)
-  })
 }
 
 it("carries the same emulator and stream into the dialog and back", async () => {
@@ -340,25 +174,25 @@ it("draws through the GPU where there is one, and drops it with its context", as
 
   // The addon is fetched only once the emulator is open, so it lands a turn
   // after the terminal does.
-  await vi.waitFor(() => expect(webglLoads).toBe(1))
+  await vi.waitFor(() => expect(stub.webglLoads).toBe(1))
 
   // A context the driver takes back leaves xterm drawing through the DOM
   // again, which is all disposing the addon means; asking for another one
   // would only lose it the same way.
-  expect(loseWebglContext).toBeTypeOf("function")
-  loseWebglContext?.()
-  expect(webglDisposals).toBe(1)
+  expect(stub.loseWebglContext).toBeTypeOf("function")
+  stub.loseWebglContext?.()
+  expect(stub.webglDisposals).toBe(1)
   expect(emulator()).toBeTruthy()
 })
 
 it("falls back to the DOM renderer when the WebGL addon will not load", async () => {
   const user = userEvent.setup()
-  webglRefuses = true
+  stub.webglRefuses = true
   render(<SessionTerminal sessionId={SESSION} status="running" />)
   await settle()
 
-  expect(webglRequests).toBe(1)
-  expect(webglLoads).toBe(0)
+  expect(stub.webglRequests).toBe(1)
+  expect(stub.webglLoads).toBe(0)
   // The renderer xterm opened with never went anywhere, so this is still a
   // terminal: it is on the page, and it is still typed into.
   keyboardOf(emulator()).focus()
@@ -367,14 +201,14 @@ it("falls back to the DOM renderer when the WebGL addon will not load", async ()
 })
 
 it("does not fetch the WebGL addon without a context to draw into", async () => {
-  webglContext = null
+  stub.webglContext = null
   render(<SessionTerminal sessionId={SESSION} status="running" />)
   await settle()
 
   // Not merely unused: a renderer this browser cannot run is a download it
   // should never have made.
-  expect(webglRequests).toBe(0)
-  expect(loseWebglContext).toBeNull()
+  expect(stub.webglRequests).toBe(0)
+  expect(stub.loseWebglContext).toBeNull()
   expect(emulator()).toBeTruthy()
 })
 
@@ -393,11 +227,11 @@ it("asks once for a frame that moved several times", async () => {
 
   // The first notification is the frame as it already is: a baseline.
   frameResizedTo(600, 300)
-  roomForPane = { cols: 100, rows: 30 }
+  stub.roomForPane = { cols: 100, rows: 30 }
   frameResizedTo(700, 300)
   // Still mid-drag: this is the size the pane should end up at, and the one
   // before it should never be asked for.
-  roomForPane = { cols: 120, rows: 30 }
+  stub.roomForPane = { cols: 120, rows: 30 }
   frameResizedTo(800, 300)
 
   await vi.waitFor(() => expect(resizes).toHaveLength(2))
@@ -486,14 +320,14 @@ it("never asks a session that is over to resize", async () => {
   // There is no pane behind a finished session; its replay is drawn at the
   // size the pane had when it was written, scaled to the frame.
   expect(resizes).toEqual([])
-  expect(fits).toBe(0)
+  expect(stub.fits).toBe(0)
 })
 
 it("keeps working when the daemon refuses to resize the pane", async () => {
   const user = userEvent.setup()
-  resizeFails = true
+  stub.resizeFails = true
   render(<SessionTerminal sessionId={SESSION} status="running" />)
-  await vi.waitFor(() => expect(fits).toBeGreaterThan(0))
+  await vi.waitFor(() => expect(stub.fits).toBeGreaterThan(0))
   await new Promise((resolve) => setTimeout(resolve, 300))
 
   // A pane that was not resized is a pane rendered smaller — not a terminal
@@ -518,13 +352,13 @@ it("measures again when the grid changes, and asks only when the answer does", a
   // Somebody else's fit. This frame still has room for exactly what it asked
   // for, so it has nothing new to say.
   streams[0]?.emit("resize", { cols: 90, rows: 20 })
-  await vi.waitFor(() => expect(fits).toBeGreaterThan(1))
+  await vi.waitFor(() => expect(stub.fits).toBeGreaterThan(1))
   await settle()
   expect(resizes).toHaveLength(1)
 
   // The same event, but this time the frame measures differently — cells that
   // settled on another size. That is a fit worth asking for.
-  roomForPane = { cols: 111, rows: 30 }
+  stub.roomForPane = { cols: 111, rows: 30 }
   streams[0]?.emit("resize", { cols: 90, rows: 21 })
   await vi.waitFor(() => expect(resizes).toHaveLength(2))
   expect(resizes[1]).toEqual({ cols: 111, rows: 30 })

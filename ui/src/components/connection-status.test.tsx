@@ -12,10 +12,10 @@
  */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, render, screen } from "@testing-library/react"
+import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { createMemoryRouter, RouterProvider } from "react-router-dom"
-import { afterEach, expect, it, vi } from "vitest"
+import { expect, it, vi } from "vitest"
 
 import type { ApiError } from "@/api"
 import { AppShell } from "@/components/app-shell"
@@ -23,16 +23,6 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import type { Connection } from "@/hooks/use-connection"
 
 import { ConnectionStatus } from "./connection-status"
-
-/**
- * Hoisted for the same reason `detail-panels.test.tsx` hoists its stub:
- * `openapi-fetch` takes its `fetch` when `@/api` is imported, and the shell
- * case pulls it in — never settling keeps whatever it asks for pending, which
- * is all it needs to be.
- */
-vi.hoisted(() => {
-  globalThis.fetch = (() => new Promise(() => {})) as unknown as typeof fetch
-})
 
 /** What the mocked `useConnection` answers; each test writes its own. */
 const state = vi.hoisted(() => ({ current: undefined as unknown }))
@@ -42,7 +32,6 @@ vi.mock("@/hooks/use-connection", () => ({
 }))
 
 // `globals` is off, so nothing unmounts a screen between tests but this.
-afterEach(cleanup)
 
 function conn(over: Partial<Connection> = {}): Connection {
   return {

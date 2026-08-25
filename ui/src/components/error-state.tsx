@@ -2,7 +2,7 @@
  * A failed call, everywhere one has to be shown.
  *
  * The daemon's own words are what goes on screen (see
- * {@link import("@/lib/errors").describeError}), and where the caller can ask
+ * {@link import("@/lib/format").describeError}), and where the caller can ask
  * again, the retry sits in the alert rather than somewhere below it.
  *
  * The icon is opt-in, because the surfaces disagree and did before: the ones
@@ -14,7 +14,7 @@ import type { ReactNode } from "react"
 
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import { describeError } from "@/lib/errors"
+import { describeError } from "@/lib/format"
 
 export function ErrorState({
   title,

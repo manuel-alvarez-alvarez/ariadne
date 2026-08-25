@@ -26,7 +26,7 @@
  * `components/detail-panels.tsx`); its `tab` is the session view's own
  * terminal/activity strip, which is inside it like any other.
  */
-export const PANEL_PARAMS = {
+const PANEL_PARAMS = {
   goal: ["goal", "task", "tab", "session"],
   task: ["task", "tab", "session"],
   session: ["session", "tab"],
@@ -35,7 +35,7 @@ export const PANEL_PARAMS = {
 export type Panel = keyof typeof PANEL_PARAMS
 
 /** Step back over the entry that opened the panel, or rewrite this one. */
-export type CloseStep = { kind: "back" } | { kind: "rewrite"; search: URLSearchParams }
+type CloseStep = { kind: "back" } | { kind: "rewrite"; search: URLSearchParams }
 
 export function closePanel(
   panel: Panel,

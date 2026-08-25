@@ -77,5 +77,3 @@ export const useStreamStore = create<StreamState & StreamActions>()((set) => ({
   markResync: () => set((state) => ({ resyncCount: state.resyncCount + 1 })),
   reset: () => set(initialState),
 }))
-
-export const useStreamStatus = () => useStreamStore((state) => state.status)

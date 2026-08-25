@@ -24,15 +24,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { When } from "@/components/when"
 import { SESSION_ATTENTION_META, SessionAttentionBadge } from "@/features/sessions/session-display"
 import { STALLED_META, StalledBadge, TASK_STATUS_META } from "@/features/tasks"
-import { describeError } from "@/lib/errors"
-import { shortId } from "@/lib/ids"
-import { ROLE_LABELS } from "@/lib/labels"
-import { plural } from "@/lib/plural"
+import { describeError, plural, ROLE_LABELS, shortId } from "@/lib/format"
 import { sessionPanelTo, taskPanelTo } from "@/routes/paths"
 
-import type { AttentionSessionItem, AttentionTaskItem } from "./attention"
-import { useAttention } from "./attention"
-
+import { type AttentionSessionItem, type AttentionTaskItem, useAttention } from "./attention"
 export function AttentionStrip() {
   const attention = useAttention()
 

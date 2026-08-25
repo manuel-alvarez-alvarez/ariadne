@@ -16,46 +16,30 @@
  * with no agents at all leaves on screen.
  */
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, render, screen, waitFor } from "@testing-library/react"
+import { screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { beforeEach, describe, expect, it } from "vitest"
 
 import type { AgentConfigDto } from "@/api"
-
+import { anAgentConfig } from "@/test/fixtures"
+import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { AgentsPage } from "./agents-page"
 
-/**
- * Hoisted, and not `vi.stubGlobal`: `openapi-fetch` takes its `fetch` when the
- * client is built, which is when `@/api` is imported — a stub installed after
- * that is a stub the daemon client never sees.
- */
-const { daemonFetch } = vi.hoisted(() => {
-  const daemonFetch = vi.fn()
-  globalThis.fetch = daemonFetch as unknown as typeof fetch
-  return { daemonFetch }
-})
-
 /** Customized: the default is there, with one flag added after it. */
-const CLAUDE_CODE: AgentConfigDto = {
-  agent_kind: "claude_code",
+const CLAUDE_CODE = anAgentConfig({
   extra_flags: ["--dangerously-skip-permissions", "--verbose"],
   default_flags: ["--dangerously-skip-permissions"],
-}
+})
 
 /** Untouched: exactly what Ariadne ships. */
-const CODEX: AgentConfigDto = {
+const CODEX = anAgentConfig({
   agent_kind: "codex",
   extra_flags: ["--dangerously-bypass-approvals-and-sandbox"],
   default_flags: ["--dangerously-bypass-approvals-and-sandbox"],
-}
+})
 
 /** Emptied: the default dropped, which is a legitimate answer of its own. */
-const OPENCODE: AgentConfigDto = {
-  agent_kind: "opencode",
-  extra_flags: [],
-  default_flags: ["--auto"],
-}
+const OPENCODE = anAgentConfig({ agent_kind: "opencode", default_flags: ["--auto"] })
 
 interface Recorded {
   method: string
@@ -89,28 +73,12 @@ function stubDaemon(configs: AgentConfigDto[] = [CLAUDE_CODE, CODEX, OPENCODE]) 
     if (request.method === "PUT") {
       const kind = pathname.split("/").at(-1)
       const config = stored.find((one) => one.agent_kind === kind)
-      if (!config) return json({})
+      if (!config) return jsonResponse({})
       config.extra_flags = body?.extra_flags ?? []
-      return json(config)
+      return jsonResponse(config)
     }
-    return json(stored)
+    return jsonResponse(stored)
   })
-}
-
-function json(payload: unknown): Response {
-  return new Response(JSON.stringify(payload), {
-    status: 200,
-    headers: { "content-type": "application/json" },
-  })
-}
-
-function renderScreen() {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <AgentsPage />
-    </QueryClientProvider>,
-  )
 }
 
 /** Opens the dialog on one agent, by the row's own edit button. */
@@ -120,31 +88,16 @@ async function openFlags(user: ReturnType<typeof userEvent.setup>, label: string
 }
 
 beforeEach(() => {
-  // jsdom lays nothing out, so it implements neither of these.
-  Element.prototype.scrollIntoView = vi.fn()
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    },
-  )
   requests = []
-  daemonFetch.mockReset()
   stubDaemon()
 })
 
 // Testing Library only unmounts by itself under `globals: true`, which this
 // project does not use — without this every screen stays in the document.
-afterEach(() => {
-  cleanup()
-  vi.unstubAllGlobals()
-})
 
 describe("AgentsPage", () => {
   it("lists the three agents by name, with the flags each is launched with", async () => {
-    renderScreen()
+    renderScreen(<AgentsPage />)
 
     expect(await screen.findByText("Claude Code")).toBeDefined()
     expect(screen.getByText("Codex")).toBeDefined()
@@ -156,7 +109,7 @@ describe("AgentsPage", () => {
   })
 
   it("says which lists have been moved off the defaults, in both directions", async () => {
-    renderScreen()
+    renderScreen(<AgentsPage />)
 
     // Claude Code has a flag added, OpenCode has the default dropped; only
     // Codex is still exactly what Ariadne ships.
@@ -166,7 +119,7 @@ describe("AgentsPage", () => {
   })
 
   it("counts the rows it is showing", async () => {
-    renderScreen()
+    renderScreen(<AgentsPage />)
 
     expect(await screen.findByText("3 agents")).toBeDefined()
   })
@@ -178,7 +131,7 @@ describe("AgentsPage", () => {
    */
   it("says the list is empty rather than showing a bare table", async () => {
     stubDaemon([])
-    renderScreen()
+    renderScreen(<AgentsPage />)
 
     expect(await screen.findByText("No agents")).toBeDefined()
     expect(screen.getByText("0 agents")).toBeDefined()
@@ -187,7 +140,7 @@ describe("AgentsPage", () => {
 
   it("opens the dialog on the agent of the row it was clicked in", async () => {
     const user = userEvent.setup()
-    renderScreen()
+    renderScreen(<AgentsPage />)
 
     await openFlags(user, "Codex")
 
@@ -201,7 +154,7 @@ describe("AgentsPage", () => {
 describe("editing an agent's flags", () => {
   it("sends the whole list, added row included, to that kind's endpoint", async () => {
     const user = userEvent.setup()
-    renderScreen()
+    renderScreen(<AgentsPage />)
 
     await openFlags(user, "Codex")
     await user.click(screen.getByRole("button", { name: "Add flag" }))
@@ -220,7 +173,7 @@ describe("editing an agent's flags", () => {
 
   it("sends the shorter list when a row is removed, and the empty one when all are", async () => {
     const user = userEvent.setup()
-    renderScreen()
+    renderScreen(<AgentsPage />)
 
     await openFlags(user, "Claude Code")
     await user.click(screen.getByRole("button", { name: "Remove flag 2" }))
@@ -235,7 +188,7 @@ describe("editing an agent's flags", () => {
 
   it("closes once the write lands, and shows the daemon's answer in the row", async () => {
     const user = userEvent.setup()
-    renderScreen()
+    renderScreen(<AgentsPage />)
 
     await openFlags(user, "Claude Code")
     await user.clear(screen.getByLabelText("Flag 2"))
@@ -252,13 +205,13 @@ describe("editing an agent's flags", () => {
     const user = userEvent.setup()
     daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
       const request = input instanceof Request ? input : new Request(String(input), init)
-      if (request.method !== "PUT") return json([CLAUDE_CODE, CODEX, OPENCODE])
+      if (request.method !== "PUT") return jsonResponse([CLAUDE_CODE, CODEX, OPENCODE])
       return new Response(
         JSON.stringify({ error: { code: "bad_request", message: "unknown agent kind: codex" } }),
         { status: 400, headers: { "content-type": "application/json" } },
       )
     })
-    renderScreen()
+    renderScreen(<AgentsPage />)
 
     await openFlags(user, "Codex")
     await user.click(screen.getByRole("button", { name: "Save flags" }))
@@ -272,7 +225,7 @@ describe("editing an agent's flags", () => {
 describe("restoring the defaults", () => {
   it("fills the rows with the daemon's own default_flags and sends those back", async () => {
     const user = userEvent.setup()
-    renderScreen()
+    renderScreen(<AgentsPage />)
 
     // OpenCode's default was dropped, so it has no rows to start from.
     await openFlags(user, "OpenCode")
@@ -291,7 +244,7 @@ describe("restoring the defaults", () => {
 
   it("writes nothing on its own — the restore is a form edit like any other", async () => {
     const user = userEvent.setup()
-    renderScreen()
+    renderScreen(<AgentsPage />)
 
     await openFlags(user, "Claude Code")
     await user.click(screen.getByRole("button", { name: "Restore defaults" }))
@@ -302,7 +255,7 @@ describe("restoring the defaults", () => {
 
   it("is not offered on a list that is already the default", async () => {
     const user = userEvent.setup()
-    renderScreen()
+    renderScreen(<AgentsPage />)
 
     await openFlags(user, "Codex")
 

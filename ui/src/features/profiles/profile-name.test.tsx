@@ -13,40 +13,24 @@
  * is `profilesQueryOptions`, and the daemon behind it is `queries.ts`'s story.
  */
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, render, screen } from "@testing-library/react"
-import { MemoryRouter } from "react-router-dom"
-import { afterEach, expect, it } from "vitest"
+import { screen } from "@testing-library/react"
+import { expect, it } from "vitest"
 
 import { type ProfileDto, qk } from "@/api"
 import { paths } from "@/routes/paths"
-
+import { aProfile } from "@/test/fixtures"
+import { renderScreen } from "@/test/harness"
 import { ProfileName } from "./profile-name"
 
-afterEach(cleanup)
-
-const PROFILE: ProfileDto = {
+const PROFILE: ProfileDto = aProfile({
   id: "01JPROF000000000000000ENG",
   name: "Builder",
-  role: "engineer",
-  agent_kind: "claude_code",
-  model: null,
-  system_prompt: "",
-  system_prompt_is_default: false,
-  created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T00:00:00Z",
-}
+})
 
 function mount(profileId: string) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  client.setQueryData(qk.profiles.list({}), [PROFILE])
-  render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter>
-        <ProfileName profileId={profileId} />
-      </MemoryRouter>
-    </QueryClientProvider>,
-  )
+  renderScreen(<ProfileName profileId={profileId} />, {
+    seed: (client) => client.setQueryData(qk.profiles.list({}), [PROFILE]),
+  })
 }
 
 it("shows the name, linking to the profile's row", () => {

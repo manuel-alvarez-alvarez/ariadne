@@ -42,10 +42,6 @@ export function setApiBaseUrl(next: string): void {
   client = createClient<paths>({ baseUrl: normalized })
 }
 
-export function getApiBaseUrl(): string {
-  return baseUrl
-}
-
 /** The current typed client. Re-read it per call — it is swapped on URL changes. */
 export function api(): Client<paths> {
   return client

@@ -15,9 +15,7 @@ import { ChevronUpIcon } from "lucide-react"
 
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useConnection } from "@/hooks/use-connection"
-import { formatDuration } from "@/lib/time"
-import { cn } from "@/lib/utils"
-
+import { cn, formatDuration } from "@/lib/format"
 export function ConnectionStatus({
   className,
   onOpenLogs,

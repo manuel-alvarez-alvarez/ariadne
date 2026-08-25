@@ -18,7 +18,7 @@
  *   the button flips to "Copied" under the pointer: no toast, nothing that
  *   moves the layout, and it lives and dies with the value it belongs to.
  * - {@link CopyableIdMenu} for goal, task and session ids, which are usually
- *   wanted *inside* a command line (`@/lib/copy-entries`). There the button
+ *   wanted *inside* a command line (`@/lib/clipboard`). There the button
  *   opens a menu of those, and since the menu — and the thing that was clicked
  *   — is gone by the time the copy lands, the feedback is a toast naming
  *   exactly what went to the clipboard.
@@ -40,10 +40,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { copyText } from "@/lib/clipboard"
-import type { CopyEntry } from "@/lib/copy-entries"
-import { middleTruncate } from "@/lib/truncate"
-import { cn } from "@/lib/utils"
+import { type CopyEntry, copyText } from "@/lib/clipboard"
+import { cn, middleTruncate } from "@/lib/format"
 
 /** How long "Copied" stays up before the tooltip goes back to naming the button. */
 const FEEDBACK_MS = 1400
@@ -59,7 +57,7 @@ type ValueProps = {
   /**
    * Which end gets the ellipsis when the row is too narrow. `middle` keeps the
    * value's last segment on screen — for branches, whose ULID prefix is the
-   * half nobody reads (see `@/lib/truncate`).
+   * half nobody reads (see `@/lib/format`).
    */
   truncate?: "end" | "middle"
   /**

@@ -12,9 +12,7 @@
  * whole updated config, so the row is correct before the refetch lands.
  */
 
-import type { QueryClient } from "@tanstack/react-query"
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query"
-
 import { type AgentConfigDto, type AgentKind, api, qk, unwrap } from "@/api"
 
 /** `GET /v1/agents` — every agent kind's flags, current and default. */
@@ -42,14 +40,13 @@ export function useUpdateAgentConfig() {
           body: { extra_flags: extraFlags },
         }),
       ),
-    onSuccess: (config) => cacheAgentConfig(queryClient, config),
+    // The updated kind back into the list, in place, and a refetch behind it.
+    // There are no detail keys to patch, so this is not `cacheRow`.
+    onSuccess: (config) => {
+      queryClient.setQueryData(qk.agents.list(), (configs?: AgentConfigDto[]) =>
+        configs?.map((current) => (current.agent_kind === config.agent_kind ? config : current)),
+      )
+      void queryClient.invalidateQueries({ queryKey: qk.agents.lists() })
+    },
   })
-}
-
-/** The updated kind back into the list, in place, and a refetch behind it. */
-function cacheAgentConfig(queryClient: QueryClient, config: AgentConfigDto): void {
-  queryClient.setQueryData(qk.agents.list(), (configs?: AgentConfigDto[]) =>
-    configs?.map((current) => (current.agent_kind === config.agent_kind ? config : current)),
-  )
-  void queryClient.invalidateQueries({ queryKey: qk.agents.lists() })
 }

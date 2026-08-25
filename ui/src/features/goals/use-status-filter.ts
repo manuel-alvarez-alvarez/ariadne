@@ -25,7 +25,7 @@ import {
   withStatusFilter,
 } from "./filters"
 
-export interface StatusFilterState {
+interface StatusFilterState {
   /** The statuses the board is narrowed to; empty is every goal. */
   statuses: StatusFilter
   /** Apply a selection: to the URL, and to what the next visit will restore. */

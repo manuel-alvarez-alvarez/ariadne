@@ -13,16 +13,15 @@
  */
 
 import { QueryClient, QueryClientProvider, useMutation } from "@tanstack/react-query"
-import { cleanup, render, screen } from "@testing-library/react"
+import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { afterEach, beforeEach, expect, it, vi } from "vitest"
+import { beforeEach, expect, it, vi } from "vitest"
 
 import type { CreateMessageRequest, MessageDto } from "@/api"
-
+import { aMessage } from "@/test/fixtures"
 import { type Addressee, MessageComposer } from "./message-composer"
 
 // `globals` is off, so nothing unmounts a screen between tests but this.
-afterEach(cleanup)
 
 // jsdom does not lay out or scroll; the box scrolls its panel after a send,
 // and here the call only has to exist.
@@ -30,13 +29,7 @@ beforeEach(() => {
   Element.prototype.scrollTo = vi.fn()
 })
 
-const SENT: MessageDto = {
-  id: "01msg",
-  goal_id: "01goal",
-  author_role: "user",
-  body: "hello there",
-  created_at: "2026-08-18T12:00:00Z",
-}
+const SENT: MessageDto = aMessage({ body: "hello there" })
 
 type Send = (message: CreateMessageRequest) => Promise<MessageDto>
 

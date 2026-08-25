@@ -16,28 +16,26 @@ import { useQuery } from "@tanstack/react-query"
 import { PencilIcon, PlusIcon, Trash2Icon } from "lucide-react"
 import { useState } from "react"
 
-import { ApiError, type MergeStrategy, type RepositoryDto } from "@/api"
+import type { MergeStrategy, RepositoryDto } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
+import { DataTable, RowAction } from "@/components/data-table"
 import { EmptyState } from "@/components/empty-state"
-import { ErrorState } from "@/components/error-state"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
-import { Skeleton } from "@/components/ui/skeleton"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { plural } from "@/lib/plural"
+import { TableCell, TableRow } from "@/components/ui/table"
+import { plural } from "@/lib/format"
 
 import { DeleteRepositoryDialog } from "./delete-repository-dialog"
 import { repositoriesQueryOptions } from "./queries"
 import { RepositoryFormDialog } from "./repository-form-dialog"
 
-const COLUMN_COUNT = 5
+const COLUMNS = [
+  { header: "Path" },
+  { header: "Base branch" },
+  { header: "Merge strategy" },
+  { header: "Description" },
+  { className: "w-20 text-right" },
+]
 
 /** How an approved task reaches the base branch, in the column's own words. */
 const MERGE_STRATEGY_LABELS: Record<MergeStrategy, string> = {
@@ -89,55 +87,20 @@ export function RepositoriesPage() {
         </p>
       ) : null}
 
-      {repositories.isError ? (
-        <ErrorState
-          title="Could not load repositories"
-          error={repositories.error}
-          // A daemon that never answered has nothing to say about why.
-          description={
-            ApiError.is(repositories.error) && repositories.error.isNetworkError
-              ? "The daemon is not answering. Check the URL in settings and that it is listening on TCP."
-              : undefined
-          }
-          onRetry={() => void repositories.refetch()}
-        />
-      ) : (
-        <div className="overflow-hidden rounded-xl border">
-          <Table>
-            <TableHeader>
-              <TableRow className="hover:bg-transparent">
-                <TableHead>Path</TableHead>
-                <TableHead>Base branch</TableHead>
-                <TableHead>Merge strategy</TableHead>
-                <TableHead>Description</TableHead>
-                <TableHead className="w-20 text-right">
-                  <span className="sr-only">Actions</span>
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {repositories.isPending ? (
-                <LoadingRows />
-              ) : repositories.data.length === 0 ? (
-                <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={COLUMN_COUNT} className="p-0">
-                    <NoRepositories onCreate={openCreate} />
-                  </TableCell>
-                </TableRow>
-              ) : (
-                repositories.data.map((repository) => (
-                  <RepositoryRow
-                    key={repository.id}
-                    repository={repository}
-                    onEdit={() => openEdit(repository)}
-                    onDelete={() => openDelete(repository)}
-                  />
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </div>
-      )}
+      <DataTable
+        query={repositories}
+        errorTitle="Could not load repositories"
+        columns={COLUMNS}
+        empty={<NoRepositories onCreate={openCreate} />}
+        rowKey={(repository) => repository.id}
+        renderRow={(repository) => (
+          <RepositoryRow
+            repository={repository}
+            onEdit={() => openEdit(repository)}
+            onDelete={() => openDelete(repository)}
+          />
+        )}
+      />
 
       <RepositoryFormDialog open={formOpen} onOpenChange={setFormOpen} repository={editing} />
       <DeleteRepositoryDialog
@@ -180,43 +143,10 @@ function RepositoryRow({
         {repository.description ?? <span className="italic">no description</span>}
       </TableCell>
       <TableCell className="text-right">
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label={`Edit ${repository.path}`}
-          title={`Edit ${repository.path}`}
-          onClick={onEdit}
-        >
-          <PencilIcon />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label={`Remove ${repository.path}`}
-          title={`Remove ${repository.path}`}
-          onClick={onDelete}
-        >
-          <Trash2Icon />
-        </Button>
+        <RowAction icon={<PencilIcon />} label={`Edit ${repository.path}`} onClick={onEdit} />
+        <RowAction icon={<Trash2Icon />} label={`Remove ${repository.path}`} onClick={onDelete} />
       </TableCell>
     </TableRow>
-  )
-}
-
-function LoadingRows() {
-  return (
-    <>
-      {[0, 1, 2].map((row) => (
-        <TableRow key={row} className="hover:bg-transparent">
-          {Array.from({ length: COLUMN_COUNT }, (_, column) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: placeholder cells have no identity
-            <TableCell key={column}>
-              <Skeleton className="h-4 w-full" />
-            </TableCell>
-          ))}
-        </TableRow>
-      ))}
-    </>
   )
 }
 

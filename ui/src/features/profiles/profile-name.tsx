@@ -20,7 +20,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 
-import { cn } from "@/lib/utils"
+import { cn } from "@/lib/format"
 import { paths } from "@/routes/paths"
 import { profilesQueryOptions } from "./queries"
 

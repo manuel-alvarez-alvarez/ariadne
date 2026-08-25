@@ -15,7 +15,7 @@
 import { describe, expect, it } from "vitest"
 
 import type { ProfileDto } from "@/api"
-
+import { aProfile } from "@/test/fixtures"
 import {
   changedPrompts,
   emptyProfileFormValues,
@@ -31,17 +31,14 @@ const BRIEFINGS: PromptFormValue[] = [
   { kind: "changes_requested", content: "Apply the review." },
 ]
 
-const PROFILE: ProfileDto = {
+const PROFILE: ProfileDto = aProfile({
   id: "p1",
   name: "rust-engineer",
-  role: "engineer",
-  agent_kind: "claude_code",
   model: "claude-opus-5",
   system_prompt: "You are a Rust engineer.",
-  system_prompt_is_default: false,
   created_at: "2026-08-16T09:00:00.000Z",
   updated_at: "2026-08-16T09:30:00.000Z",
-}
+})
 
 describe("profileToFormValues", () => {
   it("maps a fully specified profile back onto the form", () => {

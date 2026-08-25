@@ -9,57 +9,9 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-
+import { FakeEventSource, latestSource, stubEventSource } from "@/test/event-source"
 import { SessionLogStream, type SessionLogStreamHandlers, sessionLogStreamUrl } from "./log-stream"
 import { SNAPSHOT_PREFIX, writeDelta, writeResize, writeSnapshot } from "./terminal-sink"
-
-/** Minimal stand-in for the browser's `EventSource`, driven by the tests. */
-class FakeEventSource {
-  static readonly CONNECTING = 0
-  static readonly OPEN = 1
-  static readonly CLOSED = 2
-
-  static instances: FakeEventSource[] = []
-
-  readyState = FakeEventSource.CONNECTING
-  onopen: (() => void) | null = null
-  onerror: (() => void) | null = null
-  closed = false
-  readonly listeners = new Map<string, ((event: { data: string }) => void)[]>()
-  readonly url: string
-
-  constructor(url: string) {
-    this.url = url
-    FakeEventSource.instances.push(this)
-  }
-
-  addEventListener(type: string, handler: (event: { data: string }) => void): void {
-    const existing = this.listeners.get(type)
-    if (existing) existing.push(handler)
-    else this.listeners.set(type, [handler])
-  }
-
-  close(): void {
-    this.readyState = FakeEventSource.CLOSED
-    this.closed = true
-  }
-
-  succeed(): void {
-    this.readyState = FakeEventSource.OPEN
-    this.onopen?.()
-  }
-
-  fail(): void {
-    this.readyState = FakeEventSource.CLOSED
-    this.onerror?.()
-  }
-
-  emit(type: string, data: unknown): void {
-    for (const handler of this.listeners.get(type) ?? []) {
-      handler({ data: JSON.stringify(data) })
-    }
-  }
-}
 
 function handlers() {
   return {
@@ -72,11 +24,7 @@ function handlers() {
 }
 
 const sources = () => FakeEventSource.instances
-const latest = () => {
-  const source = sources().at(-1)
-  if (!source) throw new Error("no EventSource was created")
-  return source
-}
+const latest = latestSource
 
 /** Run out the backoff timer so the scheduled retry connects. */
 function advancePastBackoff() {
@@ -87,8 +35,7 @@ let stream: SessionLogStream | null = null
 
 beforeEach(() => {
   vi.useFakeTimers()
-  FakeEventSource.instances = []
-  vi.stubGlobal("EventSource", FakeEventSource)
+  stubEventSource()
 })
 
 afterEach(() => {
@@ -198,7 +145,7 @@ describe("SessionLogStream reconnection", () => {
     expect(sources()).toHaveLength(1)
   })
 
-  it("re-reads a finished log on restart", () => {
+  it("re-reads a finished log on restart, as a first connection and not a gap", () => {
     const spies = handlers()
     const s = makeStream(spies)
     s.start()
@@ -206,11 +153,17 @@ describe("SessionLogStream reconnection", () => {
     latest().emit("end", { session_id: "01S" })
 
     s.restart()
+    // The words matter: "Reload" on a finished session opens a connection
+    // nothing was lost from, so the line above the pane says it is connecting
+    // rather than showing the destructive "lost the log stream" one.
+    expect(statuses(spies).at(-1)).toBe("connecting")
+
     latest().succeed()
     latest().emit("snapshot", { chunk: "the whole log" })
 
     expect(sources()).toHaveLength(2)
     expect(spies.onSnapshot).toHaveBeenCalledWith("the whole log")
+    expect(statuses(spies)).toEqual(["connecting", "live", "ended", "connecting", "live"])
   })
 
   it("stops retrying after stop()", () => {

@@ -75,9 +75,9 @@ export interface AttentionSessionItem extends AttentionRow {
   task: TaskDto | undefined
 }
 
-export type AttentionItem = AttentionTaskItem | AttentionSessionItem
+type AttentionItem = AttentionTaskItem | AttentionSessionItem
 
-export interface Attention {
+interface Attention {
   /** Tasks and sessions in one list, most recently updated first. */
   items: AttentionItem[]
   isPending: boolean

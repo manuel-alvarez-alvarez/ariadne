@@ -20,7 +20,7 @@ import { cva, type VariantProps } from "class-variance-authority"
 import type { ReactNode } from "react"
 
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { cn } from "@/lib/utils"
+import { cn } from "@/lib/format"
 
 const statusBadgeVariants = cva(
   "inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full py-0.5 text-xs font-medium whitespace-nowrap",

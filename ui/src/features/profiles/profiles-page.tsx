@@ -25,26 +25,16 @@ import { ChevronRightIcon, PencilIcon, PlusIcon, Trash2Icon } from "lucide-react
 import { Fragment, type ReactNode, useCallback, useEffect, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 
-import { ApiError, type ProfileDto, type Role } from "@/api"
+import type { ProfileDto, Role } from "@/api"
+import { DataTable, RowAction } from "@/components/data-table"
 import { EmptyState } from "@/components/empty-state"
-import { ErrorState } from "@/components/error-state"
 import { PageHeader } from "@/components/page-header"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Skeleton } from "@/components/ui/skeleton"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { TableCell, TableRow } from "@/components/ui/table"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { When } from "@/components/when"
-import { ROLE_LABELS } from "@/lib/labels"
-import { plural } from "@/lib/plural"
-import { cn } from "@/lib/utils"
+import { cn, plural, ROLE_LABELS } from "@/lib/format"
 import { PROFILE_EXPAND_PARAM } from "@/routes/paths"
 
 import { DeleteProfileDialog } from "./delete-profile-dialog"
@@ -62,7 +52,14 @@ const ROLE_PARAM = "role"
 /** No filter, on the tab strip: the value an absent `?role=` stands for. */
 const ALL = "all"
 
-const COLUMN_COUNT = 6
+const COLUMNS = [
+  { header: "Name" },
+  { header: "Role" },
+  { header: "Agent" },
+  { header: "Model" },
+  { header: "Updated" },
+  { className: "w-20 text-right" },
+]
 
 export function ProfilesPage() {
   // The dialogs keep their subject after closing so the exit animation still
@@ -187,59 +184,23 @@ export function ProfilesPage() {
         ) : null}
       </div>
 
-      {profiles.isError ? (
-        <ErrorState
-          title="Could not load profiles"
-          error={profiles.error}
-          // A daemon that never answered has nothing to say about why.
-          description={
-            ApiError.is(profiles.error) && profiles.error.isNetworkError
-              ? "The daemon is not answering. Check the URL in settings and that it is listening on TCP."
-              : undefined
-          }
-          onRetry={() => void profiles.refetch()}
-        />
-      ) : (
-        <div className="overflow-hidden rounded-xl border">
-          <Table>
-            <TableHeader>
-              <TableRow className="hover:bg-transparent">
-                <TableHead>Name</TableHead>
-                <TableHead>Role</TableHead>
-                <TableHead>Agent</TableHead>
-                <TableHead>Model</TableHead>
-                <TableHead>Updated</TableHead>
-                <TableHead className="w-20 text-right">
-                  <span className="sr-only">Actions</span>
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {profiles.isPending ? (
-                <LoadingRows />
-              ) : profiles.data.length === 0 ? (
-                <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={COLUMN_COUNT} className="p-0">
-                    <NoProfiles roleFilter={roleFilter} onCreate={openCreate} />
-                  </TableCell>
-                </TableRow>
-              ) : (
-                profiles.data.map((profile) => (
-                  <ProfileRow
-                    key={profile.id}
-                    profile={profile}
-                    ref={profile.id === scrollToId ? scrollToRow : undefined}
-                    expanded={expandedId === profile.id}
-                    onToggle={() => toggleExpanded(profile.id)}
-                    onEdit={() => openEdit(profile)}
-                    onDelete={() => openDelete(profile)}
-                  />
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </div>
-      )}
+      <DataTable
+        query={profiles}
+        errorTitle="Could not load profiles"
+        columns={COLUMNS}
+        empty={<NoProfiles roleFilter={roleFilter} onCreate={openCreate} />}
+        rowKey={(profile) => profile.id}
+        renderRow={(profile) => (
+          <ProfileRow
+            profile={profile}
+            ref={profile.id === scrollToId ? scrollToRow : undefined}
+            expanded={expandedId === profile.id}
+            onToggle={() => toggleExpanded(profile.id)}
+            onEdit={() => openEdit(profile)}
+            onDelete={() => openDelete(profile)}
+          />
+        )}
+      />
 
       <ProfileFormDialog open={formOpen} onOpenChange={setFormOpen} profile={editing} />
       <DeleteProfileDialog open={deleteOpen} onOpenChange={setDeleteOpen} profile={deleting} />
@@ -298,29 +259,17 @@ function ProfileRow({
           <When at={profile.updated_at} label="updated" />
         </TableCell>
         <TableCell className="text-right">
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={`Edit ${profile.name}`}
-            title={`Edit ${profile.name}`}
-            onClick={onEdit}
-          >
-            <PencilIcon />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={`Delete ${profile.name}`}
-            title={`Delete ${profile.name}`}
-            onClick={onDelete}
-          >
-            <Trash2Icon />
-          </Button>
+          <RowAction icon={<PencilIcon />} label={`Edit ${profile.name}`} onClick={onEdit} />
+          <RowAction icon={<Trash2Icon />} label={`Delete ${profile.name}`} onClick={onDelete} />
         </TableCell>
       </TableRow>
       {expanded ? (
         <TableRow className="hover:bg-transparent">
-          <TableCell id={detailsId} colSpan={COLUMN_COUNT} className="whitespace-normal px-4 pt-0">
+          <TableCell
+            id={detailsId}
+            colSpan={COLUMNS.length}
+            className="whitespace-normal px-4 pt-0"
+          >
             <ProfileDetails profile={profile} />
           </TableCell>
         </TableRow>
@@ -332,23 +281,6 @@ function ProfileRow({
 /** A value the daemon does not hold, spelled out instead of left blank. */
 function Unset({ when, children }: { when: boolean; children: ReactNode }) {
   return when ? <span className="text-muted-foreground italic">{children}</span> : children
-}
-
-function LoadingRows() {
-  return (
-    <>
-      {[0, 1, 2].map((row) => (
-        <TableRow key={row} className="hover:bg-transparent">
-          {Array.from({ length: COLUMN_COUNT }, (_, column) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: placeholder cells have no identity
-            <TableCell key={column}>
-              <Skeleton className="h-4 w-full" />
-            </TableCell>
-          ))}
-        </TableRow>
-      ))}
-    </>
-  )
 }
 
 function NoProfiles({ roleFilter, onCreate }: { roleFilter: RoleFilter; onCreate: () => void }) {

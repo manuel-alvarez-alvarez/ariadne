@@ -33,8 +33,7 @@ import {
   taskListQueryOptions,
 } from "@/features/tasks"
 import { useHorizontalOverflow } from "@/hooks/use-scroll-overflow"
-import { plural } from "@/lib/plural"
-import { cn } from "@/lib/utils"
+import { cn, plural } from "@/lib/format"
 import { paths } from "@/routes/paths"
 import { type BoardAttention, useBoardAttention } from "./attention"
 import { useCollapsedLanes } from "./collapsed-lanes"

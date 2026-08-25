@@ -32,7 +32,7 @@ import {
   withFilter,
 } from "./filters"
 
-export interface SessionFiltersState {
+interface SessionFiltersState {
   /** The status the screen is narrowed to, or `null` for every status. */
   status: StatusValue | null
   /** The role the screen is narrowed to, or `null` for every role. */

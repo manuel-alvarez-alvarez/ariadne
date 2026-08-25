@@ -7,7 +7,7 @@
  * for the same reason the dialogs are.
  *
  * The header's title comes from the route's own `handle` (see
- * `src/routes/page-title.ts`), so this file knows nothing about which screens
+ * `src/routes/router.tsx`), so this file knows nothing about which screens
  * exist.
  *
  * It also binds the app's global chords and mounts what they open — the command
@@ -20,7 +20,7 @@
 
 import { SearchIcon, SettingsIcon } from "lucide-react"
 import { useCallback, useState } from "react"
-import { Outlet, useNavigate } from "react-router-dom"
+import { Outlet, useMatches, useNavigate } from "react-router-dom"
 
 import { AppSidebar } from "@/components/app-sidebar"
 import { ConnectionBanner } from "@/components/connection-banner"
@@ -34,8 +34,26 @@ import { CreateGoalDialog } from "@/features/goals/create-goal-dialog"
 import { DaemonLogsDrawer } from "@/features/system/daemon-logs-drawer"
 import { PALETTE_SHORTCUT, useGlobalShortcuts } from "@/hooks/use-global-shortcuts"
 import { shortcutLabel } from "@/lib/shortcuts"
-import { usePageTitle } from "@/routes/page-title"
 import { paths } from "@/routes/paths"
+
+/** What a route declares so the header can name the screen it is framing. */
+export interface PageHandle {
+  /** What the header calls this screen; matches its sidebar entry. */
+  title: string
+}
+
+/**
+ * The title of the deepest matched route that declares one, or `null` for the
+ * screens that do not (the redirects, the not-found page).
+ */
+function usePageTitle(): string | null {
+  const matches = useMatches()
+  for (let i = matches.length - 1; i >= 0; i -= 1) {
+    const handle = matches[i]?.handle as Partial<PageHandle> | undefined
+    if (handle?.title) return handle.title
+  }
+  return null
+}
 
 export function AppShell() {
   const [settingsOpen, setSettingsOpen] = useState(false)

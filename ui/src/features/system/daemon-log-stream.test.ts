@@ -9,61 +9,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { LogLineDto } from "@/api"
-
+import { FakeEventSource, latestSource, stubEventSource } from "@/test/event-source"
 import {
   DAEMON_LOG_LINE_CAP,
   DaemonLogStream,
   type DaemonLogStreamHandlers,
   daemonLogStreamUrl,
 } from "./daemon-log-stream"
-
-/** Minimal stand-in for the browser's `EventSource`, driven by the tests. */
-class FakeEventSource {
-  static readonly CONNECTING = 0
-  static readonly OPEN = 1
-  static readonly CLOSED = 2
-
-  static instances: FakeEventSource[] = []
-
-  readyState = FakeEventSource.CONNECTING
-  onopen: (() => void) | null = null
-  onerror: (() => void) | null = null
-  closed = false
-  readonly listeners = new Map<string, ((event: { data: string }) => void)[]>()
-  readonly url: string
-
-  constructor(url: string) {
-    this.url = url
-    FakeEventSource.instances.push(this)
-  }
-
-  addEventListener(type: string, handler: (event: { data: string }) => void): void {
-    const existing = this.listeners.get(type)
-    if (existing) existing.push(handler)
-    else this.listeners.set(type, [handler])
-  }
-
-  close(): void {
-    this.readyState = FakeEventSource.CLOSED
-    this.closed = true
-  }
-
-  succeed(): void {
-    this.readyState = FakeEventSource.OPEN
-    this.onopen?.()
-  }
-
-  fail(): void {
-    this.readyState = FakeEventSource.CLOSED
-    this.onerror?.()
-  }
-
-  emit(type: string, data: unknown): void {
-    for (const handler of this.listeners.get(type) ?? []) {
-      handler({ data: JSON.stringify(data) })
-    }
-  }
-}
 
 function handlers() {
   return {
@@ -73,11 +25,7 @@ function handlers() {
 }
 
 const sources = () => FakeEventSource.instances
-const latest = () => {
-  const source = sources().at(-1)
-  if (!source) throw new Error("no EventSource was created")
-  return source
-}
+const latest = latestSource
 
 /** Run out the backoff timer so the scheduled retry connects. */
 function advancePastBackoff() {
@@ -98,8 +46,7 @@ let stream: DaemonLogStream | null = null
 
 beforeEach(() => {
   vi.useFakeTimers()
-  FakeEventSource.instances = []
-  vi.stubGlobal("EventSource", FakeEventSource)
+  stubEventSource()
 })
 
 afterEach(() => {

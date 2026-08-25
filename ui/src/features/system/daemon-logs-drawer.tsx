@@ -28,7 +28,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
-import { cn } from "@/lib/utils"
+import { cn } from "@/lib/format"
 import { useBaseUrl } from "@/stores/settings"
 
 import { type DaemonLogStatus, DaemonLogStream, daemonLogStreamUrl } from "./daemon-log-stream"

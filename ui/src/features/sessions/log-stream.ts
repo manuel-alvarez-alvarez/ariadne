@@ -33,12 +33,14 @@
  * clear whatever it had and write the new snapshot, which is why `onSnapshot`
  * is a separate handler from `onDelta`.
  *
- * As with the domain stream, the browser's own reconnect is not used: it
- * cannot be told apart from a clean end, and it would silently splice a new
- * snapshot onto the old output.
+ * Reconnecting is `@/events/reconnecting-stream`'s, and the browser's own is
+ * not used for the reason given there — with one addition of its own: `end`
+ * means the session is over, so the daemon's hang-up right after it must not
+ * look like a drop worth retrying.
  */
 
 import { normalizeBaseUrl } from "@/api"
+import { parsePayload, ReconnectingEventStream } from "@/events/reconnecting-stream"
 
 export type SessionLogStatus =
   /** Opening the first connection. */
@@ -50,13 +52,12 @@ export type SessionLogStatus =
   /** The daemon said the session is over. Nothing more is coming. */
   | "ended"
 
-const INITIAL_BACKOFF_MS = 500
 const MAX_BACKOFF_MS = 5_000
 
-export const RESIZE_EVENT = "resize"
-export const SNAPSHOT_EVENT = "snapshot"
-export const DELTA_EVENT = "delta"
-export const END_EVENT = "end"
+const RESIZE_EVENT = "resize"
+const SNAPSHOT_EVENT = "snapshot"
+const DELTA_EVENT = "delta"
+const END_EVENT = "end"
 
 /** The pane's grid, in cells. */
 export interface PaneSize {
@@ -87,70 +88,20 @@ export function sessionLogStreamUrl(baseUrl: string, sessionId: string): string 
   ).toString()
 }
 
-export class SessionLogStream {
-  #url: string
+export class SessionLogStream extends ReconnectingEventStream<SessionLogStatus> {
   #handlers: SessionLogStreamHandlers
-  #source: EventSource | null = null
-  #retryTimer: ReturnType<typeof setTimeout> | null = null
-  #backoff = INITIAL_BACKOFF_MS
-  #stopped = true
-  /** Set by the `end` event: the session is over, so no retry is warranted. */
-  #ended = false
 
   constructor(url: string, handlers: SessionLogStreamHandlers) {
-    this.#url = url
+    super(() => url, {
+      states: { connecting: "connecting", live: "live", reconnecting: "reconnecting" },
+      maxBackoffMs: MAX_BACKOFF_MS,
+      onStatus: handlers.onStatus,
+      dropped: "log stream disconnected",
+    })
     this.#handlers = handlers
   }
 
-  /** Connect, and keep reconnecting until `stop()` or an `end` event. */
-  start(): void {
-    if (!this.#stopped) return
-    this.#stopped = false
-    this.#ended = false
-    this.#connect(true)
-  }
-
-  /** Disconnect and cancel any pending retry. Idempotent. */
-  stop(): void {
-    this.#stopped = true
-    this.#clearRetry()
-    this.#closeSource()
-  }
-
-  /**
-   * Start over from a fresh snapshot: what the "reconnect" control does once a
-   * stream has ended, and the only way to re-read a finished session's log.
-   */
-  restart(): void {
-    this.stop()
-    this.start()
-  }
-
-  #connect(first: boolean): void {
-    if (this.#stopped) return
-    this.#closeSource()
-    this.#handlers.onStatus(first ? "connecting" : "reconnecting")
-
-    let source: EventSource
-    try {
-      source = new EventSource(this.#url)
-    } catch (cause) {
-      this.#scheduleRetry(cause instanceof Error ? cause.message : String(cause))
-      return
-    }
-    this.#source = source
-
-    source.onopen = () => {
-      this.#backoff = INITIAL_BACKOFF_MS
-      this.#handlers.onStatus("live", null)
-    }
-
-    // `EventSource` reports every failure the same opaque way, and cannot tell
-    // a dropped connection from a daemon that went away — both are retried.
-    source.onerror = () => {
-      this.#scheduleRetry("log stream disconnected")
-    }
-
+  protected listen(source: EventSource): void {
     source.addEventListener(RESIZE_EVENT, (message) => {
       const size = parseSize(message.data)
       if (size !== undefined) this.#handlers.onResize(size)
@@ -169,45 +120,16 @@ export class SessionLogStream {
     source.addEventListener(END_EVENT, () => {
       // The daemon closes the connection right after this. Close first, so its
       // hang-up does not look like a drop worth reconnecting to.
-      this.#ended = true
-      this.stop()
+      this.halt()
       this.#handlers.onStatus("ended", null)
       this.#handlers.onEnd()
     })
-  }
-
-  #scheduleRetry(error: string): void {
-    if (this.#stopped || this.#ended || this.#retryTimer !== null) return
-    this.#closeSource()
-    this.#handlers.onStatus("reconnecting", error)
-    // Jitter so several open session windows do not all hit a restarting
-    // daemon on the same tick.
-    const delay = this.#backoff * (0.5 + Math.random() / 2)
-    this.#backoff = Math.min(this.#backoff * 2, MAX_BACKOFF_MS)
-    this.#retryTimer = setTimeout(() => {
-      this.#retryTimer = null
-      this.#connect(false)
-    }, delay)
-  }
-
-  #clearRetry(): void {
-    if (this.#retryTimer === null) return
-    clearTimeout(this.#retryTimer)
-    this.#retryTimer = null
-  }
-
-  #closeSource(): void {
-    if (this.#source === null) return
-    this.#source.onopen = null
-    this.#source.onerror = null
-    this.#source.close()
-    this.#source = null
   }
 }
 
 /** `{"chunk": "..."}` → the chunk, or `undefined` if the payload was junk. */
 function parseChunk(raw: string): string | undefined {
-  const parsed = parsePayload(raw)
+  const parsed = parsePayload(raw, "session-logs")
   if (parsed === undefined) return undefined
   const chunk = (parsed as { chunk?: unknown }).chunk
   return typeof chunk === "string" ? chunk : undefined
@@ -219,22 +141,10 @@ function parseChunk(raw: string): string | undefined {
  * have is wrong, but rendering at zero columns is worse.
  */
 function parseSize(raw: string): PaneSize | undefined {
-  const parsed = parsePayload(raw)
+  const parsed = parsePayload(raw, "session-logs")
   if (parsed === undefined) return undefined
   const { cols, rows } = parsed as { cols?: unknown; rows?: unknown }
   if (typeof cols !== "number" || typeof rows !== "number") return undefined
   if (!Number.isFinite(cols) || !Number.isFinite(rows) || cols < 1 || rows < 1) return undefined
   return { cols, rows }
-}
-
-function parsePayload(raw: string): object | undefined {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(raw)
-  } catch (cause) {
-    console.error("[session-logs] dropping unparseable payload", cause, raw)
-    return undefined
-  }
-  if (typeof parsed !== "object" || parsed === null) return undefined
-  return parsed
 }

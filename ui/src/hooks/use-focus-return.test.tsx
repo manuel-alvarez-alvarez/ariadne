@@ -15,18 +15,17 @@
  * the bargain through an unmount, which is what lets the hook stay this small.
  */
 
-import { cleanup, render, screen } from "@testing-library/react"
+import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { StrictMode, useRef } from "react"
 import { MemoryRouter, useNavigate, useSearchParams } from "react-router-dom"
-import { afterEach, expect, it } from "vitest"
+import { expect, it } from "vitest"
 
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 
 import { useFocusReturn } from "./use-focus-return"
 
 // `globals` is off, so nothing unmounts a screen between tests but this.
-afterEach(cleanup)
 
 /** A screen with two cards on it, and the panel one of them opens. */
 function Screen({ withRow = true }: { withRow?: boolean }) {

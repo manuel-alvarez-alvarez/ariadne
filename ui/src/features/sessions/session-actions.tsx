@@ -21,7 +21,7 @@ import { toast } from "sonner"
 import type { SessionDto } from "@/api"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { Button } from "@/components/ui/button"
-import { describeError } from "@/lib/errors"
+import { describeError } from "@/lib/format"
 
 import { useKillSession, useResumeSession } from "./queries"
 import { isLiveStatus } from "./session-display"

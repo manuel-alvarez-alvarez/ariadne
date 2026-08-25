@@ -18,32 +18,17 @@ import { QueryClient } from "@tanstack/react-query"
 import { describe, expect, it } from "vitest"
 
 import { type DomainEvent, type GoalDto, qk, type RepositoryDto } from "@/api"
-
+import { aGoal, aRepository } from "@/test/fixtures"
 import { dispatchDomainEvent } from "./dispatch"
 
-const STAMP = "2026-01-01T00:00:00Z"
-
-const REPOSITORY: RepositoryDto = {
+const REPOSITORY: RepositoryDto = aRepository({
   id: "01JREPO00000000000000ARI",
-  path: "/home/me/dev/ariadne",
-  base_branch: "main",
-  merge_strategy: "direct",
   description: null,
-  created_at: STAMP,
-  updated_at: STAMP,
-}
+})
 
-const GOAL: GoalDto = {
-  id: "01JGOAL0000000000000000001",
-  title: "Ship the board",
-  description: "",
-  planner_profile_id: "01JPROF00000000000000PLAN",
-  repos: [],
-  required_approvals: 1,
+const GOAL: GoalDto = aGoal({
   status: "completed",
-  created_at: STAMP,
-  updated_at: STAMP,
-}
+})
 
 /** A client with a list and a detail already in it, as an open screen has. */
 function seeded(): QueryClient {

@@ -12,7 +12,7 @@ import { persist } from "zustand/middleware"
 
 import { DEFAULT_BASE_URL, normalizeBaseUrl, setApiBaseUrl } from "@/api"
 
-export const SETTINGS_STORAGE_KEY = "ariadne.settings"
+const SETTINGS_STORAGE_KEY = "ariadne.settings"
 
 interface SettingsState {
   /** e.g. `http://127.0.0.1:7676`, without a trailing slash. */

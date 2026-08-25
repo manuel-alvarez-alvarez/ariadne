@@ -13,55 +13,17 @@
  * mounted board shows any of it.
  */
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, render, screen, waitFor } from "@testing-library/react"
+import { cleanup, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { MemoryRouter, useLocation } from "react-router-dom"
-import { afterEach, beforeEach, expect, it, vi } from "vitest"
+import { beforeEach, expect, it } from "vitest"
 
 import type { GoalDto } from "@/api"
-import { TooltipProvider } from "@/components/ui/tooltip"
 import { useSettingsStore } from "@/stores/settings"
-
+import { aGoal } from "@/test/fixtures"
+import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { GoalsListPage } from "./goals-list-page"
 
-/**
- * Hoisted, and not `vi.stubGlobal`: `openapi-fetch` takes its `fetch` when the
- * client is built, which is when `@/api` is imported — a stub installed after
- * that is a stub the daemon client never sees. The same goes for the store the
- * settings persist to, which jsdom does not provide and `zustand/middleware`
- * takes hold of when `@/stores/settings` is imported.
- */
-const { daemonFetch } = vi.hoisted(() => {
-  const daemonFetch = vi.fn()
-  globalThis.fetch = daemonFetch as unknown as typeof fetch
-
-  const entries = new Map<string, string>()
-  globalThis.localStorage = {
-    get length() {
-      return entries.size
-    },
-    key: (index: number) => [...entries.keys()][index] ?? null,
-    getItem: (key: string) => entries.get(key) ?? null,
-    setItem: (key: string, value: string) => void entries.set(key, value),
-    removeItem: (key: string) => void entries.delete(key),
-    clear: () => entries.clear(),
-  } as Storage
-
-  return { daemonFetch }
-})
-
-const GOAL: GoalDto = {
-  id: "01JGOAL0000000000000000001",
-  title: "Ship the board",
-  description: "",
-  planner_profile_id: "01JPROF00000000000000PLAN",
-  repos: [],
-  required_approvals: 1,
-  status: "active",
-  created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T00:00:00Z",
-}
+const GOAL: GoalDto = aGoal()
 
 /** Every list the board and its attention strip read, each answering empty. */
 function stubDaemon(goals: GoalDto[] = [GOAL]) {
@@ -70,12 +32,7 @@ function stubDaemon(goals: GoalDto[] = [GOAL]) {
       typeof input === "string" ? input : input instanceof URL ? input : input.url,
     )
     const body = url.pathname === "/v1/goals" ? goals : []
-    return Promise.resolve(
-      new Response(JSON.stringify(body), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
-    )
+    return Promise.resolve(jsonResponse(body))
   })
 }
 
@@ -88,26 +45,7 @@ function goalRequests(): (string | null)[] {
 }
 
 function renderBoard(entry: string) {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false, gcTime: 0 } },
-  })
-  const seen = { url: entry }
-  function Probe() {
-    const location = useLocation()
-    seen.url = `${location.pathname}${location.search}`
-    return null
-  }
-  render(
-    <MemoryRouter initialEntries={[entry]}>
-      <QueryClientProvider client={queryClient}>
-        <TooltipProvider delay={0}>
-          <GoalsListPage />
-          <Probe />
-        </TooltipProvider>
-      </QueryClientProvider>
-    </MemoryRouter>,
-  )
-  return seen
+  return renderScreen(<GoalsListPage />, { route: entry }).location
 }
 
 /** The trigger, which doubles as the summary of what is selected. */
@@ -116,25 +54,9 @@ function trigger() {
 }
 
 beforeEach(() => {
-  // jsdom lays nothing out, so it implements neither of these.
-  Element.prototype.scrollIntoView = vi.fn()
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    },
-  )
-  daemonFetch.mockReset()
   stubDaemon()
   localStorage.clear()
   useSettingsStore.setState({ goalStatusFilter: "" })
-})
-
-afterEach(() => {
-  cleanup()
-  vi.unstubAllGlobals()
 })
 
 it("asks the daemon for every selected status, in one request", async () => {

@@ -175,7 +175,7 @@ export function compareByAttention(a: TaskDto, b: TaskDto): number {
 }
 
 /** Terminal statuses are frozen: nothing, and nobody, moves a task out of them. */
-export function isTerminal(status: TaskStatus): boolean {
+function isTerminal(status: TaskStatus): boolean {
   return status === "merged" || status === "cancelled"
 }
 

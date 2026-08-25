@@ -12,7 +12,7 @@
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
-import { cn } from "@/lib/utils"
+import { cn } from "@/lib/format"
 
 const PROSE = [
   "text-sm leading-relaxed break-words",

@@ -8,12 +8,12 @@
  * rather than rendering as an empty cell.
  *
  * The names of the roles and the agent CLIs themselves are not this feature's:
- * they come from {@link import("@/lib/labels")}, which the sessions screens
+ * they come from {@link import("@/lib/format")}, which the sessions screens
  * read too.
  */
 
 import type { AgentKind, PromptKind, Role } from "@/api"
-import { AGENT_KIND_LABELS, ROLE_LABELS } from "@/lib/labels"
+import { AGENT_KIND_LABELS, ROLE_LABELS } from "@/lib/format"
 
 /** Roles, in the order the orchestration runs them. */
 export const ROLES = ["planner", "engineer", "reviewer"] as const satisfies readonly Role[]
@@ -26,9 +26,9 @@ export const AGENT_KINDS = [
 ] as const satisfies readonly AgentKind[]
 
 /** Shown where a profile has no agent kind pinned. */
-export const AUTO_AGENT_LABEL = "auto"
+const AUTO_AGENT_LABEL = "auto"
 /** Shown where a profile has no model pinned. */
-export const DEFAULT_MODEL_LABEL = "default"
+const DEFAULT_MODEL_LABEL = "default"
 
 export function roleLabel(role: Role): string {
   return ROLE_LABELS[role]

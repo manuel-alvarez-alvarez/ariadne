@@ -25,10 +25,21 @@
  * Escape over the confirmation answers it rather than the form behind it.
  */
 
-import { type ReactNode, useEffect, useState } from "react"
+import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react"
+import type { FieldValues, UseFormReturn } from "react-hook-form"
 
 import { ConfirmDialog } from "@/components/confirm-dialog"
-import { Dialog } from "@/components/ui/dialog"
+import { ErrorState } from "@/components/error-state"
+import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 
 export function FormDialog({
   open,
@@ -86,4 +97,113 @@ export function FormDialog({
       />
     </Dialog>
   )
+}
+
+/**
+ * The shape every form in the app has inside that guard: a titled header, the
+ * fields, whatever the daemon refused with, and a Cancel/submit pair.
+ *
+ * All four form dialogs — goal, task, profile, repository — were spelling this
+ * out for themselves, which is how their *Cancel* buttons came to disagree:
+ * the profile's and the repository's went out of reach while a save was in
+ * flight, the goal's and the task's did not. They all do now. The fields are
+ * the caller's; everything around them is here.
+ *
+ * A submit is not a dismissal: `onSubmit` is the form's own handler, and a form
+ * that saved closes by calling the `onOpenChange` its caller holds rather than
+ * anything below.
+ */
+export function FormDialogContent({
+  title,
+  description,
+  onSubmit,
+  error,
+  submitLabel,
+  pending,
+  className,
+  children,
+}: {
+  title: ReactNode
+  description: ReactNode
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void
+  /** What the daemon refused with, as the alert above the buttons. */
+  error?: { title: string; error: unknown; description?: ReactNode; showIcon?: boolean } | null
+  submitLabel: ReactNode
+  /** The submit is spinning and both buttons are out of reach. */
+  pending: boolean
+  /** Sizing for the dialog box; forms differ in how much they have to hold. */
+  className?: string
+  children: ReactNode
+}) {
+  return (
+    <DialogContent className={className}>
+      <form onSubmit={onSubmit} className="grid gap-4">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+        {children}
+        {error ? (
+          <ErrorState
+            showIcon={error.showIcon}
+            title={error.title}
+            error={error.error}
+            description={error.description}
+          />
+        ) : null}
+        <DialogFooter>
+          <DialogClose render={<Button type="button" variant="outline" disabled={pending} />}>
+            Cancel
+          </DialogClose>
+          <Button type="submit" pending={pending}>
+            {submitLabel}
+          </Button>
+        </DialogFooter>
+      </form>
+    </DialogContent>
+  )
+}
+
+/**
+ * Re-opening a form starts from a clean slate — the row as it stands, or blank
+ * — never from the previous attempt, and never from a draft the last open left
+ * behind.
+ *
+ * The defaults go through a ref so only *opening* resets: an event off the
+ * stream that re-renders the dialog mid-edit must not wipe what was typed.
+ */
+export function useResetOnOpen<V extends FieldValues>(
+  open: boolean,
+  form: UseFormReturn<V>,
+  defaultValues: V,
+  /** The mutation whose last failure should not greet the next open. */
+  mutation: { reset: () => void },
+): void {
+  const latest = useRef(defaultValues)
+  latest.current = defaultValues
+  const { reset } = form
+  const mutationReset = mutation.reset
+  useEffect(() => {
+    if (!open) return
+    reset(latest.current)
+    mutationReset()
+  }, [open, reset, mutationReset])
+}
+
+/**
+ * A daemon refusal that is about the values on screen — "goal already has 3 of
+ * max 3 tasks", "repo path does not exist" — must not still be up once one of
+ * them has changed, so the first edit after a failure drops the alert.
+ */
+export function useClearErrorOnEdit<V extends FieldValues>(
+  form: UseFormReturn<V>,
+  mutation: { error: unknown; reset: () => void },
+): void {
+  const { watch } = form
+  const { error, reset } = mutation
+  useEffect(() => {
+    if (!error) return
+    const subscription = watch(() => reset())
+    return () => subscription.unsubscribe()
+  }, [error, watch, reset])
 }

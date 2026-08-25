@@ -10,72 +10,36 @@
  * over the board instead of replacing it. Only the mounted strip shows either.
  */
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, render, screen, waitFor } from "@testing-library/react"
+import { screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { MemoryRouter } from "react-router-dom"
-import { afterEach, beforeEach, expect, it, vi } from "vitest"
+import { expect, it } from "vitest"
 
 import type { GoalDto, SessionDto, TaskDto } from "@/api"
-import { TooltipProvider } from "@/components/ui/tooltip"
-import { formatAbsolute } from "@/lib/time"
-
+import { formatAbsolute } from "@/lib/format"
+import { aGoal, aSession, aTask } from "@/test/fixtures"
+import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { AttentionStrip } from "./attention-strip"
 
-/**
- * Hoisted, and not `vi.stubGlobal`: `openapi-fetch` takes its `fetch` when the
- * client is built, which is when `@/api` is imported — a stub installed after
- * that is a stub the daemon client never sees.
- */
-const { daemonFetch } = vi.hoisted(() => {
-  const daemonFetch = vi.fn()
-  globalThis.fetch = daemonFetch as unknown as typeof fetch
-  return { daemonFetch }
+const GOAL: GoalDto = aGoal()
+
+const TASK: TaskDto = aTask({
+  title: "Wire the strip",
+  branch: "wire-the-strip-000001",
+  engineer_profile_id: "01JPROF0000000000000000ENG",
+  goal_id: GOAL.id,
 })
 
-const GOAL: GoalDto = {
-  id: "01JGOAL0000000000000000001",
-  title: "Ship the board",
-  description: "",
-  planner_profile_id: "01JPROF00000000000000PLAN",
-  repos: [],
-  required_approvals: 1,
-  status: "active",
-  created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T00:00:00Z",
-}
-
-const TASK: TaskDto = {
-  id: "01JTASK0000000000000000001",
-  goal_id: GOAL.id,
-  repo_id: "01JREPO0000000000000000001",
-  title: "Wire the strip",
-  description: "",
-  status: "in_progress",
-  branch: "wire-the-strip-000001",
-  depends_on: [],
-  engineer_profile_id: "01JPROF0000000000000000ENG",
-  reviewers: [],
-  review_round: 0,
-  stalled: false,
-  created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T00:00:00Z",
-}
-
-const SESSION: SessionDto = {
+const SESSION: SessionDto = aSession({
   id: "01JSESS0000000000000000001",
-  goal_id: GOAL.id,
-  profile_id: "01JPROF0000000000000000ENG",
-  role: "engineer",
-  agent_kind: "claude_code",
   status: "failed",
   // The daemon's flag is the whole reason a session is on the strip; a death
   // it raised nothing for is not.
   attention_reason: "disconnected",
-  tmux_session: "ariadne-01JSESS0000000000000000001",
-  created_at: "2026-01-01T00:00:00Z",
   ended_at: "2026-01-01T02:00:00Z",
-}
+  goal_id: GOAL.id,
+  profile_id: "01JPROF0000000000000000ENG",
+  tmux_session: "ariadne-01JSESS0000000000000000001",
+})
 
 /**
  * The three lists the strip reads, each answering its own path. `fails` is the
@@ -100,37 +64,14 @@ function stubDaemon({
     if (url.pathname === fails) return Promise.resolve(new Response("boom", { status: 500 }))
     const body =
       url.pathname === "/v1/goals" ? goals : url.pathname === "/v1/tasks" ? tasks : sessions
-    return Promise.resolve(
-      new Response(JSON.stringify(body), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
-    )
+    return Promise.resolve(jsonResponse(body))
   })
 }
 
 /** The strip where the board puts it: on `/goals`, with a filter already set. */
 function renderStrip() {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false, gcTime: 0 } },
-  })
-  render(
-    <MemoryRouter initialEntries={["/goals?status=active"]}>
-      <QueryClientProvider client={queryClient}>
-        <TooltipProvider delay={0}>
-          <AttentionStrip />
-        </TooltipProvider>
-      </QueryClientProvider>
-    </MemoryRouter>,
-  )
-  return queryClient
+  return renderScreen(<AttentionStrip />, { route: "/goals?status=active" }).queryClient
 }
-
-beforeEach(() => {
-  daemonFetch.mockReset()
-})
-
-afterEach(cleanup)
 
 it("stays out of the way when nothing is stuck", async () => {
   stubDaemon({
@@ -208,6 +149,7 @@ it("names a planner session by its role and the goal it is planning", async () =
       {
         ...SESSION,
         role: "planner",
+        task_id: null,
         status: "idle",
         ended_at: undefined,
         attention_reason: "waiting_input",

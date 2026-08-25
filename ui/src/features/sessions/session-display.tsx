@@ -9,8 +9,8 @@
  * reason is shown in four places (the board's attention strip, the sessions
  * table, the session panel, and the CLI's `ariadne attention`, which mirrors
  * this wording) and they have to agree. The role and agent-kind names are
- * app-wide rather than this feature's and come from `@/lib/labels`, the way
- * timestamps come from `@/lib/time`.
+ * app-wide rather than this feature's and come from `@/lib/format`, the way
+ * timestamps come from `@/lib/format`.
  */
 
 import type { AttentionReason, SessionDto, SessionStatus } from "@/api"

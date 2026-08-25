@@ -10,7 +10,7 @@
 
 import { useCallback, useState } from "react"
 
-export const DIFF_WRAP_KEY = "ariadne.tasks.diff-wrap"
+const DIFF_WRAP_KEY = "ariadne.tasks.diff-wrap"
 
 /** Only an explicit "off" turns wrapping off; anything else is the default. */
 export function parseWrap(raw: string | null): boolean {

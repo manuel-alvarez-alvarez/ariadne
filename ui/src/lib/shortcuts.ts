@@ -1,7 +1,7 @@
 /**
  * What counts as a keyboard shortcut, and when one is allowed to fire.
  *
- * App-wide, like `@/lib/ids` and `@/lib/time`: the shell binds the shortcuts
+ * App-wide, like `@/lib/format` and `@/lib/format`: the shell binds the shortcuts
  * (see `@/hooks/use-global-shortcuts`), but the two questions this file answers
  * — "is this the chord?" and "is the user typing?" — are pure and are what the
  * tests pin.
@@ -127,14 +127,9 @@ export function isTypingTarget(target: TypingTarget | null | undefined): boolean
  * a chord is *spelled*, never whether it fires — so the old-but-universal
  * `platform` sniff is enough, and a wrong answer costs a wrong glyph.
  */
-export function isApplePlatform(): boolean {
+function isApplePlatform(): boolean {
   if (typeof navigator === "undefined") return false
   return /mac|iphone|ipad|ipod/i.test(navigator.platform || navigator.userAgent)
-}
-
-/** The command modifier as it should be shown on this platform: `⌘` or `Ctrl`. */
-export function modifierLabel(): string {
-  return isApplePlatform() ? "⌘" : "Ctrl"
 }
 
 /** A chord as it should be shown, e.g. `⌘K` or `Ctrl+K`. */

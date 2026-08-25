@@ -5,7 +5,7 @@ import { XIcon } from "lucide-react"
 import type * as React from "react"
 import { Button } from "@/components/ui/button"
 import { SCRIM } from "@/components/ui/dialog"
-import { cn } from "@/lib/utils"
+import { cn } from "@/lib/format"
 
 /**
  * A side panel: the dialog primitive, but pinned to one edge of the viewport —
@@ -19,10 +19,6 @@ function Sheet({ ...props }: SheetPrimitive.Root.Props) {
 
 function SheetPortal({ ...props }: SheetPrimitive.Portal.Props) {
   return <SheetPrimitive.Portal data-slot="sheet-portal" {...props} />
-}
-
-function SheetClose({ ...props }: SheetPrimitive.Close.Props) {
-  return <SheetPrimitive.Close data-slot="sheet-close" {...props} />
 }
 
 /**
@@ -136,13 +132,4 @@ function SheetDescription({ className, ...props }: SheetPrimitive.Description.Pr
   )
 }
 
-export {
-  Sheet,
-  SheetClose,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetOverlay,
-  SheetPortal,
-  SheetTitle,
-}
+export { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle }

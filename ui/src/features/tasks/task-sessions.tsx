@@ -32,7 +32,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { sessionQueryOptions } from "@/features/sessions/queries"
 import { SessionDetailView } from "@/features/sessions/session-detail-view"
 import { SessionsList } from "@/features/sessions/sessions-list"
-import { shortId } from "@/lib/ids"
+import { shortId } from "@/lib/format"
 import { usePanelSessionTo } from "@/routes/paths"
 
 export function TaskSessions({

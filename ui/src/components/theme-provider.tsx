@@ -7,7 +7,7 @@
 import { ThemeProvider as NextThemeProvider } from "next-themes"
 import type { ReactNode } from "react"
 
-export const THEME_STORAGE_KEY = "ariadne.theme"
+const THEME_STORAGE_KEY = "ariadne.theme"
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   return (

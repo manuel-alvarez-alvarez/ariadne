@@ -18,58 +18,33 @@
  * left behind.
  */
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react"
+import { screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { MemoryRouter, useLocation } from "react-router-dom"
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { useLocation } from "react-router-dom"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { ProfileDto, RepositoryDto } from "@/api"
 import { paths } from "@/routes/paths"
-
+import { aProfile, aRepository } from "@/test/fixtures"
+import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { CreateGoalDialog } from "./create-goal-dialog"
 
-/** Hoisted for the reason the profiles tests give: the client takes its
- * `fetch` when `@/api` is imported, so a later stub is one it never sees. */
-const { daemonFetch } = vi.hoisted(() => {
-  const daemonFetch = vi.fn()
-  globalThis.fetch = daemonFetch as unknown as typeof fetch
-  return { daemonFetch }
-})
-
-const STAMP = "2026-01-01T00:00:00Z"
-
-const PLANNER: ProfileDto = {
+const PLANNER: ProfileDto = aProfile({
   id: "01JPROF00000000000000PLN",
   name: "Planner",
   role: "planner",
-  agent_kind: "claude_code",
-  model: null,
-  system_prompt: "",
-  system_prompt_is_default: false,
-  created_at: STAMP,
-  updated_at: STAMP,
-}
+})
 
-const ARIADNE: RepositoryDto = {
+const ARIADNE: RepositoryDto = aRepository({
   id: "01JREPO00000000000000ARI",
-  path: "/home/me/dev/ariadne",
-  base_branch: "main",
-  merge_strategy: "direct",
-  description: "The orchestrator itself.",
-  created_at: STAMP,
-  updated_at: STAMP,
-}
+})
 
-const SANDBOX: RepositoryDto = {
+const SANDBOX: RepositoryDto = aRepository({
   id: "01JREPO00000000000000SND",
   path: "/home/me/dev/sandbox",
   base_branch: "trunk",
-  merge_strategy: "direct",
   description: null,
-  created_at: STAMP,
-  updated_at: STAMP,
-}
+})
 
 interface Recorded {
   method: string
@@ -91,16 +66,10 @@ function stubDaemon(repositories: RepositoryDto[]) {
     const body = raw.length > 0 ? JSON.parse(raw) : null
     requests.push({ method: request.method, path: pathname, body })
 
-    const answer = (payload: unknown, status = 200) =>
-      new Response(JSON.stringify(payload), {
-        status,
-        headers: { "content-type": "application/json" },
-      })
-
-    if (pathname === "/v1/repositories") return answer(repositories)
-    if (pathname === "/v1/profiles") return answer([PLANNER])
+    if (pathname === "/v1/repositories") return jsonResponse(repositories)
+    if (pathname === "/v1/profiles") return jsonResponse([PLANNER])
     if (pathname === "/v1/goals" && request.method === "POST") {
-      return answer(
+      return jsonResponse(
         { ...body, id: "01JGOAL0000000000000NEW", repos: repositories, status: "planning" },
         201,
       )
@@ -116,14 +85,12 @@ function renderDialog() {
   }
 
   const onOpenChange = vi.fn()
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
-  render(
-    <MemoryRouter initialEntries={[paths.goals()]}>
-      <QueryClientProvider client={queryClient}>
-        <Where />
-        <CreateGoalDialog open onOpenChange={onOpenChange} />
-      </QueryClientProvider>
-    </MemoryRouter>,
+  renderScreen(
+    <>
+      <Where />
+      <CreateGoalDialog open onOpenChange={onOpenChange} />
+    </>,
+    { route: paths.goals() },
   )
   return { onOpenChange }
 }
@@ -150,23 +117,8 @@ function row(list: HTMLElement, repository: RepositoryDto): HTMLElement {
 }
 
 beforeEach(() => {
-  Element.prototype.scrollIntoView = vi.fn()
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    },
-  )
   requests = []
-  daemonFetch.mockReset()
   stubDaemon([ARIADNE, SANDBOX])
-})
-
-afterEach(() => {
-  cleanup()
-  vi.unstubAllGlobals()
 })
 
 describe("picking the goal's repositories", () => {

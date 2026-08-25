@@ -8,24 +8,15 @@
  */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, render, screen } from "@testing-library/react"
+import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { createMemoryRouter, RouterProvider } from "react-router-dom"
-import { afterEach, beforeEach, expect, it, vi } from "vitest"
+import { beforeEach, expect, it, vi } from "vitest"
 
 import { AppShell } from "@/components/app-shell"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import type { Connection } from "@/hooks/use-connection"
-
-/**
- * Hoisted for the same reason `connection-status.test.tsx` hoists its stub:
- * `openapi-fetch` takes its `fetch` when `@/api` is imported, and the shell
- * pulls it in — never settling keeps whatever it asks for pending, which is
- * all it needs to be.
- */
-vi.hoisted(() => {
-  globalThis.fetch = (() => new Promise(() => {})) as unknown as typeof fetch
-})
+import { FakeEventSource, latestSource, stubEventSource } from "@/test/event-source"
 
 vi.mock("@/hooks/use-connection", () => ({
   useConnection: (): Connection => ({
@@ -39,59 +30,8 @@ vi.mock("@/hooks/use-connection", () => ({
   }),
 }))
 
-/** Minimal stand-in for the browser's `EventSource`, driven by the tests. */
-class FakeEventSource {
-  static readonly CONNECTING = 0
-  static readonly OPEN = 1
-  static readonly CLOSED = 2
-
-  static instances: FakeEventSource[] = []
-
-  readyState = FakeEventSource.CONNECTING
-  onopen: (() => void) | null = null
-  onerror: (() => void) | null = null
-  closed = false
-  readonly listeners = new Map<string, ((event: { data: string }) => void)[]>()
-  readonly url: string
-
-  constructor(url: string) {
-    this.url = url
-    FakeEventSource.instances.push(this)
-  }
-
-  addEventListener(type: string, handler: (event: { data: string }) => void): void {
-    const existing = this.listeners.get(type)
-    if (existing) existing.push(handler)
-    else this.listeners.set(type, [handler])
-  }
-
-  close(): void {
-    this.readyState = FakeEventSource.CLOSED
-    this.closed = true
-  }
-
-  emit(type: string, data: unknown): void {
-    for (const handler of this.listeners.get(type) ?? []) {
-      handler({ data: JSON.stringify(data) })
-    }
-  }
-}
-
-/** The stream the drawer opened; throws (failing the test) if none was. */
-function openedSource(): FakeEventSource {
-  const source = FakeEventSource.instances[0]
-  if (!source) throw new Error("no EventSource was opened")
-  return source
-}
-
 beforeEach(() => {
-  FakeEventSource.instances = []
-  vi.stubGlobal("EventSource", FakeEventSource)
-})
-
-afterEach(() => {
-  cleanup()
-  vi.unstubAllGlobals()
+  stubEventSource()
 })
 
 function mountShell() {
@@ -119,7 +59,7 @@ it("opens from the footer, tails the stream, and lets go of it on close", async 
   await user.click(footerButton)
   expect(await screen.findByRole("heading", { name: "Daemon logs" })).toBeTruthy()
   expect(FakeEventSource.instances).toHaveLength(1)
-  const source = openedSource()
+  const source = latestSource()
   expect(source.url).toBe("http://127.0.0.1:7676/v1/logs/stream")
 
   source.emit("snapshot", {
@@ -153,7 +93,7 @@ it("says when it has nothing to show yet", async () => {
   const footerButton = mountShell()
 
   await user.click(footerButton)
-  const source = openedSource()
+  const source = latestSource()
   source.onopen?.()
   source.emit("snapshot", { lines: [] })
 
@@ -165,7 +105,7 @@ it("says out loud when the stream drops", async () => {
   const footerButton = mountShell()
 
   await user.click(footerButton)
-  const source = openedSource()
+  const source = latestSource()
   source.onopen?.()
   source.onerror?.()
 

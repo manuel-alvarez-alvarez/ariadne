@@ -32,9 +32,7 @@ import {
 } from "@/components/ui/dialog"
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { describeError } from "@/lib/errors"
-import { AGENT_KIND_LABELS } from "@/lib/labels"
-
+import { AGENT_KIND_LABELS, describeError } from "@/lib/format"
 import {
   type AgentFlagsFormValues,
   agentFlagsSchema,

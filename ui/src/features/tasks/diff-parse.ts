@@ -11,15 +11,15 @@
  * text.
  */
 
-export type DiffLineKind = "context" | "add" | "del"
+type DiffLineKind = "context" | "add" | "del"
 
-export interface DiffLine {
+interface DiffLine {
   kind: DiffLineKind
   /** The line without its `+`/`-`/space marker. */
   text: string
 }
 
-export interface DiffHunk {
+interface DiffHunk {
   /** The `@@ -1,3 +1,4 @@` line, verbatim. */
   header: string
   /** The section heading git appends after the second `@@`, when it found one. */
@@ -29,7 +29,7 @@ export interface DiffHunk {
   lines: DiffLine[]
 }
 
-export type DiffChangeKind = "added" | "deleted" | "renamed" | "modified"
+type DiffChangeKind = "added" | "deleted" | "renamed" | "modified"
 
 export interface DiffFile {
   /** Stable key for React; paths alone are not unique across a rename pair. */

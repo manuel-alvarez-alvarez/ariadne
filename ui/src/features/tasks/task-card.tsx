@@ -29,8 +29,7 @@ import {
   type SessionAttention,
   SessionAttentionBadge,
 } from "@/features/sessions/session-display"
-import { plural } from "@/lib/plural"
-import { cn } from "@/lib/utils"
+import { cn, plural } from "@/lib/format"
 import { useTaskPanelTo } from "@/routes/paths"
 import { STALLED_META } from "./stalled"
 import { primaryStatus, subStatus, TASK_STATUS_META } from "./status"

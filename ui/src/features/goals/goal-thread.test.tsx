@@ -12,17 +12,14 @@
  * `queries.ts`'s story, not this one's.
  */
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, render, screen } from "@testing-library/react"
+import { screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { MemoryRouter } from "react-router-dom"
-import { afterEach, expect, it } from "vitest"
+import { expect, it } from "vitest"
 
 import { type GoalDto, type ProfileDto, qk } from "@/api"
-
+import { aGoal } from "@/test/fixtures"
+import { renderScreen } from "@/test/harness"
 import { GoalThread } from "./goal-thread"
-
-afterEach(cleanup)
 
 function profile(id: string, name: string, role: ProfileDto["role"]): ProfileDto {
   return {
@@ -42,35 +39,25 @@ const PROFILES: ProfileDto[] = [
   profile("01REVIEWER", "Strict", "reviewer"),
 ]
 
-const GOAL: GoalDto = {
+const GOAL: GoalDto = aGoal({
   id: "01GOAL",
   title: "Ship it",
   description: "Ship it, all of it",
   status: "planning",
   planner_profile_id: "01PLANNER",
-  required_approvals: 1,
-  repos: [],
-  created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T00:00:00Z",
-}
+})
 
 function mount() {
   // Seeded data is never stale here: a background refetch would reach a daemon
   // that is not there, and its failure re-renders the thread out from under an
   // open picker.
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+  renderScreen(<GoalThread goalId={GOAL.id} />, {
+    seed: (client) => {
+      client.setQueryData(qk.goals.detail(GOAL.id), GOAL)
+      client.setQueryData(qk.goals.messages(GOAL.id), [])
+      client.setQueryData(qk.profiles.list({}), PROFILES)
+    },
   })
-  client.setQueryData(qk.goals.detail(GOAL.id), GOAL)
-  client.setQueryData(qk.goals.messages(GOAL.id), [])
-  client.setQueryData(qk.profiles.list({}), PROFILES)
-  render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter>
-        <GoalThread goalId={GOAL.id} />
-      </MemoryRouter>
-    </QueryClientProvider>,
-  )
 }
 
 it("offers the goal's planner, and no one who works in a task thread", async () => {

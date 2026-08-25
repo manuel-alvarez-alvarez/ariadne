@@ -46,7 +46,7 @@ export const NEW_GOAL_SHORTCUT: KeySequence = { key: "n" }
  * Keyed by path so the palette can label its "Go to …" rows from the same list
  * the shell binds, rather than spelling the chords twice.
  */
-export const SCREEN_SHORTCUTS: readonly { path: string; chord: KeySequence }[] = [
+const SCREEN_SHORTCUTS: readonly { path: string; chord: KeySequence }[] = [
   { path: paths.goals(), chord: { lead: "g", key: "g" } },
   { path: paths.sessions(), chord: { lead: "g", key: "s" } },
   { path: paths.profiles(), chord: { lead: "g", key: "p" } },
@@ -75,7 +75,7 @@ const SEQUENCE_TIMEOUT_MS = 1500
 /** Where a bare letter is not ours: anything layered over the screen. */
 const OVERLAY_SELECTOR = '[role="dialog"],[role="alertdialog"],[role="menu"],[role="listbox"]'
 
-export interface GlobalShortcutHandlers {
+interface GlobalShortcutHandlers {
   onOpenPalette: () => void
   onOpenSettings: () => void
   onNewGoal: () => void

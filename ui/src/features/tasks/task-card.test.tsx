@@ -19,7 +19,7 @@ import { afterEach, expect, it, vi } from "vitest"
 import type { TaskDto } from "@/api"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import type { SessionAttention } from "@/features/sessions/session-display"
-
+import { aTask } from "@/test/fixtures"
 import { TaskCard } from "./task-card"
 
 // `globals` is off, so nothing unmounts a screen between tests but this.
@@ -28,22 +28,16 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-const TASK: TaskDto = {
-  id: "01JTASK0000000000000000001",
-  goal_id: "01JGOAL0000000000000000001",
-  repo_id: "01JREPO0000000000000000001",
+const TASK: TaskDto = aTask({
   title: "Make the hints reachable",
-  description: "",
   status: "changes_requested",
   branch: "make-the-hints-reachable-000001",
   depends_on: ["01JTASK0000000000000000002"],
   engineer_profile_id: "01JPROF0000000000000000ENG",
-  reviewers: [],
   review_round: 2,
   stalled: true,
-  created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T00:00:00Z",
-}
+  goal_id: "01JGOAL0000000000000000001",
+})
 
 function mountCard(attention?: SessionAttention, task: TaskDto = TASK) {
   render(

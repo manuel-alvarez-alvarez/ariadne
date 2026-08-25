@@ -18,6 +18,10 @@
  * zero-height screen, a font whose cells have not been measured, a frame with
  * no room at all. None of them is a grid, and a pane must not be asked for
  * one.
+ *
+ * The other half of fitting is the font — the one dimension that is ours to
+ * choose while the pane is still the size somebody else made it, or is over and
+ * cannot be asked at all. {@link nextFontSize} is its one step.
  */
 
 import type { PaneSize } from "./log-stream"
@@ -37,7 +41,7 @@ const MIN_PANE_COLS = 20
 const MIN_PANE_ROWS = 5
 
 /** What one measurement of a frame yields, before it is a grid. */
-export interface PaneFitMeasurement {
+interface PaneFitMeasurement {
   /**
    * Columns the frame has room for at the font the emulator is drawing at, as
    * `FitAddon.proposeDimensions()` reports it — `undefined` until the font's
@@ -77,4 +81,62 @@ export function sameSize(a: PaneSize | null, b: PaneSize | null): boolean {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
+}
+
+/**
+ * Font sizes the pane may be scaled to. Below the lower bound a monospace grid
+ * stops being readable, so a pane too wide for the frame overflows it and
+ * scrolls sideways instead of shrinking into illegibility.
+ */
+const MIN_FONT_SIZE = 8
+export const MAX_FONT_SIZE = 15
+/**
+ * The ceiling in the expanded frame, where the pane is the whole screen and not
+ * one card among others. It is high enough that the room — the dialog's height,
+ * or its width for a wide pane — is what stops the font on any usual grid,
+ * rather than the ceiling standing in for the panel's.
+ */
+export const EXPANDED_MAX_FONT_SIZE = 24
+/** Where scaling starts, and what a pane is drawn at when it fits as it is. */
+export const BASE_FONT_SIZE = 12
+export const LINE_HEIGHT = 1.2
+/** Tallest the grid may get, in the panel, before the font shrinks to fit (`28rem`). */
+export const MAX_SCREEN_HEIGHT = 448
+
+/**
+ * The font size that would fit this grid into this frame, from one measurement
+ * of it.
+ *
+ * Both factors are measured rather than derived: `proposedCols` is how many
+ * columns the current font gets out of the frame, and `screenHeight` is what
+ * the rows drawn in it cost, neither of which follows from the font size alone.
+ * The ratio to the grid we want is the factor the font is off by — whichever of
+ * width and height runs out first — and a pass or two settles it, since the
+ * size is quantised and the first answer is rarely exact.
+ *
+ * Rounded *down* to the nearest half pixel: rounding up would overflow the
+ * frame the size was measured against, and whole pixels alone would leave a
+ * visible margin at the small sizes a wide pane needs.
+ */
+export function nextFontSize({
+  current,
+  proposedCols,
+  gridCols,
+  screenHeight,
+  heightBudget,
+  ceiling,
+}: {
+  current: number
+  proposedCols: number
+  /** Columns the emulator is actually drawing — the pane's own grid. */
+  gridCols: number
+  screenHeight: number
+  heightBudget: number
+  ceiling: number
+}): number {
+  const scale = Math.min(
+    proposedCols / gridCols,
+    screenHeight > 0 ? heightBudget / screenHeight : Number.POSITIVE_INFINITY,
+  )
+  return clamp(Math.floor(current * scale * 2) / 2, MIN_FONT_SIZE, ceiling)
 }

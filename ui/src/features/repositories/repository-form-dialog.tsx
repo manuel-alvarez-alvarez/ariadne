@@ -11,33 +11,17 @@
 
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useEffect } from "react"
-import { Controller, useForm } from "react-hook-form"
+import { useForm } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
 
 import { ApiError, type MergeStrategy, type RepositoryDto } from "@/api"
-import { FormDialog } from "@/components/form-dialog"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Button } from "@/components/ui/button"
-import {
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
+import { FormDialog, FormDialogContent } from "@/components/form-dialog"
+import { FormSelect } from "@/components/form-select"
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { describeError } from "@/lib/errors"
+import { describeError } from "@/lib/format"
 
 import { useCreateRepository, useUpdateRepository } from "./queries"
 
@@ -172,118 +156,93 @@ export function RepositoryFormDialog({
 
   return (
     <FormDialog open={open} onOpenChange={onOpenChange} dirty={formState.isDirty}>
-      <DialogContent className="sm:max-w-lg">
-        <form onSubmit={handleSubmit(submit)} className="grid gap-4">
-          <DialogHeader>
-            <DialogTitle>{editing ? "Edit repository" : "Register repository"}</DialogTitle>
-            <DialogDescription>
-              A checkout goals can be created against. Task worktrees are branched off its base
-              branch.
-            </DialogDescription>
-          </DialogHeader>
-
-          <FieldGroup>
-            <Field data-invalid={formState.errors.path ? true : undefined}>
-              <FieldLabel htmlFor="repository-path">Path</FieldLabel>
-              <Input
-                id="repository-path"
-                placeholder="/absolute/path/to/repo"
-                autoComplete="off"
-                spellCheck={false}
-                className="font-mono"
-                aria-invalid={formState.errors.path ? true : undefined}
-                {...register("path")}
-              />
-              {formState.errors.path ? (
-                <FieldError errors={[formState.errors.path]} />
-              ) : (
-                <FieldDescription>
-                  Absolute path to an existing git work tree on this machine.
-                </FieldDescription>
-              )}
-            </Field>
-
-            <Field data-invalid={formState.errors.base_branch ? true : undefined}>
-              <FieldLabel htmlFor="repository-base-branch">Base branch</FieldLabel>
-              <Input
-                id="repository-base-branch"
-                placeholder={editing ? "main" : "the repo's current branch"}
-                autoComplete="off"
-                spellCheck={false}
-                className="font-mono"
-                aria-invalid={formState.errors.base_branch ? true : undefined}
-                {...register("base_branch")}
-              />
-              {formState.errors.base_branch ? (
-                <FieldError errors={[formState.errors.base_branch]} />
-              ) : (
-                <FieldDescription>
-                  {editing
-                    ? "What task branches are cut from and merged back into."
-                    : "Leave empty for whatever the repo has checked out right now."}
-                </FieldDescription>
-              )}
-            </Field>
-
-            <Field>
-              <FieldLabel htmlFor="repository-merge-strategy">Merge strategy</FieldLabel>
-              <Controller
-                control={form.control}
-                name="merge_strategy"
-                render={({ field }) => (
-                  <Select
-                    value={field.value}
-                    onValueChange={(value) => field.onChange((value as MergeStrategy) ?? "direct")}
-                    items={MERGE_STRATEGIES.map(({ value, label }) => ({ label, value }))}
-                  >
-                    <SelectTrigger id="repository-merge-strategy" className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {MERGE_STRATEGIES.map(({ value, label }) => (
-                        <SelectItem key={value} value={value}>
-                          {label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-              />
+      <FormDialogContent
+        className="sm:max-w-lg"
+        title={editing ? "Edit repository" : "Register repository"}
+        description="A checkout goals can be created against. Task worktrees are branched off its base branch."
+        onSubmit={handleSubmit(submit)}
+        error={
+          formState.errors.root
+            ? {
+                title: `Could not ${editing ? "save" : "register"} the repository`,
+                error: null,
+                description: formState.errors.root.message,
+              }
+            : null
+        }
+        submitLabel={editing ? "Save changes" : "Register repository"}
+        pending={saving}
+      >
+        <FieldGroup>
+          <Field data-invalid={formState.errors.path ? true : undefined}>
+            <FieldLabel htmlFor="repository-path">Path</FieldLabel>
+            <Input
+              id="repository-path"
+              placeholder="/absolute/path/to/repo"
+              autoComplete="off"
+              spellCheck={false}
+              className="font-mono"
+              aria-invalid={formState.errors.path ? true : undefined}
+              {...register("path")}
+            />
+            {formState.errors.path ? (
+              <FieldError errors={[formState.errors.path]} />
+            ) : (
               <FieldDescription>
-                {MERGE_STRATEGIES.find(({ value }) => value === selectedStrategy)?.hint}
+                Absolute path to an existing git work tree on this machine.
               </FieldDescription>
-            </Field>
+            )}
+          </Field>
 
-            <Field>
-              <FieldLabel htmlFor="repository-description">Description</FieldLabel>
-              <Textarea
-                id="repository-description"
-                placeholder="What lives in this repo."
-                {...register("description")}
-              />
+          <Field data-invalid={formState.errors.base_branch ? true : undefined}>
+            <FieldLabel htmlFor="repository-base-branch">Base branch</FieldLabel>
+            <Input
+              id="repository-base-branch"
+              placeholder={editing ? "main" : "the repo's current branch"}
+              autoComplete="off"
+              spellCheck={false}
+              className="font-mono"
+              aria-invalid={formState.errors.base_branch ? true : undefined}
+              {...register("base_branch")}
+            />
+            {formState.errors.base_branch ? (
+              <FieldError errors={[formState.errors.base_branch]} />
+            ) : (
               <FieldDescription>
-                Optional. Shown next to the path wherever the repo is picked.
+                {editing
+                  ? "What task branches are cut from and merged back into."
+                  : "Leave empty for whatever the repo has checked out right now."}
               </FieldDescription>
-            </Field>
-          </FieldGroup>
+            )}
+          </Field>
 
-          {formState.errors.root ? (
-            <Alert variant="destructive">
-              <AlertTitle>Could not {editing ? "save" : "register"} the repository</AlertTitle>
-              <AlertDescription>{formState.errors.root.message}</AlertDescription>
-            </Alert>
-          ) : null}
+          <Field>
+            <FieldLabel htmlFor="repository-merge-strategy">Merge strategy</FieldLabel>
+            <FormSelect
+              control={form.control}
+              name="merge_strategy"
+              id="repository-merge-strategy"
+              options={MERGE_STRATEGIES.map(({ value, label }) => ({ label, value }))}
+              empty="direct"
+            />
+            <FieldDescription>
+              {MERGE_STRATEGIES.find(({ value }) => value === selectedStrategy)?.hint}
+            </FieldDescription>
+          </Field>
 
-          <DialogFooter>
-            <DialogClose render={<Button type="button" variant="outline" disabled={saving} />}>
-              Cancel
-            </DialogClose>
-            <Button type="submit" pending={saving}>
-              {editing ? "Save changes" : "Register repository"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
+          <Field>
+            <FieldLabel htmlFor="repository-description">Description</FieldLabel>
+            <Textarea
+              id="repository-description"
+              placeholder="What lives in this repo."
+              {...register("description")}
+            />
+            <FieldDescription>
+              Optional. Shown next to the path wherever the repo is picked.
+            </FieldDescription>
+          </Field>
+        </FieldGroup>
+      </FormDialogContent>
     </FormDialog>
   )
 }

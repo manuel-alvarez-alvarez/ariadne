@@ -14,110 +14,28 @@
  * one thing about them that no single render shows.
  */
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react"
+import { cleanup, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { MemoryRouter, useLocation } from "react-router-dom"
-import { afterEach, beforeEach, expect, it, vi } from "vitest"
+import { beforeEach, expect, it } from "vitest"
 
 import type { GoalDto, ProfileDto, SessionDto, TaskDto } from "@/api"
-import { TooltipProvider } from "@/components/ui/tooltip"
-import { formatAbsolute } from "@/lib/time"
+import { formatAbsolute } from "@/lib/format"
 import { useSettingsStore } from "@/stores/settings"
-
+import { aGoal, aProfile, aSession, aTask } from "@/test/fixtures"
+import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { SessionsPage } from "./sessions-page"
 
-/**
- * Hoisted, and not `vi.stubGlobal`: `openapi-fetch` takes its `fetch` when the
- * client is built, which is when `@/api` is imported — a stub installed after
- * that is a stub the daemon client never sees. The same goes for the store the
- * settings persist to, which jsdom does not provide and `zustand/middleware`
- * takes hold of when `@/stores/settings` is imported.
- */
-const { daemonFetch } = vi.hoisted(() => {
-  const daemonFetch = vi.fn()
-  globalThis.fetch = daemonFetch as unknown as typeof fetch
+const GOAL: GoalDto = aGoal()
 
-  const entries = new Map<string, string>()
-  globalThis.localStorage = {
-    get length() {
-      return entries.size
-    },
-    key: (index: number) => [...entries.keys()][index] ?? null,
-    getItem: (key: string) => entries.get(key) ?? null,
-    setItem: (key: string, value: string) => void entries.set(key, value),
-    removeItem: (key: string) => void entries.delete(key),
-    clear: () => entries.clear(),
-  } as Storage
-
-  return { daemonFetch }
+const TASK: TaskDto = aTask({
+  goal_id: GOAL.id,
 })
 
-const GOAL: GoalDto = {
-  id: "01JGOAL0000000000000000001",
-  title: "Ship the board",
-  description: "",
-  planner_profile_id: "01JPROF00000000000000PLAN",
-  repos: [],
-  required_approvals: 1,
-  status: "active",
-  created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T00:00:00Z",
-}
-
-const TASK: TaskDto = {
-  id: "01JTASK0000000000000000001",
-  goal_id: GOAL.id,
-  title: "Wire the sessions screen",
-  description: "",
-  status: "in_progress",
-  branch: "wire-the-sessions-screen-000001",
-  repo_id: "01JREPO0000000000000000001",
-  stalled: false,
-  engineer_profile_id: "01JPROF00000000000000ENGI",
-  reviewers: [],
-  depends_on: [],
-  review_round: 0,
-  created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T00:00:00Z",
-}
-
-const PROFILE: ProfileDto = {
-  id: "01JPROF00000000000000ENGI",
-  name: "Engineer",
-  role: "engineer",
-  agent_kind: "claude_code",
-  system_prompt: "",
-  system_prompt_is_default: false,
-  created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T00:00:00Z",
-}
-
-function session(overrides: Partial<SessionDto> & Pick<SessionDto, "id">): SessionDto {
-  return {
-    goal_id: GOAL.id,
-    task_id: TASK.id,
-    role: "engineer",
-    profile_id: PROFILE.id,
-    agent_kind: "claude_code",
-    model: null,
-    internal_session_id: null,
-    tmux_session: `ariadne-${overrides.id}`,
-    worktree_path: null,
-    review_round: null,
-    status: "running",
-    attention_reason: null,
-    attention_since: null,
-    last_activity_at: "2026-01-01T00:00:00Z",
-    created_at: "2026-01-01T00:00:00Z",
-    ended_at: null,
-    ...overrides,
-  }
-}
+const PROFILE: ProfileDto = aProfile()
 
 /** An engineer at work, and the planner that has no task of its own. */
-const ENGINEER = session({ id: "01JSESS0000000000000000ENG" })
-const PLANNER = session({
+const ENGINEER = aSession({ id: "01JSESS0000000000000000ENG" })
+const PLANNER = aSession({
   id: "01JSESS0000000000000000PLA",
   task_id: null,
   role: "planner",
@@ -139,12 +57,7 @@ function stubDaemon(sessions: SessionDto[] = [ENGINEER, PLANNER]) {
             : url.pathname === "/v1/profiles"
               ? [PROFILE]
               : []
-    return Promise.resolve(
-      new Response(JSON.stringify(body), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
-    )
+    return Promise.resolve(jsonResponse(body))
   })
 }
 
@@ -156,25 +69,8 @@ function sessionRequests(): (string | null)[] {
     .map((url) => url.searchParams.get("status"))
 }
 
-function renderScreen(entry = "/sessions") {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
-  const seen = { url: entry }
-  function Probe() {
-    const location = useLocation()
-    seen.url = `${location.pathname}${location.search}`
-    return null
-  }
-  render(
-    <MemoryRouter initialEntries={[entry]}>
-      <QueryClientProvider client={queryClient}>
-        <TooltipProvider delay={0}>
-          <SessionsPage />
-          <Probe />
-        </TooltipProvider>
-      </QueryClientProvider>
-    </MemoryRouter>,
-  )
-  return seen
+function renderPage(entry = "/sessions") {
+  return renderScreen(<SessionsPage />, { route: entry }).location
 }
 
 /** The row a session is on, found by the role button that opens it. */
@@ -186,28 +82,13 @@ async function row(name: string): Promise<HTMLElement> {
 }
 
 beforeEach(() => {
-  Element.prototype.scrollIntoView = vi.fn()
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    },
-  )
-  daemonFetch.mockReset()
   stubDaemon()
   localStorage.clear()
   useSettingsStore.setState({ sessionStatusFilter: "", sessionRoleFilter: "" })
 })
 
-afterEach(() => {
-  cleanup()
-  vi.unstubAllGlobals()
-})
-
 it("says which work each session belongs to, and links to it", async () => {
-  renderScreen()
+  renderPage()
 
   // A session on a task is named by the task; the planner, which has none, by
   // its goal — and the goal panel only opens on the board.
@@ -222,7 +103,7 @@ it("says which work each session belongs to, and links to it", async () => {
 
 it("opens the picked session as a panel over the screen", async () => {
   const user = userEvent.setup()
-  const seen = renderScreen()
+  const seen = renderPage()
 
   await user.click(await screen.findByRole("button", { name: "Open Engineer session" }))
 
@@ -231,7 +112,7 @@ it("opens the picked session as a panel over the screen", async () => {
 
 it("asks the daemon for one status and keeps it in the URL", async () => {
   const user = userEvent.setup()
-  const seen = renderScreen()
+  const seen = renderPage()
   await waitFor(() => expect(sessionRequests().length).toBeGreaterThan(0))
   expect(sessionRequests()).toEqual([null])
 
@@ -246,7 +127,7 @@ it("asks the daemon for one status and keeps it in the URL", async () => {
 
 it("narrows live sessions itself, without asking for a status", async () => {
   const user = userEvent.setup()
-  const seen = renderScreen()
+  const seen = renderPage()
   await waitFor(() => expect(sessionRequests().length).toBeGreaterThan(0))
 
   await user.click(screen.getByRole("button", { name: "Filter by status" }))
@@ -264,7 +145,7 @@ it("narrows live sessions itself, without asking for a status", async () => {
 
 it("filters by role, and blames the filters when nothing is left", async () => {
   const user = userEvent.setup()
-  const seen = renderScreen("/sessions?status=failed")
+  const seen = renderPage("/sessions?status=failed")
   await waitFor(() => expect(sessionRequests()).toContain("failed"))
 
   await user.click(screen.getByRole("button", { name: "Filter by role" }))
@@ -276,7 +157,7 @@ it("filters by role, and blames the filters when nothing is left", async () => {
 
 it("calls an empty list empty when nothing is filtered", async () => {
   stubDaemon([])
-  renderScreen()
+  renderPage()
 
   expect(await screen.findByText("No sessions yet")).toBeTruthy()
 })
@@ -290,7 +171,7 @@ it("calls an empty list empty when nothing is filtered", async () => {
  */
 it("puts the stamps behind the table's columns in reach of a keyboard", async () => {
   const user = userEvent.setup()
-  renderScreen()
+  renderPage()
   const engineer = await row("Open Engineer session")
 
   // The Context cell's link is the trigger, so the pair it names costs no
@@ -314,7 +195,7 @@ it("puts the stamps behind the table's columns in reach of a keyboard", async ()
 function leaveAndComeBack() {
   cleanup()
   daemonFetch.mockClear()
-  return renderScreen()
+  return renderPage()
 }
 
 /** The trigger of one filter, which doubles as the summary of what is selected. */
@@ -334,7 +215,7 @@ async function pick(
 
 it("comes back to the filters the screen was left with", async () => {
   const user = userEvent.setup()
-  renderScreen()
+  renderPage()
   await waitFor(() => expect(sessionRequests().length).toBeGreaterThan(0))
 
   await pick(user, "Filter by status", "Failed")
@@ -354,7 +235,7 @@ it("comes back to the filters the screen was left with", async () => {
 
 it("keeps the filters where a restart can find them", async () => {
   const user = userEvent.setup()
-  renderScreen()
+  renderPage()
   await waitFor(() => expect(sessionRequests().length).toBeGreaterThan(0))
 
   await pick(user, "Filter by status", "Live")
@@ -369,7 +250,7 @@ it("keeps the filters where a restart can find them", async () => {
 
 it("shows what an explicit filter asks for, not what is remembered", async () => {
   useSettingsStore.setState({ sessionStatusFilter: "live", sessionRoleFilter: "engineer" })
-  const seen = renderScreen("/sessions?status=failed&role=planner")
+  const seen = renderPage("/sessions?status=failed&role=planner")
 
   await waitFor(() => expect(sessionRequests()).toContain("failed"))
   expect(seen.url).toBe("/sessions?status=failed&role=planner")
@@ -384,14 +265,14 @@ it("shows what an explicit filter asks for, not what is remembered", async () =>
 
 it("restores the one filter a deep link says nothing about", async () => {
   useSettingsStore.setState({ sessionStatusFilter: "failed", sessionRoleFilter: "planner" })
-  const seen = renderScreen("/sessions?status=live")
+  const seen = renderPage("/sessions?status=live")
 
   await waitFor(() => expect(seen.url).toBe("/sessions?status=live&role=planner"))
 })
 
 it("drops a remembered value the daemon no longer defines", async () => {
   useSettingsStore.setState({ sessionStatusFilter: "nonsense", sessionRoleFilter: "nobody" })
-  const seen = renderScreen()
+  const seen = renderPage()
 
   await waitFor(() => expect(sessionRequests().length).toBeGreaterThan(0))
   expect(seen.url).toBe("/sessions")
@@ -402,7 +283,7 @@ it("drops a remembered value the daemon no longer defines", async () => {
 
 it("leaves a cleared filter cleared", async () => {
   const user = userEvent.setup()
-  renderScreen("/sessions?status=failed&role=planner")
+  renderPage("/sessions?status=failed&role=planner")
   await waitFor(() => expect(sessionRequests()).toContain("failed"))
 
   await pick(user, "Filter by status", "All statuses")
@@ -420,7 +301,7 @@ it("leaves a cleared filter cleared", async () => {
 
 it("restores the filters under a panel the entry opened", async () => {
   useSettingsStore.setState({ sessionStatusFilter: "failed", sessionRoleFilter: "planner" })
-  const seen = renderScreen(`/sessions?session=${ENGINEER.id}`)
+  const seen = renderPage(`/sessions?session=${ENGINEER.id}`)
 
   await waitFor(() =>
     expect(seen.url).toBe(`/sessions?session=${ENGINEER.id}&status=failed&role=planner`),

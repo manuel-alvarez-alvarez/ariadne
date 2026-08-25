@@ -12,7 +12,7 @@
  * `features/sessions/session-panel.tsx`).
  *
  * The labels are the ones the shell's header shows, which come from each
- * route's own `handle` (see `src/routes/page-title.ts`) — they are written
+ * route's own `handle` (see `src/routes/router.tsx`) — they are written
  * twice on purpose rather than derived from the route table, because a sidebar
  * entry and a route are not the same list: not every route belongs here.
  */
@@ -20,7 +20,7 @@
 import { BotIcon, CpuIcon, FolderGit2Icon, RadioTowerIcon, TargetIcon } from "lucide-react"
 import { NavLink } from "react-router-dom"
 
-import { cn } from "@/lib/utils"
+import { cn } from "@/lib/format"
 import { paths } from "@/routes/paths"
 
 const NAV_ITEMS = [

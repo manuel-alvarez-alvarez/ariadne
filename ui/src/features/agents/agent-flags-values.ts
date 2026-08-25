@@ -18,7 +18,7 @@ export const agentFlagsSchema = z.object({
 
 export type AgentFlagsFormValues = z.infer<typeof agentFlagsSchema>
 
-export type FlagRow = AgentFlagsFormValues["flags"][number]
+type FlagRow = AgentFlagsFormValues["flags"][number]
 
 /** A stored flag list as form rows. */
 export function flagRows(flags: readonly string[]): FlagRow[] {

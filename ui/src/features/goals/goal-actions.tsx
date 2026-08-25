@@ -21,9 +21,9 @@ import { CheckCheckIcon, CircleSlashIcon, Trash2Icon } from "lucide-react"
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
 
-import { ApiError, type GoalDto } from "@/api"
+import type { GoalDto } from "@/api"
 import { ConfirmDialog } from "@/components/confirm-dialog"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { DeleteDialog } from "@/components/delete-dialog"
 import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Textarea } from "@/components/ui/textarea"
@@ -208,11 +208,9 @@ function CancelGoalDialog({
  * question names what goes rather than only asking whether to go ahead — the
  * same thing `ariadne goal rm` asks before it deletes.
  *
- * The 409 is an outcome rather than a failure to toast away: the panel showed
- * a finished goal, and nothing stops it having been put back to work between
- * that render and this click. The refusal is shown here, the dialog stays open
- * and the button that caused it stops being clickable — asking again would
- * only get the same answer.
+ * The 409 the daemon answers a goal that is running again with is handled by
+ * `DeleteDialog`, along with the rest of the shape this shares with the
+ * profile's and the repository's.
  */
 function DeleteGoalDialog({
   goal,
@@ -226,36 +224,11 @@ function DeleteGoalDialog({
   onDeleted?: () => void
 }) {
   const deleteGoal = useDeleteGoal(goal.id)
-  const [running, setRunning] = useState<string | null>(null)
-  const [failure, setFailure] = useState<unknown>(null)
-
-  // Re-opening must not show the verdict of the last attempt.
-  useEffect(() => {
-    if (open) {
-      setRunning(null)
-      setFailure(null)
-    }
-  }, [open])
-
-  async function confirm() {
-    try {
-      await deleteGoal.mutateAsync()
-      toast.success("Goal deleted", { description: goal.title })
-      onOpenChange(false)
-      onDeleted?.()
-    } catch (error) {
-      if (ApiError.is(error) && error.status === 409) {
-        setRunning(error.message)
-        return
-      }
-      setFailure(error)
-    }
-  }
 
   return (
-    <ConfirmDialog
+    <DeleteDialog
       open={open}
-      onClose={() => onOpenChange(false)}
+      onOpenChange={onOpenChange}
       className="sm:max-w-lg"
       title="Delete this goal?"
       description={
@@ -266,24 +239,15 @@ function DeleteGoalDialog({
         </>
       }
       confirmLabel="Delete goal"
-      destructive
-      pending={deleteGoal.isPending}
-      // Nothing the dialog can do about a goal the daemon sees as running.
-      confirmDisabled={running !== null}
-      error={failure}
       errorTitle="Could not delete the goal"
-      onConfirm={() => void confirm()}
-    >
-      {running ? (
-        <Alert variant="destructive">
-          <AlertTitle>This goal is running again</AlertTitle>
-          <AlertDescription>
-            Only a goal that has stopped can be deleted — cancel it first, which is what tears its
-            sessions and worktrees down. The daemon said:{" "}
-            <span className="text-foreground">{running}</span>
-          </AlertDescription>
-        </Alert>
-      ) : null}
-    </ConfirmDialog>
+      pending={deleteGoal.isPending}
+      inUseTitle="This goal is running again"
+      inUseDescription="Only a goal that has stopped can be deleted — cancel it first, which is what tears its sessions and worktrees down."
+      onDelete={async () => {
+        await deleteGoal.mutateAsync()
+        toast.success("Goal deleted", { description: goal.title })
+      }}
+      onDeleted={onDeleted}
+    />
   )
 }

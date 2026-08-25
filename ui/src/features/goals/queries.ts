@@ -1,38 +1,35 @@
 /**
  * Everything the goal screens ask the daemon for.
  *
- * Keys follow the convention in `src/api/query-keys.ts` and are built from the
- * `qk` helpers, so the SSE dispatcher keeps reaching them: it invalidates
- * `qk.goals.lists()` and `qk.goals.messages(id)` and patches
- * `qk.goals.detail(id)`, and every key below is either exactly one of those or
- * nested under it.
+ * Keys are built from the `qk` helpers, so the SSE dispatcher keeps reaching
+ * them: it invalidates `qk.goals.lists()` and `qk.goals.messages(id)` and
+ * patches `qk.goals.detail(id)`, and every key below is either exactly one of
+ * those or nested under it. The cache work each write does is
+ * `@/api`'s — see `cacheRow`, `dropRow` and `useRowAction` — and what is left
+ * here is what only a goal knows: which endpoint, and what else it moved.
  *
  * Two lists here are filtered server-side (`?status=`, `?role=planner`) but the
  * shared filter types carry no `status` / `role` field, so their filter segment
  * is appended to `qk.<entity>.lists()` rather than produced by
  * `qk.<entity>.list()`. Same shape, same prefix — see the note posted on the
  * task thread about widening the shared filter types.
- *
- * The mutations invalidate what they touch even though the daemon publishes an
- * event for each of them: the stream may be down, and an action the user just
- * took is the last thing that should need a manual refresh.
  */
 
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query"
 
 import {
   api,
-  type CacheSnapshot,
   type CreateGoalRequest,
-  type CreateMessageRequest,
+  cacheRow,
+  dropRow,
   type GoalDto,
   type GoalStatus,
   type MessageDto,
-  optimisticStatus,
   type ProfileDto,
   qk,
-  restoreCache,
   unwrap,
+  usePostMessage,
+  useRowAction,
 } from "@/api"
 
 /** Page size for the goal thread; the daemon caps `limit` at 200. */
@@ -41,21 +38,16 @@ const MESSAGE_PAGE_SIZE = 200
 /** Stop walking the thread eventually, however long it grew. */
 const MAX_MESSAGE_PAGES = 20
 
-export interface GoalListFilters {
+interface GoalListFilters {
   /** Statuses to match, any of them; empty or absent is every status. */
   statuses?: readonly GoalStatus[]
 }
 
 /** `["goals", "list", {statuses?}]` — under `qk.goals.lists()`. */
-export function goalListKey({ statuses }: GoalListFilters) {
+function goalListKey({ statuses }: GoalListFilters) {
   // An empty selection is no filter at all, so it keys the same as `{}`: the
   // unfiltered board and the callers that pass nothing share one cache entry.
   return [...qk.goals.lists(), statuses?.length ? { statuses: [...statuses] } : {}] as const
-}
-
-/** `["profiles", "list", {role: "planner"}]` — under `qk.profiles.lists()`. */
-export function plannerProfileListKey() {
-  return [...qk.profiles.lists(), { role: "planner" }] as const
 }
 
 export function goalsQueryOptions(filters: GoalListFilters = {}) {
@@ -111,76 +103,48 @@ async function fetchGoalThread(goalId: string): Promise<MessageDto[]> {
 /** Planner profiles, for the planner picker on the create form. */
 export function plannerProfilesQueryOptions() {
   return queryOptions({
-    queryKey: plannerProfileListKey(),
+    // `?role=planner` is the daemon's filter; the segment sits under
+    // `qk.profiles.lists()` like any other.
+    queryKey: [...qk.profiles.lists(), { role: "planner" }] as const,
     queryFn: () => unwrap(api().GET("/v1/profiles", { params: { query: { role: "planner" } } })),
     select: (profiles: ProfileDto[]) => [...profiles].sort((a, b) => a.name.localeCompare(b.name)),
   })
 }
 
-/**
- * `POST /v1/goals/{id}/messages` — the thread tab's compose box.
- *
- * The request is the whole `CreateMessageRequest`, body and optional addressee:
- * the daemon resolves `to` against the goal's participants and answers 400 if
- * it names anyone else, which is the error the box draws.
- *
- * The daemon answers with the created message, which is appended straight to
- * the cached thread: it is the newest by construction (ids are ordered and it
- * was just minted), so the send shows up without waiting for the
- * `message_created` event to invalidate. The invalidation still runs for the
- * messages an offline stream may have missed; the append is deduped by id, so
- * event and refetch land on the same thread.
- */
+/** `POST /v1/goals/{id}/messages` — the thread tab's compose box. */
 export function usePostGoalMessage(goalId: string) {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (message: CreateMessageRequest) =>
-      unwrap(
-        api().POST("/v1/goals/{id}/messages", {
-          params: { path: { id: goalId } },
-          body: message,
-        }),
-      ),
-    onSuccess: (message) => {
-      queryClient.setQueryData<MessageDto[]>(qk.goals.messages(goalId), (thread) =>
-        thread && !thread.some((existing) => existing.id === message.id)
-          ? [...thread, message]
-          : thread,
-      )
-      void queryClient.invalidateQueries({ queryKey: qk.goals.messages(goalId) })
-    },
-  })
+  return usePostMessage(qk.goals.messages(goalId), (body) =>
+    unwrap(api().POST("/v1/goals/{id}/messages", { params: { path: { id: goalId } }, body })),
+  )
 }
 
 export function useCreateGoal() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (body: CreateGoalRequest) => unwrap(api().POST("/v1/goals", { body })),
-    onSuccess: (goal) => {
-      queryClient.setQueryData(qk.goals.detail(goal.id), goal)
-      void queryClient.invalidateQueries({ queryKey: qk.goals.lists() })
-    },
+    onSuccess: (goal) => cacheRow(queryClient, qk.goals, goal),
   })
 }
 
 export function useFinalizeGoalPlan(goalId: string) {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (summary: string) =>
+  return useRowAction(
+    qk.goals,
+    goalId,
+    (summary: string) =>
       unwrap(
         api().POST("/v1/goals/{id}/finalize", {
           params: { path: { id: goalId } },
           body: { summary },
         }),
       ),
-    onSuccess: (goal) => {
-      queryClient.setQueryData(qk.goals.detail(goalId), goal)
-      void queryClient.invalidateQueries({ queryKey: qk.goals.lists() })
-      // Finalizing records a message in the thread and readies the tasks.
-      void queryClient.invalidateQueries({ queryKey: qk.goals.messages(goalId) })
-      void queryClient.invalidateQueries({ queryKey: qk.tasks.lists() })
+    {
+      alsoInvalidates: (queryClient) => {
+        // Finalizing records a message in the thread and readies the tasks.
+        void queryClient.invalidateQueries({ queryKey: qk.goals.messages(goalId) })
+        void queryClient.invalidateQueries({ queryKey: qk.tasks.lists() })
+      },
     },
-  })
+  )
 }
 
 /**
@@ -190,26 +154,19 @@ export function useFinalizeGoalPlan(goalId: string) {
  * guessed at — those lists are invalidated once the daemon has answered.
  */
 export function useCancelGoal(goalId: string) {
-  const queryClient = useQueryClient()
-  return useMutation<GoalDto, Error, void, CacheSnapshot | undefined>({
-    mutationFn: () =>
-      unwrap(api().POST("/v1/goals/{id}/cancel", { params: { path: { id: goalId } } })),
-    onMutate: () =>
-      optimisticStatus(queryClient, {
-        detailKey: qk.goals.detail(goalId),
-        listsKey: qk.goals.lists(),
-        id: goalId,
-        status: "cancelled" satisfies GoalStatus,
-      }),
-    onError: (_error, _variables, snapshot) => restoreCache(queryClient, snapshot),
-    onSuccess: (goal) => {
-      queryClient.setQueryData(qk.goals.detail(goalId), goal)
-      void queryClient.invalidateQueries({ queryKey: qk.goals.lists() })
-      // Cancelling tears the goal's sessions and tasks down.
-      void queryClient.invalidateQueries({ queryKey: qk.tasks.lists() })
-      void queryClient.invalidateQueries({ queryKey: qk.sessions.lists() })
+  return useRowAction(
+    qk.goals,
+    goalId,
+    () => unwrap(api().POST("/v1/goals/{id}/cancel", { params: { path: { id: goalId } } })),
+    {
+      optimistic: "cancelled" satisfies GoalStatus,
+      alsoInvalidates: (queryClient) => {
+        // Cancelling tears the goal's sessions and tasks down.
+        void queryClient.invalidateQueries({ queryKey: qk.tasks.lists() })
+        void queryClient.invalidateQueries({ queryKey: qk.sessions.lists() })
+      },
     },
-  })
+  )
 }
 
 /**
@@ -227,8 +184,7 @@ export function useDeleteGoal(goalId: string) {
   return useMutation({
     mutationFn: () => unwrap(api().DELETE("/v1/goals/{id}", { params: { path: { id: goalId } } })),
     onSuccess: () => {
-      queryClient.removeQueries({ queryKey: qk.goals.detail(goalId) })
-      void queryClient.invalidateQueries({ queryKey: qk.goals.lists() })
+      dropRow(queryClient, qk.goals, goalId)
       void queryClient.invalidateQueries({ queryKey: qk.tasks.all() })
       void queryClient.invalidateQueries({ queryKey: qk.sessions.all() })
     },

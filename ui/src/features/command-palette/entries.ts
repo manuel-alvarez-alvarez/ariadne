@@ -14,12 +14,11 @@
 
 import type { GoalDto, ProfileDto, SessionDto, TaskDto } from "@/api"
 import { roleLabel } from "@/features/profiles/profile-labels"
-import { shortId } from "@/lib/ids"
-import { ROLE_LABELS } from "@/lib/labels"
+import { ROLE_LABELS, shortId } from "@/lib/format"
 import { paths, taskPanelTo, taskSessionPanelTo } from "@/routes/paths"
 
 /** Where a palette entry goes when it is picked. */
-export type PaletteTarget =
+type PaletteTarget =
   | { kind: "goal"; goalId: string }
   | { kind: "task"; taskId: string }
   | { kind: "session"; sessionId: string; goalId: string; taskId: string | null }
@@ -49,7 +48,7 @@ export interface PaletteEntry {
   target: PaletteTarget
 }
 
-export interface PaletteSource {
+interface PaletteSource {
   goals: GoalDto[] | undefined
   tasks: TaskDto[] | undefined
   sessions: SessionDto[] | undefined

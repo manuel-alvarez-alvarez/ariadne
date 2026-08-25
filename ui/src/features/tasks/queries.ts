@@ -11,21 +11,19 @@ import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query
 
 import {
   api,
-  type CacheSnapshot,
-  type CreateMessageRequest,
   type CreateTaskRequest,
-  type MessageDto,
-  optimisticStatus,
+  cacheRow,
   qk,
-  restoreCache,
   type TaskDto,
   type TaskStatus,
   type UpdateTaskRequest,
   unwrap,
+  usePostMessage,
+  useRowAction,
 } from "@/api"
 
 /** The filters `GET /v1/tasks` actually supports. */
-export interface TaskListFilters {
+interface TaskListFilters {
   goal?: string
   status?: TaskStatus
 }
@@ -120,10 +118,7 @@ export function useCreateTask(goalId: string) {
           body,
         }),
       ),
-    onSuccess: (task) => {
-      queryClient.setQueryData(qk.tasks.detail(task.id), task)
-      void queryClient.invalidateQueries({ queryKey: qk.tasks.lists() })
-    },
+    onSuccess: (task) => cacheRow(queryClient, qk.tasks, task),
   })
 }
 
@@ -142,47 +137,19 @@ export function useUpdateTask(taskId: string) {
     mutationFn: (body: UpdateTaskRequest) =>
       unwrap(api().PATCH("/v1/tasks/{id}", { params: { path: { id: taskId } }, body })),
     onSuccess: (task) => {
-      queryClient.setQueryData(qk.tasks.detail(taskId), task)
-      void queryClient.invalidateQueries({ queryKey: qk.tasks.lists() })
+      cacheRow(queryClient, qk.tasks, task)
+      // Adding a dependency to a `ready` task moves it back to `pending`.
       void queryClient.invalidateQueries({ queryKey: qk.tasks.transitions(taskId) })
     },
   })
 }
 
-/**
- * `POST /v1/tasks/{id}/messages` — the conversation tab's compose box, the
- * web's `ariadne task msg`.
- *
- * The request is the whole `CreateMessageRequest`, body and optional addressee:
- * the daemon resolves `to` against the task's participants and answers 400 if
- * it names anyone else, which is the error the box draws.
- *
- * The daemon answers with the created message, which is appended straight to
- * the cached thread: it is the newest by construction (ids are ordered and it
- * was just minted), so the send shows up without waiting for the
- * `message_created` event to invalidate. The invalidation still runs for the
- * messages an offline stream may have missed; the append is deduped by id, so
- * event and refetch land on the same thread.
- */
+/** `POST /v1/tasks/{id}/messages` — the conversation tab's compose box, the
+ * web's `ariadne task msg`. */
 export function usePostTaskMessage(taskId: string) {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (message: CreateMessageRequest) =>
-      unwrap(
-        api().POST("/v1/tasks/{id}/messages", {
-          params: { path: { id: taskId } },
-          body: message,
-        }),
-      ),
-    onSuccess: (message) => {
-      queryClient.setQueryData<MessageDto[]>(qk.tasks.messages(taskId), (thread) =>
-        thread && !thread.some((existing) => existing.id === message.id)
-          ? [...thread, message]
-          : thread,
-      )
-      void queryClient.invalidateQueries({ queryKey: qk.tasks.messages(taskId) })
-    },
-  })
+  return usePostMessage(qk.tasks.messages(taskId), (body) =>
+    unwrap(api().POST("/v1/tasks/{id}/messages", { params: { path: { id: taskId } }, body })),
+  )
 }
 
 /**
@@ -215,23 +182,10 @@ function useTaskAction(
   /** The status the task lands in, when the client can know it in advance. */
   optimistic?: TaskStatus,
 ) {
-  const queryClient = useQueryClient()
-  return useMutation<TaskDto, Error, void, CacheSnapshot | undefined>({
-    mutationFn,
-    onMutate: optimistic
-      ? () =>
-          optimisticStatus(queryClient, {
-            detailKey: qk.tasks.detail(taskId),
-            listsKey: qk.tasks.lists(),
-            id: taskId,
-            status: optimistic,
-          })
-      : undefined,
-    onError: (_error, _variables, snapshot) => restoreCache(queryClient, snapshot),
-    onSuccess: (task) => {
-      queryClient.setQueryData(qk.tasks.detail(taskId), task)
-      void queryClient.invalidateQueries({ queryKey: qk.tasks.lists() })
-      void queryClient.invalidateQueries({ queryKey: qk.tasks.transitions(taskId) })
-    },
+  return useRowAction(qk.tasks, taskId, mutationFn, {
+    optimistic,
+    // A cancel or a retry is a transition, and the history tab shows it.
+    alsoInvalidates: (queryClient) =>
+      void queryClient.invalidateQueries({ queryKey: qk.tasks.transitions(taskId) }),
   })
 }

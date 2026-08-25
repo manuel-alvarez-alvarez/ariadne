@@ -4,22 +4,17 @@
  * Reads follow the app-wide key convention so the SSE dispatcher keeps them
  * live: `profile_created` / `profile_updated` / `profile_deleted` patch
  * `profiles.detail` and invalidate `profiles.lists`, which is every list here
- * whatever role it is filtered by.
- *
- * The mutations then do the same thing to the cache themselves. That is not
- * redundant with the stream: REST can be up while the stream is down (the amber
- * connection state), and a create that only showed up once the stream came back
- * would look broken.
+ * whatever role it is filtered by — and which is what `cacheRow` / `dropRow`
+ * do for the writes below.
  */
 
-import type { QueryClient } from "@tanstack/react-query"
-import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query"
-
+import { type QueryClient, queryOptions, useMutation, useQueryClient } from "@tanstack/react-query"
 import {
   api,
   type CreateProfileRequest,
+  cacheRow,
+  dropRow,
   type PageFilters,
-  type ProfileDto,
   type ProfilePromptDto,
   type PromptKind,
   qk,
@@ -64,7 +59,7 @@ export function useCreateProfile() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (body: CreateProfileRequest) => unwrap(api().POST("/v1/profiles", { body })),
-    onSuccess: (profile) => cacheProfile(queryClient, profile),
+    onSuccess: (profile) => cacheRow(queryClient, qk.profiles, profile),
   })
 }
 
@@ -73,7 +68,7 @@ export function useUpdateProfile() {
   return useMutation({
     mutationFn: ({ id, body }: { id: string; body: UpdateProfileRequest }) =>
       unwrap(api().PUT("/v1/profiles/{id}", { params: { path: { id } }, body })),
-    onSuccess: (profile) => cacheProfile(queryClient, profile),
+    onSuccess: (profile) => cacheRow(queryClient, qk.profiles, profile),
   })
 }
 
@@ -82,10 +77,7 @@ export function useDeleteProfile() {
   return useMutation({
     mutationFn: (id: string) =>
       unwrap(api().DELETE("/v1/profiles/{id}", { params: { path: { id } } })),
-    onSuccess: (_result, id) => {
-      queryClient.removeQueries({ queryKey: qk.profiles.detail(id) })
-      void queryClient.invalidateQueries({ queryKey: qk.profiles.lists() })
-    },
+    onSuccess: (_result, id) => dropRow(queryClient, qk.profiles, id),
   })
 }
 
@@ -155,14 +147,8 @@ export function useResetSystemPrompt() {
   return useMutation({
     mutationFn: (id: string) =>
       unwrap(api().POST("/v1/profiles/{id}/system-prompt/reset", { params: { path: { id } } })),
-    onSuccess: (profile) => cacheProfile(queryClient, profile),
+    onSuccess: (profile) => cacheRow(queryClient, qk.profiles, profile),
   })
-}
-
-/** What the dispatcher does for a `profile_created` / `profile_updated` event. */
-function cacheProfile(queryClient: QueryClient, profile: ProfileDto): void {
-  queryClient.setQueryData(qk.profiles.detail(profile.id), profile)
-  void queryClient.invalidateQueries({ queryKey: qk.profiles.lists() })
 }
 
 /**

@@ -29,7 +29,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { ROLE_LABELS } from "@/lib/labels"
+import { ROLE_LABELS } from "@/lib/format"
 import { sessionPanelTo } from "@/routes/paths"
 
 import {

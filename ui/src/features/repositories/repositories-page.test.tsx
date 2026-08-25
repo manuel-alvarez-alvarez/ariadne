@@ -17,48 +17,26 @@
  * in the app is pure and has no business paying for a DOM.
  */
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, render, screen, waitFor } from "@testing-library/react"
+import { screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { beforeEach, describe, expect, it } from "vitest"
 
 import type { RepositoryDto } from "@/api"
-
+import { aRepository } from "@/test/fixtures"
+import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { RepositoriesPage } from "./repositories-page"
 
-/**
- * Hoisted, and not `vi.stubGlobal`: `openapi-fetch` takes its `fetch` when the
- * client is built, which is when `@/api` is imported — a stub installed after
- * that is a stub the daemon client never sees, and the test would go looking
- * for a real daemon.
- */
-const { daemonFetch } = vi.hoisted(() => {
-  const daemonFetch = vi.fn()
-  globalThis.fetch = daemonFetch as unknown as typeof fetch
-  return { daemonFetch }
+const ARIADNE: RepositoryDto = aRepository({
+  id: "01JREPO00000000000000ARI",
 })
 
-const STAMP = "2026-01-01T00:00:00Z"
-
-const ARIADNE: RepositoryDto = {
-  id: "01JREPO00000000000000ARI",
-  path: "/home/me/dev/ariadne",
-  base_branch: "main",
-  merge_strategy: "direct",
-  description: "The orchestrator itself.",
-  created_at: STAMP,
-  updated_at: STAMP,
-}
-
-const SANDBOX: RepositoryDto = {
+const SANDBOX: RepositoryDto = aRepository({
   id: "01JREPO00000000000000SND",
   path: "/home/me/dev/sandbox",
   base_branch: "trunk",
   merge_strategy: "pull_request",
   description: null,
-  created_at: STAMP,
-  updated_at: STAMP,
-}
+})
 
 /** `DELETE /v1/repositories/{id}` answers this instead of 204, when set. */
 let deleteFailure: { status: number; code: string; message: string } | null = null
@@ -69,16 +47,10 @@ function stubDaemon(repositories: RepositoryDto[]) {
     const request = input instanceof Request ? input : new Request(String(input), init)
     if (request.method === "DELETE") {
       if (!deleteFailure) return new Response(null, { status: 204 })
-      const { status, ...error } = deleteFailure
-      return new Response(JSON.stringify({ error }), {
-        status,
-        headers: { "content-type": "application/json" },
-      })
+      const { status, code, message } = deleteFailure
+      return errorResponse(status, code, message)
     }
-    return new Response(JSON.stringify(repositories), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    })
+    return jsonResponse(repositories)
   })
 }
 
@@ -89,40 +61,16 @@ function registerButton(): HTMLElement {
   return header
 }
 
-function renderScreen() {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <RepositoriesPage />
-    </QueryClientProvider>,
-  )
-}
-
 beforeEach(() => {
-  // jsdom lays nothing out, so it implements neither of these.
-  Element.prototype.scrollIntoView = vi.fn()
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    },
-  )
-  daemonFetch.mockReset()
   stubDaemon([ARIADNE, SANDBOX])
 })
 
 // Testing Library only unmounts by itself under `globals: true`, which this
 // project does not use — without this every screen stays in the document.
-afterEach(() => {
-  cleanup()
-  vi.unstubAllGlobals()
-})
 
 describe("RepositoriesPage", () => {
   it("lists what the daemon holds, and says so where a description is missing", async () => {
-    renderScreen()
+    renderScreen(<RepositoriesPage />)
 
     // The paths are truncated in the middle, so each one is on screen as two
     // halves under the title that carries it whole.
@@ -142,7 +90,7 @@ describe("RepositoriesPage", () => {
 
   it("copies the whole path, which is longer than what the column shows", async () => {
     const user = userEvent.setup()
-    renderScreen()
+    renderScreen(<RepositoriesPage />)
 
     const [path] = await screen.findAllByRole("button", { name: "Copy repository path" })
     if (!path) throw new Error("the first row offers no way to copy its path")
@@ -160,7 +108,7 @@ describe("RepositoriesPage", () => {
   it("offers the way out of an empty list, which is where a fresh install starts", async () => {
     const user = userEvent.setup()
     stubDaemon([])
-    renderScreen()
+    renderScreen(<RepositoriesPage />)
 
     expect(await screen.findByText("No repositories yet")).toBeDefined()
 
@@ -173,7 +121,7 @@ describe("RepositoriesPage", () => {
 
   it("opens the edit dialog on the repository of the row it was clicked in", async () => {
     const user = userEvent.setup()
-    renderScreen()
+    renderScreen(<RepositoriesPage />)
 
     await user.click(await screen.findByRole("button", { name: `Edit ${SANDBOX.path}` }))
 
@@ -186,7 +134,7 @@ describe("RepositoriesPage", () => {
 describe("removing a repository", () => {
   it("keeps the daemon's refusal on screen and stops offering the click", async () => {
     const user = userEvent.setup()
-    renderScreen()
+    renderScreen(<RepositoriesPage />)
     deleteFailure = {
       status: 409,
       code: "conflict",
@@ -206,7 +154,7 @@ describe("removing a repository", () => {
 
   it("closes on a 204, which is the whole of a successful delete", async () => {
     const user = userEvent.setup()
-    renderScreen()
+    renderScreen(<RepositoriesPage />)
 
     await user.click(await screen.findByRole("button", { name: `Remove ${SANDBOX.path}` }))
     await user.click(await screen.findByRole("button", { name: "Remove repository" }))

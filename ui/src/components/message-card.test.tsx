@@ -6,23 +6,16 @@
  * to keep the header it always had, so the test pins the absence too.
  */
 
-import { cleanup, render, screen } from "@testing-library/react"
-import { afterEach, expect, it } from "vitest"
+import { render, screen } from "@testing-library/react"
+import { expect, it } from "vitest"
 
 import type { MessageDto } from "@/api"
-
+import { aMessage } from "@/test/fixtures"
 import { MessageCard } from "./message-card"
 
 // `globals` is off, so nothing unmounts a screen between tests but this.
-afterEach(cleanup)
 
-const MESSAGE: MessageDto = {
-  id: "01msg",
-  goal_id: "01goal",
-  author_role: "user",
-  body: "have a look at this",
-  created_at: "2026-08-18T12:00:00Z",
-}
+const MESSAGE: MessageDto = aMessage({ body: "have a look at this" })
 
 it("shows no addressee pill on a message addressed to the thread", () => {
   render(<MessageCard message={MESSAGE} />)

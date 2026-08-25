@@ -8,60 +8,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-
+import { FakeEventSource, latestSource, stubEventSource } from "@/test/event-source"
 import { DomainEventStream, type DomainEventStreamHandlers } from "./stream"
-
-/** Minimal stand-in for the browser's `EventSource`, driven by the tests. */
-class FakeEventSource {
-  static readonly CONNECTING = 0
-  static readonly OPEN = 1
-  static readonly CLOSED = 2
-
-  static instances: FakeEventSource[] = []
-
-  readyState = FakeEventSource.CONNECTING
-  onopen: (() => void) | null = null
-  onerror: (() => void) | null = null
-  closed = false
-  readonly listeners = new Map<string, ((event: { data: string }) => void)[]>()
-  readonly url: string
-
-  constructor(url: string) {
-    this.url = url
-    FakeEventSource.instances.push(this)
-  }
-
-  addEventListener(type: string, handler: (event: { data: string }) => void): void {
-    const existing = this.listeners.get(type)
-    if (existing) existing.push(handler)
-    else this.listeners.set(type, [handler])
-  }
-
-  close(): void {
-    this.readyState = FakeEventSource.CLOSED
-    this.closed = true
-  }
-
-  // --- test drivers
-
-  /** The server accepted the connection. */
-  succeed(): void {
-    this.readyState = FakeEventSource.OPEN
-    this.onopen?.()
-  }
-
-  /** The connection failed or dropped, the only thing `EventSource` reports. */
-  fail(): void {
-    this.readyState = FakeEventSource.CLOSED
-    this.onerror?.()
-  }
-
-  emit(type: string, data: unknown): void {
-    for (const handler of this.listeners.get(type) ?? []) {
-      handler({ data: JSON.stringify(data) })
-    }
-  }
-}
 
 function handlers() {
   return {
@@ -78,11 +26,7 @@ function opens(spies: ReturnType<typeof handlers>): boolean[] {
 }
 
 const sources = () => FakeEventSource.instances
-const latest = () => {
-  const source = sources().at(-1)
-  if (!source) throw new Error("no EventSource was created")
-  return source
-}
+const latest = latestSource
 
 /** Run out the backoff timer so the scheduled retry connects. */
 function advancePastBackoff() {
@@ -93,8 +37,7 @@ let stream: DomainEventStream | null = null
 
 beforeEach(() => {
   vi.useFakeTimers()
-  FakeEventSource.instances = []
-  vi.stubGlobal("EventSource", FakeEventSource)
+  stubEventSource()
 })
 
 afterEach(() => {

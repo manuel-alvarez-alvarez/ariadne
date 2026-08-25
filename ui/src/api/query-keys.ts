@@ -26,18 +26,18 @@ export interface PageFilters {
   limit?: number
 }
 
-export interface TaskFilters extends PageFilters {
+interface TaskFilters extends PageFilters {
   goal?: string
   status?: TaskStatus
 }
 
-export interface SessionFilters extends PageFilters {
+interface SessionFilters extends PageFilters {
   goal?: string
   task?: string
   status?: SessionStatus
 }
 
-export interface AgentEventFilters extends PageFilters {
+interface AgentEventFilters extends PageFilters {
   session?: string
   task?: string
 }

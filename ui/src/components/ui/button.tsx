@@ -2,7 +2,7 @@ import { Button as ButtonPrimitive } from "@base-ui/react/button"
 import { cva, type VariantProps } from "class-variance-authority"
 import { Loader2Icon } from "lucide-react"
 
-import { cn } from "@/lib/utils"
+import { cn } from "@/lib/format"
 
 const buttonVariants = cva(
   // `relative` and the `aria-[busy]` exception to the disabled dimming are both
@@ -93,4 +93,4 @@ function Button({
   )
 }
 
-export { Button, buttonVariants }
+export { Button }

@@ -18,12 +18,12 @@
  * The buffer is capped at [`DAEMON_LOG_LINE_CAP`] lines, oldest dropped first,
  * so a drawer left open under a chatty daemon does not grow without bound.
  *
- * As with the other streams, the browser's own reconnect is not used: it
- * cannot be told apart from a clean close, and the retry here has to survive
- * the daemon being down — which is exactly when somebody opens this drawer.
+ * Reconnecting is `@/events/reconnecting-stream`'s. The retry has to survive
+ * the daemon being down, which is exactly when somebody opens this drawer.
  */
 
 import { type LogLineDto, normalizeBaseUrl } from "@/api"
+import { parsePayload, ReconnectingEventStream } from "@/events/reconnecting-stream"
 
 export type DaemonLogStatus =
   /** Opening the first connection. */
@@ -33,11 +33,10 @@ export type DaemonLogStatus =
   /** Dropped; a retry is scheduled. */
   | "reconnecting"
 
-const INITIAL_BACKOFF_MS = 500
 const MAX_BACKOFF_MS = 5_000
 
-export const SNAPSHOT_EVENT = "snapshot"
-export const DELTA_EVENT = "delta"
+const SNAPSHOT_EVENT = "snapshot"
+const DELTA_EVENT = "delta"
 
 /** Most lines kept client-side; older ones are dropped as new ones arrive. */
 export const DAEMON_LOG_LINE_CAP = 2_000
@@ -56,59 +55,21 @@ export function daemonLogStreamUrl(baseUrl: string): string {
   return new URL("/v1/logs/stream", `${normalizeBaseUrl(baseUrl)}/`).toString()
 }
 
-export class DaemonLogStream {
-  #url: string
+export class DaemonLogStream extends ReconnectingEventStream<DaemonLogStatus> {
   #handlers: DaemonLogStreamHandlers
-  #source: EventSource | null = null
-  #retryTimer: ReturnType<typeof setTimeout> | null = null
-  #backoff = INITIAL_BACKOFF_MS
-  #stopped = true
   #lines: LogLineDto[] = []
 
   constructor(url: string, handlers: DaemonLogStreamHandlers) {
-    this.#url = url
+    super(() => url, {
+      states: { connecting: "connecting", live: "live", reconnecting: "reconnecting" },
+      maxBackoffMs: MAX_BACKOFF_MS,
+      onStatus: handlers.onStatus,
+      dropped: "log stream disconnected",
+    })
     this.#handlers = handlers
   }
 
-  /** Connect, and keep reconnecting until `stop()`. */
-  start(): void {
-    if (!this.#stopped) return
-    this.#stopped = false
-    this.#connect(true)
-  }
-
-  /** Disconnect and cancel any pending retry. Idempotent. */
-  stop(): void {
-    this.#stopped = true
-    this.#clearRetry()
-    this.#closeSource()
-  }
-
-  #connect(first: boolean): void {
-    if (this.#stopped) return
-    this.#closeSource()
-    this.#handlers.onStatus(first ? "connecting" : "reconnecting")
-
-    let source: EventSource
-    try {
-      source = new EventSource(this.#url)
-    } catch (cause) {
-      this.#scheduleRetry(cause instanceof Error ? cause.message : String(cause))
-      return
-    }
-    this.#source = source
-
-    source.onopen = () => {
-      this.#backoff = INITIAL_BACKOFF_MS
-      this.#handlers.onStatus("live", null)
-    }
-
-    // `EventSource` reports every failure the same opaque way, and cannot tell
-    // a dropped connection from a daemon that went away — both are retried.
-    source.onerror = () => {
-      this.#scheduleRetry("log stream disconnected")
-    }
-
+  protected listen(source: EventSource): void {
     source.addEventListener(SNAPSHOT_EVENT, (message) => {
       const lines = parseSnapshot(message.data)
       if (lines !== undefined) this.#replace(lines)
@@ -132,39 +93,11 @@ export class DaemonLogStream {
     }
     this.#handlers.onLines([...this.#lines])
   }
-
-  #scheduleRetry(error: string): void {
-    if (this.#stopped || this.#retryTimer !== null) return
-    this.#closeSource()
-    this.#handlers.onStatus("reconnecting", error)
-    // Jitter so several windows do not all hit a restarting daemon on the
-    // same tick.
-    const delay = this.#backoff * (0.5 + Math.random() / 2)
-    this.#backoff = Math.min(this.#backoff * 2, MAX_BACKOFF_MS)
-    this.#retryTimer = setTimeout(() => {
-      this.#retryTimer = null
-      this.#connect(false)
-    }, delay)
-  }
-
-  #clearRetry(): void {
-    if (this.#retryTimer === null) return
-    clearTimeout(this.#retryTimer)
-    this.#retryTimer = null
-  }
-
-  #closeSource(): void {
-    if (this.#source === null) return
-    this.#source.onopen = null
-    this.#source.onerror = null
-    this.#source.close()
-    this.#source = null
-  }
 }
 
 /** `{"lines": [...]}` → the well-formed lines, or `undefined` on junk. */
 function parseSnapshot(raw: string): LogLineDto[] | undefined {
-  const parsed = parsePayload(raw)
+  const parsed = parsePayload(raw, "daemon-logs")
   if (parsed === undefined) return undefined
   const lines = (parsed as { lines?: unknown }).lines
   if (!Array.isArray(lines)) return undefined
@@ -173,7 +106,7 @@ function parseSnapshot(raw: string): LogLineDto[] | undefined {
 
 /** A `delta` payload → the line, or `undefined` if the payload was junk. */
 function parseLine(raw: string): LogLineDto | undefined {
-  const parsed = parsePayload(raw)
+  const parsed = parsePayload(raw, "daemon-logs")
   if (parsed === undefined) return undefined
   return isLogLine(parsed) ? parsed : undefined
 }
@@ -187,16 +120,4 @@ function isLogLine(value: unknown): value is LogLineDto {
     typeof target === "string" &&
     typeof message === "string"
   )
-}
-
-function parsePayload(raw: string): object | undefined {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(raw)
-  } catch (cause) {
-    console.error("[daemon-logs] dropping unparseable payload", cause, raw)
-    return undefined
-  }
-  if (typeof parsed !== "object" || parsed === null) return undefined
-  return parsed
 }

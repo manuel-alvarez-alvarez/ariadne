@@ -19,7 +19,7 @@ import { PlugZapIcon, RefreshCwIcon, SettingsIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { useConnection } from "@/hooks/use-connection"
-import { cn } from "@/lib/utils"
+import { cn } from "@/lib/format"
 
 export function ConnectionBanner({ onOpenSettings }: { onOpenSettings: () => void }) {
   const { status, streamStatus, baseUrl, refetch } = useConnection()

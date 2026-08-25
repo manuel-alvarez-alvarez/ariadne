@@ -11,12 +11,11 @@
 import { QueryClientProvider } from "@tanstack/react-query"
 import { useState } from "react"
 import { RouterProvider } from "react-router-dom"
-
+import { createQueryClient } from "@/api"
 import { ThemeProvider } from "@/components/theme-provider"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { EventStreamProvider } from "@/events/provider"
-import { createQueryClient } from "@/lib/query-client"
 import { router } from "@/routes/router"
 
 export default function App() {

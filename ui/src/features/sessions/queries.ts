@@ -15,6 +15,7 @@ import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query
 import {
   api,
   type CacheSnapshot,
+  cacheRow,
   optimisticStatus,
   qk,
   type Role,
@@ -97,7 +98,9 @@ export function taskQueryOptions(id: string) {
  * Optimistic: the daemon tears the pane down and marks the session `exited`,
  * which is the one status the client can know in advance, and a row that still
  * says "running" after a confirmed kill is the wrong thing to be looking at.
- * A refusal puts the previous row straight back.
+ * A refusal puts the previous row straight back. The session is the mutation's
+ * variable rather than a binding of the hook — the sessions list kills the row
+ * that was clicked — which is why this is not `useRowAction`.
  */
 export function useKillSession() {
   const queryClient = useQueryClient()
@@ -105,14 +108,9 @@ export function useKillSession() {
     mutationFn: (id: string) =>
       unwrap(api().POST("/v1/sessions/{id}/kill", { params: { path: { id } } })),
     onMutate: (id) =>
-      optimisticStatus(queryClient, {
-        detailKey: qk.sessions.detail(id),
-        listsKey: qk.sessions.lists(),
-        id,
-        status: "exited" satisfies SessionStatus,
-      }),
+      optimisticStatus(queryClient, qk.sessions, id, "exited" satisfies SessionStatus),
     onError: (_error, _id, snapshot) => restoreCache(queryClient, snapshot),
-    onSuccess: (session) => cacheSession(queryClient, session),
+    onSuccess: (session) => cacheRow(queryClient, qk.sessions, session),
   })
 }
 
@@ -128,111 +126,86 @@ export function useResumeSession() {
   return useMutation({
     mutationFn: (id: string) =>
       unwrap(api().POST("/v1/sessions/{id}/resume", { params: { path: { id } } })),
-    onSuccess: (session) => cacheSession(queryClient, session),
+    onSuccess: (session) => cacheRow(queryClient, qk.sessions, session),
   })
 }
 
-/** Keystrokes typed but not yet handed to a request, per session. */
-const inputQueue = new Map<string, string>()
-/** The in-flight send for a session, while one is running. */
-const inputInFlight = new Map<string, Promise<void>>()
-
 /**
- * Type into a live session's pane. Deliberately not a mutation: this is called
- * per keystroke, it changes nothing the cache holds, and a `useMutation`'s
- * pending state would re-render the terminal on every character.
+ * One request per session at a time, for the two things a frame sends a pane.
  *
- * One request per session at a time. A POST per keystroke fired in parallel
- * races — the browser sends them down several connections and the pane
- * receives `ceho` for `echo` — so anything typed while a request is in flight
- * rides along in the next one. That also keeps a paste or a fast typist to a
- * handful of requests instead of one per character.
+ * Deliberately not mutations: both are called as fast as a person can type or
+ * drag, they change nothing the cache holds, and a `useMutation`'s pending
+ * state would re-render the terminal for each one. Fired in parallel they also
+ * race — the browser sends them down several connections, and the pane receives
+ * `ceho` for `echo` or settles at whichever size lost — so whatever arrives
+ * while a request is in flight waits and rides along in the next one.
  *
- * There is no retry: a keystroke that arrives late is worse than one that
- * never arrives. The daemon answers `409` once the session is over or its pane
- * is gone, and that rejection reaches whoever is waiting on the send.
+ * The two differ only in how that waiting is spelled, which is what `queue`
+ * says: keystrokes *accumulate*, because every one of them has to reach the
+ * pane in order; a size *replaces* whatever was queued behind it, because only
+ * the newest one is worth asking for.
+ *
+ * There is no retry either way, and a failure drops what was queued behind it.
+ * For input, keeping it would contradict the no-retry rule by another route: it
+ * would ride out behind the *next* keystroke, minutes later, and a Return or
+ * Ctrl-C replayed out of context acts on whatever the pane is showing by then.
+ * For a resize, the frame the size was measured from is a moment old and the
+ * next thing that moves it measures again. The daemon answers `409` once the
+ * session is over or its pane is gone, and that rejection reaches whoever is
+ * waiting on the send.
  */
-export function sendSessionInput(id: string, data: string): Promise<void> {
-  inputQueue.set(id, (inputQueue.get(id) ?? "") + data)
-  const running = inputInFlight.get(id)
-  if (running) return running
-  const drain = drainSessionInput(id).finally(() => inputInFlight.delete(id))
-  inputInFlight.set(id, drain)
-  return drain
-}
+function coalesced<T>(
+  queue: (pending: T | undefined, next: T) => T,
+  send: (id: string, value: T) => Promise<unknown>,
+): (id: string, value: T) => Promise<void> {
+  const pending = new Map<string, T>()
+  const inFlight = new Map<string, Promise<void>>()
 
-async function drainSessionInput(id: string): Promise<void> {
-  try {
-    for (;;) {
-      const data = inputQueue.get(id)
-      if (data === undefined) return
-      inputQueue.delete(id)
-      await unwrap(
-        api().POST("/v1/sessions/{id}/input", { params: { path: { id } }, body: { data } }),
-      )
+  async function drain(id: string): Promise<void> {
+    try {
+      for (;;) {
+        const value = pending.get(id)
+        if (value === undefined) return
+        pending.delete(id)
+        await send(id, value)
+      }
+    } catch (error) {
+      pending.delete(id)
+      throw error
     }
-  } catch (error) {
-    // Everything typed while the failed request was in flight goes with it.
-    // Keeping it would contradict the no-retry rule by another route: it
-    // would ride out behind the *next* keystroke, minutes later, and a
-    // Return or Ctrl-C replayed out of context acts on whatever the pane is
-    // showing by then. A session that briefly has no pane while it starts up
-    // is exactly where this happens.
-    inputQueue.delete(id)
-    throw error
+  }
+
+  return (id, value) => {
+    pending.set(id, queue(pending.get(id), value))
+    const running = inFlight.get(id)
+    if (running) return running
+    const draining = drain(id).finally(() => inFlight.delete(id))
+    inFlight.set(id, draining)
+    return draining
   }
 }
 
-/** The size a session's pane is waiting to be asked for, per session. */
-const resizeQueue = new Map<string, PaneSize>()
-/** The in-flight resize for a session, while one is running. */
-const resizeInFlight = new Map<string, Promise<void>>()
+/** Type into a live session's pane; every keystroke gets there, in order. */
+export const sendSessionInput = coalesced<string>(
+  (queued, data) => (queued ?? "") + data,
+  (id, data) =>
+    unwrap(api().POST("/v1/sessions/{id}/input", { params: { path: { id } }, body: { data } })),
+)
 
 /**
- * Ask a live session's pane to draw at `size`. Not a mutation, for the reasons
- * {@link sendSessionInput} is not one: it changes nothing the cache holds, and
- * a pending state would re-render the terminal every time its frame moves.
+ * Ask a live session's pane to draw at `size`; only the newest one is sent.
  *
- * One request per session at a time, like the keystrokes — a pane's size is
- * last-write-wins, and two overlapping resizes can land in either order, which
- * would leave the pane at a size nobody is showing. A size measured while a
- * request is in flight replaces whatever was queued behind it: only the newest
- * one is worth asking for.
- *
- * There is no retry. The next thing that moves the frame measures again, and
- * until then the terminal scales its font to the grid it has — a pane that was
- * not resized is a pane rendered smaller, not a terminal that stopped working.
+ * A pane's size is last-write-wins, and two overlapping resizes can land in
+ * either order, which would leave the pane at a size nobody is showing. Until
+ * the pane answers, the terminal scales its font to the grid it has — a pane
+ * that was not resized is a pane rendered smaller, not one that stopped
+ * working.
  */
-export function sendSessionResize(id: string, size: PaneSize): Promise<void> {
-  resizeQueue.set(id, size)
-  const running = resizeInFlight.get(id)
-  if (running) return running
-  const drain = drainSessionResize(id).finally(() => resizeInFlight.delete(id))
-  resizeInFlight.set(id, drain)
-  return drain
-}
-
-async function drainSessionResize(id: string): Promise<void> {
-  try {
-    for (;;) {
-      const size = resizeQueue.get(id)
-      if (size === undefined) return
-      resizeQueue.delete(id)
-      await unwrap(api().POST("/v1/sessions/{id}/resize", { params: { path: { id } }, body: size }))
-    }
-  } catch (error) {
-    // A size queued behind a request that failed goes with it: the frame it
-    // was measured from is a moment old, and the next thing to move it
-    // measures again anyway.
-    resizeQueue.delete(id)
-    throw error
-  }
-}
-
-function cacheSession(queryClient: ReturnType<typeof useQueryClient>, session: SessionDto): void {
-  queryClient.setQueryData(qk.sessions.detail(session.id), session)
-  void queryClient.invalidateQueries({ queryKey: qk.sessions.lists() })
-}
+export const sendSessionResize = coalesced<PaneSize>(
+  (_queued, size) => size,
+  (id, size) =>
+    unwrap(api().POST("/v1/sessions/{id}/resize", { params: { path: { id } }, body: size })),
+)
 
 /** Index a list response by id, for turning the ids on a session into names. */
 export function byId<T extends { id: string }>(items: T[] | undefined): Map<string, T> {

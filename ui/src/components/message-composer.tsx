@@ -34,8 +34,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
+import { cn } from "@/lib/format"
 import { matchesShortcut, shortcutLabel } from "@/lib/shortcuts"
-import { cn } from "@/lib/utils"
 
 const SEND: { key: string } = { key: "Enter" }
 

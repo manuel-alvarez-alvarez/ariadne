@@ -17,7 +17,7 @@ import { StatusBadge } from "@/components/status-badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { When } from "@/components/when"
 import { ProfileName } from "@/features/profiles/profile-name"
-import { plural } from "@/lib/plural"
+import { plural } from "@/lib/format"
 import { taskReviewsQueryOptions } from "./queries"
 import { SessionLink } from "./task-sessions"
 

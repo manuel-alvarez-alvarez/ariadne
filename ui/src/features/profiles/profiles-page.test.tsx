@@ -15,40 +15,21 @@
  * in the app is pure and has no business paying for a DOM.
  */
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, render, screen, waitFor } from "@testing-library/react"
+import { screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { MemoryRouter, useLocation, useNavigate } from "react-router-dom"
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { useLocation, useNavigate } from "react-router-dom"
+import { beforeEach, describe, expect, it } from "vitest"
 
 import type { ModelDto, ProfileDto } from "@/api"
 import { PROFILE_EXPAND_PARAM, paths } from "@/routes/paths"
-
+import { aProfile } from "@/test/fixtures"
+import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { ProfilesPage } from "./profiles-page"
 
-/**
- * Hoisted, and not `vi.stubGlobal`: `openapi-fetch` takes its `fetch` when the
- * client is built, which is when `@/api` is imported — a stub installed after
- * that is a stub the daemon client never sees, and the test would go looking
- * for a real daemon.
- */
-const { daemonFetch } = vi.hoisted(() => {
-  const daemonFetch = vi.fn()
-  globalThis.fetch = daemonFetch as unknown as typeof fetch
-  return { daemonFetch }
-})
-
-const ENGINEER: ProfileDto = {
+const ENGINEER: ProfileDto = aProfile({
   id: "01JPROF000000000000000ENG",
   name: "Builder",
-  role: "engineer",
-  agent_kind: "claude_code",
-  model: null,
-  system_prompt: "",
-  system_prompt_is_default: false,
-  created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T00:00:00Z",
-}
+})
 
 const REVIEWER: ProfileDto = {
   ...ENGINEER,
@@ -90,12 +71,7 @@ function stubDaemon(profiles: ProfileDto[]) {
           : role
             ? profiles.filter((profile) => profile.role === role)
             : profiles
-    return Promise.resolve(
-      new Response(JSON.stringify(body), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
-    )
+    return Promise.resolve(jsonResponse(body))
   })
 }
 
@@ -105,7 +81,7 @@ function stubDaemon(profiles: ProfileDto[]) {
  * (and back, the way the window's own Back button does), and the search string
  * the screen has left behind.
  */
-function renderScreen(entry: string = paths.profiles()) {
+function renderPage(entry: string = paths.profiles()) {
   function Harness() {
     const navigate = useNavigate()
     const location = useLocation()
@@ -122,16 +98,12 @@ function renderScreen(entry: string = paths.profiles()) {
     )
   }
 
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false, gcTime: 0 } },
-  })
-  return render(
-    <MemoryRouter initialEntries={[entry]}>
-      <QueryClientProvider client={queryClient}>
-        <Harness />
-        <ProfilesPage />
-      </QueryClientProvider>
-    </MemoryRouter>,
+  return renderScreen(
+    <>
+      <Harness />
+      <ProfilesPage />
+    </>,
+    { route: entry },
   )
 }
 
@@ -141,20 +113,16 @@ function currentSearch(): string {
 }
 
 beforeEach(() => {
-  // jsdom lays nothing out, so it does not implement this.
-  Element.prototype.scrollIntoView = vi.fn()
-  daemonFetch.mockReset()
   stubDaemon([ENGINEER, REVIEWER, PINNED])
 })
 
 // Testing Library only unmounts by itself under `globals: true`, which this
 // project does not use — without this every screen stays in the document.
-afterEach(cleanup)
 
 describe("ProfilesPage, on ?expand=", () => {
   it("expands the profile that was asked for and scrolls to it", async () => {
     const user = userEvent.setup()
-    renderScreen()
+    renderPage()
     await screen.findByRole("button", { name: "Builder" })
 
     await user.click(screen.getByRole("button", { name: "pick Builder" }))
@@ -166,7 +134,7 @@ describe("ProfilesPage, on ?expand=", () => {
 
   it("widens the role tab, so a pick is not filtered out of the list it lands in", async () => {
     const user = userEvent.setup()
-    renderScreen()
+    renderPage()
     await screen.findByRole("button", { name: "Builder" })
 
     // The reproduction: a tab is up, and the picked profile is not under it.
@@ -183,7 +151,7 @@ describe("ProfilesPage, on ?expand=", () => {
 
   it("takes the param off the URL when the row is closed, so it stays closed", async () => {
     const user = userEvent.setup()
-    renderScreen()
+    renderPage()
     await screen.findByRole("button", { name: "Builder" })
 
     await user.click(screen.getByRole("button", { name: "pick Builder" }))
@@ -200,7 +168,7 @@ describe("ProfilesPage, on ?expand=", () => {
 
   it("walks expansions with Back, since each one is a history step", async () => {
     const user = userEvent.setup()
-    renderScreen()
+    renderPage()
     await screen.findByRole("button", { name: "Builder" })
 
     await user.click(screen.getByRole("button", { name: "pick Builder" }))
@@ -218,7 +186,7 @@ describe("ProfilesPage, on ?expand=", () => {
 
 describe("ProfilesPage, on a reload", () => {
   it("comes back up on the role tab and the row the URL names", async () => {
-    renderScreen(`/profiles?role=reviewer&${PROFILE_EXPAND_PARAM}=${REVIEWER.id}`)
+    renderPage(`/profiles?role=reviewer&${PROFILE_EXPAND_PARAM}=${REVIEWER.id}`)
 
     expect(await screen.findByRole("button", { name: "Critic", expanded: true })).toBeDefined()
     expect(screen.getByRole("tab", { name: "Reviewer", selected: true })).toBeDefined()
@@ -229,7 +197,7 @@ describe("ProfilesPage, on a reload", () => {
 
   it("keeps the picked tab in the URL, and the expansion with it", async () => {
     const user = userEvent.setup()
-    renderScreen()
+    renderPage()
     await screen.findByRole("button", { name: "Critic" })
 
     await user.click(screen.getByRole("button", { name: "Critic" }))
@@ -247,7 +215,7 @@ describe("ProfilesPage, on a reload", () => {
 describe("ProfilesPage, expanded details", () => {
   it("captions a catalog model with its capability blurb, and an unknown one with nothing", async () => {
     const user = userEvent.setup()
-    renderScreen()
+    renderPage()
 
     // A stored model the catalog lists gets its description under it — a line
     // of its own, so the blurb is not cut short by the model's own truncation.
@@ -264,7 +232,7 @@ describe("ProfilesPage, expanded details", () => {
 
   it("shows no raw profile id: the name is what a profile is named by", async () => {
     const user = userEvent.setup()
-    renderScreen()
+    renderPage()
 
     await user.click(await screen.findByRole("button", { name: "Pinned" }))
     await screen.findByRole("button", { name: "Pinned", expanded: true })

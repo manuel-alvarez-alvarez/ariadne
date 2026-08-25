@@ -17,7 +17,7 @@ import userEvent from "@testing-library/user-event"
 import { afterEach, expect, it, vi } from "vitest"
 
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { formatAbsolute } from "@/lib/time"
+import { formatAbsolute } from "@/lib/format"
 
 import { When } from "./when"
 

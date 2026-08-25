@@ -23,83 +23,41 @@
  * `ResizeObserver` are stubbed for it, as in `session-terminal.test.tsx`.
  */
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, render, screen, waitFor } from "@testing-library/react"
+import { screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { MemoryRouter, useLocation } from "react-router-dom"
-import { afterEach, beforeEach, expect, it, vi } from "vitest"
+import { useLocation } from "react-router-dom"
+import { beforeEach, expect, it, vi } from "vitest"
 
 import type { GoalDto, ProfileDto, SessionDto, TaskDto } from "@/api"
-import { TooltipProvider } from "@/components/ui/tooltip"
-
+import { aGoal, aProfile, aSession, aTask } from "@/test/fixtures"
+import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { SessionDetailView } from "./session-detail-view"
 
-/**
- * Hoisted, and not `vi.stubGlobal`: `openapi-fetch` takes its `fetch` when the
- * client is built, which is when `@/api` is imported — a stub installed after
- * that is a stub the daemon client never sees.
- */
-const { daemonFetch } = vi.hoisted(() => {
-  const daemonFetch = vi.fn()
-  globalThis.fetch = daemonFetch as unknown as typeof fetch
-  return { daemonFetch }
+const GOAL: GoalDto = aGoal()
+
+const TASK: TaskDto = aTask({
+  title: "Wire the tabs",
+  branch: "wire-the-tabs-000001",
+  engineer_profile_id: "01JPROF0000000000000000ENG",
+  goal_id: GOAL.id,
 })
 
-const GOAL: GoalDto = {
-  id: "01JGOAL0000000000000000001",
-  title: "Ship the board",
-  description: "",
-  planner_profile_id: "01JPROF00000000000000PLAN",
-  repos: [],
-  required_approvals: 1,
-  status: "active",
-  created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T00:00:00Z",
-}
-
-const TASK: TaskDto = {
-  id: "01JTASK0000000000000000001",
-  goal_id: GOAL.id,
-  repo_id: "01JREPO0000000000000000001",
-  title: "Wire the tabs",
-  description: "",
-  status: "in_progress",
-  branch: "wire-the-tabs-000001",
-  depends_on: [],
-  engineer_profile_id: "01JPROF0000000000000000ENG",
-  reviewers: [],
-  review_round: 0,
-  stalled: false,
-  created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T00:00:00Z",
-}
-
 /** Pinned to a model of its own, which the session below did not launch with. */
-const PROFILE: ProfileDto = {
+const PROFILE: ProfileDto = aProfile({
   id: TASK.engineer_profile_id,
   name: "engineer-default",
-  role: "engineer",
-  agent_kind: "claude_code",
   model: "claude-sonnet-5",
-  system_prompt: "",
-  system_prompt_is_default: false,
-  created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T00:00:00Z",
-}
+})
 
-const SESSION: SessionDto = {
+const SESSION: SessionDto = aSession({
   id: "01JSESS0000000000000000001",
+  model: "claude-opus-5",
+  last_activity_at: "2026-01-01T00:10:00Z",
   goal_id: GOAL.id,
   task_id: TASK.id,
   profile_id: PROFILE.id,
-  role: "engineer",
-  agent_kind: "claude_code",
-  model: "claude-opus-5",
-  status: "running",
   tmux_session: "ariadne-01JSESS0000000000000000001",
-  created_at: "2026-01-01T00:00:00Z",
-  last_activity_at: "2026-01-01T00:10:00Z",
-}
+})
 
 /** One log-stream connection, and whether it is still open. */
 interface Connection {
@@ -129,7 +87,6 @@ class StubEventSource {
 
 beforeEach(() => {
   connections = []
-  daemonFetch.mockReset()
   // Whatever the view reads to turn its ids into names — the goal, the task,
   // the profiles — plus the empty activity feed. Nothing here is about a
   // request failing.
@@ -144,12 +101,7 @@ beforeEach(() => {
         : url.pathname.startsWith("/v1/profiles")
           ? [PROFILE]
           : []
-    return Promise.resolve(
-      new Response(JSON.stringify(body), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
-    )
+    return Promise.resolve(jsonResponse(body))
   })
   vi.stubGlobal("EventSource", StubEventSource)
   // xterm measures the device pixel ratio and watches the frame; neither
@@ -174,22 +126,13 @@ beforeEach(() => {
   )
 })
 
-afterEach(() => {
-  cleanup()
-  vi.unstubAllGlobals()
-})
-
 function renderView(session: SessionDto = SESSION, entry = "/goals?goal=g1") {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
-  render(
-    <MemoryRouter initialEntries={[entry]}>
-      <QueryClientProvider client={queryClient}>
-        <TooltipProvider delay={0}>
-          <CurrentSearch />
-          <SessionDetailView session={session} />
-        </TooltipProvider>
-      </QueryClientProvider>
-    </MemoryRouter>,
+  renderScreen(
+    <>
+      <CurrentSearch />
+      <SessionDetailView session={session} />
+    </>,
+    { route: entry },
   )
 }
 

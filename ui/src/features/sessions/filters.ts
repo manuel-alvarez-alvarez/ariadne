@@ -14,7 +14,7 @@
  */
 
 import type { Role, SessionStatus } from "@/api"
-import { ROLE_LABELS } from "@/lib/labels"
+import { ROLE_LABELS } from "@/lib/format"
 
 import type { SessionListFilters } from "./queries"
 import { SESSION_STATUS_META } from "./session-display"
@@ -55,7 +55,7 @@ export function parseStatusFilter(value: string | null): StatusValue | null {
 }
 
 /** The same, for a role: one of the daemon's, or no filter. */
-export function parseRoleFilter(value: string | null): Role | null {
+function parseRoleFilter(value: string | null): Role | null {
   return ROLES.find((known) => known === value) ?? null
 }
 
@@ -107,7 +107,7 @@ export function roleLabel(value: Role | null): string {
 }
 
 /** The selections the screen was last left with, spelled as their params. */
-export interface RememberedFilters {
+interface RememberedFilters {
   status: string
   role: string
 }

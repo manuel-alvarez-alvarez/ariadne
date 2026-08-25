@@ -23,25 +23,16 @@ import { z } from "zod"
 import { ApiError, type CreateGoalRequest, type GoalDto } from "@/api"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
-import { FormDialog } from "@/components/form-dialog"
-import { Button } from "@/components/ui/button"
 import {
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
+  FormDialog,
+  FormDialogContent,
+  useClearErrorOnEdit,
+  useResetOnOpen,
+} from "@/components/form-dialog"
+import { FormSelect, profilePlaceholder } from "@/components/form-select"
+import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
 import { repositoriesQueryOptions } from "@/features/repositories/queries"
@@ -97,14 +88,10 @@ export function CreateGoalDialog({
     resolver: zodResolver(formSchema),
     defaultValues: DEFAULT_VALUES,
   })
+  const errors = form.formState.errors
 
-  // Re-opening starts from a clean form, never from the previous attempt.
-  useEffect(() => {
-    if (open) {
-      form.reset(DEFAULT_VALUES)
-      createGoal.reset()
-    }
-  }, [open, form.reset, createGoal.reset])
+  useResetOnOpen(open, form, DEFAULT_VALUES, createGoal)
+  useClearErrorOnEdit(form, createGoal)
 
   // The daemon's own default is the built-in "Planner" profile; match it so the
   // common case is one click.
@@ -121,16 +108,6 @@ export function CreateGoalDialog({
     if (preferred) form.setValue("planner_profile", preferred.id)
   }, [open, plannerOptions, selectedPlanner, form.setValue])
 
-  const submitError = ApiError.is(createGoal.error) ? createGoal.error : null
-
-  // "repo path does not exist" must not still be on screen once the path has
-  // been corrected, so the first edit after a failure drops the alert.
-  useEffect(() => {
-    if (!submitError) return
-    const subscription = form.watch(() => createGoal.reset())
-    return () => subscription.unsubscribe()
-  }, [submitError, form.watch, createGoal.reset])
-
   async function onSubmit(values: CreateGoalForm) {
     const body: CreateGoalRequest = {
       title: values.title.trim(),
@@ -146,147 +123,123 @@ export function CreateGoalDialog({
       onOpenChange(false)
       onCreated?.(goal)
     } catch {
-      // Rendered inline below: the daemon's message is the useful part.
+      // Rendered inline by the dialog: the daemon's message is the useful part.
     }
   }
 
   return (
     <FormDialog open={open} onOpenChange={onOpenChange} dirty={form.formState.isDirty}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
-        <form onSubmit={form.handleSubmit(onSubmit)} className="grid gap-4">
-          <DialogHeader>
-            <DialogTitle>New goal</DialogTitle>
-            <DialogDescription>
-              The planner reads the description, then proposes the tasks in the goal thread.
-            </DialogDescription>
-          </DialogHeader>
-
-          <Field data-invalid={form.formState.errors.title ? "" : undefined}>
-            <FieldLabel htmlFor="goal-title">Title</FieldLabel>
-            <Input
-              id="goal-title"
-              autoComplete="off"
-              aria-invalid={form.formState.errors.title ? true : undefined}
-              {...form.register("title")}
-            />
-            <FieldError>{form.formState.errors.title?.message}</FieldError>
-          </Field>
-
-          <Field>
-            <FieldLabel htmlFor="goal-description">Description</FieldLabel>
-            <Textarea
-              id="goal-description"
-              placeholder="What should be achieved, and anything the planner needs to know."
-              {...form.register("description")}
-            />
-            <FieldDescription>Markdown. This is the planner's brief.</FieldDescription>
-          </Field>
-
-          <Controller
-            control={form.control}
-            name="repository_ids"
-            render={({ field }) => (
-              <Field data-invalid={form.formState.errors.repository_ids ? "" : undefined}>
-                {/* One control to point a `for` at, now that the row of
-                    checkboxes is a single combobox: the label names the
-                    trigger, and the picked set is spelled out in it. */}
-                <FieldLabel htmlFor="goal-repositories">Repositories</FieldLabel>
-                {repositories.isPending ? (
-                  <LoadingRepositories />
-                ) : repositories.isError ? (
-                  <ErrorState
-                    title="Could not load repositories"
-                    error={repositories.error}
-                    onRetry={() => void repositories.refetch()}
-                  />
-                ) : repositories.data.length === 0 ? (
-                  <NoRepositories onLeave={() => onOpenChange(false)} />
-                ) : (
-                  <RepositoryCombobox
-                    id="goal-repositories"
-                    repositories={repositories.data}
-                    value={field.value}
-                    onChange={field.onChange}
-                    invalid={form.formState.errors.repository_ids ? true : undefined}
-                  />
-                )}
-                <FieldDescription>
-                  The checkouts the planner splits this goal across. Task worktrees are branched off
-                  each one's base branch.
-                </FieldDescription>
-                <FieldError>{form.formState.errors.repository_ids?.message}</FieldError>
-              </Field>
-            )}
+      <FormDialogContent
+        className="max-h-[85vh] overflow-y-auto sm:max-w-2xl"
+        title="New goal"
+        description="The planner reads the description, then proposes the tasks in the goal thread."
+        onSubmit={form.handleSubmit(onSubmit)}
+        error={
+          ApiError.is(createGoal.error)
+            ? { title: "Could not create goal", error: createGoal.error, showIcon: true }
+            : null
+        }
+        submitLabel="Create goal"
+        pending={createGoal.isPending}
+      >
+        <Field data-invalid={errors.title ? "" : undefined}>
+          <FieldLabel htmlFor="goal-title">Title</FieldLabel>
+          <Input
+            id="goal-title"
+            autoComplete="off"
+            aria-invalid={errors.title ? true : undefined}
+            {...form.register("title")}
           />
+          <FieldError>{errors.title?.message}</FieldError>
+        </Field>
 
-          <div className="grid gap-4 sm:grid-cols-3">
-            <Field data-invalid={form.formState.errors.planner_profile ? "" : undefined}>
-              <FieldLabel htmlFor="goal-planner">Planner profile</FieldLabel>
-              <Controller
-                control={form.control}
-                name="planner_profile"
-                render={({ field }) => (
-                  <Select
-                    value={field.value || null}
-                    onValueChange={(value) => field.onChange(value ?? "")}
-                    disabled={!plannerOptions?.length}
-                    // Without this the trigger would show the raw profile id.
-                    items={plannerItems}
-                  >
-                    <SelectTrigger id="goal-planner" className="w-full">
-                      <SelectValue placeholder={plannerPlaceholder(planners)} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {plannerOptions?.map((profile) => (
-                        <SelectItem key={profile.id} value={profile.id}>
-                          {profile.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-              />
-              <FieldError>{form.formState.errors.planner_profile?.message}</FieldError>
+        <Field>
+          <FieldLabel htmlFor="goal-description">Description</FieldLabel>
+          <Textarea
+            id="goal-description"
+            placeholder="What should be achieved, and anything the planner needs to know."
+            {...form.register("description")}
+          />
+          <FieldDescription>Markdown. This is the planner's brief.</FieldDescription>
+        </Field>
+
+        <Controller
+          control={form.control}
+          name="repository_ids"
+          render={({ field }) => (
+            <Field data-invalid={errors.repository_ids ? "" : undefined}>
+              {/* One control to point a `for` at, now that the row of
+                  checkboxes is a single combobox: the label names the
+                  trigger, and the picked set is spelled out in it. */}
+              <FieldLabel htmlFor="goal-repositories">Repositories</FieldLabel>
+              {repositories.isPending ? (
+                <LoadingRepositories />
+              ) : repositories.isError ? (
+                <ErrorState
+                  title="Could not load repositories"
+                  error={repositories.error}
+                  onRetry={() => void repositories.refetch()}
+                />
+              ) : repositories.data.length === 0 ? (
+                <NoRepositories onLeave={() => onOpenChange(false)} />
+              ) : (
+                <RepositoryCombobox
+                  id="goal-repositories"
+                  repositories={repositories.data}
+                  value={field.value}
+                  onChange={field.onChange}
+                  invalid={errors.repository_ids ? true : undefined}
+                />
+              )}
+              <FieldDescription>
+                The checkouts the planner splits this goal across. Task worktrees are branched off
+                each one's base branch.
+              </FieldDescription>
+              <FieldError>{errors.repository_ids?.message}</FieldError>
             </Field>
+          )}
+        />
 
-            <Field data-invalid={form.formState.errors.required_approvals ? "" : undefined}>
-              <FieldLabel htmlFor="goal-approvals">Approvals</FieldLabel>
-              <Input
-                id="goal-approvals"
-                inputMode="numeric"
-                autoComplete="off"
-                aria-invalid={form.formState.errors.required_approvals ? true : undefined}
-                {...form.register("required_approvals")}
-              />
-              <FieldError>{form.formState.errors.required_approvals?.message}</FieldError>
-            </Field>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Field data-invalid={errors.planner_profile ? "" : undefined}>
+            <FieldLabel htmlFor="goal-planner">Planner profile</FieldLabel>
+            <FormSelect
+              control={form.control}
+              name="planner_profile"
+              id="goal-planner"
+              options={plannerItems}
+              disabled={!plannerOptions?.length}
+              placeholder={profilePlaceholder(planners, "planner")}
+            />
+            <FieldError>{errors.planner_profile?.message}</FieldError>
+          </Field>
 
-            <Field data-invalid={form.formState.errors.max_tasks ? "" : undefined}>
-              <FieldLabel htmlFor="goal-max-tasks">Max tasks</FieldLabel>
-              <Input
-                id="goal-max-tasks"
-                inputMode="numeric"
-                placeholder="unbounded"
-                autoComplete="off"
-                aria-invalid={form.formState.errors.max_tasks ? true : undefined}
-                {...form.register("max_tasks")}
-              />
-              <FieldError>{form.formState.errors.max_tasks?.message}</FieldError>
-            </Field>
-          </div>
+          <Field data-invalid={errors.required_approvals ? "" : undefined}>
+            <FieldLabel htmlFor="goal-approvals">Approvals</FieldLabel>
+            <Input
+              id="goal-approvals"
+              inputMode="numeric"
+              autoComplete="off"
+              aria-invalid={errors.required_approvals ? true : undefined}
+              {...form.register("required_approvals")}
+            />
+            <FieldError>{errors.required_approvals?.message}</FieldError>
+          </Field>
 
-          {submitError ? (
-            <ErrorState showIcon title="Could not create goal" error={submitError} />
-          ) : null}
-
-          <DialogFooter>
-            <DialogClose render={<Button type="button" variant="outline" />}>Cancel</DialogClose>
-            <Button type="submit" pending={createGoal.isPending}>
-              Create goal
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
+          <Field data-invalid={errors.max_tasks ? "" : undefined}>
+            <FieldLabel htmlFor="goal-max-tasks">Max tasks</FieldLabel>
+            <Input
+              id="goal-max-tasks"
+              inputMode="numeric"
+              placeholder="unbounded"
+              autoComplete="off"
+              aria-invalid={errors.max_tasks ? true : undefined}
+              {...form.register("max_tasks")}
+            />
+            <FieldError>{errors.max_tasks?.message}</FieldError>
+          </Field>
+        </div>
+      </FormDialogContent>
     </FormDialog>
   )
 }
@@ -328,15 +281,4 @@ function NoRepositories({ onLeave }: { onLeave: () => void }) {
       }
     />
   )
-}
-
-function plannerPlaceholder(planners: {
-  isPending: boolean
-  isError: boolean
-  data?: unknown[]
-}): string {
-  if (planners.isPending) return "Loading…"
-  if (planners.isError) return "Profiles unavailable"
-  if (!planners.data?.length) return "No planner profiles"
-  return "Select a profile"
 }

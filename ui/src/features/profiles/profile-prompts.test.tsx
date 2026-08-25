@@ -12,35 +12,21 @@
  * that it offers nothing to type into, save or restore.
  */
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, render, screen } from "@testing-library/react"
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { screen } from "@testing-library/react"
+import { beforeEach, describe, expect, it } from "vitest"
 
 import type { ProfileDto, ProfilePromptDto } from "@/api"
-
+import { aProfile } from "@/test/fixtures"
+import { daemonFetch, renderScreen } from "@/test/harness"
 import { ProfilePrompts } from "./profile-prompts"
-
-/** Hoisted for the reason `profiles-page.test.tsx` gives: the client takes its
- * `fetch` when `@/api` is imported, so a later stub is one it never sees. */
-const { daemonFetch } = vi.hoisted(() => {
-  const daemonFetch = vi.fn()
-  globalThis.fetch = daemonFetch as unknown as typeof fetch
-  return { daemonFetch }
-})
 
 const STAMP = "2026-01-01T00:00:00Z"
 
-const ENGINEER: ProfileDto = {
+const ENGINEER: ProfileDto = aProfile({
   id: "01JPROF000000000000000ENG",
   name: "Builder",
-  role: "engineer",
-  agent_kind: "claude_code",
-  model: null,
   system_prompt: "Stored system prompt.",
-  system_prompt_is_default: false,
-  created_at: STAMP,
-  updated_at: STAMP,
-}
+})
 
 const PLANNER: ProfileDto = {
   ...ENGINEER,
@@ -146,12 +132,7 @@ function stubDaemon(profile: ProfileDto) {
 }
 
 function renderPrompts(profile: ProfileDto) {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <ProfilePrompts profile={profile} />
-    </QueryClientProvider>,
-  )
+  return renderScreen(<ProfilePrompts profile={profile} />)
 }
 
 /** The block one prompt is shown in, once its content has arrived. */
@@ -161,11 +142,8 @@ async function shown(label: string): Promise<HTMLElement> {
 
 beforeEach(() => {
   requests = []
-  daemonFetch.mockReset()
   stubDaemon(ENGINEER)
 })
-
-afterEach(cleanup)
 
 describe("ProfilePrompts", () => {
   it("shows the system prompt and every briefing the daemon lists for the role", async () => {

@@ -15,48 +15,22 @@
  * it beside the reviewers.
  */
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, render, screen } from "@testing-library/react"
+import { screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { GoalDto, ProfileDto } from "@/api"
-
+import { aGoal, aProfile } from "@/test/fixtures"
+import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { CreateTaskDialog, EditTaskDialog } from "./task-form-dialog"
-
-/** Hoisted for the reason the other dialog tests give: the client takes its
- * `fetch` when `@/api` is imported, so a later stub is one it never sees. */
-const { daemonFetch } = vi.hoisted(() => {
-  const daemonFetch = vi.fn()
-  globalThis.fetch = daemonFetch as unknown as typeof fetch
-  return { daemonFetch }
-})
 
 const STAMP = "2026-01-01T00:00:00Z"
 
-const GOAL: GoalDto = {
-  id: "01JGOAL0000000000000000001",
-  title: "Ship the board",
-  description: "",
-  planner_profile_id: "01JPROF00000000000000PLAN",
-  repos: [],
-  required_approvals: 1,
-  status: "active",
-  created_at: STAMP,
-  updated_at: STAMP,
-}
+const GOAL: GoalDto = aGoal()
 
-const ENGINEER: ProfileDto = {
+const ENGINEER: ProfileDto = aProfile({
   id: "01JPROF000000000000000ENG",
-  name: "Engineer",
-  role: "engineer",
-  agent_kind: "claude_code",
-  model: null,
-  system_prompt: "",
-  system_prompt_is_default: false,
-  created_at: STAMP,
-  updated_at: STAMP,
-}
+})
 
 const REVIEWER: ProfileDto = {
   ...ENGINEER,
@@ -106,11 +80,7 @@ function stubDaemon() {
       posted.push(await request.clone().json())
     }
 
-    const answer = (payload: unknown) =>
-      new Response(JSON.stringify(payload), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      })
+    const answer = (payload: unknown) => jsonResponse(payload)
 
     if (url.pathname === "/v1/profiles") {
       switch (url.searchParams.get("role")) {
@@ -129,33 +99,13 @@ function stubDaemon() {
 }
 
 function renderDialog(onOpenChange: (open: boolean) => void) {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <CreateTaskDialog goal={GOAL} open onOpenChange={onOpenChange} />
-    </QueryClientProvider>,
-  )
+  return renderScreen(<CreateTaskDialog goal={GOAL} open onOpenChange={onOpenChange} />)
 }
 
 beforeEach(() => {
-  Element.prototype.scrollIntoView = vi.fn()
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    },
-  )
   writes = []
   posted = []
-  daemonFetch.mockReset()
   stubDaemon()
-})
-
-afterEach(() => {
-  cleanup()
-  vi.unstubAllGlobals()
 })
 
 describe("dismissing the dialog", () => {
@@ -214,14 +164,7 @@ describe("editing a task that has not started", () => {
   }
 
   function renderEdit() {
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false, gcTime: 0 } },
-    })
-    return render(
-      <QueryClientProvider client={queryClient}>
-        <EditTaskDialog task={TASK as never} open onOpenChange={vi.fn()} />
-      </QueryClientProvider>,
-    )
+    return renderScreen(<EditTaskDialog task={TASK as never} open onOpenChange={vi.fn()} />)
   }
 
   it("patches the reviewers the user replaced", async () => {
@@ -229,11 +172,7 @@ describe("editing a task that has not started", () => {
     daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
       const request = input instanceof Request ? input : new Request(String(input), init)
       const url = new URL(request.url)
-      const answer = (payload: unknown) =>
-        new Response(JSON.stringify(payload), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        })
+      const answer = (payload: unknown) => jsonResponse(payload)
       if (request.method !== "GET") {
         writes.push(`${request.method} ${url.pathname}`)
         posted.push(await request.clone().json())

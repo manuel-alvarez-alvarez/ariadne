@@ -16,33 +16,17 @@
  * belongs to the sheet on top; see `hooks/use-focus-return.ts`.
  */
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react"
-import { MemoryRouter, type NavigateFunction, useNavigate } from "react-router-dom"
-import { afterEach, expect, it, vi } from "vitest"
+import { act, screen, waitFor } from "@testing-library/react"
+import { type NavigateFunction, useNavigate } from "react-router-dom"
+import { expect, it } from "vitest"
 
-import { TooltipProvider } from "@/components/ui/tooltip"
 import { paths } from "@/routes/paths"
-
+import { daemonFetch, renderScreen } from "@/test/harness"
 import { DetailPanels } from "./detail-panels"
 
-/**
- * Hoisted, and not `vi.stubGlobal`: `openapi-fetch` takes its `fetch` when the
- * client is built, which is when `@/api` is imported — a stub installed after
- * that is one the daemon client never sees.
- *
- * It never settles, so every panel stays in the pending state it renders
- * without data. That is the point: this is about focus, not about content.
- */
-const { daemonFetch } = vi.hoisted(() => {
-  const daemonFetch = vi.fn()
-  globalThis.fetch = daemonFetch as unknown as typeof fetch
-  return { daemonFetch }
-})
 daemonFetch.mockImplementation(() => new Promise(() => {}))
 
 // `globals` is off, so nothing unmounts a screen between tests but this.
-afterEach(cleanup)
 
 /** The router's `navigate`, for URL changes no rendered control stands in for. */
 let go: NavigateFunction | undefined
@@ -52,16 +36,12 @@ function Navigator() {
 }
 
 function mountPanels(at: string) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  render(
-    <QueryClientProvider client={client}>
-      <TooltipProvider delay={0}>
-        <MemoryRouter initialEntries={[at]}>
-          <Navigator />
-          <DetailPanels />
-        </MemoryRouter>
-      </TooltipProvider>
-    </QueryClientProvider>,
+  renderScreen(
+    <>
+      <Navigator />
+      <DetailPanels />
+    </>,
+    { route: at },
   )
 }
 

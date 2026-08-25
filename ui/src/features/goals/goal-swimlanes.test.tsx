@@ -16,70 +16,34 @@
  * that.
  */
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, render, screen, within } from "@testing-library/react"
-import { MemoryRouter } from "react-router-dom"
-import { afterEach, beforeEach, expect, it, vi } from "vitest"
+import { screen, within } from "@testing-library/react"
+import { expect, it } from "vitest"
 
 import type { GoalDto, SessionDto, TaskDto } from "@/api"
-import { TooltipProvider } from "@/components/ui/tooltip"
-
+import { aGoal, aSession, aTask } from "@/test/fixtures"
+import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { GoalSwimlanes } from "./goal-swimlanes"
 
-/**
- * Hoisted, and not `vi.stubGlobal`: `openapi-fetch` takes its `fetch` when the
- * client is built, which is when `@/api` is imported — a stub installed after
- * that is a stub the daemon client never sees.
- */
-const { daemonFetch } = vi.hoisted(() => {
-  const daemonFetch = vi.fn()
-  globalThis.fetch = daemonFetch as unknown as typeof fetch
-  return { daemonFetch }
+const GOAL: GoalDto = aGoal()
+
+const TASK: TaskDto = aTask({
+  title: "Wire the strip",
+  branch: "wire-the-strip-000001",
+  engineer_profile_id: "01JPROF0000000000000000ENG",
+  goal_id: GOAL.id,
 })
 
-const GOAL: GoalDto = {
-  id: "01JGOAL0000000000000000001",
-  title: "Ship the board",
-  description: "",
-  planner_profile_id: "01JPROF00000000000000PLAN",
-  repos: [],
-  required_approvals: 1,
-  status: "active",
-  created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T00:00:00Z",
-}
-
-const TASK: TaskDto = {
-  id: "01JTASK0000000000000000001",
-  goal_id: GOAL.id,
-  repo_id: "01JREPO0000000000000000001",
-  title: "Wire the strip",
-  description: "",
-  status: "in_progress",
-  branch: "wire-the-strip-000001",
-  depends_on: [],
-  engineer_profile_id: "01JPROF0000000000000000ENG",
-  reviewers: [],
-  review_round: 0,
-  stalled: false,
-  created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T00:00:00Z",
-}
-
 /** An engineer blocked on a prompt: the card's own reason to be badged. */
-const SESSION: SessionDto = {
+const SESSION: SessionDto = aSession({
   id: "01JSESS0000000000000000001",
-  goal_id: GOAL.id,
-  task_id: TASK.id,
-  profile_id: "01JPROF0000000000000000ENG",
-  role: "engineer",
-  agent_kind: "claude_code",
   status: "idle",
   attention_reason: "waiting_permission",
   attention_since: "2026-01-01T03:00:00Z",
+  goal_id: GOAL.id,
+  task_id: TASK.id,
+  profile_id: "01JPROF0000000000000000ENG",
   tmux_session: "ariadne-01JSESS0000000000000000001",
-  created_at: "2026-01-01T00:00:00Z",
-}
+})
 
 /** The planner, which belongs to no task and so to no card. */
 const PLANNER: SessionDto = {
@@ -102,47 +66,13 @@ function stubDaemon({
       typeof input === "string" ? input : input instanceof URL ? input : input.url,
     )
     const body = url.pathname === "/v1/tasks" ? tasks : sessions
-    return Promise.resolve(
-      new Response(JSON.stringify(body), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
-    )
+    return Promise.resolve(jsonResponse(body))
   })
 }
 
 function renderBoard() {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false, gcTime: 0 } },
-  })
-  render(
-    <MemoryRouter initialEntries={["/goals"]}>
-      <QueryClientProvider client={queryClient}>
-        <TooltipProvider delay={0}>
-          <GoalSwimlanes goals={[GOAL]} />
-        </TooltipProvider>
-      </QueryClientProvider>
-    </MemoryRouter>,
-  )
+  renderScreen(<GoalSwimlanes goals={[GOAL]} />, { route: "/goals" })
 }
-
-beforeEach(() => {
-  // jsdom lays nothing out, so it does not implement this.
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    },
-  )
-  daemonFetch.mockReset()
-})
-
-afterEach(() => {
-  cleanup()
-  vi.unstubAllGlobals()
-})
 
 it("badges the card of the task whose agent is waiting on a person", async () => {
   stubDaemon({ tasks: [TASK], sessions: [SESSION] })

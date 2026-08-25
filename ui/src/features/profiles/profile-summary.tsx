@@ -22,7 +22,7 @@
 import { useQuery } from "@tanstack/react-query"
 
 import type { AgentKind } from "@/api"
-import { cn } from "@/lib/utils"
+import { cn } from "@/lib/format"
 
 import { agentKindLabel, modelLabel } from "./profile-labels"
 import { ProfileName } from "./profile-name"

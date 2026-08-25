@@ -22,8 +22,7 @@ import type { ReactNode } from "react"
 
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useNow } from "@/hooks/use-now"
-import { formatAbsolute, formatAge, formatRelative } from "@/lib/time"
-import { cn } from "@/lib/utils"
+import { cn, formatAbsolute, formatAge, formatRelative } from "@/lib/format"
 
 type WhenProps = {
   /** RFC 3339 stamp from the daemon; nullish renders as a dash, with no hint. */

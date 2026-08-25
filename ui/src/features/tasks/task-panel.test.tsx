@@ -20,17 +20,12 @@
  * `queries.ts`'s story, and the tabs are `task-panel.tsx`'s own.
  */
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, render, screen } from "@testing-library/react"
-import { MemoryRouter } from "react-router-dom"
-import { afterEach, expect, it } from "vitest"
+import { screen } from "@testing-library/react"
+import { expect, it } from "vitest"
 
 import { type ProfileDto, qk, type TaskDto } from "@/api"
-import { TooltipProvider } from "@/components/ui/tooltip"
-
+import { renderScreen } from "@/test/harness"
 import { TaskPanel } from "./task-panel"
-
-afterEach(cleanup)
 
 const ENGINEER = "01JPROF0000000000000000ENG"
 const STRICT = "01JPROF0000000000000STRICT"
@@ -98,18 +93,12 @@ const TASK: TaskDto = {
 }
 
 function mount(task: TaskDto = TASK) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  client.setQueryData(qk.tasks.detail(task.id), task)
-  client.setQueryData(qk.profiles.list({}), PROFILES)
-  render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter>
-        <TooltipProvider delay={0}>
-          <TaskPanel taskId={task.id} onClose={() => {}} />
-        </TooltipProvider>
-      </MemoryRouter>
-    </QueryClientProvider>,
-  )
+  renderScreen(<TaskPanel taskId={task.id} onClose={() => {}} />, {
+    seed: (client) => {
+      client.setQueryData(qk.tasks.detail(task.id), task)
+      client.setQueryData(qk.profiles.list({}), PROFILES)
+    },
+  })
 }
 
 /**

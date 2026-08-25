@@ -1,7 +1,7 @@
 import { Input as InputPrimitive } from "@base-ui/react/input"
 import type * as React from "react"
 
-import { cn } from "@/lib/utils"
+import { cn } from "@/lib/format"
 
 /**
  * The field look itself, exported for inputs that cannot be this component —

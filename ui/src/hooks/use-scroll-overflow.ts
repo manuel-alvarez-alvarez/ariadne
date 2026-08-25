@@ -13,7 +13,7 @@
 
 import { useEffect, useState } from "react"
 
-export interface ScrollOverflow {
+interface ScrollOverflow {
   /** Content is hidden to the left of the scrollport. */
   start: boolean
   /** Content is hidden to its right. */

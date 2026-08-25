@@ -8,7 +8,7 @@
  */
 
 /** Wire shape of a daemon error response. */
-export interface ErrorEnvelope {
+interface ErrorEnvelope {
   error: {
     code: string
     message: string
@@ -17,7 +17,7 @@ export interface ErrorEnvelope {
 }
 
 /** Code used when the request never reached the daemon. */
-export const NETWORK_ERROR_CODE = "network_error"
+const NETWORK_ERROR_CODE = "network_error"
 /** Code used when a non-2xx response carried no (or an unreadable) envelope. */
 export const HTTP_ERROR_CODE = "http_error"
 

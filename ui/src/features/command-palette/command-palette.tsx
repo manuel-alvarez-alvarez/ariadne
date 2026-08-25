@@ -32,8 +32,7 @@ import {
   TargetIcon,
 } from "lucide-react"
 import { useTheme } from "next-themes"
-import type { ReactNode } from "react"
-import { useMemo } from "react"
+import { type ReactNode, useMemo } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 
 import {

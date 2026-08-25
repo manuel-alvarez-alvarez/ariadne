@@ -22,7 +22,7 @@ import { ErrorState } from "@/components/error-state"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { When } from "@/components/when"
-import { cn } from "@/lib/utils"
+import { cn } from "@/lib/format"
 
 /** Page size; the daemon caps `limit` at 200. */
 const PAGE = 200
