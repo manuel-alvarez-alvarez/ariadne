@@ -8,220 +8,80 @@
 //! database behind the store's back, the way one written before the check
 //! existed sits there.
 //!
+//! And what assembly comes to is pinned here too: the placeholders of a spawn,
+//! a resume and a review round are filled in by hand and compared with what
+//! the daemon produced, so a change to the assembler shows up as a diff rather
+//! than as an agent quietly briefed with something else.
+//!
 //! No tmux and no agent CLI: `tmux` is a stub that records the commands the
 //! launcher issues, and the rendered briefing is read back from the session's
 //! spawn plan — tmux is handed `ariadne _spawn <plan>` and nothing of the
 //! briefing itself. `git` is real — spawning an engineer creates its worktree.
 
-use std::path::Path;
-use std::sync::Arc;
+mod common;
 
-use ariadne_core::spawn_plan::SpawnPlanFile;
-use ariadne_core::{Actor, AgentKind, AuthorRole, PromptKind, Role, TaskStatus};
-use ariadne_daemon::config::Config;
-use ariadne_daemon::gitwt::GitManager;
-use ariadne_daemon::launcher::Launcher;
-use ariadne_daemon::tmux::TmuxManager;
-use ariadne_store::{NewGoal, NewMessage, NewProfile, NewRepository, NewTask, Store, Task};
+use ariadne_core::{Actor, AuthorRole, PromptKind, Role, SessionStatus, TaskStatus};
+use ariadne_daemon::agents::prompts;
+use ariadne_store::NewMessage;
+use ariadne_store::defaults::default_prompt;
+
+use common::{Cast, Harness, harness};
 
 /// What the engineer requested review with, and what it wrote afterwards:
 /// the briefing has to carry the first and never the second.
 const SUMMARY: &str = "Rendered the board from the store, with a test per lane.";
 const AFTERWARDS: &str = "Thanks — I will look at the lane widths next.";
 
-struct Harness {
-    store: Store,
-    launcher: Arc<Launcher>,
-    dir: tempfile::TempDir,
+/// A task ready for its engineer to be spawned, in a real repo.
+async fn seeded(h: &Harness) -> Cast {
+    h.git_repo("repo");
+    h.cast().await
 }
 
-async fn harness() -> Harness {
-    let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(dir.path().join("test.db")).await.unwrap();
-    let cfg = Arc::new(Config::load(Some(dir.path().join("home"))).unwrap());
-    let launcher = Arc::new(Launcher {
-        cfg,
-        store: store.clone(),
-        tmux: write_tmux_stub(dir.path()),
-        git: GitManager,
-    });
-    Harness {
-        store,
-        launcher,
-        dir,
+/// The placeholders filled in by hand, so that what an assertion compares
+/// against is the assembled text and not the assembler's own answer to the
+/// same question.
+fn fill(template: &str, values: &[(&str, &str)]) -> String {
+    let mut out = template.to_string();
+    for (key, value) in values {
+        out = out.replace(&format!("{{{key}}}"), value);
     }
+    out
 }
 
-fn sh(dir: &Path, cmd: &str) {
-    let status = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(cmd)
-        .current_dir(dir)
-        .status()
-        .unwrap();
-    assert!(status.success(), "command failed: {cmd}");
-}
-
-/// A `tmux` with no sessions that records every command it is given.
-fn write_tmux_stub(dir: &Path) -> TmuxManager {
-    use std::os::unix::fs::PermissionsExt;
-
-    let bin = dir.join("tmux-stub.sh");
-    let script = format!(
-        "#!/bin/sh\n\
-         echo \"$@\" >> '{log}'\n\
-         case \"$1\" in\n\
-         \x20 has-session) exit 1 ;;\n\
-         esac\n\
-         exit 0\n",
-        log = dir.join("tmux-commands.log").display(),
-    );
-    std::fs::write(&bin, script).unwrap();
-    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
-    TmuxManager::new(bin.display().to_string())
-}
-
-impl Harness {
-    /// A task ready for its engineer to be spawned, in a real repo. Returns
-    /// the task and its engineer profile id.
-    async fn task(&self) -> (Task, String) {
-        let planner = self.profile("planner", Role::Planner).await;
-        let engineer = self.profile("engineer", Role::Engineer).await;
-        let reviewer = self.profile("reviewer", Role::Reviewer).await;
-        let repo_path = self.dir.path().join("repo");
-        std::fs::create_dir_all(&repo_path).unwrap();
-        sh(
-            &repo_path,
-            "git init -q -b main && echo v1 > file.txt && git add . && \
-             git -c user.email=t@t -c user.name=t commit -qm init",
-        );
-        let repo = self
-            .store
-            .create_repository(NewRepository {
-                path: repo_path.display().to_string(),
-                base_branch: "main".into(),
-                description: None,
-                merge_strategy: Default::default(),
-            })
-            .await
-            .unwrap();
-        let goal = self
-            .store
-            .create_goal(NewGoal {
-                title: "Ship the UI".into(),
-                description: "desc".into(),
-                planner_profile_id: planner,
-                max_tasks: None,
-                required_approvals: 1,
-                repository_ids: vec![repo.id.clone()],
-            })
-            .await
-            .unwrap();
-        let task = self
-            .store
-            .create_task(NewTask {
-                goal_id: goal.id.clone(),
-                repo_id: repo.id,
-                title: "Render prompts from the database".into(),
-                description: "do things".into(),
-                engineer_profile_id: engineer.clone(),
-                reviewer_profile_ids: vec![reviewer],
-                depends_on: vec![],
-            })
-            .await
-            .unwrap();
-        (task, engineer)
-    }
-
-    /// Store a template the store itself would refuse, straight into the row.
-    ///
-    /// Placeholders are validated when a prompt is saved, never when one is
-    /// rendered, so a database can still hold a briefing naming a token
-    /// nothing fills in: edited by hand, restored from a backup, or written
-    /// before the check existed. Spawning has to survive it.
-    async fn plant_template(&self, profile_id: &str, kind: PromptKind, content: &str) {
-        let pool = sqlx::SqlitePool::connect(&format!(
-            "sqlite://{}",
-            self.dir.path().join("test.db").display()
-        ))
-        .await
-        .unwrap();
-        sqlx::query(
-            "INSERT INTO profile_prompts (profile_id, kind, content, updated_at)
-             VALUES (?, ?, ?, 't')
-             ON CONFLICT (profile_id, kind) DO UPDATE SET content = excluded.content",
-        )
-        .bind(profile_id)
-        .bind(kind.as_str())
-        .bind(content)
-        .execute(&pool)
-        .await
-        .unwrap();
-        pool.close().await;
-    }
-
-    async fn profile(&self, name: &str, role: Role) -> String {
-        self.store
-            .create_profile(NewProfile {
-                name: name.into(),
-                role,
-                agent_kind: Some(AgentKind::ClaudeCode),
-                model: None,
-                system_prompt: Some(format!("You are {name}.")),
-            })
-            .await
-            .unwrap()
-            .id
-    }
-
-    /// Everything the launcher said to the stub `tmux`, as one string: the
-    /// briefing is the last argument of the spawn command.
-    fn tmux_log(&self) -> String {
-        std::fs::read_to_string(self.dir.path().join("tmux-commands.log")).unwrap_or_default()
-    }
-
-    /// The argv the agent of `session_id` was launched with, joined for
-    /// reading. It comes from the session's spawn plan, which is where a
-    /// briefing of any size now travels.
-    fn launched_argv(&self, session_id: &str) -> String {
-        let path = self
-            .launcher
-            .cfg
-            .run_dir
-            .join(session_id)
-            .join("spawn.json");
-        let raw = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
-        SpawnPlanFile::from_json(&raw).unwrap().argv.join(" ")
-    }
+fn default_for(role: Role, kind: PromptKind) -> String {
+    default_prompt(role, kind).unwrap().to_string()
 }
 
 /// The briefing in the database is the briefing the agent is launched with,
-/// placeholders and all.
+/// placeholders and all — and nowhere else: a briefing in the tmux command
+/// line is what the plan file exists to prevent, whatever its size.
 #[tokio::test]
 async fn a_spawned_engineer_is_briefed_from_its_profiles_prompt() {
     let h = harness().await;
-    let (task, engineer) = h.task().await;
+    let cast = seeded(&h).await;
     h.store
         .update_profile_prompt(
-            &engineer,
+            &cast.engineer.id,
             PromptKind::EngineerBriefing,
             "Do {task_title} on {branch}, in {worktree_path}.",
         )
         .await
         .unwrap();
 
-    let session = h.launcher.spawn_engineer(&task.id).await.unwrap();
+    let session = h.launcher.spawn_engineer(&cast.task.id).await.unwrap();
     let worktree = session.worktree_path.clone().unwrap();
-    let briefing = format!("Do {} on {}, in {worktree}.", task.title, task.branch);
-    let argv = h.launched_argv(&session.id);
-    assert!(
-        argv.contains(&briefing),
-        "the edited briefing, rendered: {argv}"
+    let briefing = format!(
+        "Do {} on {}, in {worktree}.",
+        cast.task.title, cast.task.branch
     );
-    // And nowhere else: a briefing in the tmux command line is what the plan
-    // file exists to prevent, whatever its size.
-    let log = h.tmux_log();
+    let plan = h.spawn_plan(&session.id).expect("a spawn plan");
+    assert!(
+        plan.argv.iter().any(|arg| arg == &briefing),
+        "the edited briefing, rendered: {:?}",
+        plan.argv
+    );
+    let log = h.tmux_calls().join("\n");
     assert!(
         !log.contains(&briefing) && !log.contains("Do "),
         "the briefing reached the tmux command line: {log}"
@@ -242,31 +102,104 @@ async fn a_spawned_engineer_is_briefed_from_its_profiles_prompt() {
 
 /// A profile nobody edited holds no prompt at all, and is briefed with the
 /// defaults of its role: the code's text is what reaches the agent, without
-/// anything having been copied into the database first.
+/// anything having been copied into the database first — and what reaches it
+/// is the default with every placeholder filled in, exactly.
 #[tokio::test]
-async fn a_profile_with_no_prompts_of_its_own_is_briefed_with_the_defaults() {
+async fn a_spawn_assembles_the_default_briefing_word_for_word() {
     let h = harness().await;
-    let (task, engineer) = h.task().await;
+    let cast = seeded(&h).await;
     assert!(
         h.store
-            .list_profile_prompts(&engineer)
+            .list_profile_prompts(&cast.engineer.id)
             .await
             .unwrap()
             .iter()
             .all(|p| p.is_default)
     );
 
-    let session = h.launcher.spawn_engineer(&task.id).await.unwrap();
-    let argv = h.launched_argv(&session.id);
-    let expected = ariadne_daemon::agents::prompts::engineer_briefing(
-        ariadne_store::defaults::default_prompt(Role::Engineer, PromptKind::EngineerBriefing)
-            .unwrap(),
-        &h.store.get_task(&task.id).await.unwrap(),
-        &h.store.get_goal(&task.goal_id).await.unwrap(),
-        &h.store.get_repository(&task.repo_id).await.unwrap(),
-        &[],
+    let session = h.launcher.spawn_engineer(&cast.task.id).await.unwrap();
+    let task = h.store.get_task(&cast.task.id).await.unwrap();
+    let expected = fill(
+        &default_for(Role::Engineer, PromptKind::EngineerBriefing),
+        &[
+            ("task_title", &task.title),
+            ("task_description", &task.description),
+            ("goal_title", &cast.goal.title),
+            ("worktree_path", task.worktree_path.as_deref().unwrap()),
+            ("branch", &task.branch),
+            ("base_branch", &cast.repo.base_branch),
+            ("repo_path", &cast.repo.path),
+            ("merge_strategy", cast.repo.merge_strategy().as_str()),
+            ("dependencies", "none"),
+        ],
     );
-    assert!(argv.contains(&expected), "the default briefing: {argv}");
+
+    let plan = h.spawn_plan(&session.id).expect("a spawn plan");
+    assert!(
+        plan.argv.iter().any(|arg| arg == &expected),
+        "the default briefing, assembled: {:?}",
+        plan.argv
+    );
+    // The same text is what the assembler answers on its own, so nothing
+    // between the two decorates it.
+    assert_eq!(
+        prompts::engineer_briefing(
+            &default_for(Role::Engineer, PromptKind::EngineerBriefing),
+            &task,
+            &h.store.get_goal(&task.goal_id).await.unwrap(),
+            &cast.repo,
+            &[],
+        ),
+        expected
+    );
+}
+
+/// The other two assemblies an agent meets, pinned the same way: what an
+/// engineer holding unfinished work is picked up with, and what a reviewer
+/// owing a verdict is.
+#[tokio::test]
+async fn a_resume_and_a_review_round_assemble_word_for_word() {
+    let h = harness().await;
+    let cast = seeded(&h).await;
+    let task = h.store.get_task(&cast.task.id).await.unwrap();
+
+    assert_eq!(
+        prompts::engineer_resume_briefing(
+            &default_for(Role::Engineer, PromptKind::EngineerResume),
+            &task,
+        ),
+        fill(
+            &default_for(Role::Engineer, PromptKind::EngineerResume),
+            &[("task_title", &task.title), ("branch", &task.branch)],
+        )
+    );
+
+    let round = task.review_round.to_string();
+    assert_eq!(
+        prompts::reviewer_resume_briefing(
+            &default_for(Role::Reviewer, PromptKind::ReviewerResume),
+            &task,
+            Some(SUMMARY),
+        ),
+        fill(
+            &default_for(Role::Reviewer, PromptKind::ReviewerResume),
+            &[
+                ("review_round", &round),
+                ("task_title", &task.title),
+                ("branch", &task.branch),
+                ("summary", SUMMARY),
+            ],
+        )
+    );
+    // A round nobody wrote a summary for still says so in words.
+    assert!(
+        prompts::reviewer_resume_briefing(
+            &default_for(Role::Reviewer, PromptKind::ReviewerResume),
+            &task,
+            None,
+        )
+        .contains("(none provided)")
+    );
 }
 
 /// The `{summary}` a reviewer is briefed with is the one the engineer
@@ -280,8 +213,8 @@ async fn a_profile_with_no_prompts_of_its_own_is_briefed_with_the_defaults() {
 #[tokio::test]
 async fn a_reviewer_is_briefed_with_the_summary_review_was_requested_with() {
     let h = harness().await;
-    let (task, _engineer) = h.task().await;
-    let reviewer = h.store.list_task_reviewers(&task.id).await.unwrap()[0].clone();
+    let cast = seeded(&h).await;
+    let task = &cast.task;
     // The engineer's worktree is what creates the branch the reviewer's is
     // cut from.
     h.launcher.spawn_engineer(&task.id).await.unwrap();
@@ -318,61 +251,66 @@ async fn a_reviewer_is_briefed_with_the_summary_review_was_requested_with() {
 
     let session = h
         .launcher
-        .spawn_reviewer(&task.id, &reviewer)
+        .spawn_reviewer(&task.id, &cast.reviewer.id)
         .await
         .unwrap();
-    let argv = h.launched_argv(&session.id);
-    assert!(
-        argv.contains(SUMMARY),
-        "the briefing has no summary: {argv}"
+    let reviewed = h.store.get_task(&task.id).await.unwrap();
+    let expected = fill(
+        &default_for(Role::Reviewer, PromptKind::ReviewerBriefing),
+        &[
+            ("task_title", &reviewed.title),
+            ("review_round", &reviewed.review_round.to_string()),
+            ("task_description", &reviewed.description),
+            ("goal_title", &cast.goal.title),
+            ("branch", &reviewed.branch),
+            ("base_branch", &cast.repo.base_branch),
+            ("repo_path", &cast.repo.path),
+            ("summary", SUMMARY),
+        ],
     );
+    let plan = h.spawn_plan(&session.id).expect("a spawn plan");
     assert!(
-        !argv.contains(AFTERWARDS),
-        "the briefing carries what the engineer said after requesting review: {argv}"
+        plan.argv.iter().any(|arg| arg == &expected),
+        "the review-round briefing, assembled: {:?}",
+        plan.argv
     );
-    // And the summary reaches it as it was written, with nothing prefixed to
-    // it on the way.
-    assert!(
-        !argv.contains("Review requested:"),
-        "the summary was decorated on its way to the reviewer: {argv}"
-    );
+    // Which pins both halves of the summary rule at once: what the engineer
+    // requested review with is in there, and what it said afterwards — and any
+    // decoration of the summary on its way — is not.
+    assert!(!expected.contains(AFTERWARDS));
+    assert!(!expected.contains("Review requested:"));
 }
 
 /// A template that is nonsense by the time it is read is still a briefing: the
 /// unknown token and the brace that never closes travel through verbatim and
-/// the session starts.
+/// the session starts. So does an empty one.
 #[tokio::test]
-async fn a_broken_template_still_spawns_the_engineer() {
+async fn a_broken_or_empty_template_still_spawns_the_engineer() {
     let h = harness().await;
-    let (task, engineer) = h.task().await;
-    h.plant_template(
-        &engineer,
+    let cast = seeded(&h).await;
+    h.plant_prompt(
+        &cast.engineer.id,
         PromptKind::EngineerBriefing,
         "# {task_title} {who_even} {unclosed",
     )
     .await;
 
-    let session = h.launcher.spawn_engineer(&task.id).await.unwrap();
-    assert_eq!(session.status(), ariadne_core::SessionStatus::Running);
-    let argv = h.launched_argv(&session.id);
+    let session = h.launcher.spawn_engineer(&cast.task.id).await.unwrap();
+    assert_eq!(session.status(), SessionStatus::Running);
+    let plan = h.spawn_plan(&session.id).expect("a spawn plan");
+    let briefing = format!("# {} {{who_even}} {{unclosed", cast.task.title);
     assert!(
-        argv.contains(&format!("# {} {{who_even}} {{unclosed", task.title)),
-        "what could not be substituted stayed as it was: {argv}"
+        plan.argv.iter().any(|arg| arg == &briefing),
+        "what could not be substituted stayed as it was: {:?}",
+        plan.argv
     );
-}
 
-/// An empty template is no reason to hold a session back either.
-#[tokio::test]
-async fn an_empty_template_still_spawns_the_engineer() {
-    let h = harness().await;
-    let (task, engineer) = h.task().await;
     h.store
-        .update_profile_prompt(&engineer, PromptKind::EngineerBriefing, "")
+        .update_profile_prompt(&cast.engineer.id, PromptKind::EngineerBriefing, "")
         .await
         .unwrap();
-
-    let session = h.launcher.spawn_engineer(&task.id).await.unwrap();
-    assert_eq!(session.status(), ariadne_core::SessionStatus::Running);
+    let session = h.launcher.spawn_engineer(&cast.task.id).await.unwrap();
+    assert_eq!(session.status(), SessionStatus::Running);
 }
 
 /// A prompt that cannot be read at all — the profile is gone — falls back to
@@ -380,7 +318,7 @@ async fn an_empty_template_still_spawns_the_engineer() {
 #[tokio::test]
 async fn a_missing_prompt_falls_back_to_the_default() {
     let h = harness().await;
-    let template = ariadne_daemon::agents::prompts::template_for(
+    let template = prompts::template_for(
         &h.store,
         "01nosuchprofilexxxxxxxxxxx",
         PromptKind::EngineerBriefing,
@@ -388,7 +326,6 @@ async fn a_missing_prompt_falls_back_to_the_default() {
     .await;
     assert_eq!(
         template,
-        ariadne_store::defaults::default_prompt(Role::Engineer, PromptKind::EngineerBriefing)
-            .unwrap()
+        default_for(Role::Engineer, PromptKind::EngineerBriefing)
     );
 }

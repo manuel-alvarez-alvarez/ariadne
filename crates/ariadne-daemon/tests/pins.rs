@@ -9,106 +9,14 @@
 //!
 //! No tmux, no git, no agent CLI: nothing here launches anything.
 
-use std::sync::Arc;
-use std::time::Instant;
-
-use axum::Router;
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
-use http_body_util::BodyExt;
-use serde::de::DeserializeOwned;
-use tower::ServiceExt;
+mod common;
 
 use ariadne_api::goals::GoalDto;
 use ariadne_api::tasks::TaskDto;
 use ariadne_core::{AgentKind, Role};
-use ariadne_daemon::bus::EventBus;
-use ariadne_daemon::config::Config;
-use ariadne_daemon::gitwt::GitManager;
-use ariadne_daemon::http::{self, AppState};
-use ariadne_daemon::launcher::Launcher;
-use ariadne_daemon::logbuf::LogBuffer;
-use ariadne_daemon::tmux::TmuxManager;
-use ariadne_store::{
-    Goal, NewGoal, NewProfile, NewRepository, NewTask, Profile, ProfileUpdate, Store, Task,
-};
+use ariadne_store::{Goal, Profile, ProfileUpdate, Task};
 
-struct Harness {
-    store: Store,
-    router: Router,
-    dir: tempfile::TempDir,
-}
-
-async fn harness() -> Harness {
-    let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(dir.path().join("test.db")).await.unwrap();
-    let cfg = Arc::new(Config::load(Some(dir.path().join("home"))).unwrap());
-    let launcher = Arc::new(Launcher {
-        cfg,
-        store: store.clone(),
-        tmux: TmuxManager::default(),
-        git: GitManager,
-    });
-    let state = AppState {
-        store: store.clone(),
-        started_at: Instant::now(),
-        launcher,
-        sched_tx: None,
-        events: EventBus::new(),
-        logs: LogBuffer::new(),
-    };
-    Harness {
-        router: http::router(state),
-        store,
-        dir,
-    }
-}
-
-impl Harness {
-    async fn profile(
-        &self,
-        name: &str,
-        role: Role,
-        agent_kind: Option<AgentKind>,
-        model: Option<&str>,
-    ) -> Profile {
-        self.store
-            .create_profile(NewProfile {
-                name: name.into(),
-                role,
-                agent_kind,
-                model: model.map(str::to_string),
-                system_prompt: Some(format!("You are {name}.")),
-            })
-            .await
-            .unwrap()
-    }
-
-    /// Move a profile onto another agent CLI and another model, the edit every
-    /// pin here has to survive.
-    async fn move_profile(&self, id: &str, agent_kind: AgentKind, model: &str) {
-        self.store
-            .update_profile(
-                id,
-                ProfileUpdate {
-                    agent_kind: Some(Some(agent_kind)),
-                    model: Some(Some(model.into())),
-                    ..Default::default()
-                },
-            )
-            .await
-            .unwrap();
-    }
-
-    async fn get<T: DeserializeOwned>(&self, path: &str) -> T {
-        let request = Request::get(path).body(Body::empty()).unwrap();
-        let response = self.router.clone().oneshot(request).await.unwrap();
-        let status = response.status();
-        let body = response.into_body().collect().await.unwrap().to_bytes();
-        assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
-        serde_json::from_slice(&body).unwrap()
-    }
-}
+use common::{Harness, harness};
 
 /// A seeded goal and task, with the reviewer profiles the slots were cut from.
 struct Seeded {
@@ -120,80 +28,43 @@ struct Seeded {
 
 /// A goal and a task, each agent on a different agent CLI and model so no
 /// assertion can pass by reading somebody else's pin. The reviewers are two:
-/// one pinned to a model, one left on the agent's default and on auto.
+/// one pinned to a model, one left on the agent's default and on auto. Every
+/// profile then moves, after the goal and the task were created from them.
 async fn seeded(h: &Harness) -> Seeded {
     let planner = h
-        .profile(
-            "planner",
-            Role::Planner,
-            Some(AgentKind::ClaudeCode),
-            Some("opus"),
-        )
+        .profile_on("planner", Role::Planner, Some(AgentKind::ClaudeCode), Some("opus"))
         .await;
     let engineer = h
-        .profile(
-            "engineer",
-            Role::Engineer,
-            Some(AgentKind::Codex),
-            Some("gpt-5"),
-        )
+        .profile_on("engineer", Role::Engineer, Some(AgentKind::Codex), Some("gpt-5"))
         .await;
     let strict = h
-        .profile(
-            "strict",
-            Role::Reviewer,
-            Some(AgentKind::ClaudeCode),
-            Some("sonnet"),
-        )
+        .profile_on("strict", Role::Reviewer, Some(AgentKind::ClaudeCode), Some("sonnet"))
         .await;
-    let auto = h.profile("auto", Role::Reviewer, None, None).await;
+    let auto = h.profile_on("auto", Role::Reviewer, None, None).await;
 
-    // Never cloned into a worktree: nothing here reaches git.
-    let repo = h
-        .store
-        .create_repository(NewRepository {
-            path: h.dir.path().join("repo").display().to_string(),
-            base_branch: "main".into(),
-            description: None,
-            merge_strategy: Default::default(),
-        })
-        .await
-        .unwrap();
-    let goal = h
-        .store
-        .create_goal(NewGoal {
-            title: "Model switching".into(),
-            description: String::new(),
-            planner_profile_id: planner.id.clone(),
-            max_tasks: None,
-            required_approvals: 1,
-            repository_ids: vec![repo.id.clone()],
-        })
-        .await
-        .unwrap();
+    let (goal, repo) = h.goal(&planner).await;
     let task = h
-        .store
-        .create_task(NewTask {
-            goal_id: goal.id.clone(),
-            repo_id: repo.id,
-            title: "Surfaces".into(),
-            description: String::new(),
-            engineer_profile_id: engineer.id.clone(),
-            reviewer_profile_ids: vec![strict.id.clone(), auto.id.clone()],
-            depends_on: vec![],
-        })
-        .await
-        .unwrap();
+        .task_on(&goal, &repo, "Surfaces", &engineer, &[&strict, &auto])
+        .await;
 
-    // Every profile moves, after the goal and the task were created from them.
-    h.move_profile(&planner.id, AgentKind::Opencode, "grok")
-        .await;
-    h.move_profile(&engineer.id, AgentKind::ClaudeCode, "haiku")
-        .await;
-    h.move_profile(&strict.id, AgentKind::Codex, "gpt-5-mini")
-        .await;
-    h.move_profile(&auto.id, AgentKind::Codex, "gpt-5-mini")
-        .await;
+    for (profile, kind, model) in [
+        (&planner, AgentKind::Opencode, "grok"),
+        (&engineer, AgentKind::ClaudeCode, "haiku"),
+        (&strict, AgentKind::Codex, "gpt-5-mini"),
+        (&auto, AgentKind::Codex, "gpt-5-mini"),
+    ] {
+        h.store
+            .update_profile(
+                &profile.id,
+                ProfileUpdate {
+                    agent_kind: Some(Some(kind)),
+                    model: Some(Some(model.into())),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+    }
     Seeded {
         goal,
         task,
@@ -202,26 +73,19 @@ async fn seeded(h: &Harness) -> Seeded {
     }
 }
 
+/// Each slot answers for itself: the engineer's pin, and two reviewers moved
+/// onto the same agent and model still reading back as what each was assigned
+/// with, in review order.
 #[tokio::test]
-async fn a_task_carries_the_engineer_pin_its_profile_no_longer_has() {
-    let h = harness().await;
-    let Seeded { task, .. } = seeded(&h).await;
-
-    let dto: TaskDto = h.get(&format!("/v1/tasks/{}", task.id)).await;
-    assert_eq!(dto.agent_kind, Some(AgentKind::Codex));
-    assert_eq!(dto.model.as_deref(), Some("gpt-5"));
-}
-
-/// Each slot answers for itself: two reviewers moved onto the same agent and
-/// model still read back as what each was assigned with, in review order.
-#[tokio::test]
-async fn a_task_carries_one_pin_per_reviewer_slot() {
+async fn a_task_carries_the_pins_its_profiles_no_longer_have() {
     let h = harness().await;
     let Seeded {
         task, strict, auto, ..
     } = seeded(&h).await;
 
     let dto: TaskDto = h.get(&format!("/v1/tasks/{}", task.id)).await;
+    assert_eq!(dto.agent_kind, Some(AgentKind::Codex));
+    assert_eq!(dto.model.as_deref(), Some("gpt-5"));
     let pins: Vec<_> = dto
         .reviewers
         .iter()

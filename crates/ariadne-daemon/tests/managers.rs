@@ -5,25 +5,18 @@
 //! plan test also needs the `ariadne` CLI built into the same target dir
 //! (`cargo build -p ariadne-cli`), since a plan is launched by it.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 
 use ariadne_core::spawn_plan::SpawnPlanFile;
 use ariadne_daemon::gitwt::GitManager;
 use ariadne_daemon::tmux::{TmuxManager, TmuxSpawn, session_name};
 
-async fn sh(dir: &Path, cmd: &str) {
-    let status = tokio::process::Command::new("sh")
-        .arg("-c")
-        .arg(cmd)
-        .current_dir(dir)
-        .status()
-        .await
-        .unwrap();
-    assert!(status.success(), "command failed: {cmd}");
-}
+use common::sh;
 
-/// Create a toy repo with an initial commit on `main`.
-async fn toy_repo() -> (tempfile::TempDir, PathBuf) {
+/// A toy repo with an initial commit on `main`.
+fn toy_repo() -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let repo = dir.path().join("repo");
     std::fs::create_dir(&repo).unwrap();
@@ -31,15 +24,14 @@ async fn toy_repo() -> (tempfile::TempDir, PathBuf) {
         &repo,
         "git init -q -b main && git config user.email t@t && git config user.name t && \
                echo v1 > file.txt && git add . && git commit -qm init",
-    )
-    .await;
+    );
     (dir, repo)
 }
 
 #[tokio::test]
 #[ignore = "requires git"]
 async fn git_worktree_lifecycle_and_merge_verification() {
-    let (dir, repo) = toy_repo().await;
+    let (dir, repo) = toy_repo();
     let git = GitManager;
 
     // Engineer worktree on a new branch.
@@ -53,8 +45,7 @@ async fn git_worktree_lifecycle_and_merge_verification() {
     sh(
         &wt,
         "echo v2 > file.txt && git add . && git commit -qm change",
-    )
-    .await;
+    );
 
     // Reviewer worktree, detached at the branch tip.
     let wt_rev = dir.path().join("wt-rev");
@@ -86,7 +77,7 @@ async fn git_worktree_lifecycle_and_merge_verification() {
     );
 
     // Merge in the primary checkout (what the engineer agent will do).
-    sh(&repo, "git merge -q --no-ff fix-the-widget-aaa111 -m merge").await;
+    sh(&repo, "git merge -q --no-ff fix-the-widget-aaa111 -m merge");
     assert!(
         git.is_ancestor(&repo, "fix-the-widget-aaa111", "main")
             .await
@@ -120,14 +111,14 @@ async fn git_worktree_lifecycle_and_merge_verification() {
 #[tokio::test]
 #[ignore = "requires git"]
 async fn reviewer_worktree_refresh_between_rounds() {
-    let (dir, repo) = toy_repo().await;
+    let (dir, repo) = toy_repo();
     let git = GitManager;
 
     let wt = dir.path().join("wt-eng");
     git.add_worktree(&repo, &wt, "fix-the-widget-aaa111", "main")
         .await
         .unwrap();
-    sh(&wt, "echo r1 > file.txt && git add . && git commit -qm r1").await;
+    sh(&wt, "echo r1 > file.txt && git add . && git commit -qm r1");
 
     let wt_rev = dir.path().join("wt-rev");
     git.add_detached_worktree(&repo, &wt_rev, "fix-the-widget-aaa111")
@@ -141,7 +132,7 @@ async fn reviewer_worktree_refresh_between_rounds() {
     );
 
     // Round 2: engineer pushes more commits; reviewer worktree is refreshed.
-    sh(&wt, "echo r2 > file.txt && git add . && git commit -qm r2").await;
+    sh(&wt, "echo r2 > file.txt && git add . && git commit -qm r2");
     git.checkout_detached(&wt_rev, "fix-the-widget-aaa111")
         .await
         .unwrap();

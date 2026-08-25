@@ -3,233 +3,63 @@
 //! No external binaries needed: the scheduler test only asserts on the
 //! transition it makes before it reaches out to git/tmux.
 
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+mod common;
 
-use axum::Router;
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode, header};
-use http_body_util::BodyExt;
-use tokio::sync::broadcast::Receiver;
-use tower::ServiceExt;
 
 use ariadne_api::stream::{DeletedDto, DomainEvent};
 use ariadne_core::{
     Actor, AgentKind, AttentionReason, GoalStatus, ReviewVerdict, Role, SessionStatus, TaskStatus,
 };
 use ariadne_daemon::bus::{BusEvent, EventBus};
-use ariadne_daemon::config::Config;
-use ariadne_daemon::gitwt::GitManager;
 use ariadne_daemon::http::{self, AppState};
-use ariadne_daemon::launcher::Launcher;
-use ariadne_daemon::logbuf::LogBuffer;
 use ariadne_daemon::scheduler::{self, SchedEvent};
-use ariadne_daemon::tmux::TmuxManager;
-use ariadne_store::{Goal, NewGoal, NewProfile, NewRepository, NewTask, Profile, Store, Task};
+use ariadne_store::{EventFilter, NewReview, Task};
 
-/// How long a test waits for an event before giving up.
-const TIMEOUT: Duration = Duration::from_secs(5);
+use common::{Harness, TIMEOUT, get, harness, next_event, next_sse_message, post_json};
 
-struct Harness {
-    store: Store,
-    bus: EventBus,
-    launcher: Arc<Launcher>,
-    state: AppState,
-    router: Router,
-    dir: tempfile::TempDir,
-}
-
-async fn harness() -> Harness {
-    let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(dir.path().join("test.db")).await.unwrap();
-    // Installed before anything writes, exactly as the daemon does at startup.
-    let bus = ariadne_daemon::bus::start(store.clone());
-    let cfg = Arc::new(Config::load(Some(dir.path().join("home"))).unwrap());
-    let launcher = Arc::new(Launcher {
-        cfg,
-        store: store.clone(),
-        tmux: TmuxManager::default(),
-        git: GitManager,
-    });
-    let state = AppState {
-        store: store.clone(),
-        started_at: Instant::now(),
-        launcher: launcher.clone(),
-        sched_tx: None,
-        events: bus.clone(),
-        logs: LogBuffer::new(),
-    };
-    Harness {
-        router: http::router(state.clone()),
-        store,
-        bus,
-        launcher,
-        state,
-        dir,
+/// Hand a task to its engineer, which is the state a live engineer session is
+/// actually in.
+///
+/// Attention belongs to an agent somebody is waiting on, and nobody is waiting
+/// on the engineer of a task that has not been started: the ingestion
+/// withholds the flag there, so the tests that assert on one start the work
+/// first.
+async fn hand_to_engineer(h: &Harness, task: &Task) {
+    for status in [TaskStatus::Ready, TaskStatus::InProgress] {
+        h.store
+            .transition_task(&task.id, status, Actor::Daemon, None, None)
+            .await
+            .unwrap();
     }
 }
 
-impl Harness {
-    async fn profile(&self, name: &str, role: Role) -> Profile {
-        self.store
-            .create_profile(NewProfile {
-                name: name.into(),
-                role,
-                agent_kind: Some(AgentKind::ClaudeCode),
-                model: None,
-                system_prompt: Some(format!("You are {name}.")),
-            })
-            .await
-            .unwrap()
-    }
-
-    /// A live session of `role`, as the launcher would have created it.
-    async fn session(
-        &self,
-        goal: &Goal,
-        task: Option<&Task>,
-        role: Role,
-        profile_id: &str,
-    ) -> ariadne_store::AgentSession {
-        self.store
-            .create_session(ariadne_store::NewSession {
-                goal_id: goal.id.clone(),
-                task_id: task.map(|t| t.id.clone()),
-                role,
-                profile_id: profile_id.to_string(),
-                agent_kind: AgentKind::ClaudeCode,
-                model: None,
-                tmux_session: format!("ariadne-test-{}", role.as_str()),
-                worktree_path: Some(PathBuf::from("/tmp/wt").display().to_string()),
-                review_round: task.map(|t| t.review_round),
-            })
-            .await
-            .unwrap()
-    }
-
-    /// Hand a task to its engineer, which is the state a live engineer
-    /// session is actually in.
-    ///
-    /// Attention belongs to an agent somebody is waiting on, and nobody is
-    /// waiting on the engineer of a task that has not been started: the
-    /// ingestion withholds the flag there, so the tests that assert on one
-    /// start the work first.
-    async fn hand_to_engineer(&self, task: &Task) {
-        for status in [TaskStatus::Ready, TaskStatus::InProgress] {
-            self.store
-                .transition_task(&task.id, status, Actor::Daemon, None, None)
-                .await
-                .unwrap();
-        }
-    }
-
-    /// An active goal with one pending, dependency-free task.
-    ///
-    /// Returns only once the bus has published every seeding change, so a
-    /// stream opened afterwards sees nothing but what the test itself does.
-    async fn active_goal_with_task(&self) -> (Goal, Task) {
-        let mut rx = self.bus.subscribe();
-        let planner = self.profile("planner", Role::Planner).await;
-        let engineer = self.profile("engineer", Role::Engineer).await;
-        let reviewer = self.profile("reviewer", Role::Reviewer).await;
-        // Not a git repo: the scheduler fails right after the transition we
-        // assert on, which is all this needs.
-        let repo = self
-            .store
-            .create_repository(NewRepository {
-                path: self.dir.path().join("repo").display().to_string(),
-                base_branch: "main".into(),
-                description: None,
-                merge_strategy: Default::default(),
-            })
-            .await
-            .unwrap();
-        let goal = self
-            .store
-            .create_goal(NewGoal {
-                title: "Ship the UI".into(),
-                description: "desc".into(),
-                planner_profile_id: planner.id,
-                max_tasks: None,
-                required_approvals: 1,
-                repository_ids: vec![repo.id.clone()],
-            })
-            .await
-            .unwrap();
-        let task = self
-            .store
-            .create_task(NewTask {
-                goal_id: goal.id.clone(),
-                repo_id: repo.id,
-                title: "task".into(),
-                description: "do things".into(),
-                engineer_profile_id: engineer.id,
-                reviewer_profile_ids: vec![reviewer.id],
-                depends_on: vec![],
-            })
-            .await
-            .unwrap();
-        let goal = self
-            .store
-            .set_goal_status(&goal.id, GoalStatus::Active)
-            .await
-            .unwrap();
-        // The pump preserves commit order: seeing the last seeding change
-        // means all the earlier ones are out too.
-        next_event(
-            &mut rx,
-            |e| matches!(&e.event, DomainEvent::GoalUpdated(g) if g.status == GoalStatus::Active),
-        )
-        .await;
-        (goal, task)
-    }
-}
-
-/// Wait for the first event matching `pred`, skipping unrelated ones.
-async fn next_event(rx: &mut Receiver<BusEvent>, pred: impl Fn(&BusEvent) -> bool) -> BusEvent {
-    tokio::time::timeout(TIMEOUT, async {
-        loop {
-            let event = rx.recv().await.expect("event bus closed");
-            if pred(&event) {
-                return event;
-            }
-        }
+/// A Claude `Notification` payload for a permission prompt: what a session
+/// blocked on a dialog reports, whoever it belongs to.
+fn permission_prompt() -> serde_json::Value {
+    serde_json::json!({
+        "session_id": "5f3b1c8e-1234-4a2b-9d0e-0123456789ab",
+        "cwd": "/tmp/wt",
+        "hook_event_name": "Notification",
+        "message": "Claude needs your permission to use Bash",
+        "notification_type": "permission_prompt",
     })
-    .await
-    .expect("timed out waiting for a matching domain event")
 }
 
-fn get(uri: &str) -> Request<Body> {
-    Request::builder().uri(uri).body(Body::empty()).unwrap()
-}
-
-fn post_json(uri: &str, body: serde_json::Value) -> Request<Body> {
-    Request::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(body.to_string()))
+async fn notifications_recorded(h: &Harness, session_id: &str) -> usize {
+    h.store
+        .list_events(EventFilter {
+            session_id: Some(session_id.to_string()),
+            task_id: None,
+            limit: 50,
+            after: None,
+        })
+        .await
         .unwrap()
-}
-
-/// Read from an SSE body until one complete message (`\n\n`-terminated) is in.
-async fn next_sse_message(body: &mut Body) -> String {
-    tokio::time::timeout(TIMEOUT, async {
-        let mut buf = String::new();
-        while let Some(frame) = body.frame().await {
-            let frame = frame.expect("sse body error");
-            if let Some(chunk) = frame.data_ref() {
-                buf.push_str(&String::from_utf8_lossy(chunk));
-                if buf.contains("\n\n") {
-                    return buf;
-                }
-            }
-        }
-        panic!("sse stream ended before a complete message: {buf:?}");
-    })
-    .await
-    .expect("timed out waiting for an sse message")
+        .iter()
+        .filter(|e| e.kind == "notification")
+        .count()
 }
 
 #[tokio::test]
@@ -237,10 +67,8 @@ async fn http_mutation_emits_a_fat_event() {
     let h = harness().await;
     let mut rx = h.bus.subscribe();
 
-    let response = h
-        .router
-        .clone()
-        .oneshot(post_json(
+    let (status, _) = h
+        .send(post_json(
             "/v1/profiles",
             serde_json::json!({
                 "name": "rust-engineer",
@@ -249,9 +77,8 @@ async fn http_mutation_emits_a_fat_event() {
                 "system_prompt": "You write Rust.",
             }),
         ))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::CREATED);
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
 
     let event = next_event(&mut rx, |e| e.event.kind() == "profile_created").await;
     let DomainEvent::ProfileCreated(profile) = event.event else {
@@ -266,23 +93,20 @@ async fn http_mutation_emits_a_fat_event() {
 #[tokio::test]
 async fn http_transition_emits_task_updated_with_its_transition() {
     let h = harness().await;
-    let (_goal, task) = h.active_goal_with_task().await;
+    let cast = h.active_cast().await;
     let mut rx = h.bus.subscribe();
 
-    let response = h
-        .router
-        .clone()
-        .oneshot(post_json(
-            &format!("/v1/tasks/{}/cancel", task.id),
+    let (status, _) = h
+        .send(post_json(
+            &format!("/v1/tasks/{}/cancel", cast.task.id),
             serde_json::json!({}),
         ))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
+        .await;
+    assert_eq!(status, StatusCode::OK);
 
     let event = next_event(&mut rx, |e| e.event.kind() == "task_updated").await;
-    assert_eq!(event.goal_id.as_deref(), Some(task.goal_id.as_str()));
-    assert_eq!(event.task_id.as_deref(), Some(task.id.as_str()));
+    assert_eq!(event.goal_id.as_deref(), Some(cast.goal.id.as_str()));
+    assert_eq!(event.task_id.as_deref(), Some(cast.task.id.as_str()));
     let DomainEvent::TaskUpdated(updated) = event.event else {
         unreachable!("matched on kind above");
     };
@@ -298,7 +122,7 @@ async fn http_transition_emits_task_updated_with_its_transition() {
 #[tokio::test]
 async fn scheduler_transition_emits_task_updated_without_http() {
     let h = harness().await;
-    let (_goal, task) = h.active_goal_with_task().await;
+    let cast = h.active_cast().await;
     let mut rx = h.bus.subscribe();
 
     // No HTTP involved: the scheduler reconciles the task on its own and
@@ -306,7 +130,7 @@ async fn scheduler_transition_emits_task_updated_without_http() {
     // No sleep inhibition: a test has no business touching power management.
     let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
     sched
-        .send(SchedEvent::TaskChanged(task.id.clone()))
+        .send(SchedEvent::TaskChanged(cast.task.id.clone()))
         .unwrap();
 
     let event = next_event(
@@ -317,7 +141,7 @@ async fn scheduler_transition_emits_task_updated_without_http() {
     let DomainEvent::TaskUpdated(updated) = event.event else {
         unreachable!("matched on the variant above");
     };
-    assert_eq!(updated.task.id, task.id);
+    assert_eq!(updated.task.id, cast.task.id);
     let transition = updated
         .transition
         .expect("status change carries its audit row");
@@ -326,16 +150,13 @@ async fn scheduler_transition_emits_task_updated_without_http() {
 }
 
 #[tokio::test]
-async fn sse_stream_frames_events_and_honours_the_goal_filter() {
+async fn sse_stream_frames_events_and_honours_its_filters() {
     let h = harness().await;
-    let (goal, task) = h.active_goal_with_task().await;
+    let cast = h.active_cast().await;
 
     let response = h
-        .router
-        .clone()
-        .oneshot(get(&format!("/v1/events/stream?goal={}", goal.id)))
-        .await
-        .unwrap();
+        .response(get(&format!("/v1/events/stream?goal={}", cast.goal.id)))
+        .await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         response
@@ -350,13 +171,7 @@ async fn sse_stream_frames_events_and_honours_the_goal_filter() {
     h.profile("unrelated", Role::Engineer).await;
     // In scope: a task transition.
     h.store
-        .transition_task(
-            &task.id,
-            TaskStatus::Ready,
-            ariadne_core::Actor::Daemon,
-            None,
-            None,
-        )
+        .transition_task(&cast.task.id, TaskStatus::Ready, Actor::Daemon, None, None)
         .await
         .unwrap();
 
@@ -372,9 +187,35 @@ async fn sse_stream_frames_events_and_honours_the_goal_filter() {
     assert_eq!(lines.next(), Some("event: task_updated"));
     let data = lines.next().unwrap().strip_prefix("data: ").unwrap();
     let payload: serde_json::Value = serde_json::from_str(data).unwrap();
-    assert_eq!(payload["task"]["id"], task.id);
+    assert_eq!(payload["task"]["id"], cast.task.id);
     assert_eq!(payload["task"]["status"], "ready");
     assert_eq!(payload["transition"]["to_status"], "ready");
+
+    // The `task` filter is the narrower one, and a goal-level event carries no
+    // task id at all, so it drops that too.
+    let mut body = h
+        .stream(get(&format!("/v1/events/stream?task={}", cast.task.id)))
+        .await;
+    h.store
+        .set_goal_status(&cast.goal.id, GoalStatus::Cancelled)
+        .await
+        .unwrap();
+    h.store
+        .set_task_worktree(&cast.task.id, Some("/tmp/wt"))
+        .await
+        .unwrap();
+
+    let message = next_sse_message(&mut body).await;
+    assert!(
+        message.contains("event: task_updated"),
+        "goal event must be filtered out, got: {message:?}"
+    );
+    let data = message
+        .lines()
+        .find_map(|l| l.strip_prefix("data: "))
+        .unwrap();
+    let payload: serde_json::Value = serde_json::from_str(data).unwrap();
+    assert_eq!(payload["task"]["worktree_path"], "/tmp/wt");
 }
 
 /// A client that falls behind must be told, not left silently stale: it gets
@@ -390,7 +231,9 @@ async fn sse_stream_signals_resync_and_closes_when_a_client_lags() {
         ..h.state.clone()
     });
 
-    let response = router.oneshot(get("/v1/events/stream")).await.unwrap();
+    let response = tower::ServiceExt::oneshot(router, get("/v1/events/stream"))
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let mut body = response.into_body();
 
@@ -421,46 +264,10 @@ async fn sse_stream_signals_resync_and_closes_when_a_client_lags() {
     );
 
     // ...and the stream ends, rather than carrying on with a hole in it.
-    let end = tokio::time::timeout(TIMEOUT, body.frame())
+    let end = tokio::time::timeout(TIMEOUT, http_body_util::BodyExt::frame(&mut body))
         .await
         .expect("stream must close after resync, not hang");
     assert!(end.is_none(), "no frames follow the resync event");
-}
-
-#[tokio::test]
-async fn sse_stream_task_filter_excludes_other_tasks() {
-    let h = harness().await;
-    let (goal, task) = h.active_goal_with_task().await;
-
-    let response = h
-        .router
-        .clone()
-        .oneshot(get(&format!("/v1/events/stream?task={}", task.id)))
-        .await
-        .unwrap();
-    let mut body = response.into_body();
-
-    // A goal-level event carries no task id, so the task filter drops it.
-    h.store
-        .set_goal_status(&goal.id, GoalStatus::Cancelled)
-        .await
-        .unwrap();
-    h.store
-        .set_task_worktree(&task.id, Some("/tmp/wt"))
-        .await
-        .unwrap();
-
-    let message = next_sse_message(&mut body).await;
-    assert!(
-        message.contains("event: task_updated"),
-        "goal event must be filtered out, got: {message:?}"
-    );
-    let data = message
-        .lines()
-        .find_map(|l| l.strip_prefix("data: "))
-        .unwrap();
-    let payload: serde_json::Value = serde_json::from_str(data).unwrap();
-    assert_eq!(payload["task"]["worktree_path"], "/tmp/wt");
 }
 
 #[tokio::test]
@@ -475,7 +282,7 @@ async fn cors_allows_preflight_and_cross_origin_calls() {
         .header(header::ACCESS_CONTROL_REQUEST_HEADERS, "content-type")
         .body(Body::empty())
         .unwrap();
-    let response = h.router.clone().oneshot(preflight).await.unwrap();
+    let response = h.response(preflight).await;
     assert!(
         response.status().is_success(),
         "preflight rejected: {}",
@@ -494,7 +301,7 @@ async fn cors_allows_preflight_and_cross_origin_calls() {
     request
         .headers_mut()
         .insert(header::ORIGIN, "http://localhost:1420".parse().unwrap());
-    let response = h.router.clone().oneshot(request).await.unwrap();
+    let response = h.response(request).await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         response
@@ -510,39 +317,29 @@ async fn cors_allows_preflight_and_cross_origin_calls() {
 #[tokio::test]
 async fn launcher_session_writes_emit_session_events() {
     let h = harness().await;
-    let (goal, task) = h.active_goal_with_task().await;
+    let cast = h.active_cast().await;
     let mut rx = h.bus.subscribe();
 
     let session = h
-        .store
-        .create_session(ariadne_store::NewSession {
-            goal_id: goal.id.clone(),
-            task_id: Some(task.id.clone()),
-            role: Role::Engineer,
-            profile_id: task.engineer_profile_id.clone(),
-            agent_kind: AgentKind::ClaudeCode,
-            model: None,
-            tmux_session: "ariadne-test".into(),
-            worktree_path: Some(PathBuf::from("/tmp/wt").display().to_string()),
-            review_round: None,
-        })
-        .await
-        .unwrap();
+        .session(
+            &cast.goal,
+            Some(&cast.task),
+            Role::Engineer,
+            &cast.engineer.id,
+        )
+        .await;
 
     let event = next_event(&mut rx, |e| e.event.kind() == "session_created").await;
-    assert_eq!(event.goal_id.as_deref(), Some(goal.id.as_str()));
-    assert_eq!(event.task_id.as_deref(), Some(task.id.as_str()));
+    assert_eq!(event.goal_id.as_deref(), Some(cast.goal.id.as_str()));
+    assert_eq!(event.task_id.as_deref(), Some(cast.task.id.as_str()));
 
-    h.store
-        .set_session_status(&session.id, ariadne_core::SessionStatus::Exited)
-        .await
-        .unwrap();
+    h.set_status(&session, SessionStatus::Exited).await;
     let event = next_event(&mut rx, |e| e.event.kind() == "session_updated").await;
     let DomainEvent::SessionUpdated(dto) = event.event else {
         unreachable!("matched on kind above");
     };
     assert_eq!(dto.id, session.id);
-    assert_eq!(dto.status, ariadne_core::SessionStatus::Exited);
+    assert_eq!(dto.status, SessionStatus::Exited);
     assert!(dto.ended_at.is_some());
 }
 
@@ -553,43 +350,22 @@ async fn launcher_session_writes_emit_session_events() {
 #[tokio::test]
 async fn ingested_events_raise_and_clear_session_attention() {
     let h = harness().await;
-    let (goal, task) = h.active_goal_with_task().await;
-    h.hand_to_engineer(&task).await;
+    let cast = h.active_cast().await;
+    hand_to_engineer(&h, &cast.task).await;
     let session = h
-        .store
-        .create_session(ariadne_store::NewSession {
-            goal_id: goal.id.clone(),
-            task_id: Some(task.id.clone()),
-            role: Role::Engineer,
-            profile_id: task.engineer_profile_id.clone(),
-            agent_kind: AgentKind::Opencode,
-            model: None,
-            tmux_session: "ariadne-test".into(),
-            worktree_path: Some(PathBuf::from("/tmp/wt").display().to_string()),
-            review_round: None,
-        })
-        .await
-        .unwrap();
+        .session_on(
+            &cast.goal,
+            Some(&cast.task),
+            Role::Engineer,
+            &cast.engineer.id,
+            AgentKind::Opencode,
+        )
+        .await;
     let mut rx = h.bus.subscribe();
 
-    let ingest = |kind: &str| {
-        post_json(
-            "/internal/agent-events",
-            serde_json::json!({
-                "session_id": session.id,
-                "agent_kind": "opencode",
-                "kind": kind,
-                "payload": {},
-            }),
-        )
-    };
-    let post = async |kind: &str| {
-        let response = h.router.clone().oneshot(ingest(kind)).await.unwrap();
-        assert_eq!(response.status(), StatusCode::ACCEPTED, "{kind}");
-    };
-
     // A failed turn: attention is raised, the lifecycle status is untouched.
-    post("session.error").await;
+    h.ingest(&session, "session.error", serde_json::json!({}))
+        .await;
     let flagged = h.store.get_session(&session.id).await.unwrap();
     assert_eq!(
         flagged.attention_reason(),
@@ -604,22 +380,20 @@ async fn ingested_events_raise_and_clear_session_attention() {
             if s.attention_reason == Some(AttentionReason::AgentError))
     })
     .await;
-    assert_eq!(event.task_id.as_deref(), Some(task.id.as_str()));
+    assert_eq!(event.task_id.as_deref(), Some(cast.task.id.as_str()));
 
     // Going idle is when a permission prompt or a question is waiting: it
     // must not clear anything.
-    post("session.idle").await;
+    h.ingest(&session, "session.idle", serde_json::json!({}))
+        .await;
     assert_eq!(
-        h.store
-            .get_session(&session.id)
-            .await
-            .unwrap()
-            .attention_reason(),
+        h.attention(&session).await,
         Some(AttentionReason::AgentError)
     );
 
     // Back to work: the agent needs nobody now.
-    post("tool.execute.before").await;
+    h.ingest(&session, "tool.execute.before", serde_json::json!({}))
+        .await;
     let cleared = h.store.get_session(&session.id).await.unwrap();
     assert_eq!(cleared.attention_reason(), None);
     assert_eq!(cleared.attention_since, None);
@@ -632,15 +406,10 @@ async fn ingested_events_raise_and_clear_session_attention() {
 
     // A session that ended needing attention keeps the reason: a stray event
     // arriving afterwards resurrects neither its status nor its flag.
-    h.store
-        .set_session_status(&session.id, SessionStatus::Exited)
-        .await
-        .unwrap();
-    h.store
-        .set_session_attention(&session.id, AttentionReason::Disconnected)
-        .await
-        .unwrap();
-    post("tool.execute.before").await;
+    h.set_status(&session, SessionStatus::Exited).await;
+    h.raise(&session, AttentionReason::Disconnected).await;
+    h.ingest(&session, "tool.execute.before", serde_json::json!({}))
+        .await;
     let ended = h.store.get_session(&session.id).await.unwrap();
     assert_eq!(
         ended.attention_reason(),
@@ -651,10 +420,10 @@ async fn ingested_events_raise_and_clear_session_attention() {
     // Nor does a late dialog: an approval asked for by a session already
     // recorded as ended has no pane the user could answer it in, so it
     // neither goes up nor writes over the reason the session ended with.
-    post("permission.asked").await;
-    let ended = h.store.get_session(&session.id).await.unwrap();
+    h.ingest(&session, "permission.asked", serde_json::json!({}))
+        .await;
     assert_eq!(
-        ended.attention_reason(),
+        h.attention(&session).await,
         Some(AttentionReason::Disconnected)
     );
 }
@@ -666,40 +435,21 @@ async fn ingested_events_raise_and_clear_session_attention() {
 #[tokio::test]
 async fn an_opencode_permission_ask_flags_the_session_as_blocked() {
     let h = harness().await;
-    let (goal, task) = h.active_goal_with_task().await;
-    h.hand_to_engineer(&task).await;
+    let cast = h.active_cast().await;
+    hand_to_engineer(&h, &cast.task).await;
     let session = h
-        .store
-        .create_session(ariadne_store::NewSession {
-            goal_id: goal.id.clone(),
-            task_id: Some(task.id.clone()),
-            role: Role::Engineer,
-            profile_id: task.engineer_profile_id.clone(),
-            agent_kind: AgentKind::Opencode,
-            model: None,
-            tmux_session: "ariadne-test".into(),
-            worktree_path: Some(PathBuf::from("/tmp/wt").display().to_string()),
-            review_round: None,
-        })
-        .await
-        .unwrap();
-
-    let post = async |kind: &str, payload: serde_json::Value| {
-        let request = post_json(
-            "/internal/agent-events",
-            serde_json::json!({
-                "session_id": session.id,
-                "agent_kind": "opencode",
-                "kind": kind,
-                "payload": payload,
-            }),
-        );
-        let response = h.router.clone().oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::ACCEPTED, "{kind}");
-    };
+        .session_on(
+            &cast.goal,
+            Some(&cast.task),
+            Role::Engineer,
+            &cast.engineer.id,
+            AgentKind::Opencode,
+        )
+        .await;
 
     // Working, so the internal id is already known and the flag is down.
-    post(
+    h.ingest(
+        &session,
         "session.created",
         serde_json::json!({
             "sessionID": "ses_fe5cb9641ffeQPvwaIKtSsLAqP",
@@ -715,7 +465,8 @@ async fn an_opencode_permission_ask_flags_the_session_as_blocked() {
     );
 
     // The dialog goes up: flagged, and the status is left where it was.
-    post(
+    h.ingest(
+        &session,
         "permission.asked",
         serde_json::json!({
             "id": "per_01a3575b4001aOsIrUVWB44A4e",
@@ -742,22 +493,20 @@ async fn an_opencode_permission_ask_flags_the_session_as_blocked() {
 
     // `session.updated` keeps firing while the dialog waits: it must not
     // look like the agent went back to work.
-    post(
+    h.ingest(
+        &session,
         "session.updated",
         serde_json::json!({"info": {"id": "ses_fe5cb9641ffeQPvwaIKtSsLAqP"}}),
     )
     .await;
     assert_eq!(
-        h.store
-            .get_session(&session.id)
-            .await
-            .unwrap()
-            .attention_reason(),
+        h.attention(&session).await,
         Some(AttentionReason::WaitingPermission)
     );
 
     // The user answered — rejected, here, which still hands control back.
-    post(
+    h.ingest(
+        &session,
         "permission.replied",
         serde_json::json!({
             "sessionID": "ses_fe5cb9641ffeQPvwaIKtSsLAqP",
@@ -771,7 +520,8 @@ async fn an_opencode_permission_ask_flags_the_session_as_blocked() {
     assert_eq!(cleared.status(), SessionStatus::Running);
 
     // A question is the other family: a wait for an answer, cleared by one.
-    post(
+    h.ingest(
+        &session,
         "question.asked",
         serde_json::json!({
             "id": "ask_01a3575b4001aOsIrUVWB44A4f",
@@ -780,14 +530,11 @@ async fn an_opencode_permission_ask_flags_the_session_as_blocked() {
     )
     .await;
     assert_eq!(
-        h.store
-            .get_session(&session.id)
-            .await
-            .unwrap()
-            .attention_reason(),
+        h.attention(&session).await,
         Some(AttentionReason::WaitingInput)
     );
-    post(
+    h.ingest(
+        &session,
         "question.replied",
         serde_json::json!({
             "sessionID": "ses_fe5cb9641ffeQPvwaIKtSsLAqP",
@@ -796,19 +543,18 @@ async fn an_opencode_permission_ask_flags_the_session_as_blocked() {
         }),
     )
     .await;
-    assert_eq!(
-        h.store
-            .get_session(&session.id)
-            .await
-            .unwrap()
-            .attention_reason(),
-        None
-    );
+    assert_eq!(h.attention(&session).await, None);
 
     // An error while a dialog is up must not be traded for the wait, and
     // neither may clear the other: the flag stands until real work resumes.
-    post("permission.asked", serde_json::json!({"id": "per_2"})).await;
-    post("session.error", serde_json::json!({})).await;
+    h.ingest(
+        &session,
+        "permission.asked",
+        serde_json::json!({"id": "per_2"}),
+    )
+    .await;
+    h.ingest(&session, "session.error", serde_json::json!({}))
+        .await;
     let errored = h.store.get_session(&session.id).await.unwrap();
     assert_eq!(
         errored.attention_reason(),
@@ -824,37 +570,16 @@ async fn an_opencode_permission_ask_flags_the_session_as_blocked() {
 #[tokio::test]
 async fn a_claude_notification_flags_the_session_as_blocked() {
     let h = harness().await;
-    let (goal, task) = h.active_goal_with_task().await;
-    h.hand_to_engineer(&task).await;
+    let cast = h.active_cast().await;
+    hand_to_engineer(&h, &cast.task).await;
     let session = h
-        .store
-        .create_session(ariadne_store::NewSession {
-            goal_id: goal.id.clone(),
-            task_id: Some(task.id.clone()),
-            role: Role::Engineer,
-            profile_id: task.engineer_profile_id.clone(),
-            agent_kind: AgentKind::ClaudeCode,
-            model: None,
-            tmux_session: "ariadne-test".into(),
-            worktree_path: Some(PathBuf::from("/tmp/wt").display().to_string()),
-            review_round: None,
-        })
-        .await
-        .unwrap();
-
-    let post = async |kind: &str, payload: serde_json::Value| {
-        let request = post_json(
-            "/internal/agent-events",
-            serde_json::json!({
-                "session_id": session.id,
-                "agent_kind": "claude_code",
-                "kind": kind,
-                "payload": payload,
-            }),
-        );
-        let response = h.router.clone().oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::ACCEPTED, "{kind}");
-    };
+        .session(
+            &cast.goal,
+            Some(&cast.task),
+            Role::Engineer,
+            &cast.engineer.id,
+        )
+        .await;
     let notification = |notification_type: &str, message: &str| {
         serde_json::json!({
             "session_id": "5f3b1c8e-1234-4a2b-9d0e-0123456789ab",
@@ -867,7 +592,8 @@ async fn a_claude_notification_flags_the_session_as_blocked() {
 
     // Blocked on a permission dialog: flagged, and still not "running" —
     // the ingestion's own touch_session must not undo the flag.
-    post(
+    h.ingest(
+        &session,
         "notification",
         notification(
             "permission_prompt",
@@ -884,39 +610,40 @@ async fn a_claude_notification_flags_the_session_as_blocked() {
     assert!(flagged.last_activity_at.is_some());
 
     // The user answered and the agent runs a tool: attention drops.
-    post("pre_tool_use", serde_json::json!({"tool_name": "Bash"})).await;
+    h.ingest(
+        &session,
+        "pre_tool_use",
+        serde_json::json!({"tool_name": "Bash"}),
+    )
+    .await;
     let cleared = h.store.get_session(&session.id).await.unwrap();
     assert_eq!(cleared.attention_reason(), None);
     assert_eq!(cleared.status(), SessionStatus::Running);
 
     // Idle at the prompt: waiting for an answer, not for permission.
-    post(
+    h.ingest(
+        &session,
         "notification",
         notification("idle_prompt", "Claude is waiting for your input"),
     )
     .await;
     assert_eq!(
-        h.store
-            .get_session(&session.id)
-            .await
-            .unwrap()
-            .attention_reason(),
+        h.attention(&session).await,
         Some(AttentionReason::WaitingInput)
     );
 
     // Submitting a prompt is the other half of the clearing rule.
-    post("user_prompt_submit", serde_json::json!({"prompt": "go on"})).await;
-    assert_eq!(
-        h.store
-            .get_session(&session.id)
-            .await
-            .unwrap()
-            .attention_reason(),
-        None
-    );
+    h.ingest(
+        &session,
+        "user_prompt_submit",
+        serde_json::json!({"prompt": "go on"}),
+    )
+    .await;
+    assert_eq!(h.attention(&session).await, None);
 
     // An unrecognized notification is recorded but changes nothing.
-    post(
+    h.ingest(
+        &session,
         "notification",
         notification("auth_success", "Logged in as me@example.com"),
     )
@@ -924,32 +651,7 @@ async fn a_claude_notification_flags_the_session_as_blocked() {
     let untouched = h.store.get_session(&session.id).await.unwrap();
     assert_eq!(untouched.attention_reason(), None);
     assert_eq!(untouched.status(), SessionStatus::Running);
-    let events = h
-        .store
-        .list_events(ariadne_store::EventFilter {
-            session_id: Some(session.id.clone()),
-            task_id: None,
-            limit: 50,
-            after: None,
-        })
-        .await
-        .unwrap();
-    assert_eq!(
-        events.iter().filter(|e| e.kind == "notification").count(),
-        3
-    );
-}
-
-/// A Claude `Notification` payload for a permission prompt: what a session
-/// blocked on a dialog reports, whoever it belongs to.
-fn permission_prompt() -> serde_json::Value {
-    serde_json::json!({
-        "session_id": "5f3b1c8e-1234-4a2b-9d0e-0123456789ab",
-        "cwd": "/tmp/wt",
-        "hook_event_name": "Notification",
-        "message": "Claude needs your permission to use Bash",
-        "notification_type": "permission_prompt",
-    })
+    assert_eq!(notifications_recorded(&h, &session.id).await, 3);
 }
 
 /// Attention says a human must act, so it is only raised on an agent somebody
@@ -959,11 +661,11 @@ fn permission_prompt() -> serde_json::Value {
 #[tokio::test]
 async fn a_reviewer_that_already_voted_raises_no_attention() {
     let h = harness().await;
-    let (goal, task) = h.active_goal_with_task().await;
-    h.hand_to_engineer(&task).await;
+    let cast = h.active_cast().await;
+    hand_to_engineer(&h, &cast.task).await;
     h.store
         .transition_task(
-            &task.id,
+            &cast.task.id,
             TaskStatus::UnderReview,
             Actor::Engineer,
             None,
@@ -972,52 +674,38 @@ async fn a_reviewer_that_already_voted_raises_no_attention() {
         .await
         .unwrap();
     // Entering review opens the round the verdict belongs to.
-    let task = h.store.get_task(&task.id).await.unwrap();
-    let reviewer = h.store.list_task_reviewers(&task.id).await.unwrap()[0].clone();
+    let task = h.store.get_task(&cast.task.id).await.unwrap();
     let session = h
-        .session(&goal, Some(&task), Role::Reviewer, &reviewer)
+        .session(&cast.goal, Some(&task), Role::Reviewer, &cast.reviewer.id)
         .await;
 
-    let post = async |kind: &str, payload: serde_json::Value| {
-        let request = post_json(
-            "/internal/agent-events",
-            serde_json::json!({
-                "session_id": session.id,
-                "agent_kind": "claude_code",
-                "kind": kind,
-                "payload": payload,
-            }),
-        );
-        let response = h.router.clone().oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::ACCEPTED, "{kind}");
-    };
-
     // The round is still waiting on this reviewer: the prompt is raised.
-    post("notification", permission_prompt()).await;
+    h.ingest(&session, "notification", permission_prompt()).await;
     assert_eq!(
-        h.store
-            .get_session(&session.id)
-            .await
-            .unwrap()
-            .attention_reason(),
+        h.attention(&session).await,
         Some(AttentionReason::WaitingPermission)
     );
     // Back at work, so the flag comes down of its own accord...
-    post("pre_tool_use", serde_json::json!({"tool_name": "Bash"})).await;
+    h.ingest(
+        &session,
+        "pre_tool_use",
+        serde_json::json!({"tool_name": "Bash"}),
+    )
+    .await;
 
     // ...and once the verdict is in, the same prompt raises nothing.
     h.store
-        .create_review(ariadne_store::NewReview {
+        .create_review(NewReview {
             task_id: task.id.clone(),
             round: task.review_round,
-            reviewer_profile_id: reviewer.clone(),
+            reviewer_profile_id: cast.reviewer.id.clone(),
             session_id: Some(session.id.clone()),
             verdict: ReviewVerdict::Approve,
             body: None,
         })
         .await
         .unwrap();
-    post("notification", permission_prompt()).await;
+    h.ingest(&session, "notification", permission_prompt()).await;
     let quiet = h.store.get_session(&session.id).await.unwrap();
     assert_eq!(
         quiet.attention_reason(),
@@ -1029,18 +717,8 @@ async fn a_reviewer_that_already_voted_raises_no_attention() {
         SessionStatus::Running,
         "withholding the flag changes nothing else about the ingestion"
     );
-    let events = h
-        .store
-        .list_events(ariadne_store::EventFilter {
-            session_id: Some(session.id.clone()),
-            task_id: None,
-            limit: 50,
-            after: None,
-        })
-        .await
-        .unwrap();
     assert_eq!(
-        events.iter().filter(|e| e.kind == "notification").count(),
+        notifications_recorded(&h, &session.id).await,
         2,
         "the event itself is recorded either way"
     );
@@ -1051,33 +729,15 @@ async fn a_reviewer_that_already_voted_raises_no_attention() {
 #[tokio::test]
 async fn a_planner_past_planning_raises_no_attention() {
     let h = harness().await;
-    // `active_goal_with_task` finalizes the plan: the goal is already active.
-    let (goal, _task) = h.active_goal_with_task().await;
+    // `active_cast` finalizes the plan: the goal is already active.
+    let cast = h.active_cast().await;
     let session = h
-        .session(&goal, None, Role::Planner, &goal.planner_profile_id)
+        .session(&cast.goal, None, Role::Planner, &cast.planner.id)
         .await;
 
-    let post = async || {
-        let request = post_json(
-            "/internal/agent-events",
-            serde_json::json!({
-                "session_id": session.id,
-                "agent_kind": "claude_code",
-                "kind": "notification",
-                "payload": permission_prompt(),
-            }),
-        );
-        let response = h.router.clone().oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::ACCEPTED);
-    };
-
-    post().await;
+    h.ingest(&session, "notification", permission_prompt()).await;
     assert_eq!(
-        h.store
-            .get_session(&session.id)
-            .await
-            .unwrap()
-            .attention_reason(),
+        h.attention(&session).await,
         None,
         "the goal is past planning, so its planner is owed nothing"
     );
@@ -1085,16 +745,12 @@ async fn a_planner_past_planning_raises_no_attention() {
     // And the goal status is what makes the difference: back in planning, the
     // very same prompt is the user's to answer.
     h.store
-        .set_goal_status(&goal.id, GoalStatus::Planning)
+        .set_goal_status(&cast.goal.id, GoalStatus::Planning)
         .await
         .unwrap();
-    post().await;
+    h.ingest(&session, "notification", permission_prompt()).await;
     assert_eq!(
-        h.store
-            .get_session(&session.id)
-            .await
-            .unwrap()
-            .attention_reason(),
+        h.attention(&session).await,
         Some(AttentionReason::WaitingPermission)
     );
 }

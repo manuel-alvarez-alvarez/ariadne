@@ -11,18 +11,16 @@
 //! drives the daemon instead — a stub `tmux` whose composer never lets go —
 //! for what a resumed agent that never heard its instruction leaves behind.
 
+mod common;
+
 use std::path::Path;
-use std::sync::Arc;
 use std::time::Duration;
 
 use ariadne_core::{AgentKind, AttentionReason, Role};
-use ariadne_daemon::config::Config;
-use ariadne_daemon::gitwt::GitManager;
-use ariadne_daemon::launcher::Launcher;
 use ariadne_daemon::tmux::{TmuxManager, TmuxSpawn};
-use ariadne_store::{
-    AgentSession, NewGoal, NewProfile, NewRepository, NewSession, NewTask, Store, Task,
-};
+use ariadne_store::{AgentSession, Task};
+
+use common::{Harness, eventually, harness};
 
 /// Two lines, so the delivery has to be a paste: typed literally, the newline
 /// between them would submit the first line on its own.
@@ -146,6 +144,45 @@ async fn a_message_that_never_submits_is_never_called_delivered() {
     let _ = tmux.kill_session(&name).await;
 }
 
+const INSTRUCTION: &str = "The reviewers asked for changes: apply them on the same branch.";
+
+/// How long a test waits for a spawned delivery to run out of attempts.
+const TIMEOUT: Duration = Duration::from_secs(20);
+
+/// A daemon that gives up looking for a TUI after two seconds rather than two
+/// minutes: the test that types into one finds it on the first look, and the
+/// one about the window running out is only about it running out.
+async fn stub_harness() -> Harness {
+    harness().typed_input_window(Duration::from_secs(2)).await
+}
+
+/// An engineer session on an OpenCode agent, already run once: it has the
+/// internal session id a resume goes back to, and a worktree to be resumed in.
+/// OpenCode is the kind whose resume instruction cannot ride the argv, so it
+/// is the one typed into the pane.
+async fn opencode_engineer(h: &Harness) -> (Task, AgentSession) {
+    let cast = h.cast_on(AgentKind::Opencode).await;
+    let session = h
+        .session_on(
+            &cast.goal,
+            Some(&cast.task),
+            Role::Engineer,
+            &cast.engineer.id,
+            AgentKind::Opencode,
+        )
+        .await;
+    h.make_resumable(&cast.task, &session).await;
+    h.every_pane_exists();
+    (h.store.get_task(&cast.task.id).await.unwrap(), session)
+}
+
+async fn raised(h: &Harness, session: &AgentSession) {
+    eventually(TIMEOUT, "the session to be raised", async || {
+        h.attention(session).await == Some(AttentionReason::Stalled)
+    })
+    .await;
+}
+
 /// The other half of the same story, one level up: the resume instruction the
 /// launcher types into a freshly relaunched OpenCode TUI is delivered by a
 /// task of its own, with no caller to hand a failure back to. A composer that
@@ -153,8 +190,8 @@ async fn a_message_that_never_submits_is_never_called_delivered() {
 /// attention flag — rather than being logged as typed and forgotten.
 #[tokio::test]
 async fn a_resume_instruction_that_stays_in_the_composer_raises_the_session() {
-    let h = harness().await;
-    let (task, session) = h.opencode_engineer().await;
+    let h = stub_harness().await;
+    let (task, session) = opencode_engineer(&h).await;
     // Whatever is pressed, the pane keeps showing the instruction where it was
     // pasted.
     h.composer_keeps(INSTRUCTION);
@@ -164,190 +201,11 @@ async fn a_resume_instruction_that_stays_in_the_composer_raises_the_session() {
         .await
         .unwrap();
 
-    eventually("the session to be raised", async || {
-        h.attention(&session).await == Some(AttentionReason::Stalled)
-    })
-    .await;
+    raised(&h, &session).await;
     assert!(
-        h.enters() > 1,
+        h.enters(&session) > 1,
         "the Enter was pressed again before giving up"
     );
-}
-
-const INSTRUCTION: &str = "The reviewers asked for changes: apply them on the same branch.";
-
-/// How long a test waits for a spawned delivery to run out of attempts.
-const TIMEOUT: Duration = Duration::from_secs(20);
-
-async fn eventually(what: &str, mut check: impl AsyncFnMut() -> bool) {
-    let deadline = std::time::Instant::now() + TIMEOUT;
-    loop {
-        if check().await {
-            return;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "timed out waiting for {what}"
-        );
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-}
-
-struct Harness {
-    store: Store,
-    launcher: Arc<Launcher>,
-    dir: tempfile::TempDir,
-    _bus: ariadne_daemon::bus::EventBus,
-}
-
-async fn harness() -> Harness {
-    let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(dir.path().join("test.db")).await.unwrap();
-    let bus = ariadne_daemon::bus::start(store.clone());
-    let mut config = Config::load(Some(dir.path().join("home"))).unwrap();
-    // Two seconds of looking for a TUI rather than two minutes: the tests
-    // that type into one find it on the first look, and the one about the
-    // window running out is only about it running out.
-    config.typed_input_window = Duration::from_secs(2);
-    let cfg = Arc::new(config);
-    let launcher = Arc::new(Launcher {
-        cfg,
-        store: store.clone(),
-        tmux: write_tmux_stub(dir.path()),
-        git: GitManager,
-    });
-    Harness {
-        store,
-        launcher,
-        dir,
-        _bus: bus,
-    }
-}
-
-/// A `tmux` whose pane is always there, draws whatever the test put in
-/// `composer`, and counts the Enters it is sent.
-fn write_tmux_stub(dir: &Path) -> TmuxManager {
-    use std::os::unix::fs::PermissionsExt;
-
-    let bin = dir.join("tmux-stub.sh");
-    let script = format!(
-        "#!/bin/sh\n\
-         case \"$1\" in\n\
-        \x20 capture-pane) cat '{composer}' 2>/dev/null ;;\n\
-        \x20 display-message) echo '80x24 0,0' ;;\n\
-        \x20 send-keys) [ \"$#\" = 4 ] && [ \"$4\" = Enter ] && echo enter >> '{enters}' ;;\n\
-         esac\n\
-         exit 0\n",
-        composer = dir.join("composer").display(),
-        enters = dir.join("enters").display(),
-    );
-    std::fs::write(&bin, script).unwrap();
-    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
-    TmuxManager::new(bin.display().to_string())
-}
-
-impl Harness {
-    /// An engineer session on an OpenCode agent, already run once: it has the
-    /// internal session id a resume goes back to, and a worktree to be
-    /// resumed in. OpenCode is the kind whose resume instruction cannot ride
-    /// the argv, so it is the one typed into the pane.
-    async fn opencode_engineer(&self) -> (Task, AgentSession) {
-        let engineer = self.profile("engineer", Role::Engineer).await;
-        let reviewer = self.profile("reviewer", Role::Reviewer).await;
-        let planner = self.profile("planner", Role::Planner).await;
-        let repo = self
-            .store
-            .create_repository(NewRepository {
-                path: self.dir.path().join("repo").display().to_string(),
-                base_branch: "main".into(),
-                description: None,
-                merge_strategy: Default::default(),
-            })
-            .await
-            .unwrap();
-        let goal = self
-            .store
-            .create_goal(NewGoal {
-                title: "Ship the UI".into(),
-                description: "desc".into(),
-                planner_profile_id: planner,
-                max_tasks: None,
-                required_approvals: 1,
-                repository_ids: vec![repo.id.clone()],
-            })
-            .await
-            .unwrap();
-        let task = self
-            .store
-            .create_task(NewTask {
-                goal_id: goal.id.clone(),
-                repo_id: repo.id,
-                title: "task".into(),
-                description: "desc".into(),
-                engineer_profile_id: engineer.clone(),
-                reviewer_profile_ids: vec![reviewer],
-                depends_on: vec![],
-            })
-            .await
-            .unwrap();
-        let worktree = self.dir.path().join("worktree");
-        std::fs::create_dir_all(&worktree).unwrap();
-        let session = self
-            .store
-            .create_session(NewSession {
-                goal_id: goal.id,
-                task_id: Some(task.id.clone()),
-                role: Role::Engineer,
-                profile_id: engineer,
-                agent_kind: AgentKind::Opencode,
-                model: None,
-                tmux_session: "ariadne-test-stuck-eng".into(),
-                worktree_path: Some(worktree.display().to_string()),
-                review_round: None,
-            })
-            .await
-            .unwrap();
-        self.store
-            .set_session_internal_id(&session.id, "ses_previous")
-            .await
-            .unwrap();
-        (self.store.get_task(&task.id).await.unwrap(), session)
-    }
-
-    async fn profile(&self, name: &str, role: Role) -> String {
-        self.store
-            .create_profile(NewProfile {
-                name: name.into(),
-                role,
-                agent_kind: Some(AgentKind::Opencode),
-                model: None,
-                system_prompt: Some("You work.".into()),
-            })
-            .await
-            .unwrap()
-            .id
-    }
-
-    /// What the pane draws: a composer holding `text`, for good.
-    fn composer_keeps(&self, text: &str) {
-        std::fs::write(self.dir.path().join("composer"), format!("> {text}\n")).unwrap();
-    }
-
-    /// How many Enters the pane was sent.
-    fn enters(&self) -> usize {
-        std::fs::read_to_string(self.dir.path().join("enters"))
-            .unwrap_or_default()
-            .lines()
-            .count()
-    }
-
-    async fn attention(&self, session: &AgentSession) -> Option<AttentionReason> {
-        self.store
-            .get_session(&session.id)
-            .await
-            .unwrap()
-            .attention_reason()
-    }
 }
 
 /// The same story again with nothing to type into. A pane that never draws a
@@ -359,8 +217,8 @@ impl Harness {
 /// `Config::typed_input_window`, and nothing here depends on which.
 #[tokio::test]
 async fn a_pane_that_never_draws_raises_the_session_when_the_window_runs_out() {
-    let h = harness().await;
-    let (task, session) = h.opencode_engineer().await;
+    let h = stub_harness().await;
+    let (task, session) = opencode_engineer(&h).await;
     // No composer written at all: every look at the pane comes back empty,
     // which is what a TUI that never started looks like.
 
@@ -369,12 +227,9 @@ async fn a_pane_that_never_draws_raises_the_session_when_the_window_runs_out() {
         .await
         .unwrap();
 
-    eventually("the session to be raised", async || {
-        h.attention(&session).await == Some(AttentionReason::Stalled)
-    })
-    .await;
+    raised(&h, &session).await;
     assert_eq!(
-        h.enters(),
+        h.enters(&session),
         0,
         "and nothing was typed at a pane that was never ready for it"
     );

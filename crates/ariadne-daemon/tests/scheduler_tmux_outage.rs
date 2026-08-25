@@ -17,224 +17,62 @@
 //! at the first threshold turns on what the pane is drawing, and a pane that
 //! cannot be read says nothing about that either.
 
-use std::path::Path;
-use std::sync::Arc;
+mod common;
+
 use std::time::Duration;
 
-use ariadne_core::{Actor, AgentKind, AuthorRole, GoalStatus, Role, SessionStatus, TaskStatus};
-use ariadne_daemon::config::Config;
-use ariadne_daemon::gitwt::GitManager;
-use ariadne_daemon::launcher::Launcher;
+use ariadne_core::{Actor, AuthorRole, Role, SessionStatus, TaskStatus};
 use ariadne_daemon::scheduler::{self, SchedEvent};
-use ariadne_daemon::tmux::{TmuxManager, session_name};
-use ariadne_store::{
-    AgentSession, NewGoal, NewMessage, NewProfile, NewRepository, NewSession, NewTask, Recipient,
-    SessionFilter, Store,
-};
+use ariadne_store::{AgentSession, NewMessage, Recipient};
 
-/// Where the `tmux` these tests run stands — or does not, until one of them
-/// puts a working one there.
-fn tmux_path(dir: &Path) -> std::path::PathBuf {
-    dir.join("tmux-that-is-not-installed")
-}
-
-/// A `tmux` binary that is not there: every question comes back unanswered
-/// rather than answered "no", which is what a machine briefly out of process
-/// slots looks like from here.
-fn unrunnable_tmux(dir: &Path) -> TmuxManager {
-    TmuxManager::new(tmux_path(dir).display().to_string())
-}
-
-/// Put a working `tmux` where the unrunnable one was: its sessions are all
-/// there, its panes draw whatever a test wrote into `composer` (nothing,
-/// unless it wrote one — so a delivery is confirmed on the first Enter), and
-/// it writes down every `send-keys` it is handed.
-fn tmux_comes_back(dir: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-
-    let bin = tmux_path(dir);
-    let script = format!(
-        "#!/bin/sh\n\
-         case \"$1\" in\n\
-        \x20 display-message) echo '80x24 0,0' ;;\n\
-        \x20 capture-pane) cat '{composer}' 2>/dev/null ;;\n\
-        \x20 send-keys) echo \"$@\" >> '{sent}' ;;\n\
-         esac\n\
-         exit 0\n",
-        composer = dir.join("composer").display(),
-        sent = dir.join("send-keys.log").display(),
-    );
-    std::fs::write(&bin, script).unwrap();
-    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
-}
-
-/// Everything pasted into a pane, as the agent would have read it: the stub
-/// logs the `send-keys -H` payload one hexadecimal byte per argument, which is
-/// how the bytes travel.
-fn pasted(dir: &Path, session: &AgentSession) -> String {
-    let log = std::fs::read_to_string(dir.join("send-keys.log")).unwrap_or_default();
-    let mut bytes = Vec::new();
-    for line in log.lines() {
-        let args: Vec<&str> = line.split_whitespace().collect();
-        let Some(hex) = args.iter().position(|a| *a == "-H") else {
-            continue;
-        };
-        if args.get(2) != Some(&session.tmux_session.as_str()) {
-            continue;
-        }
-        bytes.extend(
-            args[hex + 1..]
-                .iter()
-                .filter_map(|a| u8::from_str_radix(a, 16).ok()),
-        );
-    }
-    String::from_utf8_lossy(&bytes).into_owned()
-}
+use common::{Cast, Harness, harness};
 
 /// Everything one of these tests works on: an active goal with a task on it,
-/// an engineer already sitting in a pane, and the daemon that cannot ask
-/// tmux about any of it.
-struct World {
-    store: Store,
-    launcher: Arc<Launcher>,
-    task: ariadne_store::Task,
-    engineer: String,
-    session: AgentSession,
-    goal: String,
-    _bus: ariadne_daemon::bus::EventBus,
+/// an engineer already sitting in a pane, and a daemon whose `tmux` binary is
+/// not there — so every question about that pane comes back unanswered rather
+/// than answered "no", which is what a machine briefly out of process slots
+/// looks like from here.
+async fn world() -> (Harness, Cast, AgentSession) {
+    let h = harness().tmux(common::Tmux::Missing).await;
+    let cast = h.active_cast().await;
+    let session = h
+        .session(
+            &cast.goal,
+            Some(&cast.task),
+            Role::Engineer,
+            &cast.engineer.id,
+        )
+        .await;
+    (h, cast, session)
 }
 
-/// The state both tests start from, up to but not including the transitions
-/// each of them wants the task in.
-async fn world(dir: &Path) -> World {
-    let store = Store::open(dir.join("test.db")).await.unwrap();
-    let bus = ariadne_daemon::bus::start(store.clone());
-    let cfg = Arc::new(Config::load(Some(dir.join("home"))).unwrap());
-    let launcher = Arc::new(Launcher {
-        cfg,
-        store: store.clone(),
-        tmux: unrunnable_tmux(dir),
-        git: GitManager,
-    });
-
-    let profile = |name: &str, role: Role| {
-        let store = store.clone();
-        let name = name.to_string();
-        async move {
-            store
-                .create_profile(NewProfile {
-                    name,
-                    role,
-                    agent_kind: Some(AgentKind::ClaudeCode),
-                    model: None,
-                    system_prompt: Some("You work.".into()),
-                })
-                .await
-                .unwrap()
-                .id
-        }
-    };
-    let planner = profile("planner", Role::Planner).await;
-    let engineer = profile("engineer", Role::Engineer).await;
-    let reviewer = profile("reviewer", Role::Reviewer).await;
-
-    let repo = store
-        .create_repository(NewRepository {
-            path: dir.join("repo").display().to_string(),
-            base_branch: "main".into(),
-            description: None,
-            merge_strategy: Default::default(),
-        })
-        .await
-        .unwrap();
-    let goal = store
-        .create_goal(NewGoal {
-            title: "Ship the UI".into(),
-            description: "desc".into(),
-            planner_profile_id: planner,
-            max_tasks: None,
-            required_approvals: 1,
-            repository_ids: vec![repo.id.clone()],
-        })
-        .await
-        .unwrap();
-    // Planning is over: reconciliation only acts on an active goal.
-    store
-        .set_goal_status(&goal.id, GoalStatus::Active)
-        .await
-        .unwrap();
-    let task = store
-        .create_task(NewTask {
-            goal_id: goal.id.clone(),
-            repo_id: repo.id,
-            title: "task".into(),
-            description: "do things".into(),
-            engineer_profile_id: engineer.clone(),
-            reviewer_profile_ids: vec![reviewer],
-            depends_on: vec![],
-        })
-        .await
-        .unwrap();
-
-    // An engineer is already on it, and its pane is one nobody can ask about.
-    let session = store
-        .create_session(NewSession {
-            goal_id: goal.id.clone(),
-            task_id: Some(task.id.clone()),
-            role: Role::Engineer,
-            profile_id: engineer.clone(),
-            agent_kind: AgentKind::ClaudeCode,
-            model: None,
-            tmux_session: session_name(&goal.id, Some(&task.id), "engineer", None),
-            worktree_path: None,
-            review_round: None,
-        })
-        .await
-        .unwrap();
-    World {
-        store,
-        launcher,
-        task,
-        engineer,
-        session,
-        goal: goal.id,
-        _bus: bus,
-    }
+/// Put a working `tmux` where the unrunnable one was, with every pane it is
+/// asked about there.
+fn tmux_comes_back(h: &Harness) {
+    h.tmux_returns();
+    h.every_pane_exists();
 }
 
 #[tokio::test]
 async fn reconciliation_with_tmux_unavailable_neither_spawns_nor_fails_the_task() {
-    let dir = tempfile::tempdir().unwrap();
-    let World {
-        store,
-        launcher,
-        task,
-        session,
-        ..
-    } = world(dir.path()).await;
-    store
-        .transition_task(&task.id, TaskStatus::Ready, Actor::Daemon, None, None)
+    let (h, cast, session) = world().await;
+    h.store
+        .transition_task(&cast.task.id, TaskStatus::Ready, Actor::Daemon, None, None)
         .await
         .unwrap();
 
     // More reconciliations than the spawn-retry budget allows for, so a task
     // failed by repeated attempts would have failed by the end of them.
     // No sleep inhibition: a test has no business touching power management.
-    let sched = scheduler::start(store.clone(), launcher.clone(), false);
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
     for _ in 0..6 {
         sched
-            .send(SchedEvent::TaskChanged(task.id.clone()))
+            .send(SchedEvent::TaskChanged(cast.task.id.clone()))
             .unwrap();
         tokio::time::sleep(Duration::from_millis(120)).await;
     }
 
-    let sessions = store
-        .list_sessions(SessionFilter {
-            task_id: Some(task.id.clone()),
-            ..Default::default()
-        })
-        .await
-        .unwrap();
+    let sessions = h.sessions_of(&cast.task.id).await;
     assert_eq!(
         sessions.len(),
         1,
@@ -247,9 +85,8 @@ async fn reconciliation_with_tmux_unavailable_neither_spawns_nor_fails_the_task(
         sessions[0].status()
     );
 
-    let task = store.get_task(&task.id).await.unwrap();
     assert_ne!(
-        task.status(),
+        h.status(&cast.task.id).await,
         TaskStatus::Failed,
         "an unreachable tmux is not the task's fault, and must not spend its retry budget"
     );
@@ -262,36 +99,23 @@ async fn reconciliation_with_tmux_unavailable_neither_spawns_nor_fails_the_task(
 /// again it goes in.
 #[tokio::test]
 async fn a_message_for_an_unreachable_pane_waits_rather_than_relaunching_its_agent() {
-    let dir = tempfile::tempdir().unwrap();
-    let World {
-        store,
-        launcher,
-        task,
-        engineer,
-        session,
-        goal,
-        ..
-    } = world(dir.path()).await;
-    for status in [TaskStatus::Ready, TaskStatus::InProgress] {
-        store
-            .transition_task(&task.id, status, Actor::Daemon, None, None)
-            .await
-            .unwrap();
-    }
+    let (h, cast, session) = world().await;
+    h.advance(&cast.task, TaskStatus::InProgress).await;
 
     // The scheduler first, and its opening reconciliation with it: what this
     // test counts is the passes made at one message, and a tick that came
     // round before the message existed makes none.
-    let sched = scheduler::start(store.clone(), launcher.clone(), false);
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
     tokio::time::sleep(Duration::from_millis(150)).await;
 
-    let message = store
+    let message = h
+        .store
         .create_message(NewMessage {
-            goal_id: goal,
-            task_id: Some(task.id.clone()),
+            goal_id: cast.goal.id.clone(),
+            task_id: Some(cast.task.id.clone()),
             author_role: AuthorRole::User,
             author_session_id: None,
-            recipient: Some(Recipient::Profile(engineer)),
+            recipient: Some(Recipient::Profile(cast.engineer.id.clone())),
             body: "Use the other endpoint.".into(),
         })
         .await
@@ -302,13 +126,7 @@ async fn a_message_for_an_unreachable_pane_waits_rather_than_relaunching_its_age
         .unwrap();
     tokio::time::sleep(Duration::from_millis(150)).await;
 
-    let sessions = store
-        .list_sessions(SessionFilter {
-            task_id: Some(task.id.clone()),
-            ..Default::default()
-        })
-        .await
-        .unwrap();
+    let sessions = h.sessions_of(&cast.task.id).await;
     assert_eq!(
         sessions.len(),
         1,
@@ -320,20 +138,11 @@ async fn a_message_for_an_unreachable_pane_waits_rather_than_relaunching_its_age
         sessions[0].status()
     );
     assert!(
-        !launcher
-            .cfg
-            .run_dir
-            .join(&session.id)
-            .join("spawn.json")
-            .exists(),
+        !h.plan_file(&session.id).exists(),
         "no relaunch was planned for it"
     );
     assert_eq!(
-        store
-            .get_session(&session.id)
-            .await
-            .unwrap()
-            .attention_reason(),
+        h.attention(&session).await,
         None,
         "and the user is not told about a message that still has passes left"
     );
@@ -342,13 +151,13 @@ async fn a_message_for_an_unreachable_pane_waits_rather_than_relaunching_its_age
     // reconciliation tick would offer the message again on its own; the test
     // asks for the same passes rather than waiting a quarter of a minute for
     // each of them.
-    tmux_comes_back(dir.path());
+    tmux_comes_back(&h);
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     loop {
         sched
             .send(SchedEvent::MessagePosted(message.id.clone()))
             .unwrap();
-        if pasted(dir.path(), &session).contains("Use the other endpoint.") {
+        if h.pasted(&session).contains("Use the other endpoint.") {
             break;
         }
         assert!(
@@ -358,11 +167,7 @@ async fn a_message_for_an_unreachable_pane_waits_rather_than_relaunching_its_age
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert_eq!(
-        store
-            .get_session(&session.id)
-            .await
-            .unwrap()
-            .attention_reason(),
+        h.attention(&session).await,
         None,
         "a message that got there in the end raises nothing"
     );
@@ -376,45 +181,27 @@ async fn a_message_for_an_unreachable_pane_waits_rather_than_relaunching_its_age
 /// still holding the instruction that was never submitted.
 #[tokio::test]
 async fn a_silent_agent_whose_pane_cannot_be_read_is_left_for_the_next_pass() {
-    let dir = tempfile::tempdir().unwrap();
-    let World {
-        store,
-        launcher,
-        task,
-        session,
-        ..
-    } = world(dir.path()).await;
-    for status in [TaskStatus::Ready, TaskStatus::InProgress] {
-        store
-            .transition_task(&task.id, status, Actor::Daemon, None, None)
-            .await
-            .unwrap();
-    }
+    let (h, cast, session) = world().await;
+    h.advance(&cast.task, TaskStatus::InProgress).await;
     // Running and silent for longer than the nudge threshold, which the store
     // only ever stamps "now": the columns the one clock is read from are moved
     // back by hand.
-    store
-        .set_session_status(&session.id, SessionStatus::Running)
-        .await
-        .unwrap();
-    silent_for(dir.path(), &session, 360).await;
+    h.set_status(&session, SessionStatus::Running).await;
+    h.launched_ago(&session, 360).await;
 
-    let sched = scheduler::start(store.clone(), launcher.clone(), false);
+    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
     sched
-        .send(SchedEvent::TaskChanged(task.id.clone()))
+        .send(SchedEvent::TaskChanged(cast.task.id.clone()))
         .unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
 
-    assert!(
-        !dir.path().join("send-keys.log").exists(),
+    assert_eq!(
+        h.keystrokes(&session),
+        0,
         "nothing was typed at a pane nobody could read"
     );
     assert_eq!(
-        store
-            .get_session(&session.id)
-            .await
-            .unwrap()
-            .attention_reason(),
+        h.attention(&session).await,
         None,
         "and the user is not told about a silence that was never confirmed"
     );
@@ -422,23 +209,18 @@ async fn a_silent_agent_whose_pane_cannot_be_read_is_left_for_the_next_pass() {
     // tmux comes back, and the pane it could not answer for is still holding
     // the instruction the launch put there — as the engineer's resume template
     // words it.
-    std::fs::write(
-        dir.path().join("composer"),
-        "> Pick \"task\" up again: your worktree is on\n",
-    )
-    .unwrap();
-    tmux_comes_back(dir.path());
+    h.composer_keeps(r#"Pick "task" up again: your worktree is on"#);
+    tmux_comes_back(&h);
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     loop {
         sched
-            .send(SchedEvent::TaskChanged(task.id.clone()))
+            .send(SchedEvent::TaskChanged(cast.task.id.clone()))
             .unwrap();
-        let sent = std::fs::read_to_string(dir.path().join("send-keys.log")).unwrap_or_default();
-        if sent.contains("Enter") {
+        if h.enters(&session) > 0 {
             assert_eq!(
-                sent.lines().count(),
+                h.keystrokes(&session),
                 1,
-                "the nudge the outage never spent is one Enter, not a paste: {sent}"
+                "the nudge the outage never spent is one Enter, not a paste"
             );
             break;
         }
@@ -448,21 +230,4 @@ async fn a_silent_agent_whose_pane_cannot_be_read_is_left_for_the_next_pass() {
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-}
-
-/// Move the columns the watchdog's clock is read from back by `secs`.
-async fn silent_for(dir: &Path, session: &AgentSession, secs: i64) {
-    let when = (chrono::Utc::now() - chrono::Duration::seconds(secs))
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", dir.join("test.db").display()))
-        .await
-        .unwrap();
-    sqlx::query("UPDATE agent_sessions SET launched_at = ?, last_activity_at = ? WHERE id = ?")
-        .bind(&when)
-        .bind(&when)
-        .bind(&session.id)
-        .execute(&pool)
-        .await
-        .unwrap();
-    pool.close().await;
 }

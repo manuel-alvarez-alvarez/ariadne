@@ -1,12 +1,12 @@
 //! Domain-event bus.
 //!
-//! The store announces every committed write ([`Change`]); one pump task
-//! fattens each change into a [`DomainEvent`] carrying the full DTO and
-//! broadcasts it to the SSE subscribers of `/v1/events/stream`. Because the
-//! hook sits in the repository layer, HTTP handlers, the scheduler and the
-//! launcher all feed the bus without knowing it exists.
+//! The pump sits behind the store's own [`Change`] hook rather than beside the
+//! writers, which is why the HTTP handlers, the scheduler and the launcher all
+//! feed it without knowing it exists — and why no write can reach the database
+//! without reaching a client.
 //!
-//! Delivery is history-free: a subscriber that cannot keep up is lagged by the
+//! Each event carries the whole DTO rather than an id to refetch, and delivery
+//! is history-free: a subscriber that cannot keep up is lagged by the
 //! broadcast channel, and the stream tells it to resync over REST rather than
 //! leaving it quietly stale (see `http::stream`).
 

@@ -1,389 +1,82 @@
 //! Integration tests for `GET /v1/sessions/{id}/logs/stream`.
 //!
-//! No tmux needed: every `tmux` here is a stub script. The sessions point at
-//! a name no stub admits to, which is exactly the "session already over" path
-//! — the one whose framing and lifecycle the acceptance criteria pin down.
-//! Following a live pane is the tailing logic, unit-tested in `logtail`; the
-//! one test that drives a real pane is `#[ignore]`d and asks for real tmux.
+//! No tmux needed: every `tmux` here is a stub script. A session pointing at a
+//! name no stub admits to is exactly the "session already over" path — the one
+//! whose framing and lifecycle the acceptance criteria pin down. Following a
+//! live pane is the tailing logic, unit-tested in `logtail`; the one test that
+//! drives a real pane is `#[ignore]`d and asks for real tmux.
 
-use std::path::PathBuf;
+mod common;
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use axum::Router;
 use axum::body::Body;
-use axum::http::{Request, StatusCode, header};
-use http_body_util::BodyExt;
+use axum::http::{StatusCode, header};
 use tokio::io::AsyncWriteExt;
-use tower::ServiceExt;
 
-use ariadne_core::{AgentKind, Role, SessionStatus};
-use ariadne_daemon::config::Config;
-use ariadne_daemon::gitwt::GitManager;
-use ariadne_daemon::http::{self, AppState};
-use ariadne_daemon::launcher::Launcher;
-use ariadne_daemon::logbuf::LogBuffer;
+use ariadne_core::SessionStatus;
 use ariadne_daemon::logtail::MAX_CHUNK;
-use ariadne_daemon::tmux::{TmuxManager, TmuxSpawn};
-use ariadne_store::{AgentSession, NewGoal, NewProfile, NewRepository, NewSession, Store};
+use ariadne_daemon::tmux::TmuxSpawn;
+use ariadne_store::AgentSession;
 
-const TIMEOUT: Duration = Duration::from_secs(5);
-
-struct Harness {
-    store: Store,
-    launcher: Arc<Launcher>,
-    router: Router,
-    dir: tempfile::TempDir,
-}
+use common::{
+    Harness, Sse, TIMEOUT, Tmux, expect_sse, get, harness, next_sse, next_sse_message, parse_sse,
+    sse_is_closed, sse_message_within,
+};
 
 /// A harness whose `tmux` denies every session it is asked about.
 ///
 /// That is what a real `tmux` answers for a session that has ended — and,
-/// unlike a real `tmux`, it answers the same on a machine with none
-/// installed, where "cannot ask" is a third thing the stream treats as
-/// "still there".
-async fn harness() -> Harness {
-    build(Tmux::Gone).await
+/// unlike a real `tmux`, it answers the same on a machine with none installed,
+/// where "cannot ask" is a third thing the stream treats as "still there".
+async fn gone_tmux() -> Harness {
+    harness().tmux(Tmux::Gone).await
 }
 
-/// A harness whose `tmux` is a stub script: `has-session` succeeds while a
-/// marker file exists, `capture-pane` prints a file the test controls and
-/// `display-message` prints the pane size from another. That makes the live
-/// path — a running pane whose session ends or is resized underneath it —
-/// reproducible without tmux and without a real agent.
-async fn harness_with_stub_tmux() -> Harness {
-    build(Tmux::Stub).await
+/// A session whose tmux is not (and never was) running.
+async fn dead_session(h: &Harness) -> AgentSession {
+    h.lone_session("ariadne-test-no-such-session").await
 }
 
-/// A harness on the real `tmux` binary. Only a test that drives an actual
-/// pane needs one, and every such test is `#[ignore]`d.
-async fn harness_with_real_tmux() -> Harness {
-    build(Tmux::Real).await
+/// Read deltas until `wanted` bytes of them have arrived, checking the frame
+/// cap on every one: what came out, and how many frames it took.
+async fn drained(body: &mut Body, wanted: usize) -> (String, usize) {
+    let mut received = String::new();
+    let mut frames = 0;
+    while received.len() < wanted {
+        let payload = expect_sse(body, "delta").await;
+        let chunk = payload["chunk"].as_str().unwrap();
+        assert!(
+            chunk.len() <= MAX_CHUNK,
+            "no frame is bigger than the cap: {}",
+            chunk.len()
+        );
+        received.push_str(chunk);
+        frames += 1;
+    }
+    (received, frames)
 }
 
-/// Which `tmux` a harness is built on.
-enum Tmux {
-    Gone,
-    Stub,
-    Real,
-}
-
-async fn build(kind: Tmux) -> Harness {
-    let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(dir.path().join("test.db")).await.unwrap();
-    let bus = ariadne_daemon::bus::start(store.clone());
-    let cfg = Arc::new(Config::load(Some(dir.path().join("home"))).unwrap());
-    let tmux = match kind {
-        Tmux::Gone => write_tmux_gone_stub(dir.path()),
-        Tmux::Stub => write_tmux_stub(dir.path()),
-        Tmux::Real => TmuxManager::default(),
-    };
-    let launcher = Arc::new(Launcher {
-        cfg,
-        store: store.clone(),
-        tmux,
-        git: GitManager,
-    });
-    let state = AppState {
-        store: store.clone(),
-        started_at: Instant::now(),
-        launcher: launcher.clone(),
-        sched_tx: None,
-        events: bus,
-        logs: LogBuffer::new(),
-    };
-    Harness {
-        router: http::router(state),
-        store,
-        launcher,
-        dir,
-    }
-}
-
-/// A `tmux` that fails every command, the way the real one does for a session
-/// that is not there: `has-session` says no, and there is no pane to capture
-/// or measure.
-fn write_tmux_gone_stub(dir: &std::path::Path) -> TmuxManager {
-    use std::os::unix::fs::PermissionsExt;
-
-    let bin = dir.join("tmux-gone.sh");
-    std::fs::write(&bin, "#!/bin/sh\nexit 1\n").unwrap();
-    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
-    TmuxManager::new(bin.display().to_string())
-}
-
-fn write_tmux_stub(dir: &std::path::Path) -> TmuxManager {
-    use std::os::unix::fs::PermissionsExt;
-
-    let bin = dir.join("tmux-stub.sh");
-    // `capture-pane` and `display-message` can each be made to fail on their
-    // own — a pane that is there but says nothing is a different thing from
-    // one that is gone — and `capture-pane` can resize the pane as it reads
-    // it, which is the one window a stream cannot otherwise reach into.
-    let script = format!(
-        "#!/bin/sh\n\
-         case \"$1\" in\n\
-         \x20 has-session) [ -f '{alive}' ] || exit 1 ;;\n\
-         \x20 capture-pane)\n\
-         \x20   [ -f '{no_capture}' ] && exit 1\n\
-         \x20   if [ -f '{resize}' ]; then cat '{resize}' > '{size}'; rm '{resize}'; fi\n\
-         \x20   cat '{pane}' 2>/dev/null ;;\n\
-         \x20 display-message)\n\
-         \x20   [ -f '{no_measure}' ] && exit 1\n\
-         \x20   [ -f '{alive}' ] || exit 1\n\
-         \x20   cat '{size}' 2>/dev/null ;;\n\
-         esac\n\
-         exit 0\n",
-        alive = dir.join("tmux-alive").display(),
-        no_capture = dir.join("capture-fails").display(),
-        no_measure = dir.join("measure-fails").display(),
-        resize = dir.join("resize-on-capture.txt").display(),
-        pane = dir.join("pane.txt").display(),
-        size = dir.join("pane-size.txt").display(),
-    );
-    std::fs::write(&bin, script).unwrap();
-    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
-    TmuxManager::new(bin.display().to_string())
-}
-
-impl Harness {
-    /// A session whose tmux is not (and never was) running.
-    async fn dead_session(&self) -> AgentSession {
-        // Deliberately not a live tmux session.
-        self.session("ariadne-test-no-such-session").await
-    }
-
-    /// A planner session bound to the tmux session `tmux_name`.
-    async fn session(&self, tmux_name: &str) -> AgentSession {
-        let planner = self
-            .store
-            .create_profile(NewProfile {
-                name: "planner".into(),
-                role: Role::Planner,
-                agent_kind: Some(AgentKind::ClaudeCode),
-                model: None,
-                system_prompt: Some("You plan.".into()),
-            })
-            .await
-            .unwrap();
-        let repo = self
-            .store
-            .create_repository(NewRepository {
-                path: "/tmp/repo".into(),
-                base_branch: "main".into(),
-                description: None,
-                merge_strategy: Default::default(),
-            })
-            .await
-            .unwrap();
-        let goal = self
-            .store
-            .create_goal(NewGoal {
-                title: "Ship the UI".into(),
-                description: "desc".into(),
-                planner_profile_id: planner.id.clone(),
-                max_tasks: None,
-                required_approvals: 1,
-                repository_ids: vec![repo.id],
-            })
-            .await
-            .unwrap();
-        self.store
-            .create_session(NewSession {
-                goal_id: goal.id,
-                task_id: None,
-                role: Role::Planner,
-                profile_id: planner.id,
-                agent_kind: AgentKind::ClaudeCode,
-                model: None,
-                tmux_session: tmux_name.into(),
-                worktree_path: None,
-                review_round: None,
-            })
-            .await
-            .unwrap()
-    }
-
-    /// Write the console log tmux `pipe-pane` would have produced.
-    fn write_console_log(&self, session_id: &str, contents: impl AsRef<[u8]>) {
-        let path = self.console_log(session_id);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, contents).unwrap();
-    }
-
-    fn console_log(&self, session_id: &str) -> PathBuf {
-        self.launcher
-            .cfg
-            .run_dir
-            .join(session_id)
-            .join("console.log")
-    }
-
-    /// A pane to capture, on a session that exists. The pane is tmux's default
-    /// 80×24 with its cursor at the bottom left until a test says otherwise.
-    fn stub_pane(&self, contents: &str) {
-        std::fs::write(self.dir.path().join("tmux-alive"), "").unwrap();
-        self.stub_pane_geometry(80, 24, 0, 23);
-        self.stub_pane_screen(contents);
-    }
-
-    /// What the stub tmux's `capture-pane` prints, leaving the geometry as it
-    /// is — the two are set apart so that a test changing what the pane draws
-    /// does not quietly change the grid it draws it at.
-    fn stub_pane_screen(&self, contents: &str) {
-        std::fs::write(self.dir.path().join("pane.txt"), contents).unwrap();
-    }
-
-    /// What the stub tmux's `display-message` reports about the pane's screen.
-    fn stub_pane_geometry(&self, cols: u16, rows: u16, cursor_x: u16, cursor_y: u16) {
-        std::fs::write(
-            self.dir.path().join("pane-size.txt"),
-            format!("{cols}x{rows} {cursor_x},{cursor_y}\n"),
-        )
-        .unwrap();
-    }
-
-    /// Resize the pane during the next `capture-pane`, once: the capture comes
-    /// back drawn at the new grid, and only a measurement taken *after* it can
-    /// know that.
-    fn stub_resize_on_capture(&self, cols: u16, rows: u16, cursor_x: u16, cursor_y: u16) {
-        std::fs::write(
-            self.dir.path().join("resize-on-capture.txt"),
-            format!("{cols}x{rows} {cursor_x},{cursor_y}\n"),
-        )
-        .unwrap();
-    }
-
-    /// Whether the stub tmux's `capture-pane` fails — a pane that is there
-    /// (`display-message` still answers) but cannot be read.
-    fn stub_capture_fails(&self, fails: bool) {
-        self.stub_marker("capture-fails", fails);
-    }
-
-    /// Whether the stub tmux's `display-message` fails — a pane that is there
-    /// (`has-session` still succeeds) but cannot be measured.
-    fn stub_measure_fails(&self, fails: bool) {
-        self.stub_marker("measure-fails", fails);
-    }
-
-    /// Whether the stub tmux can be run at all. Taking the binary away is how
-    /// a daemon that cannot spawn a process sees the world: every question is
-    /// unanswered, rather than answered "no".
-    fn stub_tmux_reachable(&self, reachable: bool) {
-        let bin = self.dir.path().join("tmux-stub.sh");
-        let parked = self.dir.path().join("tmux-stub.parked");
-        let (from, to) = if reachable {
-            (&parked, &bin)
-        } else {
-            (&bin, &parked)
-        };
-        if from.exists() {
-            std::fs::rename(from, to).unwrap();
-        }
-    }
-
-    fn stub_marker(&self, name: &str, set: bool) {
-        let marker = self.dir.path().join(name);
-        if set {
-            std::fs::write(marker, "").unwrap();
-        } else {
-            let _ = std::fs::remove_file(marker);
-        }
-    }
-}
-
-fn get(uri: &str) -> Request<Body> {
-    Request::builder().uri(uri).body(Body::empty()).unwrap()
-}
-
-/// What came out of an SSE body next. The three are worth telling apart: a
-/// stream that closes is a different thing from one that says nothing, and
-/// both are behaviours these tests assert.
-#[derive(Debug)]
-enum Sse {
-    Message(String),
-    /// The daemon closed the connection.
-    Closed,
-    /// Nothing arrived in the time allowed.
-    Silent,
-}
-
-/// Read from an SSE body until one complete message (`\n\n`-terminated) is in.
-async fn next_sse(body: &mut Body, within: Duration) -> Sse {
-    let read = tokio::time::timeout(within, async {
-        let mut buf = String::new();
-        while let Some(frame) = body.frame().await {
-            let frame = frame.expect("sse body error");
-            if let Some(chunk) = frame.data_ref() {
-                buf.push_str(&String::from_utf8_lossy(chunk));
-                if buf.contains("\n\n") {
-                    return Some(buf);
-                }
-            }
-        }
-        None
-    })
-    .await;
-    match read {
-        Ok(Some(message)) => Sse::Message(message),
-        Ok(None) => Sse::Closed,
-        Err(_) => Sse::Silent,
-    }
-}
-
-async fn next_sse_message(body: &mut Body) -> String {
-    match next_sse(body, TIMEOUT).await {
-        Sse::Message(message) => message,
-        other => panic!("expected an sse message, got {other:?}"),
-    }
-}
-
-/// The next SSE message, or `None` if none arrives within `within` — for
-/// asserting that a stream is deliberately saying nothing.
-async fn sse_message_within(body: &mut Body, within: Duration) -> Option<String> {
-    match next_sse(body, within).await {
-        Sse::Message(message) => Some(message),
-        Sse::Silent => None,
-        Sse::Closed => panic!("the stream closed instead of staying open"),
-    }
-}
-
-/// `event:` name and decoded `data:` payload of one SSE message.
-fn parse(message: &str) -> (String, serde_json::Value) {
-    let mut name = None;
-    let mut data = None;
-    for line in message.trim_end().lines() {
-        if let Some(rest) = line.strip_prefix("event: ") {
-            name = Some(rest.to_string());
-        } else if let Some(rest) = line.strip_prefix("data: ") {
-            assert!(
-                data.is_none(),
-                "payload must fit one data line: {message:?}"
-            );
-            data = Some(rest.to_string());
-        }
-    }
-    let name = name.expect("every message carries an event name");
-    let data = data.expect("every message carries a payload");
-    (name, serde_json::from_str(&data).expect("payload is JSON"))
+/// The log stream of a session, open and ready to be read message by message.
+async fn stream(h: &Harness, session: &AgentSession) -> Body {
+    h.stream(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
+        .await
 }
 
 #[tokio::test]
 async fn an_exited_session_yields_its_full_log_then_ends() {
-    let h = harness().await;
-    let session = h.dead_session().await;
+    let h = gone_tmux().await;
+    let session = dead_session(&h).await;
     // Raw terminal output: escape sequences, newlines, carriage returns and
-    // a multi-byte glyph — none of which SSE framing tolerates unencoded.
+    // A multi-byte glyph — none of which SSE framing tolerates unencoded.
     let console = "\u{1b}[2J\u{1b}[Hbuilding…\r\n│ done │\n\u{7}";
     h.write_console_log(&session.id, console);
 
     let response = h
-        .router
-        .clone()
-        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
-        .await
-        .unwrap();
+        .response(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
+        .await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         response
@@ -394,44 +87,25 @@ async fn an_exited_session_yields_its_full_log_then_ends() {
     );
     let mut body = response.into_body();
 
-    let (name, payload) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "snapshot");
+    let payload = expect_sse(&mut body, "snapshot").await;
     assert_eq!(
         payload["chunk"], console,
         "the snapshot round-trips the console log byte for byte"
     );
 
-    let (name, payload) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "end");
+    let payload = expect_sse(&mut body, "end").await;
     assert_eq!(payload["session_id"], session.id);
 
-    let end = tokio::time::timeout(TIMEOUT, body.frame())
-        .await
-        .expect("a dead session's stream must close, not hang");
-    assert!(end.is_none(), "nothing follows the end event");
-}
+    sse_is_closed(&mut body).await;
 
-/// Nothing was ever piped: the client still gets a well-formed (empty)
-/// snapshot and a clean end rather than a hanging connection.
-#[tokio::test]
-async fn an_exited_session_without_a_console_log_still_ends() {
-    let h = harness().await;
-    let session = h.dead_session().await;
-
-    let response = h
-        .router
-        .clone()
-        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    let mut body = response.into_body();
-
-    let (name, payload) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "snapshot");
+    // Nothing was ever piped for this one: the client still gets a
+    // Well-formed (empty) snapshot and a clean end rather than a hanging.
+    // Connection.
+    let unpiped = h.lone_session("ariadne-test-never-piped").await;
+    let mut body = stream(&h, &unpiped).await;
+    let payload = expect_sse(&mut body, "snapshot").await;
     assert_eq!(payload["chunk"], "");
-    let (name, _) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "end");
+    expect_sse(&mut body, "end").await;
 }
 
 /// tmux session names are per (task, role), so another session can hold the
@@ -439,44 +113,32 @@ async fn an_exited_session_without_a_console_log_still_ends() {
 /// yield *its* console log, never the pane the live one is now drawing.
 #[tokio::test]
 async fn an_exited_session_ignores_the_pane_that_took_over_its_name() {
-    let h = harness_with_stub_tmux().await;
-    let session = h.session("ariadne-reused-name").await;
-    h.store
-        .set_session_status(&session.id, SessionStatus::Exited)
-        .await
-        .unwrap();
+    let h = harness().await;
+    let session = h.lone_session("ariadne-reused-name").await;
+    h.set_status(&session, SessionStatus::Exited).await;
     h.write_console_log(&session.id, "the old session's output\n");
     // Its successor is live under the very same tmux name.
     h.stub_pane("the successor's pane\n");
 
-    let response = h
-        .router
-        .clone()
-        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    let mut body = response.into_body();
+    let mut body = stream(&h, &session).await;
 
-    let (name, payload) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "snapshot");
+    let payload = expect_sse(&mut body, "snapshot").await;
     assert_eq!(
         payload["chunk"], "the old session's output\n",
         "an exited session serves its own console log, not the live pane"
     );
 
-    let (name, _) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "end", "a session that is already over ends at once");
-    let eof = tokio::time::timeout(TIMEOUT, body.frame()).await.unwrap();
-    assert!(eof.is_none());
+    // A session that is already over ends at once.
+    expect_sse(&mut body, "end").await;
+    sse_is_closed(&mut body).await;
 }
 
 /// The stream must not be kept alive by its own traffic: a pane writing on
 /// every poll still has to notice that the session behind it is finished.
 #[tokio::test]
 async fn a_terminal_status_ends_the_stream_even_while_output_keeps_coming() {
-    let h = harness_with_stub_tmux().await;
-    let session = h.session("ariadne-chatty").await;
+    let h = harness().await;
+    let session = h.lone_session("ariadne-chatty").await;
     h.stub_pane("pane snapshot\n");
     h.write_console_log(&session.id, "");
 
@@ -496,101 +158,68 @@ async fn a_terminal_status_ends_the_stream_even_while_output_keeps_coming() {
         }
     });
 
-    let response = h
-        .router
-        .clone()
-        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
-        .await
-        .unwrap();
-    let mut body = response.into_body();
+    let mut body = stream(&h, &session).await;
 
-    let (name, _) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "resize");
-    let (name, payload) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "snapshot");
+    expect_sse(&mut body, "resize").await;
+    let payload = expect_sse(&mut body, "snapshot").await;
     assert_eq!(payload["chunk"], "pane snapshot\u{1b}[24;1H");
-    let (name, _) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "delta", "the pane is producing output");
+    // The pane is producing output.
+    expect_sse(&mut body, "delta").await;
 
     // The process is gone as far as the daemon is concerned — the pane in
-    // tmux (the stub still has one) is no longer this session's.
-    h.store
-        .set_session_status(&session.id, SessionStatus::Failed)
-        .await
-        .unwrap();
+    // Tmux (the stub still has one) is no longer this session's.
+    h.set_status(&session, SessionStatus::Failed).await;
 
     // Output is shipped as it is written now, so a pane writing every 50ms
-    // gets a delta every 50ms: the end is a liveness tick away, not a poll.
+    // Gets a delta every 50ms: the end is a liveness tick away, not a poll.
     let mut last = String::new();
     for _ in 0..60 {
-        let (name, _) = parse(&next_sse_message(&mut body).await);
+        let (name, _) = parse_sse(&next_sse_message(&mut body).await);
         last = name;
         if last == "end" {
             break;
         }
     }
     assert_eq!(last, "end", "a terminal status ends the stream");
-    let eof = tokio::time::timeout(TIMEOUT, body.frame()).await.unwrap();
-    assert!(eof.is_none(), "nothing follows the end event");
+    sse_is_closed(&mut body).await;
 }
 
 /// The snapshot is wrapped at the pane's width and everything after it is
 /// addressed in the pane's grid, so the grid has to arrive first — a viewer
 /// that renders those bytes at any other size draws every repaint on the
-/// wrong row.
+/// wrong row, and one that renders them at the wrong row does the same.
 #[tokio::test]
 async fn a_live_stream_opens_with_the_grid_the_pane_draws_against() {
-    let h = harness_with_stub_tmux().await;
-    let session = h.session("ariadne-sized").await;
+    let h = harness().await;
+    let session = h.lone_session("ariadne-sized").await;
     h.stub_pane("pane snapshot\n");
-    h.stub_pane_geometry(100, 30, 4, 9);
+    h.pane_geometry(100, 30, 4, 9);
 
-    let response = h
-        .router
-        .clone()
-        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
-        .await
-        .unwrap();
-    let mut body = response.into_body();
+    let mut body = stream(&h, &session).await;
 
-    let (name, payload) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "resize", "the grid comes before anything drawn in it");
+    // The grid comes before anything drawn in it.
+    let payload = expect_sse(&mut body, "resize").await;
     assert_eq!(payload["cols"], 100);
     assert_eq!(payload["rows"], 30);
 
-    let (name, payload) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "snapshot");
+    let payload = expect_sse(&mut body, "snapshot").await;
     assert_eq!(
         payload["chunk"], "pane snapshot\u{1b}[10;5H",
         "the capture is a screen: its last row is the pane's last row, and it \
          leaves the cursor where the pane has it"
     );
-}
 
-/// The capture's trailing newline and the cursor are the difference between a
-/// copy of the screen and the screen itself: without them the repaints that
-/// follow are addressed a row too high, on top of output that is still there.
-#[tokio::test]
-async fn a_snapshot_ends_where_the_pane_left_its_cursor() {
-    let h = harness_with_stub_tmux().await;
-    let session = h.session("ariadne-cursor").await;
+    // The trailing newline and the cursor are the difference between a copy of
+    // the screen and the screen itself: without them the repaints that follow
+    // are addressed a row too high, on top of output that is still there.
     // Three rows, the cursor at the start of the second: what a TUI holding
     // its prompt above a status line looks like.
+    let cursor = h.lone_session("ariadne-cursor").await;
     h.stub_pane("first\nsecond\nthird\n");
-    h.stub_pane_geometry(80, 3, 0, 1);
-
-    let response = h
-        .router
-        .clone()
-        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
-        .await
-        .unwrap();
-    let mut body = response.into_body();
-
-    let (name, _) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "resize");
-    let (name, payload) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "snapshot");
+    h.pane_geometry(80, 3, 0, 1);
+    let mut body = stream(&h, &cursor).await;
+    expect_sse(&mut body, "resize").await;
+    let payload = expect_sse(&mut body, "snapshot").await;
     assert_eq!(payload["chunk"], "first\nsecond\nthird\u{1b}[2;1H");
 }
 
@@ -599,31 +228,23 @@ async fn a_snapshot_ends_where_the_pane_left_its_cursor() {
 /// follows is only legible at the new one.
 #[tokio::test]
 async fn a_pane_resized_under_the_stream_reports_its_new_grid() {
-    let h = harness_with_stub_tmux().await;
-    let session = h.session("ariadne-resized").await;
+    let h = harness().await;
+    let session = h.lone_session("ariadne-resized").await;
     h.stub_pane("pane snapshot\n");
 
-    let response = h
-        .router
-        .clone()
-        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
-        .await
-        .unwrap();
-    let mut body = response.into_body();
+    let mut body = stream(&h, &session).await;
 
-    let (name, payload) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "resize");
+    let payload = expect_sse(&mut body, "resize").await;
     assert_eq!(payload["cols"], 80);
-    let (name, _) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "snapshot");
+    expect_sse(&mut body, "snapshot").await;
 
     // Somebody attached with a wider terminal.
-    h.stub_pane_screen("the redrawn pane\n");
-    h.stub_pane_geometry(120, 40, 0, 39);
+    h.pane_draws("the redrawn pane\n");
+    h.pane_geometry(120, 40, 0, 39);
 
     let mut sizes = Vec::new();
     for _ in 0..10 {
-        let (name, payload) = parse(&next_sse_message(&mut body).await);
+        let (name, payload) = parse_sse(&next_sse_message(&mut body).await);
         if name == "resize" {
             sizes.push((payload["cols"].as_u64(), payload["rows"].as_u64()));
             break;
@@ -635,11 +256,8 @@ async fn a_pane_resized_under_the_stream_reports_its_new_grid() {
         "the new grid is reported, and only when it changes"
     );
 
-    let (name, payload) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(
-        name, "snapshot",
-        "a resize is followed by the screen it applies to, not by more deltas"
-    );
+    // A resize is followed by the screen it applies to, not by more deltas.
+    let payload = expect_sse(&mut body, "snapshot").await;
     assert_eq!(payload["chunk"], "the redrawn pane\u{1b}[40;1H");
 }
 
@@ -655,13 +273,13 @@ async fn a_pane_resized_under_the_stream_reports_its_new_grid() {
 /// old-grid lines would keep arriving after it.
 #[tokio::test]
 async fn output_in_flight_when_the_pane_resizes_is_replaced_rather_than_reordered() {
-    let h = harness_with_stub_tmux().await;
-    let session = h.session("ariadne-straddle").await;
+    let h = harness().await;
+    let session = h.lone_session("ariadne-straddle").await;
     h.stub_pane("80-column screen\n");
     h.write_console_log(&session.id, "");
 
     // Writes every 50ms — faster than the stream polls — switching what it
-    // draws the moment the pane changes shape.
+    // Draws the moment the pane changes shape.
     let resized_pane = Arc::new(AtomicBool::new(false));
     let writer = {
         let log = h.console_log(&session.id);
@@ -684,26 +302,18 @@ async fn output_in_flight_when_the_pane_resizes_is_replaced_rather_than_reordere
         })
     };
 
-    let response = h
-        .router
-        .clone()
-        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
-        .await
-        .unwrap();
-    let mut body = response.into_body();
-    let (name, _) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "resize");
-    let (name, _) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "snapshot");
+    let mut body = stream(&h, &session).await;
+    expect_sse(&mut body, "resize").await;
+    expect_sse(&mut body, "snapshot").await;
 
     // Somebody attached with a wider terminal, mid-output.
-    h.stub_pane_screen("120-column screen\n");
-    h.stub_pane_geometry(120, 40, 0, 39);
+    h.pane_draws("120-column screen\n");
+    h.pane_geometry(120, 40, 0, 39);
     resized_pane.store(true, Ordering::SeqCst);
 
     let mut resized = false;
     for _ in 0..60 {
-        let (name, _) = parse(&next_sse_message(&mut body).await);
+        let (name, _) = parse_sse(&next_sse_message(&mut body).await);
         if name == "resize" {
             resized = true;
             break;
@@ -711,18 +321,15 @@ async fn output_in_flight_when_the_pane_resizes_is_replaced_rather_than_reordere
     }
     assert!(resized, "the resize is reported");
 
-    let (name, payload) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(
-        name, "snapshot",
-        "a resize is followed by a screen taken at the new grid, not by the \
-         output that was waiting to go out at the old one"
-    );
+    // A resize is followed by a screen taken at the new grid, not by the
+    // Output that was waiting to go out at the old one.
+    let payload = expect_sse(&mut body, "snapshot").await;
     assert_eq!(payload["chunk"], "120-column screen\u{1b}[40;1H");
 
     // The tail moved past the dropped bytes with it, so nothing drawn at the
-    // old grid arrives with what the pane writes next either.
+    // Old grid arrives with what the pane writes next either.
     for _ in 0..4 {
-        let (name, payload) = parse(&next_sse_message(&mut body).await);
+        let (name, payload) = parse_sse(&next_sse_message(&mut body).await);
         let chunk = payload["chunk"].as_str().unwrap_or("");
         assert!(
             !chunk.contains("DRAWN-AT-80-COLUMNS"),
@@ -741,28 +348,20 @@ async fn output_in_flight_when_the_pane_resizes_is_replaced_rather_than_reordere
 /// the failed attempt would have skipped.
 #[tokio::test]
 async fn output_while_the_resized_pane_cannot_be_captured_waits_for_the_new_screen() {
-    let h = harness_with_stub_tmux().await;
-    let session = h.session("ariadne-capture-fails").await;
+    let h = harness().await;
+    let session = h.lone_session("ariadne-capture-fails").await;
     h.stub_pane("80-column screen\n");
     h.write_console_log(&session.id, "");
 
-    let response = h
-        .router
-        .clone()
-        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
-        .await
-        .unwrap();
-    let mut body = response.into_body();
-    let (name, _) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "resize");
-    let (name, _) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "snapshot");
+    let mut body = stream(&h, &session).await;
+    expect_sse(&mut body, "resize").await;
+    expect_sse(&mut body, "snapshot").await;
 
     // The pane is resized and stops being capturable at the same time. No
-    // output yet, so nothing can be in flight and the stream has nothing to
-    // say until it has a screen.
-    h.stub_capture_fails(true);
-    h.stub_pane_geometry(120, 40, 0, 39);
+    // Output yet, so nothing can be in flight and the stream has nothing to.
+    // Say until it has a screen.
+    h.capture_fails(true);
+    h.pane_geometry(120, 40, 0, 39);
     tokio::time::sleep(Duration::from_millis(1_200)).await;
 
     // Now the pane draws — at 120 columns, which the client knows nothing of.
@@ -781,25 +380,21 @@ async fn output_while_the_resized_pane_cannot_be_captured_waits_for_the_new_scre
     );
 
     // The pane can be read again: a grid, then the screen that goes with it.
-    h.stub_pane_screen("120-column screen\n");
-    h.stub_capture_fails(false);
+    h.pane_draws("120-column screen\n");
+    h.capture_fails(false);
 
-    let (name, payload) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "resize", "the recovery reports the grid first");
+    // The recovery reports the grid first.
+    let payload = expect_sse(&mut body, "resize").await;
     assert_eq!(payload["cols"], 120);
-    let (name, payload) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(
-        name, "snapshot",
-        "and the screen taken at it immediately after"
-    );
+    // And the screen taken at it immediately after.
+    let payload = expect_sse(&mut body, "snapshot").await;
     assert_eq!(payload["chunk"], "120-column screen\u{1b}[40;1H");
 
     // What the pane wrote while it could not be captured is part of that
-    // screen now, not something still owed to the client.
+    // Screen now, not something still owed to the client.
     log.write_all(b"AFTER-THE-RECOVERY\n").await.unwrap();
     log.flush().await.unwrap();
-    let (name, payload) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "delta");
+    let payload = expect_sse(&mut body, "delta").await;
     let chunk = payload["chunk"].as_str().unwrap();
     assert!(chunk.contains("AFTER-THE-RECOVERY"), "chunk: {chunk:?}");
     assert!(
@@ -815,29 +410,21 @@ async fn output_while_the_resized_pane_cannot_be_captured_waits_for_the_new_scre
 /// grid anyone happened to confirm.
 #[tokio::test]
 async fn output_is_withheld_once_the_pane_stops_answering() {
-    let h = harness_with_stub_tmux().await;
-    let session = h.session("ariadne-unanswering").await;
+    let h = harness().await;
+    let session = h.lone_session("ariadne-unanswering").await;
     h.stub_pane("80-column screen\n");
     h.write_console_log(&session.id, "");
 
-    let mut body = h
-        .router
-        .clone()
-        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
-        .await
-        .unwrap()
-        .into_body();
-    let (name, payload) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "resize");
+    let mut body = stream(&h, &session).await;
+    let payload = expect_sse(&mut body, "resize").await;
     assert_eq!(payload["cols"], 80);
-    let (name, _) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "snapshot");
+    expect_sse(&mut body, "snapshot").await;
 
     // The pane is resized and stops answering in the same breath, so the
-    // daemon has no way to learn about the resize: the failure is all it sees.
-    h.stub_pane_screen("120-column screen\n");
-    h.stub_pane_geometry(120, 40, 0, 39);
-    h.stub_measure_fails(true);
+    // Daemon has no way to learn about the resize: the failure is all it sees.
+    h.pane_draws("120-column screen\n");
+    h.pane_geometry(120, 40, 0, 39);
+    h.measure_fails(true);
     // Long enough for the follower to have taken that in.
     tokio::time::sleep(Duration::from_millis(1_400)).await;
 
@@ -856,16 +443,14 @@ async fn output_is_withheld_once_the_pane_stops_answering() {
     );
 
     // The pane answers again, and the answer is the grid it had quietly moved
-    // to; the screen replaces what was withheld.
-    h.stub_measure_fails(false);
-    let (name, payload) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "resize");
+    // To; the screen replaces what was withheld.
+    h.measure_fails(false);
+    let payload = expect_sse(&mut body, "resize").await;
     assert_eq!(
         (payload["cols"].as_u64(), payload["rows"].as_u64()),
         (Some(120), Some(40))
     );
-    let (name, payload) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "snapshot");
+    let payload = expect_sse(&mut body, "snapshot").await;
     assert_eq!(payload["chunk"], "120-column screen\u{1b}[40;1H");
 }
 
@@ -875,19 +460,13 @@ async fn output_is_withheld_once_the_pane_stops_answering() {
 /// thing that must not happen is `end`, which retires the viewer for good.
 #[tokio::test]
 async fn tmux_being_unreachable_does_not_end_a_session() {
-    let h = harness_with_stub_tmux().await;
-    let session = h.session("ariadne-no-tmux").await;
+    let h = harness().await;
+    let session = h.lone_session("ariadne-no-tmux").await;
     h.stub_pane("a screen behind a broken tmux\n");
     h.write_console_log(&session.id, "console output\n");
-    h.stub_tmux_reachable(false);
+    h.tmux_vanishes();
 
-    let mut body = h
-        .router
-        .clone()
-        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
-        .await
-        .unwrap()
-        .into_body();
+    let mut body = stream(&h, &session).await;
     for _ in 0..3 {
         match next_sse(&mut body, Duration::from_millis(500)).await {
             Sse::Silent => {}
@@ -898,22 +477,16 @@ async fn tmux_being_unreachable_does_not_end_a_session() {
         }
     }
     assert!(
-        h.store
-            .get_session(&session.id)
-            .await
-            .unwrap()
-            .status()
+        h.session_status(&session).await
             .is_live(),
         "a session is not over because tmux could not be run"
     );
 
-    // tmux comes back: the same connection produces the screen it owed.
-    h.stub_tmux_reachable(true);
-    let (name, payload) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "resize");
+    // Tmux comes back: the same connection produces the screen it owed.
+    h.tmux_returns();
+    let payload = expect_sse(&mut body, "resize").await;
     assert_eq!(payload["cols"], 80);
-    let (name, payload) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "snapshot");
+    let payload = expect_sse(&mut body, "snapshot").await;
     assert_eq!(
         payload["chunk"],
         "a screen behind a broken tmux\u{1b}[24;1H"
@@ -927,30 +500,35 @@ async fn tmux_being_unreachable_does_not_end_a_session() {
 /// the one moment the client has nothing to fall back on.
 #[tokio::test]
 async fn a_pane_that_resizes_during_the_opening_capture_is_reported_at_the_grid_it_reached() {
-    let h = harness_with_stub_tmux().await;
-    let session = h.session("ariadne-resized-on-open").await;
+    let h = harness().await;
+    let session = h.lone_session("ariadne-resized-on-open").await;
     h.stub_pane("132-column screen\n");
-    // Armed before the first request: the pane reads 80×24, and reading it
-    // turns it into a 132×43 one.
-    h.stub_resize_on_capture(132, 43, 0, 42);
 
-    let mut body = h
-        .router
-        .clone()
-        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
-        .await
-        .unwrap()
-        .into_body();
-
-    let (name, payload) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "resize");
+    // A connection that cannot get a screen and the grid it was drawn at to
+    // agree closes without an `end` and leaves the client to open another —
+    // which is what a client does, so this does too, arming the pane again
+    // each time so that every attempt faces the same resize mid-capture: the
+    // pane reads 80×24, and reading it turns it into a 132×43 one.
+    let (payload, mut body) = loop {
+        h.pane_geometry(80, 24, 0, 23);
+        h.resize_on_capture(132, 43, 0, 42);
+        let mut body = stream(&h, &session).await;
+        match next_sse(&mut body, TIMEOUT).await {
+            Sse::Message(message) => {
+                let (name, payload) = parse_sse(&message);
+                assert_eq!(name, "resize", "expected the opening grid, got {name}");
+                break (payload, body);
+            }
+            Sse::Closed => continue,
+            Sse::Silent => panic!("the stream neither opened nor gave way"),
+        }
+    };
     assert_eq!(
         (payload["cols"].as_u64(), payload["rows"].as_u64()),
         (Some(132), Some(43)),
         "the opening grid is the captured screen's, not the one measured before it"
     );
-    let (name, payload) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "snapshot");
+    let payload = expect_sse(&mut body, "snapshot").await;
     assert_eq!(payload["chunk"], "132-column screen\u{1b}[43;1H");
 }
 
@@ -960,70 +538,54 @@ async fn a_pane_that_resizes_during_the_opening_capture_is_reported_at_the_grid_
 /// and while resynchronising alike.
 #[tokio::test]
 async fn a_pane_that_cannot_be_measured_is_not_reported_as_a_finished_session() {
-    let h = harness_with_stub_tmux().await;
-    let session = h.session("ariadne-unmeasurable").await;
+    let h = harness().await;
+    let session = h.lone_session("ariadne-unmeasurable").await;
     h.stub_pane("a screen nobody can measure\n");
     h.write_console_log(&session.id, "console output\n");
-    h.stub_measure_fails(true);
+    h.measure_fails(true);
 
     // Opening: the session is live and tmux still has it, so there is nothing
-    // to declare — least of all that it is over.
-    let mut body = h
-        .router
-        .clone()
-        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
-        .await
-        .unwrap()
-        .into_body();
+    // To declare — least of all that it is over.
+    let mut body = stream(&h, &session).await;
     match next_sse(&mut body, Duration::from_millis(700)).await {
         Sse::Silent => {}
         other => panic!("expected silence while the pane cannot be measured, got {other:?}"),
     }
 
-    h.stub_measure_fails(false);
-    let (name, payload) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "resize");
+    h.measure_fails(false);
+    let payload = expect_sse(&mut body, "resize").await;
     assert_eq!(payload["cols"], 80);
-    let (name, payload) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "snapshot");
+    let payload = expect_sse(&mut body, "snapshot").await;
     assert_eq!(payload["chunk"], "a screen nobody can measure\u{1b}[24;1H");
 
     // And again mid-stream: a resize sends the follower looking for a screen,
-    // and the measurements it needs start failing while it looks.
-    h.stub_pane_screen("120-column screen\n");
-    h.stub_pane_geometry(120, 40, 0, 39);
+    // And the measurements it needs start failing while it looks.
+    h.pane_draws("120-column screen\n");
+    h.pane_geometry(120, 40, 0, 39);
     tokio::time::sleep(Duration::from_millis(1_100)).await;
-    h.stub_measure_fails(true);
+    h.measure_fails(true);
 
     for _ in 0..3 {
         match next_sse(&mut body, Duration::from_millis(400)).await {
             Sse::Silent => {}
             Sse::Message(message) => {
-                let (name, _) = parse(&message);
+                let (name, _) = parse_sse(&message);
                 assert_ne!(name, "end", "a live session must not be declared over");
             }
             Sse::Closed => break,
         }
     }
 
-    h.stub_measure_fails(false);
+    h.measure_fails(false);
     // Whether the connection above survived the wait or gave way to a fresh
-    // one, what the client ends up with is the new grid and its screen.
-    let mut body = h
-        .router
-        .clone()
-        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
-        .await
-        .unwrap()
-        .into_body();
-    let (name, payload) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "resize");
+    // One, what the client ends up with is the new grid and its screen.
+    let mut body = stream(&h, &session).await;
+    let payload = expect_sse(&mut body, "resize").await;
     assert_eq!(
         (payload["cols"].as_u64(), payload["rows"].as_u64()),
         (Some(120), Some(40))
     );
-    let (name, payload) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "snapshot");
+    let payload = expect_sse(&mut body, "snapshot").await;
     assert_eq!(payload["chunk"], "120-column screen\u{1b}[40;1H");
 }
 
@@ -1034,21 +596,15 @@ async fn a_pane_that_cannot_be_measured_is_not_reported_as_a_finished_session() 
 /// takes — so that every reconnect is another chance at a coherent screen.
 #[tokio::test]
 async fn a_pane_that_cannot_be_captured_is_not_reported_as_a_finished_session() {
-    let h = harness_with_stub_tmux().await;
-    let session = h.session("ariadne-unreadable").await;
+    let h = harness().await;
+    let session = h.lone_session("ariadne-unreadable").await;
     h.stub_pane("a screen nobody can read\n");
     h.write_console_log(&session.id, "console output\n");
-    h.stub_capture_fails(true);
+    h.capture_fails(true);
 
     // First connection: nothing to say, and it says nothing — no `end`, and
-    // no console log served as though the session were over.
-    let mut body = h
-        .router
-        .clone()
-        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
-        .await
-        .unwrap()
-        .into_body();
+    // No console log served as though the session were over.
+    let mut body = stream(&h, &session).await;
     let mut closed = false;
     for _ in 0..10 {
         match next_sse(&mut body, Duration::from_millis(1_500)).await {
@@ -1066,27 +622,19 @@ async fn a_pane_that_cannot_be_captured_is_not_reported_as_a_finished_session() 
     );
 
     // Reconnecting while the pane still cannot be read: same again, and still
-    // no `end` — the client is free to keep trying.
-    let mut body = h
-        .router
-        .clone()
-        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
-        .await
-        .unwrap()
-        .into_body();
+    // No `end` — the client is free to keep trying.
+    let mut body = stream(&h, &session).await;
     match next_sse(&mut body, Duration::from_millis(700)).await {
         Sse::Silent => {}
         other => panic!("expected silence while the pane cannot be read, got {other:?}"),
     }
 
     // It can be read again: the connection that is already open recovers on
-    // its own, screen and grid together.
-    h.stub_capture_fails(false);
-    let (name, payload) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "resize");
+    // Its own, screen and grid together.
+    h.capture_fails(false);
+    let payload = expect_sse(&mut body, "resize").await;
     assert_eq!(payload["cols"], 80);
-    let (name, payload) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "snapshot");
+    let payload = expect_sse(&mut body, "snapshot").await;
     assert_eq!(payload["chunk"], "a screen nobody can read\u{1b}[24;1H");
 }
 
@@ -1097,33 +645,25 @@ async fn a_pane_that_cannot_be_captured_is_not_reported_as_a_finished_session() 
 /// measured beforehand would be the original corruption with extra steps.
 #[tokio::test]
 async fn a_pane_that_resizes_while_it_is_read_is_not_reported_at_the_grid_it_left() {
-    let h = harness_with_stub_tmux().await;
-    let session = h.session("ariadne-resized-mid-capture").await;
+    let h = harness().await;
+    let session = h.lone_session("ariadne-resized-mid-capture").await;
     h.stub_pane("80-column screen\n");
 
-    let mut body = h
-        .router
-        .clone()
-        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
-        .await
-        .unwrap()
-        .into_body();
-    let (name, payload) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "resize");
+    let mut body = stream(&h, &session).await;
+    let payload = expect_sse(&mut body, "resize").await;
     assert_eq!(payload["cols"], 80);
-    let (name, _) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "snapshot");
+    expect_sse(&mut body, "snapshot").await;
 
     // The pane is 120 columns now, and the next capture of it turns it into a
     // 132-column one — a second resize landing inside the read.
-    h.stub_pane_screen("132-column screen\n");
-    h.stub_pane_geometry(120, 40, 0, 39);
-    h.stub_resize_on_capture(132, 43, 0, 42);
+    h.pane_draws("132-column screen\n");
+    h.pane_geometry(120, 40, 0, 39);
+    h.resize_on_capture(132, 43, 0, 42);
 
     let mut sizes = Vec::new();
     let mut snapshot = None;
     for _ in 0..12 {
-        let (name, payload) = parse(&next_sse_message(&mut body).await);
+        let (name, payload) = parse_sse(&next_sse_message(&mut body).await);
         match name.as_str() {
             "resize" => sizes.push((payload["cols"].as_u64(), payload["rows"].as_u64())),
             "snapshot" => {
@@ -1152,82 +692,53 @@ async fn a_pane_that_resizes_while_it_is_read_is_not_reported_at_the_grid_it_lef
 /// will ever be.
 #[tokio::test]
 async fn a_finished_session_is_served_at_the_grid_it_was_last_seen_at() {
-    let h = harness().await;
-    let session = h.dead_session().await;
+    let h = gone_tmux().await;
+    let session = dead_session(&h).await;
     h.write_console_log(&session.id, "output from a 120-column pane\n");
     h.launcher.record_pane_size(&session.id, 120, 40).await;
 
-    let response = h
-        .router
-        .clone()
-        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
-        .await
-        .unwrap();
-    let mut body = response.into_body();
+    let mut body = stream(&h, &session).await;
 
-    let (name, payload) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "resize", "a finished log has a width too");
+    // A finished log has a width too.
+    let payload = expect_sse(&mut body, "resize").await;
     assert_eq!(payload["cols"], 120);
     assert_eq!(payload["rows"], 40);
 
-    let (name, payload) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "snapshot");
+    let payload = expect_sse(&mut body, "snapshot").await;
     assert_eq!(
         payload["chunk"], "output from a 120-column pane\n",
         "the console log is replayed as written, cursor sequence and all"
     );
-}
 
-/// Nothing was ever recorded — the session ended before anyone watched it —
-/// so there is no grid to report and the client falls back to its own default.
-#[tokio::test]
-async fn a_finished_session_never_measured_reports_no_grid() {
-    let h = harness().await;
-    let session = h.dead_session().await;
-    h.write_console_log(&session.id, "unmeasured output\n");
-
-    let response = h
-        .router
-        .clone()
-        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
-        .await
-        .unwrap();
-    let mut body = response.into_body();
-
-    let (name, _) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(
-        name, "snapshot",
-        "no size was ever known, so none is claimed"
-    );
+    // Nothing was ever recorded for this one — it ended before anyone watched
+    // It — so there is no grid to report and the client falls back to its own.
+    // Default.
+    let unmeasured = h.lone_session("ariadne-test-unmeasured").await;
+    h.write_console_log(&unmeasured.id, "unmeasured output\n");
+    let mut body = stream(&h, &unmeasured).await;
+    // No size was ever known, so none is claimed.
+    expect_sse(&mut body, "snapshot").await;
 }
 
 /// pipe-pane can stop mid-character. Those bytes are part of "whatever
 /// remains", so they go out lossily instead of vanishing.
 #[tokio::test]
 async fn a_half_written_character_still_reaches_the_client() {
-    let h = harness().await;
-    let session = h.dead_session().await;
+    let h = gone_tmux().await;
+    let session = dead_session(&h).await;
     let mut console = b"cut off: ".to_vec();
     // Two thirds of a three-byte character.
     console.extend_from_slice(&"│".as_bytes()[..2]);
     h.write_console_log(&session.id, &console);
 
-    let response = h
-        .router
-        .clone()
-        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
-        .await
-        .unwrap();
-    let mut body = response.into_body();
+    let mut body = stream(&h, &session).await;
 
-    let (name, payload) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "snapshot");
+    let payload = expect_sse(&mut body, "snapshot").await;
     assert_eq!(
         payload["chunk"], "cut off: \u{fffd}",
         "the truncated character is replaced, not dropped"
     );
-    let (name, _) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "end");
+    expect_sse(&mut body, "end").await;
 }
 
 /// A pane's writes, not a timer, are what move output along.
@@ -1240,22 +751,14 @@ async fn a_half_written_character_still_reaches_the_client() {
 /// hits that case too.
 #[tokio::test]
 async fn output_reaches_the_client_as_soon_as_it_is_written() {
-    let h = harness_with_stub_tmux().await;
-    let session = h.session("ariadne-prompt").await;
+    let h = harness().await;
+    let session = h.lone_session("ariadne-prompt").await;
     h.stub_pane("pane snapshot\n");
     h.write_console_log(&session.id, "");
 
-    let mut body = h
-        .router
-        .clone()
-        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
-        .await
-        .unwrap()
-        .into_body();
-    let (name, _) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "resize");
-    let (name, _) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "snapshot");
+    let mut body = stream(&h, &session).await;
+    expect_sse(&mut body, "resize").await;
+    expect_sse(&mut body, "snapshot").await;
 
     let mut log = tokio::fs::OpenOptions::new()
         .append(true)
@@ -1265,7 +768,7 @@ async fn output_reaches_the_client_as_soon_as_it_is_written() {
     let mut latencies = Vec::new();
     for i in 0..5 {
         // Long enough apart that each one is a keystroke into a quiet pane
-        // rather than the tail of the burst before it.
+        // Rather than the tail of the burst before it.
         tokio::time::sleep(Duration::from_millis(150)).await;
         let written = Instant::now();
         log.write_all(format!("echo {i}\n").as_bytes())
@@ -1273,7 +776,7 @@ async fn output_reaches_the_client_as_soon_as_it_is_written() {
             .unwrap();
         log.flush().await.unwrap();
 
-        let (name, payload) = parse(&next_sse_message(&mut body).await);
+        let (name, payload) = parse_sse(&next_sse_message(&mut body).await);
         latencies.push(written.elapsed());
         assert_eq!(name, "delta");
         assert!(
@@ -1296,25 +799,17 @@ async fn output_reaches_the_client_as_soon_as_it_is_written() {
 /// the splitting, half-written characters included.
 #[tokio::test]
 async fn a_burst_bigger_than_one_frame_arrives_as_several_deltas() {
-    let h = harness_with_stub_tmux().await;
-    let session = h.session("ariadne-burst").await;
+    let h = harness().await;
+    let session = h.lone_session("ariadne-burst").await;
     h.stub_pane("pane snapshot\n");
     h.write_console_log(&session.id, "");
 
-    let mut body = h
-        .router
-        .clone()
-        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
-        .await
-        .unwrap()
-        .into_body();
-    let (name, _) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "resize");
-    let (name, _) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "snapshot");
+    let mut body = stream(&h, &session).await;
+    expect_sse(&mut body, "resize").await;
+    expect_sse(&mut body, "snapshot").await;
 
     // Two and a bit frames' worth in one write, with a multi-byte character
-    // every few bytes so that the cap is certain to fall inside one.
+    // Every few bytes so that the cap is certain to fall inside one.
     let burst = "ab│cd".repeat(MAX_CHUNK * 2 / 5);
     assert!(burst.len() > MAX_CHUNK * 2);
     let mut log = tokio::fs::OpenOptions::new()
@@ -1325,20 +820,7 @@ async fn a_burst_bigger_than_one_frame_arrives_as_several_deltas() {
     log.write_all(burst.as_bytes()).await.unwrap();
     log.flush().await.unwrap();
 
-    let mut received = String::new();
-    let mut frames = 0;
-    while received.len() < burst.len() {
-        let (name, payload) = parse(&next_sse_message(&mut body).await);
-        assert_eq!(name, "delta");
-        let chunk = payload["chunk"].as_str().unwrap();
-        assert!(
-            chunk.len() <= MAX_CHUNK,
-            "no frame is bigger than the cap: {}",
-            chunk.len()
-        );
-        received.push_str(chunk);
-        frames += 1;
-    }
+    let (received, frames) = drained(&mut body, burst.len()).await;
     assert!(frames >= 3, "the burst was split, not sent whole: {frames}");
     assert_eq!(
         received, burst,
@@ -1353,22 +835,14 @@ async fn a_burst_bigger_than_one_frame_arrives_as_several_deltas() {
 /// times the size it promises.
 #[tokio::test]
 async fn a_burst_of_invalid_bytes_is_capped_by_what_it_decodes_to() {
-    let h = harness_with_stub_tmux().await;
-    let session = h.session("ariadne-binary").await;
+    let h = harness().await;
+    let session = h.lone_session("ariadne-binary").await;
     h.stub_pane("pane snapshot\n");
     h.write_console_log(&session.id, "");
 
-    let mut body = h
-        .router
-        .clone()
-        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
-        .await
-        .unwrap()
-        .into_body();
-    let (name, _) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "resize");
-    let (name, _) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "snapshot");
+    let mut body = stream(&h, &session).await;
+    expect_sse(&mut body, "resize").await;
+    expect_sse(&mut body, "snapshot").await;
 
     // A cap's worth of bytes, none of them valid on its own.
     let burst = vec![0xffu8; MAX_CHUNK];
@@ -1381,20 +855,7 @@ async fn a_burst_of_invalid_bytes_is_capped_by_what_it_decodes_to() {
     log.write_all(&burst).await.unwrap();
     log.flush().await.unwrap();
 
-    let mut received = String::new();
-    let mut frames = 0;
-    while received.len() < expected.len() {
-        let (name, payload) = parse(&next_sse_message(&mut body).await);
-        assert_eq!(name, "delta");
-        let chunk = payload["chunk"].as_str().unwrap();
-        assert!(
-            chunk.len() <= MAX_CHUNK,
-            "no frame is bigger than the cap: {}",
-            chunk.len()
-        );
-        received.push_str(chunk);
-        frames += 1;
-    }
+    let (received, frames) = drained(&mut body, expected.len()).await;
     assert!(frames >= 3, "the decoded burst was split: {frames}");
     assert_eq!(
         received, expected,
@@ -1407,9 +868,9 @@ async fn a_burst_of_invalid_bytes_is_capped_by_what_it_decodes_to() {
 #[tokio::test]
 #[ignore = "requires tmux"]
 async fn a_live_session_streams_new_output_until_it_is_killed() {
-    let h = harness_with_real_tmux().await;
+    let h = harness().tmux(Tmux::Real).await;
     let tmux_name = format!("ariadne-test-logstream-{}", std::process::id());
-    let session = h.session(&tmux_name).await;
+    let session = h.lone_session(&tmux_name).await;
     let run_dir = h.launcher.cfg.run_dir.join(&session.id);
     std::fs::create_dir_all(&run_dir).unwrap();
 
@@ -1430,28 +891,20 @@ async fn a_live_session_streams_new_output_until_it_is_killed() {
         .await
         .unwrap();
 
-    let response = h
-        .router
-        .clone()
-        .oneshot(get(&format!("/v1/sessions/{}/logs/stream", session.id)))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    let mut body = response.into_body();
+    let mut body = stream(&h, &session).await;
 
-    let (name, payload) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "resize", "the pane's grid comes first");
+    // The pane's grid comes first.
+    let payload = expect_sse(&mut body, "resize").await;
     assert!(
         payload["cols"].as_u64().is_some_and(|c| c > 0),
         "a real pane reports a real grid: {payload}"
     );
 
-    let (name, _) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "snapshot", "then the pane snapshot");
+    // Then the pane snapshot.
+    expect_sse(&mut body, "snapshot").await;
 
     // New output reaches the client as a delta, not as a fresh snapshot.
-    let (name, payload) = parse(&next_sse_message(&mut body).await);
-    assert_eq!(name, "delta");
+    let payload = expect_sse(&mut body, "delta").await;
     assert!(
         payload["chunk"].as_str().unwrap().contains("tick"),
         "delta carries the new pane output: {payload}"
@@ -1462,32 +915,26 @@ async fn a_live_session_streams_new_output_until_it_is_killed() {
     // Trailing output may still be drained; `end` is what closes the stream.
     let mut last = String::new();
     for _ in 0..10 {
-        let (name, _) = parse(&next_sse_message(&mut body).await);
+        let (name, _) = parse_sse(&next_sse_message(&mut body).await);
         last = name;
         if last == "end" {
             break;
         }
     }
     assert_eq!(last, "end", "killing the session ends the stream");
-    let eof = tokio::time::timeout(TIMEOUT, body.frame())
-        .await
-        .expect("the stream must close after end");
-    assert!(eof.is_none(), "nothing follows the end event");
+    sse_is_closed(&mut body).await;
 }
 
 #[tokio::test]
 async fn an_unknown_session_yields_the_standard_error_envelope() {
     let h = harness().await;
 
-    let response = h
-        .router
-        .clone()
-        .oneshot(get("/v1/sessions/01ARZ3NDEKTSV4RRFFQ69G5FAV/logs/stream"))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
-    let body = response.into_body().collect().await.unwrap().to_bytes();
-    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(payload["error"]["code"], "not_found");
-    assert!(payload["error"]["message"].is_string());
+    let envelope = h
+        .error(
+            get("/v1/sessions/01ARZ3NDEKTSV4RRFFQ69G5FAV/logs/stream"),
+            StatusCode::NOT_FOUND,
+        )
+        .await;
+    assert_eq!(envelope.error.code, "not_found");
+    assert!(!envelope.error.message.is_empty());
 }

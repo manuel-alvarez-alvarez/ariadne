@@ -1,6 +1,10 @@
-//! Launcher: turns "spawn an agent for X" into worktree + session row + tmux
-//! process. Used by the debug spawn endpoint now and by the scheduler loop
-//! once autonomous orchestration lands.
+//! Launcher: turns "spawn an agent for X" into a worktree, a session row and
+//! a tmux process.
+//!
+//! A launch is refused rather than duplicated. Every spawn asks first whether
+//! the role already has a live session, and counts "tmux could not be asked"
+//! as a yes: a wrong no puts two agents on one piece of work, where a wrong
+//! yes costs a scheduler tick that asks again.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -9,7 +13,7 @@ use anyhow::{Context, Result, anyhow};
 
 use ariadne_core::spawn_plan::SpawnPlanFile;
 use ariadne_core::{AgentKind, AttentionReason, PromptKind, Role, SessionStatus, TaskStatus};
-use ariadne_store::{AgentSession, NewSession, Repository, SessionFilter, Store, Task};
+use ariadne_store::{AgentSession, NewSession, Profile, Repository, SessionFilter, Store, Task};
 
 use crate::agents::{SpawnCtx, SpawnPlan, adapter_for, detect_first_available, prompts};
 use crate::config::Config;
@@ -384,6 +388,66 @@ impl Launcher {
         Ok(())
     }
 
+    /// The session of `role` on this task there is something to resume, and the
+    /// agent conversation it left behind: the most recent one with a captured
+    /// internal id.
+    ///
+    /// Codex and opencode report theirs from a hook, so a session that never
+    /// got going may have none, and that is nothing to resume — the caller
+    /// spawns afresh instead. `profile_id` tells a task's reviewers apart,
+    /// which is the only thing that does; every other role has one session per
+    /// task.
+    async fn resumable_session(
+        &self,
+        task_id: &str,
+        role: Role,
+        profile_id: Option<&str>,
+    ) -> Result<Option<(AgentSession, String)>> {
+        let found = self
+            .store
+            .list_sessions(SessionFilter {
+                task_id: Some(task_id.to_string()),
+                ..Default::default()
+            })
+            .await?
+            .into_iter()
+            .rev()
+            .find(|s| {
+                s.role() == role
+                    && profile_id.is_none_or(|wanted| s.profile_id == wanted)
+                    && s.internal_session_id.is_some()
+            });
+        Ok(found.map(|session| {
+            let internal = session
+                .internal_session_id
+                .clone()
+                .expect("filtered above");
+            (session, internal)
+        }))
+    }
+
+    /// The tail every resume shares, once the row has been put back on its
+    /// feet: the agent launched again in `cwd`, on the conversation `internal`
+    /// names, with `instruction` to come back to.
+    async fn launch_resumed(
+        &self,
+        session: &AgentSession,
+        profile: &Profile,
+        cwd: PathBuf,
+        internal: &str,
+        instruction: &str,
+    ) -> Result<AgentSession> {
+        let ctx = self
+            .spawn_ctx(session, cwd, prompts::system_prompt(profile), String::new())
+            .await?;
+        let plan = adapter_for(session.agent_kind()).plan_resume(&ctx, internal, instruction)?;
+        self.launch(session, plan).await?;
+        self.store
+            .get_session(&session.id)
+            .await
+            .map_err(Into::into)
+    }
+
     /// Drop the attention carried by the sessions this fresh one replaces.
     ///
     /// A session that ended needing the user keeps saying so until something
@@ -650,30 +714,12 @@ impl Launcher {
         let task = self.store.get_task(task_id).await?;
         let profile = self.store.get_profile(profile_id).await?;
 
-        // Find this reviewer's most recent session with a captured internal id
-        // (codex and opencode report theirs from a hook, so a session that
-        // never got going may have none — that is nothing to resume).
-        let previous = self
-            .store
-            .list_sessions(SessionFilter {
-                task_id: Some(task.id.clone()),
-                ..Default::default()
-            })
+        let Some((previous, internal)) = self
+            .resumable_session(&task.id, Role::Reviewer, Some(&profile.id))
             .await?
-            .into_iter()
-            .rev()
-            .find(|s| {
-                s.role() == Role::Reviewer
-                    && s.profile_id == profile.id
-                    && s.internal_session_id.is_some()
-            });
-        let Some(previous) = previous else {
+        else {
             return self.spawn_reviewer(task_id, profile_id).await;
         };
-        let internal = previous
-            .internal_session_id
-            .clone()
-            .expect("filtered above");
 
         let worktree = self.reviewer_worktree(&task, &profile.id).await?;
         if self.tmux.has_session(&previous.tmux_session).await {
@@ -688,20 +734,8 @@ impl Launcher {
             )
             .await?;
 
-        let ctx = self
-            .spawn_ctx(
-                &session,
-                worktree,
-                prompts::system_prompt(&profile),
-                String::new(),
-            )
-            .await?;
-        let plan = adapter_for(session.agent_kind()).plan_resume(&ctx, &internal, instruction)?;
-        self.launch(&session, plan).await?;
-        self.store
-            .get_session(&session.id)
+        self.launch_resumed(&session, &profile, worktree, &internal, instruction)
             .await
-            .map_err(Into::into)
     }
 
     /// Resume the engineer's previous agent session with a new instruction,
@@ -712,24 +746,12 @@ impl Launcher {
         let task = self.store.get_task(task_id).await?;
         let profile = self.store.get_profile(&task.engineer_profile_id).await?;
 
-        // Find the most recent engineer session with a captured internal id.
-        let previous = self
-            .store
-            .list_sessions(SessionFilter {
-                task_id: Some(task.id.clone()),
-                ..Default::default()
-            })
+        let Some((previous, internal)) = self
+            .resumable_session(&task.id, Role::Engineer, None)
             .await?
-            .into_iter()
-            .rev()
-            .find(|s| s.role() == Role::Engineer && s.internal_session_id.is_some());
-        let Some(previous) = previous else {
+        else {
             return self.spawn_engineer(task_id).await;
         };
-        let internal = previous
-            .internal_session_id
-            .clone()
-            .expect("filtered above");
         // The tree it was working in, from the task or from the session's own
         // row, and a new one in its place where it is no longer on disk.
         let keep = task
@@ -751,20 +773,8 @@ impl Launcher {
             .restart_session(&previous.id, Some(&worktree.display().to_string()), None)
             .await?;
 
-        let ctx = self
-            .spawn_ctx(
-                &session,
-                worktree,
-                prompts::system_prompt(&profile),
-                String::new(),
-            )
-            .await?;
-        let plan = adapter_for(session.agent_kind()).plan_resume(&ctx, &internal, instruction)?;
-        self.launch(&session, plan).await?;
-        self.store
-            .get_session(&session.id)
+        self.launch_resumed(&session, &profile, worktree, &internal, instruction)
             .await
-            .map_err(Into::into)
     }
 
     /// Revive an ended session in a fresh tmux, continuing the same agent
@@ -836,24 +846,14 @@ impl Launcher {
         // Neither the worktree nor (for a reviewer) the round changes: this is
         // the same session put back on its feet, not a new round of work.
         let session = self.store.restart_session(&previous.id, None, None).await?;
-        let ctx = self
-            .spawn_ctx(
-                &session,
-                cwd,
-                prompts::system_prompt(&profile),
-                String::new(),
-            )
-            .await?;
-        let plan = adapter_for(session.agent_kind()).plan_resume(
-            &ctx,
+        self.launch_resumed(
+            &session,
+            &profile,
+            cwd,
             &internal,
             instruction.unwrap_or(""),
-        )?;
-        self.launch(&session, plan).await?;
-        self.store
-            .get_session(&session.id)
-            .await
-            .map_err(Into::into)
+        )
+        .await
     }
 
     /// Kill a session's tmux process and mark it exited.

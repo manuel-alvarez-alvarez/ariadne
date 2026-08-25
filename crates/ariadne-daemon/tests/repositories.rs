@@ -5,159 +5,19 @@
 //! exists and has a commit — that the same checkout is registered once per
 //! base branch, and that every write reaches the domain-event stream.
 
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+mod common;
 
-use axum::Router;
-use axum::body::Body;
-use axum::http::{Method, Request, StatusCode, header};
-use http_body_util::BodyExt;
-use serde::de::DeserializeOwned;
-use tokio::sync::broadcast::Receiver;
-use tower::ServiceExt;
+use axum::http::StatusCode;
 
-use ariadne_api::error::ErrorBody;
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::stream::DomainEvent;
-use ariadne_daemon::bus::{BusEvent, EventBus};
-use ariadne_daemon::config::Config;
-use ariadne_daemon::gitwt::GitManager;
-use ariadne_daemon::http::{self, AppState};
-use ariadne_daemon::launcher::Launcher;
-use ariadne_daemon::logbuf::LogBuffer;
-use ariadne_daemon::tmux::TmuxManager;
-use ariadne_store::Store;
 
-/// How long a test waits for an event before giving up.
-const TIMEOUT: Duration = Duration::from_secs(5);
-
-struct Harness {
-    bus: EventBus,
-    router: Router,
-    dir: tempfile::TempDir,
-}
-
-async fn harness() -> Harness {
-    let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(dir.path().join("test.db")).await.unwrap();
-    // Installed before anything writes, exactly as the daemon does at startup.
-    let bus = ariadne_daemon::bus::start(store.clone());
-    let cfg = Arc::new(Config::load(Some(dir.path().join("home"))).unwrap());
-    let launcher = Arc::new(Launcher {
-        cfg,
-        store: store.clone(),
-        tmux: TmuxManager::default(),
-        git: GitManager,
-    });
-    let state = AppState {
-        store,
-        started_at: Instant::now(),
-        launcher,
-        sched_tx: None,
-        events: bus.clone(),
-        logs: LogBuffer::new(),
-    };
-    Harness {
-        router: http::router(state),
-        bus,
-        dir,
-    }
-}
-
-impl Harness {
-    /// A toy repo with an initial commit on `main`, plus a `next` branch.
-    fn repo(&self, name: &str) -> PathBuf {
-        let repo = self.dir.path().join(name);
-        std::fs::create_dir_all(&repo).unwrap();
-        sh(
-            &repo,
-            "git init -q -b main && echo v1 > file.txt && git add . && \
-             git -c user.email=t@t -c user.name=t commit -qm init && \
-             git branch next",
-        );
-        repo
-    }
-
-    async fn send(&self, request: Request<Body>) -> (StatusCode, Vec<u8>) {
-        let response = self.router.clone().oneshot(request).await.unwrap();
-        let status = response.status();
-        let body = response.into_body().collect().await.unwrap().to_bytes();
-        (status, body.to_vec())
-    }
-
-    /// Send a request expected to answer `expected` and decode its JSON body.
-    async fn json<T: DeserializeOwned>(&self, request: Request<Body>, expected: StatusCode) -> T {
-        let (status, body) = self.send(request).await;
-        assert_eq!(status, expected, "{}", String::from_utf8_lossy(&body));
-        serde_json::from_slice(&body).unwrap()
-    }
-
-    /// Send a request expected to fail and decode the error envelope.
-    async fn error(&self, request: Request<Body>, expected: StatusCode) -> ErrorBody {
-        let (status, body) = self.send(request).await;
-        assert_eq!(status, expected, "{}", String::from_utf8_lossy(&body));
-        serde_json::from_slice(&body).unwrap()
-    }
-}
-
-fn sh(dir: &Path, cmd: &str) {
-    let status = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(cmd)
-        .current_dir(dir)
-        .status()
-        .unwrap();
-    assert!(status.success(), "command failed: {cmd}");
-}
-
-fn get(uri: &str) -> Request<Body> {
-    Request::builder().uri(uri).body(Body::empty()).unwrap()
-}
-
-fn delete(uri: &str) -> Request<Body> {
-    Request::builder()
-        .method(Method::DELETE)
-        .uri(uri)
-        .body(Body::empty())
-        .unwrap()
-}
-
-fn json_request(method: Method, uri: &str, body: serde_json::Value) -> Request<Body> {
-    Request::builder()
-        .method(method)
-        .uri(uri)
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(body.to_string()))
-        .unwrap()
-}
-
-fn post_json(uri: &str, body: serde_json::Value) -> Request<Body> {
-    json_request(Method::POST, uri, body)
-}
-
-fn put_json(uri: &str, body: serde_json::Value) -> Request<Body> {
-    json_request(Method::PUT, uri, body)
-}
-
-/// Wait for the first event matching `pred`, skipping unrelated ones.
-async fn next_event(rx: &mut Receiver<BusEvent>, pred: impl Fn(&BusEvent) -> bool) -> BusEvent {
-    tokio::time::timeout(TIMEOUT, async {
-        loop {
-            let event = rx.recv().await.expect("event bus closed");
-            if pred(&event) {
-                return event;
-            }
-        }
-    })
-    .await
-    .expect("timed out waiting for a matching domain event")
-}
+use common::{delete, get, harness, next_event, post_json, put_json, sh};
 
 #[tokio::test]
 async fn crud_round_trip_emits_a_fat_event_per_write() {
     let h = harness().await;
-    let repo = h.repo("repo");
+    let repo = h.git_repo("repo");
     let mut rx = h.bus.subscribe();
 
     let created: RepositoryDto = h
@@ -236,7 +96,7 @@ async fn crud_round_trip_emits_a_fat_event_per_write() {
 #[tokio::test]
 async fn base_branch_defaults_to_the_current_branch() {
     let h = harness().await;
-    let repo = h.repo("repo");
+    let repo = h.git_repo("repo");
     sh(&repo, "git checkout -q next");
 
     let created: RepositoryDto = h
@@ -255,7 +115,7 @@ async fn base_branch_defaults_to_the_current_branch() {
 #[tokio::test]
 async fn create_refuses_a_path_or_branch_it_cannot_use() {
     let h = harness().await;
-    let repo = h.repo("repo");
+    let repo = h.git_repo("repo");
 
     // Relative path.
     let err = h
@@ -307,7 +167,7 @@ async fn create_refuses_a_path_or_branch_it_cannot_use() {
 #[tokio::test]
 async fn the_same_path_and_branch_cannot_be_registered_twice() {
     let h = harness().await;
-    let repo = h.repo("repo");
+    let repo = h.git_repo("repo");
     let body = serde_json::json!({"path": repo.display().to_string(), "base_branch": "main"});
 
     let first: RepositoryDto = h

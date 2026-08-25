@@ -5,285 +5,88 @@
 //! goes takes its tasks and messages with it, and that the deletion reaches the
 //! domain-event stream so clients stop showing what no longer exists.
 
-use std::path::{Path as FsPath, PathBuf};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+mod common;
 
-use axum::Router;
-use axum::body::Body;
-use axum::http::{Method, Request, StatusCode, header};
-use http_body_util::BodyExt;
-use serde::de::DeserializeOwned;
-use tokio::sync::broadcast::Receiver;
-use tower::ServiceExt;
+use axum::http::StatusCode;
 
-use ariadne_api::error::ErrorBody;
 use ariadne_api::goals::GoalDto;
 use ariadne_api::messages::MessageDto;
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::stream::DomainEvent;
 use ariadne_api::tasks::TaskDto;
-use ariadne_core::{AgentKind, Role};
-use ariadne_daemon::bus::{BusEvent, EventBus};
-use ariadne_daemon::config::Config;
-use ariadne_daemon::gitwt::GitManager;
-use ariadne_daemon::http::{self, AppState};
-use ariadne_daemon::launcher::Launcher;
-use ariadne_daemon::logbuf::LogBuffer;
-use ariadne_daemon::tmux::{TmuxManager, session_name};
-use ariadne_store::{AgentSession, NewProfile, NewSession, Store};
+use ariadne_core::Role;
+use ariadne_store::AgentSession;
 
-/// How long a test waits for an event before giving up.
-const TIMEOUT: Duration = Duration::from_secs(5);
+use common::{Harness, delete, get, harness, next_event, post, post_json};
 
-struct Harness {
-    bus: EventBus,
-    router: Router,
-    store: Store,
-    dir: tempfile::TempDir,
-}
-
-async fn harness() -> Harness {
-    let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(dir.path().join("test.db")).await.unwrap();
-    // Installed before anything writes, exactly as the daemon does at startup.
-    let bus = ariadne_daemon::bus::start(store.clone());
-    let cfg = Arc::new(Config::load(Some(dir.path().join("home"))).unwrap());
-    let launcher = Arc::new(Launcher {
-        cfg,
-        store: store.clone(),
-        // A stub rather than the real thing: this file is the only one that
-        // asks the launcher to kill a pane, and what it asserts is that the
-        // kill was issued before the rows went.
-        tmux: write_tmux_stub(dir.path()),
-        git: GitManager,
-    });
-    let state = AppState {
-        store: store.clone(),
-        started_at: Instant::now(),
-        launcher,
-        sched_tx: None,
-        events: bus.clone(),
-        logs: LogBuffer::new(),
-    };
-    Harness {
-        router: http::router(state),
-        bus,
-        store,
-        dir,
-    }
-}
-
-/// A `tmux` whose sessions are the names a test wrote into `alive`, and which
-/// writes down every `kill-session` it is handed.
-fn write_tmux_stub(dir: &FsPath) -> TmuxManager {
-    use std::os::unix::fs::PermissionsExt;
-
-    std::fs::write(dir.join("alive"), "").unwrap();
-    let bin = dir.join("tmux-stub.sh");
-    let script = format!(
-        "#!/bin/sh\n\
-         alive='{alive}'\n\
-         killed='{killed}'\n\
-         target=''\n\
-         prev=''\n\
-         for a in \"$@\"; do\n\
-        \x20 if [ \"$prev\" = \"-t\" ]; then target=\"$a\"; fi\n\
-        \x20 prev=\"$a\"\n\
-         done\n\
-         case \"$1\" in\n\
-        \x20 has-session) grep -qx \"$target\" \"$alive\" || exit 1 ;;\n\
-        \x20 kill-session) echo \"$target\" >> \"$killed\" ;;\n\
-         esac\n\
-         exit 0\n",
-        alive = dir.join("alive").display(),
-        killed = dir.join("kill-session.log").display(),
-    );
-    std::fs::write(&bin, script).unwrap();
-    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
-    TmuxManager::new(bin.display().to_string())
-}
-
-impl Harness {
-    /// A toy repo with an initial commit on `main`. Nothing here spawns an
-    /// agent; the repository exists because a goal needs one.
-    fn repo(&self, name: &str) -> PathBuf {
-        let repo = self.dir.path().join(name);
-        std::fs::create_dir_all(&repo).unwrap();
-        sh(
-            &repo,
-            "git init -q -b main && echo v1 > file.txt && git add . && \
-             git -c user.email=t@t -c user.name=t commit -qm init",
-        );
-        repo
-    }
-
-    async fn send(&self, request: Request<Body>) -> (StatusCode, Vec<u8>) {
-        let response = self.router.clone().oneshot(request).await.unwrap();
-        let status = response.status();
-        let body = response.into_body().collect().await.unwrap().to_bytes();
-        (status, body.to_vec())
-    }
-
-    /// Send a request expected to answer `expected` and decode its JSON body.
-    async fn json<T: DeserializeOwned>(&self, request: Request<Body>, expected: StatusCode) -> T {
-        let (status, body) = self.send(request).await;
-        assert_eq!(status, expected, "{}", String::from_utf8_lossy(&body));
-        serde_json::from_slice(&body).unwrap()
-    }
-
-    /// Send a request expected to fail and decode the error envelope.
-    async fn error(&self, request: Request<Body>, expected: StatusCode) -> ErrorBody {
-        let (status, body) = self.send(request).await;
-        assert_eq!(status, expected, "{}", String::from_utf8_lossy(&body));
-        serde_json::from_slice(&body).unwrap()
-    }
-
-    /// A goal in `planning` on a freshly registered repository.
-    async fn goal(&self, name: &str) -> GoalDto {
-        let repo = self.repo(name);
-        let registered: RepositoryDto = self
-            .json(
-                post_json(
-                    "/v1/repositories",
-                    serde_json::json!({"path": repo.display().to_string(),
-                                       "base_branch": "main"}),
-                ),
-                StatusCode::CREATED,
-            )
-            .await;
-        self.json(
+/// A goal in `planning` on a freshly registered repository. Nothing here
+/// spawns an agent; the repository exists because a goal needs one.
+async fn goal(h: &Harness, name: &str) -> GoalDto {
+    let repo = h.git_repo(name);
+    let registered: RepositoryDto = h
+        .json(
             post_json(
-                "/v1/goals",
-                serde_json::json!({"title": "Ship it", "repository_ids": [registered.id],
-                                   "planner_profile": "Planner"}),
+                "/v1/repositories",
+                serde_json::json!({"path": repo.display().to_string(),
+                                   "base_branch": "main"}),
             ),
             StatusCode::CREATED,
         )
-        .await
-    }
-
-    async fn task_in(&self, goal: &GoalDto) -> TaskDto {
-        self.json(
-            post_json(
-                &format!("/v1/goals/{}/tasks", goal.id),
-                serde_json::json!({"title": "Do the thing", "engineer_profile": "Engineer",
-                                   "reviewer_profiles": ["Reviewer"]}),
-            ),
-            StatusCode::CREATED,
-        )
-        .await
-    }
-
-    /// A live session on a goal, with a pane the stub tmux answers for.
-    async fn live_session(&self, goal: &GoalDto) -> AgentSession {
-        let planner = self
-            .store
-            .create_profile(NewProfile {
-                name: "leftover planner".into(),
-                role: Role::Planner,
-                agent_kind: Some(AgentKind::ClaudeCode),
-                model: None,
-                system_prompt: Some("You plan.".into()),
-            })
-            .await
-            .unwrap();
-        let session = self
-            .store
-            .create_session(NewSession {
-                goal_id: goal.id.clone(),
-                task_id: None,
-                role: Role::Planner,
-                profile_id: planner.id,
-                agent_kind: AgentKind::ClaudeCode,
-                model: None,
-                tmux_session: session_name(&goal.id, None, "pla", None),
-                worktree_path: None,
-                review_round: None,
-            })
-            .await
-            .unwrap();
-        std::fs::write(
-            self.dir.path().join("alive"),
-            format!("{}\n", session.tmux_session),
-        )
-        .unwrap();
-        session
-    }
-
-    /// The panes the launcher asked tmux to kill.
-    fn killed_panes(&self) -> Vec<String> {
-        std::fs::read_to_string(self.dir.path().join("kill-session.log"))
-            .unwrap_or_default()
-            .lines()
-            .map(str::to_string)
-            .collect()
-    }
-
-    async fn cancel(&self, goal: &GoalDto) -> GoalDto {
-        self.json(
-            Request::builder()
-                .method(Method::POST)
-                .uri(format!("/v1/goals/{}/cancel", goal.id))
-                .body(Body::empty())
-                .unwrap(),
-            StatusCode::OK,
-        )
-        .await
-    }
-}
-
-fn sh(dir: &FsPath, cmd: &str) {
-    let status = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(cmd)
-        .current_dir(dir)
-        .status()
-        .unwrap();
-    assert!(status.success(), "command failed: {cmd}");
-}
-
-fn get(uri: &str) -> Request<Body> {
-    Request::builder().uri(uri).body(Body::empty()).unwrap()
-}
-
-fn delete(uri: &str) -> Request<Body> {
-    Request::builder()
-        .method(Method::DELETE)
-        .uri(uri)
-        .body(Body::empty())
-        .unwrap()
-}
-
-fn post_json(uri: &str, body: serde_json::Value) -> Request<Body> {
-    Request::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(body.to_string()))
-        .unwrap()
-}
-
-/// Wait for the first event matching `pred`, skipping unrelated ones.
-async fn next_event(rx: &mut Receiver<BusEvent>, pred: impl Fn(&BusEvent) -> bool) -> BusEvent {
-    tokio::time::timeout(TIMEOUT, async {
-        loop {
-            let event = rx.recv().await.expect("event bus closed");
-            if pred(&event) {
-                return event;
-            }
-        }
-    })
+        .await;
+    h.json(
+        post_json(
+            "/v1/goals",
+            serde_json::json!({"title": "Ship it", "repository_ids": [registered.id],
+                               "planner_profile": "Planner"}),
+        ),
+        StatusCode::CREATED,
+    )
     .await
-    .expect("timed out waiting for a matching domain event")
+}
+
+async fn task_in(h: &Harness, goal: &GoalDto) -> TaskDto {
+    h.json(
+        post_json(
+            &format!("/v1/goals/{}/tasks", goal.id),
+            serde_json::json!({"title": "Do the thing", "engineer_profile": "Engineer",
+                               "reviewer_profiles": ["Reviewer"]}),
+        ),
+        StatusCode::CREATED,
+    )
+    .await
+}
+
+async fn cancel(h: &Harness, goal: &GoalDto) -> GoalDto {
+    h.json(
+        post(&format!("/v1/goals/{}/cancel", goal.id)),
+        StatusCode::OK,
+    )
+    .await
+}
+
+/// A live session on a goal, with a pane the stub tmux answers for.
+async fn live_session(h: &Harness, goal: &GoalDto) -> AgentSession {
+    let planner = h.profile("leftover planner", Role::Planner).await;
+    let goal = h.store.get_goal(&goal.id).await.unwrap();
+    let session = h
+        .session_named(
+            &goal,
+            None,
+            Role::Planner,
+            &planner.id,
+            &ariadne_daemon::tmux::session_name(&goal.id, None, "pla", None),
+        )
+        .await;
+    h.pane_exists(&session);
+    session
 }
 
 /// A cancelled goal deletes, tasks and messages with it, and the stream says so.
 #[tokio::test]
 async fn deleting_a_finished_goal_takes_its_children_and_reaches_the_stream() {
     let h = harness().await;
-    let goal = h.goal("repo").await;
-    let task = h.task_in(&goal).await;
+    let goal = goal(&h, "repo").await;
+    let task = task_in(&h, &goal).await;
     let _: MessageDto = h
         .json(
             post_json(
@@ -293,7 +96,7 @@ async fn deleting_a_finished_goal_takes_its_children_and_reaches_the_stream() {
             StatusCode::CREATED,
         )
         .await;
-    let goal = h.cancel(&goal).await;
+    let goal = cancel(&h, &goal).await;
 
     let mut rx = h.bus.subscribe();
     let (status, body) = h.send(delete(&format!("/v1/goals/{}", goal.id))).await;
@@ -319,7 +122,7 @@ async fn deleting_a_finished_goal_takes_its_children_and_reaches_the_stream() {
         StatusCode::NOT_FOUND,
     )
     .await;
-    let goals: Vec<GoalDto> = h.json(get("/v1/goals"), StatusCode::OK).await;
+    let goals: Vec<GoalDto> = h.get("/v1/goals").await;
     assert!(goals.is_empty(), "the goal is gone from the list too");
 
     // ON DELETE CASCADE: the task went with it, and so did the thread.
@@ -328,7 +131,7 @@ async fn deleting_a_finished_goal_takes_its_children_and_reaches_the_stream() {
         StatusCode::NOT_FOUND,
     )
     .await;
-    let tasks: Vec<TaskDto> = h.json(get("/v1/tasks"), StatusCode::OK).await;
+    let tasks: Vec<TaskDto> = h.get("/v1/tasks").await;
     assert!(tasks.is_empty(), "no task outlives its goal");
     h.error(
         get(&format!("/v1/goals/{}/messages", goal.id)),
@@ -337,7 +140,7 @@ async fn deleting_a_finished_goal_takes_its_children_and_reaches_the_stream() {
     .await;
 
     // The repository the goal referenced is untouched, and free again.
-    let repos: Vec<RepositoryDto> = h.json(get("/v1/repositories"), StatusCode::OK).await;
+    let repos: Vec<RepositoryDto> = h.get("/v1/repositories").await;
     assert_eq!(repos.len(), 1);
     let (status, _) = h
         .send(delete(&format!("/v1/repositories/{}", repos[0].id)))
@@ -350,8 +153,8 @@ async fn deleting_a_finished_goal_takes_its_children_and_reaches_the_stream() {
 #[tokio::test]
 async fn an_unfinished_goal_is_refused_and_keeps_everything() {
     let h = harness().await;
-    let goal = h.goal("repo").await;
-    let task = h.task_in(&goal).await;
+    let goal = goal(&h, "repo").await;
+    let task = task_in(&h, &goal).await;
 
     let err = h
         .error(
@@ -366,16 +169,12 @@ async fn an_unfinished_goal_is_refused_and_keeps_everything() {
         err.error.message
     );
 
-    let still_there: GoalDto = h
-        .json(get(&format!("/v1/goals/{}", goal.id)), StatusCode::OK)
-        .await;
+    let still_there: GoalDto = h.get(&format!("/v1/goals/{}", goal.id)).await;
     assert_eq!(still_there.id, goal.id);
-    let _: TaskDto = h
-        .json(get(&format!("/v1/tasks/{}", task.id)), StatusCode::OK)
-        .await;
+    let _: TaskDto = h.get(&format!("/v1/tasks/{}", task.id)).await;
 
     // Cancelling is the way through, and then it goes.
-    h.cancel(&goal).await;
+    cancel(&h, &goal).await;
     let (status, _) = h.send(delete(&format!("/v1/goals/{}", goal.id))).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 }
@@ -401,9 +200,9 @@ async fn deleting_an_unknown_goal_is_a_404() {
 #[tokio::test]
 async fn deleting_a_goal_takes_down_a_session_that_outlived_it() {
     let h = harness().await;
-    let goal = h.goal("repo").await;
-    let goal = h.cancel(&goal).await;
-    let session = h.live_session(&goal).await;
+    let goal = goal(&h, "repo").await;
+    let goal = cancel(&h, &goal).await;
+    let session = live_session(&h, &goal).await;
 
     let (status, body) = h.send(delete(&format!("/v1/goals/{}", goal.id))).await;
     assert_eq!(

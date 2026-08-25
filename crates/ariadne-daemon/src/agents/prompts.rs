@@ -1,10 +1,8 @@
 //! Prompt assembly from the database.
 //!
-//! Every prompt an agent runs on belongs to its profile: the system layer is
-//! its system prompt (the role's persona and playbook), the task layer one of
-//! its briefing templates — one per [`PromptKind`] — with the concrete goal,
-//! task and review values put in. Either may be the default of the code, which
-//! is what a profile that was never edited runs on.
+//! Every prompt an agent runs on belongs to its profile, and either layer may
+//! be the default of the code — which is what a profile nobody edited runs on,
+//! without anything having been copied into the database first.
 //!
 //! Those templates are editable, so they are also breakable. Rendering is
 //! lenient by construction: an unknown `{token}`, a brace that never closes,
