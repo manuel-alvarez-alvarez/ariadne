@@ -313,7 +313,11 @@ export interface paths {
         /** List profiles. */
         get: operations["profiles_list"];
         put?: never;
-        /** Create a profile. */
+        /**
+         * Create a profile.
+         * @description It starts on the prompts of its role, every one of them the default: a
+         *     briefing is given to it afterwards, one `PUT` per kind.
+         */
         post: operations["profiles_create"];
         delete?: never;
         options?: never;
@@ -347,7 +351,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The profile's briefing prompts, in briefing order. */
+        /**
+         * The profile's briefing prompts, in briefing order: each one as it takes
+         *     effect, saying whether that is the default of its kind or a text set here.
+         */
         get: operations["profiles_list_prompts"];
         put?: never;
         post?: never;
@@ -366,9 +373,10 @@ export interface paths {
         };
         get?: never;
         /**
-         * Replace the text of one prompt. A template may drop every `{placeholder}`
-         *     it was seeded with, but not name one this kind has no value for: that token
-         *     would reach the agent as literal text, so it is refused here.
+         * Set the text of one prompt, which is what makes it the profile's own. A
+         *     template may drop every `{placeholder}` of its kind, but not name one the
+         *     kind has no value for: that token would reach the agent as literal text, so
+         *     it is refused here.
          */
         put: operations["profiles_update_prompt"];
         post?: never;
@@ -387,7 +395,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Put one prompt back to the default of the profile's role. */
+        /**
+         * Put one prompt back on the default of its kind, dropping the text set on
+         *     the profile.
+         */
         post: operations["profiles_reset_prompt"];
         delete?: never;
         options?: never;
@@ -404,7 +415,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Put the profile's system prompt back to the default of its role. */
+        /** Put the profile's system prompt back on the default of its role. */
         post: operations["profiles_reset_system_prompt"];
         delete?: never;
         options?: never;
@@ -444,27 +455,6 @@ export interface paths {
         post?: never;
         /** Delete a repository. */
         delete: operations["repositories_delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/roles/{role}/prompt-defaults": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * The built-in prompts a profile of `role` is seeded with: read-only, so an
-         *     editor can show a default (and offer to restore one) before anything
-         *     exists to read them from.
-         */
-        get: operations["profiles_prompt_defaults"];
-        put?: never;
-        post?: never;
-        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -965,14 +955,12 @@ export interface components {
             model?: string | null;
             /** @example rust-engineer */
             name: string;
-            /**
-             * @description Briefing prompts to seed instead of the role defaults. A kind listed
-             *     here replaces its default; every other kind of the role is seeded as
-             *     usual. Absent or empty = the role defaults, unedited.
-             */
-            prompts?: components["schemas"]["NewProfilePrompt"][];
             role: components["schemas"]["Role"];
-            system_prompt: string;
+            /**
+             * @description Absent or null = the default of the role, which the profile then
+             *     follows. Briefings are set afterwards, one `PUT` per kind.
+             */
+            system_prompt?: string | null;
         };
         CreateRepositoryRequest: {
             /** @description Omit for the repo's currently checked-out branch. */
@@ -1224,15 +1212,6 @@ export interface components {
             /** @example claude-fable-5 */
             id: string;
         };
-        /**
-         * @description One prompt override in [`CreateProfileRequest`]: the kind spelled as on the
-         *     prompt routes, and the text to seed instead of the role default.
-         */
-        NewProfilePrompt: {
-            content: string;
-            /** @example engineer_briefing */
-            kind: string;
-        };
         /** @description A file or directory the daemon depends on. */
         PathStateDto: {
             exists: boolean;
@@ -1253,24 +1232,39 @@ export interface components {
             model?: string | null;
             name: string;
             role: components["schemas"]["Role"];
+            /**
+             * @description The system prompt this profile is spawned with: the one set on it, or
+             *     the default of its role while it has none of its own.
+             */
             system_prompt: string;
-            updated_at: string;
-        };
-        /** @description One of the briefing prompts a profile owns beside its system prompt. */
-        ProfilePromptDto: {
-            /** @description Template text with `{placeholder}` tokens the daemon fills in. */
-            content: string;
-            kind: components["schemas"]["PromptKind"];
+            /**
+             * @description Whether `system_prompt` is that role default rather than a text set on
+             *     this profile.
+             */
+            system_prompt_is_default: boolean;
             updated_at: string;
         };
         /**
-         * @description One built-in prompt default. Unlike [`ProfilePromptDto`] it belongs to no
-         *     profile, so there is nothing to timestamp.
+         * @description One of the briefing prompts a profile owns beside its system prompt, as it
+         *     takes effect.
          */
-        PromptDefaultDto: {
-            /** @description Template text with `{placeholder}` tokens the daemon fills in. */
+        ProfilePromptDto: {
+            /**
+             * @description Template text with `{placeholder}` tokens the daemon fills in: the one
+             *     set on the profile, or the default of the kind while it has none.
+             */
             content: string;
+            /**
+             * @description Whether `content` is that default rather than a text set on this
+             *     profile.
+             */
+            is_default: boolean;
             kind: components["schemas"]["PromptKind"];
+            /**
+             * @description When the text set on the profile was last written; null while the
+             *     default stands, which nothing dates.
+             */
+            updated_at?: string | null;
         };
         /**
          * @description A prompt a profile owns beside its system prompt: one of the texts an
@@ -1345,16 +1339,6 @@ export interface components {
          * @enum {string}
          */
         Role: "planner" | "engineer" | "reviewer";
-        /**
-         * @description Response of `GET /v1/roles/{role}/prompt-defaults`: what a profile of that
-         *     role is seeded with, read without creating or touching anything.
-         */
-        RolePromptDefaultsDto: {
-            /** @description The role's briefing prompts, in briefing order. */
-            prompts: components["schemas"]["PromptDefaultDto"][];
-            role: components["schemas"]["Role"];
-            system_prompt: string;
-        };
         SessionDto: {
             agent_kind: components["schemas"]["AgentKind"];
             attention_reason?: null | components["schemas"]["AttentionReason"];
@@ -1555,6 +1539,10 @@ export interface components {
              */
             model?: string | null;
             name?: string | null;
+            /**
+             * @description New system prompt. Absent = unchanged; putting it back on the role
+             *     default is `POST /v1/profiles/{id}/system-prompt/reset`.
+             */
             system_prompt?: string | null;
         };
         /** @description Partial update; absent fields stay unchanged. */
@@ -2127,13 +2115,6 @@ export interface operations {
                     "application/json": components["schemas"]["ProfileDto"];
                 };
             };
-            /** @description a prompt kind the role does not own, or a placeholder its kind cannot fill in */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
             /** @description name already exists */
             409: {
                 headers: {
@@ -2518,35 +2499,6 @@ export interface operations {
                 content?: never;
             };
             404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    profiles_prompt_defaults: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description planner, engineer or reviewer */
-                role: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RolePromptDefaultsDto"];
-                };
-            };
-            /** @description unknown role */
-            400: {
                 headers: {
                     [name: string]: unknown;
                 };

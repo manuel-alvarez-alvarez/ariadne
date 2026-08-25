@@ -206,11 +206,11 @@ ariadne repo edit <repository-id> --merge-strategy direct
 
 # Custom profiles pin a role to a specific agent/model/prompt:
 ariadne profile create --name rev-strict --role reviewer --agent codex \
-  --prompt "You are a demanding reviewer. Reject anything without tests."
+  --prompt system="You are a demanding reviewer. Reject anything without tests."
 
-# Every prompt a profile briefs its agents with is editable, and every one of
-# them can go back to the default of its role:
-ariadne profile prompts rev-strict            # system + briefings, edited or not
+# A profile runs on the built-in prompts of its role until one is set on it, and
+# a reset drops what was set rather than writing the default over it:
+ariadne profile prompts rev-strict            # system + briefings, default or not
 ariadne profile prompt get rev-strict reviewer_briefing > brief.md
 ariadne profile prompt set rev-strict reviewer_briefing --file brief.md
 ariadne profile prompt reset rev-strict --all

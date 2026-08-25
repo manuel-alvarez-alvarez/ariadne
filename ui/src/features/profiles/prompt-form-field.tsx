@@ -2,11 +2,14 @@
  * One prompt inside the profile form: a collapsible section holding a plain
  * form field.
  *
- * Nothing is written until the form is submitted, so there is no save and no
- * failure of its own — only text, and a "restore default" that fills the box
- * from the role's defaults and leaves the writing to the submit.
+ * Its text is written when the form is submitted, so there is no save of its
+ * own. "Restore default" is the exception: a default is the daemon's text and
+ * this form holds no copy of it, so restoring one is a write of its own — the
+ * caller sends it and fills the box from what comes back. That is also why the
+ * badge and the button read the *stored* state rather than what is in the box:
+ * they are about what the daemon holds, which is what a restore acts on.
  *
- * A profile carries up to four prompts and every one of them is long, so they
+ * A profile carries up to five prompts and every one of them is long, so they
  * are folded away by default. Collapsed sections are unmounted; their text
  * lives in the form's state, not in the textarea, so folding one shut keeps
  * whatever was typed into it.
@@ -28,11 +31,14 @@ interface PromptFormFieldProps {
   value: string
   onChange: (content: string) => void
   /**
-   * The role default for this prompt, or undefined while it is unknown — the
-   * defaults endpoint is allowed to fail, and then there is nothing to restore
-   * to and nothing to call the text customised against.
+   * Whether the profile runs on the default of this prompt rather than on a
+   * text of its own — the daemon's word, not a comparison made here.
    */
-  defaultContent: string | undefined
+  isDefault: boolean
+  /** Put the prompt back on its default. Absent = nothing to restore to. */
+  onReset?: () => void
+  /** True while that restore is in flight. */
+  resetting?: boolean
   open: boolean
   onOpenChange: (open: boolean) => void
   /** A client-side validation message, shown under the box. */
@@ -45,14 +51,15 @@ export function PromptFormField({
   hint,
   value,
   onChange,
-  defaultContent,
+  isDefault,
+  onReset,
+  resetting,
   open,
   onOpenChange,
   error,
   placeholder,
 }: PromptFormFieldProps) {
   const fieldId = useId()
-  const customised = defaultContent !== undefined && value !== defaultContent
 
   return (
     <section
@@ -73,24 +80,24 @@ export function PromptFormField({
           {open ? <ChevronDownIcon /> : <ChevronRightIcon />}
           <span className="truncate">{label}</span>
         </Button>
-        {customised ? (
-          <Badge variant="outline" className="shrink-0">
-            edited
-          </Badge>
+        <Badge variant="outline" className="shrink-0">
+          {isDefault ? "default" : "edited"}
+        </Badge>
+        {onReset ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="shrink-0"
+            aria-label={`Restore ${label} to default`}
+            // Already on its default: there is nothing to drop.
+            disabled={isDefault || resetting}
+            onClick={onReset}
+          >
+            <RotateCcwIcon />
+            Restore default
+          </Button>
         ) : null}
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="shrink-0"
-          aria-label={`Restore ${label} to default`}
-          // Nothing to restore to: the role defaults never arrived.
-          disabled={defaultContent === undefined || !customised}
-          onClick={() => onChange(defaultContent ?? "")}
-        >
-          <RotateCcwIcon />
-          Restore default
-        </Button>
       </header>
 
       {open ? (

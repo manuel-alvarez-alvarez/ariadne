@@ -87,8 +87,7 @@ impl Harness {
                 role: Role::Planner,
                 agent_kind: Some(AgentKind::ClaudeCode),
                 model: None,
-                system_prompt: "You plan.".into(),
-                prompts: vec![],
+                system_prompt: Some("You plan.".into()),
             })
             .await
             .unwrap();

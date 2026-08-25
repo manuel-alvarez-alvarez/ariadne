@@ -8,6 +8,8 @@ use ariadne_core::{
     ReviewVerdict, Role, SessionStatus, TaskStatus,
 };
 
+use crate::defaults::default_system_prompt;
+
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Profile {
     pub id: String,
@@ -16,7 +18,11 @@ pub struct Profile {
     /// NULL = auto-resolve at spawn time (first installed agent CLI).
     pub agent_kind: Option<String>,
     pub model: Option<String>,
-    pub system_prompt: String,
+    /// The system prompt set on this profile, or NULL while it runs on the
+    /// default of its role. Read it through [`Profile::effective_system_prompt`]
+    /// rather than directly: what the agent is spawned with is the one or the
+    /// other.
+    pub system_prompt: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -24,6 +30,18 @@ pub struct Profile {
 impl Profile {
     pub fn role(&self) -> Role {
         Role::from_str(&self.role).expect("valid role in db")
+    }
+    /// The system prompt this profile is spawned with: the one set on it, or
+    /// the default of its role.
+    pub fn effective_system_prompt(&self) -> &str {
+        self.system_prompt
+            .as_deref()
+            .unwrap_or_else(|| default_system_prompt(self.role()))
+    }
+    /// Whether [`Profile::effective_system_prompt`] is that role default rather
+    /// than a text set on this profile.
+    pub fn system_prompt_is_default(&self) -> bool {
+        self.system_prompt.is_none()
     }
     pub fn agent_kind(&self) -> Option<AgentKind> {
         self.agent_kind
@@ -59,14 +77,20 @@ impl AgentConfig {
     }
 }
 
-/// One editable briefing of a profile, keyed by [`PromptKind`].
-#[derive(Debug, Clone, sqlx::FromRow)]
+/// One briefing of a profile as it takes effect: the text set on the profile,
+/// or — while nothing is set for that kind — the default the kind ships with.
+#[derive(Debug, Clone)]
 pub struct ProfilePrompt {
     pub profile_id: String,
     pub kind: String,
     /// Template text with `{placeholder}` tokens the daemon fills in.
     pub content: String,
-    pub updated_at: String,
+    /// Whether `content` is the kind's default rather than a text set on this
+    /// profile.
+    pub is_default: bool,
+    /// When the text set on the profile was last written; `None` while the
+    /// default stands, which nothing here dates.
+    pub updated_at: Option<String>,
 }
 
 impl ProfilePrompt {

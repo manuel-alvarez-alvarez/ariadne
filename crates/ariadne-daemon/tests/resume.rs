@@ -304,8 +304,7 @@ impl Harness {
                 role,
                 agent_kind,
                 model: model.map(str::to_string),
-                system_prompt: format!("You are {name}."),
-                prompts: vec![],
+                system_prompt: Some(format!("You are {name}.")),
             })
             .await
             .unwrap()

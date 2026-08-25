@@ -46,6 +46,7 @@ const PLANNER: ProfileDto = {
   agent_kind: "claude_code",
   model: null,
   system_prompt: "",
+  system_prompt_is_default: false,
   created_at: STAMP,
   updated_at: STAMP,
 }

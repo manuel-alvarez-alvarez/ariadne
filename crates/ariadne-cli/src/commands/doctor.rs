@@ -1063,6 +1063,7 @@ mod tests {
             agent_kind,
             model: None,
             system_prompt: String::new(),
+            system_prompt_is_default: false,
             created_at: String::new(),
             updated_at: String::new(),
         }

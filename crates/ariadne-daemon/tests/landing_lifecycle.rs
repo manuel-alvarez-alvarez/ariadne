@@ -263,8 +263,7 @@ impl Harness {
                 // the ones a real session takes.
                 agent_kind: Some(AgentKind::ClaudeCode),
                 model: None,
-                system_prompt: format!("You are {name}."),
-                prompts: vec![],
+                system_prompt: Some(format!("You are {name}.")),
             })
             .await
             .unwrap()

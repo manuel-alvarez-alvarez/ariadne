@@ -120,8 +120,7 @@ async fn world(dir: &Path) -> World {
                     role,
                     agent_kind: Some(AgentKind::ClaudeCode),
                     model: None,
-                    system_prompt: "You work.".into(),
-                    prompts: vec![],
+                    system_prompt: Some("You work.".into()),
                 })
                 .await
                 .unwrap()

@@ -60,24 +60,6 @@ export function modelsQueryOptions() {
   })
 }
 
-/**
- * `GET /v1/roles/{role}/prompt-defaults` — the built-in system prompt and
- * briefings a profile of that role is seeded with.
- *
- * Read-only and compiled into the daemon: it cannot change while the app is
- * open, so it is cached for the session and never invalidated. The form dialog
- * uses it twice — to prefill the editors of a profile being created, and to
- * answer "restore default" in either mode without writing anything.
- */
-export function rolePromptDefaultsQueryOptions(role: Role) {
-  return queryOptions({
-    queryKey: qk.roles.promptDefaults(role),
-    queryFn: () =>
-      unwrap(api().GET("/v1/roles/{role}/prompt-defaults", { params: { path: { role } } })),
-    staleTime: Number.POSITIVE_INFINITY,
-  })
-}
-
 export function useCreateProfile() {
   const queryClient = useQueryClient()
   return useMutation({
@@ -109,7 +91,8 @@ export function useDeleteProfile() {
 
 /**
  * `GET /v1/profiles/{id}/prompts` — the briefing prompts of the profile's role,
- * in the order the daemon sends them.
+ * in the order the daemon sends them, each one as it takes effect: the text set
+ * on the profile, or the default of its kind with `is_default` saying so.
  *
  * Nested under the profile's detail key, so deleting a profile drops its
  * prompts with it. It is deliberately *not* refetched by `profile_updated`:
@@ -124,17 +107,55 @@ export function profilePromptsQueryOptions(id: string) {
   })
 }
 
-export function useUpdateProfilePrompt(id: string) {
+/**
+ * `PUT /v1/profiles/{id}/prompts/{kind}` — set the text of one prompt, which is
+ * what makes it the profile's own.
+ *
+ * The profile is an argument rather than a binding of the hook because the
+ * create dialog writes its prompts to a profile that did not exist when the
+ * dialog rendered.
+ */
+export function useUpdateProfilePrompt() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ kind, content }: { kind: PromptKind; content: string }) =>
+    mutationFn: ({ id, kind, content }: { id: string; kind: PromptKind; content: string }) =>
       unwrap(
         api().PUT("/v1/profiles/{id}/prompts/{kind}", {
           params: { path: { id, kind } },
           body: { content },
         }),
       ),
-    onSuccess: (prompt) => cachePrompt(queryClient, id, prompt),
+    onSuccess: (prompt, { id }) => cachePrompt(queryClient, id, prompt),
+  })
+}
+
+/**
+ * `POST /v1/profiles/{id}/prompts/{kind}/reset` — drop the text set on the
+ * profile, leaving it on the default of the kind.
+ *
+ * Unlike an edit, this is written the moment it is asked for: the default is
+ * the daemon's text and no form can hold a draft of it, so the answer is both
+ * the write and the only way to read what it put back.
+ */
+export function useResetProfilePrompt() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, kind }: { id: string; kind: PromptKind }) =>
+      unwrap(
+        api().POST("/v1/profiles/{id}/prompts/{kind}/reset", { params: { path: { id, kind } } }),
+      ),
+    onSuccess: (prompt, { id }) => cachePrompt(queryClient, id, prompt),
+  })
+}
+
+/** `POST /v1/profiles/{id}/system-prompt/reset` — the same, for the one prompt
+ * that lives on the profile row rather than in the prompts list. */
+export function useResetSystemPrompt() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      unwrap(api().POST("/v1/profiles/{id}/system-prompt/reset", { params: { path: { id } } })),
+    onSuccess: (profile) => cacheProfile(queryClient, profile),
   })
 }
 

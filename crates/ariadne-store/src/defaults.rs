@@ -1,17 +1,20 @@
 //! Built-in default prompts.
 //!
-//! Every prompt an agent runs on lives in the database so it can be edited per
-//! profile; these constants are what a profile starts from and what
-//! [`Store::reset_profile_prompt`](crate::Store::reset_profile_prompt) puts
-//! back. A system prompt states the role's persona and playbook once, in one
+//! The one place a default text lives. A profile runs on these constants until
+//! somebody sets a prompt of its own, and
+//! [`Store::reset_profile_prompt`](crate::Store::reset_profile_prompt) puts it
+//! back on them by dropping what was set — nothing is ever copied into the
+//! database, so rewriting a text here reaches every profile that never edited
+//! it. A system prompt states the role's persona and playbook once, in one
 //! piece; the briefing templates carry `{placeholder}` tokens the daemon fills
 //! in per task.
 
 use ariadne_core::{PromptKind, Role};
 
 /// A profile Ariadne seeds into an empty database: one per role, on the
-/// auto-resolved agent CLI (no agent kind, no model). The ids are fixed so
-/// they stay recognizable; deleting a built-in is allowed and permanent.
+/// auto-resolved agent CLI (no agent kind, no model) and on every default
+/// prompt of its role. The ids are fixed so they stay recognizable; deleting a
+/// built-in is allowed and permanent.
 pub struct BuiltinProfile {
     pub id: &'static str,
     pub name: &'static str,
@@ -36,7 +39,7 @@ pub const BUILTIN_PROFILES: [BuiltinProfile; 3] = [
     },
 ];
 
-/// The system prompt a profile of `role` starts from.
+/// The system prompt a profile of `role` runs on while it has none of its own.
 pub fn default_system_prompt(role: Role) -> &'static str {
     match role {
         Role::Planner => PLANNER_SYSTEM_PROMPT,
@@ -51,16 +54,8 @@ pub fn default_prompt(role: Role, kind: PromptKind) -> Option<&'static str> {
     kind.owned_by(role).then(|| default_prompt_text(kind))
 }
 
-/// Every prompt a profile of `role` starts with, in briefing order.
-pub fn default_prompts(role: Role) -> impl Iterator<Item = (PromptKind, &'static str)> {
-    PromptKind::for_role(role)
-        .iter()
-        .map(|kind| (*kind, default_prompt_text(*kind)))
-}
-
 /// The default text of `kind`, whichever role is reading it: what every
-/// profile that owns the kind is seeded with, and what is fallen back on when
-/// a profile has no row for it.
+/// profile that owns the kind is briefed with until one of its own is set.
 pub fn default_prompt_text(kind: PromptKind) -> &'static str {
     match kind {
         PromptKind::PlannerBriefing => PLANNER_BRIEFING,
@@ -529,20 +524,18 @@ mod tests {
         }
     }
 
-    /// The constants are the templates every profile starts from, so they are
+    /// The constants are the templates every profile runs on, so they are
     /// also the ones a save-time check may never refuse: a default that fails
     /// validation would be a profile nobody can edit back to its own default.
     #[test]
     fn every_default_names_only_placeholders_its_kind_can_fill_in() {
-        for role in Role::ALL {
-            for (kind, template) in default_prompts(role) {
-                assert_eq!(
-                    kind.validate_template(template),
-                    Ok(()),
-                    "the default {} template",
-                    kind.as_str()
-                );
-            }
+        for kind in PromptKind::ALL {
+            assert_eq!(
+                kind.validate_template(default_prompt_text(kind)),
+                Ok(()),
+                "the default {} template",
+                kind.as_str()
+            );
         }
     }
 
@@ -553,7 +546,11 @@ mod tests {
     #[test]
     fn the_planner_is_told_nothing_of_forges_or_landing() {
         let planner = std::iter::once(default_system_prompt(Role::Planner))
-            .chain(default_prompts(Role::Planner).map(|(_, text)| text))
+            .chain(
+                PromptKind::for_role(Role::Planner)
+                    .iter()
+                    .map(|kind| default_prompt_text(*kind)),
+            )
             .collect::<Vec<_>>()
             .join("\n");
         for forge in [

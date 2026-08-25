@@ -5,11 +5,9 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 
 use ariadne_api::profiles::{
-    CreateProfileRequest, ProfileDto, ProfileListQuery, ProfilePromptDto, PromptDefaultDto,
-    RolePromptDefaultsDto, UpdateProfilePromptRequest, UpdateProfileRequest,
+    CreateProfileRequest, ProfileDto, ProfileListQuery, ProfilePromptDto,
+    UpdateProfilePromptRequest, UpdateProfileRequest,
 };
-use ariadne_core::Role;
-use ariadne_store::defaults::{default_prompts, default_system_prompt};
 use ariadne_store::{NewProfile, ProfileUpdate, parse_prompt_kind};
 
 use super::AppState;
@@ -17,22 +15,19 @@ use super::convert::{profile_dto, profile_prompt_dto};
 use super::error::{ApiError, ApiResult};
 
 /// Create a profile.
+///
+/// It starts on the prompts of its role, every one of them the default: a
+/// briefing is given to it afterwards, one `PUT` per kind.
 #[utoipa::path(post, path = "/v1/profiles", tag = "profiles",
     request_body = CreateProfileRequest,
     responses(
         (status = 201, body = ProfileDto),
-        (status = 400, description = "a prompt kind the role does not own, \
-                                      or a placeholder its kind cannot fill in"),
         (status = 409, description = "name already exists")
     ))]
 pub async fn create(
     State(state): State<AppState>,
     Json(req): Json<CreateProfileRequest>,
 ) -> ApiResult<(StatusCode, Json<ProfileDto>)> {
-    let mut prompts = Vec::with_capacity(req.prompts.len());
-    for prompt in req.prompts {
-        prompts.push((parse_prompt_kind(&prompt.kind)?, prompt.content));
-    }
     let profile = state
         .store
         .create_profile(NewProfile {
@@ -41,40 +36,9 @@ pub async fn create(
             agent_kind: req.agent_kind,
             model: req.model,
             system_prompt: req.system_prompt,
-            prompts,
         })
         .await?;
     Ok((StatusCode::CREATED, Json(profile_dto(profile))))
-}
-
-/// The built-in prompts a profile of `role` is seeded with: read-only, so an
-/// editor can show a default (and offer to restore one) before anything
-/// exists to read them from.
-#[utoipa::path(get, path = "/v1/roles/{role}/prompt-defaults", tag = "profiles",
-    params(("role" = String, Path, description = "planner, engineer or reviewer")),
-    responses(
-        (status = 200, body = RolePromptDefaultsDto),
-        (status = 400, description = "unknown role")
-    ))]
-pub async fn prompt_defaults(Path(role): Path<String>) -> ApiResult<Json<RolePromptDefaultsDto>> {
-    let role = role.parse::<Role>().map_err(|_| {
-        let known = Role::ALL
-            .iter()
-            .map(|r| r.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        ApiError::bad_request(format!("unknown role: {role} (expected one of {known})"))
-    })?;
-    Ok(Json(RolePromptDefaultsDto {
-        role,
-        system_prompt: default_system_prompt(role).to_string(),
-        prompts: default_prompts(role)
-            .map(|(kind, content)| PromptDefaultDto {
-                kind,
-                content: content.to_string(),
-            })
-            .collect(),
-    }))
 }
 
 /// List profiles.
@@ -148,7 +112,8 @@ pub async fn delete(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// The profile's briefing prompts, in briefing order.
+/// The profile's briefing prompts, in briefing order: each one as it takes
+/// effect, saying whether that is the default of its kind or a text set here.
 #[utoipa::path(get, path = "/v1/profiles/{id}/prompts", tag = "profiles",
     params(("id" = String, Path, description = "profile id or name")),
     responses((status = 200, body = [ProfilePromptDto]), (status = 404)))]
@@ -161,9 +126,10 @@ pub async fn list_prompts(
     Ok(Json(prompts.into_iter().map(profile_prompt_dto).collect()))
 }
 
-/// Replace the text of one prompt. A template may drop every `{placeholder}`
-/// it was seeded with, but not name one this kind has no value for: that token
-/// would reach the agent as literal text, so it is refused here.
+/// Set the text of one prompt, which is what makes it the profile's own. A
+/// template may drop every `{placeholder}` of its kind, but not name one the
+/// kind has no value for: that token would reach the agent as literal text, so
+/// it is refused here.
 #[utoipa::path(put, path = "/v1/profiles/{id}/prompts/{kind}", tag = "profiles",
     request_body = UpdateProfilePromptRequest,
     params(
@@ -190,7 +156,8 @@ pub async fn update_prompt(
     Ok(Json(profile_prompt_dto(prompt)))
 }
 
-/// Put one prompt back to the default of the profile's role.
+/// Put one prompt back on the default of its kind, dropping the text set on
+/// the profile.
 #[utoipa::path(post, path = "/v1/profiles/{id}/prompts/{kind}/reset", tag = "profiles",
     params(
         ("id" = String, Path, description = "profile id or name"),
@@ -211,7 +178,7 @@ pub async fn reset_prompt(
     Ok(Json(profile_prompt_dto(prompt)))
 }
 
-/// Put the profile's system prompt back to the default of its role.
+/// Put the profile's system prompt back on the default of its role.
 #[utoipa::path(post, path = "/v1/profiles/{id}/system-prompt/reset", tag = "profiles",
     params(("id" = String, Path, description = "profile id or name")),
     responses((status = 200, body = ProfileDto), (status = 404)))]

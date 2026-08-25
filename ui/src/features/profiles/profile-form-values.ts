@@ -13,10 +13,11 @@
  * `role` is deliberately missing from the update body: the daemon has no way to
  * change a profile's role after creation.
  *
- * The briefing prompts are the other asymmetry. Create takes them inline, so
- * only the ones edited away from the role default go into the body; update has
- * no room for them at all — each changed kind is its own `PUT`, which is why
- * {@link changedPrompts} is separate from either request builder.
+ * The prompts are the other asymmetry. Neither body carries a briefing: a
+ * changed kind is its own `PUT`, which is why {@link changedPrompts} is
+ * separate from either request builder. The system prompt does travel with the
+ * profile, and on create an empty box means "no prompt of its own", which is
+ * what leaves the profile on the default of its role.
  */
 
 import { z } from "zod"
@@ -48,9 +49,9 @@ export type AgentKindChoice = (typeof AGENT_KIND_CHOICES)[number]
 /**
  * One briefing prompt while it is being edited: the daemon's kind and the text.
  *
- * Which kinds a form holds is never decided here — the create dialog takes them
- * from the role defaults and the edit dialog from the profile's own prompts, in
- * the order the daemon sends them.
+ * Which kinds a form holds is never decided here — they are the ones the
+ * profile's own prompts endpoint answers with, in the order it sends them, so a
+ * new profile carries none until it exists.
  */
 export interface PromptFormValue {
   kind: PromptKind
@@ -68,10 +69,10 @@ export const profileFormSchema = z.object({
   role: z.enum(ROLES),
   agentKind: z.enum(AGENT_KIND_CHOICES),
   model: z.string(),
-  systemPrompt: z
-    .string()
-    .refine((value) => value.trim().length > 0, { message: "A system prompt is required." }),
-  // A briefing may legitimately be emptied, so there is nothing to validate.
+  // A prompt may legitimately be emptied — the daemon takes any text — and on
+  // create an empty one means the role's default, so there is nothing to
+  // validate.
+  systemPrompt: z.string(),
   prompts: z.array(z.object({ kind: z.enum(PROMPT_KINDS), content: z.string() })),
 })
 
@@ -112,10 +113,9 @@ export function profileToFormValues(
 /**
  * The prompts whose text is not what `baseline` holds.
  *
- * Both dialogs save through this: on create the baseline is the role's
- * defaults, so only edited briefings are sent and the rest are seeded by the
- * daemon; on edit it is what the daemon last answered, so an untouched briefing
- * is never written.
+ * The baseline is what the daemon last answered, which is the default itself
+ * for a prompt the profile has none of its own: an untouched briefing is never
+ * written, so reading one does not quietly turn it into an override.
  */
 export function changedPrompts(
   prompts: readonly PromptFormValue[],
@@ -128,26 +128,21 @@ export function changedPrompts(
 }
 
 /**
- * The create body, with only the briefings the user actually edited.
+ * The create body.
  *
- * `defaults` is what the role would seed on its own: a kind left at its default
- * is left out of the body entirely, which is what the daemon reads as "seed
- * this one yourself".
+ * A blank system prompt is sent as no system prompt at all, which is what
+ * leaves the new profile on the default of its role — the same thing the CLI
+ * does with a `create` that names no `system` prompt.
  */
-export function toCreateRequest(
-  values: ProfileFormValues,
-  defaults: readonly PromptFormValue[] = [],
-): CreateProfileRequest {
+export function toCreateRequest(values: ProfileFormValues): CreateProfileRequest {
   const model = values.model.trim()
-  const prompts = changedPrompts(values.prompts, defaults)
   return {
     name: values.name.trim(),
     role: values.role,
     // Create takes the absent value itself rather than a sentinel.
     agent_kind: values.agentKind === AUTO_AGENT_KIND ? null : values.agentKind,
     model: model.length > 0 ? model : null,
-    system_prompt: values.systemPrompt,
-    ...(prompts.length > 0 ? { prompts } : {}),
+    system_prompt: values.systemPrompt.trim().length > 0 ? values.systemPrompt : null,
   }
 }
 

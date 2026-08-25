@@ -1,11 +1,8 @@
 //! Profile repository.
 
-use std::collections::HashMap;
-
 use ariadne_core::id::new_id;
-use ariadne_core::{AgentKind, PromptKind, Role};
+use ariadne_core::{AgentKind, Role};
 
-use crate::prompts::{check_placeholders, check_role_kind};
 use crate::{Change, Profile, Result, Store, StoreError, not_found, now};
 
 #[derive(Debug, Clone)]
@@ -15,12 +12,8 @@ pub struct NewProfile {
     /// None = auto: resolved at spawn time to the first installed agent CLI.
     pub agent_kind: Option<AgentKind>,
     pub model: Option<String>,
-    pub system_prompt: String,
-    /// Briefing prompts seeded instead of the role defaults, by kind. A kind
-    /// the role does not own, or a template naming a placeholder that kind
-    /// cannot fill in, rejects the whole creation; a kind listed twice keeps
-    /// the last entry.
-    pub prompts: Vec<(PromptKind, String)>,
+    /// None = the default of the role, which the profile then follows.
+    pub system_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -30,25 +23,18 @@ pub struct ProfileUpdate {
     pub agent_kind: Option<Option<AgentKind>>,
     /// Some(None) clears back to the agent default.
     pub model: Option<Option<String>>,
+    /// Some = the new text; None leaves whatever the profile has. Putting it
+    /// back on the role default is [`Store::reset_system_prompt`].
     pub system_prompt: Option<String>,
 }
 
 impl Store {
-    /// Create a profile, seeded with the default prompts of its role: a new
-    /// profile starts from the built-in briefings and is edited from there.
-    /// `new.prompts` seeds edited text instead, in the same transaction, so a
-    /// customized profile is never half-created.
+    /// Create a profile on the prompts of its role: nothing of its own is
+    /// stored, so every default it runs on stays the one in the code. Setting
+    /// a prompt afterwards is what gives it one.
     pub async fn create_profile(&self, new: NewProfile) -> Result<Profile> {
-        let whose = format!("this {} profile", new.role.as_str());
-        let mut prompts = HashMap::with_capacity(new.prompts.len());
-        for (kind, content) in new.prompts {
-            check_role_kind(kind, new.role, &whose)?;
-            check_placeholders(kind, &content)?;
-            prompts.insert(kind, content);
-        }
         let id = new_id();
         let ts = now();
-        let mut tx = self.w().begin().await?;
         sqlx::query(
             "INSERT INTO profiles (id, name, role, agent_kind, model, system_prompt, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -61,7 +47,7 @@ impl Store {
         .bind(&new.system_prompt)
         .bind(&ts)
         .bind(&ts)
-        .execute(&mut *tx)
+        .execute(self.w())
         .await
         .map_err(|e| match e {
             sqlx::Error::Database(ref db) if db.is_unique_violation() => {
@@ -69,8 +55,6 @@ impl Store {
             }
             other => StoreError::Db(other),
         })?;
-        Self::insert_prompts(&mut tx, &id, new.role, &ts, &prompts).await?;
-        tx.commit().await?;
         let profile = self.get_profile(&id).await?;
         self.publish(Change::ProfileCreated(profile.clone()));
         Ok(profile)
@@ -139,7 +123,7 @@ impl Store {
             None => current.agent_kind,
         };
         let model = update.model.unwrap_or(current.model);
-        let system_prompt = update.system_prompt.unwrap_or(current.system_prompt);
+        let system_prompt = update.system_prompt.or(current.system_prompt);
         sqlx::query(
             "UPDATE profiles SET name = ?, agent_kind = ?, model = ?, system_prompt = ?, updated_at = ?
              WHERE id = ?",

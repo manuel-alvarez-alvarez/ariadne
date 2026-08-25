@@ -115,7 +115,6 @@ dependencies = [
  "ariadne-api",
  "ariadne-client",
  "ariadne-core",
- "ariadne-store",
  "chrono",
  "clap",
  "clap_complete",

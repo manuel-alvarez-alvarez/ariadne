@@ -20,8 +20,7 @@ async fn seed_profile(store: &Store, name: &str, role: Role) -> Profile {
             role,
             agent_kind: Some(AgentKind::ClaudeCode),
             model: None,
-            system_prompt: format!("You are {name}."),
-            prompts: vec![],
+            system_prompt: Some(format!("You are {name}.")),
         })
         .await
         .unwrap()
@@ -182,8 +181,7 @@ async fn profile_crud_and_delete_guard() {
             role: Role::Planner,
             agent_kind: Some(AgentKind::Codex),
             model: None,
-            system_prompt: "x".into(),
-            prompts: vec![],
+            system_prompt: Some("x".into()),
         })
         .await;
     assert!(matches!(dup, Err(StoreError::Conflict(_))));
@@ -1754,8 +1752,11 @@ async fn goal_cascade_delete_cleans_children() {
     ));
 }
 
+/// A fresh database holds three profiles and not one prompt: what they are
+/// briefed with is the code's, which is what an empty `profile_prompts` and a
+/// NULL `system_prompt` mean.
 #[tokio::test]
-async fn a_fresh_database_is_seeded_with_the_built_in_profiles_and_their_prompts() {
+async fn a_fresh_database_is_seeded_with_the_built_in_profiles_on_every_default() {
     let (store, _dir) = test_store().await;
     for (name, role) in [
         ("Planner", Role::Planner),
@@ -1766,16 +1767,20 @@ async fn a_fresh_database_is_seeded_with_the_built_in_profiles_and_their_prompts
         assert_eq!(p.role(), role);
         assert!(p.agent_kind().is_none(), "{name} must have no agent kind");
         assert!(p.model.is_none(), "{name} must have no model");
+        assert!(
+            p.system_prompt.is_none(),
+            "{name} stores no system prompt of its own"
+        );
         assert_eq!(
-            p.system_prompt,
+            p.effective_system_prompt(),
             default_system_prompt(role),
-            "{name} ships the role default system prompt"
+            "{name} is briefed with the role default system prompt"
         );
         assert!(
-            p.system_prompt.contains("`ariadne` MCP tools"),
+            p.effective_system_prompt().contains("`ariadne` MCP tools"),
             "{name}'s system prompt says how to reach the orchestrator"
         );
-        // Exactly the role's prompt kinds, each at its default.
+        // Exactly the role's prompt kinds, each of them the default itself.
         let prompts = store.list_profile_prompts(&p.id).await.unwrap();
         assert_eq!(
             prompts.iter().map(|p| p.kind()).collect::<Vec<_>>(),
@@ -1784,15 +1789,20 @@ async fn a_fresh_database_is_seeded_with_the_built_in_profiles_and_their_prompts
         );
         for prompt in &prompts {
             assert_eq!(prompt.content, default_prompt(role, prompt.kind()).unwrap());
+            assert!(prompt.is_default, "{name} stored a {} prompt", prompt.kind);
+            assert!(prompt.updated_at.is_none());
         }
     }
+
+    // Not one prompt row was written for any of them.
+    assert_eq!(prompt_rows(&_dir).await, 0);
 
     // Fixed, recognizable ids; the reviewer carries the newer persona.
     let reviewer = store.get_profile_by_name("Reviewer").await.unwrap();
     assert_eq!(reviewer.id, "00000000000000000000000003");
     assert!(
         reviewer
-            .system_prompt
+            .effective_system_prompt()
             .contains("install the project's dependencies"),
         "reviewers are told to install dependencies and verify"
     );
@@ -1809,14 +1819,28 @@ async fn a_fresh_database_is_seeded_with_the_built_in_profiles_and_their_prompts
         )
         .await
         .unwrap();
-    assert_eq!(
-        store
-            .get_profile_by_name("Engineer")
-            .await
-            .unwrap()
-            .system_prompt,
-        "custom"
-    );
+    let engineer = store.get_profile_by_name("Engineer").await.unwrap();
+    assert_eq!(engineer.system_prompt.as_deref(), Some("custom"));
+    assert_eq!(engineer.effective_system_prompt(), "custom");
+}
+
+/// How many prompts the database is actually holding, read from the file
+/// itself: what the store answers is the effective prompt, which says nothing
+/// about whether a row is behind it.
+async fn prompt_rows(dir: &tempfile::TempDir) -> i64 {
+    prompt_rows_at(&dir.path().join("test.db")).await
+}
+
+async fn prompt_rows_at(path: &std::path::Path) -> i64 {
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+    let rows = sqlx::query_scalar("SELECT COUNT(*) FROM profile_prompts")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+    rows
 }
 
 /// Seeding keys off an empty `profiles` table only: deleting a built-in is
@@ -1856,7 +1880,7 @@ async fn built_ins_are_not_recreated_on_reopen() {
 }
 
 #[tokio::test]
-async fn a_new_profile_starts_from_the_role_defaults() {
+async fn a_new_profile_starts_on_the_role_defaults_and_stores_none_of_them() {
     let (store, _dir) = test_store().await;
     let reviewer = seed_profile(&store, "rev-strict", Role::Reviewer).await;
 
@@ -1869,12 +1893,34 @@ async fn a_new_profile_starts_from_the_role_defaults() {
         prompts[0].content,
         default_prompt(Role::Reviewer, PromptKind::ReviewerBriefing).unwrap()
     );
+    assert!(prompts.iter().all(|p| p.is_default));
+    assert_eq!(prompt_rows(&_dir).await, 0);
     // Its system prompt is the one it was created with, not the role default.
-    assert_eq!(reviewer.system_prompt, "You are rev-strict.");
+    assert_eq!(reviewer.system_prompt.as_deref(), Some("You are rev-strict."));
+    assert!(!reviewer.system_prompt_is_default());
+
+    // Created without one, it follows its role's instead.
+    let plain = store
+        .create_profile(NewProfile {
+            name: "rev-plain".into(),
+            role: Role::Reviewer,
+            agent_kind: None,
+            model: None,
+            system_prompt: None,
+        })
+        .await
+        .unwrap();
+    assert!(plain.system_prompt.is_none());
+    assert_eq!(
+        plain.effective_system_prompt(),
+        default_system_prompt(Role::Reviewer)
+    );
 }
 
+/// Setting a prompt is what writes a row, and resetting is what takes it away
+/// again: what is left over is the default, which nothing stores.
 #[tokio::test]
-async fn prompts_update_and_reset_to_their_defaults() {
+async fn a_prompt_is_stored_only_while_it_is_set_and_a_reset_deletes_it() {
     let (store, _dir) = test_store().await;
     let engineer = store.get_profile_by_name("Engineer").await.unwrap();
 
@@ -1884,6 +1930,10 @@ async fn prompts_update_and_reset_to_their_defaults() {
         .unwrap();
     assert_eq!(updated.content, "fix it");
     assert_eq!(updated.kind(), PromptKind::ChangesRequested);
+    assert!(!updated.is_default);
+    assert!(updated.updated_at.is_some());
+    // One prompt was set, so one row exists.
+    assert_eq!(prompt_rows(&_dir).await, 1);
     assert_eq!(
         store
             .get_profile_prompt(&engineer.id, PromptKind::ChangesRequested)
@@ -1910,6 +1960,9 @@ async fn prompts_update_and_reset_to_their_defaults() {
         reset.content,
         default_prompt(Role::Engineer, PromptKind::ChangesRequested).unwrap()
     );
+    assert!(reset.is_default);
+    // The row is gone with it: a default is stored nowhere.
+    assert_eq!(prompt_rows(&_dir).await, 0);
 
     // The system prompt resets the same way.
     store
@@ -1923,8 +1976,9 @@ async fn prompts_update_and_reset_to_their_defaults() {
         .await
         .unwrap();
     let restored = store.reset_system_prompt(&engineer.id).await.unwrap();
+    assert!(restored.system_prompt.is_none());
     assert_eq!(
-        restored.system_prompt,
+        restored.effective_system_prompt(),
         default_system_prompt(Role::Engineer)
     );
 }
@@ -1960,25 +2014,6 @@ async fn a_template_naming_a_placeholder_its_kind_cannot_fill_in_is_refused() {
             .content,
         default_prompt(Role::Engineer, PromptKind::EngineerBriefing).unwrap()
     );
-
-    // The same rule seeds a profile: the row must not survive its bad prompt.
-    assert!(matches!(
-        store
-            .create_profile(NewProfile {
-                name: "eng-typo".into(),
-                role: Role::Engineer,
-                agent_kind: None,
-                model: None,
-                system_prompt: "You are eng-typo.".into(),
-                prompts: vec![(PromptKind::ChangesRequested, "{feedbcak}".into())],
-            })
-            .await,
-        Err(StoreError::Invalid(_))
-    ));
-    assert!(matches!(
-        store.get_profile_by_name("eng-typo").await,
-        Err(StoreError::NotFound { .. })
-    ));
 
     // What renders as itself still saves: literal braces, JSON, no
     // placeholders at all.
@@ -2236,8 +2271,7 @@ async fn seed_pinned_profile(
             role,
             agent_kind,
             model: model.map(str::to_string),
-            system_prompt: format!("You are {name}."),
-            prompts: vec![],
+            system_prompt: Some(format!("You are {name}.")),
         })
         .await
         .unwrap()
@@ -2741,8 +2775,14 @@ async fn a_pre_rewrite_database_ends_on_the_prompts_this_release_ships() {
     let store = Store::open(&path).await.unwrap();
 
     for (id, role) in SEEDED {
+        let profile = store.get_profile(id).await.unwrap();
+        assert!(
+            profile.system_prompt.is_none(),
+            "the {} playbook was left as a copy of the default",
+            role.as_str()
+        );
         assert_eq!(
-            store.get_profile(id).await.unwrap().system_prompt,
+            profile.effective_system_prompt(),
             default_system_prompt(role),
             "the {} playbook did not reach today's default",
             role.as_str()
@@ -3059,7 +3099,11 @@ async fn a_pre_0026_database_loses_the_landing_role_and_keeps_everything_else() 
         ("oldengineer", Role::Engineer),
     ] {
         assert_eq!(
-            store.get_profile(id).await.unwrap().system_prompt,
+            store
+                .get_profile(id)
+                .await
+                .unwrap()
+                .effective_system_prompt(),
             default_system_prompt(role),
             "the {} playbook",
             role.as_str()
@@ -3070,7 +3114,7 @@ async fn a_pre_0026_database_loses_the_landing_role_and_keeps_everything_else() 
             .get_profile("oldreviewer")
             .await
             .unwrap()
-            .system_prompt,
+            .effective_system_prompt(),
         "Mine, edited."
     );
     assert_eq!(
@@ -3089,4 +3133,96 @@ async fn a_pre_0026_database_loses_the_landing_role_and_keeps_everything_else() 
             .content,
         default_prompt(Role::Engineer, PromptKind::LandingInstructions).unwrap()
     );
+}
+
+/// A database from before prompts were overrides: every copy of a default goes,
+/// everything a user wrote stays, and what the store answers is the same text
+/// either way.
+///
+/// This is the migration that ends the rewrite chain above. What it removes is
+/// what made the chain necessary — a row per prompt per profile, each one to be
+/// walked by hand whenever a default was reworded.
+#[tokio::test]
+async fn a_pre_0028_database_keeps_only_the_prompts_somebody_wrote() {
+    let dir = tempfile::tempdir().unwrap();
+    let (path, pool) = legacy_database(&dir, "overrides.db").await;
+    migrated_below(&pool, 28).await;
+
+    // Two profiles as that release stored them: one untouched, holding copies
+    // of the defaults, and one its user rewrote.
+    for (id, name, system) in [
+        ("copies", "Copies", default_system_prompt(Role::Engineer)),
+        ("edited", "Edited", "You are mine."),
+    ] {
+        sqlx::query(
+            "INSERT INTO profiles (id, name, role, system_prompt, created_at, updated_at)
+             VALUES (?, ?, 'engineer', ?, 't', 't')",
+        )
+        .bind(id)
+        .bind(name)
+        .bind(system)
+        .execute(&pool)
+        .await
+        .unwrap();
+        for kind in PromptKind::for_role(Role::Engineer) {
+            let content = match (id, kind) {
+                ("edited", PromptKind::ChangesRequested) => "Fix it. {feedback}".to_string(),
+                _ => default_prompt(Role::Engineer, *kind).unwrap().to_string(),
+            };
+            sqlx::query(
+                "INSERT INTO profile_prompts (profile_id, kind, content, updated_at)
+                 VALUES (?, ?, ?, 't')",
+            )
+            .bind(id)
+            .bind(kind.as_str())
+            .bind(content)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    }
+    pool.close().await;
+
+    // Opening the store runs the migration under test.
+    let store = Store::open(&path).await.unwrap();
+
+    // Nothing is stored for the profile that had only copies, and it is briefed
+    // exactly as it was.
+    let copies = store.get_profile("copies").await.unwrap();
+    assert!(copies.system_prompt.is_none());
+    assert_eq!(
+        copies.effective_system_prompt(),
+        default_system_prompt(Role::Engineer)
+    );
+    for prompt in store.list_profile_prompts("copies").await.unwrap() {
+        assert!(prompt.is_default, "{} was kept as a copy", prompt.kind);
+        assert_eq!(
+            prompt.content,
+            default_prompt(Role::Engineer, prompt.kind()).unwrap()
+        );
+    }
+
+    // The rewritten profile keeps every word of what its user wrote, and
+    // nothing else.
+    let edited = store.get_profile("edited").await.unwrap();
+    assert_eq!(edited.system_prompt.as_deref(), Some("You are mine."));
+    for prompt in store.list_profile_prompts("edited").await.unwrap() {
+        match prompt.kind() {
+            PromptKind::ChangesRequested => {
+                assert!(!prompt.is_default);
+                assert_eq!(prompt.content, "Fix it. {feedback}");
+            }
+            kind => {
+                assert!(
+                    prompt.is_default,
+                    "{} was kept as a copy",
+                    kind.as_str()
+                );
+                assert_eq!(prompt.content, default_prompt(Role::Engineer, kind).unwrap());
+            }
+        }
+    }
+
+    // One prompt was written across the whole install, so one row is left.
+    assert_eq!(prompt_rows_at(&path).await, 1);
 }

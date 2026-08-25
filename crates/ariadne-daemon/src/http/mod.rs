@@ -91,7 +91,7 @@ impl AppState {
         agents::list, agents::update,
         profiles::create, profiles::list, profiles::get, profiles::update, profiles::delete,
         profiles::list_prompts, profiles::update_prompt, profiles::reset_prompt,
-        profiles::reset_system_prompt, profiles::prompt_defaults,
+        profiles::reset_system_prompt,
         repositories::create, repositories::list, repositories::get,
         repositories::update, repositories::delete,
         goals::create, goals::list, goals::get, goals::delete,
@@ -159,11 +159,6 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/v1/profiles/{id}/system-prompt/reset",
             post(profiles::reset_system_prompt),
-        )
-        // the built-in prompt defaults of a role, before any profile exists
-        .route(
-            "/v1/roles/{role}/prompt-defaults",
-            get(profiles::prompt_defaults),
         )
         // repositories
         .route(

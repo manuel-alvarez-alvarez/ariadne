@@ -764,6 +764,7 @@
           "profiles"
         ],
         "summary": "Create a profile.",
+        "description": "It starts on the prompts of its role, every one of them the default: a\nbriefing is given to it afterwards, one `PUT` per kind.",
         "operationId": "create",
         "requestBody": {
           "content": {
@@ -785,9 +786,6 @@
                 }
               }
             }
-          },
-          "400": {
-            "description": "a prompt kind the role does not own, or a placeholder its kind cannot fill in"
           },
           "409": {
             "description": "name already exists"
@@ -907,7 +905,7 @@
         "tags": [
           "profiles"
         ],
-        "summary": "The profile's briefing prompts, in briefing order.",
+        "summary": "The profile's briefing prompts, in briefing order: each one as it takes\neffect, saying whether that is the default of its kind or a text set here.",
         "operationId": "list_prompts",
         "parameters": [
           {
@@ -945,7 +943,7 @@
         "tags": [
           "profiles"
         ],
-        "summary": "Replace the text of one prompt. A template may drop every `{placeholder}`\nit was seeded with, but not name one this kind has no value for: that token\nwould reach the agent as literal text, so it is refused here.",
+        "summary": "Set the text of one prompt, which is what makes it the profile's own. A\ntemplate may drop every `{placeholder}` of its kind, but not name one the\nkind has no value for: that token would reach the agent as literal text, so\nit is refused here.",
         "operationId": "update_prompt",
         "parameters": [
           {
@@ -1002,7 +1000,7 @@
         "tags": [
           "profiles"
         ],
-        "summary": "Put one prompt back to the default of the profile's role.",
+        "summary": "Put one prompt back on the default of its kind, dropping the text set on\nthe profile.",
         "operationId": "reset_prompt",
         "parameters": [
           {
@@ -1049,7 +1047,7 @@
         "tags": [
           "profiles"
         ],
-        "summary": "Put the profile's system prompt back to the default of its role.",
+        "summary": "Put the profile's system prompt back on the default of its role.",
         "operationId": "reset_system_prompt",
         "parameters": [
           {
@@ -1244,41 +1242,6 @@
           },
           "404": {
             "description": ""
-          }
-        }
-      }
-    },
-    "/v1/roles/{role}/prompt-defaults": {
-      "get": {
-        "tags": [
-          "profiles"
-        ],
-        "summary": "The built-in prompts a profile of `role` is seeded with: read-only, so an\neditor can show a default (and offer to restore one) before anything\nexists to read them from.",
-        "operationId": "prompt_defaults",
-        "parameters": [
-          {
-            "name": "role",
-            "in": "path",
-            "description": "planner, engineer or reviewer",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RolePromptDefaultsDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "unknown role"
           }
         }
       }
@@ -2424,8 +2387,7 @@
         "type": "object",
         "required": [
           "name",
-          "role",
-          "system_prompt"
+          "role"
         ],
         "properties": {
           "agent_kind": {
@@ -2449,18 +2411,15 @@
             "type": "string",
             "example": "rust-engineer"
           },
-          "prompts": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/NewProfilePrompt"
-            },
-            "description": "Briefing prompts to seed instead of the role defaults. A kind listed\nhere replaces its default; every other kind of the role is seeded as\nusual. Absent or empty = the role defaults, unedited."
-          },
           "role": {
             "$ref": "#/components/schemas/Role"
           },
           "system_prompt": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Absent or null = the default of the role, which the profile then\nfollows. Briefings are set afterwards, one `PUT` per kind."
           }
         }
       },
@@ -3208,23 +3167,6 @@
           }
         }
       },
-      "NewProfilePrompt": {
-        "type": "object",
-        "description": "One prompt override in [`CreateProfileRequest`]: the kind spelled as on the\nprompt routes, and the text to seed instead of the role default.",
-        "required": [
-          "kind",
-          "content"
-        ],
-        "properties": {
-          "content": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string",
-            "example": "engineer_briefing"
-          }
-        }
-      },
       "PathStateDto": {
         "type": "object",
         "description": "A file or directory the daemon depends on.",
@@ -3253,6 +3195,7 @@
           "name",
           "role",
           "system_prompt",
+          "system_prompt_is_default",
           "created_at",
           "updated_at"
         ],
@@ -3287,7 +3230,12 @@
             "$ref": "#/components/schemas/Role"
           },
           "system_prompt": {
-            "type": "string"
+            "type": "string",
+            "description": "The system prompt this profile is spawned with: the one set on it, or\nthe default of its role while it has none of its own."
+          },
+          "system_prompt_is_default": {
+            "type": "boolean",
+            "description": "Whether `system_prompt` is that role default rather than a text set on\nthis profile."
           },
           "updated_at": {
             "type": "string"
@@ -3296,39 +3244,30 @@
       },
       "ProfilePromptDto": {
         "type": "object",
-        "description": "One of the briefing prompts a profile owns beside its system prompt.",
+        "description": "One of the briefing prompts a profile owns beside its system prompt, as it\ntakes effect.",
         "required": [
           "kind",
           "content",
-          "updated_at"
+          "is_default"
         ],
         "properties": {
           "content": {
             "type": "string",
-            "description": "Template text with `{placeholder}` tokens the daemon fills in."
+            "description": "Template text with `{placeholder}` tokens the daemon fills in: the one\nset on the profile, or the default of the kind while it has none."
+          },
+          "is_default": {
+            "type": "boolean",
+            "description": "Whether `content` is that default rather than a text set on this\nprofile."
           },
           "kind": {
             "$ref": "#/components/schemas/PromptKind"
           },
           "updated_at": {
-            "type": "string"
-          }
-        }
-      },
-      "PromptDefaultDto": {
-        "type": "object",
-        "description": "One built-in prompt default. Unlike [`ProfilePromptDto`] it belongs to no\nprofile, so there is nothing to timestamp.",
-        "required": [
-          "kind",
-          "content"
-        ],
-        "properties": {
-          "content": {
-            "type": "string",
-            "description": "Template text with `{placeholder}` tokens the daemon fills in."
-          },
-          "kind": {
-            "$ref": "#/components/schemas/PromptKind"
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "When the text set on the profile was last written; null while the\ndefault stands, which nothing dates."
           }
         }
       },
@@ -3483,30 +3422,6 @@
           "engineer",
           "reviewer"
         ]
-      },
-      "RolePromptDefaultsDto": {
-        "type": "object",
-        "description": "Response of `GET /v1/roles/{role}/prompt-defaults`: what a profile of that\nrole is seeded with, read without creating or touching anything.",
-        "required": [
-          "role",
-          "system_prompt",
-          "prompts"
-        ],
-        "properties": {
-          "prompts": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/PromptDefaultDto"
-            },
-            "description": "The role's briefing prompts, in briefing order."
-          },
-          "role": {
-            "$ref": "#/components/schemas/Role"
-          },
-          "system_prompt": {
-            "type": "string"
-          }
-        }
       },
       "SessionDto": {
         "type": "object",
@@ -4033,7 +3948,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "New system prompt. Absent = unchanged; putting it back on the role\ndefault is `POST /v1/profiles/{id}/system-prompt/reset`."
           }
         }
       },

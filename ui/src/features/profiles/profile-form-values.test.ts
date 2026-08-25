@@ -25,8 +25,8 @@ import {
   toUpdateRequest,
 } from "./profile-form-values"
 
-/** What an engineer role seeds, as the defaults endpoint answers it. */
-const DEFAULTS: PromptFormValue[] = [
+/** What an engineer profile is briefed with, as its prompts endpoint answers. */
+const BRIEFINGS: PromptFormValue[] = [
   { kind: "engineer_briefing", content: "Start the task." },
   { kind: "changes_requested", content: "Apply the review." },
 ]
@@ -38,6 +38,7 @@ const PROFILE: ProfileDto = {
   agent_kind: "claude_code",
   model: "claude-opus-5",
   system_prompt: "You are a Rust engineer.",
+  system_prompt_is_default: false,
   created_at: "2026-08-16T09:00:00.000Z",
   updated_at: "2026-08-16T09:30:00.000Z",
 }
@@ -55,8 +56,8 @@ describe("profileToFormValues", () => {
   })
 
   it("takes the briefings from the second argument, which the DTO has no room for", () => {
-    const values = profileToFormValues(PROFILE, DEFAULTS)
-    expect(values.prompts).toEqual(DEFAULTS)
+    const values = profileToFormValues(PROFILE, BRIEFINGS)
+    expect(values.prompts).toEqual(BRIEFINGS)
   })
 
   it("shows the unset agent kind and model as their explicit choices", () => {
@@ -73,28 +74,19 @@ describe("toCreateRequest", () => {
       role: "planner",
       agent_kind: null,
       model: null,
-      system_prompt: "",
+      // A blank box is no system prompt at all, which is the role's own.
+      system_prompt: null,
     })
   })
 
-  it("leaves the prompts out when every briefing is still its default", () => {
-    const values = { ...profileToFormValues(PROFILE, DEFAULTS) }
-    expect(toCreateRequest(values, DEFAULTS)).not.toHaveProperty("prompts")
+  it("sends a blank system prompt as none, so the new profile follows its role", () => {
+    const values = { ...profileToFormValues(PROFILE), systemPrompt: "   " }
+    expect(toCreateRequest(values).system_prompt).toBeNull()
   })
 
-  it("sends only the briefings edited away from their default", () => {
-    const values = profileToFormValues(PROFILE, [
-      { kind: "engineer_briefing", content: "Start the task, carefully." },
-      ...DEFAULTS.slice(1),
-    ])
-    expect(toCreateRequest(values, DEFAULTS).prompts).toEqual([
-      { kind: "engineer_briefing", content: "Start the task, carefully." },
-    ])
-  })
-
-  it("sends nothing when the defaults never arrived, so the daemon seeds them all", () => {
-    const values = { ...profileToFormValues(PROFILE), prompts: [] }
-    expect(toCreateRequest(values, []).prompts).toBeUndefined()
+  it("carries no briefings: they are written to the profile once it exists", () => {
+    const values = profileToFormValues(PROFILE, BRIEFINGS)
+    expect(toCreateRequest(values)).not.toHaveProperty("prompts")
   })
 
   it("passes a pinned agent kind and model through", () => {
@@ -126,16 +118,16 @@ describe("toUpdateRequest", () => {
 
 describe("changedPrompts", () => {
   it("is empty while nothing has been touched", () => {
-    expect(changedPrompts(DEFAULTS, DEFAULTS)).toEqual([])
+    expect(changedPrompts(BRIEFINGS, BRIEFINGS)).toEqual([])
   })
 
   it("keeps an emptied briefing, which is an edit like any other", () => {
-    const edited = [{ kind: "changes_requested" as const, content: "" }, ...DEFAULTS.slice(2)]
-    expect(changedPrompts(edited, DEFAULTS)).toEqual([{ kind: "changes_requested", content: "" }])
+    const edited = [{ kind: "changes_requested" as const, content: "" }, ...BRIEFINGS.slice(2)]
+    expect(changedPrompts(edited, BRIEFINGS)).toEqual([{ kind: "changes_requested", content: "" }])
   })
 
   it("counts a kind the baseline never had as changed", () => {
-    expect(changedPrompts(DEFAULTS, [])).toEqual(DEFAULTS)
+    expect(changedPrompts(BRIEFINGS, [])).toEqual(BRIEFINGS)
   })
 })
 

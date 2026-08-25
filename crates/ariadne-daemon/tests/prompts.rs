@@ -146,13 +146,17 @@ impl Harness {
         ))
         .await
         .unwrap();
-        sqlx::query("UPDATE profile_prompts SET content = ? WHERE profile_id = ? AND kind = ?")
-            .bind(content)
-            .bind(profile_id)
-            .bind(kind.as_str())
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO profile_prompts (profile_id, kind, content, updated_at)
+             VALUES (?, ?, ?, 't')
+             ON CONFLICT (profile_id, kind) DO UPDATE SET content = excluded.content",
+        )
+        .bind(profile_id)
+        .bind(kind.as_str())
+        .bind(content)
+        .execute(&pool)
+        .await
+        .unwrap();
         pool.close().await;
     }
 
@@ -163,8 +167,7 @@ impl Harness {
                 role,
                 agent_kind: Some(AgentKind::ClaudeCode),
                 model: None,
-                system_prompt: format!("You are {name}."),
-                prompts: vec![],
+                system_prompt: Some(format!("You are {name}.")),
             })
             .await
             .unwrap()
@@ -235,6 +238,35 @@ async fn a_spawned_engineer_is_briefed_from_its_profiles_prompt() {
     )
     .unwrap();
     assert_eq!(system, "You are engineer.");
+}
+
+/// A profile nobody edited holds no prompt at all, and is briefed with the
+/// defaults of its role: the code's text is what reaches the agent, without
+/// anything having been copied into the database first.
+#[tokio::test]
+async fn a_profile_with_no_prompts_of_its_own_is_briefed_with_the_defaults() {
+    let h = harness().await;
+    let (task, engineer) = h.task().await;
+    assert!(
+        h.store
+            .list_profile_prompts(&engineer)
+            .await
+            .unwrap()
+            .iter()
+            .all(|p| p.is_default)
+    );
+
+    let session = h.launcher.spawn_engineer(&task.id).await.unwrap();
+    let argv = h.launched_argv(&session.id);
+    let expected = ariadne_daemon::agents::prompts::engineer_briefing(
+        ariadne_store::defaults::default_prompt(Role::Engineer, PromptKind::EngineerBriefing)
+            .unwrap(),
+        &h.store.get_task(&task.id).await.unwrap(),
+        &h.store.get_goal(&task.goal_id).await.unwrap(),
+        &h.store.get_repository(&task.repo_id).await.unwrap(),
+        &[],
+    );
+    assert!(argv.contains(&expected), "the default briefing: {argv}");
 }
 
 /// The `{summary}` a reviewer is briefed with is the one the engineer

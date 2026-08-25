@@ -18,10 +18,11 @@ pub fn profile_dto(p: store::Profile) -> ProfileDto {
     ProfileDto {
         role: p.role(),
         agent_kind: p.agent_kind(),
+        system_prompt: p.effective_system_prompt().to_string(),
+        system_prompt_is_default: p.system_prompt_is_default(),
         id: p.id,
         name: p.name,
         model: p.model,
-        system_prompt: p.system_prompt,
         created_at: p.created_at,
         updated_at: p.updated_at,
     }
@@ -39,6 +40,7 @@ pub fn profile_prompt_dto(p: store::ProfilePrompt) -> ProfilePromptDto {
     ProfilePromptDto {
         kind: p.kind(),
         content: p.content,
+        is_default: p.is_default,
         updated_at: p.updated_at,
     }
 }

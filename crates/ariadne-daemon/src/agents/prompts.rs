@@ -1,9 +1,10 @@
 //! Prompt assembly from the database.
 //!
 //! Every prompt an agent runs on belongs to its profile: the system layer is
-//! the profile's own `system_prompt` (the role's persona and playbook),
-//! the task layer is one of its briefing templates — one per
-//! [`PromptKind`] — with the concrete goal, task and review values put in.
+//! its system prompt (the role's persona and playbook), the task layer one of
+//! its briefing templates — one per [`PromptKind`] — with the concrete goal,
+//! task and review values put in. Either may be the default of the code, which
+//! is what a profile that was never edited runs on.
 //!
 //! Those templates are editable, so they are also breakable. Rendering is
 //! lenient by construction: an unknown `{token}`, a brace that never closes,
@@ -18,12 +19,12 @@ use ariadne_core::PromptKind;
 use ariadne_store::defaults::default_prompt_text;
 use ariadne_store::{Goal, Message, Profile, Repository, Store, Task};
 
-/// The profile's own text for `kind`, falling back to the built-in default
-/// when there is no row to read (deleted by hand, or a profile that predates
-/// the kind).
+/// The text `kind` is rendered from: the one set on the profile, or the
+/// default of the kind, which is what the store answers while nothing is set.
 ///
-/// A prompt we cannot read is never a reason to leave an agent unstarted, so
-/// the failure is logged and answered with the default rather than returned.
+/// A prompt we cannot read at all — a profile that has gone — is never a
+/// reason to leave an agent unstarted, so the failure is logged and answered
+/// with the default rather than returned.
 pub async fn template_for(store: &Store, profile_id: &str, kind: PromptKind) -> String {
     match store.get_profile_prompt(profile_id, kind).await {
         Ok(prompt) => prompt.content,
@@ -32,7 +33,7 @@ pub async fn template_for(store: &Store, profile_id: &str, kind: PromptKind) -> 
                 profile = %profile_id,
                 kind = kind.as_str(),
                 error = %e,
-                "no stored prompt for this profile; using the built-in default"
+                "this profile's prompt could not be read; using the built-in default"
             );
             default_prompt_text(kind).into()
         }
@@ -76,9 +77,10 @@ pub fn render(template: &str, values: &[(&str, &str)]) -> String {
     out
 }
 
-/// System layer: the profile's prompt, as the profile has it.
+/// System layer: the profile's prompt, as the profile has it — the one set on
+/// it, or the default of its role.
 pub fn system_prompt(profile: &Profile) -> String {
-    profile.system_prompt.trim().to_string()
+    profile.effective_system_prompt().trim().to_string()
 }
 
 /// Initial prompt for a planner session.

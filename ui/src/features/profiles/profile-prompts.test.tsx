@@ -37,6 +37,7 @@ const ENGINEER: ProfileDto = {
   agent_kind: "claude_code",
   model: null,
   system_prompt: "Stored system prompt.",
+  system_prompt_is_default: false,
   created_at: STAMP,
   updated_at: STAMP,
 }
@@ -58,16 +59,58 @@ const REVIEWER: ProfileDto = {
 /** What the daemon holds, per role — the kinds it answers `GET .../prompts` with. */
 const STORED: Record<string, ProfilePromptDto[]> = {
   engineer: [
-    { kind: "engineer_briefing", content: "Stored engineer briefing.", updated_at: STAMP },
-    { kind: "engineer_resume", content: "Stored engineer resume.", updated_at: STAMP },
-    { kind: "changes_requested", content: "Stored changes requested.", updated_at: STAMP },
-    { kind: "landing_instructions", content: "Stored landing instructions.", updated_at: STAMP },
-    { kind: "message_delivery", content: "Stored message delivery.", updated_at: STAMP },
+    {
+      kind: "engineer_briefing",
+      content: "Stored engineer briefing.",
+      is_default: false,
+      updated_at: STAMP,
+    },
+    {
+      kind: "engineer_resume",
+      content: "Stored engineer resume.",
+      is_default: false,
+      updated_at: STAMP,
+    },
+    {
+      kind: "changes_requested",
+      content: "Stored changes requested.",
+      is_default: false,
+      updated_at: STAMP,
+    },
+    {
+      kind: "landing_instructions",
+      content: "Stored landing instructions.",
+      is_default: false,
+      updated_at: STAMP,
+    },
+    {
+      kind: "message_delivery",
+      content: "Stored message delivery.",
+      is_default: false,
+      updated_at: STAMP,
+    },
   ],
-  planner: [{ kind: "planner_briefing", content: "Stored planner briefing.", updated_at: STAMP }],
+  planner: [
+    {
+      kind: "planner_briefing",
+      content: "Stored planner briefing.",
+      is_default: false,
+      updated_at: STAMP,
+    },
+  ],
   reviewer: [
-    { kind: "reviewer_briefing", content: "Stored reviewer briefing.", updated_at: STAMP },
-    { kind: "reviewer_resume", content: "Stored reviewer resume.", updated_at: STAMP },
+    {
+      kind: "reviewer_briefing",
+      content: "Stored reviewer briefing.",
+      is_default: false,
+      updated_at: STAMP,
+    },
+    {
+      kind: "reviewer_resume",
+      content: "Stored reviewer resume.",
+      is_default: false,
+      updated_at: STAMP,
+    },
   ],
 }
 

@@ -13,7 +13,12 @@ pub struct ProfileDto {
     /// (claude_code, then codex, then opencode).
     pub agent_kind: Option<AgentKind>,
     pub model: Option<String>,
+    /// The system prompt this profile is spawned with: the one set on it, or
+    /// the default of its role while it has none of its own.
     pub system_prompt: String,
+    /// Whether `system_prompt` is that role default rather than a text set on
+    /// this profile.
+    pub system_prompt_is_default: bool,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -26,21 +31,10 @@ pub struct CreateProfileRequest {
     /// Omit for auto: the first installed agent CLI is used at spawn time.
     pub agent_kind: Option<AgentKind>,
     pub model: Option<String>,
-    pub system_prompt: String,
-    /// Briefing prompts to seed instead of the role defaults. A kind listed
-    /// here replaces its default; every other kind of the role is seeded as
-    /// usual. Absent or empty = the role defaults, unedited.
+    /// Absent or null = the default of the role, which the profile then
+    /// follows. Briefings are set afterwards, one `PUT` per kind.
     #[serde(default)]
-    pub prompts: Vec<NewProfilePrompt>,
-}
-
-/// One prompt override in [`CreateProfileRequest`]: the kind spelled as on the
-/// prompt routes, and the text to seed instead of the role default.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct NewProfilePrompt {
-    #[schema(example = "engineer_briefing")]
-    pub kind: String,
-    pub content: String,
+    pub system_prompt: Option<String>,
 }
 
 /// Partial update; absent fields stay unchanged.
@@ -53,40 +47,30 @@ pub struct UpdateProfileRequest {
     /// New model, or "default" (or empty) to clear it back to the agent's
     /// default. Absent = unchanged.
     pub model: Option<String>,
+    /// New system prompt. Absent = unchanged; putting it back on the role
+    /// default is `POST /v1/profiles/{id}/system-prompt/reset`.
     pub system_prompt: Option<String>,
 }
 
-/// One of the briefing prompts a profile owns beside its system prompt.
+/// One of the briefing prompts a profile owns beside its system prompt, as it
+/// takes effect.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ProfilePromptDto {
     pub kind: PromptKind,
-    /// Template text with `{placeholder}` tokens the daemon fills in.
+    /// Template text with `{placeholder}` tokens the daemon fills in: the one
+    /// set on the profile, or the default of the kind while it has none.
     pub content: String,
-    pub updated_at: String,
+    /// Whether `content` is that default rather than a text set on this
+    /// profile.
+    pub is_default: bool,
+    /// When the text set on the profile was last written; null while the
+    /// default stands, which nothing dates.
+    pub updated_at: Option<String>,
 }
 
 /// Body of `PUT /v1/profiles/{id}/prompts/{kind}`: the whole new text.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct UpdateProfilePromptRequest {
-    pub content: String,
-}
-
-/// Response of `GET /v1/roles/{role}/prompt-defaults`: what a profile of that
-/// role is seeded with, read without creating or touching anything.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct RolePromptDefaultsDto {
-    pub role: Role,
-    pub system_prompt: String,
-    /// The role's briefing prompts, in briefing order.
-    pub prompts: Vec<PromptDefaultDto>,
-}
-
-/// One built-in prompt default. Unlike [`ProfilePromptDto`] it belongs to no
-/// profile, so there is nothing to timestamp.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct PromptDefaultDto {
-    pub kind: PromptKind,
-    /// Template text with `{placeholder}` tokens the daemon fills in.
     pub content: String,
 }
 

@@ -32,6 +32,7 @@ const PROFILE: ProfileDto = {
   agent_kind: "claude_code",
   model: null,
   system_prompt: "",
+  system_prompt_is_default: false,
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
 }

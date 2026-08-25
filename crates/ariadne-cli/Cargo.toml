@@ -13,10 +13,6 @@ path = "src/main.rs"
 ariadne-api = { workspace = true }
 ariadne-client = { workspace = true }
 ariadne-core = { workspace = true, features = ["clap"] }
-# For the default prompt texts alone (ariadne_store::defaults): `profile
-# prompts` says whether a prompt still matches the default its role starts
-# from, and the daemon serves no way to ask.
-ariadne-store = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
