@@ -37,7 +37,7 @@ import { cn, plural } from "@/lib/format"
 import { paths } from "@/routes/paths"
 import { type BoardAttention, useBoardAttention } from "./attention"
 import { useCollapsedLanes } from "./collapsed-lanes"
-import { GOAL_STATUS_META } from "./status"
+import { awaitsPlanApproval, GOAL_STATUS_META } from "./status"
 
 /**
  * One template for the header row and every lane, so the columns line up: one
@@ -76,7 +76,7 @@ const LANE_HEADER = "sticky left-0 z-10 flex w-fit max-w-full items-center gap-2
 
 export function GoalSwimlanes({ goals }: { goals: GoalDto[] }) {
   const tasks = useQuery(taskListQueryOptions({}))
-  const byGoal = useMemo(() => groupByGoal(tasks.data ?? []), [tasks.data])
+  const byGoal = useMemo(() => groupByGoal(tasks.data ?? [], goals), [tasks.data, goals])
   // Which cards — and which lanes — are asking for a person, off the sessions
   // query the attention strip above the board already holds. The board is
   // where the work is, and a card that says nothing about its blocked agent is
@@ -219,6 +219,10 @@ function Lane({
   // ask for a person. It is shown collapsed too — a lane folded away is
   // exactly where a stuck planner would otherwise go unseen.
   const planner: SessionAttention | undefined = attention.byGoal.get(goal.id)
+  // Nothing under an unapproved plan has started, whatever each task's own
+  // status says, so every card of this lane says what it is really waiting
+  // for. It is the goal's fact, which is why the lane hands it down.
+  const awaitingPlan = awaitsPlanApproval(goal.status)
 
   return (
     <section className="border-b last:border-b-0">
@@ -266,7 +270,11 @@ function Lane({
 
       {collapsed ? null : total === 0 ? (
         <p className="sticky left-0 w-fit px-3 pt-1 pb-3 text-xs text-muted-foreground">
-          {goal.status === "planning" ? "No tasks yet — the planner is still working" : "No tasks"}
+          {goal.status === "planning"
+            ? "No tasks yet — the planner is still working"
+            : goal.status === "plan_ready"
+              ? "Waiting for your approval"
+              : "No tasks"}
         </p>
       ) : (
         <div className={cn(COLUMNS_GRID, "px-3 pt-1 pb-2.5")}>
@@ -275,7 +283,12 @@ function Lane({
             // nothing in it, and a board of placeholders says nothing at all.
             <div key={status} className="flex flex-col gap-2">
               {(tasks?.columns[status] ?? []).map((task) => (
-                <TaskCard key={task.id} task={task} attention={attention.byTask.get(task.id)} />
+                <TaskCard
+                  key={task.id}
+                  task={task}
+                  attention={attention.byTask.get(task.id)}
+                  awaitingPlan={awaitingPlan}
+                />
               ))}
             </div>
           ))}
@@ -345,8 +358,20 @@ interface GoalTasks {
   offBoard: TaskDto[]
 }
 
-function groupByGoal(tasks: TaskDto[]): Map<string, GoalTasks> {
+/**
+ * The tasks of each lane, in the cell each one belongs in.
+ *
+ * A goal whose plan has not been approved holds all of its tasks in the first
+ * column, `pending` and `ready` alike: nothing under it has been handed to an
+ * engineer, so a card further down the pipeline would say a task is moving
+ * when it is waiting on the reader. That is the goal's status talking, which
+ * is why the goals are an argument here.
+ */
+function groupByGoal(tasks: TaskDto[], goals: GoalDto[]): Map<string, GoalTasks> {
   const lanes = new Map<string, GoalTasks>()
+  const held = new Set(
+    goals.filter((goal) => awaitsPlanApproval(goal.status)).map((goal) => goal.id),
+  )
   for (const task of tasks) {
     let lane = lanes.get(task.goal_id)
     if (!lane) {
@@ -362,6 +387,8 @@ function groupByGoal(tasks: TaskDto[]): Map<string, GoalTasks> {
     lane.all.push(task)
     if ((OFF_BOARD_STATUSES as readonly TaskStatus[]).includes(task.status)) {
       lane.offBoard.push(task)
+    } else if (held.has(task.goal_id)) {
+      lane.columns[BOARD_STATUSES[0]].push(task)
     } else {
       lane.columns[primaryStatus(task.status)]?.push(task)
     }

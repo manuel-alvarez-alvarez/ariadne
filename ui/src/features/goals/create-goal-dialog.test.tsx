@@ -16,6 +16,10 @@
  * the search narrows what is offered, several picks are made without the popup
  * closing between them, and each one can be taken back off from the chip it
  * left behind.
+ *
+ * The planner's model is the other field with a rule of its own: it is on the
+ * wire when it was chosen and off it entirely when it was not, which is what
+ * runs the planner on its profile's own model.
  */
 
 import { screen, waitFor, within } from "@testing-library/react"
@@ -23,7 +27,7 @@ import userEvent from "@testing-library/user-event"
 import { useLocation } from "react-router-dom"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import type { ProfileDto, RepositoryDto } from "@/api"
+import type { ModelDto, ProfileDto, RepositoryDto } from "@/api"
 import { paths } from "@/routes/paths"
 import { aProfile, aRepository } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
@@ -39,6 +43,12 @@ const ARIADNE: RepositoryDto = aRepository({
   id: "01JREPO00000000000000ARI",
 })
 
+/** Two agents' worth of catalog, which the picker offers whole. */
+const CATALOG: ModelDto[] = [
+  { id: "claude-opus-5", agent_kind: "claude_code", description: "Opus tier: deep analysis" },
+  { id: "gpt-5.3-codex", agent_kind: "codex", description: "Frontier reasoning: agentic loops" },
+]
+
 const SANDBOX: RepositoryDto = aRepository({
   id: "01JREPO00000000000000SND",
   path: "/home/me/dev/sandbox",
@@ -49,7 +59,7 @@ const SANDBOX: RepositoryDto = aRepository({
 interface Recorded {
   method: string
   path: string
-  body: { repository_ids?: string[]; title?: string } | null
+  body: { repository_ids?: string[]; title?: string; model?: string } | null
 }
 
 let requests: Recorded[] = []
@@ -67,6 +77,7 @@ function stubDaemon(repositories: RepositoryDto[]) {
     requests.push({ method: request.method, path: pathname, body })
 
     if (pathname === "/v1/repositories") return jsonResponse(repositories)
+    if (pathname === "/v1/models") return jsonResponse(CATALOG)
     if (pathname === "/v1/profiles") return jsonResponse([PLANNER])
     if (pathname === "/v1/goals" && request.method === "POST") {
       return jsonResponse(
@@ -270,5 +281,54 @@ describe("dismissing the dialog", () => {
       "Rewrite the scheduler.",
     )
     expect(onOpenChange).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * The planner runs on one model and the daemon derives its agent CLI from it,
+ * so this form has one control for the pair — and an empty one is not a value
+ * the daemon would take, it is the field being left out.
+ */
+describe("choosing the planner's model", () => {
+  /** Fills the required fields, so the submit is about the model alone. */
+  async function fillRequired(user: ReturnType<typeof userEvent.setup>) {
+    await user.type(screen.getByLabelText("Title"), "Model selector")
+    const list = await openList(user)
+    await user.click(row(list, ARIADNE))
+    await user.keyboard("{Escape}")
+  }
+
+  it("sends the model picked out of the catalog, whatever agent it belongs to", async () => {
+    const user = userEvent.setup()
+    renderDialog()
+
+    await fillRequired(user)
+    const box = await screen.findByRole("combobox", { name: "Planner model" })
+    await user.click(box)
+    const models = await screen.findByRole("listbox", { name: "Models" })
+    // A codex model on the claude_code Planner profile: one gesture, and no
+    // agent control anywhere on the form.
+    await user.click(within(models).getByText("gpt-5.3-codex"))
+
+    expect(await screen.findByText("Runs on Codex.")).toBeDefined()
+    await user.click(screen.getByRole("button", { name: "Create goal" }))
+
+    await waitFor(() => {
+      expect(lastWrite()).toBeDefined()
+    })
+    expect(lastWrite()?.body?.model).toBe("gpt-5.3-codex")
+  })
+
+  it("leaves the model out when the box was not filled", async () => {
+    const user = userEvent.setup()
+    renderDialog()
+
+    await fillRequired(user)
+    await user.click(screen.getByRole("button", { name: "Create goal" }))
+
+    await waitFor(() => {
+      expect(lastWrite()).toBeDefined()
+    })
+    expect(lastWrite()?.body).not.toHaveProperty("model")
   })
 })

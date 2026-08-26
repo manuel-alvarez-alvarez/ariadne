@@ -11,15 +11,14 @@
  * using `title=` (see its docblock, and `components/ui/tooltip.tsx`).
  */
 
-import { act, cleanup, render, screen } from "@testing-library/react"
+import { act, cleanup, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { MemoryRouter } from "react-router-dom"
 import { afterEach, expect, it, vi } from "vitest"
 
 import type { TaskDto } from "@/api"
-import { TooltipProvider } from "@/components/ui/tooltip"
 import type { SessionAttention } from "@/features/sessions/session-display"
 import { aTask } from "@/test/fixtures"
+import { renderScreen } from "@/test/harness"
 import { TaskCard } from "./task-card"
 
 // `globals` is off, so nothing unmounts a screen between tests but this.
@@ -39,14 +38,13 @@ const TASK: TaskDto = aTask({
   goal_id: "01JGOAL0000000000000000001",
 })
 
+/**
+ * The card under the providers the app gives it: a router for its link, a
+ * tooltip provider with no hover delay, and a query client — the card asks the
+ * profiles what its engineer's pin is measured against.
+ */
 function mountCard(attention?: SessionAttention, task: TaskDto = TASK) {
-  render(
-    <TooltipProvider delay={0}>
-      <MemoryRouter>
-        <TaskCard task={task} attention={attention} />
-      </MemoryRouter>
-    </TooltipProvider>,
-  )
+  renderScreen(<TaskCard task={task} attention={attention} />)
   return userEvent.setup()
 }
 

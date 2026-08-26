@@ -7,7 +7,7 @@
       "name": "MIT OR Apache-2.0",
       "identifier": "MIT OR Apache-2.0"
     },
-    "version": "0.3.0"
+    "version": "0.4.0"
   },
   "paths": {
     "/v1/agents": {
@@ -454,7 +454,7 @@
         "tags": [
           "goals"
         ],
-        "summary": "Finalize planning: goal moves planning -> active (planner or user).",
+        "summary": "Approve the plan: goal moves plan_ready (or planning) -> active, and its\ntasks start. The user's call alone — the planner submits, it does not\napprove its own plan.",
         "operationId": "finalize",
         "parameters": [
           {
@@ -487,6 +487,9 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": ""
           },
           "409": {
             "description": ""
@@ -593,6 +596,54 @@
           },
           "400": {
             "description": "unknown addressee, or one taking no part in the goal"
+          }
+        }
+      }
+    },
+    "/v1/goals/{id}/submit": {
+      "post": {
+        "tags": [
+          "goals"
+        ],
+        "summary": "Submit the plan for the user's approval: goal moves planning -> plan_ready\n(planner or user). Nothing starts; only `finalize` does that.",
+        "operationId": "submit",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "goal id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitPlanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": ""
+          },
+          "409": {
+            "description": ""
           }
         }
       }
@@ -2340,6 +2391,13 @@
             "format": "int64",
             "description": "Max tasks the planner may create (default: unbounded)."
           },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Model the planner runs on; omitted = the planner profile's own model\nand agent CLI. A model names the agent CLI that runs it (claude ids\nbelong to claude_code, gpt/o-series and codex ids to codex, a\n`provider/model` id to opencode), and both are pinned onto the goal; a\nmodel nothing can place, and the empty string, are refused."
+          },
           "planner_profile": {
             "type": "string",
             "description": "Planner profile id or unique name."
@@ -2489,7 +2547,7 @@
         "required": [
           "title",
           "engineer_profile",
-          "reviewer_profiles"
+          "reviewers"
         ],
         "properties": {
           "depends_on": {
@@ -2506,6 +2564,13 @@
             "type": "string",
             "description": "Engineer profile id or unique name."
           },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Model the engineer runs on; omitted = the engineer profile's own model\nand agent CLI. Resolved the way [`ReviewerAssignment::model`] is."
+          },
           "repo_id": {
             "type": [
               "string",
@@ -2513,12 +2578,12 @@
             ],
             "description": "Id of one of the goal's repositories; may be omitted when the goal\nworks in exactly one."
           },
-          "reviewer_profiles": {
+          "reviewers": {
             "type": "array",
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/ReviewerAssignment"
             },
-            "description": "Reviewer profile ids or names, in review order. At least one."
+            "description": "The reviewers of the task, in review order. At least one."
           },
           "title": {
             "type": "string"
@@ -2895,7 +2960,7 @@
       },
       "FinalizePlanRequest": {
         "type": "object",
-        "description": "Body of `POST /v1/goals/{id}/finalize`: planning ends, execution starts.",
+        "description": "Body of `POST /v1/goals/{id}/finalize`: the user approves the plan,\nplanning ends and execution starts. The user's call, not the planner's.",
         "required": [
           "summary"
         ],
@@ -2927,7 +2992,7 @@
               },
               {
                 "$ref": "#/components/schemas/AgentKind",
-                "description": "Agent CLI the planner runs on, pinned from the profile when the goal\nwas created; editing the profile afterwards leaves it alone. None =\nauto, resolved at spawn time to the first installed CLI."
+                "description": "Agent CLI the planner runs on: pinned from the planner profile when\nthe goal was created, or from the model chosen for the goal instead.\nEditing the profile afterwards leaves it alone. None = auto, resolved\nat spawn time to the first installed CLI."
               }
             ]
           },
@@ -2985,6 +3050,7 @@
         "description": "Goal lifecycle status.",
         "enum": [
           "planning",
+          "plan_ready",
           "active",
           "completed",
           "cancelled"
@@ -3415,6 +3481,25 @@
           "request_changes"
         ]
       },
+      "ReviewerAssignment": {
+        "type": "object",
+        "description": "One reviewer of a task: the profile that reviews, and the model it is to\nrun on.\n\nA model names the agent CLI that runs it — claude ids belong to\n`claude_code`, `gpt-`/`o<digit>`/codex ids to `codex`, a `provider/model`\nid to `opencode` — and both are pinned onto the slot. A model nothing can\nplace is refused (there is no way to name the agent by hand), and so is the\nempty string. Omitted, the slot takes the profile's own agent and model as\nthey stand when it is assigned.",
+        "required": [
+          "profile"
+        ],
+        "properties": {
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "profile": {
+            "type": "string",
+            "description": "Reviewer profile id or unique name."
+          }
+        }
+      },
       "Role": {
         "type": "string",
         "description": "The role an agent plays in the orchestration.",
@@ -3637,6 +3722,19 @@
           "failed"
         ]
       },
+      "SubmitPlanRequest": {
+        "type": "object",
+        "description": "Body of `POST /v1/goals/{id}/submit`: the planner hands the plan to the\nuser for approval. The goal waits in `plan_ready` and no task starts.",
+        "required": [
+          "summary"
+        ],
+        "properties": {
+          "summary": {
+            "type": "string",
+            "description": "Plan summary, posted to the goal thread addressed to the user."
+          }
+        }
+      },
       "TaskDto": {
         "type": "object",
         "required": [
@@ -3663,7 +3761,7 @@
               },
               {
                 "$ref": "#/components/schemas/AgentKind",
-                "description": "Agent CLI the engineer runs on, pinned from the profile when the task\nwas created; editing the profile afterwards leaves it alone. None =\nauto, resolved at spawn time to the first installed CLI."
+                "description": "Agent CLI the engineer runs on: pinned from the engineer profile when\nthe task was created, or from the model chosen for the task at\ncreation or on an edit instead. Editing the profile afterwards leaves\nit alone. None = auto, resolved at spawn time to the first installed\nCLI."
               }
             ]
           },
@@ -3764,7 +3862,7 @@
       },
       "TaskReviewerDto": {
         "type": "object",
-        "description": "One reviewer slot of a task: which profile reviews it, and what that\nreviewer was pinned to run on when the slot was assigned. Pinned the same\nway the engineer is, and read the same way: what a reviewer of this task\nruns on, not what its profile says today.",
+        "description": "One reviewer slot of a task: which profile reviews it, and what that\nreviewer was pinned to run on when the slot was assigned — the profile's\nown agent and model, or the model chosen for the slot. Pinned the same way\nthe engineer is, and read the same way: what a reviewer of this task runs\non, not what its profile says today.",
         "required": [
           "profile_id"
         ],
@@ -4008,14 +4106,22 @@
               "null"
             ]
           },
-          "reviewer_profiles": {
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Model the engineer runs on, resolved the way\n[`ReviewerAssignment::model`] is: absent leaves the task's pins alone,\n\"default\" (or the empty string) puts them back on the engineer\nprofile's model and agent as they stand now, anything else pins that\nmodel and the agent CLI that runs it. The same convention\n`UpdateProfileRequest::model` takes."
+          },
+          "reviewers": {
             "type": [
               "array",
               "null"
             ],
             "items": {
-              "type": "string"
-            }
+              "$ref": "#/components/schemas/ReviewerAssignment"
+            },
+            "description": "The whole reviewer list, replaced: each slot is cut afresh and pinned\nto its own model or, where it names none, to its profile's."
           },
           "title": {
             "type": [

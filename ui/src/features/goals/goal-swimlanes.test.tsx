@@ -13,7 +13,8 @@
  *
  * The columns are here for the same reason: which cell a card lands in is a
  * property of the mounted grid, and `ready` folding into Pending is exactly
- * that.
+ * that — as is a goal whose plan nobody has approved yet holding every one of
+ * its tasks in the first column, whatever each task's own status says.
  */
 
 import { screen, within } from "@testing-library/react"
@@ -70,8 +71,14 @@ function stubDaemon({
   })
 }
 
-function renderBoard() {
-  renderScreen(<GoalSwimlanes goals={[GOAL]} />, { route: "/goals" })
+function renderBoard(goal: GoalDto = GOAL) {
+  renderScreen(<GoalSwimlanes goals={[goal]} />, { route: "/goals" })
+}
+
+/** The grid cell a card sits in, and its index among the lane's columns. */
+function cellOf(card: HTMLElement): { cell: HTMLElement; column: number } {
+  const cell = card.closest("a")?.parentElement?.parentElement as HTMLElement
+  return { cell, column: [...(cell?.parentElement?.children ?? [])].indexOf(cell) }
 }
 
 it("badges the card of the task whose agent is waiting on a person", async () => {
@@ -155,4 +162,29 @@ it("puts the tasks their engineers are landing in the Approved column", async ()
   // Approved — and both tasks are in it.
   expect([...(cell?.parentElement?.children ?? [])].indexOf(cell as Element)).toBe(3)
   expect(cell?.textContent).toContain(published.title)
+})
+
+it("holds every task of a plan waiting for approval in the first column", async () => {
+  const planReady: GoalDto = { ...GOAL, status: "plan_ready" }
+  const pending: TaskDto = { ...TASK, id: `${TASK.id}P`, title: "Waiting on a dependency" }
+  pending.status = "pending"
+  const ready: TaskDto = { ...TASK, id: `${TASK.id}R`, title: "Dependencies all merged" }
+  ready.status = "ready"
+  stubDaemon({ tasks: [pending, ready] })
+  renderBoard(planReady)
+
+  const { cell, column } = cellOf(await screen.findByText(ready.title))
+  expect(column).toBe(0)
+  expect(cell.textContent).toContain(pending.title)
+
+  // And each card says what it is really waiting for, which is the reader.
+  expect(within(cell).getAllByText("Awaiting approval")).toHaveLength(2)
+})
+
+it("says nothing about approval once the goal is active", async () => {
+  stubDaemon({ tasks: [{ ...TASK, status: "ready" }] })
+  renderBoard()
+
+  await screen.findByText(TASK.title)
+  expect(screen.queryByText("Awaiting approval")).toBeNull()
 })

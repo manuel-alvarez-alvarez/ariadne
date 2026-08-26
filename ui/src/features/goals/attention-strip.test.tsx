@@ -8,9 +8,13 @@
  * *absent* when nothing is stuck, and that its rows keep the board's own
  * search params while adding their panel's, which is what makes a panel open
  * over the board instead of replacing it. Only the mounted strip shows either.
+ *
+ * A plan waiting to be approved is the third kind of row, and the one that is
+ * not about anything going wrong: it is the user's move, and its row is how
+ * the board says so above the lanes.
  */
 
-import { screen, waitFor } from "@testing-library/react"
+import { screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { expect, it } from "vitest"
 
@@ -191,6 +195,22 @@ it("flags a stalled task without a status of its own to show it", async () => {
   renderStrip()
 
   expect(await screen.findByText("Stalled")).not.toBeNull()
+})
+
+it("lists a plan the planner has handed over, and opens the goal it belongs to", async () => {
+  const planReady: GoalDto = { ...GOAL, status: "plan_ready" }
+  // Nothing stuck anywhere: the row is there because the goal is waiting on
+  // the reader, not because anything failed.
+  stubDaemon({ goals: [planReady], tasks: [{ ...TASK, status: "pending" }] })
+  renderStrip()
+
+  const row = await screen.findByRole("listitem")
+  expect(row.textContent).toContain(planReady.title)
+  expect(row.textContent).toContain("Plan ready")
+  expect(row.textContent).toContain("Plan ready for approval")
+  expect(within(row).getByRole("link").getAttribute("href")).toBe(
+    `/goals?status=active&goal=${planReady.id}`,
+  )
 })
 
 it("opens each row's panel over the board, keeping the board's filter", async () => {

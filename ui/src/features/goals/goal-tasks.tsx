@@ -26,9 +26,16 @@ import { useBoardAttention } from "./attention"
 
 export function GoalTasks({
   goalId,
+  awaitingPlan = false,
   onNewTask,
 }: {
   goalId: string
+  /**
+   * Whether the goal's plan is still waiting to be approved, which is what
+   * every card here is waiting for — the same thing the lanes say, said in the
+   * panel where the plan is read before it is approved.
+   */
+  awaitingPlan?: boolean
   /** Opens the create-task dialog; absent when the goal no longer takes one. */
   onNewTask?: () => void
 }) {
@@ -83,7 +90,12 @@ export function GoalTasks({
     <ul className="flex flex-col gap-2">
       {ordered.map((task) => (
         <li key={task.id}>
-          <TaskCard task={task} showStatus attention={attention.byTask.get(task.id)} />
+          <TaskCard
+            task={task}
+            showStatus
+            attention={attention.byTask.get(task.id)}
+            awaitingPlan={awaitingPlan}
+          />
         </li>
       ))}
     </ul>

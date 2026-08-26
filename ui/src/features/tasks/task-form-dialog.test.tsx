@@ -13,15 +13,23 @@
  * so what the picker shows has to be what is sent whether the user touched it
  * or not, and it is reassignable while the task waits, so the edit form offers
  * it beside the reviewers.
+ *
+ * The models are checked through the mounted form rather than only through
+ * `task-form-values.test.ts`, because what they mean is a property of the
+ * dialog: which box a pick lands in when there are three of them, where the
+ * daemon's refusal of a model shows up — under the box that holds it, leaving
+ * the rest of the form alone — and, on an edit, what an untouched box is
+ * measured against when the profiles that decide how it was seeded only land
+ * after the user has started typing.
  */
 
-import { screen } from "@testing-library/react"
+import { screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import type { GoalDto, ProfileDto } from "@/api"
+import type { GoalDto, ModelDto, ProfileDto } from "@/api"
 import { aGoal, aProfile } from "@/test/fixtures"
-import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
+import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { CreateTaskDialog, EditTaskDialog } from "./task-form-dialog"
 
 const STAMP = "2026-01-01T00:00:00Z"
@@ -47,6 +55,12 @@ const STRICT_REVIEWER: ProfileDto = {
   role: "reviewer",
 }
 
+/** The catalog both model boxes offer, whole. */
+const CATALOG: ModelDto[] = [
+  { id: "claude-opus-5", agent_kind: "claude_code", description: "Opus tier: deep analysis" },
+  { id: "gpt-5.3-codex", agent_kind: "codex", description: "Frontier reasoning: agentic loops" },
+]
+
 /** The bodies of the writes the dialog made, in order. */
 let posted: unknown[] = []
 
@@ -70,6 +84,9 @@ const CREATED = {
 
 let writes: string[] = []
 
+/** When set, `POST` answers the daemon's refusal of that model instead. */
+let rejectedModel: string | null = null
+
 /** The reads the dialog does; a write would be a failure, so it is recorded. */
 function stubDaemon() {
   daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
@@ -90,8 +107,16 @@ function stubDaemon() {
           return answer([ENGINEER])
       }
     }
+    if (url.pathname === "/v1/models") return answer(CATALOG)
     if (url.pathname === "/v1/tasks") return answer([])
     if (url.pathname === `/v1/goals/${GOAL.id}/tasks`) {
+      if (rejectedModel) {
+        return errorResponse(
+          400,
+          "bad_request",
+          `unknown model \`${rejectedModel}\`: cannot tell which agent runs it`,
+        )
+      }
       return answer({ ...CREATED, ...(await request.clone().json()) })
     }
     return new Response("not stubbed", { status: 404 })
@@ -105,8 +130,19 @@ function renderDialog(onOpenChange: (open: boolean) => void) {
 beforeEach(() => {
   writes = []
   posted = []
+  rejectedModel = null
   stubDaemon()
 })
+
+/** Picks `model` out of the catalog hanging under the named box. */
+async function pickModel(
+  user: ReturnType<typeof userEvent.setup>,
+  field: string,
+  model: string,
+): Promise<void> {
+  await user.click(await screen.findByRole("combobox", { name: field }))
+  await user.click(within(await screen.findByRole("listbox", { name: "Models" })).getByText(model))
+}
 
 describe("dismissing the dialog", () => {
   it("closes an untouched form straight away, preselected profiles and all", async () => {
@@ -163,6 +199,16 @@ describe("editing a task that has not started", () => {
     reviewers: [{ profile_id: REVIEWER.id, agent_kind: null, model: null }],
   }
 
+  /** An engineer profile that runs on a model, for the pin to agree with. */
+  const PINNED_ENGINEER: ProfileDto = { ...ENGINEER, model: "claude-opus-5" }
+
+  /** The same task, pinned to exactly what that profile runs on. */
+  const PINNED_TASK = {
+    ...TASK,
+    agent_kind: "claude_code",
+    model: PINNED_ENGINEER.model,
+  }
+
   function renderEdit() {
     return renderScreen(<EditTaskDialog task={TASK as never} open onOpenChange={vi.fn()} />)
   }
@@ -192,6 +238,122 @@ describe("editing a task that has not started", () => {
     await user.click(screen.getByRole("button", { name: "Save changes" }))
 
     await vi.waitFor(() => expect(writes).toEqual([`PATCH /v1/tasks/${TASK.id}`]))
-    expect(posted[0]).toMatchObject({ reviewer_profiles: [STRICT_REVIEWER.id] })
+    expect(posted[0]).toMatchObject({ reviewers: [{ profile: STRICT_REVIEWER.id }] })
+  })
+
+  /**
+   * The one sequence where "what the box was seeded with" and "what it would
+   * be seeded with now" disagree: the dialog opens before the profiles have
+   * loaded, so the box shows the task's pin; the user types in another field,
+   * which stops the form being re-seeded; the profiles then land and say the
+   * pin is only the profile's own model, which would have opened the box
+   * empty. The box on screen is still the pin and nobody touched it, so the
+   * update has to say nothing about the model — sending it would pin the task
+   * to a model the user never chose, and freeze it against a later edit of the
+   * profile.
+   */
+  it("says nothing about a model box nobody touched, though the profiles landed late", async () => {
+    const user = userEvent.setup()
+    let landProfiles = () => {}
+    const profiles = new Promise<void>((resolve) => {
+      landProfiles = resolve
+    })
+    daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(String(input), init)
+      const url = new URL(request.url)
+      if (request.method !== "GET") {
+        writes.push(`${request.method} ${url.pathname}`)
+        posted.push(await request.clone().json())
+        return jsonResponse(PINNED_TASK)
+      }
+      if (url.pathname === "/v1/profiles") {
+        await profiles
+        return jsonResponse(
+          url.searchParams.get("role") === "reviewer" ? [REVIEWER] : [PINNED_ENGINEER],
+        )
+      }
+      if (url.pathname === "/v1/models") return jsonResponse(CATALOG)
+      if (url.pathname === "/v1/tasks") return jsonResponse([])
+      return new Response("not stubbed", { status: 404 })
+    })
+    renderScreen(<EditTaskDialog task={PINNED_TASK as never} open onOpenChange={vi.fn()} />)
+
+    // Nothing to read the pin against yet, so the pin is what the box holds.
+    const box = (await screen.findByRole("combobox", {
+      name: "Engineer model",
+    })) as HTMLInputElement
+    expect(box.value).toBe(PINNED_ENGINEER.model)
+
+    await user.type(screen.getByLabelText("Title"), "!")
+    landProfiles()
+
+    // The placeholder is the profile's own model, so it is also the signal
+    // that the profiles are in — and the box is still what the user saw.
+    await vi.waitFor(() => {
+      expect(box.getAttribute("placeholder")).toBe(`Profile default: ${PINNED_ENGINEER.model}`)
+    })
+    expect(box.value).toBe(PINNED_ENGINEER.model)
+
+    await user.click(screen.getByRole("button", { name: "Save changes" }))
+
+    await vi.waitFor(() => expect(writes).toEqual([`PATCH /v1/tasks/${TASK.id}`]))
+    expect(posted[0]).not.toHaveProperty("model")
+  })
+})
+
+/**
+ * One model per agent, chosen on the form that assigns them. There is no agent
+ * control here: the daemon reads the CLI off the model, and the form says which
+ * one that will be.
+ */
+describe("the models the task runs on", () => {
+  it("sends the engineer's model and each reviewer's", async () => {
+    const user = userEvent.setup()
+    renderDialog(vi.fn())
+
+    await user.type(screen.getByLabelText("Title"), "Wire the strip")
+    expect(await screen.findByText("Engineer")).toBeDefined()
+    await pickModel(user, "Engineer model", "gpt-5.3-codex")
+    await pickModel(user, "Reviewer 1 model", "claude-opus-5")
+
+    // The pick names the CLI it commits to, which is the other half of it.
+    expect(await screen.findByText("Runs on Codex.")).toBeDefined()
+
+    await user.click(screen.getByRole("button", { name: "Create task" }))
+
+    await vi.waitFor(() => expect(writes).toEqual([`POST /v1/goals/${GOAL.id}/tasks`]))
+    expect(posted[0]).toMatchObject({
+      model: "gpt-5.3-codex",
+      reviewers: [{ profile: REVIEWER.id, model: "claude-opus-5" }],
+    })
+  })
+
+  it("leaves an untouched box out, which runs the agent on its profile's model", async () => {
+    const user = userEvent.setup()
+    renderDialog(vi.fn())
+
+    await user.type(screen.getByLabelText("Title"), "Wire the strip")
+    expect(await screen.findByText("Engineer")).toBeDefined()
+    await user.click(screen.getByRole("button", { name: "Create task" }))
+
+    await vi.waitFor(() => expect(writes).toEqual([`POST /v1/goals/${GOAL.id}/tasks`]))
+    expect(posted[0]).not.toHaveProperty("model")
+    expect(posted[0]).toMatchObject({ reviewers: [{ profile: REVIEWER.id }] })
+  })
+
+  it("shows a model the daemon could not place under the box that holds it", async () => {
+    const user = userEvent.setup()
+    rejectedModel = "llama3"
+    renderDialog(vi.fn())
+
+    await user.type(screen.getByLabelText("Title"), "Wire the strip")
+    expect(await screen.findByText("Engineer")).toBeDefined()
+    await user.type(await screen.findByRole("combobox", { name: "Engineer model" }), "llama3")
+    await user.click(screen.getByRole("button", { name: "Create task" }))
+
+    // The daemon's own words, once, on the field — and not over the form.
+    const message = await screen.findAllByText(/unknown model `llama3`/)
+    expect(message).toHaveLength(1)
+    expect(screen.queryByText("Could not create task")).toBeNull()
   })
 })

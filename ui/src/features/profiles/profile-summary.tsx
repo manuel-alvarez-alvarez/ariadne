@@ -28,6 +28,25 @@ import { agentKindLabel, modelLabel } from "./profile-labels"
 import { ProfileName } from "./profile-name"
 import { profilesQueryOptions } from "./queries"
 
+/**
+ * Whether what this mention runs on is no longer what its profile says.
+ *
+ * True of a pin chosen for the task, the slot or the goal itself, and of one
+ * the profile has since been edited away from — the two are the same fact from
+ * the reader's side: what runs is the pin, and the profile is not it. Both
+ * halves count, since choosing a model pins the agent CLI that runs it.
+ */
+export function isPinOverride(
+  profile: { agent_kind?: AgentKind | null; model?: string | null } | undefined,
+  pinned: { agent_kind?: AgentKind | null; model?: string | null } | undefined | null,
+): boolean {
+  if (!profile || !pinned) return false
+  return (
+    (pinned.agent_kind ?? null) !== (profile.agent_kind ?? null) ||
+    (pinned.model ?? null) !== (profile.model ?? null)
+  )
+}
+
 export function ProfileSummary({
   profileId,
   pinned,
@@ -55,6 +74,11 @@ export function ProfileSummary({
       {facts ? (
         <span className="truncate text-muted-foreground">
           · {agentKindLabel(facts.agent_kind)} · {modelLabel(facts.model)}
+          {/* Where the two disagree, the pair just read is the pin and not
+              the profile's own — the model chosen here, or a profile edited
+              since. One word, because the line sits in table cells and panel
+              columns and already carries three facts. */}
+          {isPinOverride(profile, pinned) ? " (overrides)" : null}
         </span>
       ) : null}
     </span>

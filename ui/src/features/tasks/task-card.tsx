@@ -16,7 +16,8 @@
  * `components/ui/tooltip.tsx`.
  */
 
-import { GitBranchIcon, LayersIcon, TriangleAlertIcon } from "lucide-react"
+import { useQuery } from "@tanstack/react-query"
+import { CpuIcon, GitBranchIcon, LayersIcon, TriangleAlertIcon } from "lucide-react"
 import { Link } from "react-router-dom"
 
 import type { TaskDto } from "@/api"
@@ -24,6 +25,9 @@ import { CopyableId } from "@/components/copyable-id"
 import { StatusBadge } from "@/components/status-badge"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { When } from "@/components/when"
+import { agentKindLabel, modelLabel } from "@/features/profiles/profile-labels"
+import { isPinOverride } from "@/features/profiles/profile-summary"
+import { profilesQueryOptions } from "@/features/profiles/queries"
 import {
   SESSION_ATTENTION_META,
   type SessionAttention,
@@ -34,10 +38,18 @@ import { useTaskPanelTo } from "@/routes/paths"
 import { STALLED_META } from "./stalled"
 import { primaryStatus, subStatus, TASK_STATUS_META } from "./status"
 
+/** What the card says about a task its goal's plan is still holding back. */
+const AWAITING_PLAN = {
+  label: "Awaiting approval",
+  hint: "Its goal's plan is waiting for you: nothing starts until the plan is approved.",
+  badge: "bg-status-warn-soft text-status-warn-fg",
+}
+
 export function TaskCard({
   task,
   showStatus = false,
   attention,
+  awaitingPlan = false,
 }: {
   task: TaskDto
   showStatus?: boolean
@@ -51,6 +63,12 @@ export function TaskCard({
    * the board and match the titles up.
    */
   attention?: SessionAttention | null
+  /**
+   * Whether this task is held by its goal's plan rather than by anything of
+   * its own — what the board says about every card of a `planning` or
+   * `plan_ready` goal, which is why it is the lane's word and not the card's.
+   */
+  awaitingPlan?: boolean
 }) {
   const status = TASK_STATUS_META[primaryStatus(task.status)]
   const sub = subStatus(task.status)
@@ -94,6 +112,17 @@ export function TaskCard({
               <TooltipContent>{sub.hint}</TooltipContent>
             </Tooltip>
           )}
+          {/* After the status, because it refines it: a pending or ready task
+              of an unapproved plan is not waiting on an engineer, it is
+              waiting on the reader. */}
+          {awaitingPlan && (
+            <Tooltip>
+              <TooltipTrigger render={<span className="flex" />}>
+                <StatusBadge size="sm" label={AWAITING_PLAN.label} tone={AWAITING_PLAN.badge} />
+              </TooltipTrigger>
+              <TooltipContent>{AWAITING_PLAN.hint}</TooltipContent>
+            </Tooltip>
+          )}
           {task.review_round > 0 && (
             <Tooltip>
               <TooltipTrigger render={<span className="font-mono" />}>
@@ -130,14 +159,49 @@ export function TaskCard({
         </div>
       </Link>
 
-      <div className="px-2.5 pt-1.5 pb-2.5">
+      {/* Stacked rather than wrapped: each pill is `w-fit max-w-full`, and as
+          flex items on one row they would squeeze each other's middle-truncated
+          text instead of taking the width they need. */}
+      <div className="flex flex-col items-start gap-1.5 px-2.5 pt-1.5 pb-2.5">
         <span className="flex w-fit max-w-full items-center gap-1 rounded-md bg-muted/60 px-1.5 py-0.5 text-xs text-muted-foreground">
           <GitBranchIcon className="size-3 shrink-0" />
           {/* Middle-truncated: the card is narrow, and what an engineer looks
               for is the slug at the end rather than the ULID it hangs off. */}
           <CopyableId value={task.branch} label="branch" truncate="middle" />
         </span>
+        <EnginePin task={task} />
       </div>
     </div>
+  )
+}
+
+/**
+ * What the engineer of this task runs on, when that is not what its profile
+ * says — a model chosen for the task, or a profile edited away from the pin
+ * since.
+ *
+ * Only then: the pin is on every task, and a board repeating the same profile
+ * default on every card would say nothing while costing every card a line.
+ * What the reader cannot know without being told is the card that runs on
+ * something else, and the task panel's facts spell the pin out either way.
+ */
+function EnginePin({ task }: { task: TaskDto }) {
+  const profiles = useQuery(profilesQueryOptions())
+  const profile = profiles.data?.find((item) => item.id === task.engineer_profile_id)
+  if (!isPinOverride(profile, task)) return null
+
+  const pin = `${agentKindLabel(task.agent_kind)} · ${modelLabel(task.model)}`
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span className="flex w-fit min-w-0 items-center gap-1 rounded-md bg-muted/60 px-1.5 py-0.5 text-xs text-muted-foreground" />
+        }
+      >
+        <CpuIcon className="size-3 shrink-0" />
+        <span className="truncate font-mono">{pin}</span>
+      </TooltipTrigger>
+      <TooltipContent>{`${pin} (overrides ${profile?.name})`}</TooltipContent>
+    </Tooltip>
   )
 }

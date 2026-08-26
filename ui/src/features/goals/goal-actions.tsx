@@ -1,15 +1,16 @@
 /**
  * The three things a user can do to a goal from outside the thread.
  *
- * Each is confirmed first — finalizing starts every ready task, cancelling
- * tears the goal's sessions and worktrees down, deleting drops the goal and
- * every trace of it — and each surfaces the daemon's 409 in the dialog rather
- * than closing on a failure ("cannot finalize a plan with no tasks" is the one
- * a user will actually hit).
+ * Each is confirmed first — approving the plan starts every task whose
+ * dependencies are met, cancelling tears the goal's sessions and worktrees
+ * down, deleting drops the goal and every trace of it — and each surfaces the
+ * daemon's 409 in the dialog rather than closing on a failure ("cannot
+ * finalize a plan with no tasks" is the one a user will actually hit).
  *
  * They divide the lifecycle between them, the way `ariadne goal` does:
- * finalizing belongs to a planning goal, cancelling to one that has not
- * stopped, deleting to one that has. Cancelling and deleting are therefore
+ * approving belongs to a goal whose plan is still the user's to accept —
+ * `plan_ready`, where the planner handed it over, and `planning`, where it has
+ * not yet — cancelling to one that has not stopped, deleting to one that has. Cancelling and deleting are therefore
  * exact opposites — every goal offers one of them and never both — which is
  * why this row always has something to show and the three dialogs are always
  * mounted. A trigger that goes away mid-flow (cancelling is optimistic, so the
@@ -28,7 +29,7 @@ import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Textarea } from "@/components/ui/textarea"
 import { useCancelGoal, useDeleteGoal, useFinalizeGoalPlan } from "./queries"
-import { isTerminalGoalStatus } from "./status"
+import { awaitsPlanApproval, isTerminalGoalStatus } from "./status"
 
 export function GoalActions({
   goal,
@@ -49,7 +50,10 @@ export function GoalActions({
   const cancel = useCancelGoal(goal.id)
 
   const terminal = isTerminalGoalStatus(goal.status)
-  const canFinalize = goal.status === "planning"
+  // The user's approval is the only thing that starts a goal's tasks, and it
+  // is offered wherever the plan is still waiting on it: `plan_ready` is the
+  // planner saying it is done, `planning` the user approving ahead of it.
+  const canFinalize = awaitsPlanApproval(goal.status)
   const canCancel = !terminal
   // A running goal still owns tmux sessions and git worktrees that only
   // cancelling tears down, so the daemon refuses to delete one — and the
@@ -61,7 +65,7 @@ export function GoalActions({
       {canFinalize ? (
         <Button variant="outline" size="sm" onClick={() => setFinalizeOpen(true)}>
           <CheckCheckIcon />
-          Finalize plan
+          Approve plan
         </Button>
       ) : null}
       {canCancel ? (
@@ -102,7 +106,7 @@ function FinalizePlanDialog({
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
-  /** Owned by `GoalActions`, so it survives the goal leaving `planning`. */
+  /** Owned by `GoalActions`, so it survives the goal leaving `plan_ready`. */
   finalize: ReturnType<typeof useFinalizeGoalPlan>
 }) {
   const [summary, setSummary] = useState("")
@@ -117,7 +121,7 @@ function FinalizePlanDialog({
   async function confirm() {
     try {
       await finalize.mutateAsync(summary.trim())
-      toast.success("Plan finalized", { description: "The goal is now active." })
+      toast.success("Plan approved", { description: "The goal is now active." })
       onOpenChange(false)
     } catch {
       // Shown in the dialog; the 409 is the interesting case.
@@ -129,12 +133,12 @@ function FinalizePlanDialog({
       open={open}
       onClose={() => onOpenChange(false)}
       className="sm:max-w-lg"
-      title="Finalize the plan?"
-      description="The goal moves from planning to active and its tasks start as soon as their dependencies allow. The planner cannot add to the plan afterwards."
-      confirmLabel="Finalize plan"
+      title="Approve the plan?"
+      description="The goal becomes active and every task whose dependencies are met starts at once; the rest follow as their dependencies merge. The planner cannot add to the plan afterwards."
+      confirmLabel="Approve plan"
       pending={finalize.isPending}
       error={finalize.error}
-      errorTitle="Could not finalize the plan"
+      errorTitle="Could not approve the plan"
       onConfirm={() => void confirm()}
     >
       <Field>

@@ -197,7 +197,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Finalize planning: goal moves planning -> active (planner or user). */
+        /**
+         * Approve the plan: goal moves plan_ready (or planning) -> active, and its
+         *     tasks start. The user's call alone — the planner submits, it does not
+         *     approve its own plan.
+         */
         post: operations["goals_finalize"];
         delete?: never;
         options?: never;
@@ -217,6 +221,26 @@ export interface paths {
         put?: never;
         /** Post to the goal-level thread. */
         post: operations["goals_post_message"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/goals/{id}/submit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit the plan for the user's approval: goal moves planning -> plan_ready
+         *     (planner or user). Nothing starts; only `finalize` does that.
+         */
+        post: operations["goals_submit"];
         delete?: never;
         options?: never;
         head?: never;
@@ -929,6 +953,14 @@ export interface components {
              * @description Max tasks the planner may create (default: unbounded).
              */
             max_tasks?: number | null;
+            /**
+             * @description Model the planner runs on; omitted = the planner profile's own model
+             *     and agent CLI. A model names the agent CLI that runs it (claude ids
+             *     belong to claude_code, gpt/o-series and codex ids to codex, a
+             *     `provider/model` id to opencode), and both are pinned onto the goal; a
+             *     model nothing can place, and the empty string, are refused.
+             */
+            model?: string | null;
             /** @description Planner profile id or unique name. */
             planner_profile: string;
             /** @description Ids of registered repositories (`POST /v1/repositories`); at least one. */
@@ -989,12 +1021,17 @@ export interface components {
             /** @description Engineer profile id or unique name. */
             engineer_profile: string;
             /**
+             * @description Model the engineer runs on; omitted = the engineer profile's own model
+             *     and agent CLI. Resolved the way [`ReviewerAssignment::model`] is.
+             */
+            model?: string | null;
+            /**
              * @description Id of one of the goal's repositories; may be omitted when the goal
              *     works in exactly one.
              */
             repo_id?: string | null;
-            /** @description Reviewer profile ids or names, in review order. At least one. */
-            reviewer_profiles: string[];
+            /** @description The reviewers of the task, in review order. At least one. */
+            reviewers: components["schemas"]["ReviewerAssignment"][];
             title: string;
         };
         /** @description The daemon's own environment, as `ariadne doctor` renders it. */
@@ -1096,7 +1133,10 @@ export interface components {
             /** @enum {string} */
             event: "repository_deleted";
         };
-        /** @description Body of `POST /v1/goals/{id}/finalize`: planning ends, execution starts. */
+        /**
+         * @description Body of `POST /v1/goals/{id}/finalize`: the user approves the plan,
+         *     planning ends and execution starts. The user's call, not the planner's.
+         */
         FinalizePlanRequest: {
             /** @description Plan summary, recorded in the goal thread. */
             summary: string;
@@ -1132,7 +1172,7 @@ export interface components {
          * @description Goal lifecycle status.
          * @enum {string}
          */
-        GoalStatus: "planning" | "active" | "completed" | "cancelled";
+        GoalStatus: "planning" | "plan_ready" | "active" | "completed" | "cancelled";
         /** @description Response of `GET /v1/health`. */
         HealthResponse: {
             /**
@@ -1335,6 +1375,22 @@ export interface components {
          */
         ReviewVerdict: "approve" | "request_changes";
         /**
+         * @description One reviewer of a task: the profile that reviews, and the model it is to
+         *     run on.
+         *
+         *     A model names the agent CLI that runs it — claude ids belong to
+         *     `claude_code`, `gpt-`/`o<digit>`/codex ids to `codex`, a `provider/model`
+         *     id to `opencode` — and both are pinned onto the slot. A model nothing can
+         *     place is refused (there is no way to name the agent by hand), and so is the
+         *     empty string. Omitted, the slot takes the profile's own agent and model as
+         *     they stand when it is assigned.
+         */
+        ReviewerAssignment: {
+            model?: string | null;
+            /** @description Reviewer profile id or unique name. */
+            profile: string;
+        };
+        /**
          * @description The role an agent plays in the orchestration.
          * @enum {string}
          */
@@ -1430,6 +1486,14 @@ export interface components {
          * @enum {string}
          */
         SessionStatus: "starting" | "running" | "idle" | "exited" | "failed";
+        /**
+         * @description Body of `POST /v1/goals/{id}/submit`: the planner hands the plan to the
+         *     user for approval. The goal waits in `plan_ready` and no task starts.
+         */
+        SubmitPlanRequest: {
+            /** @description Plan summary, posted to the goal thread addressed to the user. */
+            summary: string;
+        };
         TaskDto: {
             agent_kind?: null | components["schemas"]["AgentKind"];
             branch: string;
@@ -1476,9 +1540,10 @@ export interface components {
         };
         /**
          * @description One reviewer slot of a task: which profile reviews it, and what that
-         *     reviewer was pinned to run on when the slot was assigned. Pinned the same
-         *     way the engineer is, and read the same way: what a reviewer of this task
-         *     runs on, not what its profile says today.
+         *     reviewer was pinned to run on when the slot was assigned — the profile's
+         *     own agent and model, or the model chosen for the slot. Pinned the same way
+         *     the engineer is, and read the same way: what a reviewer of this task runs
+         *     on, not what its profile says today.
          */
         TaskReviewerDto: {
             agent_kind?: null | components["schemas"]["AgentKind"];
@@ -1557,7 +1622,20 @@ export interface components {
         UpdateTaskRequest: {
             depends_on?: string[] | null;
             description?: string | null;
-            reviewer_profiles?: string[] | null;
+            /**
+             * @description Model the engineer runs on, resolved the way
+             *     [`ReviewerAssignment::model`] is: absent leaves the task's pins alone,
+             *     "default" (or the empty string) puts them back on the engineer
+             *     profile's model and agent as they stand now, anything else pins that
+             *     model and the agent CLI that runs it. The same convention
+             *     `UpdateProfileRequest::model` takes.
+             */
+            model?: string | null;
+            /**
+             * @description The whole reviewer list, replaced: each slot is cut afresh and pinned
+             *     to its own model or, where it names none, to its profile's.
+             */
+            reviewers?: components["schemas"]["ReviewerAssignment"][] | null;
             title?: string | null;
         };
         /** @description Response of `GET /v1/version`. */
@@ -1920,6 +1998,12 @@ export interface operations {
                     "application/json": components["schemas"]["GoalDto"];
                 };
             };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -1981,6 +2065,44 @@ export interface operations {
             };
             /** @description unknown addressee, or one taking no part in the goal */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    goals_submit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description goal id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubmitPlanRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoalDto"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -7,6 +7,11 @@
  * them, not on every form that needs one. With none registered the field is an
  * empty state pointing there.
  *
+ * The planner's model is the one field with a meaning when it is empty: the
+ * user picks a model and nothing else — the daemon derives the agent CLI from
+ * it — and an empty box leaves the field out of the request entirely, which is
+ * what runs the planner on its profile's own model.
+ *
  * Everything else the daemon still validates: the client only catches what it
  * can know on its own (empty title, nothing picked) and shows the daemon's
  * error envelope verbatim.
@@ -35,6 +40,8 @@ import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
+import { ModelPicker } from "@/features/profiles/model-picker"
+import { modelsQueryOptions } from "@/features/profiles/queries"
 import { repositoriesQueryOptions } from "@/features/repositories/queries"
 import { paths } from "@/routes/paths"
 
@@ -55,6 +62,9 @@ const formSchema = z.object({
   title: z.string().trim().min(1, "Give the goal a title."),
   description: z.string(),
   planner_profile: z.string().min(1, "Choose a planner profile."),
+  // Free text: the catalog only suggests, and an id it does not carry is still
+  // the daemon's to place or refuse.
+  model: z.string(),
   required_approvals: optionalCount("Approvals"),
   max_tasks: optionalCount("Max tasks"),
   repository_ids: z.array(z.string()).min(1, "Pick at least one repository."),
@@ -66,6 +76,7 @@ const DEFAULT_VALUES: CreateGoalForm = {
   title: "",
   description: "",
   planner_profile: "",
+  model: "",
   required_approvals: "1",
   max_tasks: "",
   repository_ids: [],
@@ -82,6 +93,7 @@ export function CreateGoalDialog({
 }) {
   const planners = useQuery({ ...plannerProfilesQueryOptions(), enabled: open })
   const repositories = useQuery({ ...repositoriesQueryOptions(), enabled: open })
+  const models = useQuery({ ...modelsQueryOptions(), enabled: open })
   const createGoal = useCreateGoal()
 
   const form = useForm<CreateGoalForm>({
@@ -101,6 +113,7 @@ export function CreateGoalDialog({
     [plannerOptions],
   )
   const selectedPlanner = form.watch("planner_profile")
+  const plannerProfile = plannerOptions?.find((profile) => profile.id === selectedPlanner)
   useEffect(() => {
     if (!open || !plannerOptions?.length || selectedPlanner) return
     const preferred =
@@ -109,10 +122,14 @@ export function CreateGoalDialog({
   }, [open, plannerOptions, selectedPlanner, form.setValue])
 
   async function onSubmit(values: CreateGoalForm) {
+    const model = values.model.trim()
     const body: CreateGoalRequest = {
       title: values.title.trim(),
       description: values.description,
       planner_profile: values.planner_profile,
+      // Left out rather than sent empty: the daemon refuses an empty model,
+      // and an untouched box means the planner profile's own.
+      ...(model.length > 0 ? { model } : {}),
       repository_ids: values.repository_ids,
       required_approvals: values.required_approvals ? Number(values.required_approvals) : null,
       max_tasks: values.max_tasks ? Number(values.max_tasks) : null,
@@ -239,6 +256,32 @@ export function CreateGoalDialog({
             <FieldError>{errors.max_tasks?.message}</FieldError>
           </Field>
         </div>
+
+        <Field>
+          {/* No htmlFor: cmdk owns its input's id and names it itself. */}
+          <FieldLabel>Planner model</FieldLabel>
+          <Controller
+            control={form.control}
+            name="model"
+            render={({ field }) => (
+              <ModelPicker
+                label="Planner model"
+                value={field.value}
+                onChange={field.onChange}
+                models={models.data}
+                placeholder={
+                  plannerProfile?.model
+                    ? `Profile default: ${plannerProfile.model}`
+                    : "Profile default: the CLI's default"
+                }
+                caption
+              />
+            )}
+          />
+          <FieldDescription>
+            The agent CLI follows the model. Leave it empty to run the planner on its profile's own.
+          </FieldDescription>
+        </Field>
       </FormDialogContent>
     </FormDialog>
   )
