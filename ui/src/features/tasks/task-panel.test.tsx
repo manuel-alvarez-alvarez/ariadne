@@ -88,6 +88,11 @@ const TASK: TaskDto = {
   ],
   review_round: 0,
   stalled: false,
+  usage: {
+    total: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 },
+    engineer: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 },
+    reviewers: [],
+  },
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
 }

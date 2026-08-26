@@ -4,6 +4,8 @@ use ariadne_core::{AgentKind, TaskStatus};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
+use crate::usage::TokenUsageDto;
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TaskDto {
     pub id: String,
@@ -42,8 +44,34 @@ pub struct TaskDto {
     /// URL of the pull or merge request the task was published as, once its
     /// engineer has reported one; None for a task landed directly.
     pub pr_url: Option<String>,
+    /// What the agents of this task have spent between them.
+    pub usage: TaskUsageDto,
     pub created_at: String,
     pub updated_at: String,
+}
+
+/// What a task cost, by who spent it: its engineer, its reviewers one entry
+/// each, and the total of every session on the task.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+pub struct TaskUsageDto {
+    /// Every session on the task summed, whatever its role.
+    pub total: TokenUsageDto,
+    /// The engineer's own, across every run of it.
+    pub engineer: TokenUsageDto,
+    /// One entry per reviewer profile that has a session on the task, every
+    /// review round of it summed, ordered like `reviewers`. A reviewer whose
+    /// session has yet to report anything is listed with zeros; one that has
+    /// never been spawned is not listed at all.
+    pub reviewers: Vec<ProfileUsageDto>,
+}
+
+/// What one profile spent on a task, named the way a reader addresses it.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ProfileUsageDto {
+    pub profile_id: String,
+    /// The profile's name; None only if that profile is gone.
+    pub profile_name: Option<String>,
+    pub usage: TokenUsageDto,
 }
 
 /// One reviewer slot of a task: which profile reviews it, and what that

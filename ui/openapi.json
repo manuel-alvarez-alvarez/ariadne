@@ -2981,6 +2981,7 @@
           "required_approvals",
           "planner_profile_id",
           "repos",
+          "usage",
           "created_at",
           "updated_at"
         ],
@@ -3042,6 +3043,10 @@
           },
           "updated_at": {
             "type": "string"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/GoalUsageDto",
+            "description": "What the agents of this goal have spent between them."
           }
         }
       },
@@ -3055,6 +3060,34 @@
           "completed",
           "cancelled"
         ]
+      },
+      "GoalUsageDto": {
+        "type": "object",
+        "description": "What a goal cost, by the role that spent it. Grouped by role rather than\nby profile: a goal's engineers are as many as it has tasks, and what is\nread at this height is where the tokens went, not which agent went there.",
+        "required": [
+          "total",
+          "planner",
+          "engineers",
+          "reviewers"
+        ],
+        "properties": {
+          "engineers": {
+            "$ref": "#/components/schemas/TokenUsageDto",
+            "description": "Every engineer session of every task of the goal."
+          },
+          "planner": {
+            "$ref": "#/components/schemas/TokenUsageDto",
+            "description": "The planner's sessions, which belong to no task."
+          },
+          "reviewers": {
+            "$ref": "#/components/schemas/TokenUsageDto",
+            "description": "Every reviewer session of every task of the goal, all rounds."
+          },
+          "total": {
+            "$ref": "#/components/schemas/TokenUsageDto",
+            "description": "Every session of the goal summed, the planner's included."
+          }
+        }
       },
       "HealthResponse": {
         "type": "object",
@@ -3337,6 +3370,29 @@
           }
         }
       },
+      "ProfileUsageDto": {
+        "type": "object",
+        "description": "What one profile spent on a task, named the way a reader addresses it.",
+        "required": [
+          "profile_id",
+          "usage"
+        ],
+        "properties": {
+          "profile_id": {
+            "type": "string"
+          },
+          "profile_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The profile's name; None only if that profile is gone."
+          },
+          "usage": {
+            "$ref": "#/components/schemas/TokenUsageDto"
+          }
+        }
+      },
       "PromptKind": {
         "type": "string",
         "description": "A prompt a profile owns beside its system prompt: one of the texts an\nagent of that role is started, resumed or nudged with. Every text Ariadne\nputs in front of an agent is one of these, and each kind belongs to the\nrole — or, for [`PromptKind::MessageDelivery`], the roles — that receive it\n(see [`PromptKind::roles`]).",
@@ -3519,6 +3575,7 @@
           "agent_kind",
           "tmux_session",
           "status",
+          "usage",
           "created_at"
         ],
         "properties": {
@@ -3603,6 +3660,10 @@
           },
           "tmux_session": {
             "type": "string"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/TokenUsageDto",
+            "description": "What this session's agent has spent, summed over every transcript it\nreported under. Zeros while nothing has been reported."
           },
           "worktree_path": {
             "type": [
@@ -3750,6 +3811,7 @@
           "branch",
           "review_round",
           "stalled",
+          "usage",
           "created_at",
           "updated_at"
         ],
@@ -3851,6 +3913,10 @@
           },
           "updated_at": {
             "type": "string"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/TaskUsageDto",
+            "description": "What the agents of this task have spent between them."
           },
           "worktree_path": {
             "type": [
@@ -3965,6 +4031,61 @@
                 "description": "Present when this update was a status transition."
               }
             ]
+          }
+        }
+      },
+      "TaskUsageDto": {
+        "type": "object",
+        "description": "What a task cost, by who spent it: its engineer, its reviewers one entry\neach, and the total of every session on the task.",
+        "required": [
+          "total",
+          "engineer",
+          "reviewers"
+        ],
+        "properties": {
+          "engineer": {
+            "$ref": "#/components/schemas/TokenUsageDto",
+            "description": "The engineer's own, across every run of it."
+          },
+          "reviewers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProfileUsageDto"
+            },
+            "description": "One entry per reviewer profile that has a session on the task, every\nreview round of it summed, ordered like `reviewers`. A reviewer whose\nsession has yet to report anything is listed with zeros; one that has\nnever been spawned is not listed at all."
+          },
+          "total": {
+            "$ref": "#/components/schemas/TokenUsageDto",
+            "description": "Every session on the task summed, whatever its role."
+          }
+        }
+      },
+      "TokenUsageDto": {
+        "type": "object",
+        "description": "Tokens spent, as the agents' own transcripts report them.\n\nAlways present and always a number: nothing reported is zero, not null.",
+        "required": [
+          "input_tokens",
+          "cached_input_tokens",
+          "output_tokens"
+        ],
+        "properties": {
+          "cached_input_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The subset of `input_tokens` served from the prompt cache, so never\nadded to it.",
+            "minimum": 0
+          },
+          "input_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Prompt tokens, cache reads and cache writes included.",
+            "minimum": 0
+          },
+          "output_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Completion tokens, thinking and reasoning included.",
+            "minimum": 0
           }
         }
       },

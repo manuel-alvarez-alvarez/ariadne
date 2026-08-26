@@ -19,6 +19,7 @@ mod repositories;
 mod reviews;
 mod sessions;
 mod tasks;
+mod usage;
 
 pub use change::Change;
 pub use entities::*;
@@ -31,6 +32,7 @@ pub use repositories::{NewRepository, RepositoryUpdate};
 pub use reviews::NewReview;
 pub use sessions::{NewSession, SessionFilter};
 pub use tasks::{NewTask, ReviewerSlot, TaskFilter, TaskUpdate};
+pub use usage::{ProfileUsage, RoleUsage};
 
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
@@ -43,9 +45,10 @@ use tokio::sync::mpsc;
 
 use ariadne_core::TransitionError;
 
-/// The one migration this release ships. There is exactly one: the schema is
-/// squashed, and prompts are overrides, so nothing rewrites a default in SQL
-/// any more (see `migrations/0001_init.sql`).
+/// The migrations this release ships. The chain starts at the squashed
+/// schema (`migrations/0001_init.sql`) — prompts are overrides, so nothing
+/// rewrites a default in SQL any more — and grows a file per change to it
+/// from there.
 static MIGRATIONS: Migrator = sqlx::migrate!("./migrations");
 
 #[derive(Debug, thiserror::Error)]

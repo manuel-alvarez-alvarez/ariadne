@@ -293,7 +293,7 @@ impl Store {
         self.publish_session_update(id).await
     }
 
-    async fn publish_session_update(&self, id: &str) -> Result<()> {
+    pub(crate) async fn publish_session_update(&self, id: &str) -> Result<()> {
         let session = self.get_session(id).await?;
         self.publish(Change::SessionUpdated(session));
         Ok(())

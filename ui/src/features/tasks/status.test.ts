@@ -11,6 +11,8 @@ import {
   subStatus,
 } from "./status"
 
+const NO_TOKENS = { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 }
+
 function task(id: string, status: TaskStatus, extra: Partial<TaskDto> = {}): TaskDto {
   return {
     id,
@@ -25,6 +27,7 @@ function task(id: string, status: TaskStatus, extra: Partial<TaskDto> = {}): Tas
     reviewers: [],
     review_round: 0,
     stalled: false,
+    usage: { total: NO_TOKENS, engineer: NO_TOKENS, reviewers: [] },
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
     ...extra,

@@ -31,6 +31,9 @@ const SESSION_ID = "01JSESS0000000000000000001"
 const PROFILE_ID = "01JPROF00000000000000ENGI"
 const REPO_ID = "01JREPO0000000000000000001"
 
+/** A row nobody has reported tokens for, which is how every fixture starts. */
+const NO_TOKENS = { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 }
+
 export function aGoal(overrides: Partial<GoalDto> = {}): GoalDto {
   return {
     id: GOAL_ID,
@@ -40,6 +43,12 @@ export function aGoal(overrides: Partial<GoalDto> = {}): GoalDto {
     repos: [],
     required_approvals: 1,
     status: "active",
+    usage: {
+      total: NO_TOKENS,
+      planner: NO_TOKENS,
+      engineers: NO_TOKENS,
+      reviewers: NO_TOKENS,
+    },
     created_at: STAMP,
     updated_at: STAMP,
     ...overrides,
@@ -60,6 +69,7 @@ export function aTask(overrides: Partial<TaskDto> = {}): TaskDto {
     reviewers: [],
     depends_on: [],
     review_round: 0,
+    usage: { total: NO_TOKENS, engineer: NO_TOKENS, reviewers: [] },
     created_at: STAMP,
     updated_at: STAMP,
     ...overrides,
@@ -84,6 +94,7 @@ export function aSession(overrides: Partial<SessionDto> = {}): SessionDto {
     attention_reason: null,
     attention_since: null,
     last_activity_at: STAMP,
+    usage: NO_TOKENS,
     created_at: STAMP,
     ended_at: null,
     ...overrides,

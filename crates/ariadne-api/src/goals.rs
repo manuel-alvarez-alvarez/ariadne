@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::repositories::RepositoryDto;
+use crate::usage::TokenUsageDto;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct GoalDto {
@@ -27,8 +28,25 @@ pub struct GoalDto {
     /// The registered repositories the goal works in, as they stand now: a
     /// goal references them, so an edit to one shows up here.
     pub repos: Vec<RepositoryDto>,
+    /// What the agents of this goal have spent between them.
+    pub usage: GoalUsageDto,
     pub created_at: String,
     pub updated_at: String,
+}
+
+/// What a goal cost, by the role that spent it. Grouped by role rather than
+/// by profile: a goal's engineers are as many as it has tasks, and what is
+/// read at this height is where the tokens went, not which agent went there.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+pub struct GoalUsageDto {
+    /// Every session of the goal summed, the planner's included.
+    pub total: TokenUsageDto,
+    /// The planner's sessions, which belong to no task.
+    pub planner: TokenUsageDto,
+    /// Every engineer session of every task of the goal.
+    pub engineers: TokenUsageDto,
+    /// Every reviewer session of every task of the goal, all rounds.
+    pub reviewers: TokenUsageDto,
 }
 
 /// Body of `POST /v1/goals/{id}/submit`: the planner hands the plan to the

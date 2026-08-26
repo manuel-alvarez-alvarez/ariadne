@@ -8,7 +8,11 @@ mod common;
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode, header};
 
+use ariadne_api::goals::GoalDto;
+use ariadne_api::sessions::SessionDto;
 use ariadne_api::stream::{DeletedDto, DomainEvent};
+use ariadne_api::tasks::TaskDto;
+use ariadne_api::usage::TokenUsageDto;
 use ariadne_core::{
     Actor, AgentKind, AttentionReason, GoalStatus, ReviewVerdict, Role, SessionStatus, TaskStatus,
 };
@@ -756,4 +760,170 @@ async fn a_planner_past_the_approval_raises_no_attention() {
         h.attention(&session).await,
         Some(AttentionReason::WaitingPermission)
     );
+}
+
+// -- token usage ------------------------------------------------------------
+
+fn tokens(input_tokens: u64, cached_input_tokens: u64, output_tokens: u64) -> TokenUsageDto {
+    TokenUsageDto {
+        input_tokens,
+        cached_input_tokens,
+        output_tokens,
+    }
+}
+
+/// An event carrying the totals of one transcript, exactly as the hooks and
+/// the plugin report them.
+fn reports(source: &str, usage: TokenUsageDto) -> serde_json::Value {
+    serde_json::json!({
+        "hook_event_name": "Stop",
+        "ariadne_usage": {
+            "source": source,
+            "input_tokens": usage.input_tokens,
+            "cached_input_tokens": usage.cached_input_tokens,
+            "output_tokens": usage.output_tokens,
+        },
+    })
+}
+
+/// Everything an agent reports lands on its own session, rolls up to the task
+/// and to the goal, and every watcher of the three hears it: a report is the
+/// whole of one transcript, so a second one under the same source replaces it
+/// and only a second source adds.
+#[tokio::test]
+async fn reported_usage_rolls_up_to_the_task_and_the_goal() {
+    let h = harness().await;
+    let cast = h.active_cast().await;
+    let engineer = h
+        .session(&cast.goal, Some(&cast.task), Role::Engineer, &cast.engineer.id)
+        .await;
+    let reviewer = h
+        .session(&cast.goal, Some(&cast.task), Role::Reviewer, &cast.reviewer.id)
+        .await;
+    let planner = h
+        .session(&cast.goal, None, Role::Planner, &cast.planner.id)
+        .await;
+    let mut rx = h.bus.subscribe();
+
+    h.ingest(&engineer, "stop", reports("/x.jsonl", tokens(100, 80, 10)))
+        .await;
+
+    // The rollup rides in all three fat events, since all three are read with
+    // it: a client holding a task would otherwise never hear its figures move.
+    next_event(&mut rx, |e| {
+        matches!(&e.event, DomainEvent::SessionUpdated(s)
+                 if s.id == engineer.id && s.usage == tokens(100, 80, 10))
+    })
+    .await;
+    next_event(&mut rx, |e| {
+        matches!(&e.event, DomainEvent::TaskUpdated(u)
+                 if u.task.id == cast.task.id && u.task.usage.total == tokens(100, 80, 10))
+    })
+    .await;
+    next_event(&mut rx, |e| {
+        matches!(&e.event, DomainEvent::GoalUpdated(g)
+                 if g.id == cast.goal.id && g.usage.total == tokens(100, 80, 10))
+    })
+    .await;
+
+    // The same transcript, further along: the session stands at the second
+    // figures, not at the sum of both.
+    h.ingest(&engineer, "stop", reports("/x.jsonl", tokens(150, 120, 30)))
+        .await;
+    let session: SessionDto = h.get(&format!("/v1/sessions/{}", engineer.id)).await;
+    assert_eq!(session.usage, tokens(150, 120, 30));
+
+    // A resumed agent writes a transcript of its own, and that one adds.
+    h.ingest(&engineer, "stop", reports("/y.jsonl", tokens(10, 0, 5)))
+        .await;
+    let session: SessionDto = h.get(&format!("/v1/sessions/{}", engineer.id)).await;
+    assert_eq!(session.usage, tokens(160, 120, 35));
+
+    h.ingest(&reviewer, "stop", reports("/r.jsonl", tokens(20, 10, 4)))
+        .await;
+    h.ingest(&planner, "stop", reports("/p.jsonl", tokens(40, 30, 8)))
+        .await;
+
+    let task: TaskDto = h.get(&format!("/v1/tasks/{}", cast.task.id)).await;
+    assert_eq!(task.usage.engineer, tokens(160, 120, 35));
+    let reviewers = &task.usage.reviewers;
+    assert_eq!(reviewers.len(), 1);
+    assert_eq!(reviewers[0].profile_id, cast.reviewer.id);
+    assert_eq!(reviewers[0].profile_name.as_deref(), Some("reviewer"));
+    assert_eq!(reviewers[0].usage, tokens(20, 10, 4));
+    assert_eq!(
+        task.usage.total,
+        tokens(180, 130, 39),
+        "the total is its engineer and its reviewers, and nothing else is on the task"
+    );
+
+    let goal: GoalDto = h.get(&format!("/v1/goals/{}", cast.goal.id)).await;
+    assert_eq!(goal.usage.planner, tokens(40, 30, 8));
+    assert_eq!(goal.usage.engineers, tokens(160, 120, 35));
+    assert_eq!(goal.usage.reviewers, tokens(20, 10, 4));
+    assert_eq!(
+        goal.usage.total,
+        tokens(220, 160, 47),
+        "every session of the goal, the planner's included"
+    );
+}
+
+/// A session nobody has reported for reads as zeros rather than as nothing,
+/// and so do the task and the goal above it.
+#[tokio::test]
+async fn a_session_that_has_reported_nothing_reads_as_zeros() {
+    let h = harness().await;
+    let cast = h.active_cast().await;
+    let engineer = h
+        .session(&cast.goal, Some(&cast.task), Role::Engineer, &cast.engineer.id)
+        .await;
+
+    let session: SessionDto = h.get(&format!("/v1/sessions/{}", engineer.id)).await;
+    assert_eq!(session.usage, tokens(0, 0, 0));
+    let task: TaskDto = h.get(&format!("/v1/tasks/{}", cast.task.id)).await;
+    assert_eq!(task.usage.total, tokens(0, 0, 0));
+    assert_eq!(task.usage.engineer, tokens(0, 0, 0));
+    let goal: GoalDto = h.get(&format!("/v1/goals/{}", cast.goal.id)).await;
+    assert_eq!(goal.usage.total, tokens(0, 0, 0));
+}
+
+/// Figures nobody can read are dropped on their own: the event they came on
+/// is recorded like any other, and everything else it carries still happens.
+#[tokio::test]
+async fn a_malformed_report_is_dropped_and_its_event_still_lands() {
+    let h = harness().await;
+    let cast = h.active_cast().await;
+    let engineer = h
+        .session(&cast.goal, Some(&cast.task), Role::Engineer, &cast.engineer.id)
+        .await;
+
+    h.ingest(
+        &engineer,
+        "stop",
+        serde_json::json!({
+            "hook_event_name": "Stop",
+            "ariadne_usage": {"source": "/x.jsonl", "input_tokens": -5, "output_tokens": 1},
+        }),
+    )
+    .await;
+
+    let session: SessionDto = h.get(&format!("/v1/sessions/{}", engineer.id)).await;
+    assert_eq!(session.usage, tokens(0, 0, 0));
+    assert_eq!(
+        session.status,
+        SessionStatus::Idle,
+        "the event still moved the status it was sent for"
+    );
+    let events = h
+        .store
+        .list_events(EventFilter {
+            session_id: Some(engineer.id.clone()),
+            task_id: None,
+            limit: 50,
+            after: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(events.len(), 1, "the event is recorded, payload and all");
+    assert_eq!(events[0].kind, "stop");
 }

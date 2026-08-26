@@ -1,9 +1,12 @@
 //! What an agent event means: the internal session id it carries, the
-//! lifecycle status it implies, and whether it says a human has to act.
+//! lifecycle status it implies, whether it says a human has to act, and what
+//! it reports having spent.
 //!
 //! Three CLIs report through [`super::events::ingest`] in three vocabularies,
 //! and these tables are where each one is read. An event that matches nothing
 //! is still recorded — it simply moves neither flag.
+
+use ariadne_core::TokenUsage;
 
 /// Where each agent kind carries its internal session id in event payloads.
 pub(super) fn extract_internal_id(
@@ -89,6 +92,45 @@ pub(super) fn attention_for_event(
     }
 }
 
+/// The token usage an event reports, as `(source, totals)` — the transcript
+/// the figures were read from, and its cumulative totals.
+///
+/// Any event of any agent kind may carry an `ariadne_usage`, and most carry
+/// none: reporting is the job of the hooks and the plugin that read the
+/// transcripts, and an event without one simply has no news. What is refused
+/// is refused quietly — a payload whose counters are missing, fractional or
+/// negative is a bug in whatever composed it, and failing the agent's event
+/// over it would cost the daemon the status and attention the same event
+/// carries.
+pub(super) fn usage_for_event(payload: &serde_json::Value) -> Option<(String, TokenUsage)> {
+    let reported = payload.get("ariadne_usage")?;
+    let source = reported.get("source").and_then(|v| v.as_str());
+    let counter = |key: &str| reported.get(key).and_then(serde_json::Value::as_u64);
+    match (
+        source,
+        counter("input_tokens"),
+        counter("cached_input_tokens"),
+        counter("output_tokens"),
+    ) {
+        (Some(source), Some(input_tokens), Some(cached_input_tokens), Some(output_tokens))
+            if !source.is_empty() =>
+        {
+            Some((
+                source.to_string(),
+                TokenUsage {
+                    input_tokens,
+                    cached_input_tokens,
+                    output_tokens,
+                },
+            ))
+        }
+        _ => {
+            tracing::warn!(usage = %reported, "ignoring a malformed ariadne_usage");
+            None
+        }
+    }
+}
+
 /// Classify a Claude Code `Notification` hook payload.
 ///
 /// `notification_type` is the reliable discriminator (it is also what the
@@ -119,9 +161,9 @@ fn attention_for_notification(
 
 #[cfg(test)]
 mod tests {
-    use super::{attention_for_event, extract_internal_id, status_for_event};
+    use super::{attention_for_event, extract_internal_id, status_for_event, usage_for_event};
 
-    use ariadne_core::{AgentKind, AttentionReason, SessionStatus};
+    use ariadne_core::{AgentKind, AttentionReason, SessionStatus, TokenUsage};
     use serde_json::json;
 
     /// A Codex 0.147 `PermissionRequest` payload, captured while the approval
@@ -361,6 +403,54 @@ mod tests {
                 Some(expected),
                 "{message}"
             );
+        }
+    }
+
+    /// The contract the hooks and the plugin report under, read whole.
+    #[test]
+    fn an_event_reports_the_totals_of_the_transcript_it_names() {
+        let payload = json!({
+            "hook_event_name": "Stop",
+            "ariadne_usage": {
+                "source": "/Users/me/.claude/projects/-tmp-wt/5cf3f43d.jsonl",
+                "input_tokens": 100,
+                "cached_input_tokens": 80,
+                "output_tokens": 10,
+            },
+        });
+        assert_eq!(
+            usage_for_event(&payload),
+            Some((
+                "/Users/me/.claude/projects/-tmp-wt/5cf3f43d.jsonl".to_string(),
+                TokenUsage {
+                    input_tokens: 100,
+                    cached_input_tokens: 80,
+                    output_tokens: 10,
+                }
+            ))
+        );
+    }
+
+    /// Most events carry no figures at all, and one that carries figures
+    /// nobody can read is not a reason to fail the agent's event: both are
+    /// simply no news.
+    #[test]
+    fn an_absent_or_malformed_report_is_no_news() {
+        for payload in [
+            json!({"hook_event_name": "Stop"}),
+            json!({"ariadne_usage": {}}),
+            json!({"ariadne_usage": {"source": "/x.jsonl", "input_tokens": 100}}),
+            json!({"ariadne_usage": {"source": "", "input_tokens": 1,
+                                     "cached_input_tokens": 0, "output_tokens": 1}}),
+            json!({"ariadne_usage": {"source": "/x.jsonl", "input_tokens": -1,
+                                     "cached_input_tokens": 0, "output_tokens": 1}}),
+            json!({"ariadne_usage": {"source": "/x.jsonl", "input_tokens": 1.5,
+                                     "cached_input_tokens": 0, "output_tokens": 1}}),
+            json!({"ariadne_usage": {"source": "/x.jsonl", "input_tokens": "100",
+                                     "cached_input_tokens": 0, "output_tokens": 1}}),
+            json!({"ariadne_usage": "none of it"}),
+        ] {
+            assert_eq!(usage_for_event(&payload), None, "{payload}");
         }
     }
 }

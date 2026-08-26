@@ -13,7 +13,7 @@ use ariadne_core::{GoalStatus, Role};
 use ariadne_store::{Goal, NewGoal, NewMessage, SessionFilter, Store, Task, TaskFilter};
 
 use super::AppState;
-use super::convert::{goal_dto, message_dtos};
+use super::convert::{goal_dto_of, message_dtos};
 use super::error::{ApiError, ApiResult};
 use super::pins;
 use super::recipients::{self, Thread, call_ctx};
@@ -26,11 +26,10 @@ pub struct GoalListQuery {
     pub status: Option<String>,
 }
 
-/// A goal with the repositories it references, which is how every one of
-/// these endpoints answers.
+/// A goal with the repositories it references and what its agents have
+/// spent, which is how every one of these endpoints answers.
 async fn to_dto(store: &Store, goal: Goal) -> ApiResult<Json<GoalDto>> {
-    let repos = store.list_goal_repositories(&goal.id).await?;
-    Ok(Json(goal_dto(goal, repos)))
+    Ok(Json(goal_dto_of(store, goal).await?))
 }
 
 impl GoalListQuery {
@@ -111,8 +110,7 @@ pub async fn list(
     let goals = state.store.list_goals(&q.statuses()?).await?;
     let mut out = Vec::with_capacity(goals.len());
     for goal in goals {
-        let repos = state.store.list_goal_repositories(&goal.id).await?;
-        out.push(goal_dto(goal, repos));
+        out.push(goal_dto_of(&state.store, goal).await?);
     }
     Ok(Json(out))
 }

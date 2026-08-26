@@ -12,6 +12,7 @@ pub mod probe;
 pub mod spawn_plan;
 pub mod state_machine;
 
+pub use models::TokenUsage;
 pub use probe::{
     PROBE_TIMEOUT, PathState, is_executable, path_state, probe_auth, probe_status, probe_version,
     which,

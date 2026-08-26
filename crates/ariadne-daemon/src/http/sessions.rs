@@ -10,7 +10,7 @@ use ariadne_api::sessions::{
 use ariadne_store::{AgentSession, SessionFilter};
 
 use super::AppState;
-use super::convert::session_dto;
+use super::convert::session_dto_of;
 use super::error::{ApiError, ApiResult};
 
 /// The session behind `id`, with a pane to act on — or the conflict saying
@@ -54,7 +54,11 @@ pub async fn list(
             attention_only: q.attention.unwrap_or(false),
         })
         .await?;
-    Ok(Json(sessions.into_iter().map(session_dto).collect()))
+    let mut out = Vec::with_capacity(sessions.len());
+    for session in sessions {
+        out.push(session_dto_of(&state.store, session).await?);
+    }
+    Ok(Json(out))
 }
 
 /// Inspect a session.
@@ -65,7 +69,8 @@ pub async fn get(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<Json<SessionDto>> {
-    Ok(Json(session_dto(state.store.get_session(&id).await?)))
+    let session = state.store.get_session(&id).await?;
+    Ok(Json(session_dto_of(&state.store, session).await?))
 }
 
 /// Revive an ended session: new tmux, same agent conversation (resumed via
@@ -88,7 +93,7 @@ pub async fn resume(
         .revive_session(&id, None)
         .await
         .map_err(|e| ApiError::conflict(e.to_string()))?;
-    Ok(Json(session_dto(session)))
+    Ok(Json(session_dto_of(&state.store, session).await?))
 }
 
 /// Kill a session's tmux process.
@@ -107,7 +112,8 @@ pub async fn kill(
         .kill_session(&id)
         .await
         .map_err(|e| ApiError::conflict(e.to_string()))?;
-    Ok(Json(session_dto(state.store.get_session(&id).await?)))
+    let session = state.store.get_session(&id).await?;
+    Ok(Json(session_dto_of(&state.store, session).await?))
 }
 
 /// Type into a session's pane: the write counterpart of the log stream.
@@ -265,5 +271,5 @@ pub async fn debug_spawn(
         }
     }
     .map_err(|e| ApiError::conflict(e.to_string()))?;
-    Ok(Json(session_dto(session)))
+    Ok(Json(session_dto_of(&state.store, session).await?))
 }

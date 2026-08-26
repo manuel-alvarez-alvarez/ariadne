@@ -19,8 +19,8 @@ use ariadne_api::stream::{DeletedDto, DomainEvent, TaskUpdatedDto};
 use ariadne_store::{AgentSession, Change, Goal, Result, Store, Task};
 
 use crate::http::convert::{
-    event_dto, goal_dto, message_dto_of, profile_dto, repository_dto, review_dto, session_dto,
-    task_dto_of, transition_dto,
+    event_dto, goal_dto_of, message_dto_of, profile_dto, repository_dto, review_dto,
+    session_dto_of, task_dto_of, transition_dto,
 };
 
 /// Events buffered per subscriber before it is considered too slow.
@@ -153,8 +153,12 @@ async fn fatten(store: &Store, change: Change) -> Result<BusEvent> {
                 event: DomainEvent::ReviewCreated(review_dto(review)),
             }
         }
-        Change::SessionCreated(session) => session_event(session, DomainEvent::SessionCreated),
-        Change::SessionUpdated(session) => session_event(session, DomainEvent::SessionUpdated),
+        Change::SessionCreated(session) => {
+            session_event(store, session, DomainEvent::SessionCreated).await?
+        }
+        Change::SessionUpdated(session) => {
+            session_event(store, session, DomainEvent::SessionUpdated).await?
+        }
         Change::AgentEventCreated(agent_event) => {
             let goal_id = match &agent_event.session_id {
                 Some(id) => Some(store.get_session(id).await?.goal_id),
@@ -191,10 +195,9 @@ async fn goal_event(
     goal: Goal,
     wrap: fn(GoalDto) -> DomainEvent,
 ) -> Result<BusEvent> {
-    let repos = store.list_goal_repositories(&goal.id).await?;
     let goal_id = goal.id.clone();
     Ok(BusEvent {
-        event: wrap(goal_dto(goal, repos)),
+        event: wrap(goal_dto_of(store, goal).await?),
         goal_id: Some(goal_id),
         task_id: None,
     })
@@ -209,12 +212,17 @@ async fn task_event_of(
     Ok((task_dto_of(store, task).await?, keys))
 }
 
-fn session_event(session: AgentSession, wrap: fn(SessionDto) -> DomainEvent) -> BusEvent {
-    BusEvent {
-        goal_id: Some(session.goal_id.clone()),
-        task_id: session.task_id.clone(),
-        event: wrap(session_dto(session)),
-    }
+async fn session_event(
+    store: &Store,
+    session: AgentSession,
+    wrap: fn(SessionDto) -> DomainEvent,
+) -> Result<BusEvent> {
+    let (goal_id, task_id) = (session.goal_id.clone(), session.task_id.clone());
+    Ok(BusEvent {
+        goal_id: Some(goal_id),
+        task_id,
+        event: wrap(session_dto_of(store, session).await?),
+    })
 }
 
 /// An event that belongs to no goal or task (profiles and repositories are

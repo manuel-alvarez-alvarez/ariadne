@@ -682,7 +682,11 @@ impl Store {
     }
 
     /// Announce a non-transitional task write, unless it matched no row.
-    async fn publish_task_update(&self, task_id: &str, rows_affected: u64) -> Result<()> {
+    pub(crate) async fn publish_task_update(
+        &self,
+        task_id: &str,
+        rows_affected: u64,
+    ) -> Result<()> {
         if rows_affected > 0 {
             let task = self.get_task(task_id).await?;
             self.publish(Change::TaskUpdated {

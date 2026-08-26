@@ -32,6 +32,7 @@ pub fn goal(id: &str, title: &str) -> GoalDto {
         agent_kind: None,
         model: None,
         repos: Vec::new(),
+        usage: Default::default(),
         created_at: NOW.into(),
         updated_at: NOW.into(),
     }
@@ -59,6 +60,7 @@ pub fn task(id: &str, goal_id: &str) -> TaskDto {
         stalled: false,
         merge_commit: None,
         pr_url: None,
+        usage: Default::default(),
         created_at: NOW.into(),
         updated_at: NOW.into(),
     }
@@ -86,6 +88,7 @@ pub fn session(id: &str, goal_id: &str, task_id: Option<&str>) -> SessionDto {
         attention_reason: None,
         attention_since: None,
         last_activity_at: None,
+        usage: Default::default(),
         created_at: NOW.into(),
         ended_at: None,
     }

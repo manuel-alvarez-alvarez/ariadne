@@ -17,6 +17,7 @@ pub mod reviews;
 pub mod sessions;
 pub mod stream;
 pub mod tasks;
+pub mod usage;
 
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};

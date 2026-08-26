@@ -10,14 +10,18 @@ use std::collections::hash_map::Entry;
 
 use ariadne_api::agents::AgentConfigDto;
 use ariadne_api::events::AgentEventDto;
-use ariadne_api::goals::GoalDto;
+use ariadne_api::goals::{GoalDto, GoalUsageDto};
 use ariadne_api::messages::{MessageDto, MessageRecipientDto};
 use ariadne_api::profiles::{ProfileDto, ProfilePromptDto};
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::reviews::ReviewDto;
 use ariadne_api::sessions::SessionDto;
-use ariadne_api::tasks::{TaskDto, TaskReviewerDto, TaskTransitionDto};
-use ariadne_store::{self as store, Store, StoreError};
+use ariadne_api::tasks::{
+    ProfileUsageDto, TaskDto, TaskReviewerDto, TaskTransitionDto, TaskUsageDto,
+};
+use ariadne_api::usage::TokenUsageDto;
+use ariadne_core::{Role, TokenUsage};
+use ariadne_store::{self as store, ProfileUsage, Store, StoreError};
 
 /// One conversion per entity: the fields that are not a straight move, then
 /// `..` and the ones that are.
@@ -69,11 +73,17 @@ dto! {
         .. id, path, base_branch, description, created_at, updated_at
     }
 
-    /// `repos` are the goal's repositories, which the caller loads.
-    pub fn goal_dto(g: store::Goal, repos: Vec<store::Repository>) -> GoalDto {
+    /// `repos` are the goal's repositories and `usage` its rollup, both of
+    /// which the caller loads.
+    fn goal_dto(
+        g: store::Goal,
+        repos: Vec<store::Repository>,
+        usage: GoalUsageDto,
+    ) -> GoalDto {
         status: g.status(),
         agent_kind: g.agent_kind(),
         repos: repos.into_iter().map(repository_dto).collect(),
+        usage: usage,
         .. id, title, description, max_tasks, required_approvals,
            planner_profile_id, model, created_at, updated_at
     }
@@ -93,6 +103,7 @@ dto! {
         depends_on: Vec<String>,
         engineer_profile_name: Option<String>,
         planner_profile_name: Option<String>,
+        usage: TaskUsageDto,
     ) -> TaskDto {
         status: t.status(),
         stalled: t.is_stalled(),
@@ -104,6 +115,7 @@ dto! {
         depends_on: depends_on,
         engineer_profile_name: engineer_profile_name,
         planner_profile_name: planner_profile_name,
+        usage: usage,
         .. id, goal_id, repo_id, title, description, engineer_profile_id, model,
            branch, worktree_path, review_round, merge_commit, pr_url,
            created_at, updated_at
@@ -130,11 +142,13 @@ dto! {
         .. id, task_id, round, reviewer_profile_id, session_id, body, created_at
     }
 
-    pub fn session_dto(s: store::AgentSession) -> SessionDto {
+    /// `usage` is what this session has spent, which the caller loads.
+    fn session_dto(s: store::AgentSession, usage: TokenUsageDto) -> SessionDto {
         role: s.role(),
         agent_kind: s.agent_kind(),
         status: s.status(),
         attention_reason: s.attention_reason(),
+        usage: usage,
         .. id, goal_id, task_id, profile_id, model, internal_session_id,
            tmux_session, worktree_path, review_round, attention_since,
            last_activity_at, created_at, ended_at
@@ -171,7 +185,95 @@ pub async fn task_dto_of(store: &Store, task: store::Task) -> Result<TaskDto, St
     let engineer = profile_name(store, &task.engineer_profile_id).await;
     let planner_id = store.get_goal(&task.goal_id).await?.planner_profile_id;
     let planner = profile_name(store, &planner_id).await;
-    Ok(task_dto(task, reviewers, depends_on, engineer, planner))
+    let usage = task_usage(store, &task.id, &reviewers).await?;
+    Ok(task_dto(
+        task, reviewers, depends_on, engineer, planner, usage,
+    ))
+}
+
+/// [`session_dto`] with what the session has spent loaded from the store.
+pub async fn session_dto_of(
+    store: &Store,
+    session: store::AgentSession,
+) -> Result<SessionDto, StoreError> {
+    let usage = store.session_usage(&session.id).await?;
+    Ok(session_dto(session, usage.into()))
+}
+
+/// [`goal_dto`] with everything it needs loaded: the repositories the goal
+/// references, and what every session under it has spent.
+pub async fn goal_dto_of(store: &Store, goal: store::Goal) -> Result<GoalDto, StoreError> {
+    let repos = store.list_goal_repositories(&goal.id).await?;
+    let usage = goal_usage(store, &goal.id).await?;
+    Ok(goal_dto(goal, repos, usage))
+}
+
+/// What a task has spent, arranged the way it is read: the engineer's own,
+/// one entry per reviewer profile in slot order, and the total of every
+/// session on the task.
+///
+/// The engineer's is every engineer-role session, not only the profile the
+/// task names today — a task moved to another engineer keeps what the first
+/// one spent, and a total that did not count it would not add up. A reviewer
+/// no longer holding a slot is listed after those that do, for the same
+/// reason.
+async fn task_usage(
+    store: &Store,
+    task_id: &str,
+    reviewers: &[(store::TaskReviewer, Option<String>)],
+) -> Result<TaskUsageDto, StoreError> {
+    let spent = store.task_usage(task_id).await?;
+    let total: TokenUsage = spent.iter().map(|p| p.usage).sum();
+    let engineer: TokenUsage = spent
+        .iter()
+        .filter(|p| p.role == Role::Engineer)
+        .map(|p| p.usage)
+        .sum();
+    let mut left: Vec<&ProfileUsage> = spent.iter().filter(|p| p.role == Role::Reviewer).collect();
+
+    let mut listed = Vec::new();
+    for (slot, name) in reviewers {
+        if let Some(at) = left.iter().position(|p| p.profile_id == slot.profile_id) {
+            let spent = left.remove(at);
+            listed.push(ProfileUsageDto {
+                profile_id: spent.profile_id.clone(),
+                profile_name: name.clone(),
+                usage: spent.usage.into(),
+            });
+        }
+    }
+    for spent in left {
+        listed.push(ProfileUsageDto {
+            profile_id: spent.profile_id.clone(),
+            profile_name: profile_name(store, &spent.profile_id).await,
+            usage: spent.usage.into(),
+        });
+    }
+    Ok(TaskUsageDto {
+        total: total.into(),
+        engineer: engineer.into(),
+        reviewers: listed,
+    })
+}
+
+/// What a goal has spent, by role: its planner, the engineers of its tasks,
+/// their reviewers, and the total of all three.
+async fn goal_usage(store: &Store, goal_id: &str) -> Result<GoalUsageDto, StoreError> {
+    let spent = store.goal_usage(goal_id).await?;
+    let of = |role: Role| -> TokenUsageDto {
+        spent
+            .iter()
+            .filter(|r| r.role == role)
+            .map(|r| r.usage)
+            .sum::<TokenUsage>()
+            .into()
+    };
+    Ok(GoalUsageDto {
+        total: spent.iter().map(|r| r.usage).sum::<TokenUsage>().into(),
+        planner: of(Role::Planner),
+        engineers: of(Role::Engineer),
+        reviewers: of(Role::Reviewer),
+    })
 }
 
 /// [`message_dto`] with the addressee's name loaded from the store.

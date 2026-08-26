@@ -2,7 +2,7 @@
 
 use ariadne_core::{
     Actor, AgentKind, AttentionReason, AuthorRole, GoalStatus, MergeStrategy, PromptKind,
-    ReviewVerdict, Role, SessionStatus, TaskStatus,
+    ReviewVerdict, Role, SessionStatus, TaskStatus, TokenUsage,
 };
 use ariadne_store::defaults::{default_prompt, default_system_prompt};
 use ariadne_store::*;
@@ -2442,7 +2442,7 @@ async fn a_database_from_before_the_squash_says_which_file_to_delete() {
     sqlx::query(
         "INSERT INTO _sqlx_migrations (version, description, installed_on, success,
                                        checksum, execution_time)
-         VALUES (2, 'repositories', '2025-01-01 00:00:00', 1, x'00', 0)",
+         VALUES (29, 'repositories', '2025-01-01 00:00:00', 1, x'00', 0)",
     )
     .execute(&pool)
     .await
@@ -2477,5 +2477,285 @@ async fn a_database_from_before_the_squash_says_which_file_to_delete() {
     assert_eq!(
         ariadne_store::pre_squash_database(dir.path().join("nothing.db")).await,
         None
+    );
+}
+
+// -- token usage ------------------------------------------------------------
+
+fn usage(input_tokens: u64, cached_input_tokens: u64, output_tokens: u64) -> TokenUsage {
+    TokenUsage {
+        input_tokens,
+        cached_input_tokens,
+        output_tokens,
+    }
+}
+
+/// The rows `session_usage` is actually holding, read from the file itself:
+/// what the store answers about a session that is gone is a zero either way,
+/// so only the table can say whether anything was left behind.
+async fn usage_rows(dir: &tempfile::TempDir) -> i64 {
+    usage_rows_at(&dir.path().join("test.db")).await
+}
+
+async fn usage_rows_at(path: &std::path::Path) -> i64 {
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+    let rows = sqlx::query_scalar("SELECT COUNT(*) FROM session_usage")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+    rows
+}
+
+/// A report is the whole of one transcript, not an increment: reporting the
+/// same source again leaves the session at the new figures rather than at the
+/// sum of both, and only a second source adds to it.
+#[tokio::test]
+async fn a_source_replaces_its_own_totals_and_sources_add_up() {
+    let w = World::new().await;
+    let session = w.engineer_session().await;
+    // Nothing reported is a zero, not an absence.
+    assert_eq!(
+        w.store.session_usage(&session.id).await.unwrap(),
+        TokenUsage::default()
+    );
+
+    assert!(
+        w.store
+            .upsert_session_usage(&session.id, "/x.jsonl", usage(100, 80, 10))
+            .await
+            .unwrap()
+    );
+    // Agents re-report their totals on every event: the same figures again
+    // are no change, and say so.
+    assert!(
+        !w.store
+            .upsert_session_usage(&session.id, "/x.jsonl", usage(100, 80, 10))
+            .await
+            .unwrap()
+    );
+    assert!(
+        w.store
+            .upsert_session_usage(&session.id, "/x.jsonl", usage(150, 120, 30))
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        w.store.session_usage(&session.id).await.unwrap(),
+        usage(150, 120, 30),
+        "the second report replaces the first, it does not add to it"
+    );
+
+    // A resumed agent writes a transcript of its own, and that one does add.
+    w.store
+        .upsert_session_usage(&session.id, "/y.jsonl", usage(10, 0, 5))
+        .await
+        .unwrap();
+    assert_eq!(
+        w.store.session_usage(&session.id).await.unwrap(),
+        usage(160, 120, 35)
+    );
+    assert_eq!(usage_rows(&w._dir).await, 2, "one row per source");
+}
+
+/// What a task spent, by the profile that spent it: its engineer once, and
+/// each reviewer with every round it sat summed into one entry — a reviewer
+/// runs a session per round, and nobody reads them round by round.
+#[tokio::test]
+async fn a_tasks_usage_groups_every_round_of_a_reviewer_together() {
+    let w = World::new().await;
+    let engineer = w.engineer_session().await;
+    let reviewer_id = w.store.list_task_reviewers(&w.task.id).await.unwrap()[0].clone();
+    let first_round = w
+        .session(
+            "rev-round-1",
+            Role::Reviewer,
+            &reviewer_id,
+            Some(&w.task.id),
+        )
+        .await;
+    let second_round = w
+        .session(
+            "rev-round-2",
+            Role::Reviewer,
+            &reviewer_id,
+            Some(&w.task.id),
+        )
+        .await;
+
+    for (session, spent) in [
+        (&engineer, usage(100, 80, 10)),
+        (&first_round, usage(20, 10, 4)),
+        (&second_round, usage(5, 1, 2)),
+    ] {
+        w.store
+            .upsert_session_usage(&session.id, "/x.jsonl", spent)
+            .await
+            .unwrap();
+    }
+
+    let grouped = w.store.task_usage(&w.task.id).await.unwrap();
+    assert_eq!(
+        grouped,
+        vec![
+            ProfileUsage {
+                role: Role::Engineer,
+                profile_id: w.task.engineer_profile_id.clone(),
+                usage: usage(100, 80, 10),
+            },
+            ProfileUsage {
+                role: Role::Reviewer,
+                profile_id: reviewer_id,
+                usage: usage(25, 11, 6),
+            },
+        ]
+    );
+}
+
+/// A session that has reported nothing is still one of the task's: it reads
+/// as zeros rather than dropping out, so the reviewer nobody has spent
+/// anything on is still listed.
+#[tokio::test]
+async fn a_session_that_has_reported_nothing_reads_as_zeros() {
+    let w = World::new().await;
+    let _engineer = w.engineer_session().await;
+    let grouped = w.store.task_usage(&w.task.id).await.unwrap();
+    assert_eq!(
+        grouped,
+        vec![ProfileUsage {
+            role: Role::Engineer,
+            profile_id: w.task.engineer_profile_id.clone(),
+            usage: TokenUsage::default(),
+        }]
+    );
+}
+
+/// A goal's usage is grouped by role rather than by profile, and its planner
+/// counts: a planner session belongs to no task, so nothing under a task
+/// would ever have found it.
+#[tokio::test]
+async fn a_goals_usage_is_grouped_by_role_and_counts_its_planner() {
+    let w = World::new().await;
+    let planner = w.session("plan", Role::Planner, &w.planner.id, None).await;
+    let engineer = w.engineer_session().await;
+    let reviewer_id = w.store.list_task_reviewers(&w.task.id).await.unwrap()[0].clone();
+    let reviewer = w
+        .session("rev", Role::Reviewer, &reviewer_id, Some(&w.task.id))
+        .await;
+
+    for (session, spent) in [
+        (&planner, usage(40, 30, 8)),
+        (&engineer, usage(100, 80, 10)),
+        (&reviewer, usage(20, 10, 4)),
+    ] {
+        w.store
+            .upsert_session_usage(&session.id, "/x.jsonl", spent)
+            .await
+            .unwrap();
+    }
+
+    let grouped = w.store.goal_usage(&w.goal.id).await.unwrap();
+    assert_eq!(
+        grouped,
+        vec![
+            RoleUsage {
+                role: Role::Engineer,
+                usage: usage(100, 80, 10),
+            },
+            RoleUsage {
+                role: Role::Planner,
+                usage: usage(40, 30, 8),
+            },
+            RoleUsage {
+                role: Role::Reviewer,
+                usage: usage(20, 10, 4),
+            },
+        ]
+    );
+    assert_eq!(
+        grouped.iter().map(|r| r.usage).sum::<TokenUsage>(),
+        usage(160, 120, 22),
+        "the goal's total is every session under it, the planner included"
+    );
+}
+
+/// Usage belongs to the session that spent it: deleting the goal takes the
+/// sessions with it, and the rows keyed on them go too rather than outliving
+/// the id that names them.
+#[tokio::test]
+async fn usage_goes_when_the_session_it_belonged_to_does() {
+    let w = World::new().await;
+    let session = w.engineer_session().await;
+    w.store
+        .upsert_session_usage(&session.id, "/x.jsonl", usage(100, 80, 10))
+        .await
+        .unwrap();
+    assert_eq!(usage_rows(&w._dir).await, 1);
+
+    w.store.delete_goal(&w.goal.id).await.unwrap();
+    assert_eq!(usage_rows(&w._dir).await, 0);
+}
+
+/// A database written before token usage existed is upgraded rather than
+/// refused: it holds nothing this release does not ship, so `0002` simply
+/// runs on it and the table is there afterwards.
+///
+/// The state is reproduced rather than replayed from an old checkout: what
+/// the previous release left behind is `0001` applied and no `session_usage`
+/// table, which is exactly what this undoes.
+#[tokio::test]
+async fn a_database_from_before_token_usage_gets_the_table_on_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("previous.db");
+    drop(Store::open(&path).await.unwrap());
+
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+    sqlx::query("DROP TABLE session_usage")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 2")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+
+    // Not called old: everything applied to it is still shipped.
+    assert_eq!(ariadne_store::pre_squash_database(&path).await, None);
+    let store = Store::open(&path).await.unwrap();
+    assert_eq!(
+        usage_rows_at(&path).await,
+        0,
+        "the table is there, and empty"
+    );
+
+    // And it works: a session on the upgraded database records what it spent.
+    let planner = seed_profile(&store, "planner", Role::Planner).await;
+    let (goal, _repo) = seed_goal(&store, &planner, None).await;
+    let session = store
+        .create_session(NewSession {
+            goal_id: goal.id.clone(),
+            task_id: None,
+            role: Role::Planner,
+            profile_id: planner.id.clone(),
+            agent_kind: AgentKind::ClaudeCode,
+            model: None,
+            tmux_session: "plan".into(),
+            worktree_path: None,
+            review_round: None,
+        })
+        .await
+        .unwrap();
+    store
+        .upsert_session_usage(&session.id, "/x.jsonl", usage(1, 0, 2))
+        .await
+        .unwrap();
+    assert_eq!(
+        store.session_usage(&session.id).await.unwrap(),
+        usage(1, 0, 2)
     );
 }

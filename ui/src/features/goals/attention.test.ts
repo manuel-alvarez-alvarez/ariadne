@@ -6,6 +6,9 @@ import { sessionAttention } from "@/features/sessions/session-display"
 
 import { collectAttention, collectBoardAttention, taskAttentionReason } from "./attention"
 
+/** A row nobody has reported tokens for, which is every row here. */
+const NO_TOKENS = { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 }
+
 function task(overrides: Partial<TaskDto>): TaskDto {
   return {
     branch: "a-task-aaa111",
@@ -21,6 +24,7 @@ function task(overrides: Partial<TaskDto>): TaskDto {
     stalled: false,
     status: "in_progress",
     title: "A task",
+    usage: { total: NO_TOKENS, engineer: NO_TOKENS, reviewers: [] },
     updated_at: "2026-08-16T10:00:00Z",
     ...overrides,
   }
@@ -42,6 +46,7 @@ function session(overrides: Partial<SessionDto>): SessionDto {
     role: "engineer",
     status: "failed",
     tmux_session: "ariadne-s1",
+    usage: NO_TOKENS,
     ...overrides,
   }
 }
@@ -56,6 +61,12 @@ function goal(overrides: Partial<GoalDto>): GoalDto {
     required_approvals: 1,
     status: "active",
     title: "A goal",
+    usage: {
+      total: NO_TOKENS,
+      planner: NO_TOKENS,
+      engineers: NO_TOKENS,
+      reviewers: NO_TOKENS,
+    },
     updated_at: "2026-08-16T09:00:00Z",
     ...overrides,
   }

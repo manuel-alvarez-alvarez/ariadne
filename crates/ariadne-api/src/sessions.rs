@@ -4,6 +4,8 @@ use ariadne_core::{AgentKind, AttentionReason, Role, SessionStatus};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
+use crate::usage::TokenUsageDto;
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SessionDto {
     pub id: String,
@@ -27,6 +29,9 @@ pub struct SessionDto {
     /// When the current `attention_reason` was first raised.
     pub attention_since: Option<String>,
     pub last_activity_at: Option<String>,
+    /// What this session's agent has spent, summed over every transcript it
+    /// reported under. Zeros while nothing has been reported.
+    pub usage: TokenUsageDto,
     pub created_at: String,
     pub ended_at: Option<String>,
 }

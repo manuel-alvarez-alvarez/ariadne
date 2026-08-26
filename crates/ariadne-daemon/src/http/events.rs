@@ -10,7 +10,9 @@ use ariadne_api::events::{AgentEventDto, EventListQuery, IngestEventRequest};
 use ariadne_store::{EventFilter, NewAgentEvent};
 
 use super::AppState;
-use super::classify::{attention_for_event, extract_internal_id, status_for_event};
+use super::classify::{
+    attention_for_event, extract_internal_id, status_for_event, usage_for_event,
+};
 use super::convert::event_dto;
 use super::error::ApiResult;
 
@@ -62,6 +64,18 @@ pub async fn ingest(
         state
             .store
             .set_session_internal_id(&session.id, &internal)
+            .await?;
+    }
+
+    // What the agent has spent, where the event says so. Cumulative totals
+    // per transcript, so this is a replace and not an addition — see
+    // `Store::upsert_session_usage` — and it rides on any event kind of any
+    // agent kind, since which of them carries the figures is a decision of
+    // the hook or plugin that reads the transcript, not of this handler.
+    if let Some((source, usage)) = usage_for_event(&req.payload) {
+        state
+            .store
+            .upsert_session_usage(&session.id, &source, usage)
             .await?;
     }
 

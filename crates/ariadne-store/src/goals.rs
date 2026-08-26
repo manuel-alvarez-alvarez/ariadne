@@ -125,6 +125,15 @@ impl Store {
         Ok(goal)
     }
 
+    /// Announce a goal as it now stands, for a write that changed something
+    /// a goal is read with rather than the goal row itself — the usage of a
+    /// session under it, which rides in the goal's own fat event.
+    pub(crate) async fn publish_goal_update(&self, id: &str) -> Result<()> {
+        let goal = self.get_goal(id).await?;
+        self.publish(Change::GoalUpdated(goal));
+        Ok(())
+    }
+
     /// Hard-delete a goal and, via ON DELETE CASCADE, all its children. The
     /// normal lifecycle uses cancel; deleting drops a finished goal for good,
     /// so nothing is left to refetch and the event carries the id alone.

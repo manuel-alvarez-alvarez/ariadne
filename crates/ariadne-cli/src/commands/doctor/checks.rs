@@ -476,7 +476,7 @@ mod tests {
         sqlx::query(
             "INSERT INTO _sqlx_migrations (version, description, installed_on, success,
                                            checksum, execution_time)
-             VALUES (2, 'repositories', '2025-01-01 00:00:00', 1, x'00', 0)",
+             VALUES (29, 'repositories', '2025-01-01 00:00:00', 1, x'00', 0)",
         )
         .execute(&pool)
         .await

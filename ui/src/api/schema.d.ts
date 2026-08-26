@@ -1167,12 +1167,29 @@ export interface components {
             status: components["schemas"]["GoalStatus"];
             title: string;
             updated_at: string;
+            /** @description What the agents of this goal have spent between them. */
+            usage: components["schemas"]["GoalUsageDto"];
         };
         /**
          * @description Goal lifecycle status.
          * @enum {string}
          */
         GoalStatus: "planning" | "plan_ready" | "active" | "completed" | "cancelled";
+        /**
+         * @description What a goal cost, by the role that spent it. Grouped by role rather than
+         *     by profile: a goal's engineers are as many as it has tasks, and what is
+         *     read at this height is where the tokens went, not which agent went there.
+         */
+        GoalUsageDto: {
+            /** @description Every engineer session of every task of the goal. */
+            engineers: components["schemas"]["TokenUsageDto"];
+            /** @description The planner's sessions, which belong to no task. */
+            planner: components["schemas"]["TokenUsageDto"];
+            /** @description Every reviewer session of every task of the goal, all rounds. */
+            reviewers: components["schemas"]["TokenUsageDto"];
+            /** @description Every session of the goal summed, the planner's included. */
+            total: components["schemas"]["TokenUsageDto"];
+        };
         /** @description Response of `GET /v1/health`. */
         HealthResponse: {
             /**
@@ -1306,6 +1323,13 @@ export interface components {
              */
             updated_at?: string | null;
         };
+        /** @description What one profile spent on a task, named the way a reader addresses it. */
+        ProfileUsageDto: {
+            profile_id: string;
+            /** @description The profile's name; None only if that profile is gone. */
+            profile_name?: string | null;
+            usage: components["schemas"]["TokenUsageDto"];
+        };
         /**
          * @description A prompt a profile owns beside its system prompt: one of the texts an
          *     agent of that role is started, resumed or nudged with. Every text Ariadne
@@ -1417,6 +1441,11 @@ export interface components {
             /** @description None = planner session. */
             task_id?: string | null;
             tmux_session: string;
+            /**
+             * @description What this session's agent has spent, summed over every transcript it
+             *     reported under. Zeros while nothing has been reported.
+             */
+            usage: components["schemas"]["TokenUsageDto"];
             worktree_path?: string | null;
         };
         /** @description Body of `POST /v1/sessions/{id}/input`. */
@@ -1536,6 +1565,8 @@ export interface components {
             status: components["schemas"]["TaskStatus"];
             title: string;
             updated_at: string;
+            /** @description What the agents of this task have spent between them. */
+            usage: components["schemas"]["TaskUsageDto"];
             worktree_path?: string | null;
         };
         /**
@@ -1576,6 +1607,46 @@ export interface components {
         TaskUpdatedDto: {
             task: components["schemas"]["TaskDto"];
             transition?: null | components["schemas"]["TaskTransitionDto"];
+        };
+        /**
+         * @description What a task cost, by who spent it: its engineer, its reviewers one entry
+         *     each, and the total of every session on the task.
+         */
+        TaskUsageDto: {
+            /** @description The engineer's own, across every run of it. */
+            engineer: components["schemas"]["TokenUsageDto"];
+            /**
+             * @description One entry per reviewer profile that has a session on the task, every
+             *     review round of it summed, ordered like `reviewers`. A reviewer whose
+             *     session has yet to report anything is listed with zeros; one that has
+             *     never been spawned is not listed at all.
+             */
+            reviewers: components["schemas"]["ProfileUsageDto"][];
+            /** @description Every session on the task summed, whatever its role. */
+            total: components["schemas"]["TokenUsageDto"];
+        };
+        /**
+         * @description Tokens spent, as the agents' own transcripts report them.
+         *
+         *     Always present and always a number: nothing reported is zero, not null.
+         */
+        TokenUsageDto: {
+            /**
+             * Format: int64
+             * @description The subset of `input_tokens` served from the prompt cache, so never
+             *     added to it.
+             */
+            cached_input_tokens: number;
+            /**
+             * Format: int64
+             * @description Prompt tokens, cache reads and cache writes included.
+             */
+            input_tokens: number;
+            /**
+             * Format: int64
+             * @description Completion tokens, thinking and reasoning included.
+             */
+            output_tokens: number;
         };
         TransitionRequest: {
             /** @description Required when `to` is `merged`. */

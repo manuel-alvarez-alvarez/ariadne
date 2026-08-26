@@ -31,6 +31,9 @@ import { GoalActions } from "./goal-actions"
 
 const STAMP = "2026-01-01T00:00:00Z"
 
+/** A goal nobody has reported tokens for, which is every goal here. */
+const NO_TOKENS = { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 }
+
 function goal(status: GoalStatus): GoalDto {
   return {
     id: "01JGOAL0000000000000000001",
@@ -40,6 +43,12 @@ function goal(status: GoalStatus): GoalDto {
     repos: [],
     required_approvals: 1,
     status,
+    usage: {
+      total: NO_TOKENS,
+      planner: NO_TOKENS,
+      engineers: NO_TOKENS,
+      reviewers: NO_TOKENS,
+    },
     created_at: STAMP,
     updated_at: STAMP,
   }
