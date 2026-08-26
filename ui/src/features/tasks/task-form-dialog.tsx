@@ -18,13 +18,11 @@
  * /v1/tasks/{id}` carries neither — so edit mode leaves those fields out; the
  * task panel's facts card keeps showing what they are.
  *
- * The models can be chosen in both modes, one per agent: the engineer's and
- * every reviewer's. A model is the whole of that choice — the daemon derives
- * the agent CLI from it — so there is no agent control here, and an empty box
- * means the profile's own model. A model the daemon cannot place comes back as
- * a `400` naming it, which is shown under the box that holds it rather than
- * over the whole form: it is one field's problem, and the other fields are
- * still worth keeping.
+ * What each agent runs on can be chosen in both modes, one pair per slot: the
+ * engineer's and every reviewer's. The agent CLI is the choice and the model
+ * only narrows it, so each slot has an agent select with the model box beside
+ * it, scoped to whatever that select names and shut while it names nothing —
+ * which is the slot on its profile's own agent and model.
  */
 
 import { zodResolver } from "@hookform/resolvers/zod"
@@ -33,7 +31,7 @@ import { PlusIcon, XIcon } from "lucide-react"
 import { useEffect, useMemo } from "react"
 import { Controller, useFieldArray, useForm } from "react-hook-form"
 import { toast } from "sonner"
-import { ApiError, type GoalDto, type ProfileDto, type TaskDto } from "@/api"
+import { type AgentKind, ApiError, type GoalDto, type ProfileDto, type TaskDto } from "@/api"
 import {
   FormDialog,
   FormDialogContent,
@@ -45,7 +43,13 @@ import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
+import {
+  AGENT_PIN_OPTIONS,
+  PROFILE_AGENT_KIND,
+  pinnedAgentKind,
+} from "@/features/profiles/agent-pin"
 import { ModelPicker } from "@/features/profiles/model-picker"
+import { agentKindLabel, modelLabel } from "@/features/profiles/profile-labels"
 import { modelsQueryOptions, profilesQueryOptions } from "@/features/profiles/queries"
 import { taskListQueryOptions, useCreateTask, useUpdateTask } from "./queries"
 import {
@@ -184,7 +188,10 @@ function TaskFormDialog({
     () => engineerOptions.find((profile) => profile.id === selectedEngineer),
     [engineerOptions, selectedEngineer],
   )
-  // Watched whole, so each row's box knows the profile it sits beside.
+  // The agent the engineer's model box is scoped to, and the gate on the box
+  // itself: with no agent picked there is no CLI whose models it could name.
+  const engineerAgentKind = pinnedAgentKind(form.watch("engineer_agent"))
+  // Watched whole, so each row's box knows the agent it sits beside.
   const reviewerRowValues = form.watch("reviewers")
 
   // The daemon ships built-in "Engineer" and "Reviewer" profiles; preselect
@@ -209,14 +216,6 @@ function TaskFormDialog({
   const submitError = ApiError.is(submit.error) ? submit.error : null
   useClearErrorOnEdit(form, submit)
 
-  // A model the daemon could not place is one box's problem: it names the id
-  // it refused, so the message goes under whichever box holds it and the form
-  // keeps the rest. Derived rather than pushed into the form's errors, so the
-  // first edit clears it along with the mutation (`useClearErrorOnEdit`).
-  const refused = refusedModel(submitError)
-  const modelError = (value: string) =>
-    refused !== null && value.trim() === refused ? submitError?.message : undefined
-
   async function onSubmit(values: TaskFormValues) {
     try {
       if (editing) {
@@ -224,8 +223,13 @@ function TaskFormDialog({
         // keeps for us — not `defaultValues`, which goes on changing as the
         // profiles arrive even where the form was left alone on purpose (see
         // the re-seed effect above, and `toUpdateTaskRequest`).
-        const seeded = form.formState.defaultValues?.engineer_model ?? ""
-        const task = await updateTask.mutateAsync(toUpdateTaskRequest(values, seeded))
+        const seeded = form.formState.defaultValues
+        const task = await updateTask.mutateAsync(
+          toUpdateTaskRequest(values, {
+            agent: seeded?.engineer_agent ?? PROFILE_AGENT_KIND,
+            model: seeded?.engineer_model ?? "",
+          }),
+        )
         toast.success("Task updated", { description: task.title })
         onOpenChange(false)
       } else {
@@ -253,9 +257,7 @@ function TaskFormDialog({
         }
         onSubmit={form.handleSubmit(onSubmit)}
         error={
-          // Not when a model field is carrying it: one message, under the box
-          // it is about.
-          submitError && refused === null
+          submitError
             ? {
                 title: editing ? "Could not save task" : "Could not create task",
                 error: submitError,
@@ -302,31 +304,46 @@ function TaskFormDialog({
           </Field>
         ) : null}
 
-        {/* Editable in both modes, unlike the profile beside it: the daemon
-            takes a model on `PATCH` too, for as long as the task waits. */}
-        <Field data-invalid={modelError(form.watch("engineer_model")) ? "" : undefined}>
-          {/* No htmlFor: cmdk owns its input's id and names it itself. */}
-          <FieldLabel>Engineer model</FieldLabel>
-          <Controller
-            control={form.control}
-            name="engineer_model"
-            render={({ field }) => (
-              <ModelPicker
-                label="Engineer model"
-                value={field.value}
-                onChange={field.onChange}
-                models={models.data}
-                placeholder={modelPlaceholder(engineerProfile)}
-                caption
-                invalid={modelError(field.value) ? true : undefined}
-              />
-            )}
-          />
-          <FieldDescription>
-            The agent CLI follows the model. Leave it empty to run on the profile's own.
-          </FieldDescription>
-          <FieldError>{modelError(form.watch("engineer_model"))}</FieldError>
-        </Field>
+        {/* Editable in both modes, unlike the profile beside them: the daemon
+            takes a pin on `PATCH` too, for as long as the task waits. */}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field>
+            <FieldLabel htmlFor="task-engineer-agent">Engineer agent</FieldLabel>
+            <FormSelect
+              control={form.control}
+              name="engineer_agent"
+              id="task-engineer-agent"
+              options={AGENT_PIN_OPTIONS}
+            />
+            <FieldDescription>
+              {engineerPinHint(engineerAgentKind, engineerProfile)}
+            </FieldDescription>
+          </Field>
+
+          <Field>
+            {/* No htmlFor: cmdk owns its input's id and names it itself. */}
+            <FieldLabel>Engineer model</FieldLabel>
+            <Controller
+              control={form.control}
+              name="engineer_model"
+              render={({ field }) => (
+                <ModelPicker
+                  label="Engineer model"
+                  value={field.value}
+                  onChange={field.onChange}
+                  models={models.data}
+                  agentKind={engineerAgentKind}
+                  disabled={!engineerAgentKind}
+                  placeholder="Agent default"
+                />
+              )}
+            />
+            <FieldDescription>
+              Picking an agent runs the engineer on it; leave the model empty for that CLI's own
+              default.
+            </FieldDescription>
+          </Field>
+        </div>
 
         <Field>
           {/* A row is a reviewer now, not only a profile: the slot carries the
@@ -335,14 +352,14 @@ function TaskFormDialog({
           <div className="flex flex-col gap-2">
             {reviewerRows.fields.map((row, index) => {
               const error = form.formState.errors.reviewers?.[index]?.profile
-              const chosen = reviewerRowValues?.[index]
-              const profile = reviewerOptions.find((option) => option.id === chosen?.profile)
-              const rejected = modelError(chosen?.model ?? "")
+              const agentKind = pinnedAgentKind(
+                reviewerRowValues?.[index]?.agent ?? PROFILE_AGENT_KIND,
+              )
               return (
                 <div key={row.id} className="flex flex-col gap-1">
                   {/* The profile and what it runs on, side by side: one row is
-                      one reviewer, and its model belongs to the slot rather
-                      than to the profile it names. */}
+                      one reviewer, and the agent and model belong to the slot
+                      rather than to the profile it names. */}
                   <div className="flex items-start gap-2">
                     <FormSelect
                       control={form.control}
@@ -354,6 +371,13 @@ function TaskFormDialog({
                       disabled={!reviewerOptions.length}
                       placeholder={profilePlaceholder(reviewers, "reviewer")}
                     />
+                    <FormSelect
+                      control={form.control}
+                      name={`reviewers.${index}.agent`}
+                      ariaLabel={`Reviewer ${index + 1} agent`}
+                      className="w-40 shrink-0"
+                      options={AGENT_PIN_OPTIONS}
+                    />
                     <Controller
                       control={form.control}
                       name={`reviewers.${index}.model`}
@@ -363,9 +387,9 @@ function TaskFormDialog({
                           value={field.value}
                           onChange={field.onChange}
                           models={models.data}
-                          placeholder={modelPlaceholder(profile)}
-                          caption
-                          invalid={rejected ? true : undefined}
+                          agentKind={agentKind}
+                          disabled={!agentKind}
+                          placeholder="Agent default"
                           className="flex-1"
                         />
                       )}
@@ -381,7 +405,7 @@ function TaskFormDialog({
                       <XIcon />
                     </Button>
                   </div>
-                  <FieldError>{error?.message ?? rejected}</FieldError>
+                  <FieldError>{error?.message}</FieldError>
                 </div>
               )
             })}
@@ -391,7 +415,9 @@ function TaskFormDialog({
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => reviewerRows.append({ profile: "", model: "" })}
+              onClick={() =>
+                reviewerRows.append({ profile: "", agent: PROFILE_AGENT_KIND, model: "" })
+              }
             >
               <PlusIcon />
               Add reviewer
@@ -477,21 +503,14 @@ function TaskFormDialog({
 }
 
 /**
- * What an empty model box would run on: the profile's own model, named where
- * it has one so that leaving the box alone is an informed choice rather than a
- * blank.
+ * What the engineer would run on with no agent picked: its profile's own pair,
+ * named where the profile is known, so that leaving the select alone is an
+ * informed choice rather than a blank.
  */
-function modelPlaceholder(profile: ProfileDto | undefined): string {
-  return profile?.model ? `Profile default: ${profile.model}` : "Profile default: the CLI's default"
-}
-
-/**
- * The model id a `400` refused, or null when the failure was about anything
- * else. The daemon answers a model it cannot place by naming it — "unknown
- * model `llama3`: cannot tell which agent runs it" — which is what lets the
- * message be shown under the box that holds it.
- */
-function refusedModel(error: ApiError | null): string | null {
-  if (error?.status !== 400) return null
-  return error.message.match(/unknown model `([^`]+)`/)?.[1] ?? null
+function engineerPinHint(
+  agentKind: AgentKind | undefined,
+  profile: ProfileDto | undefined,
+): string {
+  if (agentKind) return "Pinned: the engineer is spawned on this CLI."
+  return `The engineer profile's own: ${agentKindLabel(profile?.agent_kind)} · ${modelLabel(profile?.model)}.`
 }

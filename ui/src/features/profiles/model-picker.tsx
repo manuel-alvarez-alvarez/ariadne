@@ -20,13 +20,14 @@
  *   the popover simply never opens and the field is exactly the old free-text
  *   input.
  *
- * The value is the model string and nothing else. On a goal or a task that is
- * the whole of the choice: the daemon derives the agent CLI from the model, so
- * there is no agent control beside this one and the catalog is offered whole,
- * grouped by the agent each model belongs to — picking a codex model on a
- * claude_code profile is one gesture. The profile form is the one caller that
- * *does* have an agent select, and it scopes the options with {@link agentKind}
- * (see `model-combobox.tsx`).
+ * The value is the model string and nothing else: which agent CLI runs it is
+ * the other half of the choice, and every form that assigns one asks for it
+ * first, in an agent select next to this field. That select is what scopes the
+ * catalog, through {@link agentKind} — and while it names no agent there is
+ * nothing for a model to narrow, so the field is {@link disabled}. The one
+ * caller that scopes nothing is the profile form's "Auto-resolve", which has
+ * no CLI to offer the models of yet: it gets the catalog whole, with a heading
+ * per agent (see `model-combobox.tsx`).
  */
 
 import { Popover } from "@base-ui/react/popover"
@@ -46,9 +47,6 @@ import { cn } from "@/lib/format"
 
 import { AGENT_KINDS, agentKindLabel } from "./profile-labels"
 
-/** What the caption says about a model the catalog does not carry. */
-const DERIVED_CAPTION = "Agent CLI derived by the daemon."
-
 export function ModelPicker({
   value,
   onChange,
@@ -56,7 +54,7 @@ export function ModelPicker({
   agentKind,
   label = "Model",
   placeholder = "Provider default",
-  caption = false,
+  disabled = false,
   invalid,
   className,
 }: {
@@ -73,11 +71,10 @@ export function ModelPicker({
   label?: string
   placeholder?: string
   /**
-   * Whether to name the agent CLI the chosen model implies, under the field.
-   * The forms that have no agent control show it; the profile form, whose
-   * agent select says it already, does not.
+   * Gates the field: no agent is pinned, so there is no CLI whose models this
+   * could name. The catalog stays shut with it.
    */
-  caption?: boolean
+  disabled?: boolean
   invalid?: boolean
   className?: string
 }) {
@@ -100,14 +97,8 @@ export function ModelPicker({
     })).filter((group) => group.models.length > 0)
   }, [models, agentKind])
 
-  const canOpen = groups.length > 0
+  const canOpen = groups.length > 0 && !disabled
   const showHeadings = agentKind === undefined
-
-  /** The catalog entry the current text names, when it names one. */
-  const chosen = useMemo(
-    () => (models ?? []).find((model) => model.id === value.trim()),
-    [models, value],
-  )
 
   function pick(id: string) {
     onChange(id)
@@ -184,6 +175,7 @@ export function ModelPicker({
           }}
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
+          disabled={disabled}
           aria-invalid={invalid ? true : undefined}
           className={cn(inputClassName, "font-mono")}
         />
@@ -239,15 +231,6 @@ export function ModelPicker({
           </Popover.Portal>
         </Popover.Root>
       </Command>
-      {/* Which CLI the chosen model commits the agent to, which is the half of
-          the choice nothing else on these forms says. A model the catalog
-          carries names its agent outright; free text is placed by the daemon's
-          own rules, and refused there if nothing places it. */}
-      {caption && value.trim().length > 0 ? (
-        <p className="text-xs text-muted-foreground">
-          {chosen ? `Runs on ${agentKindLabel(chosen.agent_kind)}.` : DERIVED_CAPTION}
-        </p>
-      ) : null}
     </div>
   )
 }

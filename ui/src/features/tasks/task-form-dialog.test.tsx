@@ -14,11 +14,11 @@
  * or not, and it is reassignable while the task waits, so the edit form offers
  * it beside the reviewers.
  *
- * The models are checked through the mounted form rather than only through
+ * The pins are checked through the mounted form rather than only through
  * `task-form-values.test.ts`, because what they mean is a property of the
- * dialog: which box a pick lands in when there are three of them, where the
- * daemon's refusal of a model shows up — under the box that holds it, leaving
- * the rest of the form alone — and, on an edit, what an untouched box is
+ * dialog: one agent select and one model box per slot, each box gated by the
+ * select beside it and scoped to what it names, which pick lands in which slot
+ * when there are several of them, and — on an edit — what an untouched pair is
  * measured against when the profiles that decide how it was seeded only land
  * after the user has started typing.
  */
@@ -29,7 +29,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { GoalDto, ModelDto, ProfileDto } from "@/api"
 import { aGoal, aProfile } from "@/test/fixtures"
-import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
+import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { CreateTaskDialog, EditTaskDialog } from "./task-form-dialog"
 
 const STAMP = "2026-01-01T00:00:00Z"
@@ -84,9 +84,6 @@ const CREATED = {
 
 let writes: string[] = []
 
-/** When set, `POST` answers the daemon's refusal of that model instead. */
-let rejectedModel: string | null = null
-
 /** The reads the dialog does; a write would be a failure, so it is recorded. */
 function stubDaemon() {
   daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
@@ -110,15 +107,9 @@ function stubDaemon() {
     if (url.pathname === "/v1/models") return answer(CATALOG)
     if (url.pathname === "/v1/tasks") return answer([])
     if (url.pathname === `/v1/goals/${GOAL.id}/tasks`) {
-      if (rejectedModel) {
-        return errorResponse(
-          400,
-          "bad_request",
-          `unknown model \`${rejectedModel}\`: cannot tell which agent runs it`,
-        )
-      }
       return answer({ ...CREATED, ...(await request.clone().json()) })
     }
+    if (request.method === "PATCH" && url.pathname.startsWith("/v1/tasks/")) return answer(CREATED)
     return new Response("not stubbed", { status: 404 })
   })
 }
@@ -130,7 +121,6 @@ function renderDialog(onOpenChange: (open: boolean) => void) {
 beforeEach(() => {
   writes = []
   posted = []
-  rejectedModel = null
   stubDaemon()
 })
 
@@ -142,6 +132,21 @@ async function pickModel(
 ): Promise<void> {
   await user.click(await screen.findByRole("combobox", { name: field }))
   await user.click(within(await screen.findByRole("listbox", { name: "Models" })).getByText(model))
+}
+
+/** Picks an agent CLI — or "Profile's own" — in the named select. */
+async function pickAgent(
+  user: ReturnType<typeof userEvent.setup>,
+  field: string,
+  agent: string,
+): Promise<void> {
+  await user.click(await screen.findByLabelText(field))
+  await user.click(await screen.findByRole("option", { name: agent }))
+}
+
+/** The named model box, which the agent select beside it gates. */
+async function modelBox(field: string): Promise<HTMLInputElement> {
+  return (await screen.findByRole("combobox", { name: field })) as HTMLInputElement
 }
 
 describe("dismissing the dialog", () => {
@@ -209,8 +214,14 @@ describe("editing a task that has not started", () => {
     model: PINNED_ENGINEER.model,
   }
 
-  function renderEdit() {
-    return renderScreen(<EditTaskDialog task={TASK as never} open onOpenChange={vi.fn()} />)
+  /**
+   * The same task on another CLI than its engineer profile's, and on that
+   * CLI's own default model rather than a named one.
+   */
+  const CODEX_TASK = { ...TASK, agent_kind: "codex", model: null }
+
+  function renderEdit(task: unknown = TASK) {
+    return renderScreen(<EditTaskDialog task={task as never} open onOpenChange={vi.fn()} />)
   }
 
   it("patches the reviewers the user replaced", async () => {
@@ -287,48 +298,122 @@ describe("editing a task that has not started", () => {
     await user.type(screen.getByLabelText("Title"), "!")
     landProfiles()
 
-    // The placeholder is the profile's own model, so it is also the signal
-    // that the profiles are in — and the box is still what the user saw.
-    await vi.waitFor(() => {
-      expect(box.getAttribute("placeholder")).toBe(`Profile default: ${PINNED_ENGINEER.model}`)
-    })
+    // A reviewer row shows its profile's name only once the profiles are in,
+    // so it is the signal — and the box is still what the user saw.
+    expect(await screen.findByText("Reviewer")).toBeDefined()
     expect(box.value).toBe(PINNED_ENGINEER.model)
+    expect((await screen.findByLabelText("Engineer agent")).textContent).toContain("Claude Code")
 
     await user.click(screen.getByRole("button", { name: "Save changes" }))
 
     await vi.waitFor(() => expect(writes).toEqual([`PATCH /v1/tasks/${TASK.id}`]))
+    expect(posted[0]).not.toHaveProperty("agent_kind")
+    expect(posted[0]).not.toHaveProperty("model")
+  })
+
+  it("opens on the pinned agent with an empty box, which is that CLI's default", async () => {
+    renderEdit(CODEX_TASK)
+
+    // The engineer profile runs on claude_code, so the pin is an override and
+    // shows as itself; its model is the CLI's own, so the box stays empty.
+    expect((await screen.findByLabelText("Engineer agent")).textContent).toContain("Codex")
+    expect((await modelBox("Engineer model")).value).toBe("")
+  })
+
+  it("sends the daemon's sentinel when a pin is put back on the profile's own", async () => {
+    const user = userEvent.setup()
+    renderEdit(CODEX_TASK)
+
+    expect((await screen.findByLabelText("Engineer agent")).textContent).toContain("Codex")
+    await pickAgent(user, "Engineer agent", "Profile's own")
+    await user.click(screen.getByRole("button", { name: "Save changes" }))
+
+    await vi.waitFor(() => expect(writes).toEqual([`PATCH /v1/tasks/${TASK.id}`]))
+    expect(posted[0]).toMatchObject({ agent_kind: "default" })
+    expect(posted[0]).not.toHaveProperty("model")
+  })
+
+  it("says nothing about a pin left alone, whatever else was edited", async () => {
+    const user = userEvent.setup()
+    renderEdit(CODEX_TASK)
+
+    expect((await screen.findByLabelText("Engineer agent")).textContent).toContain("Codex")
+    await user.type(screen.getByLabelText("Title"), "!")
+    await user.click(screen.getByRole("button", { name: "Save changes" }))
+
+    await vi.waitFor(() => expect(writes).toEqual([`PATCH /v1/tasks/${TASK.id}`]))
+    expect(posted[0]).not.toHaveProperty("agent_kind")
     expect(posted[0]).not.toHaveProperty("model")
   })
 })
 
 /**
- * One model per agent, chosen on the form that assigns them. There is no agent
- * control here: the daemon reads the CLI off the model, and the form says which
- * one that will be.
+ * One pin per slot, chosen on the form that assigns them: an agent CLI, and a
+ * model narrowing it to one of that CLI's own.
  */
-describe("the models the task runs on", () => {
-  it("sends the engineer's model and each reviewer's", async () => {
+describe("what the task's agents run on", () => {
+  it("keeps each model box shut until its own agent is picked", async () => {
+    const user = userEvent.setup()
+    renderDialog(vi.fn())
+
+    expect((await modelBox("Engineer model")).disabled).toBe(true)
+    expect((await modelBox("Reviewer 1 model")).disabled).toBe(true)
+
+    await pickAgent(user, "Engineer agent", "Codex")
+
+    expect((await modelBox("Engineer model")).disabled).toBe(false)
+    // One slot at a time: the reviewer's box is its own row's business.
+    expect((await modelBox("Reviewer 1 model")).disabled).toBe(true)
+  })
+
+  it("offers a slot the models of the agent picked beside it", async () => {
+    const user = userEvent.setup()
+    renderDialog(vi.fn())
+
+    await pickAgent(user, "Reviewer 1 agent", "Codex")
+    await user.click(await modelBox("Reviewer 1 model"))
+
+    const models = await screen.findByRole("listbox", { name: "Models" })
+    expect(within(models).getByText("gpt-5.3-codex")).toBeDefined()
+    expect(within(models).queryByText("claude-opus-5")).toBeNull()
+  })
+
+  it("sends the engineer's agent and model, and each reviewer's", async () => {
     const user = userEvent.setup()
     renderDialog(vi.fn())
 
     await user.type(screen.getByLabelText("Title"), "Wire the strip")
     expect(await screen.findByText("Engineer")).toBeDefined()
+    await pickAgent(user, "Engineer agent", "Codex")
     await pickModel(user, "Engineer model", "gpt-5.3-codex")
+    await pickAgent(user, "Reviewer 1 agent", "Claude Code")
     await pickModel(user, "Reviewer 1 model", "claude-opus-5")
-
-    // The pick names the CLI it commits to, which is the other half of it.
-    expect(await screen.findByText("Runs on Codex.")).toBeDefined()
 
     await user.click(screen.getByRole("button", { name: "Create task" }))
 
     await vi.waitFor(() => expect(writes).toEqual([`POST /v1/goals/${GOAL.id}/tasks`]))
     expect(posted[0]).toMatchObject({
+      agent_kind: "codex",
       model: "gpt-5.3-codex",
-      reviewers: [{ profile: REVIEWER.id, model: "claude-opus-5" }],
+      reviewers: [{ profile: REVIEWER.id, agent_kind: "claude_code", model: "claude-opus-5" }],
     })
   })
 
-  it("leaves an untouched box out, which runs the agent on its profile's model", async () => {
+  it("sends an agent with an empty box alone, which is that CLI's default", async () => {
+    const user = userEvent.setup()
+    renderDialog(vi.fn())
+
+    await user.type(screen.getByLabelText("Title"), "Wire the strip")
+    expect(await screen.findByText("Engineer")).toBeDefined()
+    await pickAgent(user, "Engineer agent", "Codex")
+    await user.click(screen.getByRole("button", { name: "Create task" }))
+
+    await vi.waitFor(() => expect(writes).toEqual([`POST /v1/goals/${GOAL.id}/tasks`]))
+    expect(posted[0]).toMatchObject({ agent_kind: "codex" })
+    expect(posted[0]).not.toHaveProperty("model")
+  })
+
+  it("leaves an untouched slot out, which runs it on its profile's own", async () => {
     const user = userEvent.setup()
     renderDialog(vi.fn())
 
@@ -337,23 +422,8 @@ describe("the models the task runs on", () => {
     await user.click(screen.getByRole("button", { name: "Create task" }))
 
     await vi.waitFor(() => expect(writes).toEqual([`POST /v1/goals/${GOAL.id}/tasks`]))
+    expect(posted[0]).not.toHaveProperty("agent_kind")
     expect(posted[0]).not.toHaveProperty("model")
     expect(posted[0]).toMatchObject({ reviewers: [{ profile: REVIEWER.id }] })
-  })
-
-  it("shows a model the daemon could not place under the box that holds it", async () => {
-    const user = userEvent.setup()
-    rejectedModel = "llama3"
-    renderDialog(vi.fn())
-
-    await user.type(screen.getByLabelText("Title"), "Wire the strip")
-    expect(await screen.findByText("Engineer")).toBeDefined()
-    await user.type(await screen.findByRole("combobox", { name: "Engineer model" }), "llama3")
-    await user.click(screen.getByRole("button", { name: "Create task" }))
-
-    // The daemon's own words, once, on the field — and not over the form.
-    const message = await screen.findAllByText(/unknown model `llama3`/)
-    expect(message).toHaveLength(1)
-    expect(screen.queryByText("Could not create task")).toBeNull()
   })
 })

@@ -17,9 +17,10 @@
  * closing between them, and each one can be taken back off from the chip it
  * left behind.
  *
- * The planner's model is the other field with a rule of its own: it is on the
- * wire when it was chosen and off it entirely when it was not, which is what
- * runs the planner on its profile's own model.
+ * What the planner runs on is the other field with a rule of its own, and it
+ * is asked for agent first: the agent CLI is on the wire when it was picked,
+ * the model only beside it, and neither when nothing was picked — which is
+ * what runs the planner on its profile's own.
  */
 
 import { screen, waitFor, within } from "@testing-library/react"
@@ -59,7 +60,12 @@ const SANDBOX: RepositoryDto = aRepository({
 interface Recorded {
   method: string
   path: string
-  body: { repository_ids?: string[]; title?: string; model?: string } | null
+  body: {
+    repository_ids?: string[]
+    title?: string
+    agent_kind?: string
+    model?: string
+  } | null
 }
 
 let requests: Recorded[] = []
@@ -285,12 +291,12 @@ describe("dismissing the dialog", () => {
 })
 
 /**
- * The planner runs on one model and the daemon derives its agent CLI from it,
- * so this form has one control for the pair — and an empty one is not a value
- * the daemon would take, it is the field being left out.
+ * The planner is pinned agent first: the CLI is the choice, and the model
+ * narrows it to one of that CLI's own — so the box is worth nothing until an
+ * agent is named, and neither field is a value the daemon would take empty.
  */
-describe("choosing the planner's model", () => {
-  /** Fills the required fields, so the submit is about the model alone. */
+describe("choosing what the planner runs on", () => {
+  /** Fills the required fields, so the submit is about the pin alone. */
   async function fillRequired(user: ReturnType<typeof userEvent.setup>) {
     await user.type(screen.getByLabelText("Title"), "Model selector")
     const list = await openList(user)
@@ -298,28 +304,76 @@ describe("choosing the planner's model", () => {
     await user.keyboard("{Escape}")
   }
 
-  it("sends the model picked out of the catalog, whatever agent it belongs to", async () => {
+  /** The model field, which the agent select above it gates. */
+  async function modelBox(): Promise<HTMLInputElement> {
+    return (await screen.findByRole("combobox", { name: "Planner model" })) as HTMLInputElement
+  }
+
+  /** Picks one of the agent CLIs, or puts the select back on the profile's. */
+  async function pickAgent(user: ReturnType<typeof userEvent.setup>, label: string) {
+    await user.click(await screen.findByLabelText("Planner agent"))
+    await user.click(await screen.findByRole("option", { name: label }))
+  }
+
+  it("keeps the model box shut until an agent is picked", async () => {
     const user = userEvent.setup()
     renderDialog()
 
-    await fillRequired(user)
-    const box = await screen.findByRole("combobox", { name: "Planner model" })
-    await user.click(box)
-    const models = await screen.findByRole("listbox", { name: "Models" })
-    // A codex model on the claude_code Planner profile: one gesture, and no
-    // agent control anywhere on the form.
-    await user.click(within(models).getByText("gpt-5.3-codex"))
+    expect((await modelBox()).disabled).toBe(true)
 
-    expect(await screen.findByText("Runs on Codex.")).toBeDefined()
-    await user.click(screen.getByRole("button", { name: "Create goal" }))
+    await pickAgent(user, "Codex")
 
-    await waitFor(() => {
-      expect(lastWrite()).toBeDefined()
-    })
-    expect(lastWrite()?.body?.model).toBe("gpt-5.3-codex")
+    expect((await modelBox()).disabled).toBe(false)
   })
 
-  it("leaves the model out when the box was not filled", async () => {
+  it("offers the picked agent's models and no others", async () => {
+    const user = userEvent.setup()
+    renderDialog()
+
+    await pickAgent(user, "Codex")
+    await user.click(await modelBox())
+
+    const models = await screen.findByRole("listbox", { name: "Models" })
+    expect(within(models).getByText("gpt-5.3-codex")).toBeDefined()
+    expect(within(models).queryByText("claude-opus-5")).toBeNull()
+  })
+
+  it("sends the agent alone when its box was left empty", async () => {
+    const user = userEvent.setup()
+    renderDialog()
+
+    await fillRequired(user)
+    await pickAgent(user, "Codex")
+    await user.click(screen.getByRole("button", { name: "Create goal" }))
+
+    await waitFor(() => {
+      expect(lastWrite()).toBeDefined()
+    })
+    expect(lastWrite()?.body?.agent_kind).toBe("codex")
+    expect(lastWrite()?.body).not.toHaveProperty("model")
+  })
+
+  it("sends the model beside the agent it was picked under", async () => {
+    const user = userEvent.setup()
+    renderDialog()
+
+    await fillRequired(user)
+    // A codex model on the claude_code Planner profile: the pin is the slot's,
+    // not the profile's.
+    await pickAgent(user, "Codex")
+    await user.click(await modelBox())
+    const models = await screen.findByRole("listbox", { name: "Models" })
+    await user.click(within(models).getByText("gpt-5.3-codex"))
+
+    await user.click(screen.getByRole("button", { name: "Create goal" }))
+
+    await waitFor(() => {
+      expect(lastWrite()).toBeDefined()
+    })
+    expect(lastWrite()?.body).toMatchObject({ agent_kind: "codex", model: "gpt-5.3-codex" })
+  })
+
+  it("sends neither when the planner is left on its profile's own", async () => {
     const user = userEvent.setup()
     renderDialog()
 
@@ -329,6 +383,7 @@ describe("choosing the planner's model", () => {
     await waitFor(() => {
       expect(lastWrite()).toBeDefined()
     })
+    expect(lastWrite()?.body).not.toHaveProperty("agent_kind")
     expect(lastWrite()?.body).not.toHaveProperty("model")
   })
 })

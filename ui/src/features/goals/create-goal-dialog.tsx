@@ -7,10 +7,11 @@
  * them, not on every form that needs one. With none registered the field is an
  * empty state pointing there.
  *
- * The planner's model is the one field with a meaning when it is empty: the
- * user picks a model and nothing else — the daemon derives the agent CLI from
- * it — and an empty box leaves the field out of the request entirely, which is
- * what runs the planner on its profile's own model.
+ * What the planner runs on is asked for agent first: the agent CLI is the
+ * choice, and the model only narrows which model that CLI is asked for. Both
+ * carry a meaning when they are unset — no agent leaves the planner on its
+ * profile's own agent *and* model, and an agent with no model runs that CLI's
+ * default — so each is left out of the request rather than sent empty.
  *
  * Everything else the daemon still validates: the client only catches what it
  * can know on its own (empty title, nothing picked) and shows the daemon's
@@ -40,7 +41,14 @@ import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
+import {
+  AGENT_PIN_CHOICES,
+  AGENT_PIN_OPTIONS,
+  PROFILE_AGENT_KIND,
+  pinnedAgentKind,
+} from "@/features/profiles/agent-pin"
 import { ModelPicker } from "@/features/profiles/model-picker"
+import { agentKindLabel, modelLabel } from "@/features/profiles/profile-labels"
 import { modelsQueryOptions } from "@/features/profiles/queries"
 import { repositoriesQueryOptions } from "@/features/repositories/queries"
 import { paths } from "@/routes/paths"
@@ -62,8 +70,9 @@ const formSchema = z.object({
   title: z.string().trim().min(1, "Give the goal a title."),
   description: z.string(),
   planner_profile: z.string().min(1, "Choose a planner profile."),
-  // Free text: the catalog only suggests, and an id it does not carry is still
-  // the daemon's to place or refuse.
+  agent: z.enum(AGENT_PIN_CHOICES),
+  // Free text: the catalog only suggests, and an id it does not carry is
+  // handed to the chosen CLI as typed.
   model: z.string(),
   required_approvals: optionalCount("Approvals"),
   max_tasks: optionalCount("Max tasks"),
@@ -76,6 +85,7 @@ const DEFAULT_VALUES: CreateGoalForm = {
   title: "",
   description: "",
   planner_profile: "",
+  agent: PROFILE_AGENT_KIND,
   model: "",
   required_approvals: "1",
   max_tasks: "",
@@ -114,6 +124,9 @@ export function CreateGoalDialog({
   )
   const selectedPlanner = form.watch("planner_profile")
   const plannerProfile = plannerOptions?.find((profile) => profile.id === selectedPlanner)
+  // The agent the model box is scoped to, and the gate on the box itself:
+  // with no agent picked there is no CLI whose models it could name.
+  const plannerAgentKind = pinnedAgentKind(form.watch("agent"))
   useEffect(() => {
     if (!open || !plannerOptions?.length || selectedPlanner) return
     const preferred =
@@ -122,14 +135,16 @@ export function CreateGoalDialog({
   }, [open, plannerOptions, selectedPlanner, form.setValue])
 
   async function onSubmit(values: CreateGoalForm) {
+    const agentKind = pinnedAgentKind(values.agent)
     const model = values.model.trim()
     const body: CreateGoalRequest = {
       title: values.title.trim(),
       description: values.description,
       planner_profile: values.planner_profile,
-      // Left out rather than sent empty: the daemon refuses an empty model,
-      // and an untouched box means the planner profile's own.
-      ...(model.length > 0 ? { model } : {}),
+      // Neither field where no agent was picked: that is the planner on its
+      // profile's own. A model without an agent is refused, and an agent
+      // without a model is that CLI's default.
+      ...(agentKind ? { agent_kind: agentKind, ...(model.length > 0 ? { model } : {}) } : {}),
       repository_ids: values.repository_ids,
       required_approvals: values.required_approvals ? Number(values.required_approvals) : null,
       max_tasks: values.max_tasks ? Number(values.max_tasks) : null,
@@ -257,31 +272,46 @@ export function CreateGoalDialog({
           </Field>
         </div>
 
-        <Field>
-          {/* No htmlFor: cmdk owns its input's id and names it itself. */}
-          <FieldLabel>Planner model</FieldLabel>
-          <Controller
-            control={form.control}
-            name="model"
-            render={({ field }) => (
-              <ModelPicker
-                label="Planner model"
-                value={field.value}
-                onChange={field.onChange}
-                models={models.data}
-                placeholder={
-                  plannerProfile?.model
-                    ? `Profile default: ${plannerProfile.model}`
-                    : "Profile default: the CLI's default"
-                }
-                caption
-              />
-            )}
-          />
-          <FieldDescription>
-            The agent CLI follows the model. Leave it empty to run the planner on its profile's own.
-          </FieldDescription>
-        </Field>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field>
+            <FieldLabel htmlFor="goal-agent">Planner agent</FieldLabel>
+            <FormSelect
+              control={form.control}
+              name="agent"
+              id="goal-agent"
+              options={AGENT_PIN_OPTIONS}
+            />
+            <FieldDescription>
+              {plannerAgentKind
+                ? "Pinned: the planner is spawned on this CLI."
+                : `The planner profile's own: ${agentKindLabel(plannerProfile?.agent_kind)} · ${modelLabel(plannerProfile?.model)}.`}
+            </FieldDescription>
+          </Field>
+
+          <Field>
+            {/* No htmlFor: cmdk owns its input's id and names it itself. */}
+            <FieldLabel>Planner model</FieldLabel>
+            <Controller
+              control={form.control}
+              name="model"
+              render={({ field }) => (
+                <ModelPicker
+                  label="Planner model"
+                  value={field.value}
+                  onChange={field.onChange}
+                  models={models.data}
+                  agentKind={plannerAgentKind}
+                  disabled={!plannerAgentKind}
+                  placeholder="Agent default"
+                />
+              )}
+            />
+            <FieldDescription>
+              Picking an agent runs the planner on it; leave the model empty for that CLI's own
+              default.
+            </FieldDescription>
+          </Field>
+        </div>
       </FormDialogContent>
     </FormDialog>
   )

@@ -2,11 +2,12 @@
  * The model field of the profile form: {@link ModelPicker}, scoped by the
  * agent select next to it.
  *
- * The profile form is the one place where the agent CLI is chosen by hand
- * rather than derived from the model, so it is the one place where the catalog
- * is narrowed: a pinned agent gets its own models, "Auto-resolve" gets the
- * union with a heading per agent. The picker says nothing about the agent
- * underneath the field here — the select above it already does.
+ * Every form that assigns an agent scopes the catalog to it; the profile form
+ * is the one whose agent select has a choice that names no CLI at all, so it
+ * is the one that ever asks for the catalog whole: a pinned agent gets its own
+ * models, "Auto-resolve" gets the union with a heading per agent — and, unlike
+ * a slot with no pin, still an open field, since a profile with no agent
+ * pinned may well have a model.
  */
 
 import type { ModelDto } from "@/api"
