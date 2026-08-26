@@ -171,6 +171,7 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                         planner_profile: planner,
                         max_tasks,
                         required_approvals: approvals,
+                        agent_kind: None,
                         model,
                     },
                 )

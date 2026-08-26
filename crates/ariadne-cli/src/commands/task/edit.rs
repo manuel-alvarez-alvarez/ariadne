@@ -35,6 +35,7 @@ pub fn parse_reviewer(s: &str) -> Result<ReviewerAssignment, String> {
     }
     Ok(ReviewerAssignment {
         profile: profile.to_string(),
+        agent_kind: None,
         model: model.map(str::to_string),
     })
 }
@@ -56,6 +57,7 @@ pub fn update_request(
     let req = UpdateTaskRequest {
         title,
         description,
+        agent_kind: None,
         // "default" travels as it was typed: it is the daemon's spelling for
         // running on the engineer profile's model again, the same word
         // `profile update --model default` takes.

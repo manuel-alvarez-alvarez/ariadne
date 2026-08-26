@@ -229,8 +229,10 @@ impl AriadneMcp {
             description: req.description,
             repo_id: req.repo_id,
             engineer_profile: req.engineer_profile,
-            // The planner assigns profiles; the user is who picks models, so
-            // every task the planner creates takes the profiles' own.
+            // The planner assigns profiles; the user is who picks the agent
+            // and the model, so every task the planner creates takes the
+            // profiles' own.
+            agent_kind: None,
             model: None,
             reviewers: req
                 .reviewer_profiles
@@ -252,6 +254,7 @@ impl AriadneMcp {
         let body = UpdateTaskRequest {
             title: req.title,
             description: req.description,
+            agent_kind: None,
             model: None,
             reviewers: req
                 .reviewer_profiles

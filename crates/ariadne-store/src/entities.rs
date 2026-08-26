@@ -144,18 +144,19 @@ pub struct Repository {
     pub updated_at: String,
 }
 
-/// The agent CLI and the model a goal, a task or a reviewer slot is pinned to
-/// because the user chose that model, rather than because its profile was on
-/// it.
+/// The agent CLI, and optionally the model, a goal, a task or a reviewer slot
+/// is pinned to because the user chose them, rather than because its profile
+/// was on them.
 ///
-/// A model belongs to one agent CLI (`ariadne_core::models::agent_kind_of`),
-/// so the two are one decision and travel as one. Which decision it is belongs
-/// to whoever took the request — the store is handed a pair already resolved,
-/// and writes it exactly where the profile's own pins would have gone.
+/// The agent is the choice: a pin with no model runs that CLI on its own
+/// default. Which choice it is belongs to whoever took the request — the store
+/// is handed a pin already resolved, and writes it exactly where the profile's
+/// own pins would have gone.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentPin {
     pub agent_kind: AgentKind,
-    pub model: String,
+    /// None = the agent CLI's own default model.
+    pub model: Option<String>,
 }
 
 impl AgentPin {
@@ -166,10 +167,7 @@ impl AgentPin {
         profile: &Profile,
     ) -> (Option<String>, Option<String>) {
         match pin {
-            Some(pin) => (
-                Some(pin.agent_kind.as_str().to_string()),
-                Some(pin.model.clone()),
-            ),
+            Some(pin) => (Some(pin.agent_kind.as_str().to_string()), pin.model.clone()),
             None => (profile.agent_kind.clone(), profile.model.clone()),
         }
     }

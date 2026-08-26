@@ -17,13 +17,13 @@ pub struct GoalDto {
     pub max_tasks: Option<i64>,
     pub required_approvals: i64,
     pub planner_profile_id: String,
-    /// Agent CLI the planner runs on: pinned from the planner profile when
-    /// the goal was created, or from the model chosen for the goal instead.
+    /// Agent CLI the planner runs on: pinned when the goal was created, from
+    /// the agent chosen for it or, where none was, from the planner profile.
     /// Editing the profile afterwards leaves it alone. None = auto, resolved
     /// at spawn time to the first installed CLI.
     pub agent_kind: Option<AgentKind>,
-    /// Model the planner runs on, pinned like `agent_kind`. None = the agent
-    /// CLI's own default.
+    /// Model the planner runs on, pinned alongside `agent_kind`. None = the
+    /// agent CLI's own default model.
     pub model: Option<String>,
     /// The registered repositories the goal works in, as they stand now: a
     /// goal references them, so an edit to one shows up here.
@@ -78,11 +78,14 @@ pub struct CreateGoalRequest {
     pub max_tasks: Option<i64>,
     /// Approvals required to merge a task (default 1).
     pub required_approvals: Option<i64>,
-    /// Model the planner runs on; omitted = the planner profile's own model
-    /// and agent CLI. A model names the agent CLI that runs it (claude ids
-    /// belong to claude_code, gpt/o-series and codex ids to codex, a
-    /// `provider/model` id to opencode), and both are pinned onto the goal; a
-    /// model nothing can place, and the empty string, are refused.
+    /// Agent CLI the planner runs on; omitted = the planner profile's own
+    /// agent and model, as they stand now.
+    #[serde(default)]
+    pub agent_kind: Option<AgentKind>,
+    /// Model the planner runs on, on the agent named by `agent_kind`; omitted
+    /// (or "default") = that CLI's own default model. Free text, handed to the
+    /// CLI as typed. A model without an `agent_kind` is refused: the agent is
+    /// the choice, the model narrows it.
     #[serde(default)]
     pub model: Option<String>,
 }

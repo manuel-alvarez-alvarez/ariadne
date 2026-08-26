@@ -2199,11 +2199,12 @@ async fn reassigned_reviewers_pin_the_profile_they_are_assigned_from() {
     assert_eq!(pins[1].model.as_deref(), Some("opus"));
 }
 
-/// A model chosen for a goal, a task or a slot is what gets pinned, and it
-/// brings its agent CLI with it — the profile's own pins are what a slot with
-/// no choice on it falls back to, not a floor the choice is merged into.
+/// An agent and model chosen for a goal, a task or a slot are what gets
+/// pinned — the profile's own pins are what a slot with no choice on it falls
+/// back to, not a floor the choice is merged into. A pin naming only its agent
+/// writes a null model, which is that CLI's own default.
 #[tokio::test]
-async fn a_chosen_model_is_pinned_in_place_of_the_profiles() {
+async fn a_chosen_pin_is_written_in_place_of_the_profiles() {
     let (store, _dir) = test_store().await;
     let planner = seed_pinned_profile(
         &store,
@@ -2249,7 +2250,7 @@ async fn a_chosen_model_is_pinned_in_place_of_the_profiles() {
             repository_ids: vec![repo.id.clone()],
             pin: Some(AgentPin {
                 agent_kind: AgentKind::Codex,
-                model: "gpt-5.3-codex".into(),
+                model: Some("gpt-5.3-codex".into()),
             }),
         })
         .await
@@ -2266,14 +2267,14 @@ async fn a_chosen_model_is_pinned_in_place_of_the_profiles() {
             engineer_profile_id: engineer.id.clone(),
             pin: Some(AgentPin {
                 agent_kind: AgentKind::Codex,
-                model: "gpt-5.6-sol".into(),
+                model: Some("gpt-5.6-sol".into()),
             }),
             reviewers: vec![
                 ReviewerSlot {
                     profile_id: chosen.id.clone(),
                     pin: Some(AgentPin {
                         agent_kind: AgentKind::Opencode,
-                        model: "ollama/llama3:8b".into(),
+                        model: Some("ollama/llama3:8b".into()),
                     }),
                 },
                 ReviewerSlot::of(&untouched.id),
@@ -2310,6 +2311,26 @@ async fn a_chosen_model_is_pinned_in_place_of_the_profiles() {
         .unwrap();
     assert_eq!(plain.agent_kind(), Some(AgentKind::ClaudeCode));
     assert_eq!(plain.model.as_deref(), Some("claude-opus-5"));
+
+    // An agent with no model of its own: the CLI is pinned and the model is
+    // left null, which is the CLI's default rather than the profile's model.
+    let agent_only = store
+        .create_goal(NewGoal {
+            title: "Agent only".into(),
+            description: "desc".into(),
+            planner_profile_id: planner.id.clone(),
+            max_tasks: None,
+            required_approvals: 1,
+            repository_ids: vec![repo.id.clone()],
+            pin: Some(AgentPin {
+                agent_kind: AgentKind::Opencode,
+                model: None,
+            }),
+        })
+        .await
+        .unwrap();
+    assert_eq!(agent_only.agent_kind(), Some(AgentKind::Opencode));
+    assert_eq!(agent_only.model, None);
 }
 
 /// Editing a pending task moves its pins and puts them back: cleared, they
@@ -2356,13 +2377,13 @@ async fn a_task_pin_can_be_moved_and_cleared_back_to_the_profiles() {
             TaskUpdate {
                 pin: Some(Some(AgentPin {
                     agent_kind: AgentKind::Codex,
-                    model: "gpt-5.3-codex".into(),
+                    model: Some("gpt-5.3-codex".into()),
                 })),
                 reviewers: Some(vec![ReviewerSlot {
                     profile_id: reviewer.id.clone(),
                     pin: Some(AgentPin {
                         agent_kind: AgentKind::Codex,
-                        model: "o3".into(),
+                        model: Some("o3".into()),
                     }),
                 }]),
                 ..Default::default()

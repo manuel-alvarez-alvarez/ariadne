@@ -38,7 +38,7 @@ async fn resolve_profile(store: &Store, spec: &str, role: Role) -> ApiResult<Str
 }
 
 /// The reviewer slots an assignment list asks for, in the order it names them:
-/// each profile resolved as any other, each slot carrying the model chosen for
+/// each profile resolved as any other, each slot carrying the agent chosen for
 /// it or, where none was, nothing — which is the store's cue to pin the
 /// profile's own.
 async fn resolve_reviewers(
@@ -49,7 +49,7 @@ async fn resolve_reviewers(
     for assignment in assignments {
         slots.push(ReviewerSlot {
             profile_id: resolve_profile(store, &assignment.profile, Role::Reviewer).await?,
-            pin: pins::chosen(assignment.model.as_deref())?,
+            pin: pins::chosen(assignment.agent_kind, assignment.model.as_deref())?,
         });
     }
     Ok(slots)
@@ -108,7 +108,7 @@ pub async fn create(
             title: req.title,
             description: req.description,
             engineer_profile_id: engineer,
-            pin: pins::chosen(req.model.as_deref())?,
+            pin: pins::chosen(req.agent_kind, req.model.as_deref())?,
             reviewers,
             depends_on: req.depends_on,
         })
@@ -179,7 +179,7 @@ pub async fn update(
             TaskUpdate {
                 title: req.title,
                 description: req.description,
-                pin: pins::rechosen(req.model.as_deref())?,
+                pin: pins::rechosen(req.agent_kind.as_deref(), req.model.as_deref())?,
                 reviewers,
             },
         )

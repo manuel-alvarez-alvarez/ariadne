@@ -65,9 +65,9 @@ pub async fn create(
     if req.repository_ids.is_empty() {
         return Err(ApiError::bad_request("a goal needs at least one repo"));
     }
-    // Resolved before anything is looked up: a model nobody can place is a
-    // fact about the request, not about the profiles it names.
-    let pin = pins::chosen(req.model.as_deref())?;
+    // Resolved before anything is looked up: a model nobody said what to run
+    // is a fact about the request, not about the profiles it names.
+    let pin = pins::chosen(req.agent_kind, req.model.as_deref())?;
 
     let planner = state.store.resolve_profile(&req.planner_profile).await?;
     if planner.role() != Role::Planner {

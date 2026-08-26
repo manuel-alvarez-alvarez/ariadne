@@ -241,6 +241,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                         description,
                         repo_id,
                         engineer_profile: engineer,
+                        agent_kind: None,
                         model,
                         reviewers,
                         depends_on,

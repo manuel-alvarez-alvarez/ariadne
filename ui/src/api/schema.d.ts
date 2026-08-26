@@ -947,6 +947,7 @@ export interface components {
             version?: string | null;
         };
         CreateGoalRequest: {
+            agent_kind?: null | components["schemas"]["AgentKind"];
             description?: string;
             /**
              * Format: int64
@@ -954,11 +955,10 @@ export interface components {
              */
             max_tasks?: number | null;
             /**
-             * @description Model the planner runs on; omitted = the planner profile's own model
-             *     and agent CLI. A model names the agent CLI that runs it (claude ids
-             *     belong to claude_code, gpt/o-series and codex ids to codex, a
-             *     `provider/model` id to opencode), and both are pinned onto the goal; a
-             *     model nothing can place, and the empty string, are refused.
+             * @description Model the planner runs on, on the agent named by `agent_kind`; omitted
+             *     (or "default") = that CLI's own default model. Free text, handed to the
+             *     CLI as typed. A model without an `agent_kind` is refused: the agent is
+             *     the choice, the model narrows it.
              */
             model?: string | null;
             /** @description Planner profile id or unique name. */
@@ -1015,14 +1015,15 @@ export interface components {
             verdict: components["schemas"]["ReviewVerdict"];
         };
         CreateTaskRequest: {
+            agent_kind?: null | components["schemas"]["AgentKind"];
             /** @description Task ids this task depends on. */
             depends_on?: string[];
             description?: string;
             /** @description Engineer profile id or unique name. */
             engineer_profile: string;
             /**
-             * @description Model the engineer runs on; omitted = the engineer profile's own model
-             *     and agent CLI. Resolved the way [`ReviewerAssignment::model`] is.
+             * @description Model the engineer runs on there; omitted (or "default") = that CLI's
+             *     own default model. A model without an `agent_kind` is refused.
              */
             model?: string | null;
             /**
@@ -1152,8 +1153,8 @@ export interface components {
              */
             max_tasks?: number | null;
             /**
-             * @description Model the planner runs on, pinned like `agent_kind`. None = the agent
-             *     CLI's own default.
+             * @description Model the planner runs on, pinned alongside `agent_kind`. None = the
+             *     agent CLI's own default model.
              */
             model?: string | null;
             planner_profile_id: string;
@@ -1399,17 +1400,20 @@ export interface components {
          */
         ReviewVerdict: "approve" | "request_changes";
         /**
-         * @description One reviewer of a task: the profile that reviews, and the model it is to
-         *     run on.
+         * @description One reviewer of a task: the profile that reviews, and what it is to run on.
          *
-         *     A model names the agent CLI that runs it — claude ids belong to
-         *     `claude_code`, `gpt-`/`o<digit>`/codex ids to `codex`, a `provider/model`
-         *     id to `opencode` — and both are pinned onto the slot. A model nothing can
-         *     place is refused (there is no way to name the agent by hand), and so is the
-         *     empty string. Omitted, the slot takes the profile's own agent and model as
-         *     they stand when it is assigned.
+         *     The agent CLI is the choice and the model narrows it: an `agent_kind` alone
+         *     runs that CLI on its own default model, an `agent_kind` with a `model` pins
+         *     both, and a `model` with no `agent_kind` is refused — nothing here derives
+         *     one from the other. Omitted, the slot takes the profile's own agent and
+         *     model as they stand when it is assigned.
          */
         ReviewerAssignment: {
+            agent_kind?: null | components["schemas"]["AgentKind"];
+            /**
+             * @description Model it runs on there; omitted (or "default") = the CLI's own default
+             *     model. Free text, handed to the CLI as typed.
+             */
             model?: string | null;
             /** @description Reviewer profile id or unique name. */
             profile: string;
@@ -1540,8 +1544,8 @@ export interface components {
             id: string;
             merge_commit?: string | null;
             /**
-             * @description Model the engineer runs on, pinned like `agent_kind`. None = the agent
-             *     CLI's own default.
+             * @description Model the engineer runs on, pinned alongside `agent_kind`. None = the
+             *     agent CLI's own default model.
              */
             model?: string | null;
             /**
@@ -1572,13 +1576,13 @@ export interface components {
         /**
          * @description One reviewer slot of a task: which profile reviews it, and what that
          *     reviewer was pinned to run on when the slot was assigned — the profile's
-         *     own agent and model, or the model chosen for the slot. Pinned the same way
+         *     own agent and model, or the agent chosen for the slot. Pinned the same way
          *     the engineer is, and read the same way: what a reviewer of this task runs
          *     on, not what its profile says today.
          */
         TaskReviewerDto: {
             agent_kind?: null | components["schemas"]["AgentKind"];
-            /** @description None = the agent CLI's own default. */
+            /** @description None = the agent CLI's own default model. */
             model?: string | null;
             profile_id: string;
             /**
@@ -1691,20 +1695,25 @@ export interface components {
         };
         /** @description Partial update; only allowed while the task is pending/ready. */
         UpdateTaskRequest: {
+            /**
+             * @description Agent CLI the engineer runs on: absent leaves the task's pins alone,
+             *     "default" (or the empty string) puts them back on the engineer
+             *     profile's agent and model as they stand now, and a kind pins that kind
+             *     — together with `model` where one is given. The same convention
+             *     `UpdateProfileRequest::agent_kind` takes for its "auto".
+             */
+            agent_kind?: string | null;
             depends_on?: string[] | null;
             description?: string | null;
             /**
-             * @description Model the engineer runs on, resolved the way
-             *     [`ReviewerAssignment::model`] is: absent leaves the task's pins alone,
-             *     "default" (or the empty string) puts them back on the engineer
-             *     profile's model and agent as they stand now, anything else pins that
-             *     model and the agent CLI that runs it. The same convention
-             *     `UpdateProfileRequest::model` takes.
+             * @description Model the engineer runs on there; "default" (or the empty string) is
+             *     the agent CLI's own default model. A model with no `agent_kind` beside
+             *     it is refused, as it is on a creation.
              */
             model?: string | null;
             /**
              * @description The whole reviewer list, replaced: each slot is cut afresh and pinned
-             *     to its own model or, where it names none, to its profile's.
+             *     to its own agent and model or, where it names none, to its profile's.
              */
             reviewers?: components["schemas"]["ReviewerAssignment"][] | null;
             title?: string | null;

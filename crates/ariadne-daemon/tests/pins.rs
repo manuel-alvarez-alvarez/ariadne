@@ -147,9 +147,9 @@ async fn the_task_list_carries_the_pins_too() {
     assert_eq!(found.reviewers.len(), 2);
 }
 
-// -- the model the user chose -----------------------------------------------
+// -- the agent, and the model, the user chose -------------------------------
 
-/// The profiles a chosen model has to overrule: all three on claude_code, all
+/// The profiles a chosen agent has to overrule: all three on claude_code, all
 /// three on the same model, so nothing below can pass by reading a profile.
 async fn on_claude(h: &Harness) -> (Profile, Profile, Profile, Profile) {
     let planner = h
@@ -187,10 +187,10 @@ async fn on_claude(h: &Harness) -> (Profile, Profile, Profile, Profile) {
     (planner, engineer, chosen, untouched)
 }
 
-/// A goal created with a model of its own plans on it — on the agent CLI that
-/// model belongs to, which is not the one the planner profile is on.
+/// A goal created with an agent and a model of its own plans on them, whatever
+/// the planner profile is on.
 #[tokio::test]
-async fn a_goal_created_with_a_model_plans_on_it() {
+async fn a_goal_created_with_an_agent_and_a_model_plans_on_them() {
     let h = harness().await;
     let (planner, ..) = on_claude(&h).await;
     let repo = h.repository(&h.dir.path().join("repo")).await;
@@ -203,6 +203,7 @@ async fn a_goal_created_with_a_model_plans_on_it() {
                     "title": "Ship it",
                     "repository_ids": [repo.id],
                     "planner_profile": planner.name,
+                    "agent_kind": "codex",
                     "model": "gpt-5.3-codex",
                 }),
             ),
@@ -220,11 +221,71 @@ async fn a_goal_created_with_a_model_plans_on_it() {
     assert!(argv.contains("gpt-5.3-codex"), "{argv}");
 }
 
-/// A task created with models runs each agent on its own: the engineer on the
-/// one it was given, the reviewer that was given one on that, and the reviewer
-/// that was given none on its profile's.
+/// The agent is the choice and the model only narrows it: an agent named on
+/// its own pins that CLI with no model, which is what runs it on its own
+/// default — on a goal, on a task's engineer and on a reviewer slot alike.
 #[tokio::test]
-async fn a_task_created_with_models_runs_each_agent_on_its_own() {
+async fn an_agent_alone_pins_it_with_no_model_of_its_own() {
+    let h = harness().await;
+    let (planner, engineer, chosen, untouched) = on_claude(&h).await;
+    let repo = h.repository(&h.git_repo("repo")).await;
+
+    let goal: GoalDto = h
+        .json(
+            post_json(
+                "/v1/goals",
+                serde_json::json!({
+                    "title": "Ship it",
+                    "repository_ids": [repo.id],
+                    "planner_profile": planner.name,
+                    "agent_kind": "opencode",
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(goal.agent_kind, Some(AgentKind::Opencode));
+    assert_eq!(goal.model, None);
+
+    let task: TaskDto = h
+        .json(
+            post_json(
+                &format!("/v1/goals/{}/tasks", goal.id),
+                serde_json::json!({
+                    "title": "Do the thing",
+                    "engineer_profile": engineer.name,
+                    "agent_kind": "codex",
+                    "reviewers": [
+                        {"profile": chosen.name, "agent_kind": "opencode"},
+                        {"profile": untouched.name},
+                    ],
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(task.agent_kind, Some(AgentKind::Codex));
+    assert_eq!(task.model, None);
+    assert_eq!(task.reviewers[0].agent_kind, Some(AgentKind::Opencode));
+    assert_eq!(task.reviewers[0].model, None);
+    // The slot that chose nothing is the one still on its profile's pair.
+    assert_eq!(task.reviewers[1].agent_kind, Some(AgentKind::ClaudeCode));
+    assert_eq!(task.reviewers[1].model.as_deref(), Some("claude-opus-5"));
+
+    // And the CLI is spawned with no model of its own to run on.
+    let session = h.launcher.spawn_engineer(&task.id).await.unwrap();
+    assert_eq!(session.agent_kind(), AgentKind::Codex);
+    assert_eq!(session.model, None);
+    let argv = h.spawn_argv(&session.id);
+    assert!(argv.starts_with("codex "), "{argv}");
+    assert!(!argv.contains("--model"), "{argv}");
+}
+
+/// A task created with agents runs each of them on its own: the engineer on
+/// the pair it was given, the reviewer that was given one on that, and the
+/// reviewer that was given none on its profile's.
+#[tokio::test]
+async fn a_task_created_with_agents_runs_each_one_on_its_own() {
     let h = harness().await;
     let (planner, engineer, chosen, untouched) = on_claude(&h).await;
     let repo_path = h.git_repo("repo");
@@ -238,9 +299,10 @@ async fn a_task_created_with_models_runs_each_agent_on_its_own() {
                 serde_json::json!({
                     "title": "Do the thing",
                     "engineer_profile": engineer.name,
+                    "agent_kind": "codex",
                     "model": "gpt-5.6-sol",
                     "reviewers": [
-                        {"profile": chosen.name, "model": "ollama/llama3:8b"},
+                        {"profile": chosen.name, "agent_kind": "opencode", "model": "ollama/llama3:8b"},
                         {"profile": untouched.name},
                     ],
                 }),
@@ -284,11 +346,11 @@ async fn a_task_created_with_models_runs_each_agent_on_its_own() {
     assert_eq!(session.model.as_deref(), Some("ollama/llama3:8b"));
 }
 
-/// Editing a pending task moves its models, and "default" hands them back to
-/// the profiles — as those profiles stand at that moment, which is what
+/// Editing a pending task moves its pins, and "default" hands them back to the
+/// profiles — as those profiles stand at that moment, which is what
 /// reassigning a reviewer has always done.
 #[tokio::test]
-async fn an_edit_moves_the_models_and_default_hands_them_back() {
+async fn an_edit_moves_the_pins_and_default_hands_them_back() {
     let h = harness().await;
     let (planner, engineer, chosen, _) = on_claude(&h).await;
     let repo = h.repository(&h.dir.path().join("repo")).await;
@@ -302,8 +364,9 @@ async fn an_edit_moves_the_models_and_default_hands_them_back() {
             patch_json(
                 &format!("/v1/tasks/{}", task.id),
                 serde_json::json!({
+                    "agent_kind": "codex",
                     "model": "gpt-5.3-codex",
-                    "reviewers": [{"profile": chosen.name, "model": "o3"}],
+                    "reviewers": [{"profile": chosen.name, "agent_kind": "codex", "model": "o3"}],
                 }),
             ),
             StatusCode::OK,
@@ -326,7 +389,21 @@ async fn an_edit_moves_the_models_and_default_hands_them_back() {
         .await;
     assert_eq!(renamed.model.as_deref(), Some("gpt-5.3-codex"));
 
-    // The profiles have moved since the task was cut, and handing the models
+    // An agent named on its own drops the model the task had: that CLI on its
+    // own default is a choice like any other.
+    let dropped: TaskDto = h
+        .json(
+            patch_json(
+                &format!("/v1/tasks/{}", task.id),
+                serde_json::json!({"agent_kind": "opencode"}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(dropped.agent_kind, Some(AgentKind::Opencode));
+    assert_eq!(dropped.model, None);
+
+    // The profiles have moved since the task was cut, and handing the pins
     // back hands back what they are on now.
     h.move_profile(
         &engineer.id,
@@ -345,7 +422,7 @@ async fn an_edit_moves_the_models_and_default_hands_them_back() {
             patch_json(
                 &format!("/v1/tasks/{}", task.id),
                 serde_json::json!({
-                    "model": "default",
+                    "agent_kind": "default",
                     "reviewers": [{"profile": chosen.name}],
                 }),
             ),
@@ -358,51 +435,56 @@ async fn an_edit_moves_the_models_and_default_hands_them_back() {
     assert_eq!(back.reviewers[0].model.as_deref(), Some("claude-haiku-4-5"));
 }
 
-/// The user picks models and nothing else, so an id nothing can place is
-/// refused by name rather than stored for a spawn to trip over. A model the
-/// catalog has never heard of but whose vendor spells it plainly is placed all
-/// the same.
+/// The agent is what a pin is chosen by, so a model with no agent beside it is
+/// refused by name rather than placed by guesswork — on a goal, on a task's
+/// engineer, on a reviewer slot and on an edit alike.
 #[tokio::test]
-async fn a_model_nothing_can_place_is_refused_by_name() {
+async fn a_model_without_an_agent_is_refused_by_name() {
     let h = harness().await;
     let (planner, engineer, chosen, _) = on_claude(&h).await;
     let repo = h.repository(&h.dir.path().join("repo")).await;
 
-    let goal_with = |model: serde_json::Value| {
-        post_json(
-            "/v1/goals",
-            serde_json::json!({
-                "title": "Ship it",
-                "repository_ids": [repo.id],
-                "planner_profile": planner.name,
-                "model": model,
-            }),
-        )
+    let goal_with = |pin: serde_json::Value| {
+        let mut body = serde_json::json!({
+            "title": "Ship it",
+            "repository_ids": [repo.id],
+            "planner_profile": planner.name,
+        });
+        let object = body.as_object_mut().expect("an object");
+        for (key, value) in pin.as_object().expect("an object") {
+            object.insert(key.clone(), value.clone());
+        }
+        post_json("/v1/goals", body)
     };
 
     let err = h
-        .error(goal_with("llama3".into()), StatusCode::BAD_REQUEST)
+        .error(
+            goal_with(serde_json::json!({"model": "gpt-5.3-codex"})),
+            StatusCode::BAD_REQUEST,
+        )
         .await;
     assert!(
-        err.error.message.contains("unknown model `llama3`"),
+        err.error.message.contains("`gpt-5.3-codex` names no agent"),
         "{}",
         err.error.message
     );
 
     // Empty is a field somebody meant to fill in, not a way to say "the
     // profile's" — that is what leaving it out says.
-    let err = h.error(goal_with("".into()), StatusCode::BAD_REQUEST).await;
+    let err = h
+        .error(
+            goal_with(serde_json::json!({"model": ""})),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
     assert!(err.error.message.contains("empty"), "{}", err.error.message);
 
-    // Released after this build, and still placed by how Anthropic spells it.
     let goal: GoalDto = h
         .json(
-            goal_with("claude-opus-9-20991231".into()),
+            goal_with(serde_json::json!({"agent_kind": "claude_code"})),
             StatusCode::CREATED,
         )
         .await;
-    assert_eq!(goal.agent_kind, Some(AgentKind::ClaudeCode));
-    assert_eq!(goal.model.as_deref(), Some("claude-opus-9-20991231"));
 
     // The same refusal on the way in for a task, engineer and reviewer alike.
     let task_with =
@@ -412,14 +494,14 @@ async fn a_model_nothing_can_place_is_refused_by_name() {
             task_with(serde_json::json!({
                 "title": "Do the thing",
                 "engineer_profile": engineer.name,
-                "model": "llama3",
+                "model": "gpt-5.3-codex",
                 "reviewers": [{"profile": chosen.name}],
             })),
             StatusCode::BAD_REQUEST,
         )
         .await;
     assert!(
-        err.error.message.contains("unknown model `llama3`"),
+        err.error.message.contains("`gpt-5.3-codex` names no agent"),
         "{}",
         err.error.message
     );
@@ -428,14 +510,74 @@ async fn a_model_nothing_can_place_is_refused_by_name() {
             task_with(serde_json::json!({
                 "title": "Do the thing",
                 "engineer_profile": engineer.name,
-                "reviewers": [{"profile": chosen.name, "model": "llama3"}],
+                "reviewers": [{"profile": chosen.name, "model": "o3"}],
             })),
             StatusCode::BAD_REQUEST,
         )
         .await;
     assert!(
-        err.error.message.contains("unknown model `llama3`"),
+        err.error.message.contains("`o3` names no agent"),
         "{}",
         err.error.message
     );
+
+    // And on an edit, where "default" is a word about the agent: a model on
+    // its own says nothing about which CLI is to run it.
+    let stored = h.store.get_goal(&goal.id).await.unwrap();
+    let task = h
+        .task_on(&stored, &repo, "Do it", &engineer, &[&chosen])
+        .await;
+    for model in ["gpt-5.3-codex", "default"] {
+        let err = h
+            .error(
+                patch_json(
+                    &format!("/v1/tasks/{}", task.id),
+                    serde_json::json!({"model": model}),
+                ),
+                StatusCode::BAD_REQUEST,
+            )
+            .await;
+        assert!(
+            err.error
+                .message
+                .contains(&format!("`{model}` names no agent")),
+            "{}",
+            err.error.message
+        );
+    }
+}
+
+/// Models are the agent CLI's business, not this daemon's: what a request
+/// types is what gets pinned, whether or not any catalog here lists it —
+/// opencode alone discovers its models at runtime, and none of them are known
+/// until it is asked.
+#[tokio::test]
+async fn a_model_is_stored_as_typed_whatever_the_catalogs_list() {
+    let h = harness().await;
+    let (planner, ..) = on_claude(&h).await;
+    let repo = h.repository(&h.dir.path().join("repo")).await;
+
+    for (agent_kind, model) in [
+        ("opencode", "ollama/llama3:8b"),
+        ("claude_code", "a-model-nobody-has-heard-of"),
+        ("codex", "gpt-5.3-codex"),
+    ] {
+        let goal: GoalDto = h
+            .json(
+                post_json(
+                    "/v1/goals",
+                    serde_json::json!({
+                        "title": "Ship it",
+                        "repository_ids": [repo.id],
+                        "planner_profile": planner.name,
+                        "agent_kind": agent_kind,
+                        "model": model,
+                    }),
+                ),
+                StatusCode::CREATED,
+            )
+            .await;
+        assert_eq!(goal.agent_kind.map(|k| k.as_str()), Some(agent_kind));
+        assert_eq!(goal.model.as_deref(), Some(model));
+    }
 }
