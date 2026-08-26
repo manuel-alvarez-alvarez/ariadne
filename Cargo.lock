@@ -99,7 +99,7 @@ dependencies = [
 
 [[package]]
 name = "ariadne-api"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "ariadne-core",
  "serde",
@@ -109,7 +109,7 @@ dependencies = [
 
 [[package]]
 name = "ariadne-cli"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "ariadne-api",
@@ -133,7 +133,7 @@ dependencies = [
 
 [[package]]
 name = "ariadne-client"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "ariadne-api",
  "ariadne-core",
@@ -154,7 +154,7 @@ dependencies = [
 
 [[package]]
 name = "ariadne-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "clap",
  "rustix",
@@ -169,7 +169,7 @@ dependencies = [
 
 [[package]]
 name = "ariadne-daemon"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "ariadne-api",
@@ -202,7 +202,7 @@ dependencies = [
 
 [[package]]
 name = "ariadne-store"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "ariadne-core",
  "chrono",
