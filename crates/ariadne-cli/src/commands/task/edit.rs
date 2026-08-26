@@ -1,8 +1,9 @@
 //! What a `task create` or `task update` line means before it is sent.
 //!
 //! Both are refused here rather than by the daemon where the answer is already
-//! known: an update with nothing in it, a `--reviewer` that says nothing after
-//! its `=`, and a `--repo` that names none of the goal's repositories.
+//! known: an update with nothing in it, an `--agent` or a `--reviewer` whose
+//! agent is missing or is no agent CLI Ariadne runs, and a `--repo` that names
+//! none of the goal's repositories.
 
 use anyhow::{Result, bail};
 
@@ -10,34 +11,100 @@ use ariadne_api::goals::GoalDto;
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::tasks::{ReviewerAssignment, UpdateTaskRequest};
 use ariadne_client::Client;
+use ariadne_core::AgentKind;
 
-/// One `--reviewer PROFILE[=MODEL]`: who reviews, and — after an `=` — the
-/// model that reviewer is to run on instead of its profile's.
+use crate::commands::parse_agent;
+
+/// The daemon's word for "the profile's own agent and model", which
+/// `task update --agent` takes as the third thing it can say.
+const DEFAULT: &str = "default";
+
+/// One `task update --agent`, as the word the daemon reads it by: an agent
+/// kind in its wire spelling, or `default` for the engineer profile's own
+/// agent and model.
 ///
-/// The agent CLI is not spelled anywhere: a model belongs to one, and the
-/// daemon is what places it, so a model it cannot place comes back as a
-/// refusal naming the model rather than as a flag nobody could have typed.
+/// A `String` rather than an [`AgentKind`] because the field says one thing
+/// more than a kind can — but only the words it may say get through, so
+/// `--agent llama` is refused on the line it was typed on rather than sent to
+/// the daemon to be refused there. The hyphenated spelling is normalised here
+/// too, the way `--agent` normalises it everywhere else.
+pub fn parse_agent_or_default(s: &str) -> Result<String, String> {
+    if s == DEFAULT {
+        return Ok(DEFAULT.to_string());
+    }
+    match parse_agent(s) {
+        Ok(kind) => Ok(kind.as_str().to_string()),
+        Err(_) => Err(format!(
+            "unknown agent \"{s}\" — write one of {}, or \"{DEFAULT}\" to put the \
+             task back on its engineer profile's own agent and model",
+            kinds()
+        )),
+    }
+}
+
+/// One `--reviewer PROFILE[=AGENT[:MODEL]]`: who reviews, and — after an `=` —
+/// the agent CLI that reviewer runs on instead of its profile's, narrowed by a
+/// `:MODEL` to one model of that CLI.
+///
+/// The agent is the choice and the model only narrows it: a model belongs to
+/// an agent CLI, and nothing here derives one from the other. The `=` splits
+/// first and the `:` only after it, so an opencode id — `provider/model`,
+/// which carries no colon — arrives whole.
 pub fn parse_reviewer(s: &str) -> Result<ReviewerAssignment, String> {
-    let (profile, model) = match s.split_once('=') {
+    let (profile, pin) = match s.split_once('=') {
         None => (s, None),
-        Some((profile, model)) => (profile, Some(model)),
+        Some((profile, pin)) => (profile, Some(pin)),
     };
     if profile.is_empty() {
+        return Err(format!("no profile in \"{s}\" — {}", accepted()));
+    }
+    let Some(pin) = pin else {
+        return Ok(ReviewerAssignment::of(profile));
+    };
+    let (agent, model) = match pin.split_once(':') {
+        None => (pin, None),
+        Some((agent, model)) => (agent, Some(model)),
+    };
+    if agent.is_empty() {
         return Err(format!(
-            "no profile in \"{s}\" — write PROFILE or PROFILE=MODEL"
+            "no agent after the = in \"{s}\" — {}, or {profile} on its own to run \
+             it on its profile's agent and model",
+            accepted()
         ));
     }
     if model.is_some_and(str::is_empty) {
         return Err(format!(
-            "no model after the = in \"{s}\" — write {profile} on its own to \
-             run it on its profile's model"
+            "no model after the : in \"{s}\" — {}, or {profile}={agent} to run it \
+             on that CLI's own default model",
+            accepted()
         ));
     }
     Ok(ReviewerAssignment {
         profile: profile.to_string(),
-        agent_kind: None,
+        agent_kind: Some(
+            parse_agent(agent)
+                .map_err(|_| format!("unknown agent \"{agent}\" in \"{s}\" — {}", accepted()))?,
+        ),
         model: model.map(str::to_string),
     })
+}
+
+/// What every refusal of a `--reviewer` ends with: the form it accepts, and
+/// the agent CLIs that can stand in it — the two things the typo was between.
+fn accepted() -> String {
+    format!(
+        "write PROFILE, PROFILE=AGENT or PROFILE=AGENT:MODEL, where AGENT is one of {}",
+        kinds()
+    )
+}
+
+/// The agent CLIs an `AGENT` may name, as a refusal lists them.
+fn kinds() -> String {
+    AgentKind::ALL
+        .iter()
+        .map(|k| k.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// The PATCH body of `task update`, or the reason there is nothing to send.
@@ -49,6 +116,7 @@ pub fn parse_reviewer(s: &str) -> Result<ReviewerAssignment, String> {
 pub fn update_request(
     title: Option<String>,
     description: Option<String>,
+    agent: Option<String>,
     model: Option<String>,
     reviewers: Vec<ReviewerAssignment>,
     depends_on: Vec<String>,
@@ -57,10 +125,12 @@ pub fn update_request(
     let req = UpdateTaskRequest {
         title,
         description,
-        agent_kind: None,
         // "default" travels as it was typed: it is the daemon's spelling for
-        // running on the engineer profile's model again, the same word
-        // `profile update --model default` takes.
+        // handing the pins back to the engineer profile's own agent and model,
+        // the same word `profile update --agent` takes for its "auto".
+        agent_kind: agent,
+        // Never on its own — clap refuses a `--model` with no `--agent` beside
+        // it, so the daemon is never asked to place a model itself.
         model,
         reviewers: (!reviewers.is_empty()).then_some(reviewers),
         depends_on: match (clear_depends_on, depends_on.is_empty()) {
@@ -73,12 +143,12 @@ pub fn update_request(
     // started task, which reads as a failure the caller never asked for.
     if req.title.is_none()
         && req.description.is_none()
-        && req.model.is_none()
+        && req.agent_kind.is_none()
         && req.reviewers.is_none()
         && req.depends_on.is_none()
     {
         bail!(
-            "nothing to update — pass --title, --description, --model, \
+            "nothing to update — pass --title, --description, --agent, \
              --reviewer or --depends-on"
         );
     }
@@ -130,33 +200,88 @@ mod tests {
         assert_eq!(pick_repo(&repos, "/home/me/other"), None);
     }
 
-    /// A reviewer is a profile, and after an `=` the model it runs on: the
-    /// two forms `task create` and `task update` both take.
+    /// `task update --agent` says one of exactly three things, and the two it
+    /// may spell reach the daemon in its own words: an agent kind in its wire
+    /// spelling, hyphens and all, or `default`.
     #[test]
-    fn a_reviewer_is_a_profile_and_the_model_it_runs_on() {
-        let plain = parse_reviewer("Reviewer").expect("a profile on its own");
-        assert_eq!(plain.profile, "Reviewer");
-        assert_eq!(plain.model, None);
-
-        let chosen = parse_reviewer("Reviewer=gpt-5.3-codex").expect("a model");
-        assert_eq!(chosen.profile, "Reviewer");
-        assert_eq!(chosen.model.as_deref(), Some("gpt-5.3-codex"));
-
-        // An opencode id carries a `/` and a `:`; only the first `=` splits.
-        let opencode = parse_reviewer("rev-strict=ollama/llama3:8b").expect("a provider id");
-        assert_eq!(opencode.profile, "rev-strict");
-        assert_eq!(opencode.model.as_deref(), Some("ollama/llama3:8b"));
+    fn the_engineers_agent_is_a_kind_or_the_word_default() {
+        assert_eq!(parse_agent_or_default("default").unwrap(), "default");
+        assert_eq!(parse_agent_or_default("codex").unwrap(), "codex");
+        assert_eq!(
+            parse_agent_or_default("claude-code").unwrap(),
+            "claude_code",
+            "the hyphenated spelling names the same CLI, and travels as the \
+             daemon spells it"
+        );
     }
 
-    /// Half a form is a typo, and both halves are named where they are
-    /// missing rather than sent on to be refused elsewhere.
+    /// Anything else is a typo, and it is refused where it was typed, with
+    /// every word the flag does take listed.
+    #[test]
+    fn an_agent_that_is_no_cli_is_refused_before_it_is_sent() {
+        let err = parse_agent_or_default("llama").expect_err("no such agent");
+        assert!(err.contains("unknown agent \"llama\""), "{err}");
+        assert!(err.contains("claude_code, codex, opencode"), "{err}");
+        assert!(err.contains("\"default\""), "{err}");
+
+        assert!(
+            parse_agent_or_default("").is_err(),
+            "and an empty --agent says nothing at all"
+        );
+    }
+
+    /// A reviewer is a profile, and after an `=` the agent CLI it runs on,
+    /// with a `:MODEL` where one model of that CLI is meant: the three forms
+    /// `task create` and `task update` both take.
+    #[test]
+    fn a_reviewer_is_a_profile_and_what_it_runs_on() {
+        let plain = parse_reviewer("Reviewer").expect("a profile on its own");
+        assert_eq!(plain.profile, "Reviewer");
+        assert_eq!(plain.agent_kind, None);
+        assert_eq!(plain.model, None);
+
+        let agent = parse_reviewer("Reviewer=codex").expect("an agent");
+        assert_eq!(agent.profile, "Reviewer");
+        assert_eq!(agent.agent_kind, Some(AgentKind::Codex));
+        assert_eq!(agent.model, None, "codex on its own default model");
+
+        let both = parse_reviewer("Reviewer=codex:gpt-5.3-codex").expect("an agent and a model");
+        assert_eq!(both.agent_kind, Some(AgentKind::Codex));
+        assert_eq!(both.model.as_deref(), Some("gpt-5.3-codex"));
+
+        // An opencode id is `provider/model` and carries no colon of its own,
+        // so the one that splits is the first and the id arrives whole.
+        let opencode = parse_reviewer("rev-strict=opencode:ollama/llama3:8b").expect("an id");
+        assert_eq!(opencode.profile, "rev-strict");
+        assert_eq!(opencode.agent_kind, Some(AgentKind::Opencode));
+        assert_eq!(opencode.model.as_deref(), Some("ollama/llama3:8b"));
+
+        // The agent CLI answers to the hyphenated spelling too, the way
+        // `--agent` does.
+        let hyphenated = parse_reviewer("Reviewer=claude-code").expect("a spelling");
+        assert_eq!(hyphenated.agent_kind, Some(AgentKind::ClaudeCode));
+    }
+
+    /// Half a form is a typo, and it is refused where it was typed, with the
+    /// form and the agent CLIs that stand in it — not sent on to be refused
+    /// elsewhere.
     #[test]
     fn a_reviewer_missing_a_half_is_refused_before_it_is_sent() {
-        let err = parse_reviewer("Reviewer=").expect_err("no model");
-        assert!(err.contains("no model after the ="), "{err}");
+        let err = parse_reviewer("Reviewer=").expect_err("no agent");
+        assert!(err.contains("no agent after the ="), "{err}");
         assert!(err.contains("Reviewer on its own"), "{err}");
+        assert!(err.contains("PROFILE=AGENT:MODEL"), "{err}");
+        assert!(err.contains("claude_code, codex, opencode"), "{err}");
 
-        let err = parse_reviewer("=gpt-5.3-codex").expect_err("no profile");
+        let err = parse_reviewer("Reviewer=codex:").expect_err("no model");
+        assert!(err.contains("no model after the :"), "{err}");
+        assert!(err.contains("Reviewer=codex"), "{err}");
+
+        let err = parse_reviewer("Reviewer=llama").expect_err("no such agent");
+        assert!(err.contains("unknown agent \"llama\""), "{err}");
+        assert!(err.contains("claude_code, codex, opencode"), "{err}");
+
+        let err = parse_reviewer("=codex").expect_err("no profile");
         assert!(err.contains("no profile"), "{err}");
     }
 
@@ -165,10 +290,11 @@ mod tests {
     /// flag cannot say on its own is spelled `--clear-depends-on`.
     #[test]
     fn only_the_flags_that_were_given_reach_the_daemon() {
-        let req =
-            update_request(Some("new".into()), None, None, vec![], vec![], false).expect("body");
+        let req = update_request(Some("new".into()), None, None, None, vec![], vec![], false)
+            .expect("body");
         assert_eq!(req.title.as_deref(), Some("new"));
         assert!(req.description.is_none());
+        assert!(req.agent_kind.is_none(), "and the pins are left alone");
         assert!(req.model.is_none());
         assert!(req.reviewers.is_none());
         assert!(req.depends_on.is_none());
@@ -177,9 +303,10 @@ mod tests {
             None,
             None,
             None,
+            None,
             vec![
                 ReviewerAssignment::of("Reviewer"),
-                parse_reviewer("rev-strict=o3").expect("a model"),
+                parse_reviewer("rev-strict=codex:o3").expect("an agent and a model"),
             ],
             vec!["01TASK".into()],
             false,
@@ -188,44 +315,56 @@ mod tests {
         assert_eq!(
             req.reviewers.as_ref().map(|r| r
                 .iter()
-                .map(|a| (a.profile.as_str(), a.model.as_deref()))
+                .map(|a| (a.profile.as_str(), a.agent_kind, a.model.as_deref()))
                 .collect::<Vec<_>>()),
-            Some(vec![("Reviewer", None), ("rev-strict", Some("o3"))])
+            Some(vec![
+                ("Reviewer", None, None),
+                ("rev-strict", Some(AgentKind::Codex), Some("o3"))
+            ])
         );
         assert_eq!(
             req.depends_on.as_deref(),
             Some(["01TASK".to_string()].as_slice())
         );
 
-        let req = update_request(None, None, None, vec![], vec![], true).expect("body");
+        let req = update_request(None, None, None, None, vec![], vec![], true).expect("body");
         assert_eq!(req.depends_on.as_deref(), Some([].as_slice()));
     }
 
-    /// `--model default` is the daemon's word for the engineer profile's own
-    /// model, and it travels as typed — the same word `profile update` takes.
+    /// What the engineer runs on is three answers, and the request carries
+    /// each one apart: nothing said at all, back to the profile's own agent
+    /// and model, or an agent CLI — with a model of it where one was named.
     #[test]
-    fn clearing_the_model_travels_as_the_word_default() {
-        let req = update_request(None, None, Some("default".into()), vec![], vec![], false)
+    fn the_agent_pin_travels_as_the_three_things_it_can_say() {
+        let req = update_request(None, None, Some("default".into()), None, vec![], vec![], false)
             .expect("body");
-        assert_eq!(req.model.as_deref(), Some("default"));
+        assert_eq!(req.agent_kind.as_deref(), Some("default"));
+        assert!(req.model.is_none());
         assert!(req.title.is_none(), "and nothing else was touched");
+
+        let req = update_request(None, None, Some("codex".into()), None, vec![], vec![], false)
+            .expect("body");
+        assert_eq!(req.agent_kind.as_deref(), Some("codex"));
+        assert!(req.model.is_none(), "codex on its own default model");
 
         let req = update_request(
             None,
             None,
+            Some("codex".into()),
             Some("gpt-5.3-codex".into()),
             vec![],
             vec![],
             false,
         )
         .expect("body");
+        assert_eq!(req.agent_kind.as_deref(), Some("codex"));
         assert_eq!(req.model.as_deref(), Some("gpt-5.3-codex"));
     }
 
     #[test]
     fn an_update_with_no_flags_is_refused_before_it_is_sent() {
-        let err = update_request(None, None, None, vec![], vec![], false).expect_err("no-op");
+        let err = update_request(None, None, None, None, vec![], vec![], false).expect_err("no-op");
         assert!(err.to_string().starts_with("nothing to update"), "{err}");
-        assert!(err.to_string().contains("--model"), "{err}");
+        assert!(err.to_string().contains("--agent"), "{err}");
     }
 }

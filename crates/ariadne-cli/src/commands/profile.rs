@@ -13,7 +13,7 @@ use ariadne_api::profiles::{CreateProfileRequest, ProfileDto, UpdateProfileReque
 use ariadne_client::Client;
 use ariadne_core::{AgentKind, Role};
 
-use super::{confirm, path_segment};
+use super::{confirm, parse_agent, path_segment};
 use crate::output::{Column, Format, UNCAPPED, local_time, note, print, print_kv, print_list};
 
 pub use flags::{PromptAssignment, read_prompts};
@@ -185,12 +185,6 @@ pub enum PromptCommand {
         #[arg(short, long)]
         yes: bool,
     },
-}
-
-
-fn parse_agent(s: &str) -> Result<AgentKind, String> {
-    // Accept both claude_code and claude-code spellings.
-    s.replace('-', "_").parse()
 }
 
 pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result<()> {

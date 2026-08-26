@@ -5,7 +5,7 @@ use super::*;
 
 use clap::FromArgMatches;
 
-use ariadne_core::{GoalStatus, MergeStrategy, Role, TaskStatus};
+use ariadne_core::{AgentKind, GoalStatus, MergeStrategy, Role, TaskStatus};
 
 use crate::commands::profile::PromptAssignment;
 
@@ -239,46 +239,53 @@ fn a_message_is_addressed_only_when_to_says_so() {
     );
 }
 
-/// The model each agent runs on is chosen on the way in, and every spelling
-/// lands in the field the request is built from: `--model` for the planner and
-/// the engineer, `--reviewer PROFILE=MODEL` per reviewer slot, and `--model
-/// default` on an edit for "back to the profile's".
+/// What each agent runs on is chosen on the way in, agent first: `--agent`
+/// for the planner and the engineer, `--reviewer PROFILE=AGENT[:MODEL]` per
+/// reviewer slot, and every spelling lands in the field the request is built
+/// from.
 #[test]
-fn a_model_can_be_chosen_for_every_agent_on_the_line() {
-    let Command::Goal {
-        command: GoalCommand::Create { model, .. },
-    } = parse(&[
-        "ariadne",
-        "goal",
-        "create",
-        "--title",
-        "Ship it",
-        "--repo",
-        "01REPO",
-        "--model",
-        "gpt-5.3-codex",
-    ])
-    .command
-    else {
-        panic!("goal create")
+fn an_agent_can_be_chosen_for_every_agent_on_the_line() {
+    let planner = |args: &[&str]| {
+        let mut argv = vec![
+            "ariadne", "goal", "create", "--title", "Ship it", "--repo", "01REPO",
+        ];
+        argv.extend_from_slice(args);
+        let Command::Goal {
+            command: GoalCommand::Create { agent, model, .. },
+        } = parse(&argv).command
+        else {
+            panic!("goal create")
+        };
+        (agent, model)
     };
-    assert_eq!(model.as_deref(), Some("gpt-5.3-codex"));
-
-    let Command::Goal {
-        command: GoalCommand::Create { model, .. },
-    } = parse(&[
-        "ariadne", "goal", "create", "--title", "Ship it", "--repo", "01REPO",
-    ])
-    .command
-    else {
-        panic!("goal create")
-    };
-    assert_eq!(model, None, "and no model is the planner profile's own");
+    assert_eq!(
+        planner(&["--agent", "codex", "--model", "gpt-5.3-codex"]),
+        (Some(AgentKind::Codex), Some("gpt-5.3-codex".to_string()))
+    );
+    assert_eq!(
+        planner(&["--agent", "codex"]),
+        (Some(AgentKind::Codex), None),
+        "an agent on its own runs that CLI on its own default model"
+    );
+    assert_eq!(
+        planner(&[]),
+        (None, None),
+        "and neither is the planner profile's own agent and model"
+    );
+    assert_eq!(
+        planner(&["--agent", "claude-code"]).0,
+        Some(AgentKind::ClaudeCode),
+        "the hyphenated spelling names the same CLI"
+    );
 
     let Command::Task {
-        command: TaskCommand::Create {
-            model, reviewers, ..
-        },
+        command:
+            TaskCommand::Create {
+                agent,
+                model,
+                reviewers,
+                ..
+            },
     } = parse(&[
         "ariadne",
         "task",
@@ -286,54 +293,127 @@ fn a_model_can_be_chosen_for_every_agent_on_the_line() {
         "01GOAL",
         "--title",
         "Do it",
+        "--agent",
+        "claude_code",
         "--model",
-        "gpt-5.6-sol",
+        "claude-opus-5",
         "--reviewer",
-        "Reviewer=ollama/llama3:8b",
+        "Reviewer=codex:o3",
         "--reviewer",
-        "rev-strict",
+        "rev-strict=opencode",
+        "--reviewer",
+        "Security",
     ])
     .command
     else {
         panic!("task create")
     };
-    assert_eq!(model.as_deref(), Some("gpt-5.6-sol"));
+    assert_eq!(agent, Some(AgentKind::ClaudeCode));
+    assert_eq!(model.as_deref(), Some("claude-opus-5"));
     assert_eq!(
         reviewers
             .iter()
-            .map(|r| (r.profile.as_str(), r.model.as_deref()))
+            .map(|r| (r.profile.as_str(), r.agent_kind, r.model.as_deref()))
             .collect::<Vec<_>>(),
-        [("Reviewer", Some("ollama/llama3:8b")), ("rev-strict", None)],
+        [
+            ("Reviewer", Some(AgentKind::Codex), Some("o3")),
+            ("rev-strict", Some(AgentKind::Opencode), None),
+            ("Security", None, None),
+        ],
         "in the order they were typed, which is review order"
     );
 
-    let Command::Task {
-        command: TaskCommand::Update { model, .. },
-    } = parse(&["ariadne", "task", "update", "01TASK", "--model", "default"]).command
-    else {
-        panic!("task update")
+    let edited = |args: &[&str]| {
+        let mut argv = vec!["ariadne", "task", "update", "01TASK"];
+        argv.extend_from_slice(args);
+        let Command::Task {
+            command: TaskCommand::Update { agent, model, .. },
+        } = parse(&argv).command
+        else {
+            panic!("task update")
+        };
+        (agent, model)
     };
-    assert_eq!(model.as_deref(), Some("default"));
+    assert_eq!(
+        edited(&["--agent", "default"]),
+        (Some("default".to_string()), None),
+        "\"default\" hands the task back to its engineer profile's pins"
+    );
+    assert_eq!(
+        edited(&["--agent", "claude-code"]).0,
+        Some("claude_code".to_string()),
+        "and a kind travels in the spelling the daemon reads"
+    );
+    assert_eq!(
+        edited(&["--agent", "codex", "--model", "gpt-5.3-codex"]),
+        (Some("codex".to_string()), Some("gpt-5.3-codex".to_string()))
+    );
+    assert_eq!(edited(&["--title", "Do it better"]), (None, None));
 }
 
-/// A `--reviewer` with nothing after its `=` is a typo, and it is refused
-/// where it was typed rather than sent to the daemon to be refused there.
+/// The agent is what places a model, so a `--model` with no `--agent` beside
+/// it is refused by clap on the line it was typed on — never a request the
+/// daemon has to turn down.
 #[test]
-fn a_reviewer_with_no_model_after_its_equals_is_a_usage_error() {
-    let err = try_parse(&[
-        "ariadne",
-        "task",
-        "create",
-        "01GOAL",
-        "--title",
-        "Do it",
-        "--reviewer",
-        "Reviewer=",
-    ])
-    .map(|_| ())
-    .expect_err("no model")
-    .to_string();
-    assert!(err.contains("no model after the ="), "{err}");
+fn a_model_with_no_agent_is_a_usage_error() {
+    let lines: [&[&str]; 3] = [
+        &[
+            "ariadne", "goal", "create", "--title", "Ship it", "--repo", "01REPO", "--model",
+            "gpt-5.3-codex",
+        ],
+        &[
+            "ariadne",
+            "task",
+            "create",
+            "01GOAL",
+            "--title",
+            "Do it",
+            "--model",
+            "gpt-5.3-codex",
+        ],
+        &["ariadne", "task", "update", "01TASK", "--model", "default"],
+    ];
+    for argv in lines {
+        let err = try_parse(argv)
+            .map(|_| ())
+            .expect_err("a model with no agent")
+            .to_string();
+        assert!(err.contains("--agent"), "{argv:?}: {err}");
+    }
+}
+
+/// `task update --agent` takes an agent CLI or the word "default" and nothing
+/// else: a kind that names no CLI is refused on the line it was typed on,
+/// never sent for the daemon to turn down.
+#[test]
+fn an_agent_that_names_no_cli_is_a_usage_error() {
+    let err = try_parse(&["ariadne", "task", "update", "01TASK", "--agent", "llama"])
+        .map(|_| ())
+        .expect_err("no such agent")
+        .to_string();
+    assert!(err.contains("unknown agent \"llama\""), "{err}");
+    assert!(err.contains("claude_code, codex, opencode"), "{err}");
+    assert!(err.contains("default"), "{err}");
+}
+
+/// A `--reviewer` that says half of what it means is a typo, and it is
+/// refused where it was typed rather than sent to the daemon to be refused
+/// there — with the form it accepts and the agent CLIs that stand in it.
+#[test]
+fn a_reviewer_that_names_no_real_agent_is_a_usage_error() {
+    let refused = |spec: &str| {
+        try_parse(&[
+            "ariadne", "task", "create", "01GOAL", "--title", "Do it", "--reviewer", spec,
+        ])
+        .map(|_| ())
+        .expect_err("a reviewer that says half of what it means")
+        .to_string()
+    };
+    let err = refused("Reviewer=llama");
+    assert!(err.contains("unknown agent \"llama\""), "{err}");
+    assert!(err.contains("claude_code, codex, opencode"), "{err}");
+    assert!(refused("Reviewer=").contains("no agent after the ="));
+    assert!(refused("Reviewer=codex:").contains("no model after the :"));
 }
 
 /// How a repository takes a change is the user's to set, on the way in

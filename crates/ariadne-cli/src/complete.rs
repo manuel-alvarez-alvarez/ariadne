@@ -192,7 +192,8 @@ fn ulid_after(verb: &str) -> Option<String> {
         .cloned()
 }
 
-/// Agent kinds for `profile create --agent`.
+/// Agent kinds for `--agent`: `profile create`, `goal create` and `task
+/// create`, where the choice is the agent CLI and only then a model of it.
 pub fn agent_kinds() -> Vec<CompletionCandidate> {
     AgentKind::ALL
         .into_iter()
@@ -205,6 +206,17 @@ pub fn agent_kinds_or_auto() -> Vec<CompletionCandidate> {
     let mut out = agent_kinds();
     out.push(
         CompletionCandidate::new("auto").help(Some("first installed CLI at spawn time".into())),
+    );
+    out
+}
+
+/// Agent kinds plus "default" for `task update --agent`, which is how a task
+/// is handed back to the pins of the profile behind it.
+pub fn agent_kinds_or_default() -> Vec<CompletionCandidate> {
+    let mut out = agent_kinds();
+    out.push(
+        CompletionCandidate::new("default")
+            .help(Some("the engineer profile's own agent and model".into())),
     );
     out
 }
@@ -267,9 +279,11 @@ fn assignment_kinds(current: &str) -> Vec<CompletionCandidate> {
         .collect()
 }
 
-/// Model candidates for `--model`, scoped to the agent in play: an explicit
-/// `--agent` earlier on the line wins; otherwise, when updating an existing
-/// profile, its stored agent kind; otherwise the union of all agents.
+/// Model candidates for `--model`, scoped to the agent in play: the `--agent`
+/// earlier on the line wins — and on `goal create`, `task create` and `task
+/// update` it is the only thing that scopes them, since `--model` is not
+/// accepted without it; otherwise, when updating an existing profile, its
+/// stored agent kind; otherwise the union of all agents.
 ///
 /// The catalog comes from the daemon (`GET /v1/models`, the list the UI
 /// offers, opencode discovery included) when it answers within the budget; a

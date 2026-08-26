@@ -13,10 +13,10 @@ use ariadne_api::tasks::{
 };
 use ariadne_api::usage::TokenUsageDto;
 use ariadne_client::Client;
-use ariadne_core::TaskStatus;
+use ariadne_core::{AgentKind, TaskStatus};
 
-use edit::{parse_reviewer, resolve_repo, update_request};
-use super::{ProfileNames, confirm, print_messages, query_path};
+use edit::{parse_agent_or_default, parse_reviewer, resolve_repo, update_request};
+use super::{ProfileNames, confirm, parse_agent, print_messages, query_path};
 use crate::output::{
     Column, Format, UNCAPPED, dash, local_time, note, print, print_kv, print_list, usage_cell,
     usage_summary, yes_no,
@@ -73,15 +73,19 @@ pub enum TaskCommand {
         /// Engineer profile id or name that owns the task
         #[arg(long, default_value = "Engineer", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::engineer_profiles))]
         engineer: String,
-        /// Model the engineer runs on (default: the engineer profile's own).
-        /// The agent CLI follows the model, so a model of another CLI moves
-        /// the engineer onto it
-        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
+        /// Agent CLI the engineer runs on: claude_code | codex | opencode
+        /// (default: the engineer profile's own agent and model)
+        #[arg(long, value_parser = parse_agent, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::agent_kinds))]
+        agent: Option<AgentKind>,
+        /// Model that agent CLI runs the engineer on (default: its own default
+        /// model); only alongside --agent, which is what places a model
+        #[arg(long, requires = "agent", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
         model: Option<String>,
         /// Reviewer profile id or name, in review order; repeatable. Add
-        /// `=MODEL` to run that reviewer on a model of your choosing
-        /// (`--reviewer Reviewer=gpt-5.3-codex`)
-        #[arg(long = "reviewer", value_name = "PROFILE[=MODEL]", default_value = "Reviewer", value_parser = parse_reviewer, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::reviewer_profiles))]
+        /// `=AGENT` to run that reviewer on an agent CLI of your choosing, and
+        /// `:MODEL` after it for the model there
+        /// (`--reviewer Reviewer=codex:gpt-5.3-codex`)
+        #[arg(long = "reviewer", value_name = "PROFILE[=AGENT[:MODEL]]", default_value = "Reviewer", value_parser = parse_reviewer, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::reviewer_profiles))]
         reviewers: Vec<ReviewerAssignment>,
         /// Id of a task that must merge before this one starts; repeatable
         #[arg(long = "depends-on", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
@@ -93,10 +97,11 @@ pub enum TaskCommand {
     },
     /// Edit a task that has not started yet
     ///
-    /// Title, description, model, reviewers and dependencies, while the
-    /// task is still pending or ready — once an engineer is on it the daemon
-    /// refuses the edit. Every flag left out keeps what the task already has;
-    /// `--reviewer` and `--depends-on` replace the whole list they name.
+    /// Title, description, what the engineer runs on, reviewers and
+    /// dependencies, while the task is still pending or ready — once an
+    /// engineer is on it the daemon refuses the edit. Every flag left out
+    /// keeps what the task already has; `--reviewer` and `--depends-on`
+    /// replace the whole list they name.
     Update {
         /// Task id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
@@ -107,14 +112,18 @@ pub enum TaskCommand {
         /// New description
         #[arg(short = 'd', long)]
         description: Option<String>,
-        /// Model the engineer runs on, or "default" to put it back on the
-        /// engineer profile's own
-        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
+        /// Agent CLI the engineer runs on: claude_code | codex | opencode, or
+        /// "default" for the engineer profile's own agent and model
+        #[arg(long, value_parser = parse_agent_or_default, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::agent_kinds_or_default))]
+        agent: Option<String>,
+        /// Model that agent CLI runs the engineer on (default: its own default
+        /// model); only alongside --agent, which is what places a model
+        #[arg(long, requires = "agent", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
         model: Option<String>,
-        /// Reviewer profile id or name, optionally `=MODEL`, in review order;
-        /// repeatable, and replaces the task's reviewers rather than adding
-        /// to them
-        #[arg(long = "reviewer", value_name = "PROFILE[=MODEL]", value_parser = parse_reviewer, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::reviewer_profiles))]
+        /// Reviewer profile id or name, optionally `=AGENT` or `=AGENT:MODEL`,
+        /// in review order; repeatable, and replaces the task's reviewers
+        /// rather than adding to them
+        #[arg(long = "reviewer", value_name = "PROFILE[=AGENT[:MODEL]]", value_parser = parse_reviewer, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::reviewer_profiles))]
         reviewers: Vec<ReviewerAssignment>,
         /// Id of a task that must merge first; repeatable, and replaces the
         /// task's dependencies rather than adding to them
@@ -224,6 +233,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             title,
             description,
             engineer,
+            agent,
             model,
             reviewers,
             depends_on,
@@ -241,7 +251,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                         description,
                         repo_id,
                         engineer_profile: engineer,
-                        agent_kind: None,
+                        agent_kind: agent,
                         model,
                         reviewers,
                         depends_on,
@@ -254,6 +264,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             id,
             title,
             description,
+            agent,
             model,
             reviewers,
             depends_on,
@@ -262,6 +273,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             let body = update_request(
                 title,
                 description,
+                agent,
                 model,
                 reviewers,
                 depends_on,

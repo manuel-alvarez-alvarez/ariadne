@@ -334,6 +334,13 @@ pub fn query_path(base: &str, query: &impl serde::Serialize) -> Result<String> {
     })
 }
 
+/// One `--agent <kind>` off the command line, in either of its spellings: the
+/// wire one the daemon uses (`claude_code`) and the hyphenated one a shell
+/// user reaches for (`claude-code`) name the same CLI.
+fn parse_agent(s: &str) -> Result<AgentKind, String> {
+    s.replace('-', "_").parse()
+}
+
 /// One caller-typed value as a single path segment.
 ///
 /// Profiles answer to their name as well as their id, and a name is free text
