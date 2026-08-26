@@ -10,15 +10,8 @@
 # to $TMPDIR/ariadne-uninstall.log — never into ~/.ariadne, which --purge
 # deletes — and are only shown when a step fails.
 #
-# Usage: scripts/uninstall.sh [--prefix DIR] [--purge] [--verbose] [--quiet]
-#                             [--dry-run] [--yes] [--help]
-#   --prefix DIR  binaries location if no install manifest exists (default: ~/.local/bin)
-#   --purge       also delete ~/.ariadne (database, worktrees, run dirs, logs)
-#   --verbose     stream subcommand output instead of capturing it
-#   --quiet       print errors and the final summary only
-#   --dry-run     print the steps that would run, change nothing
-#   --yes, -y     accepted for symmetry with install.sh; nothing here asks
-#   --help, -h    show usage
+# The options are in usage() below, which is what --help prints; they are not
+# repeated here so the two cannot drift apart.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -58,42 +51,22 @@ done
 ui_init
 trap 'ui_on_err $?' ERR
 
-OS="$(uname -s)"
-ARIADNE_HOME="${ARIADNE_HOME:-$HOME/.ariadne}"
-MANIFEST="$ARIADNE_HOME/install.env"
+# The same locations install.sh writes, as the defaults; the manifest of the
+# install actually being undone then overrides whichever of them it records.
+ui_locations
 LOG_FILE="${TMPDIR:-/tmp}/ariadne-uninstall.log"
-PLIST_LABEL="dev.ariadne.daemon"
-
-# Defaults, overridden by the manifest when present.
-DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}"
 ARIADNE_PREFIX="$PREFIX"
-ARIADNE_BASH_COMPLETION="$DATA_DIR/bash-completion/completions/ariadne"
-ARIADNE_ZSH_COMPLETION="$DATA_DIR/zsh/site-functions/_ariadne"
-ARIADNE_PLIST="$HOME/Library/LaunchAgents/$PLIST_LABEL.plist"
-ARIADNE_UNIT="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/ariadned.service"
 # Only ever set by the manifest: an install that skipped the desktop app - and
 # any manifest written before it existed - leaves nothing to remove.
 ARIADNE_APP=""
 MANIFEST_FOUND=0
-if [ -f "$MANIFEST" ]; then
+if [ -f "$ARIADNE_MANIFEST" ]; then
     MANIFEST_FOUND=1
     # shellcheck disable=SC1090
-    . "$MANIFEST"
+    . "$ARIADNE_MANIFEST"
 fi
 
-case "$OS" in
-    Darwin) SERVICE_DESC="launchd $PLIST_LABEL" ;;
-    Linux) SERVICE_DESC="systemd --user ariadned.service" ;;
-    *) SERVICE_DESC="none on $OS" ;;
-esac
-
-strip_block() {
-    local file="$1"
-    [ -f "$file" ] || return 0
-    awk '/^# >>> ariadne >>>/{skip=1} skip==0{print} /^# <<< ariadne <<</{skip=0}' \
-        "$file" > "$file.ariadne-tmp"
-    mv "$file.ariadne-tmp" "$file"
-}
+SERVICE_DESC="$(ui_service_desc "none on $OS")"
 
 # --- the plan ------------------------------------------------------------------
 # One plan_add per step, in execution order; the step count adapts to the flags.
@@ -106,7 +79,7 @@ plan_add "Removing the install manifest"
 ui_start
 
 ui_header "Ariadne uninstaller" \
-    "manifest  $(ui_tilde "$MANIFEST")$([ "$MANIFEST_FOUND" = 1 ] || printf ' (absent - using defaults)')" \
+    "manifest  $(ui_tilde "$ARIADNE_MANIFEST")$([ "$MANIFEST_FOUND" = 1 ] || printf ' (absent - using defaults)')" \
     "data      $([ "$PURGE" = 1 ] && printf 'deleted (--purge)' || printf 'kept')" \
     "log       $(ui_tilde "$LOG_FILE")"
 
@@ -119,21 +92,7 @@ ui_log_init "$LOG_FILE"
 
 # --- daemon service ----------------------------------------------------------
 step_begin
-case "$OS" in
-    Darwin)
-        run_logged launchctl bootout "gui/$(id -u)/$PLIST_LABEL" || true
-        rm -f "$ARIADNE_PLIST"
-        ;;
-    Linux)
-        run_logged systemctl --user disable --now ariadned.service || true
-        rm -f "$ARIADNE_UNIT"
-        run_logged systemctl --user daemon-reload || true
-        ;;
-esac
-# A manually started daemon, if any.
-if [ -f "$ARIADNE_HOME/ariadned.pid" ]; then
-    kill "$(cat "$ARIADNE_HOME/ariadned.pid")" 2>/dev/null || true
-fi
+ui_stop_daemon unregister
 step_ok
 
 # --- binaries -------------------------------------------------------------------
@@ -165,13 +124,13 @@ fi
 # --- completions ------------------------------------------------------------------
 step_begin
 rm -f "$ARIADNE_BASH_COMPLETION" "$ARIADNE_ZSH_COMPLETION"
-strip_block "$HOME/.bashrc"
-strip_block "${ZDOTDIR:-$HOME}/.zshrc"
+ui_strip_block "$ARIADNE_BASHRC"
+ui_strip_block "$ARIADNE_ZSHRC"
 step_ok
 
 # --- manifest ---------------------------------------------------------------------
 step_begin
-rm -f "$MANIFEST"
+rm -f "$ARIADNE_MANIFEST"
 if [ "$MANIFEST_FOUND" = 1 ]; then
     step_ok
 else

@@ -18,22 +18,8 @@
 # Output is a numbered step list; noisy subcommands (cargo, npm, launchctl,
 # systemctl) go to ~/.ariadne/install.log and are only shown when a step fails.
 #
-# Usage: scripts/install.sh [--build-from-source] [--version vX.Y.Z]
-#                           [--prefix DIR] [--no-service] [--no-completions]
-#                           [--no-codex-hooks] [--no-ui] [--verbose] [--quiet]
-#                           [--dry-run] [--yes] [--help]
-#   --build-from-source  compile locally instead of downloading a release
-#   --version vX.Y.Z   release to install (default: the latest one)
-#   --prefix DIR       install binaries into DIR (default: ~/.local/bin)
-#   --no-service       skip daemon service registration
-#   --no-completions   skip shell completion installation
-#   --no-codex-hooks   skip the Codex hook trust prompt
-#   --no-ui            skip installing the Ariadne Desktop app
-#   --verbose          stream subcommand output instead of capturing it
-#   --quiet            print errors and the final summary only
-#   --dry-run          print the steps that would run, change nothing
-#   --yes, -y          non-interactive: skip anything that would ask
-#   --help, -h         show usage
+# The options are in usage() below, which is what --help prints; they are not
+# repeated here so the two cannot drift apart.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -101,17 +87,9 @@ esac
 ui_init
 trap 'ui_on_err $?' ERR
 
-OS="$(uname -s)"
-ARIADNE_HOME="${ARIADNE_HOME:-$HOME/.ariadne}"
-MANIFEST="$ARIADNE_HOME/install.env"
+# Where everything goes, and the names the manifest records them under.
+ui_locations
 LOG_FILE="$ARIADNE_HOME/install.log"
-PLIST_LABEL="dev.ariadne.daemon"
-PLIST_PATH="$HOME/Library/LaunchAgents/$PLIST_LABEL.plist"
-UNIT_PATH="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/ariadned.service"
-DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}"
-BASH_DIR="$DATA_DIR/bash-completion/completions"
-ZSH_DIR="$DATA_DIR/zsh/site-functions"
-ZSHRC="${ZDOTDIR:-$HOME}/.zshrc"
 APP_NAME="Ariadne Desktop"
 APP_SRC_DIR="$REPO_DIR/ui"
 APP_TARGET_DIR="$APP_SRC_DIR/src-tauri/target/release"
@@ -128,21 +106,8 @@ STAGE_DIR=""       # scratch directory the assets are downloaded into
 # ours still gets everything before that step, and fails inside it.
 SERVICE_DESC=""
 if [ "$WITH_SERVICE" = 1 ]; then
-    case "$OS" in
-        Darwin) SERVICE_DESC="launchd $PLIST_LABEL" ;;
-        Linux) SERVICE_DESC="systemd --user ariadned.service" ;;
-        *) SERVICE_DESC="unsupported on $OS" ;;
-    esac
+    SERVICE_DESC="$(ui_service_desc "unsupported on $OS")"
 fi
-
-# Remove a previously added "# >>> ariadne >>> ... # <<< ariadne <<<" block.
-strip_block() {
-    local file="$1"
-    [ -f "$file" ] || return 0
-    awk '/^# >>> ariadne >>>/{skip=1} skip==0{print} /^# <<< ariadne <<</{skip=0}' \
-        "$file" > "$file.ariadne-tmp"
-    mv "$file.ariadne-tmp" "$file"
-}
 
 # npm, run from ui/: the Tauri CLI resolves src-tauri/ relative to the cwd.
 app_npm() {
@@ -274,7 +239,7 @@ if [ "$WITH_SERVICE" = 1 ]; then
     plan_add "Waiting for the daemon"
 fi
 [ "$WITH_CODEX_HOOKS" = 1 ] && plan_add "Trusting Ariadne's Codex hooks"
-plan_add "Writing the install manifest $UI_ARROW $(ui_tilde "$MANIFEST")"
+plan_add "Writing the install manifest $UI_ARROW $(ui_tilde "$ARIADNE_MANIFEST")"
 plan_add "Checking the installation (ariadne doctor)"
 ui_start
 
@@ -292,9 +257,9 @@ ui_log_init "$LOG_FILE"
 
 # --- previous install (for cross-prefix idempotency) --------------------------
 OLD_PREFIX=""
-if [ -f "$MANIFEST" ]; then
+if [ -f "$ARIADNE_MANIFEST" ]; then
     # shellcheck disable=SC1090
-    OLD_PREFIX="$(. "$MANIFEST" && echo "${ARIADNE_PREFIX:-}")"
+    OLD_PREFIX="$(. "$ARIADNE_MANIFEST" && echo "${ARIADNE_PREFIX:-}")"
 fi
 
 # --- build, or download and verify ---------------------------------------------
@@ -347,14 +312,9 @@ else
 fi
 
 # --- stop whatever is currently running ------------------------------------------
+# The service stays registered: this only frees the binaries to be replaced.
 step_begin
-case "$OS" in
-    Darwin) run_logged launchctl bootout "gui/$(id -u)/$PLIST_LABEL" || true ;;
-    Linux) run_logged systemctl --user stop ariadned.service || true ;;
-esac
-if [ -f "$ARIADNE_HOME/ariadned.pid" ]; then
-    kill "$(cat "$ARIADNE_HOME/ariadned.pid")" 2>/dev/null || true
-fi
+ui_stop_daemon
 sleep 1
 step_ok
 
@@ -396,8 +356,9 @@ if [ "$WITH_UI" = 1 ] && [ "$BUILD_FROM_SOURCE" = 0 ]; then
             APP_BUNDLE="$STAGE_DIR/$APP_NAME.app"
             [ -d "$APP_BUNDLE" ] || ui_die "$APP_ASSET holds no $APP_NAME.app"
             ;;
-        Linux) APP_BUNDLE="$STAGE_DIR/$APP_ASSET" ;;
-        *) ui_die "unsupported OS for the desktop app: $OS (use --no-ui)" ;;
+        # Any other OS died in detect_target long before this; install_app_bundle
+        # is the one place that refuses it, here and in the build branch below.
+        *) APP_BUNDLE="$STAGE_DIR/$APP_ASSET" ;;
     esac
     install_app_bundle "$APP_BUNDLE"
     clear_quarantine "$APP_PATH"
@@ -413,14 +374,9 @@ elif [ "$WITH_UI" = 1 ]; then
         step_skip "no $(ui_tilde "$APP_SRC_DIR/package.json") - skipping $APP_NAME"
     else
         # ci is reproducible but demands a lockfile in sync with package.json;
-        # a stale one is no reason to fail the whole install.
-        if [ -f "$APP_SRC_DIR/package-lock.json" ]; then
-            app_npm ci || app_npm install \
-                || ui_die "npm install in ui/ failed (--no-ui skips the app)"
-        else
-            app_npm install \
-                || ui_die "npm install in ui/ failed (--no-ui skips the app)"
-        fi
+        # a stale or missing one is no reason to fail the whole install.
+        app_npm ci || app_npm install \
+            || ui_die "npm install in ui/ failed (--no-ui skips the app)"
         app_npm run tauri build \
             || ui_die "npm run tauri build failed (--no-ui skips the app)"
 
@@ -444,9 +400,7 @@ elif [ "$WITH_UI" = 1 ]; then
                 done
                 [ -n "$APP_BUNDLE" ] || ui_die "the build produced no AppImage and no binary"
                 ;;
-            *)
-                ui_die "unsupported OS for the desktop app: $OS (use --no-ui)"
-                ;;
+            *) APP_BUNDLE="" ;;
         esac
         install_app_bundle "$APP_BUNDLE"
         APP_STATE="$(ui_tilde "$APP_PATH")"
@@ -462,11 +416,11 @@ if [ "$WITH_COMPLETIONS" = 1 ]; then
     # the ariadne binary on TAB, which queries the daemon for live candidates
     # (task/goal/session ids, profile names). Remove static files from older
     # installs so they cannot shadow the dynamic registration.
-    rm -f "$BASH_DIR/ariadne" "$ZSH_DIR/_ariadne"
+    rm -f "$ARIADNE_BASH_COMPLETION" "$ARIADNE_ZSH_COMPLETION"
 
-    if [ -f "$HOME/.bashrc" ]; then
-        strip_block "$HOME/.bashrc"
-        cat >> "$HOME/.bashrc" <<EOF
+    if [ -f "$ARIADNE_BASHRC" ]; then
+        ui_strip_block "$ARIADNE_BASHRC"
+        cat >> "$ARIADNE_BASHRC" <<EOF
 # >>> ariadne >>>
 [ -x "$PREFIX/ariadne" ] && source <(COMPLETE=bash "$PREFIX/ariadne")
 # <<< ariadne <<<
@@ -474,11 +428,11 @@ EOF
         COMPLETION_SHELLS="bash"
     fi
 
-    if [ -f "$ZSHRC" ]; then
-        strip_block "$ZSHRC"
+    if [ -f "$ARIADNE_ZSHRC" ]; then
+        ui_strip_block "$ARIADNE_ZSHRC"
         # compdef only exists after compinit; the guard keeps shells without
         # compsys working.
-        cat >> "$ZSHRC" <<EOF
+        cat >> "$ARIADNE_ZSHRC" <<EOF
 # >>> ariadne >>>
 if [ -x "$PREFIX/ariadne" ] && (( \$+functions[compdef] )); then
     source <(COMPLETE=zsh "$PREFIX/ariadne")
@@ -502,13 +456,13 @@ if [ "$WITH_SERVICE" = 1 ]; then
     mkdir -p "$ARIADNE_HOME"
     case "$OS" in
         Darwin)
-            mkdir -p "$(dirname "$PLIST_PATH")"
-            cat > "$PLIST_PATH" <<EOF
+            mkdir -p "$(dirname "$ARIADNE_PLIST")"
+            cat > "$ARIADNE_PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>Label</key><string>$PLIST_LABEL</string>
+    <key>Label</key><string>$ARIADNE_PLIST_LABEL</string>
     <key>ProgramArguments</key>
     <array><string>$PREFIX/ariadned</string></array>
     <key>EnvironmentVariables</key>
@@ -526,12 +480,12 @@ if [ "$WITH_SERVICE" = 1 ]; then
 </dict>
 </plist>
 EOF
-            run_logged launchctl bootstrap "gui/$(id -u)" "$PLIST_PATH" \
+            run_logged launchctl bootstrap "gui/$(id -u)" "$ARIADNE_PLIST" \
                 || ui_die "launchctl bootstrap failed"
             ;;
         Linux)
-            mkdir -p "$(dirname "$UNIT_PATH")"
-            cat > "$UNIT_PATH" <<EOF
+            mkdir -p "$(dirname "$ARIADNE_UNIT")"
+            cat > "$ARIADNE_UNIT" <<EOF
 [Unit]
 Description=Ariadne coding-agent orchestrator daemon
 
@@ -592,16 +546,16 @@ fi
 # --- manifest (read by uninstall.sh) ---------------------------------------------------
 step_begin
 mkdir -p "$ARIADNE_HOME"
-cat > "$MANIFEST" <<EOF
+cat > "$ARIADNE_MANIFEST" <<EOF
 # Written by scripts/install.sh — read by scripts/uninstall.sh.
 ARIADNE_PREFIX="$PREFIX"
-ARIADNE_BASH_COMPLETION="$BASH_DIR/ariadne"
-ARIADNE_ZSH_COMPLETION="$ZSH_DIR/_ariadne"
-ARIADNE_PLIST="$PLIST_PATH"
-ARIADNE_UNIT="$UNIT_PATH"
+ARIADNE_BASH_COMPLETION="$ARIADNE_BASH_COMPLETION"
+ARIADNE_ZSH_COMPLETION="$ARIADNE_ZSH_COMPLETION"
+ARIADNE_PLIST="$ARIADNE_PLIST"
+ARIADNE_UNIT="$ARIADNE_UNIT"
 EOF
 # Absent when the app was skipped; uninstall.sh then has nothing to remove.
-[ -n "$APP_PATH" ] && printf 'ARIADNE_APP="%s"\n' "$APP_PATH" >> "$MANIFEST"
+[ -n "$APP_PATH" ] && printf 'ARIADNE_APP="%s"\n' "$APP_PATH" >> "$ARIADNE_MANIFEST"
 step_ok
 
 # --- checkup ----------------------------------------------------------------------------
@@ -646,7 +600,7 @@ fi
 ui_field "desktop app" "$APP_STATE"
 [ "$WITH_CODEX_HOOKS" = 1 ] && ui_field "codex hooks" "$CODEX_STATE"
 ui_field "checkup" "ariadne doctor - $DOCTOR_STATE"
-ui_field "manifest" "$(ui_tilde "$MANIFEST")"
+ui_field "manifest" "$(ui_tilde "$ARIADNE_MANIFEST")"
 ui_field "log" "$(ui_tilde "$LOG_FILE")"
 printf '\n'
 
@@ -657,7 +611,7 @@ esac
 
 if [ "$WITH_SERVICE" = 1 ]; then
     case "$OS" in
-        Darwin) STOP_HINT="launchctl bootout gui/\$(id -u)/$PLIST_LABEL" ;;
+        Darwin) STOP_HINT="launchctl bootout gui/\$(id -u)/$ARIADNE_PLIST_LABEL" ;;
         Linux) STOP_HINT="systemctl --user stop ariadned" ;;
     esac
     printf '  %sthe daemon restarts on failure; stop it with: %s%s\n' \

@@ -77,6 +77,74 @@ ui_tilde() {
     esac
 }
 
+# --- what an install puts where -------------------------------------------------
+# install.sh writes these paths into the manifest and uninstall.sh reads them
+# back, so the two scripts have to agree on them exactly. They are resolved
+# here once instead of being spelled out on both sides.
+#
+# Call before sourcing a manifest: an uninstall lets the manifest of the
+# install it is undoing override every one of them.
+ui_locations() {
+    local _data_dir
+    OS="$(uname -s)"
+    ARIADNE_HOME="${ARIADNE_HOME:-$HOME/.ariadne}"
+    ARIADNE_MANIFEST="$ARIADNE_HOME/install.env"
+    ARIADNE_PLIST_LABEL="dev.ariadne.daemon"
+    ARIADNE_PLIST="$HOME/Library/LaunchAgents/$ARIADNE_PLIST_LABEL.plist"
+    ARIADNE_UNIT="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/ariadned.service"
+    _data_dir="${XDG_DATA_HOME:-$HOME/.local/share}"
+    ARIADNE_BASH_COMPLETION="$_data_dir/bash-completion/completions/ariadne"
+    ARIADNE_ZSH_COMPLETION="$_data_dir/zsh/site-functions/_ariadne"
+    ARIADNE_BASHRC="$HOME/.bashrc"
+    ARIADNE_ZSHRC="${ZDOTDIR:-$HOME}/.zshrc"
+}
+
+# How the daemon is registered on this OS, for step titles and summaries.
+# $1 is what to say on an OS Ariadne registers no service for.
+ui_service_desc() {
+    case "$OS" in
+        Darwin) printf 'launchd %s' "$ARIADNE_PLIST_LABEL" ;;
+        Linux) printf 'systemd --user ariadned.service' ;;
+        *) printf '%s' "$1" ;;
+    esac
+}
+
+# Remove a previously added "# >>> ariadne >>> ... # <<< ariadne <<<" block.
+ui_strip_block() {
+    local file="$1"
+    [ -f "$file" ] || return 0
+    awk '/^# >>> ariadne >>>/{skip=1} skip==0{print} /^# <<< ariadne <<</{skip=0}' \
+        "$file" > "$file.ariadne-tmp"
+    mv "$file.ariadne-tmp" "$file"
+}
+
+# Stop whatever daemon is running: the registered service, plus one started by
+# hand from its pid file. With `unregister`, the service is also disabled and
+# its unit file deleted - what the uninstaller wants, where the installer only
+# wants the binaries free to be replaced.
+ui_stop_daemon() {
+    local mode="${1:-}"
+    case "$OS" in
+        Darwin)
+            run_logged launchctl bootout "gui/$(id -u)/$ARIADNE_PLIST_LABEL" || true
+            if [ "$mode" = unregister ]; then rm -f "$ARIADNE_PLIST"; fi
+            ;;
+        Linux)
+            if [ "$mode" = unregister ]; then
+                run_logged systemctl --user disable --now ariadned.service || true
+                rm -f "$ARIADNE_UNIT"
+                run_logged systemctl --user daemon-reload || true
+            else
+                run_logged systemctl --user stop ariadned.service || true
+            fi
+            ;;
+    esac
+    if [ -f "$ARIADNE_HOME/ariadned.pid" ]; then
+        kill "$(cat "$ARIADNE_HOME/ariadned.pid")" 2>/dev/null || true
+    fi
+    return 0
+}
+
 # --- header, plan and summary --------------------------------------------------
 
 ui_header() {
@@ -93,12 +161,6 @@ ui_header() {
 # A label/value pair, aligned; used by the closing summary.
 ui_field() {
     printf '  %s%-13s%s %s\n' "$UI_D" "$1" "$UI_R" "$2"
-}
-
-ui_note() {
-    [ "$UI_QUIET" = 1 ] && return 0
-    printf '      %s%s %s%s\n' "$UI_D" "$UI_BULLET" "$1" "$UI_R"
-    return 0
 }
 
 ui_warn() {

@@ -3,14 +3,11 @@
 Instructions for coding agents working in this repository. Read them before
 you commit.
 
-## Repository layout
+## Where things are, and what checks them
 
-- `crates/` — the Cargo workspace: `ariadne-core` (domain types, task state
-  machine), `ariadne-api` (REST DTOs), `ariadne-store` (SQLite),
-  `ariadne-client` (REST client), `ariadne-daemon` (`ariadned`),
-  `ariadne-cli` (`ariadne`, MCP server, hook sink).
-- `ui/` — Ariadne Desktop (Tauri 2 + React), outside the cargo workspace.
-- `scripts/` — `install.sh` / `uninstall.sh` and their shared `lib.sh`.
+The tree, area by area, is [`README.md`'s Workspace
+layout](README.md#workspace-layout); `ui/` has its own
+[`ui/README.md`](ui/README.md).
 
 Before changing anything, read the surrounding code and match its style,
 naming and tooling. Run `cargo test` and `cargo clippy --all-targets` for Rust
@@ -18,17 +15,21 @@ changes; in `ui/`, `npm test`, `npm run typecheck` and `npm run lint`.
 
 ## Commit messages
 
+This is the one place the commit types are written down: `README.md` and
+[`.github/RELEASING.md`](.github/RELEASING.md) point here rather than repeat
+the list.
+
 Write every commit subject as a [Conventional
 Commit](https://www.conventionalcommits.org): `type(scope): subject`, with a
 lowercase type and an imperative subject ("add", not "added"/"adds").
 
 Allowed types, and what each one does to a release:
 
-- `feat` — minor bump while the project is pre-1.0.
-- `fix`, `perf`, `revert` — patch bump.
-- `docs`, `refactor`, `test`, `chore`, `style`, `build`, `ci` — hidden: they
-  ride along in a release triggered by something else and never trigger one on
-  their own.
+| Type | Effect while pre-1.0 |
+| --- | --- |
+| `feat` | minor bump (0.1.0 → 0.2.0) |
+| `fix`, `perf`, `revert` | patch bump (0.1.0 → 0.1.1) |
+| `docs`, `refactor`, `test`, `chore`, `style`, `build`, `ci` | hidden: they ride along in a release triggered by something else and never trigger one on their own |
 
 Mark a breaking change with `!` before the colon (`feat!: …`) or a
 `BREAKING CHANGE:` footer; while pre-1.0 that is still a minor bump.
@@ -39,7 +40,9 @@ names: `ui`, `daemon`, `cli`, `store`, `api`, `core`, `mcp`, `prompts`,
 
 Release notes and version bumps are generated from commit messages by
 release-please, so write subjects a user can read in a changelog: say what
-changed for them, not which file you edited.
+changed for them, not which file you edited. Anything that is not a
+conventional commit is silently ignored — it neither appears in the notes nor
+moves the version.
 
 ## History
 

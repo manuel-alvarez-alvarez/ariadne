@@ -28,16 +28,15 @@ npm run tauri build    # packaged app + installers under src-tauri/target/releas
 ```
 
 The daemon URL defaults to `http://127.0.0.1:7676` and is editable in the
-settings dialog (the gear in the header). It is persisted to `localStorage`
-under `ariadne.settings`; the theme lives under `ariadne.theme`. Changing the
-URL clears the query cache and reconnects the event stream.
+settings dialog (the gear in the header, or `⌘,`). It is persisted to
+`localStorage` under `ariadne.settings`; the theme lives under `ariadne.theme`.
+Changing the URL clears the query cache and reconnects the event stream.
 
 The sticky footer at the bottom of the window carries the connection state:
 green when both `/v1/health` and the event stream are live, amber when REST
-works but the stream is down (screens load but stop updating themselves), red
-when the daemon is unreachable. Hover it for the URL, daemon version and
-uptime; it is a button, and a coming task attaches the daemon-logs drawer to
-the click.
+works but the stream is down (screens load but stop updating themselves) or the
+daemon is still being reached, red when it is unreachable. Hover it for the URL,
+daemon version and uptime; clicking it opens the daemon-logs drawer.
 
 ### Scripts
 
@@ -50,6 +49,7 @@ the click.
 | `npm run lint` | Biome lint + format check |
 | `npm run lint:fix` | Biome, applying safe fixes |
 | `npm run format` | Biome formatter only |
+| `npm run check:unused` | fails on a declared dependency nothing imports, or an export no other file imports |
 | `npm run gen:api` | regenerate the API types (below) |
 | `npm run tauri <cmd>` | the Tauri CLI (`dev`, `build`, `info`, …) |
 
@@ -78,20 +78,27 @@ are unaffected.
 
 ```
 src/
-  api/             typed HTTP client, generated types, query-key convention
-  events/          the SSE connection and its dispatcher
+  api/             typed HTTP client, generated types, the query-key convention,
+                   and the query building blocks the features share
+  events/          the one SSE connection, its dispatcher, the reconnect machinery
   stores/          zustand: settings (daemon URL), stream status
-  hooks/           shared hooks (connection state, global shortcuts)
-  routes/          router, URL helpers, 404
-  components/      app shell, sidebar, theme + settings + status
+  hooks/           shared hooks (connection state, global shortcuts, focus return)
+  lib/             format, clipboard, keyboard chords
+  routes/          the route table, URL/panel helpers, 404
+  components/      app shell, sidebar, theme + settings + connection, and the
+                   table / form dialog / delete dialog / panel pieces features reuse
     ui/            shadcn/ui primitives
   features/
     command-palette/ ⌘K: search over every entity, plus the actions
-    goals/         goals list + goal detail (incl. its task board)
-    tasks/         task detail
-    sessions/      session list + session detail, embedded by the panels
-    profiles/      profiles screen
+    goals/         the goals board (swimlanes, attention strip) and the goal panel
+    tasks/         the task panel: facts, diff, reviews, history, conversation
+    sessions/      the sessions screen, the session panel and the terminal
+    profiles/      profiles screen and the prompts a profile overrides
+    repositories/  the registered checkouts goals are created against
     agents/        agent-kind screen: the flags each CLI is launched with
+    system/        the daemon-logs drawer and the log stream behind it
+  test/            setup, render harness, DTO fixtures and the browser stand-ins
+                   the suite shares
 src-tauri/         the Tauri shell (deliberately empty: no commands)
 ```
 
@@ -102,11 +109,11 @@ desktop shell and the UI's dependency tree stays out of `Cargo.lock`.
 ### Calling the daemon
 
 ```ts
-import { api, ApiError, qk, unwrap } from "@/api"
+import { api, qk, unwrap } from "@/api"
 
-const goals = useQuery({
-  queryKey: qk.goals.list({ limit: 50 }),
-  queryFn: () => unwrap(api().GET("/v1/goals", { params: { query: { limit: 50 } } })),
+const tasks = useQuery({
+  queryKey: qk.tasks.list({ goal: goalId }),
+  queryFn: () => unwrap(api().GET("/v1/tasks", { params: { query: { goal: goalId } } })),
 })
 ```
 
@@ -116,6 +123,10 @@ daemon's `{error: {code, message, details}}` envelope — branch on `error.code`
 (`task_not_found`, `illegal_transition`, …) rather than parsing messages.
 `error.isNetworkError` is the "never reached the daemon" case.
 
+`src/api/types.ts` holds only the schema aliases the app actually reads: it is
+not a complete mapping of the document, and `npm run check:unused` fails on an
+alias nothing imports. Add one when a screen needs it.
+
 ## Conventions
 
 ### Query keys
@@ -124,18 +135,27 @@ Defined once in `src/api/query-keys.ts` and used through the `qk` helper — nev
 write a key literal. Every key is `[entity, "list" | "detail", ...]`:
 
 ```
-["goals",    "list",   filters]        ["goals",    "detail", id]
-["tasks",    "list",   filters]        ["tasks",    "detail", id]
-["sessions", "list",   filters]        ["sessions", "detail", id]
-["profiles", "list",   filters]        ["profiles", "detail", id]
+["goals",        "list", filters]   ["goals",    "detail", id]
+["tasks",        "list", filters]   ["tasks",    "detail", id]
+["sessions",     "list", filters]   ["sessions", "detail", id]
+["profiles",     "list", filters]   ["profiles", "detail", id]
+["repositories", "list", filters]   ["repositories", "detail", id]
+["agents",       "list", {}]        ["models",   "list", {}]
+["agent-events", "list", filters]   ["system",   "health" | "version"]
 ```
 
 Sub-resources hang off their detail key: `["tasks", "detail", id, "messages"]`,
 `… "reviews"`, `… "transitions"`, `… "diff"`, `["goals", "detail", id,
-"messages"]`, `["sessions", "detail", id, "logs"]`. Two consequences the event
-dispatcher depends on: invalidating `qk.tasks.lists()` refetches every task list
-without disturbing an open detail view, and invalidating a detail key also
-invalidates that entity's sub-resources.
+"messages"]`, `["sessions", "detail", id, "logs"]`, `["profiles", "detail", id,
+"prompts"]`. Two consequences the event dispatcher depends on: invalidating
+`qk.tasks.lists()` refetches every task list without disturbing an open detail
+view, and invalidating a detail key also invalidates that entity's
+sub-resources.
+
+`src/api/queries.ts` holds what the features would otherwise each spell out:
+`cacheRow` / `dropRow` (write the detail entry, refetch the lists), `useRowAction`
+(a confirmed action, optimistic where the landing status is knowable) and
+`usePostMessage`.
 
 ### The event stream
 
@@ -154,6 +174,7 @@ the query cache and it stays live.
 | event | effect |
 |---|---|
 | `goal_created`, `goal_updated` | patch `goals.detail`, invalidate `goals.lists` |
+| `goal_deleted` | remove `goals.detail`, invalidate `goals.lists` and every task and session key |
 | `task_created` | patch `tasks.detail`, invalidate `tasks.lists` |
 | `task_updated` | patch `tasks.detail`, invalidate `tasks.lists`, and `tasks.transitions` when the event carries a transition |
 | `message_created` | invalidate `tasks.messages` or, for a goal-level message, `goals.messages` |
@@ -162,13 +183,18 @@ the query cache and it stays live.
 | `agent_event` | invalidate `agentEvents.lists` |
 | `profile_created`, `profile_updated` | patch `profiles.detail`, invalidate `profiles.lists` |
 | `profile_deleted` | remove `profiles.detail`, invalidate `profiles.lists` |
+| `repository_created` | patch `repositories.detail`, invalidate `repositories.lists` |
+| `repository_updated` | the same, plus every goal key — goals carry their repositories inline |
+| `repository_deleted` | remove `repositories.detail`, invalidate `repositories.lists` |
 
 The daemon has **no replay**: anything that happened while the stream was down
 is simply gone. So both a reconnect and the daemon's `resync` control event
 (sent when this client fell too far behind, just before the daemon hangs up)
-invalidate *everything*. `DomainEventStream` handles reconnection itself with
-capped exponential backoff and jitter, and publishes its state through
-`useStreamStore`.
+invalidate *everything*. Reconnection itself — capped exponential backoff with
+jitter, closing the old socket before opening a new one — is
+`src/events/reconnecting-stream.ts`, shared with the session-pane and
+daemon-log streams; `DomainEventStream` adds the protocol and publishes its
+state through `useStreamStore`.
 
 "Reconnect" here means *any open that follows a gap*, not just an open that
 follows a previous one. A first connection that only came up after a few failed
@@ -187,22 +213,30 @@ therefore also the stream's watchdog: losing it calls `forceReconnect`, getting
 it back calls `reconnectIfClosed` instead of waiting out the backoff. That is
 why `healthQueryOptions` is shared rather than restated per call site.
 
-`DOMAIN_EVENT_KINDS` in `src/events/stream.ts` is a total record over the
+`src/events/stream.ts` declares the event kinds as a total record over the
 generated `DomainEventKind`, and `dispatchDomainEvent` ends in a `never`
 exhaustiveness check — a new event kind in the daemon fails to compile in both
 places until it is handled.
 
 ### Routes
 
-A feature with screens of its own owns a `routes.tsx` exporting its
-`RouteObject[]`, which `src/routes/router.tsx` mounts under the shell. Add
-screens there, not in the router. Link with the helpers in
-`src/routes/paths.ts` rather than hand-written paths.
+Every route is in `src/routes/router.tsx`, and that is where a screen is added.
+There is no per-feature route file: there are a handful of routes, half of them
+one line, and a file that mounted one said less about its feature than the line
+it held. What the header calls a screen rides on the route's own `handle`.
 
-Not every feature has routes. Sessions has none: a session is opened from the
-Sessions tab of the goal or the task panel, which the `?tab=`/`?session=`
-search params drive (`panelSessionTo` in `src/routes/paths.ts` builds a link to
-one). `#/sessions` is not a URL the app answers — it falls through to the 404.
+Five screens have URLs of their own — `#/goals`, `#/sessions`, `#/profiles`,
+`#/agents`, `#/repositories` — and `#/` redirects onto the board. Goals, tasks
+and sessions have no pages: their details open as **side panels** driven by
+search params (`?goal=` on the board, `?task=` over any screen, `?session=` for
+a session's own panel, `?tab=sessions&session=` for a session inside a goal's or
+a task's panel), which `src/components/detail-panels.tsx` reads. The old
+`#/goals/:goalId` and `#/tasks/:taskId` deep links survive as redirects onto the
+board with the panel open.
+
+Link with the helpers in `src/routes/paths.ts` (`paths.goal`, `taskPanelTo`,
+`sessionPanelTo`, `panelSessionTo`, …) rather than hand-written paths, so a
+panel opened from a list keeps the screen and the filters behind it.
 
 A **hash router** is used on purpose: in a packaged build the frontend is served
 straight off Tauri's asset protocol with no history fallback, so a reload on a
@@ -214,20 +248,23 @@ deep link has to resolve client-side.
 |---|---|
 | `⌘K` / `Ctrl+K` | the command palette |
 | `⌘,` / `Ctrl+,` | settings |
+| `N` | new goal, from any screen |
+| `G` then `G`/`S`/`P`/`A`/`R` | goals, sessions, profiles, agents, repositories |
 | `Escape` | closes the palette, then the topmost panel |
 
-Both chords answer to **either** modifier, on every platform: the app runs in a
-Tauri WebView and in a browser tab, and a chord that silently does nothing
+The two ⌘ chords answer to **either** modifier, on every platform: the app runs
+in a Tauri WebView and in a browser tab, and a chord that silently does nothing
 because the platform was sniffed wrong is worse than one that answers to both.
 Only the hint printed next to the header's search button picks a side
 (`shortcutLabel` in `src/lib/shortcuts.ts`).
 
 They are bound once, by the shell, in `src/hooks/use-global-shortcuts.ts` —
 `window`, bubble phase, skipped when the keystroke was already handled or is
-going into a text field, a CodeMirror editor or the textarea xterm reads a
-session's pane through. `Escape` is deliberately *not* bound: it belongs to
-whatever is on top, and Base UI's dialogs already close the topmost one, so a
-global handler would take two layers down at once.
+going into a text field, an editor, or the textarea xterm reads a session's pane
+through. The typed chords are skipped inside a dialog or a menu too, where a
+bare letter belongs to whatever is on top. `Escape` is deliberately *not* bound:
+it belongs to whatever is on top, and Base UI's dialogs already close the
+topmost one, so a global handler would take two layers down at once.
 
 The palette (`src/features/command-palette/`) searches the goal, task, session
 and profile lists that are **already in the query cache** — the same keys their
@@ -250,31 +287,13 @@ prop, not `asChild`. Note that this style ships `field` (`Field`, `FieldLabel`,
 `FieldError`, …) instead of the older `form` wrapper; `react-hook-form` and
 `zod` are installed to go with it.
 
-Add components with `npx shadcn@latest add <name>`. Two known snags: it may
-write to a literal `@/` directory (move the files into `src/`), and its output
-occasionally trips `noUnusedLocals` or a Biome rule — fix the file, or add an
-override under `src/components/ui/**` in `biome.json`.
+Add components with `npx shadcn@latest add <name>`. Three known snags: it may
+write to a literal `@/` directory (move the files into `src/`), its output
+occasionally trips `noUnusedLocals` or a Biome rule (fix the file, or add an
+override under `src/components/ui/**` in `biome.json`), and `npm run
+check:unused` fails on a primitive nothing renders — so use what you scaffold,
+or delete it.
 
-## Rules for the screen tasks
-
-The four feature tasks (goals, tasks, sessions, profiles) run **in parallel**.
-Sessions is the exception to "screen": it owns no route of its own — its list
-and detail views are embedded by the goal and task panels' Sessions tab.
-Each one owns exactly one directory under `src/features/` and must stay inside
-it:
-
-- **Do not edit `package.json`.** Everything the screens need is already
-  installed: CodeMirror 6 (including `@codemirror/merge` and
-  `@uiw/react-codemirror`), `@xterm/xterm` with the fit and WebGL addons,
-  `react-markdown` + `remark-gfm`, and the shadcn/ui primitives listed in
-  `src/components/ui/`. If something is genuinely missing, say so in the task
-  thread rather than adding it.
-- **Do not edit the shared files**: `src/api/**`, `src/events/**`,
-  `src/stores/**`, `src/lib/**`, `src/routes/router.tsx`,
-  `src/components/app-shell.tsx`, `src/components/app-sidebar.tsx`, the theme,
-  settings and connection components, or `biome.json` / the tsconfigs. Adding a
-  new shadcn primitive under `src/components/ui/` is fine.
-- **Add routes in your feature's own `routes.tsx`**, which the router already
-  mounts.
-- `src/components/stub-screen.tsx` is scaffolding: drop the import when you
-  replace your stub. The file goes away with the last usage.
+`shadcn` itself stays in `dependencies` rather than `devDependencies`:
+`src/index.css` imports `shadcn/tailwind.css`, so it is a runtime dependency and
+not only the scaffolding CLI.

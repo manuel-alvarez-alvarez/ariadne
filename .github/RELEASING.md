@@ -25,22 +25,17 @@ does all three from the commit history.
 ## Commit messages
 
 Only [conventional commits](https://www.conventionalcommits.org) are seen by
-release-please. Everything else — including the `scope: message` style most of
-this repository's history uses — is silently ignored: it neither appears in the
+release-please. Everything else is silently ignored: it neither appears in the
 notes nor moves the version.
 
-| Commit                                     | Effect while pre-1.0                |
-| ------------------------------------------ | ----------------------------------- |
-| `feat: …`                                  | minor bump (0.1.0 → 0.2.0)          |
-| `fix: …`, `perf: …`, `revert: …`           | patch bump (0.1.0 → 0.1.1)          |
-| `feat!: …`, or a `BREAKING CHANGE:` footer | minor bump (`bump-minor-pre-major`) |
+**The allowed types and what each one does to a release are in
+[`AGENTS.md`](../AGENTS.md#commit-messages)**, which is what anyone writing a
+commit here reads first; they are written down there and nowhere else.
 
-`docs:`, `refactor:`, `test:`, `chore:`, `style:`, `build:` and `ci:` are
-hidden: they ride along in a release triggered by something else, but on their
-own they produce no release PR at all.
-
-`feat!:` deliberately does not jump to 1.0.0 while the project is pre-1.0; drop
-`bump-minor-pre-major` from `release-please-config.json` when 1.0 is the intent.
+One thing here is configuration rather than convention: `feat!:` deliberately
+does not jump to 1.0.0 while the project is pre-1.0, which is what
+`bump-minor-pre-major` in `release-please-config.json` buys — drop it when 1.0
+is the intent.
 
 ## What one bump touches
 
