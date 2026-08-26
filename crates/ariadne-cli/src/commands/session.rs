@@ -23,8 +23,9 @@ use crate::output::{
 /// because the two are orthogonal: an agent blocked on a permission prompt is
 /// still `running`, and the status alone says nothing about it.
 ///
-/// `tokens` is what the session spent, `in/out`; the cache is in `session
-/// inspect`, since a column is scanned rather than read.
+/// `tokens` is what the session spent, in over an up arrow and out over a
+/// down one; the cache is in `session inspect`, since a column is scanned
+/// rather than read.
 const LS: &[Column] = &[
     ("id", UNCAPPED),
     ("context", 40),

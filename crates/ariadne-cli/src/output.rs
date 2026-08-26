@@ -145,49 +145,75 @@ pub fn at(rfc3339: Option<&str>) -> String {
     rfc3339.map_or_else(|| "-".to_string(), local_time)
 }
 
-/// A token count as a person reads it: exact under a thousand, and scaled to
-/// one decimal above it (`950`, `12.3k`, `1.2M`).
+/// A token count as a person reads it: the digits under a thousand, then
+/// three figures at most — `950`, `1.2k`, `45k`, `1.2M`, `12M`.
 ///
 /// Counts run from zero to tens of millions, and the digits past the first
 /// few are noise in a table: what a reader wants from them is the order of
-/// magnitude, side by side with the row above.
+/// magnitude, side by side with the row above. The same rule as the web's
+/// `formatTokens`, character for character, so a count reads the same in a
+/// terminal and on a screen.
+///
+/// The bands are cut where the rounding lands rather than where the unit
+/// does, so a count that rounds up out of its band is spelled by the band
+/// above it: 9_950 is `10k`, the way ten thousand itself is written, never
+/// `10.0k`, and 999_500 is `1M` rather than `1000k`.
 pub fn tokens(count: u64) -> String {
     if count < 1_000 {
-        return count.to_string();
-    }
-    // 999_950 upwards rounds to `1000.0k`, which is `1.0M` spelled long.
-    match count < 999_950 {
-        true => scaled(count, 1_000, 'k'),
-        false => scaled(count, 1_000_000, 'M'),
+        count.to_string()
+    } else if count < 9_950 {
+        tenths(count, 1_000, 'k')
+    } else if count < 999_500 {
+        whole(count, 1_000, 'k')
+    } else if count < 9_950_000 {
+        tenths(count, 1_000_000, 'M')
+    } else {
+        whole(count, 1_000_000, 'M')
     }
 }
 
-/// What one agent, task or goal spent, in a line: what went in, how much of
-/// it the prompt cache served, and what came out.
+/// What one agent, task or goal spent, in a line: the cell, and then how much
+/// of what went in the prompt cache served.
+///
+/// It opens on exactly what the table cell shows, so the figure a row was
+/// scanned for is the figure the block starts with.
 pub fn usage_summary(usage: &TokenUsageDto) -> String {
     format!(
-        "in {} (cached {}) · out {}",
-        tokens(usage.input_tokens),
+        "{} ({} cached)",
+        usage_cell(usage),
         tokens(usage.cached_input_tokens),
-        tokens(usage.output_tokens),
     )
 }
 
-/// The same spend as a table cell: `in/out`, with the cache left to
-/// `usage_summary` — a column is for comparing rows, not for reading one.
+/// The same spend as a table cell: what went in under an up arrow and what
+/// came out under a down one, with the cache left to [`usage_summary`] — a
+/// column is for comparing rows, not for reading one.
 pub fn usage_cell(usage: &TokenUsageDto) -> String {
     format!(
-        "{}/{}",
+        "↑{} ↓{}",
         tokens(usage.input_tokens),
         tokens(usage.output_tokens)
     )
 }
 
-/// `count` over `unit`, rounded to one decimal — half away from zero, so the
-/// last digit is the nearest one and not the one that fell out of a float.
-fn scaled(count: u64, unit: u64, suffix: char) -> String {
-    let tenths = (u128::from(count) * 10 + u128::from(unit) / 2) / u128::from(unit);
-    format!("{}.{}{suffix}", tenths / 10, tenths % 10)
+/// `count` over `unit` to a tenth, with a trailing `.0` dropped: `1.2k`, `2k`.
+fn tenths(count: u64, unit: u64, suffix: char) -> String {
+    let tenths = rounded(count, unit / 10);
+    match tenths % 10 {
+        0 => format!("{}{suffix}", tenths / 10),
+        frac => format!("{}.{frac}{suffix}", tenths / 10),
+    }
+}
+
+/// `count` over `unit` as a whole number: `45k`, `12M`.
+fn whole(count: u64, unit: u64, suffix: char) -> String {
+    format!("{}{suffix}", rounded(count, unit))
+}
+
+/// `count` over `step`, rounded half away from zero — so the last digit shown
+/// is the nearest one, and not the one that fell out of a float.
+fn rounded(count: u64, step: u64) -> u128 {
+    (u128::from(count) + u128::from(step) / 2) / u128::from(step)
 }
 
 /// A flag as a cell: `yes`, or `no_word` — `-` in a table, `no` in a block.
@@ -304,55 +330,79 @@ mod tests {
         }
     }
 
-    /// Exact while the digits still mean something, scaled once they stop:
-    /// a table is read down a column, and 12_345 next to 1_204_567 says
-    /// nothing that `12.3k` next to `1.2M` does not.
+    /// Three figures at most, and the digits themselves while they still mean
+    /// something: a table is read down a column, and 12_345 next to
+    /// 1_234_567 says nothing that `12k` next to `1.2M` does not.
+    ///
+    /// The same table the web's `formatTokens` is held to, count for count:
+    /// a figure that reads one way in a terminal and another on a screen is
+    /// two figures to whoever is comparing them.
     #[test]
-    fn a_token_count_is_exact_under_a_thousand_and_scaled_above_it() {
+    fn a_token_count_is_spelled_the_way_the_web_spells_it() {
         assert_eq!(tokens(0), "0");
         assert_eq!(tokens(950), "950");
         assert_eq!(tokens(999), "999");
-        assert_eq!(tokens(1_000), "1.0k");
-        assert_eq!(tokens(12_345), "12.3k");
-        assert_eq!(tokens(45_300), "45.3k");
-        assert_eq!(tokens(1_204_567), "1.2M");
-        assert_eq!(tokens(23_456_789), "23.5M");
-    }
-
-    /// The last digit is the nearest one, and a count that rounds past its
-    /// own unit moves up to the next one rather than reading `1000.0k`.
-    #[test]
-    fn a_scaled_count_rounds_to_its_nearest_tenth() {
-        assert_eq!(tokens(1_249), "1.2k");
-        assert_eq!(tokens(1_250), "1.3k");
-        assert_eq!(tokens(999_949), "999.9k");
-        assert_eq!(tokens(999_950), "1.0M");
-        assert_eq!(tokens(1_049_999), "1.0M");
-        assert_eq!(tokens(1_050_000), "1.1M");
+        assert_eq!(tokens(1_000), "1k");
+        assert_eq!(tokens(1_234), "1.2k");
+        assert_eq!(tokens(1_950), "2k");
+        assert_eq!(tokens(9_949), "9.9k");
+        assert_eq!(tokens(9_950), "10k");
+        assert_eq!(tokens(45_300), "45k");
+        assert_eq!(tokens(516_000), "516k");
+        assert_eq!(tokens(999_499), "999k");
+        assert_eq!(tokens(999_500), "1M");
+        assert_eq!(tokens(1_234_567), "1.2M");
+        assert_eq!(tokens(1_950_000), "2M");
+        assert_eq!(tokens(9_949_999), "9.9M");
+        assert_eq!(tokens(9_950_000), "10M");
+        assert_eq!(tokens(12_345_678), "12M");
     }
 
     /// Nothing spent is `0` spent: a blank or a dash in this line would read
     /// as a figure the daemon does not have.
     #[test]
     fn a_spend_of_nothing_is_zeros_and_not_a_dash() {
-        assert_eq!(
-            usage_summary(&TokenUsageDto::default()),
-            "in 0 (cached 0) · out 0"
-        );
-        assert_eq!(usage_cell(&TokenUsageDto::default()), "0/0");
+        assert_eq!(usage_cell(&TokenUsageDto::default()), "↑0 ↓0");
+        assert_eq!(usage_summary(&TokenUsageDto::default()), "↑0 ↓0 (0 cached)");
     }
 
-    /// The block line carries the cache, the cell leaves it out: one is read
-    /// on its own, the other against the rows around it.
+    /// The cell is what went in and what came out, the block line is that
+    /// same pair plus the cache: one is read on its own, the other against
+    /// the rows around it, and the second opens on the first.
     #[test]
-    fn a_spend_reads_as_a_line_in_a_block_and_as_in_over_out_in_a_cell() {
+    fn a_spend_reads_as_arrows_in_a_cell_and_carries_the_cache_in_a_block() {
         let usage = TokenUsageDto {
-            input_tokens: 1_204_567,
+            input_tokens: 1_234_567,
             cached_input_tokens: 1_100_000,
             output_tokens: 45_300,
         };
-        assert_eq!(usage_summary(&usage), "in 1.2M (cached 1.1M) · out 45.3k");
-        assert_eq!(usage_cell(&usage), "1.2M/45.3k");
+        assert_eq!(usage_cell(&usage), "↑1.2M ↓45k");
+        assert_eq!(usage_summary(&usage), "↑1.2M ↓45k (1.1M cached)");
+    }
+
+    /// The arrows are three bytes each, and a column padded by bytes would
+    /// leave every row with a spend in it short of the one above.
+    #[test]
+    fn columns_stay_aligned_when_a_cell_carries_the_arrows() {
+        let usage = |input, output| {
+            usage_cell(&TokenUsageDto {
+                input_tokens: input,
+                cached_input_tokens: 0,
+                output_tokens: output,
+            })
+        };
+        let cols: &[Column] = &[("tokens", UNCAPPED), ("branch", UNCAPPED)];
+        let rows = [
+            vec![usage(1_234_567, 45_300), "one".into()],
+            vec![usage(0, 0), "two".into()],
+        ];
+        let out = table_lines(cols, &rows, false);
+        let branch = |line: &String| {
+            line.find("one")
+                .or_else(|| line.find("two"))
+                .map(|byte| line[..byte].chars().count())
+        };
+        assert_eq!(branch(&out[1]), branch(&out[2]), "{out:?}");
     }
 
     #[test]

@@ -565,10 +565,10 @@ mod tests {
     /// know".
     #[test]
     fn a_task_that_has_spent_nothing_says_zero() {
-        assert_eq!(ls_row(&dto())[6], "0/0");
+        assert_eq!(ls_row(&dto())[6], "↑0 ↓0");
         assert_eq!(
             usage_lines(&dto()).lines().next().unwrap(),
-            "in 0 (cached 0) · out 0"
+            "↑0 ↓0 (0 cached)"
         );
     }
 
@@ -594,14 +594,14 @@ mod tests {
         assert_eq!(
             usage_lines(&t),
             [
-                "in 1.2M (cached 1.1M) · out 45.3k",
-                "              engineer  in 1.2M (cached 1.1M) · out 45.0k",
-                "              Reviewer  in 4.6k (cached 0) · out 300",
-                "              Security  in 0 (cached 0) · out 0",
+                "↑1.2M ↓45k (1.1M cached)",
+                "              engineer  ↑1.2M ↓45k (1.1M cached)",
+                "              Reviewer  ↑4.6k ↓300 (0 cached)",
+                "              Security  ↑0 ↓0 (0 cached)",
             ]
             .join("\n")
         );
-        assert_eq!(ls_row(&t)[6], "1.2M/45.3k", "the row carries the total");
+        assert_eq!(ls_row(&t)[6], "↑1.2M ↓45k", "the row carries the total");
     }
 
     /// A profile that spent on the task without holding one of its slots is
@@ -621,7 +621,7 @@ mod tests {
             ..dto()
         };
         assert!(
-            usage_lines(&t).contains("01GONE    in 400 (cached 0) · out 40"),
+            usage_lines(&t).contains("01GONE    ↑400 ↓40 (0 cached)"),
             "{}",
             usage_lines(&t)
         );
@@ -667,7 +667,7 @@ mod tests {
                 "0",
                 "-",
                 "yes",
-                "0/0",
+                "↑0 ↓0",
                 "add-the-frobnicator-01task",
             ]
         );

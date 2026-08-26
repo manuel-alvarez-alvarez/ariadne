@@ -19,7 +19,8 @@ use crate::output::{
 use super::query_path;
 
 /// Columns of `goal ls`. `tokens` is what every agent of the goal spent
-/// between them, `in/out`; the roles it splits into are in `goal inspect`.
+/// between them, in over an up arrow and out over a down one; the roles it
+/// splits into are in `goal inspect`.
 const LS: &[Column] = &[
     ("id", UNCAPPED),
     ("title", 48),
@@ -483,10 +484,10 @@ mod tests {
         assert_eq!(
             usage_lines(&g),
             [
-                "in 12.3M (cached 11.0M) · out 456.0k",
-                "             planner    in 345.0k (cached 300.0k) · out 6.0k",
-                "             engineers  in 10.0M (cached 9.0M) · out 400.0k",
-                "             reviewers  in 2.0M (cached 1.7M) · out 50.0k",
+                "↑12M ↓456k (11M cached)",
+                "             planner    ↑345k ↓6k (300k cached)",
+                "             engineers  ↑10M ↓400k (9M cached)",
+                "             reviewers  ↑2M ↓50k (1.7M cached)",
             ]
             .join("\n")
         );
@@ -500,10 +501,10 @@ mod tests {
         assert_eq!(
             usage_lines(&g),
             [
-                "in 0 (cached 0) · out 0",
-                "             planner    in 0 (cached 0) · out 0",
-                "             engineers  in 0 (cached 0) · out 0",
-                "             reviewers  in 0 (cached 0) · out 0",
+                "↑0 ↓0 (0 cached)",
+                "             planner    ↑0 ↓0 (0 cached)",
+                "             engineers  ↑0 ↓0 (0 cached)",
+                "             reviewers  ↑0 ↓0 (0 cached)",
             ]
             .join("\n")
         );
