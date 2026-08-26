@@ -26,11 +26,11 @@ import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { Markdown } from "@/components/markdown"
 import { StatusBadge } from "@/components/status-badge"
+import { goalUsageRows, TokenFigure } from "@/components/token-figure"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { TokenFigure } from "@/components/usage-breakdown"
 import { When } from "@/components/when"
 import { ProfileSummary } from "@/features/profiles/profile-summary"
 import { CreateTaskDialog } from "@/features/tasks/task-form-dialog"
@@ -251,7 +251,7 @@ function GoalView({
           <GoalThread goalId={goal.id} />
         </TabsContent>
         <TabsContent value="sessions" className="pt-3">
-          <GoalSessions goal={goal} onSelect={onSelectSession} />
+          <GoalSessions goalId={goal.id} onSelect={onSelectSession} />
         </TabsContent>
       </Tabs>
 
@@ -299,9 +299,13 @@ function GoalMetadata({ goal }: { goal: GoalDto }) {
         <When at={goal.updated_at} label="updated" />
       </Detail>
       <Detail label="Tokens">
-        {/* Every session of the goal, its planner's included; the Sessions tab
-            breaks the same total down by the role that spent it. */}
-        <TokenFigure usage={goal.usage.total} summary className="text-xs" />
+        {/* Every session of the goal, its planner's included, with the hint
+            breaking the same total down by the role that spent it. */}
+        <TokenFigure
+          usage={goal.usage.total}
+          rows={goalUsageRows(goal.usage)}
+          className="text-xs"
+        />
       </Detail>
       <Detail label="Repositories" className="sm:col-span-2 lg:col-span-3">
         <ul className="flex flex-col gap-1">

@@ -19,10 +19,10 @@ import { Link } from "react-router-dom"
 import type { GoalDto, TaskDto, TaskStatus } from "@/api"
 import { ErrorState } from "@/components/error-state"
 import { StatusBadge } from "@/components/status-badge"
+import { goalUsageRows, TokenFigure } from "@/components/token-figure"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { TokenFigure } from "@/components/usage-breakdown"
 import { When } from "@/components/when"
 import { type SessionAttention, SessionAttentionBadge } from "@/features/sessions/session-display"
 import {
@@ -268,8 +268,9 @@ function Lane({
           {plural(total, "task")} · created <When at={goal.created_at} label="created" /> ·{" "}
           {/* What the whole goal has cost — planner, engineers and reviewers —
               which is the one number the board can show without opening
-              anything. The sentence behind it says which half is which. */}
-          <TokenFigure usage={goal.usage.total} /> tokens
+              anything. The hint behind it names the halves and splits the
+              total between the three roles. */}
+          <TokenFigure usage={goal.usage.total} rows={goalUsageRows(goal.usage)} />
         </span>
       </header>
 

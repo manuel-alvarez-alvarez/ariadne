@@ -1,13 +1,12 @@
 /**
  * The agents that worked this task — the `session ls --task` equivalent, in
- * the task's own panel: what they have spent between them, the sessions table
- * filtered to this task, and the session that was picked from it, in full.
+ * the task's own panel: the sessions table filtered to this task, and the
+ * session that was picked from it, in full.
  *
- * The breakdown above the table is the task's own aggregate, split by who
- * spent it: its engineer, and one row per reviewer profile that has been on
- * it. It is what the daemon put on the task, not a sum over the rows below —
- * the table is one page of a filtered list, and adding it up would answer a
- * different question every time it scrolled.
+ * Just the table: what the task has spent is the figure in its facts, and the
+ * split by who spent it is the hint behind that figure (see
+ * {@link import("@/components/token-figure").TokenFigure}). Every row here
+ * carries its own session's figure besides.
  *
  * Picking one is drilling into it: {@link TaskSessionView} takes over the whole
  * panel (see `task-panel.tsx`), header and tabs included, with a link back to
@@ -30,14 +29,11 @@ import { useQuery } from "@tanstack/react-query"
 import { ArrowLeftIcon } from "lucide-react"
 import { Link } from "react-router-dom"
 
-import type { TaskDto, TaskUsage } from "@/api"
 import { ErrorState } from "@/components/error-state"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
-import { UsageBreakdown, type UsageRow } from "@/components/usage-breakdown"
-import { ProfileSummary } from "@/features/profiles/profile-summary"
 import { sessionQueryOptions } from "@/features/sessions/queries"
 import { SessionDetailView } from "@/features/sessions/session-detail-view"
 import { SessionsList } from "@/features/sessions/sessions-list"
@@ -45,69 +41,16 @@ import { shortId } from "@/lib/format"
 import { usePanelSessionTo } from "@/routes/paths"
 
 export function TaskSessions({
-  task,
+  taskId,
   onSelect,
 }: {
-  /** The whole task, for the usage it carries — the list only needs its id. */
-  task: TaskDto
+  taskId: string
   /** Selects a session, which opens it over the whole panel. */
   onSelect: (sessionId: string) => void
 }) {
-  return (
-    <div className="space-y-3">
-      <UsageBreakdown total={task.usage.total} rows={usageRows(task)} />
-      {/* The selected row marks itself: `SessionsList` reads the same
-          `?session=` this panel drives, so nothing has to be threaded
-          through the panel. */}
-      <SessionsList filters={{ task: task.id }} onSelect={(session) => onSelect(session.id)} />
-    </div>
-  )
-}
-
-/**
- * The task's agents, in the order the task lists them: its engineer, then each
- * reviewer profile the daemon has usage for — which is every reviewer that has
- * been spawned, and only those.
- *
- * A reviewer that has a slot on the task carries that slot's pin, so it reads
- * here exactly as it does in the task's facts. See {@link reviewerRow}.
- */
-function usageRows(task: TaskDto): UsageRow[] {
-  const engineer: UsageRow = {
-    key: "engineer",
-    role: "Engineer",
-    who: <ProfileSummary profileId={task.engineer_profile_id} pinned={task} />,
-    usage: task.usage.engineer,
-  }
-  const reviewers = task.usage.reviewers.map((reviewer) =>
-    reviewerRow(
-      reviewer,
-      task.reviewers.find((slot) => slot.profile_id === reviewer.profile_id),
-    ),
-  )
-  return [engineer, ...reviewers]
-}
-
-/**
- * One reviewer's line: the slot's own pin where the slot is still there, and
- * the name the daemon sent with the figures where it is not — a reviewer
- * replaced after it had already run spent what it spent, and dropping the row
- * would leave the total unaccounted for.
- */
-function reviewerRow(
-  reviewer: TaskUsage["reviewers"][number],
-  slot: TaskDto["reviewers"][number] | undefined,
-): UsageRow {
-  return {
-    key: reviewer.profile_id,
-    role: "Reviewer",
-    who: slot ? (
-      <ProfileSummary profileId={reviewer.profile_id} pinned={slot} />
-    ) : (
-      <span className="truncate">{reviewer.profile_name ?? shortId(reviewer.profile_id)}</span>
-    ),
-    usage: reviewer.usage,
-  }
+  // The selected row marks itself: `SessionsList` reads the same `?session=`
+  // this panel drives, so nothing has to be threaded through the panel.
+  return <SessionsList filters={{ task: taskId }} onSelect={(session) => onSelect(session.id)} />
 }
 
 /**

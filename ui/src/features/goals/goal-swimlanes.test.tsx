@@ -206,11 +206,15 @@ it("carries the goal's own total in the lane header", async () => {
   renderBoard()
 
   await screen.findByText(TASK.title)
-  const tokens = screen.getByText("1.2M/45.3k")
   // In the header, beside the task count and the goal's age — not on a card,
   // which is one task's worth of a figure that is the whole goal's.
-  expect(tokens.closest("header")).not.toBeNull()
-  expect(tokens.closest("header")?.textContent).toContain("1 task")
+  const meta = screen.getByText(/1 task · created/)
+  expect(meta.closest("header")).not.toBeNull()
+  // Input first and output after it, each behind its own arrow; the word the
+  // arrows stand for is there for a screen reader and nowhere else, since the
+  // header has no room to spell "tokens" out beside them.
+  expect(meta.textContent).toContain("1.2M in, 45k out")
+  expect(meta.textContent).not.toContain("tokens")
 })
 
 it("says zero for a goal whose agents have spent nothing", async () => {
@@ -218,5 +222,7 @@ it("says zero for a goal whose agents have spent nothing", async () => {
   renderBoard(aGoal())
 
   await screen.findByText(TASK.title)
-  expect(screen.getByText("0/0")).not.toBeNull()
+  // Both halves, and a figure rather than a dash: an agent that has spent
+  // nothing has spent nothing, which is a number the daemon knows.
+  expect(screen.getByText(/1 task · created/).textContent).toContain("0 in, 0 out")
 })

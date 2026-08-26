@@ -88,6 +88,14 @@ async function row(name: string): Promise<HTMLElement> {
   return found
 }
 
+/** A row's tokens figure, which is also the element the hint hangs off. */
+function tokens(row: HTMLElement): HTMLElement {
+  const cell = within(row).getAllByRole("cell").at(-2)
+  const figure = cell?.querySelector<HTMLElement>("[data-slot='tooltip-trigger']")
+  if (!figure) throw new Error("no tokens figure in the row")
+  return figure
+}
+
 beforeEach(() => {
   stubDaemon()
   localStorage.clear()
@@ -318,20 +326,18 @@ it("restores the filters under a panel the entry opened", async () => {
 it("carries each session's tokens, and zero for one that has reported none", async () => {
   renderPage()
 
-  const engineer = within(await row("Open Engineer session")).getByText("1.2M/45.3k")
-  expect(engineer).not.toBeNull()
-  // The planner has spent nothing yet, which is a figure of its own: a blank
-  // cell would read as a column the daemon has no answer for.
-  expect(within(await row("Open Planner session")).getByText("0/0")).not.toBeNull()
+  expect(tokens(await row("Open Engineer session")).textContent).toBe("1.2M in, 45k out")
+  // The planner has spent nothing yet, which is a figure of its own — both
+  // halves of it: a blank cell would read as a column the daemon has no
+  // answer for.
+  expect(tokens(await row("Open Planner session")).textContent).toBe("0 in, 0 out")
 })
 
-it("puts the whole sentence behind the tokens column in reach of a keyboard", async () => {
+it("puts the exact counts behind the tokens column in reach of a keyboard", async () => {
   renderPage()
 
-  // The cached share and the exact counts are what the column has no room
-  // for; the hint opens on focus, like the table's other two.
-  within(await row("Open Engineer session"))
-    .getByText("1.2M/45.3k")
-    .focus()
-  expect(await screen.findByText("in 1,234,567 (cached 1,100,000) · out 45,300")).not.toBeNull()
+  // The cached share and every digit of the two counts are what the column
+  // has no room for; the hint opens on focus, like the table's other two.
+  tokens(await row("Open Engineer session")).focus()
+  expect(await screen.findByText("In 1,234,567 (cached 1,100,000) · Out 45,300")).not.toBeNull()
 })

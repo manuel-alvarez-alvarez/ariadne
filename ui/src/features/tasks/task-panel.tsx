@@ -161,7 +161,7 @@ export function TaskPanel({
                 <TaskDiff taskId={taskId} />
               </TabsContent>
               <TabsContent value="sessions" className="pt-3">
-                <TaskSessions task={task.data} onSelect={selectSession} />
+                <TaskSessions taskId={task.data.id} onSelect={selectSession} />
               </TabsContent>
             </Tabs>
           </>

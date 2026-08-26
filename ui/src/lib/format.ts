@@ -27,8 +27,8 @@ import {
 /**
  * The language every formatted value is spelled in, pinned rather than taken
  * from the system: these strings sit in the middle of English sentences
- * ("updated 3 minutes ago", "in 1.2M (cached 1.1M)"), and a machine set to
- * another language would produce half-translated lines.
+ * ("updated 3 minutes ago", "In 1,234,567 (cached 1,100,000)"), and a machine
+ * set to another language would produce half-translated lines.
  */
 const LOCALE = "en"
 
@@ -53,48 +53,67 @@ export function plural(count: number, noun: string, many = `${noun}s`): string {
 // ── Tokens ────────────────────────────────────────────────────────────────
 
 /**
- * Token counts run to seven digits, and every surface that shows one is a
- * table cell, a card header or a 48rem panel column: `1234567` is both
- * unreadable and wider than the space it has. The compact form keeps three
- * significant digits, which is as much as a reader compares by — `12.3k` next
- * to `1.2M` says everything a row is read for, and the exact number is one
- * hover away wherever this is shown.
+ * Token counts run to eight digits, and every surface that shows one is a
+ * table cell, a lane header or a 48rem panel column: `1234567` is both
+ * unreadable and wider than the space it has. A figure keeps at most three
+ * digits of the count — `1.2k`, `45k`, `1.2M` — which is as much as a reader
+ * compares by, and the exact number is one hover away wherever this is shown.
+ *
+ * The decimal only appears while it says something. It separates `1.2k` from
+ * `9.9k`, where a tenth is a tenth of the whole figure; above ten of a unit it
+ * is noise, so `45k` and `12M` carry none. A round figure drops it too — `2k`,
+ * not the `2.0k` whose zero every row would have to be read past.
+ *
+ * Rounding is half away from zero at whatever precision is being shown, and it
+ * carries into the next band as it reaches it: 9,950 is `10k` and not the
+ * `10.0k` the band below would spell, 999,500 is `1M` and not `1000k`.
  *
  * Character for character what the CLI's own `tokens` prints (see
  * `crates/ariadne-cli/src/output.rs`): the same count has to read the same in
  * a terminal and on a screen, or the two look like they disagree about a
- * number neither of them is wrong about. That is what the decimal a scaled
- * figure always carries is for — `1.0M`, not the `1M` that would otherwise sit
- * in a column under `999.9k` looking like a different kind of value.
+ * number neither of them is wrong about.
  */
 export function formatTokens(count: number): string {
   const total = Math.max(0, Math.round(count))
   if (total < 1_000) return String(total)
-  // Rounded to one decimal *before* the unit is picked, so a count that rounds
-  // up into the next one is spelled in it: 999,960 is `1.0M`, never `1000.0k`.
-  const thousands = Math.round(total / 100) / 10
-  if (thousands < 1_000) return `${thousands.toFixed(1)}k`
-  return `${(Math.round(total / 100_000) / 10).toFixed(1)}M`
+  // Each band is rounded at its own precision *before* it is accepted, so a
+  // count that rounds out of one is spelled by the next: 9,950 rounds to ten
+  // thousand and falls through to the whole-k band, 999,500 to the M one.
+  const tenthsOfK = Math.round(total / 100) / 10
+  if (tenthsOfK < 10) return `${decimal(tenthsOfK)}k`
+  const wholeK = Math.round(total / 1_000)
+  if (wholeK < 1_000) return `${wholeK}k`
+  const tenthsOfM = Math.round(total / 100_000) / 10
+  if (tenthsOfM < 10) return `${decimal(tenthsOfM)}M`
+  return `${Math.round(total / 1_000_000)}M`
+}
+
+/** One decimal place, and none at all where it is a zero: `1.2`, `2`. */
+function decimal(value: number): string {
+  return value.toFixed(1).replace(/\.0$/, "")
 }
 
 const EXACT = new Intl.NumberFormat(LOCALE)
 
 /**
- * What an agent spent, as one line: `in 1.2M (cached 1.1M) · out 45.3k`.
+ * What an agent spent, to the digit: `In 1,234,567 (cached 1,100,000) · Out
+ * 45,300`.
  *
- * Cached input is a subset of the input beside it rather than a fourth number
+ * This is the hint behind a compact figure and nothing else's text — which is
+ * why it is spelled out rather than rounded: two counts a hundred thousand
+ * apart both read as `1.2M`, and the exact pair has to be reachable somewhere.
+ *
+ * Cached input is a subset of the input beside it rather than a third number
  * to add up, which is why it reads as a parenthesis on that half. It is shown
  * even at zero: a run with no cache hits is a fact about the run, and a
- * parenthesis that comes and goes down a column is harder to read than one
- * that says `0`.
- *
- * `exact` spells the same sentence with every digit, for the hint behind a
- * compact figure: the rounding must not be the only form a reader can get at,
- * since two counts a hundred thousand apart both round to `1.2M`.
+ * parenthesis that comes and goes is harder to read than one that says `0`.
  */
-export function usageSummary(usage: TokenUsage, { exact = false } = {}): string {
-  const spell = exact ? (count: number) => EXACT.format(count) : formatTokens
-  return `in ${spell(usage.input_tokens)} (cached ${spell(usage.cached_input_tokens)}) · out ${spell(usage.output_tokens)}`
+export function usageSummary({
+  input_tokens,
+  cached_input_tokens,
+  output_tokens,
+}: TokenUsage): string {
+  return `In ${EXACT.format(input_tokens)} (cached ${EXACT.format(cached_input_tokens)}) · Out ${EXACT.format(output_tokens)}`
 }
 
 // ── Identifiers ───────────────────────────────────────────────────────────

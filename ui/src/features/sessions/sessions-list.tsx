@@ -36,6 +36,7 @@ import type { GoalDto, SessionDto, TaskDto } from "@/api"
 import { CopyableIdMenu } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
+import { TokenFigure } from "@/components/token-figure"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   Table,
@@ -46,7 +47,6 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { TokenFigure } from "@/components/usage-breakdown"
 import { When, WhenDetail } from "@/components/when"
 // Both reached at their `queries` module rather than through the feature's
 // barrel: `@/features/tasks` re-exports the task panel, whose sessions tab is
@@ -267,8 +267,8 @@ function SessionRow({
         </div>
       </TableCell>
       {/* What this agent has spent, compact and right-aligned so the column
-          reads down: the whole sentence, cached input and exact counts
-          included, is the hint behind it. */}
+          reads down: the exact counts and the cached share of the input are
+          the hint behind it. */}
       <TableCell className="text-right text-xs text-muted-foreground">
         <TokenFigure usage={session.usage} />
       </TableCell>

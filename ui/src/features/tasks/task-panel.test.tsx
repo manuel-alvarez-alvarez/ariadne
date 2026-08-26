@@ -18,14 +18,14 @@
  *
  * The tokens are here for a different reason: the panel shows the daemon's own
  * aggregate twice over — the task's total in the facts, and the split by who
- * spent it above the sessions — and both have to be the figures the daemon
- * sent rather than anything added up here.
+ * spent it in the hint behind that total — and both have to be the figures the
+ * daemon sent rather than anything added up here.
  *
  * Everything is seeded into the query cache: what the daemon returns is
  * `queries.ts`'s story, and the tabs are `task-panel.tsx`'s own.
  */
 
-import { screen, within } from "@testing-library/react"
+import { screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { expect, it } from "vitest"
 
@@ -132,13 +132,17 @@ function fact(label: string): string {
   return (value.textContent ?? "").replaceAll("·", " ·").replaceAll("  ·", " ·")
 }
 
-/** The usage block above the sessions table, once that tab is open. */
-async function breakdown(): Promise<HTMLElement> {
-  await userEvent.setup().click(screen.getByRole("tab", { name: "Sessions" }))
-  const heading = await screen.findByRole("heading", { name: "Tokens" })
-  const block = heading.closest("section")
-  if (!block) throw new Error("no usage block around the Tokens heading")
-  return block
+/** The hint behind a fact's figure, opened the way a keyboard opens it. */
+async function hint(label: string): Promise<HTMLElement> {
+  const figure = screen
+    .getByText(label)
+    .nextElementSibling?.querySelector<HTMLElement>("[data-slot='tooltip-trigger']")
+  if (!figure) throw new Error(`no figure under "${label}"`)
+  figure.focus()
+  const exact = await screen.findByText(/^In \d/)
+  const popup = exact.closest<HTMLElement>("[data-slot='tooltip-content']")
+  if (!popup) throw new Error("no hint around the exact counts")
+  return popup
 }
 
 it("shows the engineer's pin, not what its profile says today", () => {
@@ -185,7 +189,7 @@ it("leaves the pull request row out of a task landed locally", () => {
 it("shows the task's total, as the daemon aggregated it", () => {
   mount()
 
-  expect(fact("Tokens")).toBe("in 1.2M (cached 1.1M) · out 45.3k")
+  expect(fact("Tokens")).toBe("1.2M in, 45k out")
 })
 
 it("says zero for a task whose agents have reported nothing", () => {
@@ -198,27 +202,33 @@ it("says zero for a task whose agents have reported nothing", () => {
     },
   })
 
-  expect(fact("Tokens")).toBe("in 0 (cached 0) · out 0")
+  expect(fact("Tokens")).toBe("0 in, 0 out")
 })
 
 it("breaks the total down by the agent that spent it, reviewers named", async () => {
   mount()
-  const block = await breakdown()
+  const popup = await hint("Tokens")
 
-  // The engineer reads as it does in the facts above — the task's pin, not
-  // what its profile says today — and carries its own half of the total.
-  expect(within(block).getByText("Engineer")).not.toBeNull()
-  expect(block.textContent).toContain("Builder")
-  expect(within(block).getByText("1.0M/40.0k")).not.toBeNull()
+  // The engineer first, then the one reviewer that has actually run — named
+  // by the daemon, since the figures are its own. The second slot has never
+  // been spawned and is not a line at all.
+  const who = [...popup.querySelectorAll("dt")].map((agent) => agent.textContent)
+  expect(who).toEqual(["Engineer", "Strict"])
+  expect(popup.textContent).not.toContain("Second")
 
-  // The reviewer that has run is named by its profile, with the pin of the
-  // slot it fills; the one that never has is not a row at all.
-  expect(within(block).getByText("Reviewer")).not.toBeNull()
-  expect(block.textContent).toContain("Strict")
-  expect(block.textContent).not.toContain("Second")
-  expect(within(block).getByText("234.6k/5.3k")).not.toBeNull()
+  const figures = [...popup.querySelectorAll("dd")].map((figure) => figure.textContent)
+  expect(figures).toEqual(["1M in, 40k out", "235k in, 5.3k out"])
 
-  // The total leads the block, and it is the task's own rather than the rows
-  // under it added up.
-  expect(block.textContent).toContain("in 1.2M (cached 1.1M) · out 45.3k")
+  // The exact counts lead the hint, and they are the task's own total rather
+  // than the lines under it added up.
+  expect(popup.textContent).toContain("In 1,234,567 (cached 1,100,000) · Out 45,300")
+})
+
+it("keeps the sessions tab to the sessions, with no breakdown above them", async () => {
+  mount()
+  await userEvent.setup().click(screen.getByRole("tab", { name: "Sessions" }))
+
+  // The figure in the facts carries the total and its split; a card repeating
+  // both above a table whose rows carry their own figures said it all twice.
+  expect(screen.queryByRole("heading", { name: "Tokens" })).toBeNull()
 })

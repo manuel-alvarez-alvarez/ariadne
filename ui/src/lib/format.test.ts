@@ -29,38 +29,31 @@ describe("plural", () => {
 })
 
 describe("formatTokens", () => {
-  it("shows a count under a thousand exactly, since it fits", () => {
-    expect(formatTokens(0)).toBe("0")
-    expect(formatTokens(950)).toBe("950")
-    expect(formatTokens(999)).toBe("999")
-  })
+  // The rule, band by band, in the one place both this and the CLI's own
+  // `tokens` can be read against each other: a count reads the same in a
+  // terminal and on a screen or the two look like they disagree about it.
+  const TABLE: [number, string][] = [
+    [0, "0"],
+    [950, "950"],
+    [999, "999"],
+    [1_000, "1k"],
+    [1_234, "1.2k"],
+    [1_950, "2k"],
+    [9_949, "9.9k"],
+    [9_950, "10k"],
+    [45_300, "45k"],
+    [516_000, "516k"],
+    [999_499, "999k"],
+    [999_500, "1M"],
+    [1_234_567, "1.2M"],
+    [1_950_000, "2M"],
+    [9_949_999, "9.9M"],
+    [9_950_000, "10M"],
+    [12_345_678, "12M"],
+  ]
 
-  it("keeps one decimal of the unit it fits in, and keeps it at zero", () => {
-    expect(formatTokens(1_000)).toBe("1.0k")
-    expect(formatTokens(12_345)).toBe("12.3k")
-    expect(formatTokens(1_234_567)).toBe("1.2M")
-  })
-
-  it("carries into the next unit rather than spelling 1000 of the last one", () => {
-    // The decimal is rounded before the unit is picked, so this is `1.0M` and
-    // never the `1000.0k` a unit chosen first would produce.
-    expect(formatTokens(999_960)).toBe("1.0M")
-    expect(formatTokens(999_400)).toBe("999.4k")
-  })
-
-  it("spells what the CLI spells, which is the whole point of it", () => {
-    // The cases `crates/ariadne-cli/src/output.rs` pins for its own `tokens`:
-    // the same count has to read the same in a terminal and on a screen.
-    expect(formatTokens(0)).toBe("0")
-    expect(formatTokens(45_300)).toBe("45.3k")
-    expect(formatTokens(1_204_567)).toBe("1.2M")
-    expect(formatTokens(23_456_789)).toBe("23.5M")
-    expect(formatTokens(1_249)).toBe("1.2k")
-    expect(formatTokens(1_250)).toBe("1.3k")
-    expect(formatTokens(999_949)).toBe("999.9k")
-    expect(formatTokens(999_950)).toBe("1.0M")
-    expect(formatTokens(1_049_999)).toBe("1.0M")
-    expect(formatTokens(1_050_000)).toBe("1.1M")
+  it.for(TABLE)("spells %i as %s", ([count, spelled]) => {
+    expect(formatTokens(count)).toBe(spelled)
   })
 
   it("has nothing below zero to show", () => {
@@ -69,21 +62,19 @@ describe("formatTokens", () => {
 })
 
 describe("usageSummary", () => {
-  const USAGE = { input_tokens: 1_234_567, cached_input_tokens: 1_100_000, output_tokens: 45_300 }
-
-  it("is the compact sentence, with the cached share inside the input half", () => {
-    expect(usageSummary(USAGE)).toBe("in 1.2M (cached 1.1M) · out 45.3k")
-  })
-
-  it("spells every digit out where it is read to be checked", () => {
-    expect(usageSummary(USAGE, { exact: true })).toBe(
-      "in 1,234,567 (cached 1,100,000) · out 45,300",
-    )
+  it("spells every digit, since it is what a rounded figure hides", () => {
+    expect(
+      usageSummary({
+        input_tokens: 1_234_567,
+        cached_input_tokens: 1_100_000,
+        output_tokens: 45_300,
+      }),
+    ).toBe("In 1,234,567 (cached 1,100,000) · Out 45,300")
   })
 
   it("says zero for an agent that has reported nothing, rather than going blank", () => {
     expect(usageSummary({ input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 })).toBe(
-      "in 0 (cached 0) · out 0",
+      "In 0 (cached 0) · Out 0",
     )
   })
 })

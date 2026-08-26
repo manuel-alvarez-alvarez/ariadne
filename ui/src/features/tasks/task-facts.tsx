@@ -14,7 +14,7 @@ import { Link } from "react-router-dom"
 
 import type { TaskDto } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
-import { TokenFigure } from "@/components/usage-breakdown"
+import { TokenFigure, taskUsageRows } from "@/components/token-figure"
 import { ProfileSummary } from "@/features/profiles/profile-summary"
 import { cn, shortSha } from "@/lib/format"
 import { useTaskPanelTo } from "@/routes/paths"
@@ -63,9 +63,13 @@ export function TaskFacts({ task }: { task: TaskDto }) {
         )}
       </Fact>
       <Fact label="Tokens">
-        {/* Every agent that has run this task, the reviewers included; the
-            Sessions tab breaks the same total down by who spent it. */}
-        <TokenFigure usage={task.usage.total} summary className="text-xs" />
+        {/* Every agent that has run this task, the reviewers included, with
+            the hint breaking the same total down by who spent it. */}
+        <TokenFigure
+          usage={task.usage.total}
+          rows={taskUsageRows(task.usage)}
+          className="text-xs"
+        />
       </Fact>
       <Fact label="Depends on">
         <Dependencies ids={task.depends_on} />

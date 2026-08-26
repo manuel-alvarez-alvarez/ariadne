@@ -36,8 +36,8 @@ import { Link, useSearchParams } from "react-router-dom"
 
 import type { SessionDto } from "@/api"
 import { CopyableId, CopyableIdMenu } from "@/components/copyable-id"
+import { TokenFigure } from "@/components/token-figure"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { TokenFigure } from "@/components/usage-breakdown"
 import { When } from "@/components/when"
 import { modelLabel } from "@/features/profiles/profile-labels"
 import { ProfileSummary } from "@/features/profiles/profile-summary"
@@ -169,7 +169,7 @@ export function SessionDetailView({
             until it reports anything, which is a number and not a blank: an
             agent that has spent nothing is what a session just spawned is. */}
         <Detail label="Tokens">
-          <TokenFigure usage={session.usage} summary />
+          <TokenFigure usage={session.usage} />
         </Detail>
         {session.attention_reason ? (
           <Detail label="Needs attention since">

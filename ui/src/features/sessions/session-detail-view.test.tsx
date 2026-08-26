@@ -218,12 +218,12 @@ it("names the agent CLI's own choice where no model was recorded", () => {
   expect(detail("Model")).toBe("default")
 })
 
-it("spells out what the session's agent has spent", () => {
+it("shows what the session's agent has spent, as the pair it is", () => {
   renderView()
 
-  // The cached half is a subset of the input beside it, which is why it reads
-  // as a parenthesis rather than as a third figure to add up.
-  expect(detail("Tokens")).toBe("in 12.3k (cached 10.0k) · out 950")
+  // What was sent and what came back, each behind its own arrow; the cached
+  // share of the input and the exact counts are the hint behind them.
+  expect(detail("Tokens")).toBe("12k in, 950 out")
 })
 
 it("says zero for a session that has reported nothing yet", () => {
@@ -232,5 +232,5 @@ it("says zero for a session that has reported nothing yet", () => {
     usage: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 },
   })
 
-  expect(detail("Tokens")).toBe("in 0 (cached 0) · out 0")
+  expect(detail("Tokens")).toBe("0 in, 0 out")
 })

@@ -6,9 +6,9 @@
  * A goal's total is the one figure that cannot be read anywhere else: its
  * planner belongs to no task, its engineers and reviewers belong to tasks the
  * panel does not list, and the sessions tab under it holds the planner's alone.
- * So the panel shows the daemon's own aggregate twice — the total in the
- * facts, and the split by the role that spent it above the sessions — and
- * neither is added up here.
+ * So the panel shows the daemon's own aggregate twice over — the pair in the
+ * facts, and the split by the role that spent it in the hint behind that pair
+ * — and neither is added up here.
  *
  * Grouped by role rather than by profile on purpose: past the planner, each
  * role is as many agents as the goal has tasks, and the task panels are where
@@ -18,7 +18,7 @@
  * `queries.ts`'s story.
  */
 
-import { screen, within } from "@testing-library/react"
+import { screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { expect, it } from "vitest"
 
@@ -45,47 +45,57 @@ function mount(goal: GoalDto = GOAL) {
 }
 
 /** The value of a fact of the metadata card, by the label above it. */
-function detail(label: string): string {
+function detail(label: string): HTMLElement {
   const term = screen.getByText(label)
   const value = term.nextElementSibling
-  if (!value) throw new Error(`no value under "${label}"`)
-  return value.textContent ?? ""
+  if (!(value instanceof HTMLElement)) throw new Error(`no value under "${label}"`)
+  return value
 }
 
-/** The usage block above the sessions table, once that tab is open. */
-async function breakdown(): Promise<HTMLElement> {
-  await userEvent.setup().click(screen.getByRole("tab", { name: "Sessions" }))
-  const heading = await screen.findByRole("heading", { name: "Tokens" })
-  const block = heading.closest("section")
-  if (!block) throw new Error("no usage block around the Tokens heading")
-  return block
+/** The hint behind a figure, opened the way a keyboard opens it. */
+async function hint(value: HTMLElement): Promise<HTMLElement> {
+  const figure = value.querySelector<HTMLElement>("[data-slot='tooltip-trigger']")
+  if (!figure) throw new Error("no figure to open a hint on")
+  figure.focus()
+  const exact = await screen.findByText(/^In \d/)
+  const popup = exact.closest<HTMLElement>("[data-slot='tooltip-content']")
+  if (!popup) throw new Error("no hint around the exact counts")
+  return popup
 }
 
-it("shows the goal's total among its facts", () => {
+it("shows the goal's total among its facts, as the pair it is", () => {
   mount()
 
-  expect(detail("Tokens")).toBe("in 1.2M (cached 1.1M) · out 45.3k")
+  expect(detail("Tokens").textContent).toBe("1.2M in, 45k out")
 })
 
 it("says zero for a goal whose agents have reported nothing", () => {
   mount(aGoal())
 
-  expect(detail("Tokens")).toBe("in 0 (cached 0) · out 0")
+  expect(detail("Tokens").textContent).toBe("0 in, 0 out")
 })
 
-it("breaks the total down by the role that spent it", async () => {
+it("breaks the total down by the role that spent it, behind the figure", async () => {
   mount()
-  const block = await breakdown()
+  const popup = await hint(detail("Tokens"))
 
   // In the order the work goes through them, and every role listed — a
-  // reviewer that has spent nothing is an answer, not a row to drop.
-  const rows = [...block.querySelectorAll("dt")].map((row) => row.textContent)
-  expect(rows).toEqual(["Planner", "Engineers", "Reviewers"])
-  expect(within(block).getByText("234.6k/5.3k")).not.toBeNull()
-  expect(within(block).getByText("1.0M/40.0k")).not.toBeNull()
-  expect(within(block).getByText("0/0")).not.toBeNull()
+  // reviewer that has spent nothing is an answer, not a line to drop.
+  const roles = [...popup.querySelectorAll("dt")].map((role) => role.textContent)
+  expect(roles).toEqual(["Planner", "Engineers", "Reviewers"])
+  const figures = [...popup.querySelectorAll("dd")].map((figure) => figure.textContent)
+  expect(figures).toEqual(["235k in, 5.3k out", "1M in, 40k out", "0 in, 0 out"])
 
-  // The total leads the block, and it is the goal's own: the planner and the
-  // two roles under it, which is more than the list below this shows.
-  expect(block.textContent).toContain("in 1.2M (cached 1.1M) · out 45.3k")
+  // The exact counts lead the hint, and they are the goal's own total: the
+  // planner and the two roles under it, none of it added up here.
+  expect(popup.textContent).toContain("In 1,234,567 (cached 1,100,000) · Out 45,300")
+})
+
+it("keeps the sessions tab to the sessions, with no breakdown above them", async () => {
+  mount()
+  await userEvent.setup().click(screen.getByRole("tab", { name: "Sessions" }))
+
+  // The figure in the facts carries the total and its split; a card repeating
+  // both above a table whose rows carry their own figures said it all twice.
+  expect(screen.queryByRole("heading", { name: "Tokens" })).toBeNull()
 })
