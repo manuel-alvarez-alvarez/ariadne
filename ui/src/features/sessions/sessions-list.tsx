@@ -6,16 +6,19 @@
  * panel picks a session without leaving the screen it is floating over, and the
  * screen turns the pick into a link of its own.
  *
- * Five columns in a panel, because the table has to fit a 48rem one as well as
+ * Six columns in a panel, because the table has to fit a 48rem one as well as
  * a full screen without scrolling sideways: the agent kind and the model ride
  * along with the profile, the review round with the role, and the end of the
  * session with its last activity — the last two in the hint behind the cell,
  * where they were worth a column each only for the sessions that have them.
- * The sixth, the context, is the screen's alone.
+ * Tokens are two of the three counters, `in/out`, for the same reason: the
+ * cached share of the input is what explains the figure rather than a figure
+ * of its own, so it rides in the hint with the exact counts. The seventh, the
+ * context, is the screen's alone.
  *
  * The filters come from the caller (`{goal}`, `{task}`, whatever the panel
  * has); this component only reads them — but it reads them for more than the
- * request. What the list is *scoped* to is what decides the sixth column and
+ * request. What the list is *scoped* to is what decides the context column and
  * what an empty list is called: inside a goal's or a task's panel the subject
  * is the panel's own heading, and repeating it on every row (or blaming an
  * empty tab on filters that tab does not have) says nothing. See
@@ -43,6 +46,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { TokenFigure } from "@/components/usage-breakdown"
 import { When, WhenDetail } from "@/components/when"
 // Both reached at their `queries` module rather than through the feature's
 // barrel: `@/features/tasks` re-exports the task panel, whose sessions tab is
@@ -106,14 +110,14 @@ export function SessionsList({
   const sessions = useQuery(sessionsQueryOptions(filters))
 
   // Both are shared keys the rest of the app already holds (the goals board's
-  // attention strip mounts them), so the sixth column usually costs no request
-  // at all — and none whatsoever in a panel, which does not draw it.
+  // attention strip mounts them), so the context column usually costs no
+  // request at all — and none whatsoever in a panel, which does not draw it.
   const showContext = listScope(filters) === "unscoped"
   const goals = useQuery({ ...goalsQueryOptions(), enabled: showContext })
   const tasks = useQuery({ ...taskListQueryOptions(), enabled: showContext })
   const goalsById = byId(goals.data)
   const tasksById = byId(tasks.data)
-  const columnCount = showContext ? 6 : 5
+  const columnCount = showContext ? 7 : 6
 
   return (
     <div className="space-y-4">
@@ -134,6 +138,7 @@ export function SessionsList({
               <TableHead>Role</TableHead>
               <TableHead>Profile</TableHead>
               <TableHead>Status</TableHead>
+              <TableHead className="text-right">Tokens</TableHead>
               <TableHead className="text-right">Last activity</TableHead>
             </TableRow>
           </TableHeader>
@@ -260,6 +265,12 @@ function SessionRow({
             <SessionAttentionBadge attention={session.attention_reason} />
           ) : null}
         </div>
+      </TableCell>
+      {/* What this agent has spent, compact and right-aligned so the column
+          reads down: the whole sentence, cached input and exact counts
+          included, is the hint behind it. */}
+      <TableCell className="text-right text-xs text-muted-foreground">
+        <TokenFigure usage={session.usage} />
       </TableCell>
       {/* The compact age is the column's text — the heading says what it is
           the age of, and "N minutes ago" down a column is a column of repeated

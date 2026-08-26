@@ -12,6 +12,7 @@ export type { components, operations, paths } from "./schema"
 type Schemas = components["schemas"]
 
 export type GoalDto = Schemas["GoalDto"]
+export type GoalUsage = Schemas["GoalUsageDto"]
 export type GoalStatus = Schemas["GoalStatus"]
 export type CreateGoalRequest = Schemas["CreateGoalRequest"]
 
@@ -21,6 +22,7 @@ export type CreateRepositoryRequest = Schemas["CreateRepositoryRequest"]
 export type UpdateRepositoryRequest = Schemas["UpdateRepositoryRequest"]
 
 export type TaskDto = Schemas["TaskDto"]
+export type TaskUsage = Schemas["TaskUsageDto"]
 export type TaskStatus = Schemas["TaskStatus"]
 export type TaskTransitionDto = Schemas["TaskTransitionDto"]
 export type CreateTaskRequest = Schemas["CreateTaskRequest"]
@@ -37,6 +39,13 @@ export type ReviewVerdict = Schemas["ReviewVerdict"]
 export type SessionDto = Schemas["SessionDto"]
 export type SessionStatus = Schemas["SessionStatus"]
 export type AttentionReason = Schemas["AttentionReason"]
+
+/**
+ * What one agent spent — the same three counters wherever they are read: a
+ * session's own, each half of a task's {@link TaskUsage}, each role of a
+ * goal's {@link GoalUsage}.
+ */
+export type TokenUsage = Schemas["TokenUsageDto"]
 
 export type ProfileDto = Schemas["ProfileDto"]
 export type CreateProfileRequest = Schemas["CreateProfileRequest"]

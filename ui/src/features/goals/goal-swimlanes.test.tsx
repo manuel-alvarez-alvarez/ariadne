@@ -15,6 +15,11 @@
  * property of the mounted grid, and `ready` folding into Pending is exactly
  * that — as is a goal whose plan nobody has approved yet holding every one of
  * its tasks in the first column, whatever each task's own status says.
+ *
+ * The lane header carries what the whole goal has spent, which is the one
+ * figure the board shows without opening anything — and it is a number on a
+ * goal nothing has been spent on too, since a lane that goes blank reads as a
+ * lane the daemon lost track of.
  */
 
 import { screen, within } from "@testing-library/react"
@@ -25,7 +30,14 @@ import { aGoal, aSession, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { GoalSwimlanes } from "./goal-swimlanes"
 
-const GOAL: GoalDto = aGoal()
+const GOAL: GoalDto = aGoal({
+  usage: {
+    total: { input_tokens: 1_234_567, cached_input_tokens: 1_100_000, output_tokens: 45_300 },
+    planner: { input_tokens: 234_567, cached_input_tokens: 200_000, output_tokens: 5_300 },
+    engineers: { input_tokens: 1_000_000, cached_input_tokens: 900_000, output_tokens: 40_000 },
+    reviewers: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 },
+  },
+})
 
 const TASK: TaskDto = aTask({
   title: "Wire the strip",
@@ -187,4 +199,24 @@ it("says nothing about approval once the goal is active", async () => {
 
   await screen.findByText(TASK.title)
   expect(screen.queryByText("Awaiting approval")).toBeNull()
+})
+
+it("carries the goal's own total in the lane header", async () => {
+  stubDaemon({ tasks: [TASK] })
+  renderBoard()
+
+  await screen.findByText(TASK.title)
+  const tokens = screen.getByText("1.2M/45.3k")
+  // In the header, beside the task count and the goal's age — not on a card,
+  // which is one task's worth of a figure that is the whole goal's.
+  expect(tokens.closest("header")).not.toBeNull()
+  expect(tokens.closest("header")?.textContent).toContain("1 task")
+})
+
+it("says zero for a goal whose agents have spent nothing", async () => {
+  stubDaemon({ tasks: [TASK] })
+  renderBoard(aGoal())
+
+  await screen.findByText(TASK.title)
+  expect(screen.getByText("0/0")).not.toBeNull()
 })

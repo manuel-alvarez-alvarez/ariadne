@@ -16,8 +16,10 @@
  * this view is drilled into, which is why a value that is not one of these two
  * has to read as the terminal rather than as nothing.
  *
- * And the model: it is null on the wire for a session launched without one,
- * which means the agent CLI chose — a fact about the session, not a blank.
+ * And two things a session says about itself that are neither: the model, null
+ * on the wire for a session launched without one, which means the agent CLI
+ * chose — a fact about the session, not a blank — and what it has spent, which
+ * is zero rather than blank for an agent that has reported nothing yet.
  *
  * xterm needs a browser this environment only half is, so `matchMedia` and
  * `ResizeObserver` are stubbed for it, as in `session-terminal.test.tsx`.
@@ -52,6 +54,7 @@ const PROFILE: ProfileDto = aProfile({
 const SESSION: SessionDto = aSession({
   id: "01JSESS0000000000000000001",
   model: "claude-opus-5",
+  usage: { input_tokens: 12_345, cached_input_tokens: 10_000, output_tokens: 950 },
   last_activity_at: "2026-01-01T00:10:00Z",
   goal_id: GOAL.id,
   task_id: TASK.id,
@@ -213,4 +216,21 @@ it("names the agent CLI's own choice where no model was recorded", () => {
   renderView({ ...SESSION, model: null })
 
   expect(detail("Model")).toBe("default")
+})
+
+it("spells out what the session's agent has spent", () => {
+  renderView()
+
+  // The cached half is a subset of the input beside it, which is why it reads
+  // as a parenthesis rather than as a third figure to add up.
+  expect(detail("Tokens")).toBe("in 12.3k (cached 10.0k) · out 950")
+})
+
+it("says zero for a session that has reported nothing yet", () => {
+  renderView({
+    ...SESSION,
+    usage: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 },
+  })
+
+  expect(detail("Tokens")).toBe("in 0 (cached 0) · out 0")
 })

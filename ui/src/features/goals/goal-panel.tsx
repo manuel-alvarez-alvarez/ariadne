@@ -30,11 +30,13 @@ import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { TokenFigure } from "@/components/usage-breakdown"
 import { When } from "@/components/when"
 import { ProfileSummary } from "@/features/profiles/profile-summary"
 import { CreateTaskDialog } from "@/features/tasks/task-form-dialog"
 import { useFocusReturn } from "@/hooks/use-focus-return"
 import { goalCopyEntries } from "@/lib/clipboard"
+import { cn } from "@/lib/format"
 import { paths, taskPanelTo, usePanelSessionNavigation } from "@/routes/paths"
 import { GoalActions } from "./goal-actions"
 import { GoalSessions, GoalSessionView } from "./goal-sessions"
@@ -249,7 +251,7 @@ function GoalView({
           <GoalThread goalId={goal.id} />
         </TabsContent>
         <TabsContent value="sessions" className="pt-3">
-          <GoalSessions goalId={goal.id} onSelect={onSelectSession} />
+          <GoalSessions goal={goal} onSelect={onSelectSession} />
         </TabsContent>
       </Tabs>
 
@@ -267,13 +269,14 @@ function GoalView({
 }
 
 /**
- * What the goal is allowed to do, always on show.
+ * What the goal is allowed to do and what it has cost, always on show.
  *
  * Three columns where there is room, like the session panel's Details card,
- * and six facts to fill them: at every width the grid comes out whole, which
- * the five short facts plus a full-width row of repositories did not — it left
- * a hole in the middle of the card. The repositories take the last cell and
- * wrap inside it, which is what {@link CopyableId.wrap} is for.
+ * and six short facts to fill them: two whole rows at three columns and three
+ * whole rows at two, which the five facts it started with did not manage — one
+ * of them left a hole in the middle of the card. The repositories are the
+ * seventh and take a row of their own at the end, wrapping across it, which is
+ * what {@link CopyableId.wrap} is for.
  */
 function GoalMetadata({ goal }: { goal: GoalDto }) {
   return (
@@ -295,7 +298,12 @@ function GoalMetadata({ goal }: { goal: GoalDto }) {
       <Detail label="Updated">
         <When at={goal.updated_at} label="updated" />
       </Detail>
-      <Detail label="Repositories">
+      <Detail label="Tokens">
+        {/* Every session of the goal, its planner's included; the Sessions tab
+            breaks the same total down by the role that spent it. */}
+        <TokenFigure usage={goal.usage.total} summary className="text-xs" />
+      </Detail>
+      <Detail label="Repositories" className="sm:col-span-2 lg:col-span-3">
         <ul className="flex flex-col gap-1">
           {goal.repos.map((repo) => (
             <li key={repo.id} className="min-w-0">
@@ -327,9 +335,18 @@ function GoalMetadata({ goal }: { goal: GoalDto }) {
   )
 }
 
-function Detail({ label, children }: { label: string; children: ReactNode }) {
+function Detail({
+  label,
+  className,
+  children,
+}: {
+  label: string
+  /** How many of the grid's columns this fact takes; one, unless it says so. */
+  className?: string
+  children: ReactNode
+}) {
   return (
-    <div className="min-w-0 space-y-0.5">
+    <div className={cn("min-w-0 space-y-0.5", className)}>
       <dt className="text-xs text-muted-foreground">{label}</dt>
       <dd className="min-w-0">{children}</dd>
     </div>

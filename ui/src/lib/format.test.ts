@@ -7,10 +7,12 @@ import {
   formatAge,
   formatDuration,
   formatRelative,
+  formatTokens,
   middleTruncate,
   plural,
   shortId,
   shortSha,
+  usageSummary,
 } from "./format"
 
 describe("plural", () => {
@@ -23,6 +25,66 @@ describe("plural", () => {
   it("takes an irregular plural, for the nouns -s does not reach", () => {
     expect(plural(1, "repository", "repositories")).toBe("1 repository")
     expect(plural(3, "repository", "repositories")).toBe("3 repositories")
+  })
+})
+
+describe("formatTokens", () => {
+  it("shows a count under a thousand exactly, since it fits", () => {
+    expect(formatTokens(0)).toBe("0")
+    expect(formatTokens(950)).toBe("950")
+    expect(formatTokens(999)).toBe("999")
+  })
+
+  it("keeps one decimal of the unit it fits in, and keeps it at zero", () => {
+    expect(formatTokens(1_000)).toBe("1.0k")
+    expect(formatTokens(12_345)).toBe("12.3k")
+    expect(formatTokens(1_234_567)).toBe("1.2M")
+  })
+
+  it("carries into the next unit rather than spelling 1000 of the last one", () => {
+    // The decimal is rounded before the unit is picked, so this is `1.0M` and
+    // never the `1000.0k` a unit chosen first would produce.
+    expect(formatTokens(999_960)).toBe("1.0M")
+    expect(formatTokens(999_400)).toBe("999.4k")
+  })
+
+  it("spells what the CLI spells, which is the whole point of it", () => {
+    // The cases `crates/ariadne-cli/src/output.rs` pins for its own `tokens`:
+    // the same count has to read the same in a terminal and on a screen.
+    expect(formatTokens(0)).toBe("0")
+    expect(formatTokens(45_300)).toBe("45.3k")
+    expect(formatTokens(1_204_567)).toBe("1.2M")
+    expect(formatTokens(23_456_789)).toBe("23.5M")
+    expect(formatTokens(1_249)).toBe("1.2k")
+    expect(formatTokens(1_250)).toBe("1.3k")
+    expect(formatTokens(999_949)).toBe("999.9k")
+    expect(formatTokens(999_950)).toBe("1.0M")
+    expect(formatTokens(1_049_999)).toBe("1.0M")
+    expect(formatTokens(1_050_000)).toBe("1.1M")
+  })
+
+  it("has nothing below zero to show", () => {
+    expect(formatTokens(-5)).toBe("0")
+  })
+})
+
+describe("usageSummary", () => {
+  const USAGE = { input_tokens: 1_234_567, cached_input_tokens: 1_100_000, output_tokens: 45_300 }
+
+  it("is the compact sentence, with the cached share inside the input half", () => {
+    expect(usageSummary(USAGE)).toBe("in 1.2M (cached 1.1M) · out 45.3k")
+  })
+
+  it("spells every digit out where it is read to be checked", () => {
+    expect(usageSummary(USAGE, { exact: true })).toBe(
+      "in 1,234,567 (cached 1,100,000) · out 45,300",
+    )
+  })
+
+  it("says zero for an agent that has reported nothing, rather than going blank", () => {
+    expect(usageSummary({ input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 })).toBe(
+      "in 0 (cached 0) · out 0",
+    )
   })
 })
 

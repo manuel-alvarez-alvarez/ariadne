@@ -12,6 +12,10 @@
  * and one of which it cannot (`live` is three statuses, so it is narrowed
  * here) — including what a second visit to the screen opens on, which is the
  * one thing about them that no single render shows.
+ *
+ * The tokens column is here because it is the row's own figure and the table
+ * is where sessions are compared: a compact `in/out`, and a `0/0` — never a
+ * blank — on a session whose agent has reported nothing.
  */
 
 import { cleanup, screen, waitFor, within } from "@testing-library/react"
@@ -34,7 +38,10 @@ const TASK: TaskDto = aTask({
 const PROFILE: ProfileDto = aProfile()
 
 /** An engineer at work, and the planner that has no task of its own. */
-const ENGINEER = aSession({ id: "01JSESS0000000000000000ENG" })
+const ENGINEER = aSession({
+  id: "01JSESS0000000000000000ENG",
+  usage: { input_tokens: 1_234_567, cached_input_tokens: 1_100_000, output_tokens: 45_300 },
+})
 const PLANNER = aSession({
   id: "01JSESS0000000000000000PLA",
   task_id: null,
@@ -306,4 +313,25 @@ it("restores the filters under a panel the entry opened", async () => {
   await waitFor(() =>
     expect(seen.url).toBe(`/sessions?session=${ENGINEER.id}&status=failed&role=planner`),
   )
+})
+
+it("carries each session's tokens, and zero for one that has reported none", async () => {
+  renderPage()
+
+  const engineer = within(await row("Open Engineer session")).getByText("1.2M/45.3k")
+  expect(engineer).not.toBeNull()
+  // The planner has spent nothing yet, which is a figure of its own: a blank
+  // cell would read as a column the daemon has no answer for.
+  expect(within(await row("Open Planner session")).getByText("0/0")).not.toBeNull()
+})
+
+it("puts the whole sentence behind the tokens column in reach of a keyboard", async () => {
+  renderPage()
+
+  // The cached share and the exact counts are what the column has no room
+  // for; the hint opens on focus, like the table's other two.
+  within(await row("Open Engineer session"))
+    .getByText("1.2M/45.3k")
+    .focus()
+  expect(await screen.findByText("in 1,234,567 (cached 1,100,000) · out 45,300")).not.toBeNull()
 })

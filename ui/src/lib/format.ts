@@ -15,7 +15,22 @@
 import { type ClassValue, clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
 
-import { type AgentKind, ApiError, type AuthorRole, HTTP_ERROR_CODE, type Role } from "@/api"
+import {
+  type AgentKind,
+  ApiError,
+  type AuthorRole,
+  HTTP_ERROR_CODE,
+  type Role,
+  type TokenUsage,
+} from "@/api"
+
+/**
+ * The language every formatted value is spelled in, pinned rather than taken
+ * from the system: these strings sit in the middle of English sentences
+ * ("updated 3 minutes ago", "in 1.2M (cached 1.1M)"), and a machine set to
+ * another language would produce half-translated lines.
+ */
+const LOCALE = "en"
 
 /** Tailwind class lists composed and de-conflicted; what every component builds its `className` with. */
 export function cn(...inputs: ClassValue[]) {
@@ -33,6 +48,53 @@ export function cn(...inputs: ClassValue[]) {
  */
 export function plural(count: number, noun: string, many = `${noun}s`): string {
   return `${count} ${count === 1 ? noun : many}`
+}
+
+// ── Tokens ────────────────────────────────────────────────────────────────
+
+/**
+ * Token counts run to seven digits, and every surface that shows one is a
+ * table cell, a card header or a 48rem panel column: `1234567` is both
+ * unreadable and wider than the space it has. The compact form keeps three
+ * significant digits, which is as much as a reader compares by — `12.3k` next
+ * to `1.2M` says everything a row is read for, and the exact number is one
+ * hover away wherever this is shown.
+ *
+ * Character for character what the CLI's own `tokens` prints (see
+ * `crates/ariadne-cli/src/output.rs`): the same count has to read the same in
+ * a terminal and on a screen, or the two look like they disagree about a
+ * number neither of them is wrong about. That is what the decimal a scaled
+ * figure always carries is for — `1.0M`, not the `1M` that would otherwise sit
+ * in a column under `999.9k` looking like a different kind of value.
+ */
+export function formatTokens(count: number): string {
+  const total = Math.max(0, Math.round(count))
+  if (total < 1_000) return String(total)
+  // Rounded to one decimal *before* the unit is picked, so a count that rounds
+  // up into the next one is spelled in it: 999,960 is `1.0M`, never `1000.0k`.
+  const thousands = Math.round(total / 100) / 10
+  if (thousands < 1_000) return `${thousands.toFixed(1)}k`
+  return `${(Math.round(total / 100_000) / 10).toFixed(1)}M`
+}
+
+const EXACT = new Intl.NumberFormat(LOCALE)
+
+/**
+ * What an agent spent, as one line: `in 1.2M (cached 1.1M) · out 45.3k`.
+ *
+ * Cached input is a subset of the input beside it rather than a fourth number
+ * to add up, which is why it reads as a parenthesis on that half. It is shown
+ * even at zero: a run with no cache hits is a fact about the run, and a
+ * parenthesis that comes and goes down a column is harder to read than one
+ * that says `0`.
+ *
+ * `exact` spells the same sentence with every digit, for the hint behind a
+ * compact figure: the rounding must not be the only form a reader can get at,
+ * since two counts a hundred thousand apart both round to `1.2M`.
+ */
+export function usageSummary(usage: TokenUsage, { exact = false } = {}): string {
+  const spell = exact ? (count: number) => EXACT.format(count) : formatTokens
+  return `in ${spell(usage.input_tokens)} (cached ${spell(usage.cached_input_tokens)}) · out ${spell(usage.output_tokens)}`
 }
 
 // ── Identifiers ───────────────────────────────────────────────────────────
@@ -127,17 +189,11 @@ export function describeError(error: unknown): string {
 
 // ── Time ──────────────────────────────────────────────────────────────────
 
-/**
- * The daemon stamps everything with RFC 3339 in UTC; the user reads it in
- * their own zone. Anything unparsable is passed through as-is rather than
- * rendered as "Invalid Date".
- *
- * The locale is pinned rather than taken from the system: these strings sit in
- * the middle of English sentences ("updated 3 minutes ago"), and a machine set
- * to another language would otherwise produce half-translated lines. The time
- * zone still comes from the system, which is the part that matters.
- */
-const LOCALE = "en"
+// The daemon stamps everything with RFC 3339 in UTC; the user reads it in
+// their own zone. Anything unparsable is passed through as-is rather than
+// rendered as "Invalid Date". The time zone comes from the system, which is
+// the part of the reader's locale that matters here; the language does not —
+// see LOCALE at the top of the file.
 
 /** What a nullish timestamp renders as, so a column never goes blank. */
 const NONE = "—"

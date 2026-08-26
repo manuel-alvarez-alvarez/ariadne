@@ -16,11 +16,17 @@
  *
  * The pull request row is here because it exists only sometimes.
  *
+ * The tokens are here for a different reason: the panel shows the daemon's own
+ * aggregate twice over — the task's total in the facts, and the split by who
+ * spent it above the sessions — and both have to be the figures the daemon
+ * sent rather than anything added up here.
+ *
  * Everything is seeded into the query cache: what the daemon returns is
  * `queries.ts`'s story, and the tabs are `task-panel.tsx`'s own.
  */
 
-import { screen } from "@testing-library/react"
+import { screen, within } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { expect, it } from "vitest"
 
 import { type ProfileDto, qk, type TaskDto } from "@/api"
@@ -89,9 +95,17 @@ const TASK: TaskDto = {
   review_round: 0,
   stalled: false,
   usage: {
-    total: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 },
-    engineer: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 },
-    reviewers: [],
+    total: { input_tokens: 1_234_567, cached_input_tokens: 1_100_000, output_tokens: 45_300 },
+    engineer: { input_tokens: 1_000_000, cached_input_tokens: 900_000, output_tokens: 40_000 },
+    // Only the reviewer that has actually been spawned: the second slot has
+    // never run, and the daemon lists no row for it.
+    reviewers: [
+      {
+        profile_id: STRICT,
+        profile_name: "Strict",
+        usage: { input_tokens: 234_567, cached_input_tokens: 200_000, output_tokens: 5_300 },
+      },
+    ],
   },
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
@@ -116,6 +130,15 @@ function fact(label: string): string {
   const value = term.nextElementSibling
   if (!value) throw new Error(`no value under "${label}"`)
   return (value.textContent ?? "").replaceAll("·", " ·").replaceAll("  ·", " ·")
+}
+
+/** The usage block above the sessions table, once that tab is open. */
+async function breakdown(): Promise<HTMLElement> {
+  await userEvent.setup().click(screen.getByRole("tab", { name: "Sessions" }))
+  const heading = await screen.findByRole("heading", { name: "Tokens" })
+  const block = heading.closest("section")
+  if (!block) throw new Error("no usage block around the Tokens heading")
+  return block
 }
 
 it("shows the engineer's pin, not what its profile says today", () => {
@@ -157,4 +180,45 @@ it("leaves the pull request row out of a task landed locally", () => {
   mount()
 
   expect(screen.queryByText("Pull request")).toBeNull()
+})
+
+it("shows the task's total, as the daemon aggregated it", () => {
+  mount()
+
+  expect(fact("Tokens")).toBe("in 1.2M (cached 1.1M) · out 45.3k")
+})
+
+it("says zero for a task whose agents have reported nothing", () => {
+  mount({
+    ...TASK,
+    usage: {
+      total: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 },
+      engineer: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 },
+      reviewers: [],
+    },
+  })
+
+  expect(fact("Tokens")).toBe("in 0 (cached 0) · out 0")
+})
+
+it("breaks the total down by the agent that spent it, reviewers named", async () => {
+  mount()
+  const block = await breakdown()
+
+  // The engineer reads as it does in the facts above — the task's pin, not
+  // what its profile says today — and carries its own half of the total.
+  expect(within(block).getByText("Engineer")).not.toBeNull()
+  expect(block.textContent).toContain("Builder")
+  expect(within(block).getByText("1.0M/40.0k")).not.toBeNull()
+
+  // The reviewer that has run is named by its profile, with the pin of the
+  // slot it fills; the one that never has is not a row at all.
+  expect(within(block).getByText("Reviewer")).not.toBeNull()
+  expect(block.textContent).toContain("Strict")
+  expect(block.textContent).not.toContain("Second")
+  expect(within(block).getByText("234.6k/5.3k")).not.toBeNull()
+
+  // The total leads the block, and it is the task's own rather than the rows
+  // under it added up.
+  expect(block.textContent).toContain("in 1.2M (cached 1.1M) · out 45.3k")
 })

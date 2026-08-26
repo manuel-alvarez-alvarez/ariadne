@@ -22,6 +22,7 @@ import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { TokenFigure } from "@/components/usage-breakdown"
 import { When } from "@/components/when"
 import { type SessionAttention, SessionAttentionBadge } from "@/features/sessions/session-display"
 import {
@@ -263,8 +264,12 @@ function Lane({
           tone={GOAL_STATUS_META[goal.status].badge}
         />
         {planner ? <SessionAttentionBadge attention={planner} /> : null}
-        <span className="whitespace-nowrap text-xs text-muted-foreground">
-          {plural(total, "task")} · created <When at={goal.created_at} label="created" />
+        <span className="flex items-baseline gap-1 whitespace-nowrap text-xs text-muted-foreground">
+          {plural(total, "task")} · created <When at={goal.created_at} label="created" /> ·{" "}
+          {/* What the whole goal has cost — planner, engineers and reviewers —
+              which is the one number the board can show without opening
+              anything. The sentence behind it says which half is which. */}
+          <TokenFigure usage={goal.usage.total} /> tokens
         </span>
       </header>
 

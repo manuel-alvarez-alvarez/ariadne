@@ -1,8 +1,16 @@
 /**
- * The sessions of one goal, inside its panel: the goal's own agent — the
- * planner, once per resume or restart — as a list, and the one that was picked
- * from it, in full. The sessions of the goal's tasks are not here; each task
- * panel has its own sessions tab for those.
+ * The sessions of one goal, inside its panel: what every agent under the goal
+ * has spent, the goal's own agent — the planner, once per resume or restart —
+ * as a list, and the one that was picked from it, in full. The sessions of the
+ * goal's tasks are not listed here; each task panel has its own sessions tab
+ * for those.
+ *
+ * The breakdown above the list is the exception, and deliberately so: it is
+ * the goal's aggregate, which is the planner *plus* every engineer and every
+ * reviewer of every task under it. That is the number a goal is read for, and
+ * it is grouped by role rather than by profile because a goal's engineers are
+ * as many as it has tasks. It is the daemon's own aggregate, not a sum over
+ * the list below, which holds one role of it.
  *
  * Picking one is drilling into it: {@link GoalSessionView} takes over the whole
  * panel (see `goal-panel.tsx`), goal header and tabs included, with a link back
@@ -20,32 +28,53 @@
 import { useQuery } from "@tanstack/react-query"
 import { ArrowLeftIcon } from "lucide-react"
 
+import type { GoalDto, GoalUsage } from "@/api"
 import { ErrorState } from "@/components/error-state"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
+import { UsageBreakdown, type UsageRow } from "@/components/usage-breakdown"
 import { sessionQueryOptions } from "@/features/sessions/queries"
 import { SessionDetailView } from "@/features/sessions/session-detail-view"
 import { SessionsList } from "@/features/sessions/sessions-list"
 import { shortId } from "@/lib/format"
 
 export function GoalSessions({
-  goalId,
+  goal,
   onSelect,
 }: {
-  goalId: string
+  /** The whole goal, for the usage it carries — the list only needs its id. */
+  goal: GoalDto
   /** Selects a session, which opens it over the whole panel. */
   onSelect: (sessionId: string) => void
 }) {
-  // The selected row marks itself: `SessionsList` reads the same `?session=`
-  // this panel drives, so nothing has to be threaded through the panel.
   return (
-    <SessionsList
-      filters={{ goal: goalId, role: "planner" }}
-      onSelect={(session) => onSelect(session.id)}
-    />
+    <div className="space-y-3">
+      <UsageBreakdown total={goal.usage.total} rows={usageRows(goal.usage)} />
+      {/* The selected row marks itself: `SessionsList` reads the same
+          `?session=` this panel drives, so nothing has to be threaded through
+          the panel. */}
+      <SessionsList
+        filters={{ goal: goal.id, role: "planner" }}
+        onSelect={(session) => onSelect(session.id)}
+      />
+    </div>
   )
+}
+
+/**
+ * The goal's three roles, in the order the work goes through them: the planner
+ * that wrote the tasks, the engineers that did them, the reviewers that read
+ * them. No profiles, because past the planner each role is as many agents as
+ * the goal has tasks — the task panels are where the names are.
+ */
+function usageRows(usage: GoalUsage): UsageRow[] {
+  return [
+    { key: "planner", role: "Planner", usage: usage.planner },
+    { key: "engineers", role: "Engineers", usage: usage.engineers },
+    { key: "reviewers", role: "Reviewers", usage: usage.reviewers },
+  ]
 }
 
 /** The selected session as the panel's whole body, with the way back to the goal. */
