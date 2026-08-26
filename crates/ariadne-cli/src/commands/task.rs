@@ -11,12 +11,16 @@ use ariadne_api::reviews::ReviewDto;
 use ariadne_api::tasks::{
     CreateTaskRequest, ReviewerAssignment, TaskDto, TaskListQuery, TaskTransitionDto,
 };
+use ariadne_api::usage::TokenUsageDto;
 use ariadne_client::Client;
 use ariadne_core::TaskStatus;
 
 use edit::{parse_reviewer, resolve_repo, update_request};
 use super::{ProfileNames, confirm, print_messages, query_path};
-use crate::output::{Column, Format, UNCAPPED, dash, local_time, note, print, print_kv, print_list, yes_no};
+use crate::output::{
+    Column, Format, UNCAPPED, dash, local_time, note, print, print_kv, print_list, usage_cell,
+    usage_summary, yes_no,
+};
 
 /// Columns of `task ls`. Titles and branches are the long ones: a task whose
 /// title runs to a paragraph would otherwise push status and round off-screen.
@@ -31,8 +35,14 @@ const LS: &[Column] = &[
     ("round", UNCAPPED),
     ("stalled", UNCAPPED),
     ("pr", UNCAPPED),
+    ("tokens", UNCAPPED),
     ("branch", 40),
 ];
+
+/// Where a continuation line of `task inspect` starts: [`print_kv`] pads its
+/// keys to the longest one — `pull_request` — and then two spaces, and a
+/// block that spills over several lines lines them all up under the first.
+const INDENT: &str = "\n              ";
 
 /// Columns of `task reviews`. A review body is prose, and only its opening
 /// belongs in a table — `task reviews --format json` has all of it.
@@ -310,7 +320,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                                 profiles.pinned_label(&r.profile_id, r.agent_kind, r.model.as_deref())
                             })
                             .collect::<Vec<_>>()
-                            .join("\n             "),
+                            .join(INDENT),
                     ),
                     (
                         "depends_on",
@@ -321,6 +331,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                     ),
                     ("branch", t.branch.clone()),
                     ("worktree", dash(t.worktree_path.as_deref())),
+                    ("tokens", usage_lines(&t)),
                     ("round", t.review_round.to_string()),
                     ("stalled", yes_no(t.stalled, "no")),
                     ("merge", dash(t.merge_commit.as_deref())),
@@ -436,8 +447,69 @@ fn ls_row(t: &TaskDto) -> Vec<String> {
         t.review_round.to_string(),
         yes_no(t.stalled, "-"),
         yes_no(t.pr_url.is_some(), "-"),
+        usage_cell(&t.usage.total),
         t.branch.clone(),
     ]
+}
+
+/// What the task cost, spender by spender: the total first, then the
+/// engineer and each reviewer under it, named the way a message addresses
+/// them.
+///
+/// Every reviewer slot of the task gets a line, whether or not it has spent
+/// anything: a reviewer missing from the block would read as one the task
+/// does not have, and `0` is a fact where a gap is a question. A profile that
+/// spent on the task without holding a slot any more is listed after them, so
+/// the lines still add up to the total.
+fn usage_lines(t: &TaskDto) -> String {
+    let mut agents: Vec<(String, TokenUsageDto)> = vec![("engineer".into(), t.usage.engineer)];
+    for r in &t.reviewers {
+        let spent = spent_by(t, &r.profile_id).unwrap_or_default();
+        agents.push((
+            profile_label(r.profile_name.as_deref(), &r.profile_id),
+            spent,
+        ));
+    }
+    agents.extend(
+        t.usage
+            .reviewers
+            .iter()
+            .filter(|u| !t.reviewers.iter().any(|r| r.profile_id == u.profile_id))
+            .map(|u| {
+                (
+                    profile_label(u.profile_name.as_deref(), &u.profile_id),
+                    u.usage,
+                )
+            }),
+    );
+
+    let width = agents
+        .iter()
+        .map(|(name, _)| name.chars().count())
+        .max()
+        .unwrap_or(0);
+    let mut out = usage_summary(&t.usage.total);
+    for (name, usage) in agents {
+        out.push_str(INDENT);
+        out.push_str(&format!("{name:<width$}  {}", usage_summary(&usage)));
+    }
+    out
+}
+
+/// What one reviewer profile spent on the task, if the daemon reported it at
+/// all — a slot whose reviewer has never been spawned has no entry.
+fn spent_by(t: &TaskDto, profile_id: &str) -> Option<TokenUsageDto> {
+    t.usage
+        .reviewers
+        .iter()
+        .find(|u| u.profile_id == profile_id)
+        .map(|u| u.usage)
+}
+
+/// A profile as this block names it: its name, or its id where the daemon
+/// would not name it — the way every other mention of a profile falls back.
+fn profile_label(name: Option<&str>, profile_id: &str) -> String {
+    name.unwrap_or(profile_id).to_string()
 }
 
 /// What `task cancel` asks before the work is thrown away: cancelling is
@@ -458,6 +530,8 @@ fn print_status(t: &TaskDto, format: Format) -> Result<()> {
 mod tests {
     use super::*;
 
+    use ariadne_api::tasks::{ProfileUsageDto, TaskReviewerDto, TaskUsageDto};
+
     use crate::commands::fixtures;
 
     /// A plain task, for the blocks that render one.
@@ -467,6 +541,90 @@ mod tests {
             branch: "add-the-frobnicator-01task".into(),
             ..fixtures::task("01TASK", "01GOAL")
         }
+    }
+
+    fn usage(input: u64, cached: u64, output: u64) -> TokenUsageDto {
+        TokenUsageDto {
+            input_tokens: input,
+            cached_input_tokens: cached,
+            output_tokens: output,
+        }
+    }
+
+    fn reviewer(profile_id: &str, name: &str) -> TaskReviewerDto {
+        TaskReviewerDto {
+            profile_id: profile_id.into(),
+            profile_name: Some(name.into()),
+            agent_kind: None,
+            model: None,
+        }
+    }
+
+    /// A task nobody has run yet still says what it spent: `0`, which is a
+    /// figure, where a blank or a dash would read as "the daemon does not
+    /// know".
+    #[test]
+    fn a_task_that_has_spent_nothing_says_zero() {
+        assert_eq!(ls_row(&dto())[6], "0/0");
+        assert_eq!(
+            usage_lines(&dto()).lines().next().unwrap(),
+            "in 0 (cached 0) · out 0"
+        );
+    }
+
+    /// The block is the total and then who spent it: the engineer, and every
+    /// reviewer slot by the name a message addresses it with — including the
+    /// one that has never been spawned, which spent `0` rather than nothing
+    /// at all.
+    #[test]
+    fn the_block_names_the_engineer_and_every_reviewer_of_the_task() {
+        let t = TaskDto {
+            reviewers: vec![reviewer("01REV", "Reviewer"), reviewer("01SEC", "Security")],
+            usage: TaskUsageDto {
+                total: usage(1_204_567, 1_100_000, 45_300),
+                engineer: usage(1_200_000, 1_100_000, 45_000),
+                reviewers: vec![ProfileUsageDto {
+                    profile_id: "01REV".into(),
+                    profile_name: Some("Reviewer".into()),
+                    usage: usage(4_567, 0, 300),
+                }],
+            },
+            ..dto()
+        };
+        assert_eq!(
+            usage_lines(&t),
+            [
+                "in 1.2M (cached 1.1M) · out 45.3k",
+                "              engineer  in 1.2M (cached 1.1M) · out 45.0k",
+                "              Reviewer  in 4.6k (cached 0) · out 300",
+                "              Security  in 0 (cached 0) · out 0",
+            ]
+            .join("\n")
+        );
+        assert_eq!(ls_row(&t)[6], "1.2M/45.3k", "the row carries the total");
+    }
+
+    /// A profile that spent on the task without holding one of its slots is
+    /// still listed: the lines under the total are meant to add up to it.
+    #[test]
+    fn a_spender_that_holds_no_reviewer_slot_is_still_listed() {
+        let t = TaskDto {
+            usage: TaskUsageDto {
+                total: usage(1_000, 0, 100),
+                engineer: usage(600, 0, 60),
+                reviewers: vec![ProfileUsageDto {
+                    profile_id: "01GONE".into(),
+                    profile_name: None,
+                    usage: usage(400, 0, 40),
+                }],
+            },
+            ..dto()
+        };
+        assert!(
+            usage_lines(&t).contains("01GONE    in 400 (cached 0) · out 40"),
+            "{}",
+            usage_lines(&t)
+        );
     }
 
     /// The question is the last thing between the caller and a cancelled
@@ -509,6 +667,7 @@ mod tests {
                 "0",
                 "-",
                 "yes",
+                "0/0",
                 "add-the-frobnicator-01task",
             ]
         );

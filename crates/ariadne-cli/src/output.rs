@@ -10,6 +10,7 @@
 
 use std::io::Write;
 
+use ariadne_api::usage::TokenUsageDto;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -144,6 +145,51 @@ pub fn at(rfc3339: Option<&str>) -> String {
     rfc3339.map_or_else(|| "-".to_string(), local_time)
 }
 
+/// A token count as a person reads it: exact under a thousand, and scaled to
+/// one decimal above it (`950`, `12.3k`, `1.2M`).
+///
+/// Counts run from zero to tens of millions, and the digits past the first
+/// few are noise in a table: what a reader wants from them is the order of
+/// magnitude, side by side with the row above.
+pub fn tokens(count: u64) -> String {
+    if count < 1_000 {
+        return count.to_string();
+    }
+    // 999_950 upwards rounds to `1000.0k`, which is `1.0M` spelled long.
+    match count < 999_950 {
+        true => scaled(count, 1_000, 'k'),
+        false => scaled(count, 1_000_000, 'M'),
+    }
+}
+
+/// What one agent, task or goal spent, in a line: what went in, how much of
+/// it the prompt cache served, and what came out.
+pub fn usage_summary(usage: &TokenUsageDto) -> String {
+    format!(
+        "in {} (cached {}) · out {}",
+        tokens(usage.input_tokens),
+        tokens(usage.cached_input_tokens),
+        tokens(usage.output_tokens),
+    )
+}
+
+/// The same spend as a table cell: `in/out`, with the cache left to
+/// `usage_summary` — a column is for comparing rows, not for reading one.
+pub fn usage_cell(usage: &TokenUsageDto) -> String {
+    format!(
+        "{}/{}",
+        tokens(usage.input_tokens),
+        tokens(usage.output_tokens)
+    )
+}
+
+/// `count` over `unit`, rounded to one decimal — half away from zero, so the
+/// last digit is the nearest one and not the one that fell out of a float.
+fn scaled(count: u64, unit: u64, suffix: char) -> String {
+    let tenths = (u128::from(count) * 10 + u128::from(unit) / 2) / u128::from(unit);
+    format!("{}.{}{suffix}", tenths / 10, tenths % 10)
+}
+
 /// A flag as a cell: `yes`, or `no_word` — `-` in a table, `no` in a block.
 pub fn yes_no(flag: bool, no_word: &str) -> String {
     match flag {
@@ -256,6 +302,57 @@ mod tests {
         for line in table_lines(COLS, &rows, false) {
             assert_eq!(line.trim_end(), line, "trailing space in {line:?}");
         }
+    }
+
+    /// Exact while the digits still mean something, scaled once they stop:
+    /// a table is read down a column, and 12_345 next to 1_204_567 says
+    /// nothing that `12.3k` next to `1.2M` does not.
+    #[test]
+    fn a_token_count_is_exact_under_a_thousand_and_scaled_above_it() {
+        assert_eq!(tokens(0), "0");
+        assert_eq!(tokens(950), "950");
+        assert_eq!(tokens(999), "999");
+        assert_eq!(tokens(1_000), "1.0k");
+        assert_eq!(tokens(12_345), "12.3k");
+        assert_eq!(tokens(45_300), "45.3k");
+        assert_eq!(tokens(1_204_567), "1.2M");
+        assert_eq!(tokens(23_456_789), "23.5M");
+    }
+
+    /// The last digit is the nearest one, and a count that rounds past its
+    /// own unit moves up to the next one rather than reading `1000.0k`.
+    #[test]
+    fn a_scaled_count_rounds_to_its_nearest_tenth() {
+        assert_eq!(tokens(1_249), "1.2k");
+        assert_eq!(tokens(1_250), "1.3k");
+        assert_eq!(tokens(999_949), "999.9k");
+        assert_eq!(tokens(999_950), "1.0M");
+        assert_eq!(tokens(1_049_999), "1.0M");
+        assert_eq!(tokens(1_050_000), "1.1M");
+    }
+
+    /// Nothing spent is `0` spent: a blank or a dash in this line would read
+    /// as a figure the daemon does not have.
+    #[test]
+    fn a_spend_of_nothing_is_zeros_and_not_a_dash() {
+        assert_eq!(
+            usage_summary(&TokenUsageDto::default()),
+            "in 0 (cached 0) · out 0"
+        );
+        assert_eq!(usage_cell(&TokenUsageDto::default()), "0/0");
+    }
+
+    /// The block line carries the cache, the cell leaves it out: one is read
+    /// on its own, the other against the rows around it.
+    #[test]
+    fn a_spend_reads_as_a_line_in_a_block_and_as_in_over_out_in_a_cell() {
+        let usage = TokenUsageDto {
+            input_tokens: 1_204_567,
+            cached_input_tokens: 1_100_000,
+            output_tokens: 45_300,
+        };
+        assert_eq!(usage_summary(&usage), "in 1.2M (cached 1.1M) · out 45.3k");
+        assert_eq!(usage_cell(&usage), "1.2M/45.3k");
     }
 
     #[test]

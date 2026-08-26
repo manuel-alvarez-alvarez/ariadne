@@ -13,12 +13,18 @@ use ariadne_core::{AttentionReason, Role, SessionStatus};
 
 use super::attention::reason_label;
 use super::{ProfileNames, confirm, query_path};
-use crate::output::{Column, Format, UNCAPPED, at, dash, local_time, print, print_kv, print_list};
+use crate::output::{
+    Column, Format, UNCAPPED, at, dash, local_time, print, print_kv, print_list, usage_cell,
+    usage_summary,
+};
 
 /// Columns of `session ls`. `context` is the one written by a human, so it is
 /// capped the way `task ls` caps its titles. `attention` is next to `status`
 /// because the two are orthogonal: an agent blocked on a permission prompt is
 /// still `running`, and the status alone says nothing about it.
+///
+/// `tokens` is what the session spent, `in/out`; the cache is in `session
+/// inspect`, since a column is scanned rather than read.
 const LS: &[Column] = &[
     ("id", UNCAPPED),
     ("context", 40),
@@ -26,6 +32,7 @@ const LS: &[Column] = &[
     ("agent", UNCAPPED),
     ("status", UNCAPPED),
     ("attention", UNCAPPED),
+    ("tokens", UNCAPPED),
     ("tmux", 32),
     ("internal id", 36),
 ];
@@ -125,6 +132,7 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
                         s.agent_kind.as_str().into(),
                         s.status.as_str().into(),
                         attention_label(s.attention_reason),
+                        usage_cell(&s.usage),
                         s.tmux_session.clone(),
                         s.internal_session_id.clone().unwrap_or_else(|| "-".into()),
                     ]
@@ -165,6 +173,7 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
                         s.review_round.map_or("-".into(), |r| r.to_string()),
                     ),
                     ("internal id", dash(s.internal_session_id.as_deref())),
+                    ("tokens", usage_summary(&s.usage)),
                     ("activity", at(s.last_activity_at.as_deref())),
                     ("created", local_time(&s.created_at)),
                     ("ended", at(s.ended_at.as_deref())),

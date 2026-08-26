@@ -13,17 +13,26 @@ use ariadne_client::Client;
 use ariadne_core::GoalStatus;
 
 use super::{ProfileNames, confirm, print_messages};
-use crate::output::{Column, Format, UNCAPPED, local_time, print, print_kv, print_list};
+use crate::output::{
+    Column, Format, UNCAPPED, local_time, print, print_kv, print_list, usage_cell, usage_summary,
+};
 use super::query_path;
 
-/// Columns of `goal ls`.
+/// Columns of `goal ls`. `tokens` is what every agent of the goal spent
+/// between them, `in/out`; the roles it splits into are in `goal inspect`.
 const LS: &[Column] = &[
     ("id", UNCAPPED),
     ("title", 48),
     ("status", UNCAPPED),
     ("approvals", UNCAPPED),
+    ("tokens", UNCAPPED),
     ("repos", 40),
 ];
+
+/// Where a continuation line of `goal inspect` starts: [`print_kv`] pads its
+/// keys to the longest one — `description` — and then two spaces, and a block
+/// that spills over several lines lines them all up under the first.
+const INDENT: &str = "\n             ";
 
 #[derive(Subcommand)]
 pub enum GoalCommand {
@@ -180,6 +189,7 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                         g.title.clone(),
                         g.status.as_str().into(),
                         g.required_approvals.to_string(),
+                        usage_cell(&g.usage.total),
                         g.repos
                             .iter()
                             .map(|r| r.path.as_str())
@@ -223,8 +233,9 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                             .iter()
                             .map(|r| format!("{} [{}] ({})", r.path, r.base_branch, r.id))
                             .collect::<Vec<_>>()
-                            .join("\n           "),
+                            .join(INDENT),
                     ),
+                    ("tokens", usage_lines(&g)),
                     ("created", local_time(&g.created_at)),
                     ("description", format!("\n---\n{}", g.description)),
                 ])
@@ -288,6 +299,29 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
         }
     }
     Ok(())
+}
+
+/// What the goal cost, role by role: every session of it summed, then the
+/// planner, its engineers and its reviewers under that.
+///
+/// By role rather than by profile, the way [`GoalUsageDto`] groups it: a goal
+/// has as many engineers as it has tasks, and at this height the question is
+/// where the tokens went, not which agent went there. Each of the three lines
+/// is always printed, `0` included — a role a goal has not spent on yet is a
+/// figure, not a gap.
+fn usage_lines(g: &GoalDto) -> String {
+    let roles = [
+        ("planner", &g.usage.planner),
+        ("engineers", &g.usage.engineers),
+        ("reviewers", &g.usage.reviewers),
+    ];
+    let width = roles.iter().map(|(name, _)| name.len()).max().unwrap_or(0);
+    let mut out = usage_summary(&g.usage.total);
+    for (name, usage) in roles {
+        out.push_str(INDENT);
+        out.push_str(&format!("{name:<width$}  {}", usage_summary(usage)));
+    }
+    out
 }
 
 fn goal_path(id: &str) -> String {
@@ -412,7 +446,10 @@ fn pick_repository(repos: &[RepositoryDto], spec: &str) -> Result<String> {
 mod tests {
     use super::*;
 
-    use crate::commands::fixtures::repository;
+    use ariadne_api::goals::GoalUsageDto;
+    use ariadne_api::usage::TokenUsageDto;
+
+    use crate::commands::fixtures::{goal, repository};
 
     fn repos() -> Vec<RepositoryDto> {
         vec![
@@ -420,6 +457,56 @@ mod tests {
             repository("01REPOUI", "/home/me/ui", "main"),
             repository("01REPOUINEXT", "/home/me/ui", "next"),
         ]
+    }
+
+    fn usage(input: u64, cached: u64, output: u64) -> TokenUsageDto {
+        TokenUsageDto {
+            input_tokens: input,
+            cached_input_tokens: cached,
+            output_tokens: output,
+        }
+    }
+
+    /// The total first, then where it went: a goal is read by role, since its
+    /// engineers are as many as it has tasks.
+    #[test]
+    fn the_block_splits_the_goal_total_by_role() {
+        let g = GoalDto {
+            usage: GoalUsageDto {
+                total: usage(12_345_000, 11_000_000, 456_000),
+                planner: usage(345_000, 300_000, 6_000),
+                engineers: usage(10_000_000, 9_000_000, 400_000),
+                reviewers: usage(2_000_000, 1_700_000, 50_000),
+            },
+            ..goal("01GOAL", "Ship the board")
+        };
+        assert_eq!(
+            usage_lines(&g),
+            [
+                "in 12.3M (cached 11.0M) · out 456.0k",
+                "             planner    in 345.0k (cached 300.0k) · out 6.0k",
+                "             engineers  in 10.0M (cached 9.0M) · out 400.0k",
+                "             reviewers  in 2.0M (cached 1.7M) · out 50.0k",
+            ]
+            .join("\n")
+        );
+    }
+
+    /// A goal nobody has run yet spent `0`, and every role says so: a role
+    /// left out of the block would read as one the goal does not have.
+    #[test]
+    fn a_goal_that_has_spent_nothing_says_zero_for_every_role() {
+        let g = goal("01GOAL", "Ship the board");
+        assert_eq!(
+            usage_lines(&g),
+            [
+                "in 0 (cached 0) · out 0",
+                "             planner    in 0 (cached 0) · out 0",
+                "             engineers  in 0 (cached 0) · out 0",
+                "             reviewers  in 0 (cached 0) · out 0",
+            ]
+            .join("\n")
+        );
     }
 
     #[test]
