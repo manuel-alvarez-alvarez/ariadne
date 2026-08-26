@@ -1514,6 +1514,30 @@ async fn a_prompt_is_only_ever_raised_on_a_session_that_is_still_live() {
     }
 }
 
+/// Every status a goal can be in survives the round trip through SQLite,
+/// whose `CHECK` on the column is a second copy of the enum: a status the
+/// constraint has not been told about is not a wrong answer but a write that
+/// fails.
+#[tokio::test]
+async fn every_goal_status_round_trips_through_the_database() {
+    let (store, _dir) = test_store().await;
+    let planner = seed_profile(&store, "planner", Role::Planner).await;
+    let (goal, _) = seed_goal(&store, &planner, None).await;
+
+    for status in GoalStatus::ALL {
+        assert_eq!(
+            store
+                .set_goal_status(&goal.id, status)
+                .await
+                .unwrap()
+                .status(),
+            status,
+            "{}",
+            status.as_str()
+        );
+    }
+}
+
 #[tokio::test]
 async fn list_goals_filters_by_any_of_the_given_statuses() {
     let (store, _dir) = test_store().await;

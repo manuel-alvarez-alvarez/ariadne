@@ -38,7 +38,7 @@ use quiet::Quiet;
 pub enum SchedEvent {
     /// A task's status, reviews or deps changed.
     TaskChanged(String),
-    /// A goal was created / cancelled / finalized.
+    /// A goal was created, submitted for approval, approved or cancelled.
     GoalChanged(String),
     /// An agent session reported activity.
     SessionEvent(String),

@@ -1,5 +1,6 @@
-//! What a goal wants, by status: a planner while it is being planned, its
-//! tasks while it is active, and nothing running once it is over.
+//! What a goal wants, by status: a planner while it is being planned, nothing
+//! at all while its plan waits for the user, its tasks while it is active, and
+//! nothing running once it is over.
 
 use tracing::{info, warn};
 
@@ -35,6 +36,14 @@ impl super::Scheduler {
                         .await?;
                 }
             }
+            // The plan is submitted and the user's to approve: nothing is
+            // expected of anybody here. No planner is spawned for a goal
+            // whose plan is already written, no idle one is ended — the user
+            // may still ask for changes, and `wake_profile` revives the
+            // session a message addressed to it — and no resume nudge goes
+            // out, since what the planner is waiting on is the user rather
+            // than the other way round.
+            GoalStatus::PlanReady => {}
             GoalStatus::Active => {
                 self.end_idle_planner(&goal.id).await;
                 let tasks = self
@@ -110,12 +119,14 @@ impl super::Scheduler {
     /// The planner's work ends with the plan: an idle one is let go once the
     /// goal it planned is being worked on.
     ///
-    /// Nothing waits on a planner outside `planning` — `attention::work_is_active`
-    /// says so, which is why a planner pane that vanishes under an active
-    /// goal is not reported as a disconnect either — and a session nobody
-    /// waits on that is left running is an agent holding a pane, a tmux
-    /// process and the machine's sleep inhibitor open until the goal
-    /// completes.
+    /// Nothing waits on a planner once the user has approved its plan —
+    /// `attention::work_is_active` says so, which is why a planner pane that
+    /// vanishes under an active goal is not reported as a disconnect either —
+    /// and a session nobody waits on that is left running is an agent holding
+    /// a pane, a tmux process and the machine's sleep inhibitor open until the
+    /// goal completes. Not while the plan waits in `plan_ready`, though: the
+    /// user may still send it back for changes, and only the arm above calls
+    /// this.
     ///
     /// Ended, not unreachable: the goal's tasks may still have something to
     /// say to their planner, and a message addressed to an exited session is
@@ -139,7 +150,7 @@ impl super::Scheduler {
             .iter()
             .filter(|s| s.role() == Role::Planner && s.status() == SessionStatus::Idle)
         {
-            info!(goal = %goal_id, session = %planner.id, "the goal is past planning; ending its idle planner");
+            info!(goal = %goal_id, session = %planner.id, "the plan is approved; ending the goal's idle planner");
             if let Err(e) = self.launcher.kill_session(&planner.id).await {
                 warn!(goal = %goal_id, session = %planner.id, error = %e, "ending the planner failed");
             }

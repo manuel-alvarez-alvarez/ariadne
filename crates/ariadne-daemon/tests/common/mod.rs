@@ -902,6 +902,14 @@ impl Harness {
             .unwrap();
     }
 
+    /// The goal-level thread, as anyone reading it would see it.
+    pub async fn goal_thread(&self, goal: &Goal) -> Vec<Message> {
+        self.store
+            .list_goal_messages(&goal.id, None, 50)
+            .await
+            .unwrap()
+    }
+
     /// The bodies of a task thread, as anyone reading it would see them.
     pub async fn thread(&self, task: &Task) -> Vec<String> {
         self.store
@@ -1038,6 +1046,11 @@ impl Harness {
     /// write. Only for a harness built with [`HarnessBuilder::scheduler`].
     pub fn notify(&self, task_id: &str) {
         self.wake(SchedEvent::TaskChanged(task_id.to_string()));
+    }
+
+    /// The same about a goal: what a status change sends.
+    pub fn notify_goal(&self, goal_id: &str) {
+        self.wake(SchedEvent::GoalChanged(goal_id.to_string()));
     }
 
     /// Offer a posted message to the scheduler again — the pass a
@@ -1304,6 +1317,10 @@ pub fn post_json(uri: &str, body: serde_json::Value) -> Request<Body> {
 
 pub fn put_json(uri: &str, body: serde_json::Value) -> Request<Body> {
     json_request(Method::PUT, uri, body)
+}
+
+pub fn patch_json(uri: &str, body: serde_json::Value) -> Request<Body> {
+    json_request(Method::PATCH, uri, body)
 }
 
 /// A request an agent makes as itself, carrying the session header the daemon

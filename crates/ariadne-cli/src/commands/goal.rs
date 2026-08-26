@@ -65,11 +65,15 @@ pub enum GoalCommand {
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
         id: String,
     },
-    /// Finalize a goal's plan: planning ends and its tasks start running
+    /// Approve a goal's plan: planning ends and its tasks start running
     ///
-    /// What the planner's `finalize_plan` does, from the terminal: the goal
-    /// leaves `planning` for `active`, and every task whose dependencies are
-    /// met is handed to an engineer. The goal needs at least one task.
+    /// The user's approval, and nobody else's: the planner's `submit_plan`
+    /// hands the plan over and leaves the goal in `plan_ready`, and this is
+    /// what starts it. The goal leaves `planning` or `plan_ready` for
+    /// `active`, and every task whose dependencies are met is handed to an
+    /// engineer. Read the plan first (`goal inspect`, `task ls --goal`) and
+    /// `task update` what it still needs; the goal needs at least one task.
+    #[command(visible_alias = "approve")]
     Finalize {
         /// Goal id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
@@ -311,14 +315,15 @@ fn goals_path(statuses: &[GoalStatus]) -> Result<String> {
     query_path("/v1/goals", &GoalListQuery { status })
 }
 
-/// What `goal finalize` asks before execution starts: agents are spawned and
-/// start writing code, so the question names how much of it is about to run.
+/// What `goal finalize` asks before execution starts: approving is what spawns
+/// the agents that start writing code, so the question names how much of it is
+/// about to run.
 async fn finalize_question(client: &Client, goal: &GoalDto) -> String {
     let tail = match goal_tasks(client, &goal.id).await.len() {
         1 => "1 task starts running".into(),
         n => format!("{n} tasks start running"),
     };
-    format!("Finalize the plan of goal \"{}\" ({tail})?", goal.title)
+    format!("Approve the plan of goal \"{}\" ({tail})?", goal.title)
 }
 
 /// What `goal cancel` asks before it fans out: cancelling is irreversible and
@@ -442,6 +447,10 @@ mod tests {
         assert_eq!(
             goals_path(&[GoalStatus::Planning]).unwrap(),
             "/v1/goals?status=planning"
+        );
+        assert_eq!(
+            goals_path(&[GoalStatus::PlanReady]).unwrap(),
+            "/v1/goals?status=plan_ready"
         );
     }
 

@@ -82,15 +82,15 @@ pub fn default_prompt_text(kind: PromptKind) -> &'static str {
     }
 }
 
-/// Planner persona and playbook, and the one place `finalize_plan` is
-/// explained: it starts every task at once.
+/// Planner persona and playbook, and the one place `submit_plan` is
+/// explained: it hands the plan to the user and starts nothing.
 const PLANNER_SYSTEM_PROMPT: &str = r#"You are the planning lead of an Ariadne goal: turn it into a small set of well-scoped tasks, each with an engineer and one or more reviewers. Never write code.
 
 1. Explore the repositories your briefing names; settle scope and trade-offs with the user here, asking rather than assuming.
 2. Break the goal into small, independently mergeable tasks, one repository each, written like a strong ticket: context, what to do, what not to touch, and acceptance criteria saying how to verify each.
 3. `create_task` with an engineer and at least one reviewer out of `list_profiles`. `depends_on` is for a task that truly needs another first: unordered tasks run concurrently in separate worktrees and must not touch the same code.
 4. `update_task` corrects a task until it starts.
-5. `finalize_plan` starts every task at once: call it once the user agrees the plan is complete, never with a question open."#;
+5. `submit_plan` hands the plan to the user for approval and starts nothing: call it once they agree the plan is complete, never with a question open. Their approval starts the tasks; until it comes, rework whatever they ask for and `submit_plan` again."#;
 
 /// Engineer persona and playbook: what it may touch, what it writes, and the
 /// one place `request_review` is explained. Landing is its own too, but the
@@ -128,10 +128,11 @@ const PLANNER_BRIEFING: &str = r#"# Goal: {goal_title}
 - At most {max_tasks} tasks
 - {required_approvals} approvals per task"#;
 
-/// What a planner that has gone quiet is picked up with. The goal is still in
-/// planning, so there is one thing left to do with it and two calls that end
-/// it; the goal itself the session has read already.
-const PLANNER_RESUME: &str = r#"Keep planning "{goal_title}": `create_task` for what it still needs, `finalize_plan` once the user agrees it is complete, `post_message` where you are waiting on them."#;
+/// What a planner that has gone quiet is picked up with. Only a goal still in
+/// planning is nudged — one whose plan is already submitted waits on the user,
+/// not on its planner — so there is one thing left to do with it and two calls
+/// that end it; the goal itself the session has read already.
+const PLANNER_RESUME: &str = r#"Keep planning "{goal_title}": `create_task` for what it still needs, `submit_plan` to hand it to the user once they agree it is complete, `post_message` where you are waiting on them."#;
 
 /// Initial briefing of an engineer session: the task, and the values its
 /// commands act on.
@@ -273,10 +274,17 @@ mod tests {
     /// The total is over the prompt kinds — what a briefing costs per turn —
     /// with the three system prompts pinned separately and counted again in a
     /// grand total, since a session pays for one of each.
+    ///
+    /// What a cap is not is a reason to say a rule badly. The system-prompt
+    /// one went from 900 to 1050 when approving a plan became the user's:
+    /// a step of the lifecycle the planner has to know about is not the kind
+    /// of growth these numbers are here to stop. Moving one is a decision to
+    /// argue for, never a way round a failing assertion.
     #[test]
     fn size_caps_hold() {
         const KIND_TOTAL: usize = 6000;
         const GRAND_TOTAL: usize = 7000;
+        const SYSTEM_PROMPT: usize = 1050;
 
         let cap = |kind: PromptKind| match kind {
             PromptKind::LandingDirect | PromptKind::LandingPullRequest => 2000,
@@ -294,8 +302,8 @@ mod tests {
         for role in Role::ALL {
             let text = default_system_prompt(role);
             assert!(
-                text.len() <= 900,
-                "the {} system prompt is {} characters, over its 900",
+                text.len() <= SYSTEM_PROMPT,
+                "the {} system prompt is {} characters, over its {SYSTEM_PROMPT}",
                 role.as_str(),
                 text.len()
             );
@@ -353,7 +361,7 @@ mod tests {
                 "one per round and the only thing that counts",
             ),
             (Role::Engineer, "you are briefed to land it"),
-            (Role::Planner, "starts every task at once"),
+            (Role::Planner, "hands the plan to the user for approval"),
         ] {
             for role in Role::ALL {
                 let prompt = default_system_prompt(role);
@@ -492,7 +500,7 @@ mod tests {
             "--ff-only",
             "`request_review` submits it",
             "`submit_verdict` is the verdict",
-            "`finalize_plan` starts every task",
+            "hands the plan to the user for approval",
         ] {
             let places = all_defaults()
                 .into_iter()
@@ -521,6 +529,26 @@ mod tests {
                 Ok(()),
                 "the default {} template",
                 kind.as_str()
+            );
+        }
+    }
+
+    /// The plan is submitted, not finalized: `submit_plan` is what the
+    /// planner calls, and approving what it hands over is the user's alone —
+    /// so no default names the call it used to make, and every profile on the
+    /// defaults is briefed with the new one the moment it is read.
+    #[test]
+    fn the_planner_submits_the_plan_and_no_default_still_names_finalize_plan() {
+        for text in [
+            default_system_prompt(Role::Planner),
+            default_prompt_text(PromptKind::PlannerResume),
+        ] {
+            assert!(text.contains("`submit_plan`"), "{text}");
+        }
+        for (name, text) in all_defaults() {
+            assert!(
+                !text.contains("finalize_plan"),
+                "the {name} still names `finalize_plan`"
             );
         }
     }

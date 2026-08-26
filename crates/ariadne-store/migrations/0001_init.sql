@@ -83,7 +83,8 @@ CREATE TABLE goals (
     title               TEXT NOT NULL,
     description         TEXT NOT NULL,
     status              TEXT NOT NULL DEFAULT 'planning'
-                        CHECK (status IN ('planning', 'active', 'completed', 'cancelled')),
+                        CHECK (status IN ('planning', 'plan_ready', 'active',
+                                          'completed', 'cancelled')),
     max_tasks           INTEGER,                -- NULL = unbounded
     required_approvals  INTEGER NOT NULL DEFAULT 1 CHECK (required_approvals >= 1),
     planner_profile_id  TEXT NOT NULL REFERENCES profiles (id),

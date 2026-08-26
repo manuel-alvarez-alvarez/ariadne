@@ -28,12 +28,16 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    conversation.
 2. The planner discusses the breakdown with you, creates tasks through the
    Ariadne MCP tools (assigning an engineer profile and reviewer profiles per
-   task, with optional `depends_on` ordering), then calls `finalize_plan`.
-3. The scheduler takes over: when a task's dependencies are merged it becomes
-   `ready` and an **engineer** is spawned in a dedicated git worktree, on a
-   branch named after the task — its title slugged plus a short tail of its id,
-   as in `fix-the-landing-briefing-real-fetch-r9jr7c`. It implements, commits
-   and calls `request_review`.
+   task, with optional `depends_on` ordering), then calls `submit_plan`. The
+   goal waits in `plan_ready` and nothing runs: read the tasks, edit what they
+   still need (`ariadne task update`) or ask the planner for changes, and
+   `ariadne goal approve` when the plan is right.
+3. Your approval starts the work, and the scheduler takes over: when a task's
+   dependencies are merged it becomes `ready` and an **engineer** is spawned in
+   a dedicated git worktree, on a branch named after the task — its title
+   slugged plus a short tail of its id, as in
+   `fix-the-landing-briefing-real-fetch-r9jr7c`. It implements, commits and
+   calls `request_review`.
 4. **Reviewers** spawn in read-only detached worktrees, inspect the diff and
    `submit_verdict`, approving or requesting changes. Change requests resume
    the engineer with the feedback; enough approvals move the task to

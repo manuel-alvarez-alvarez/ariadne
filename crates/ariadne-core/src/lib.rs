@@ -423,7 +423,11 @@ impl AgentKind {
 pub enum GoalStatus {
     /// Planner session active; tasks being defined.
     Planning,
-    /// Plan finalized; tasks executing.
+    /// The planner has submitted the plan; waiting for the user's approval.
+    /// Nothing runs yet: the plan is still the user's to read and edit, and
+    /// the planner is still there to rework it.
+    PlanReady,
+    /// Plan approved by the user; tasks executing.
     Active,
     /// All tasks merged (or goal-level completion recorded).
     Completed,
@@ -432,6 +436,7 @@ pub enum GoalStatus {
 
 wire_enum! { GoalStatus, "goal status", [
     Planning = "planning",
+    PlanReady = "plan_ready",
     Active = "active",
     Completed = "completed",
     Cancelled = "cancelled",

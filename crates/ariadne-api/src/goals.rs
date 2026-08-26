@@ -30,7 +30,16 @@ pub struct GoalDto {
     pub updated_at: String,
 }
 
-/// Body of `POST /v1/goals/{id}/finalize`: planning ends, execution starts.
+/// Body of `POST /v1/goals/{id}/submit`: the planner hands the plan to the
+/// user for approval. The goal waits in `plan_ready` and no task starts.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SubmitPlanRequest {
+    /// Plan summary, posted to the goal thread addressed to the user.
+    pub summary: String,
+}
+
+/// Body of `POST /v1/goals/{id}/finalize`: the user approves the plan,
+/// planning ends and execution starts. The user's call, not the planner's.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct FinalizePlanRequest {
     /// Plan summary, recorded in the goal thread.
