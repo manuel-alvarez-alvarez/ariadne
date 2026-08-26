@@ -1,5 +1,99 @@
 # Changelog
 
+## [0.4.0](https://github.com/manuel-alvarez-alvarez/ariadne/compare/v0.3.0...v0.4.0) (2026-08-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* **store:** a database written by an earlier release cannot be opened. Delete `db_path` (default `~/.ariadne/ariadne.db`), along with its `-wal` and `-shm` files, before starting this version; the daemon writes a fresh one. Ariadne is pre-1.0, so a database is recreated rather than migrated.
+* **prompts:** the `landing_instructions` prompt kind is gone. A prompt somebody set for it is dropped by migration 0029, and `landing_direct` and `landing_pull_request` start on the defaults the code ships.
+* **daemon:** `running_quiet_flag_secs` and `running_quiet_resume_secs` are no longer `config.toml` keys, and the file is read strictly — a `config.toml` naming either of them stops the daemon until they are dropped. The thresholds they set are now the daemon's own, at fifteen and forty-five minutes.
+* **store:** prompts are overrides, and every default lives in code
+* **mcp:** a smaller tool set, and a task read in one call
+* `merge_strategy` is a new repository field, `integrating` is no longer a task status and tasks no longer carry an integrator profile. Anything reading `/v1/tasks` for `integrator_profile_id`, `pr_number` or the `integrating` status, or setting `gh_bin`, `glab_bin` or `pr_poll_secs` in `config.toml`, needs updating.
+
+### Features
+
+* **api:** address a message to a profile or the user ([90a61dc](https://github.com/manuel-alvarez-alvarez/ariadne/commit/90a61dc5c45041a1d208c3e4e989ad783069b084))
+* **cli:** address a message to one agent or the user ([67360e8](https://github.com/manuel-alvarez-alvarez/ariadne/commit/67360e8d523306c62c4364f44798097f0f7979ac))
+* **core,store:** rename the merging status to integrating and add the integrator role ([1a363b7](https://github.com/manuel-alvarez-alvarez/ariadne/commit/1a363b724072e13fa55a0f1df75e11f6cc3b16e7))
+* **core:** every text an agent receives is a prompt kind ([c25cf4b](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c25cf4bf4ae5f0970fc6b0a5632edd8104683a3a))
+* **daemon,store,core:** land approved tasks with an integrator session ([c0683a7](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c0683a725d38468038c5631577c24d41c0de7b94))
+* **daemon:** a closed request ends its task, and a watch that reads nothing says so ([833292c](https://github.com/manuel-alvarez-alvarez/ariadne/commit/833292cdb725d5e07e70beaf09739ece9cb31948))
+* **daemon:** a published request's reviewers replace the internal round ([88bf39a](https://github.com/manuel-alvarez-alvarez/ariadne/commit/88bf39ac5e065b72401dfb10af86b1e659cb3658))
+* **daemon:** a request closed without a merge is a state of its own ([f8200d6](https://github.com/manuel-alvarez-alvarez/ariadne/commit/f8200d66552d7190ed62184c5d0385596ec778b9))
+* **daemon:** attention raised for the user is the user's to clear ([6ce3c52](https://github.com/manuel-alvarez-alvarez/ariadne/commit/6ce3c522eea08dc330fbabf77994a105e4075f39))
+* **daemon:** give relayed forge feedback an author of its own ([fd6e62e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/fd6e62eb4b72fa0e6917e9b48bde1d77096d8ef6))
+* **daemon:** improve task notification hygiene ([4328d61](https://github.com/manuel-alvarez-alvarez/ariadne/commit/4328d61a29f867d8fbbecc3b0caeb48f934dd1c0))
+* **daemon:** let the planner go once the goal leaves planning ([e757d39](https://github.com/manuel-alvarez-alvarez/ariadne/commit/e757d399ac5ef58e3849eee67447818a7d62e7ad))
+* **daemon:** one quiet-clock watchdog replaces the three in the scheduler ([f68b8ec](https://github.com/manuel-alvarez-alvarez/ariadne/commit/f68b8ec16fb62a525b3e5981b19b9f4c51d1fe48))
+* **daemon:** prevent stalled forge integrations ([03d0e82](https://github.com/manuel-alvarez-alvarez/ariadne/commit/03d0e823e7045c116ae90308ebaee678c88d7358))
+* **daemon:** render every agent-facing text from its profile's template ([f12f72c](https://github.com/manuel-alvarez-alvarez/ariadne/commit/f12f72ce92641a4fe0a69fa7c37c1ff15b0ebd93))
+* **daemon:** route failing checks and conflicts to engineers ([19aea95](https://github.com/manuel-alvarez-alvarez/ariadne/commit/19aea9567ef1a84f2acb79079009ba0a26f71467))
+* **daemon:** route published review replies through integrator ([4737c44](https://github.com/manuel-alvarez-alvarez/ariadne/commit/4737c444de10ef176e9c2727c0b7c48e5e92fad6))
+* **daemon:** say how many comments the round came back with ([651595e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/651595e1050e4ff4ac1f53c8dda2cf1938c9b78f))
+* **daemon:** send a failing or conflicting request back to the engineer ([524856c](https://github.com/manuel-alvarez-alvarez/ariadne/commit/524856c7de1e960d4c937370aa66712148219b4a))
+* **daemon:** send pull request comments straight to the engineer ([218a0c5](https://github.com/manuel-alvarez-alvarez/ariadne/commit/218a0c5de57043ac1b77ab59ee81285e2fcc1916))
+* **daemon:** stream session output on the write, not on a 300 ms poll ([c0cde92](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c0cde92c915b73ad2a92d0b0b22a076371c7db51))
+* **daemon:** tell the user when a task or a goal ends ([fa59fb2](https://github.com/manuel-alvarez-alvarez/ariadne/commit/fa59fb2829a1b058eba2c89ae3155a92fbe85bcf))
+* **daemon:** tell the user when a wedged agent ends its task ([146a1c0](https://github.com/manuel-alvarez-alvarez/ariadne/commit/146a1c04c1ca794e3515b82131fc5c0f3d0b15cd))
+* **daemon:** wake the agent a message addresses ([2a57942](https://github.com/manuel-alvarez-alvarez/ariadne/commit/2a5794226c00bfb714f10c2a8b1160ade8554637))
+* **daemon:** watch the agent that wedges inside its turn ([5850b22](https://github.com/manuel-alvarez-alvarez/ariadne/commit/5850b229a00962b1611df59e185c26915301a522))
+* **daemon:** watchdog running sessions that stop reporting ([24a1db0](https://github.com/manuel-alvarez-alvarez/ariadne/commit/24a1db062b7de3d9888183c3dfd5f33dd299f9ee))
+* **doctor:** report gh and glab, and whether they are signed in ([8af45a3](https://github.com/manuel-alvarez-alvarez/ariadne/commit/8af45a30566b9e98828fea94f566c0831a491f26))
+* fit an agent's tmux pane to the browser panel showing it ([0abf5ae](https://github.com/manuel-alvarez-alvarez/ariadne/commit/0abf5aef13a8c7abd8b986f90eae14dc14e34a7a))
+* **mcp:** a smaller tool set, and a task read in one call ([b21bd69](https://github.com/manuel-alvarez-alvarez/ariadne/commit/b21bd69ec1fe84ef5f26f5d902910bd91abd4d46))
+* **mcp:** get_task names the profiles a message is addressed to ([1d435e1](https://github.com/manuel-alvarez-alvarez/ariadne/commit/1d435e152acdec4620a0d48a3885f45faeeb886c))
+* **mcp:** let the integrator read the goal its task belongs to ([c1dbf98](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c1dbf9809381254a56eabc86c9bb8bf20219a356))
+* **prompts:** every rule once, and one landing briefing per merge strategy ([45c5e13](https://github.com/manuel-alvarez-alvarez/ariadne/commit/45c5e1315886bc4463b1d84ea64699f3579fab4b))
+* **prompts:** render every agent-facing text from templates ([6492492](https://github.com/manuel-alvarez-alvarez/ariadne/commit/64924925d9e563e66a1729b92e48573316523ede))
+* **prompts:** stop briefing the integrator to relay comments ([4d53f84](https://github.com/manuel-alvarez-alvarez/ariadne/commit/4d53f8458853d212e93616bb88de91e9fea71dd6))
+* **store,api,daemon,cli,ui:** assign the integrator at planning time ([8a80fd6](https://github.com/manuel-alvarez-alvarez/ariadne/commit/8a80fd6daf9732b62c3be4594ccb2fe93940e10a))
+* **store,daemon:** publish approved tasks as GitHub pull requests ([8174c25](https://github.com/manuel-alvarez-alvarez/ariadne/commit/8174c2560a958cf2a81451994515c8d89fc53442))
+* **store,daemon:** publish approved tasks as GitLab merge requests ([90ac6e6](https://github.com/manuel-alvarez-alvarez/ariadne/commit/90ac6e673886c92674abcf5c10d456fbd009bd11))
+* **store:** default texts for every prompt an agent receives ([914e8c6](https://github.com/manuel-alvarez-alvarez/ariadne/commit/914e8c62c8dbf37882dd88ec2b6c4dee3013f462))
+* **store:** name a task branch after its title ([b6c6b9d](https://github.com/manuel-alvarez-alvarez/ariadne/commit/b6c6b9d2c82382e3893aa96a86ea8c4029f29e4f))
+* **store:** name task branches after their titles ([65fa4e4](https://github.com/manuel-alvarez-alvarez/ariadne/commit/65fa4e4a50e9ce619b5cb6fb0b5e7645b7296d5d))
+* **store:** one init migration replaces the chain of 29 ([affda30](https://github.com/manuel-alvarez-alvarez/ariadne/commit/affda30beadefdcba48c50067e399e85f859ea64))
+* **store:** prompts are overrides, and every default lives in code ([6b566fe](https://github.com/manuel-alvarez-alvarez/ariadne/commit/6b566fe6fac10929a4d13bf4555cc7c62c60c8a9))
+* **store:** unify built-in integrator profiles ([92765e3](https://github.com/manuel-alvarez-alvarez/ariadne/commit/92765e31883f623a99f03c2b336e22288025e692))
+* the engineer lands its own task, by the repository's merge strategy ([ad268ee](https://github.com/manuel-alvarez-alvarez/ariadne/commit/ad268ee001e9e28dc98e24383c32eb7b2b94d188))
+* **ui,cli:** make the integrator a first-class per-task role ([a76fd9d](https://github.com/manuel-alvarez-alvarez/ariadne/commit/a76fd9d681e6842e52a7114cdcc947c2519ae3e7))
+* **ui:** drop the profile id row, give the model blurb a line ([80cc3f4](https://github.com/manuel-alvarez-alvarez/ariadne/commit/80cc3f43ac2f49a1565904eeebe803809704e3f4))
+* **ui:** render the forge author and the attention that is the user's ([2b4834e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/2b4834ec58cf337cabc0d7d7eb7e693d6626c4d9))
+* **ui:** show and compose addressed messages ([1f7d7eb](https://github.com/manuel-alvarez-alvarez/ariadne/commit/1f7d7eb5f59d527db5579a6c290b36b1e1643328))
+* **ui:** the profile editor lists every prompt kind ([da12bf2](https://github.com/manuel-alvarez-alvarez/ariadne/commit/da12bf2b7b8cf9310ac67374f1b6f148717b7754))
+
+
+### Bug Fixes
+
+* **daemon:** a check that has not finished holds the notice back ([1eab980](https://github.com/manuel-alvarez-alvarez/ariadne/commit/1eab980aa0d12524fbfde4f9ab20b05ca70d7912))
+* **daemon:** a closed request ends its task whatever its integrator is doing ([0a9ecc9](https://github.com/manuel-alvarez-alvarez/ariadne/commit/0a9ecc968061813d08c671a18397c264f5a5c60d))
+* **daemon:** a message nobody has a session for is a pass, not a shrug ([3e65951](https://github.com/manuel-alvarez-alvarez/ariadne/commit/3e659511fc597eda6fb5911092f3a2311691c7f7))
+* **daemon:** a nudge that arrived does not give itself back ([71f062a](https://github.com/manuel-alvarez-alvarez/ariadne/commit/71f062a2d130f1820566b98cd688c2312aa0c1b4))
+* **daemon:** brief reviewers with the summary review was requested with ([2ca6dd2](https://github.com/manuel-alvarez-alvarez/ariadne/commit/2ca6dd297fa9e48ab54eba6ec03fa28f709d5219))
+* **daemon:** deliver an addressed message or say who never got it ([8502e52](https://github.com/manuel-alvarez-alvarez/ariadne/commit/8502e52b349799a7e2a768ed804e85e7ac4a5cdc))
+* **daemon:** do not kill a wedged pane a delivery is going into ([5de4e2f](https://github.com/manuel-alvarez-alvarez/ariadne/commit/5de4e2f5fe84f5037c1bdddd505c792a4d7a6110))
+* **daemon:** hand the engineer's replies to the integrator byte for byte ([b11513e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/b11513ecc7b8a7e37551aae5b08e08e884b634b7))
+* **daemon:** leave a flag raised for the user where it is ([bbe71a2](https://github.com/manuel-alvarez-alvarez/ariadne/commit/bbe71a257979f2e2d673b3aa6598598cb4041939))
+* **daemon:** make addressed message delivery reliable ([1e033f5](https://github.com/manuel-alvarez-alvarez/ariadne/commit/1e033f5887a3ad3b32f6b19091edc6b331ccf39b))
+* **daemon:** poll a published request before starting an integrator for it ([3828492](https://github.com/manuel-alvarez-alvarez/ariadne/commit/3828492f46cea90a1ce49e8077624f5ccc9c7b5d))
+* **daemon:** raise a resume instruction that was never typed in ([2326323](https://github.com/manuel-alvarez-alvarez/ariadne/commit/2326323cd060667311b76fc45a4b4c4559495d14))
+* **daemon:** relay forge comments to the engineer ([092a8e3](https://github.com/manuel-alvarez-alvarez/ariadne/commit/092a8e3da2a470df4129f3ce19757e9cd64b24fa))
+* **daemon:** tell the user when a pull request is opened for them ([d502679](https://github.com/manuel-alvarez-alvarez/ariadne/commit/d502679fc6f966a77a429693a3f1565cc834657b))
+* **daemon:** tell the user when a pull request is opened for them ([be0749c](https://github.com/manuel-alvarez-alvarez/ariadne/commit/be0749c22b90d473527898f10e1df3401d04e904))
+* **daemon:** what the user is owed outlives the relaunch ([1265da3](https://github.com/manuel-alvarez-alvarez/ariadne/commit/1265da31583a9f0123fd1b48e3d41e6d9df45101))
+* **prompts:** correct integrator git landing procedure ([9de9cf7](https://github.com/manuel-alvarez-alvarez/ariadne/commit/9de9cf7932c34216335feca2660a5694450499ab))
+* **prompts:** give the integrator a git procedure that works ([2e66025](https://github.com/manuel-alvarez-alvarez/ariadne/commit/2e66025605d2fa9be62a7d1603be69da67279070))
+* **prompts:** let the daemon be the one that announces a published request ([65b4985](https://github.com/manuel-alvarez-alvarez/ariadne/commit/65b4985e8e19246c0981a0d21b9929eea481014e))
+* **store:** an agent's own clear takes its task's stall with it ([136dc82](https://github.com/manuel-alvarez-alvarez/ariadne/commit/136dc82a4dfd2002d872fa3a75f0f53838c61930))
+* **store:** relay a round of forge comments in one write, or in none ([f1c1861](https://github.com/manuel-alvarez-alvarez/ariadne/commit/f1c18617f28b8571e05e1ebefbc1de6c8aa741c5))
+
+
+### Performance Improvements
+
+* **ui:** keep the terminal across the expand, and draw it on the GPU ([479cfc9](https://github.com/manuel-alvarez-alvarez/ariadne/commit/479cfc95cb38ac51d105d6e21a762839a3cb787b))
+
 ## [0.3.0](https://github.com/manuel-alvarez-alvarez/ariadne/compare/v0.2.0...v0.3.0) (2026-08-23)
 
 
