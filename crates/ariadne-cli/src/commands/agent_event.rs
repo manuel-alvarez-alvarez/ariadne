@@ -7,8 +7,8 @@
 mod usage;
 
 use std::io::Read;
-use std::path::Path;
-use std::time::Duration;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 use ariadne_api::events::IngestEventRequest;
 use ariadne_client::Client;
@@ -57,7 +57,7 @@ async fn forward(kind: String, json: Option<String>) {
         _ => return,
     };
 
-    attach_usage(agent_kind, &event_kind, &mut payload);
+    attach_usage(agent_kind, &event_kind, &mut payload, &session_id);
 
     let client = Client::from_env();
     let _ = client
@@ -73,22 +73,49 @@ async fn forward(kind: String, json: Option<String>) {
         .await;
 }
 
-/// The events a transcript is worth reading for: the turn boundaries, where
-/// the counters have just moved. Reading on every tool call instead would
-/// re-read a multi-megabyte file dozens of times a turn for an answer that
-/// only changes when the turn ends.
-const USAGE_EVENTS: [&str; 3] = ["stop", "session_end", "user_prompt_submit"];
+/// The events that always read the transcript: the turn boundaries, where the
+/// counters have just moved.
+const TURN_BOUNDARIES: [&str; 3] = ["stop", "session_end", "user_prompt_submit"];
+
+/// The event that reads it only when [`USAGE_INTERVAL`] has passed since the
+/// last report. A turn is one long stretch of tool calls, and its figures
+/// would otherwise sit at zero until it ends; reading on *every* call instead
+/// would re-read a multi-megabyte file dozens of times a turn.
+const THROTTLED_USAGE_EVENT: &str = "post_tool_use";
+
+/// How stale the last report has to be before a [`THROTTLED_USAGE_EVENT`]
+/// reads the transcript again.
+const USAGE_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Add `ariadne_usage` to the payload, when the agent's transcript can be read.
 ///
 /// The counters are cumulative for `source`, the transcript they came from,
 /// so the daemon can store the latest report and ignore the order they arrive
-/// in. Every failure — an event that is not a turn boundary, no
-/// `transcript_path`, a file that is gone or unreadable, a shape that has
-/// changed — leaves the payload as it was: usage is a bonus, never a reason
-/// for the hook to do anything different.
-fn attach_usage(agent_kind: AgentKind, event: &str, payload: &mut serde_json::Value) {
-    if !USAGE_EVENTS.contains(&event) {
+/// in. Every failure — an event that reports no usage, no `transcript_path`, a
+/// file that is gone or unreadable, a shape that has changed — leaves the
+/// payload as it was: usage is a bonus, never a reason for the hook to do
+/// anything different.
+fn attach_usage(
+    agent_kind: AgentKind,
+    event: &str,
+    payload: &mut serde_json::Value,
+    session_id: &str,
+) {
+    attach_usage_within(
+        agent_kind,
+        event,
+        payload,
+        &Throttle::for_session(session_id),
+    );
+}
+
+fn attach_usage_within(
+    agent_kind: AgentKind,
+    event: &str,
+    payload: &mut serde_json::Value,
+    throttle: &Throttle,
+) {
+    if !throttle.allows(event) {
         return;
     }
     let Some(source) = payload
@@ -101,8 +128,12 @@ fn attach_usage(agent_kind: AgentKind, event: &str, payload: &mut serde_json::Va
     let usage = match agent_kind {
         AgentKind::ClaudeCode => usage::claude_usage(Path::new(&source)),
         AgentKind::Codex => usage::codex_usage(Path::new(&source)),
-        _ => None,
+        // OpenCode reports its own usage from the plugin.
+        _ => return,
     };
+    // The read is what the interval is there to space out, so the stamp marks
+    // it whether or not the file had anything to say.
+    throttle.record();
     let (Some(usage), Some(object)) = (usage, payload.as_object_mut()) else {
         return;
     };
@@ -115,6 +146,59 @@ fn attach_usage(agent_kind: AgentKind, event: &str, payload: &mut serde_json::Va
             "output_tokens": usage.output_tokens,
         }),
     );
+}
+
+/// When this session last read its transcript, kept in a file because every
+/// hook run is a process of its own that remembers nothing.
+///
+/// Anything the stamp cannot answer — no file yet, junk in it, a clock that
+/// moved, a temp dir that cannot be written — is answered by reporting: a
+/// missed throttle costs one read, a missed report costs the figure this is
+/// all here to show.
+struct Throttle {
+    stamp: PathBuf,
+    now: SystemTime,
+    interval: Duration,
+}
+
+impl Throttle {
+    fn for_session(session_id: &str) -> Self {
+        Self {
+            stamp: std::env::temp_dir().join(format!("ariadne-usage-{session_id}")),
+            now: SystemTime::now(),
+            interval: USAGE_INTERVAL,
+        }
+    }
+
+    /// Whether `event` may read the transcript now.
+    fn allows(&self, event: &str) -> bool {
+        if TURN_BOUNDARIES.contains(&event) {
+            return true;
+        }
+        if event != THROTTLED_USAGE_EVENT {
+            return false;
+        }
+        self.last_report()
+            .and_then(|last| self.now.duration_since(last).ok())
+            .is_none_or(|since| since >= self.interval)
+    }
+
+    fn last_report(&self) -> Option<SystemTime> {
+        let millis: u64 = std::fs::read_to_string(&self.stamp)
+            .ok()?
+            .trim()
+            .parse()
+            .ok()?;
+        Some(SystemTime::UNIX_EPOCH + Duration::from_millis(millis))
+    }
+
+    fn record(&self) {
+        let Ok(age) = self.now.duration_since(SystemTime::UNIX_EPOCH) else {
+            return;
+        };
+        let millis = u64::try_from(age.as_millis()).unwrap_or(u64::MAX);
+        let _ = std::fs::write(&self.stamp, millis.to_string());
+    }
 }
 
 /// Split a hook payload into (event kind, payload). Unparsable input is
@@ -148,11 +232,12 @@ fn camel_to_snake(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::time::{Duration, SystemTime};
 
     use ariadne_core::AgentKind;
     use tempfile::TempDir;
 
-    use super::{attach_usage, parse_hook_event};
+    use super::{Throttle, USAGE_INTERVAL, attach_usage_within, parse_hook_event};
 
     /// A real Codex 0.147 SessionStart payload.
     const CODEX_SESSION_START: &str = r#"{
@@ -208,20 +293,46 @@ mod tests {
         "\n",
     );
 
-    fn stop_payload(transcript: &str) -> serde_json::Value {
-        let raw = format!(r#"{{"hook_event_name": "Stop", "transcript_path": "{transcript}"}}"#);
+    fn payload_for(event: &str, transcript: &str) -> serde_json::Value {
+        let raw = format!(r#"{{"hook_event_name": "{event}", "transcript_path": "{transcript}"}}"#);
         parse_hook_event(&raw).1
+    }
+
+    fn stop_payload(transcript: &str) -> serde_json::Value {
+        payload_for("Stop", transcript)
+    }
+
+    /// A transcript with something to report, and room for the stamp beside it.
+    fn fixture() -> (TempDir, String) {
+        let dir = TempDir::new().expect("a temp dir");
+        let transcript = dir.path().join("session.jsonl");
+        fs::write(&transcript, TRANSCRIPT).expect("write the transcript");
+        let source = transcript.to_str().expect("a utf-8 path").to_string();
+        (dir, source)
+    }
+
+    /// The throttle a hook running `seconds` into the session would build:
+    /// every call of one test shares the stamp file, as the hooks of one
+    /// session share theirs.
+    fn throttle_at(dir: &TempDir, seconds: u64) -> Throttle {
+        Throttle {
+            stamp: dir.path().join("stamp"),
+            now: SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000 + seconds),
+            interval: USAGE_INTERVAL,
+        }
     }
 
     #[test]
     fn a_stop_reports_the_usage_its_transcript_holds() {
-        let dir = TempDir::new().expect("a temp dir");
-        let transcript = dir.path().join("session.jsonl");
-        fs::write(&transcript, TRANSCRIPT).expect("write the transcript");
-        let source = transcript.to_str().expect("a utf-8 path");
+        let (dir, source) = fixture();
 
-        let mut payload = stop_payload(source);
-        attach_usage(AgentKind::ClaudeCode, "stop", &mut payload);
+        let mut payload = stop_payload(&source);
+        attach_usage_within(
+            AgentKind::ClaudeCode,
+            "stop",
+            &mut payload,
+            &throttle_at(&dir, 0),
+        );
 
         assert_eq!(payload["ariadne_usage"]["source"], source);
         assert_eq!(payload["ariadne_usage"]["input_tokens"], 1110);
@@ -231,28 +342,165 @@ mod tests {
 
     #[test]
     fn a_transcript_that_is_not_there_reports_nothing() {
+        let dir = TempDir::new().expect("a temp dir");
         let mut payload = stop_payload("/nowhere/session.jsonl");
-        attach_usage(AgentKind::ClaudeCode, "stop", &mut payload);
+        attach_usage_within(
+            AgentKind::ClaudeCode,
+            "stop",
+            &mut payload,
+            &throttle_at(&dir, 0),
+        );
         assert!(payload.get("ariadne_usage").is_none());
         // The event still goes out with everything it arrived with.
         assert_eq!(payload["transcript_path"], "/nowhere/session.jsonl");
     }
 
     #[test]
-    fn only_turn_boundaries_read_the_transcript() {
-        let dir = TempDir::new().expect("a temp dir");
-        let transcript = dir.path().join("session.jsonl");
-        fs::write(&transcript, TRANSCRIPT).expect("write the transcript");
-        let source = transcript.to_str().expect("a utf-8 path");
+    fn a_tool_call_reports_mid_turn() {
+        let (dir, source) = fixture();
 
-        for event in ["pre_tool_use", "post_tool_use", "session_start", "unknown"] {
-            let mut payload = stop_payload(source);
-            attach_usage(AgentKind::ClaudeCode, event, &mut payload);
+        let mut payload = payload_for("PostToolUse", &source);
+        attach_usage_within(
+            AgentKind::ClaudeCode,
+            "post_tool_use",
+            &mut payload,
+            &throttle_at(&dir, 0),
+        );
+
+        assert_eq!(payload["ariadne_usage"]["input_tokens"], 1110);
+    }
+
+    #[test]
+    fn a_second_tool_call_within_the_interval_reports_nothing() {
+        let (dir, source) = fixture();
+        let mut first = payload_for("PostToolUse", &source);
+        attach_usage_within(
+            AgentKind::ClaudeCode,
+            "post_tool_use",
+            &mut first,
+            &throttle_at(&dir, 0),
+        );
+        assert!(first.get("ariadne_usage").is_some());
+        let stamp = fs::read_to_string(dir.path().join("stamp")).expect("a stamp");
+
+        let mut second = payload_for("PostToolUse", &source);
+        attach_usage_within(
+            AgentKind::ClaudeCode,
+            "post_tool_use",
+            &mut second,
+            &throttle_at(&dir, 9),
+        );
+
+        assert!(second.get("ariadne_usage").is_none());
+        // The stamp only moves when the transcript is read, so one that has
+        // not moved is the proof that the throttled call read nothing.
+        assert_eq!(
+            fs::read_to_string(dir.path().join("stamp")).expect("a stamp"),
+            stamp
+        );
+
+        // Once the interval has passed, the next call reports again.
+        let mut third = payload_for("PostToolUse", &source);
+        attach_usage_within(
+            AgentKind::ClaudeCode,
+            "post_tool_use",
+            &mut third,
+            &throttle_at(&dir, 10),
+        );
+        assert!(third.get("ariadne_usage").is_some());
+    }
+
+    #[test]
+    fn a_stop_right_after_a_tool_call_still_reports() {
+        let (dir, source) = fixture();
+        let mut tool_call = payload_for("PostToolUse", &source);
+        attach_usage_within(
+            AgentKind::ClaudeCode,
+            "post_tool_use",
+            &mut tool_call,
+            &throttle_at(&dir, 0),
+        );
+
+        let mut stop = stop_payload(&source);
+        attach_usage_within(
+            AgentKind::ClaudeCode,
+            "stop",
+            &mut stop,
+            &throttle_at(&dir, 1),
+        );
+
+        assert_eq!(stop["ariadne_usage"]["input_tokens"], 1110);
+    }
+
+    #[test]
+    fn a_turn_boundary_refreshes_the_interval() {
+        let (dir, source) = fixture();
+        let mut stop = stop_payload(&source);
+        attach_usage_within(
+            AgentKind::ClaudeCode,
+            "stop",
+            &mut stop,
+            &throttle_at(&dir, 0),
+        );
+
+        let mut tool_call = payload_for("PostToolUse", &source);
+        attach_usage_within(
+            AgentKind::ClaudeCode,
+            "post_tool_use",
+            &mut tool_call,
+            &throttle_at(&dir, 5),
+        );
+
+        assert!(tool_call.get("ariadne_usage").is_none());
+    }
+
+    #[test]
+    fn a_stamp_that_cannot_be_written_does_not_stop_a_report() {
+        let (dir, source) = fixture();
+        let unwritable = Throttle {
+            stamp: dir.path().join("nowhere").join("stamp"),
+            now: SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000),
+            interval: USAGE_INTERVAL,
+        };
+
+        // Twice in a row, with no interval between them: with nowhere to
+        // remember the first report, the second one still goes out.
+        for _ in 0..2 {
+            let mut payload = payload_for("PostToolUse", &source);
+            attach_usage_within(
+                AgentKind::ClaudeCode,
+                "post_tool_use",
+                &mut payload,
+                &unwritable,
+            );
+            assert_eq!(payload["ariadne_usage"]["input_tokens"], 1110);
+        }
+    }
+
+    #[test]
+    fn only_turn_boundaries_and_tool_calls_read_the_transcript() {
+        // A fixture each, so every event is judged on a session that has
+        // reported nothing yet.
+        for event in ["pre_tool_use", "session_start", "unknown"] {
+            let (dir, source) = fixture();
+            let mut payload = stop_payload(&source);
+            attach_usage_within(
+                AgentKind::ClaudeCode,
+                event,
+                &mut payload,
+                &throttle_at(&dir, 0),
+            );
             assert!(payload.get("ariadne_usage").is_none(), "{event}");
         }
-        for event in ["stop", "session_end", "user_prompt_submit"] {
-            let mut payload = stop_payload(source);
-            attach_usage(AgentKind::ClaudeCode, event, &mut payload);
+        for event in ["stop", "session_end", "user_prompt_submit", "post_tool_use"] {
+            let (dir, source) = fixture();
+            let mut payload = stop_payload(&source);
+            attach_usage_within(
+                AgentKind::ClaudeCode,
+                event,
+                &mut payload,
+                &throttle_at(&dir, 0),
+            );
             assert!(payload.get("ariadne_usage").is_some(), "{event}");
         }
     }
@@ -261,8 +509,14 @@ mod tests {
     /// how to read what it writes.
     #[test]
     fn opencode_payloads_are_left_alone() {
+        let dir = TempDir::new().expect("a temp dir");
         let mut payload = stop_payload("/nowhere/session.jsonl");
-        attach_usage(AgentKind::Opencode, "stop", &mut payload);
+        attach_usage_within(
+            AgentKind::Opencode,
+            "stop",
+            &mut payload,
+            &throttle_at(&dir, 0),
+        );
         assert!(payload.get("ariadne_usage").is_none());
     }
 }

@@ -3,7 +3,8 @@
  *
  * Forwards session/tool/approval events to the Ariadne daemon via the
  * fail-safe `ariadne agent-event` subcommand, and tags the events that end a
- * turn with the session's token usage. No-ops entirely unless the process was
+ * turn — and, at most every `usageIntervalMs`, the tool calls in between —
+ * with the session's token usage. No-ops entirely unless the process was
  * spawned by Ariadne (ARIADNE_SESSION_ID present), so it is safe to keep
  * installed globally.
  */
@@ -22,7 +23,9 @@ export const AriadneEvents = async ({ $, client }) => {
     }
   };
 
-  // Token usage, attached to the events that end a turn. Verified against
+  // Token usage, attached to the events that end a turn and to the tool calls
+  // in between (a turn is one long stretch of them, and its figures would
+  // otherwise sit at zero until it ends). Verified against
   // opencode 1.18.15 and @opencode-ai/sdk 1.18.10:
   //
   //   session.idle          {sessionID}
@@ -42,6 +45,16 @@ export const AriadneEvents = async ({ $, client }) => {
   // Ariadne stores cumulative totals per source, and reporting both would
   // count the children twice.
   const usageDeadlineMs = 2000;
+
+  // Walking every message of the session and its children after every tool
+  // call would be dozens of walks a turn for an answer that moves slowly, so
+  // a tool call looks the totals up only when the last lookup is this old.
+  // The events that end a turn always look them up, and every lookup —
+  // whatever it comes back with — restarts the interval. The plugin outlives
+  // the turn, so the timestamp is just a variable here.
+  const usageIntervalMs = 10000;
+  let lastUsageAt = -Infinity;
+  const usageIsDue = () => Date.now() - lastUsageAt >= usageIntervalMs;
 
   // Every reader below throws on anything it does not recognise, and the
   // caller turns that into no usage at all. A shape this code cannot read is
@@ -104,6 +117,7 @@ export const AriadneEvents = async ({ $, client }) => {
   // more than the deadline.
   const usageOf = async (id) => {
     if (!client || !id) return undefined;
+    lastUsageAt = Date.now();
     let timer;
     try {
       const deadline = new Promise((_, reject) => {
@@ -169,11 +183,13 @@ export const AriadneEvents = async ({ $, client }) => {
       await forward(event.type, payload);
     },
     "tool.execute.after": async (input, output) => {
-      await forward("tool.execute.after", {
+      const payload = {
         tool: input?.tool,
         sessionID: input?.sessionID,
         title: output?.title,
-      });
+      };
+      const usage = usageIsDue() ? await usageOf(input?.sessionID) : undefined;
+      await forward("tool.execute.after", usage ? { ...payload, ariadne_usage: usage } : payload);
     },
   };
 };
