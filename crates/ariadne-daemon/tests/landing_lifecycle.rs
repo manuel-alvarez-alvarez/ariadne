@@ -25,7 +25,7 @@ use axum::http::StatusCode;
 use ariadne_api::reviews::ReviewDto;
 use ariadne_api::tasks::TaskDto;
 use ariadne_core::{Actor, MergeStrategy, ReviewVerdict, Role, TaskStatus};
-use ariadne_store::{AgentSession, NewReview, RepositoryUpdate, Repository, Task};
+use ariadne_store::{AgentSession, NewReview, RepositoryUpdate, Repository, ReviewerSlot, Task};
 
 use common::{Cast, Harness, as_session, eventually, get, harness, sh};
 
@@ -155,7 +155,8 @@ async fn an_approved_task_is_landed_by_its_own_engineer() {
             title: "Use what the first one built".into(),
             description: "do things".into(),
             engineer_profile_id: cast.engineer.id.clone(),
-            reviewer_profile_ids: vec![cast.reviewer.id.clone()],
+            pin: None,
+            reviewers: vec![ReviewerSlot::of(&cast.reviewer.id)],
             depends_on: vec![task.id.clone()],
         })
         .await

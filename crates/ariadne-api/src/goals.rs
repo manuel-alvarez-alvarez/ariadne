@@ -16,9 +16,10 @@ pub struct GoalDto {
     pub max_tasks: Option<i64>,
     pub required_approvals: i64,
     pub planner_profile_id: String,
-    /// Agent CLI the planner runs on, pinned from the profile when the goal
-    /// was created; editing the profile afterwards leaves it alone. None =
-    /// auto, resolved at spawn time to the first installed CLI.
+    /// Agent CLI the planner runs on: pinned from the planner profile when
+    /// the goal was created, or from the model chosen for the goal instead.
+    /// Editing the profile afterwards leaves it alone. None = auto, resolved
+    /// at spawn time to the first installed CLI.
     pub agent_kind: Option<AgentKind>,
     /// Model the planner runs on, pinned like `agent_kind`. None = the agent
     /// CLI's own default.
@@ -59,4 +60,11 @@ pub struct CreateGoalRequest {
     pub max_tasks: Option<i64>,
     /// Approvals required to merge a task (default 1).
     pub required_approvals: Option<i64>,
+    /// Model the planner runs on; omitted = the planner profile's own model
+    /// and agent CLI. A model names the agent CLI that runs it (claude ids
+    /// belong to claude_code, gpt/o-series and codex ids to codex, a
+    /// `provider/model` id to opencode), and both are pinned onto the goal; a
+    /// model nothing can place, and the empty string, are refused.
+    #[serde(default)]
+    pub model: Option<String>,
 }

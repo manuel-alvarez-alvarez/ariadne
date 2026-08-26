@@ -10,6 +10,7 @@ mod goals;
 mod landing;
 mod logs;
 mod pane;
+mod pins;
 mod profiles;
 mod recipients;
 mod repositories;

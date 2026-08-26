@@ -15,6 +15,7 @@ use ariadne_store::{Goal, NewGoal, NewMessage, SessionFilter, Store, Task, TaskF
 use super::AppState;
 use super::convert::{goal_dto, message_dtos};
 use super::error::{ApiError, ApiResult};
+use super::pins;
 use super::recipients::{self, Thread, call_ctx};
 
 #[derive(Debug, Default, Deserialize, IntoParams)]
@@ -65,6 +66,9 @@ pub async fn create(
     if req.repository_ids.is_empty() {
         return Err(ApiError::bad_request("a goal needs at least one repo"));
     }
+    // Resolved before anything is looked up: a model nobody can place is a
+    // fact about the request, not about the profiles it names.
+    let pin = pins::chosen(req.model.as_deref())?;
 
     let planner = state.store.resolve_profile(&req.planner_profile).await?;
     if planner.role() != Role::Planner {
@@ -88,6 +92,7 @@ pub async fn create(
             max_tasks: req.max_tasks,
             required_approvals: req.required_approvals.unwrap_or(1),
             repository_ids: req.repository_ids,
+            pin,
         })
         .await?;
     // The scheduler spawns the planner session for goals in planning.

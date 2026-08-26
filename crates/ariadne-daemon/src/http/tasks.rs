@@ -8,42 +8,51 @@ use axum::http::{HeaderMap, StatusCode};
 use ariadne_api::Page;
 use ariadne_api::messages::{CreateMessageRequest, MessageDto};
 use ariadne_api::tasks::{
-    CreateTaskRequest, TaskDto, TaskListQuery, TaskTransitionDto, TransitionRequest,
-    UpdateTaskRequest,
+    CreateTaskRequest, ReviewerAssignment, TaskDto, TaskListQuery, TaskTransitionDto,
+    TransitionRequest, UpdateTaskRequest,
 };
 use ariadne_core::{Actor, Role, TaskStatus};
-use ariadne_store::{NewTask, Store, Task, TaskFilter, TaskUpdate};
+use ariadne_store::{NewTask, ReviewerSlot, Store, Task, TaskFilter, TaskUpdate};
 
 use super::AppState;
 use super::convert::{message_dtos, task_dto_of, transition_dto};
 use super::error::{ApiError, ApiResult};
 use super::landing;
+use super::pins;
 use super::recipients::{self, CallCtx, Thread, call_ctx, ensure_task_scope};
 use crate::notify;
 
-/// Resolve a list of profile ids-or-names, checking each has `role`.
-async fn resolve_profiles(store: &Store, specs: &[String], role: Role) -> ApiResult<Vec<String>> {
-    let mut ids = Vec::with_capacity(specs.len());
-    for spec in specs {
-        let p = store.resolve_profile(spec).await?;
-        if p.role() != role {
-            return Err(ApiError::bad_request(format!(
-                "profile {} has role {}, expected {}",
-                p.name,
-                p.role,
-                role.as_str()
-            )));
-        }
-        ids.push(p.id);
+/// Resolve one profile id-or-name, checking it has `role`: the shape every
+/// profile assignment takes.
+async fn resolve_profile(store: &Store, spec: &str, role: Role) -> ApiResult<String> {
+    let p = store.resolve_profile(spec).await?;
+    if p.role() != role {
+        return Err(ApiError::bad_request(format!(
+            "profile {} has role {}, expected {}",
+            p.name,
+            p.role,
+            role.as_str()
+        )));
     }
-    Ok(ids)
+    Ok(p.id)
 }
 
-/// Resolve one profile id-or-name, checking it has `role`: the shape every
-/// single-profile assignment takes.
-async fn resolve_profile(store: &Store, spec: &str, role: Role) -> ApiResult<String> {
-    let specs = [spec.to_string()];
-    Ok(resolve_profiles(store, &specs, role).await?.remove(0))
+/// The reviewer slots an assignment list asks for, in the order it names them:
+/// each profile resolved as any other, each slot carrying the model chosen for
+/// it or, where none was, nothing — which is the store's cue to pin the
+/// profile's own.
+async fn resolve_reviewers(
+    store: &Store,
+    assignments: &[ReviewerAssignment],
+) -> ApiResult<Vec<ReviewerSlot>> {
+    let mut slots = Vec::with_capacity(assignments.len());
+    for assignment in assignments {
+        slots.push(ReviewerSlot {
+            profile_id: resolve_profile(store, &assignment.profile, Role::Reviewer).await?,
+            pin: pins::chosen(assignment.model.as_deref())?,
+        });
+    }
+    Ok(slots)
 }
 
 /// Create a task in a goal (planner via MCP, or the user).
@@ -89,7 +98,7 @@ pub async fn create(
     };
 
     let engineer = resolve_profile(&state.store, &req.engineer_profile, Role::Engineer).await?;
-    let reviewers = resolve_profiles(&state.store, &req.reviewer_profiles, Role::Reviewer).await?;
+    let reviewers = resolve_reviewers(&state.store, &req.reviewers).await?;
 
     let task = state
         .store
@@ -99,7 +108,8 @@ pub async fn create(
             title: req.title,
             description: req.description,
             engineer_profile_id: engineer,
-            reviewer_profile_ids: reviewers,
+            pin: pins::chosen(req.model.as_deref())?,
+            reviewers,
             depends_on: req.depends_on,
         })
         .await?;
@@ -158,8 +168,8 @@ pub async fn update(
             "only the planner or the user may edit tasks",
         ));
     }
-    let reviewer_profile_ids = match &req.reviewer_profiles {
-        Some(specs) => Some(resolve_profiles(&state.store, specs, Role::Reviewer).await?),
+    let reviewers = match &req.reviewers {
+        Some(assignments) => Some(resolve_reviewers(&state.store, assignments).await?),
         None => None,
     };
     let task = state
@@ -169,7 +179,8 @@ pub async fn update(
             TaskUpdate {
                 title: req.title,
                 description: req.description,
-                reviewer_profile_ids,
+                pin: pins::rechosen(req.model.as_deref())?,
+                reviewers,
             },
         )
         .await?;

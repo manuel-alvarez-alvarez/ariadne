@@ -42,7 +42,7 @@ use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_daemon::tmux::{TmuxManager, session_name};
 use ariadne_store::{
     AgentSession, Goal, Message, NewAgentEvent, NewGoal, NewProfile, NewRepository, NewSession,
-    NewTask, Profile, Recipient, Repository, SessionFilter, Store, Task,
+    NewTask, Profile, Recipient, Repository, ReviewerSlot, SessionFilter, Store, Task,
 };
 
 /// How long a test waits for something the daemon does off the request path —
@@ -645,6 +645,7 @@ impl Harness {
                 max_tasks: None,
                 required_approvals: approvals,
                 repository_ids: vec![repo.id.clone()],
+                pin: None,
             })
             .await
             .unwrap()
@@ -666,7 +667,8 @@ impl Harness {
                 title: title.into(),
                 description: "do things".into(),
                 engineer_profile_id: engineer.id.clone(),
-                reviewer_profile_ids: reviewers.iter().map(|p| p.id.clone()).collect(),
+                pin: None,
+                reviewers: reviewers.iter().map(|p| ReviewerSlot::of(&p.id)).collect(),
                 depends_on: vec![],
             })
             .await

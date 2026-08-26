@@ -20,9 +20,11 @@ pub struct TaskDto {
     /// Name of the planner profile of the task's goal, which takes part in
     /// every task thread without being a field of the task.
     pub planner_profile_name: Option<String>,
-    /// Agent CLI the engineer runs on, pinned from the profile when the task
-    /// was created; editing the profile afterwards leaves it alone. None =
-    /// auto, resolved at spawn time to the first installed CLI.
+    /// Agent CLI the engineer runs on: pinned from the engineer profile when
+    /// the task was created, or from the model chosen for the task at
+    /// creation or on an edit instead. Editing the profile afterwards leaves
+    /// it alone. None = auto, resolved at spawn time to the first installed
+    /// CLI.
     pub agent_kind: Option<AgentKind>,
     /// Model the engineer runs on, pinned like `agent_kind`. None = the agent
     /// CLI's own default.
@@ -45,9 +47,10 @@ pub struct TaskDto {
 }
 
 /// One reviewer slot of a task: which profile reviews it, and what that
-/// reviewer was pinned to run on when the slot was assigned. Pinned the same
-/// way the engineer is, and read the same way: what a reviewer of this task
-/// runs on, not what its profile says today.
+/// reviewer was pinned to run on when the slot was assigned — the profile's
+/// own agent and model, or the model chosen for the slot. Pinned the same way
+/// the engineer is, and read the same way: what a reviewer of this task runs
+/// on, not what its profile says today.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TaskReviewerDto {
     pub profile_id: String,
@@ -60,6 +63,33 @@ pub struct TaskReviewerDto {
     pub model: Option<String>,
 }
 
+/// One reviewer of a task: the profile that reviews, and the model it is to
+/// run on.
+///
+/// A model names the agent CLI that runs it — claude ids belong to
+/// `claude_code`, `gpt-`/`o<digit>`/codex ids to `codex`, a `provider/model`
+/// id to `opencode` — and both are pinned onto the slot. A model nothing can
+/// place is refused (there is no way to name the agent by hand), and so is the
+/// empty string. Omitted, the slot takes the profile's own agent and model as
+/// they stand when it is assigned.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ReviewerAssignment {
+    /// Reviewer profile id or unique name.
+    pub profile: String,
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
+impl ReviewerAssignment {
+    /// A reviewer on whatever its profile is on.
+    pub fn of(profile: impl Into<String>) -> Self {
+        Self {
+            profile: profile.into(),
+            model: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateTaskRequest {
     pub title: String,
@@ -70,8 +100,12 @@ pub struct CreateTaskRequest {
     pub repo_id: Option<String>,
     /// Engineer profile id or unique name.
     pub engineer_profile: String,
-    /// Reviewer profile ids or names, in review order. At least one.
-    pub reviewer_profiles: Vec<String>,
+    /// Model the engineer runs on; omitted = the engineer profile's own model
+    /// and agent CLI. Resolved the way [`ReviewerAssignment::model`] is.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// The reviewers of the task, in review order. At least one.
+    pub reviewers: Vec<ReviewerAssignment>,
     /// Task ids this task depends on.
     #[serde(default)]
     pub depends_on: Vec<String>,
@@ -82,7 +116,16 @@ pub struct CreateTaskRequest {
 pub struct UpdateTaskRequest {
     pub title: Option<String>,
     pub description: Option<String>,
-    pub reviewer_profiles: Option<Vec<String>>,
+    /// Model the engineer runs on, resolved the way
+    /// [`ReviewerAssignment::model`] is: absent leaves the task's pins alone,
+    /// "default" (or the empty string) puts them back on the engineer
+    /// profile's model and agent as they stand now, anything else pins that
+    /// model and the agent CLI that runs it. The same convention
+    /// `UpdateProfileRequest::model` takes.
+    pub model: Option<String>,
+    /// The whole reviewer list, replaced: each slot is cut afresh and pinned
+    /// to its own model or, where it names none, to its profile's.
+    pub reviewers: Option<Vec<ReviewerAssignment>>,
     pub depends_on: Option<Vec<String>>,
 }
 

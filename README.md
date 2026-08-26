@@ -25,13 +25,21 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    repositories it works in (`ariadne repo add`), how many reviewer approvals
    a task needs (default 1) and optionally a max task count. The daemon spawns
    the **planner** in tmux; `ariadne goal attach` drops you into the
-   conversation.
+   conversation. `--model` runs that planner on a model of your choosing
+   rather than on its profile's, and the agent CLI comes with the model: a
+   planner profile on claude_code created with `--model gpt-5.3-codex` plans
+   on codex.
 2. The planner discusses the breakdown with you, creates tasks through the
    Ariadne MCP tools (assigning an engineer profile and reviewer profiles per
    task, with optional `depends_on` ordering), then calls `submit_plan`. The
    goal waits in `plan_ready` and nothing runs: read the tasks, edit what they
    still need (`ariadne task update`) or ask the planner for changes, and
-   `ariadne goal approve` when the plan is right.
+   `ariadne goal approve` when the plan is right. Models are yours to pick,
+   not the planner's: its tasks run on the models their profiles are on until
+   you say otherwise with `ariadne task update <task-id> --model <model>
+   --reviewer <profile>=<model>`, which a task takes while it is still pending
+   or ready (`--model default` hands it back to the profile's). `ariadne task
+   create` takes the same two flags.
 3. Your approval starts the work, and the scheduler takes over: when a task's
    dependencies are merged it becomes `ready` and an **engineer** is spawned in
    a dedicated git worktree, on a branch named after the task — its title
@@ -161,6 +169,11 @@ ariadne daemon start           # unix socket at ~/.ariadne/ariadne.sock
 ariadne repo add ~/projects/api --description "the public API"
 ariadne goal create --title "Add rate limiting" --repo ~/projects/api
 ariadne goal attach <goal-id>
+
+# a model of your own, per agent: whichever CLI runs the model runs the agent
+ariadne goal create --title "Add rate limiting" --repo ~/projects/api \
+    --model gpt-5.3-codex
+ariadne task update <task-id> --model claude-opus-5 --reviewer Reviewer=o3
 
 # watch it run
 ariadne attention                      # what is waiting for you, across every goal

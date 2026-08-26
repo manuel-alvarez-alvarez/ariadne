@@ -38,7 +38,7 @@ use ariadne_core::{
     Actor, AttentionReason, AuthorRole, GoalStatus, ReviewVerdict, Role, SessionStatus, TaskStatus,
 };
 use ariadne_daemon::scheduler::{self, SchedEvent};
-use ariadne_store::{AgentSession, Goal, NewMessage, NewReview, Recipient, Task};
+use ariadne_store::{AgentSession, Goal, NewMessage, NewReview, Recipient, ReviewerSlot, Task};
 
 use common::{Harness, eventually, harness};
 
@@ -120,7 +120,8 @@ impl World {
                 title: title.into(),
                 description: "do things".into(),
                 engineer_profile_id: self.engineer.clone(),
-                reviewer_profile_ids: vec![self.reviewer.clone()],
+                pin: None,
+                reviewers: vec![ReviewerSlot::of(&self.reviewer)],
                 depends_on: vec![],
             })
             .await

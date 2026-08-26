@@ -30,7 +30,7 @@ pub use prompts::parse_prompt_kind;
 pub use repositories::{NewRepository, RepositoryUpdate};
 pub use reviews::NewReview;
 pub use sessions::{NewSession, SessionFilter};
-pub use tasks::{NewTask, TaskFilter, TaskUpdate};
+pub use tasks::{NewTask, ReviewerSlot, TaskFilter, TaskUpdate};
 
 use std::path::Path;
 use std::sync::{Arc, OnceLock};

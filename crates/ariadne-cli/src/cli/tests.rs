@@ -239,6 +239,103 @@ fn a_message_is_addressed_only_when_to_says_so() {
     );
 }
 
+/// The model each agent runs on is chosen on the way in, and every spelling
+/// lands in the field the request is built from: `--model` for the planner and
+/// the engineer, `--reviewer PROFILE=MODEL` per reviewer slot, and `--model
+/// default` on an edit for "back to the profile's".
+#[test]
+fn a_model_can_be_chosen_for_every_agent_on_the_line() {
+    let Command::Goal {
+        command: GoalCommand::Create { model, .. },
+    } = parse(&[
+        "ariadne",
+        "goal",
+        "create",
+        "--title",
+        "Ship it",
+        "--repo",
+        "01REPO",
+        "--model",
+        "gpt-5.3-codex",
+    ])
+    .command
+    else {
+        panic!("goal create")
+    };
+    assert_eq!(model.as_deref(), Some("gpt-5.3-codex"));
+
+    let Command::Goal {
+        command: GoalCommand::Create { model, .. },
+    } = parse(&[
+        "ariadne", "goal", "create", "--title", "Ship it", "--repo", "01REPO",
+    ])
+    .command
+    else {
+        panic!("goal create")
+    };
+    assert_eq!(model, None, "and no model is the planner profile's own");
+
+    let Command::Task {
+        command: TaskCommand::Create {
+            model, reviewers, ..
+        },
+    } = parse(&[
+        "ariadne",
+        "task",
+        "create",
+        "01GOAL",
+        "--title",
+        "Do it",
+        "--model",
+        "gpt-5.6-sol",
+        "--reviewer",
+        "Reviewer=ollama/llama3:8b",
+        "--reviewer",
+        "rev-strict",
+    ])
+    .command
+    else {
+        panic!("task create")
+    };
+    assert_eq!(model.as_deref(), Some("gpt-5.6-sol"));
+    assert_eq!(
+        reviewers
+            .iter()
+            .map(|r| (r.profile.as_str(), r.model.as_deref()))
+            .collect::<Vec<_>>(),
+        [("Reviewer", Some("ollama/llama3:8b")), ("rev-strict", None)],
+        "in the order they were typed, which is review order"
+    );
+
+    let Command::Task {
+        command: TaskCommand::Update { model, .. },
+    } = parse(&["ariadne", "task", "update", "01TASK", "--model", "default"]).command
+    else {
+        panic!("task update")
+    };
+    assert_eq!(model.as_deref(), Some("default"));
+}
+
+/// A `--reviewer` with nothing after its `=` is a typo, and it is refused
+/// where it was typed rather than sent to the daemon to be refused there.
+#[test]
+fn a_reviewer_with_no_model_after_its_equals_is_a_usage_error() {
+    let err = try_parse(&[
+        "ariadne",
+        "task",
+        "create",
+        "01GOAL",
+        "--title",
+        "Do it",
+        "--reviewer",
+        "Reviewer=",
+    ])
+    .map(|_| ())
+    .expect_err("no model")
+    .to_string();
+    assert!(err.contains("no model after the ="), "{err}");
+}
+
 /// How a repository takes a change is the user's to set, on the way in
 /// and afterwards; a repository nobody said anything about is landed on
 /// directly.
@@ -267,7 +364,15 @@ fn a_repository_can_be_registered_with_a_merge_strategy() {
 
     let Command::Repo {
         command: RepoCommand::Edit { merge_strategy, .. },
-    } = parse(&["ariadne", "repo", "edit", "01REPO", "--merge-strategy", "direct"]).command
+    } = parse(&[
+        "ariadne",
+        "repo",
+        "edit",
+        "01REPO",
+        "--merge-strategy",
+        "direct",
+    ])
+    .command
     else {
         panic!("repo edit");
     };

@@ -17,7 +17,8 @@ use ariadne_api::goals::SubmitPlanRequest;
 use ariadne_api::messages::{CreateMessageRequest, MessageDto};
 use ariadne_api::reviews::CreateReviewRequest;
 use ariadne_api::tasks::{
-    CreateTaskRequest, RecordPullRequestRequest, TransitionRequest, UpdateTaskRequest,
+    CreateTaskRequest, RecordPullRequestRequest, ReviewerAssignment, TransitionRequest,
+    UpdateTaskRequest,
 };
 use ariadne_core::{ReviewVerdict, TaskStatus};
 
@@ -216,7 +217,7 @@ impl AriadneMcp {
     // ---- planner ----
 
     #[tool(
-        description = "Create one task in the goal, owned by one engineer profile and gated by at least one reviewer profile."
+        description = "Create one task in the goal, owned by one engineer profile and gated by at least one reviewer profile. Each agent runs on the model its profile is on; which model that is, is the user's choice to make and change, not yours."
     )]
     async fn create_task(
         &self,
@@ -228,7 +229,14 @@ impl AriadneMcp {
             description: req.description,
             repo_id: req.repo_id,
             engineer_profile: req.engineer_profile,
-            reviewer_profiles: req.reviewer_profiles,
+            // The planner assigns profiles; the user is who picks models, so
+            // every task the planner creates takes the profiles' own.
+            model: None,
+            reviewers: req
+                .reviewer_profiles
+                .into_iter()
+                .map(ReviewerAssignment::of)
+                .collect(),
             depends_on: req.depends_on.unwrap_or_default(),
         };
         json_result(self.post(&path, &body).await?)
@@ -244,7 +252,10 @@ impl AriadneMcp {
         let body = UpdateTaskRequest {
             title: req.title,
             description: req.description,
-            reviewer_profiles: req.reviewer_profiles,
+            model: None,
+            reviewers: req
+                .reviewer_profiles
+                .map(|profiles| profiles.into_iter().map(ReviewerAssignment::of).collect()),
             depends_on: req.depends_on,
         };
         let path = format!("/v1/tasks/{}", req.task_id);

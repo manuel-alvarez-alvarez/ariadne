@@ -42,6 +42,11 @@ pub enum GoalCommand {
         /// Planner profile id or name (default: the built-in Planner profile)
         #[arg(long, default_value = "Planner", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::planner_profiles))]
         planner: String,
+        /// Model the planner runs on (default: the planner profile's own).
+        /// The agent CLI follows the model, so a model of another CLI moves
+        /// the planner onto it
+        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
+        model: Option<String>,
         /// Reviewer approvals required to merge a task
         #[arg(long)]
         approvals: Option<i64>,
@@ -142,6 +147,7 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
             description,
             repos,
             planner,
+            model,
             approvals,
             max_tasks,
         } => {
@@ -155,6 +161,7 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                         planner_profile: planner,
                         max_tasks,
                         required_approvals: approvals,
+                        model,
                     },
                 )
                 .await?;

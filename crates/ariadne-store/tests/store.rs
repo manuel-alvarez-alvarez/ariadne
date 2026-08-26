@@ -50,6 +50,7 @@ async fn seed_goal(store: &Store, planner: &Profile, max_tasks: Option<i64>) -> 
             max_tasks,
             required_approvals: 1,
             repository_ids: vec![repo.id.clone()],
+            pin: None,
         })
         .await
         .unwrap();
@@ -178,7 +179,8 @@ async fn seed_task(store: &Store, goal: &Goal, repo: &Repository, deps: Vec<Stri
             title: "task".into(),
             description: "do things".into(),
             engineer_profile_id: eng.id,
-            reviewer_profile_ids: vec![rev.id],
+            pin: None,
+            reviewers: vec![ReviewerSlot::of(rev.id)],
             depends_on: deps,
         })
         .await
@@ -442,6 +444,7 @@ async fn a_goal_reads_its_repositories_live() {
             required_approvals: 1,
             // The same repository named twice is one reference.
             repository_ids: vec![api.id.clone(), ui.id.clone(), api.id.clone()],
+            pin: None,
         })
         .await
         .unwrap();
@@ -484,6 +487,7 @@ async fn a_goal_needs_repositories_that_exist() {
         max_tasks: None,
         required_approvals: 1,
         repository_ids,
+        pin: None,
     };
 
     assert!(matches!(
@@ -513,7 +517,8 @@ async fn a_goal_needs_repositories_that_exist() {
                 title: "task".into(),
                 description: "do things".into(),
                 engineer_profile_id: eng.id,
-                reviewer_profile_ids: vec![rev.id],
+                pin: None,
+                reviewers: vec![ReviewerSlot::of(rev.id)],
                 depends_on: vec![],
             })
             .await,
@@ -555,7 +560,8 @@ async fn task_branch_is_named_after_the_title() {
             title: "Fix the landing briefing: real fetch/rebase".into(),
             description: "d".into(),
             engineer_profile_id: eng.id,
-            reviewer_profile_ids: vec![rev.id],
+            pin: None,
+            reviewers: vec![ReviewerSlot::of(rev.id)],
             depends_on: vec![],
         })
         .await
@@ -641,7 +647,8 @@ async fn max_tasks_is_enforced() {
             title: "too many".into(),
             description: "".into(),
             engineer_profile_id: eng.id,
-            reviewer_profile_ids: vec![rev.id],
+            pin: None,
+            reviewers: vec![ReviewerSlot::of(rev.id)],
             depends_on: vec![],
         })
         .await;
@@ -2002,7 +2009,8 @@ async fn creation_pins_the_agent_and_model_of_every_profile() {
             title: "task".into(),
             description: "do things".into(),
             engineer_profile_id: engineer.id.clone(),
-            reviewer_profile_ids: vec![reviewer.id.clone()],
+            pin: None,
+            reviewers: vec![ReviewerSlot::of(reviewer.id.clone())],
             depends_on: vec![],
         })
         .await
@@ -2074,7 +2082,8 @@ async fn auto_and_default_are_pinned_as_such() {
             title: "task".into(),
             description: "do things".into(),
             engineer_profile_id: engineer.id.clone(),
-            reviewer_profile_ids: vec![reviewer.id.clone()],
+            pin: None,
+            reviewers: vec![ReviewerSlot::of(reviewer.id.clone())],
             depends_on: vec![],
         })
         .await
@@ -2142,7 +2151,8 @@ async fn reassigned_reviewers_pin_the_profile_they_are_assigned_from() {
             title: "task".into(),
             description: "do things".into(),
             engineer_profile_id: engineer.id.clone(),
-            reviewer_profile_ids: vec![first.id.clone()],
+            pin: None,
+            reviewers: vec![ReviewerSlot::of(first.id.clone())],
             depends_on: vec![],
         })
         .await
@@ -2162,7 +2172,10 @@ async fn reassigned_reviewers_pin_the_profile_they_are_assigned_from() {
         .update_task(
             &task.id,
             TaskUpdate {
-                reviewer_profile_ids: Some(vec![second.id.clone(), first.id.clone()]),
+                reviewers: Some(vec![
+                    ReviewerSlot::of(&second.id),
+                    ReviewerSlot::of(&first.id),
+                ]),
                 ..Default::default()
             },
         )
@@ -2184,6 +2197,227 @@ async fn reassigned_reviewers_pin_the_profile_they_are_assigned_from() {
     );
     assert_eq!(pins[1].agent_kind(), Some(AgentKind::ClaudeCode));
     assert_eq!(pins[1].model.as_deref(), Some("opus"));
+}
+
+/// A model chosen for a goal, a task or a slot is what gets pinned, and it
+/// brings its agent CLI with it — the profile's own pins are what a slot with
+/// no choice on it falls back to, not a floor the choice is merged into.
+#[tokio::test]
+async fn a_chosen_model_is_pinned_in_place_of_the_profiles() {
+    let (store, _dir) = test_store().await;
+    let planner = seed_pinned_profile(
+        &store,
+        "planner-chosen",
+        Role::Planner,
+        Some(AgentKind::ClaudeCode),
+        Some("claude-opus-5"),
+    )
+    .await;
+    let engineer = seed_pinned_profile(
+        &store,
+        "engineer-chosen",
+        Role::Engineer,
+        Some(AgentKind::ClaudeCode),
+        Some("claude-opus-5"),
+    )
+    .await;
+    let chosen = seed_pinned_profile(
+        &store,
+        "reviewer-chosen",
+        Role::Reviewer,
+        Some(AgentKind::ClaudeCode),
+        Some("claude-opus-5"),
+    )
+    .await;
+    let untouched = seed_pinned_profile(
+        &store,
+        "reviewer-untouched",
+        Role::Reviewer,
+        Some(AgentKind::Opencode),
+        Some("ollama/llama3:8b"),
+    )
+    .await;
+
+    let repo = seed_repository(&store).await;
+    let goal = store
+        .create_goal(NewGoal {
+            title: "Chosen".into(),
+            description: "desc".into(),
+            planner_profile_id: planner.id.clone(),
+            max_tasks: None,
+            required_approvals: 1,
+            repository_ids: vec![repo.id.clone()],
+            pin: Some(AgentPin {
+                agent_kind: AgentKind::Codex,
+                model: "gpt-5.3-codex".into(),
+            }),
+        })
+        .await
+        .unwrap();
+    assert_eq!(goal.agent_kind(), Some(AgentKind::Codex));
+    assert_eq!(goal.model.as_deref(), Some("gpt-5.3-codex"));
+
+    let task = store
+        .create_task(NewTask {
+            goal_id: goal.id.clone(),
+            repo_id: repo.id.clone(),
+            title: "task".into(),
+            description: "do things".into(),
+            engineer_profile_id: engineer.id.clone(),
+            pin: Some(AgentPin {
+                agent_kind: AgentKind::Codex,
+                model: "gpt-5.6-sol".into(),
+            }),
+            reviewers: vec![
+                ReviewerSlot {
+                    profile_id: chosen.id.clone(),
+                    pin: Some(AgentPin {
+                        agent_kind: AgentKind::Opencode,
+                        model: "ollama/llama3:8b".into(),
+                    }),
+                },
+                ReviewerSlot::of(&untouched.id),
+            ],
+            depends_on: vec![],
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(task.agent_kind(), Some(AgentKind::Codex));
+    assert_eq!(task.model.as_deref(), Some("gpt-5.6-sol"));
+    let pins = store.list_task_reviewer_pins(&task.id).await.unwrap();
+    assert_eq!(pins[0].agent_kind(), Some(AgentKind::Opencode));
+    assert_eq!(pins[0].model.as_deref(), Some("ollama/llama3:8b"));
+    assert_eq!(
+        pins[1].agent_kind(),
+        Some(AgentKind::Opencode),
+        "the slot nobody chose for took its profile's"
+    );
+    assert_eq!(pins[1].model.as_deref(), Some("ollama/llama3:8b"));
+
+    // A goal created without a choice is the case that must not have moved.
+    let plain = store
+        .create_goal(NewGoal {
+            title: "Plain".into(),
+            description: "desc".into(),
+            planner_profile_id: planner.id.clone(),
+            max_tasks: None,
+            required_approvals: 1,
+            repository_ids: vec![repo.id.clone()],
+            pin: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(plain.agent_kind(), Some(AgentKind::ClaudeCode));
+    assert_eq!(plain.model.as_deref(), Some("claude-opus-5"));
+}
+
+/// Editing a pending task moves its pins and puts them back: cleared, they
+/// return to the engineer profile's as it stands at that moment, which is the
+/// same rule reassigning a reviewer follows.
+#[tokio::test]
+async fn a_task_pin_can_be_moved_and_cleared_back_to_the_profiles() {
+    let (store, _dir) = test_store().await;
+    let planner = seed_pinned_profile(&store, "planner-edit", Role::Planner, None, None).await;
+    let engineer = seed_pinned_profile(
+        &store,
+        "engineer-edit",
+        Role::Engineer,
+        Some(AgentKind::ClaudeCode),
+        Some("claude-opus-5"),
+    )
+    .await;
+    let reviewer = seed_pinned_profile(
+        &store,
+        "reviewer-edit",
+        Role::Reviewer,
+        Some(AgentKind::ClaudeCode),
+        Some("claude-opus-5"),
+    )
+    .await;
+    let (goal, repo) = seed_goal(&store, &planner, None).await;
+    let task = store
+        .create_task(NewTask {
+            goal_id: goal.id.clone(),
+            repo_id: repo.id.clone(),
+            title: "task".into(),
+            description: "do things".into(),
+            engineer_profile_id: engineer.id.clone(),
+            pin: None,
+            reviewers: vec![ReviewerSlot::of(&reviewer.id)],
+            depends_on: vec![],
+        })
+        .await
+        .unwrap();
+
+    let moved = store
+        .update_task(
+            &task.id,
+            TaskUpdate {
+                pin: Some(Some(AgentPin {
+                    agent_kind: AgentKind::Codex,
+                    model: "gpt-5.3-codex".into(),
+                })),
+                reviewers: Some(vec![ReviewerSlot {
+                    profile_id: reviewer.id.clone(),
+                    pin: Some(AgentPin {
+                        agent_kind: AgentKind::Codex,
+                        model: "o3".into(),
+                    }),
+                }]),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(moved.agent_kind(), Some(AgentKind::Codex));
+    assert_eq!(moved.model.as_deref(), Some("gpt-5.3-codex"));
+    let pins = store.list_task_reviewer_pins(&task.id).await.unwrap();
+    assert_eq!(pins[0].agent_kind(), Some(AgentKind::Codex));
+    assert_eq!(pins[0].model.as_deref(), Some("o3"));
+
+    // An edit that says nothing about the model leaves the choice standing.
+    let renamed = store
+        .update_task(
+            &task.id,
+            TaskUpdate {
+                title: Some("renamed".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(renamed.title, "renamed");
+    assert_eq!(renamed.model.as_deref(), Some("gpt-5.3-codex"));
+
+    // Cleared, the task is back on the profile — the profile as it is now.
+    store
+        .update_profile(
+            &engineer.id,
+            ProfileUpdate {
+                agent_kind: Some(Some(AgentKind::Opencode)),
+                model: Some(Some("ollama/llama3:8b".into())),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let cleared = store
+        .update_task(
+            &task.id,
+            TaskUpdate {
+                pin: Some(None),
+                reviewers: Some(vec![ReviewerSlot::of(&reviewer.id)]),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(cleared.agent_kind(), Some(AgentKind::Opencode));
+    assert_eq!(cleared.model.as_deref(), Some("ollama/llama3:8b"));
+    let pins = store.list_task_reviewer_pins(&task.id).await.unwrap();
+    assert_eq!(pins[0].agent_kind(), Some(AgentKind::ClaudeCode));
+    assert_eq!(pins[0].model.as_deref(), Some("claude-opus-5"));
 }
 
 /// A database written by a release from before the schema was squashed into

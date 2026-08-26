@@ -8,11 +8,13 @@ use serde_json::json;
 
 use ariadne_api::messages::{CreateMessageRequest, MessageDto};
 use ariadne_api::reviews::ReviewDto;
-use ariadne_api::tasks::{CreateTaskRequest, TaskDto, TaskListQuery, TaskTransitionDto};
+use ariadne_api::tasks::{
+    CreateTaskRequest, ReviewerAssignment, TaskDto, TaskListQuery, TaskTransitionDto,
+};
 use ariadne_client::Client;
 use ariadne_core::TaskStatus;
 
-use edit::{resolve_repo, update_request};
+use edit::{parse_reviewer, resolve_repo, update_request};
 use super::{ProfileNames, confirm, print_messages, query_path};
 use crate::output::{Column, Format, UNCAPPED, dash, local_time, note, print, print_kv, print_list, yes_no};
 
@@ -61,9 +63,16 @@ pub enum TaskCommand {
         /// Engineer profile id or name that owns the task
         #[arg(long, default_value = "Engineer", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::engineer_profiles))]
         engineer: String,
-        /// Reviewer profile id or name, in review order; repeatable
-        #[arg(long = "reviewer", default_value = "Reviewer", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::reviewer_profiles))]
-        reviewers: Vec<String>,
+        /// Model the engineer runs on (default: the engineer profile's own).
+        /// The agent CLI follows the model, so a model of another CLI moves
+        /// the engineer onto it
+        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
+        model: Option<String>,
+        /// Reviewer profile id or name, in review order; repeatable. Add
+        /// `=MODEL` to run that reviewer on a model of your choosing
+        /// (`--reviewer Reviewer=gpt-5.3-codex`)
+        #[arg(long = "reviewer", value_name = "PROFILE[=MODEL]", default_value = "Reviewer", value_parser = parse_reviewer, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::reviewer_profiles))]
+        reviewers: Vec<ReviewerAssignment>,
         /// Id of a task that must merge before this one starts; repeatable
         #[arg(long = "depends-on", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
         depends_on: Vec<String>,
@@ -74,7 +83,7 @@ pub enum TaskCommand {
     },
     /// Edit a task that has not started yet
     ///
-    /// Title, description, reviewers and dependencies, while the
+    /// Title, description, model, reviewers and dependencies, while the
     /// task is still pending or ready — once an engineer is on it the daemon
     /// refuses the edit. Every flag left out keeps what the task already has;
     /// `--reviewer` and `--depends-on` replace the whole list they name.
@@ -88,10 +97,15 @@ pub enum TaskCommand {
         /// New description
         #[arg(short = 'd', long)]
         description: Option<String>,
-        /// Reviewer profile id or name, in review order; repeatable, and
-        /// replaces the task's reviewers rather than adding to them
-        #[arg(long = "reviewer", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::reviewer_profiles))]
-        reviewers: Vec<String>,
+        /// Model the engineer runs on, or "default" to put it back on the
+        /// engineer profile's own
+        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
+        model: Option<String>,
+        /// Reviewer profile id or name, optionally `=MODEL`, in review order;
+        /// repeatable, and replaces the task's reviewers rather than adding
+        /// to them
+        #[arg(long = "reviewer", value_name = "PROFILE[=MODEL]", value_parser = parse_reviewer, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::reviewer_profiles))]
+        reviewers: Vec<ReviewerAssignment>,
         /// Id of a task that must merge first; repeatable, and replaces the
         /// task's dependencies rather than adding to them
         #[arg(long = "depends-on", conflicts_with = "clear_depends_on", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
@@ -200,6 +214,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             title,
             description,
             engineer,
+            model,
             reviewers,
             depends_on,
             repo,
@@ -216,7 +231,8 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                         description,
                         repo_id,
                         engineer_profile: engineer,
-                        reviewer_profiles: reviewers,
+                        model,
+                        reviewers,
                         depends_on,
                     },
                 )
@@ -227,11 +243,19 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             id,
             title,
             description,
+            model,
             reviewers,
             depends_on,
             clear_depends_on,
         } => {
-            let body = update_request(title, description, reviewers, depends_on, clear_depends_on)?;
+            let body = update_request(
+                title,
+                description,
+                model,
+                reviewers,
+                depends_on,
+                clear_depends_on,
+            )?;
             let t: TaskDto = client.patch_json(&task_path(&id), &body).await?;
             print(format, &t, || println!("updated {}", t.id))?;
         }

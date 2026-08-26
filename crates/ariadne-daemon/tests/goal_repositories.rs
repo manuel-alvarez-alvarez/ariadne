@@ -77,7 +77,7 @@ async fn task_in(h: &Harness, goal: &GoalDto) -> TaskDto {
         post_json(
             &format!("/v1/goals/{}/tasks", goal.id),
             serde_json::json!({"title": "Do the thing", "engineer_profile": "Engineer",
-                               "reviewer_profiles": ["Reviewer"]}),
+                               "reviewers": [{"profile": "Reviewer"}]}),
         ),
         StatusCode::CREATED,
     )

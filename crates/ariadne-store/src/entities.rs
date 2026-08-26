@@ -144,6 +144,37 @@ pub struct Repository {
     pub updated_at: String,
 }
 
+/// The agent CLI and the model a goal, a task or a reviewer slot is pinned to
+/// because the user chose that model, rather than because its profile was on
+/// it.
+///
+/// A model belongs to one agent CLI (`ariadne_core::models::agent_kind_of`),
+/// so the two are one decision and travel as one. Which decision it is belongs
+/// to whoever took the request — the store is handed a pair already resolved,
+/// and writes it exactly where the profile's own pins would have gone.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentPin {
+    pub agent_kind: AgentKind,
+    pub model: String,
+}
+
+impl AgentPin {
+    /// The `(agent_kind, model)` a row is written with: the override where the
+    /// caller gave one, and `profile`'s own where it did not.
+    pub(crate) fn or_profile(
+        pin: Option<&AgentPin>,
+        profile: &Profile,
+    ) -> (Option<String>, Option<String>) {
+        match pin {
+            Some(pin) => (
+                Some(pin.agent_kind.as_str().to_string()),
+                Some(pin.model.clone()),
+            ),
+            None => (profile.agent_kind.clone(), profile.model.clone()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Goal {
     pub id: String,
