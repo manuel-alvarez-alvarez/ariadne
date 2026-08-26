@@ -2,22 +2,17 @@
 //! stdout happens to be going.
 
 use std::convert::Infallible;
-use std::time::Duration;
 
 use axum::Json;
 use axum::extract::{Query, State};
-use axum::response::sse::{Event, KeepAlive, Sse};
-use futures_util::Stream;
-use futures_util::stream::{once, unfold};
-use tokio::sync::broadcast::Receiver;
-use tokio::sync::broadcast::error::RecvError;
+use axum::response::sse::{Event, Sse};
+use futures_util::stream::once;
+use futures_util::{Stream, StreamExt};
 
 use ariadne_api::logs::{LogLineDto, LogSnapshotResponse, LogsQuery};
 
 use super::AppState;
-
-/// How often a keep-alive comment is sent on a quiet stream.
-const KEEP_ALIVE_SECS: u64 = 15;
+use super::sse;
 
 /// Recent daemon log lines from the in-memory ring buffer, oldest first.
 #[utoipa::path(get, path = "/v1/logs", tag = "logs",
@@ -56,26 +51,14 @@ pub async fn stream(
     State(state): State<AppState>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let (lines, rx) = state.logs.snapshot_and_follow();
-    let snapshot = once(async move {
-        Ok(Event::default()
-            .event("snapshot")
-            .data(serde_json::json!(LogSnapshotResponse { lines }).to_string()))
-    });
-    let deltas = unfold(rx, |mut rx: Receiver<LogLineDto>| async move {
-        match rx.recv().await {
-            Ok(line) => Some((
-                Ok(Event::default()
-                    .event("delta")
-                    .data(serde_json::json!(line).to_string())),
-                rx,
-            )),
-            // Lagged: a slow consumer's missed lines are gone from the channel
-            // for good. Hang up rather than stream a gap it cannot see; the
-            // reconnect's snapshot is the resync. Closed: the daemon is
-            // shutting down.
-            Err(RecvError::Lagged(_)) | Err(RecvError::Closed) => None,
-        }
-    });
-    Sse::new(futures_util::StreamExt::chain(snapshot, deltas))
-        .keep_alive(KeepAlive::new().interval(Duration::from_secs(KEEP_ALIVE_SECS)))
+    let snapshot =
+        once(async move { Ok(sse::json_event("snapshot", LogSnapshotResponse { lines })) });
+    let deltas = sse::follow(
+        rx,
+        |line: LogLineDto| Some(sse::json_event("delta", line)),
+        // Nothing to say to a follower that fell behind: the reconnect's
+        // snapshot is the resync.
+        |_| None,
+    );
+    sse::respond(snapshot.chain(deltas))
 }

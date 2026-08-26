@@ -12,7 +12,9 @@ use std::sync::Arc;
 use anyhow::{Context, Result, anyhow};
 
 use ariadne_core::spawn_plan::SpawnPlanFile;
-use ariadne_core::{AgentKind, AttentionReason, PromptKind, Role, SessionStatus, TaskStatus};
+use ariadne_core::{
+    AgentKind, AttentionReason, PromptKind, Role, SessionStatus, TaskStatus, probe,
+};
 use ariadne_store::{AgentSession, NewSession, Profile, Repository, SessionFilter, Store, Task};
 
 use crate::agents::{SpawnCtx, SpawnPlan, adapter_for, detect_first_available, prompts};
@@ -358,7 +360,7 @@ impl Launcher {
             return Err(bad("is empty"));
         }
         if bin.contains('/') {
-            if !is_executable(Path::new(&bin)) {
+            if !probe::is_executable(Path::new(&bin)) {
                 return Err(bad("is not an executable file"));
             }
         } else if !on_path(&bin) {
@@ -978,17 +980,7 @@ fn write_spawn_plan(path: &Path, plan: &SpawnPlanFile) -> Result<()> {
         .with_context(|| format!("writing the spawn plan {}", path.display()))
 }
 
-/// A file this daemon could exec: present, a file, and with an execute bit.
-/// (`http::doctor` asks the same question to *report* on a binary; here it
-/// decides whether a spawn happens at all.)
-fn is_executable(path: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    // Follows symlinks on purpose: what matters is what running it reaches.
-    std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-}
-
 /// Whether a bare name is an executable on the daemon's own `PATH`.
 fn on_path(name: &str) -> bool {
-    std::env::var_os("PATH")
-        .is_some_and(|path| std::env::split_paths(&path).any(|dir| is_executable(&dir.join(name))))
+    std::env::var_os("PATH").is_some_and(|path| probe::which(&path, name).is_some())
 }

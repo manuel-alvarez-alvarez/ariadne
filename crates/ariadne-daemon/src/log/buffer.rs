@@ -1,4 +1,4 @@
-//! In-memory daemon-log capture.
+//! The daemon's own log, kept in memory.
 //!
 //! A `tracing_subscriber` [`Layer`] turns every log event into a structured
 //! [`LogLineDto`] and hands it to a [`LogBuffer`]: a bounded ring of recent

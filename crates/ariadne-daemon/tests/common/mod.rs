@@ -37,7 +37,7 @@ use ariadne_daemon::config::Config;
 use ariadne_daemon::gitwt::GitManager;
 use ariadne_daemon::http::{self, AppState};
 use ariadne_daemon::launcher::Launcher;
-use ariadne_daemon::logbuf::LogBuffer;
+use ariadne_daemon::log::LogBuffer;
 use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_daemon::tmux::{TmuxManager, session_name};
 use ariadne_store::{

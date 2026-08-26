@@ -117,6 +117,12 @@ pub async fn delete(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Whatever git says about a checkout the caller named is a bad request:
+/// they gave the path, and the answer is about the path.
+fn bad(e: impl std::fmt::Display) -> ApiError {
+    ApiError::bad_request(e.to_string())
+}
+
 /// An absolute path, the first of the checks goal creation makes before it
 /// writes a repo down.
 fn repo_path(raw: &str) -> Result<PathBuf, ApiError> {
@@ -135,16 +141,10 @@ fn repo_path(raw: &str) -> Result<PathBuf, ApiError> {
 /// cannot be created from.
 async fn resolve_base_branch(path: &FsPath, branch: Option<&str>) -> Result<String, ApiError> {
     let git = GitManager;
-    git.validate_repo(path)
-        .await
-        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    git.validate_repo(path).await.map_err(bad)?;
     let base_branch = match branch {
         Some(b) => {
-            if !git
-                .branch_exists(path, b)
-                .await
-                .map_err(|e| ApiError::bad_request(e.to_string()))?
-            {
+            if !git.branch_exists(path, b).await.map_err(bad)? {
                 return Err(ApiError::bad_request(format!(
                     "branch {b} does not exist in {}",
                     path.display()
@@ -152,13 +152,10 @@ async fn resolve_base_branch(path: &FsPath, branch: Option<&str>) -> Result<Stri
             }
             b.to_string()
         }
-        None => git
-            .current_branch(path)
-            .await
-            .map_err(|e| ApiError::bad_request(e.to_string()))?,
+        None => git.current_branch(path).await.map_err(bad)?,
     };
     git.ensure_branch_has_commits(path, &base_branch)
         .await
-        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+        .map_err(bad)?;
     Ok(base_branch)
 }

@@ -1,19 +1,21 @@
 //! Axum application: routes, shared state, OpenAPI document.
 
-mod agents;
-mod auth;
+mod catalog;
+mod classify;
 pub(crate) mod convert;
 mod doctor;
 mod error;
 mod events;
 mod goals;
+mod landing;
 mod logs;
-mod models;
+mod pane;
 mod profiles;
 mod recipients;
 mod repositories;
 mod session_logs;
 mod sessions;
+mod sse;
 mod stream;
 mod tasks;
 
@@ -31,9 +33,11 @@ use utoipa_swagger_ui::SwaggerUi;
 use ariadne_api::{HealthResponse, VersionResponse};
 use ariadne_store::Store;
 
+use catalog::{agents, models};
+
 use crate::bus::EventBus;
 use crate::launcher::Launcher;
-use crate::logbuf::LogBuffer;
+use crate::log::LogBuffer;
 use crate::scheduler::SchedEvent;
 
 /// Shared handler state.
@@ -51,29 +55,29 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub async fn notify_scheduler(&self, task_id: &str) {
+    /// Poke the scheduler, if one is running. Whether an event is worth
+    /// acting on is its decision, not the handler's.
+    fn wake(&self, event: SchedEvent) {
         if let Some(tx) = &self.sched_tx {
-            let _ = tx.send(SchedEvent::TaskChanged(task_id.to_string()));
+            let _ = tx.send(event);
         }
     }
 
-    pub async fn notify_scheduler_session(&self, session_id: &str) {
-        if let Some(tx) = &self.sched_tx {
-            let _ = tx.send(SchedEvent::SessionEvent(session_id.to_string()));
-        }
+    pub fn notify_scheduler(&self, task_id: &str) {
+        self.wake(SchedEvent::TaskChanged(task_id.to_string()));
     }
 
-    pub async fn notify_scheduler_goal(&self, goal_id: &str) {
-        if let Some(tx) = &self.sched_tx {
-            let _ = tx.send(SchedEvent::GoalChanged(goal_id.to_string()));
-        }
+    pub fn notify_scheduler_session(&self, session_id: &str) {
+        self.wake(SchedEvent::SessionEvent(session_id.to_string()));
+    }
+
+    pub fn notify_scheduler_goal(&self, goal_id: &str) {
+        self.wake(SchedEvent::GoalChanged(goal_id.to_string()));
     }
 
     /// A message was posted: whoever it addresses is woken with it.
-    pub async fn notify_scheduler_message(&self, message_id: &str) {
-        if let Some(tx) = &self.sched_tx {
-            let _ = tx.send(SchedEvent::MessagePosted(message_id.to_string()));
-        }
+    pub fn notify_scheduler_message(&self, message_id: &str) {
+        self.wake(SchedEvent::MessagePosted(message_id.to_string()));
     }
 }
 
@@ -100,8 +104,8 @@ impl AppState {
         tasks::create, tasks::list, tasks::get, tasks::update,
         tasks::transition, tasks::cancel, tasks::retry, tasks::list_transitions,
         tasks::list_messages, tasks::post_message,
-        tasks::list_reviews, tasks::post_review, tasks::diff,
-        tasks::record_pull_request,
+        landing::list_reviews, landing::post_review, landing::diff,
+        landing::record_pull_request,
         sessions::list, sessions::get, sessions::kill, sessions::resume,
         sessions::input, sessions::resize, sessions::logs,
         session_logs::logs_stream,
@@ -196,12 +200,12 @@ pub fn router(state: AppState) -> Router {
         )
         .route(
             "/v1/tasks/{id}/reviews",
-            get(tasks::list_reviews).post(tasks::post_review),
+            get(landing::list_reviews).post(landing::post_review),
         )
-        .route("/v1/tasks/{id}/diff", get(tasks::diff))
+        .route("/v1/tasks/{id}/diff", get(landing::diff))
         .route(
             "/v1/tasks/{id}/pull-request",
-            post(tasks::record_pull_request),
+            post(landing::record_pull_request),
         )
         // sessions
         .route("/v1/sessions", get(sessions::list))

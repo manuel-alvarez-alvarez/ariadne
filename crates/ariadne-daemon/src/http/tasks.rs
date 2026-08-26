@@ -1,4 +1,5 @@
-//! Task endpoints: CRUD, transitions, messages, reviews.
+//! Task endpoints: CRUD, transitions and the task conversation. What a task
+//! being reviewed and landed goes through is in [`super::landing`].
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -6,24 +7,19 @@ use axum::http::{HeaderMap, StatusCode};
 
 use ariadne_api::Page;
 use ariadne_api::messages::{CreateMessageRequest, MessageDto};
-use ariadne_api::reviews::{CreateReviewRequest, ReviewDto};
 use ariadne_api::tasks::{
-    CreateTaskRequest, RecordPullRequestRequest, TaskDto, TaskListQuery, TaskTransitionDto,
-    TransitionRequest, UpdateTaskRequest,
+    CreateTaskRequest, TaskDto, TaskListQuery, TaskTransitionDto, TransitionRequest,
+    UpdateTaskRequest,
 };
-use ariadne_core::{Actor, MergeStrategy, Role, TaskStatus};
-use ariadne_store::{NewMessage, NewReview, NewTask, Store, Task, TaskFilter, TaskUpdate};
+use ariadne_core::{Actor, Role, TaskStatus};
+use ariadne_store::{NewTask, Store, Task, TaskFilter, TaskUpdate};
 
 use super::AppState;
-use super::auth::{CallCtx, call_ctx, ensure_task_scope};
-use super::convert::{message_dto_of, message_dtos, review_dto, task_dto_of, transition_dto};
+use super::convert::{message_dtos, task_dto_of, transition_dto};
 use super::error::{ApiError, ApiResult};
-use super::recipients;
+use super::landing;
+use super::recipients::{self, CallCtx, Thread, call_ctx, ensure_task_scope};
 use crate::notify;
-
-async fn to_dto(store: &Store, task: Task) -> ApiResult<TaskDto> {
-    Ok(task_dto_of(store, task).await?)
-}
 
 /// Resolve a list of profile ids-or-names, checking each has `role`.
 async fn resolve_profiles(store: &Store, specs: &[String], role: Role) -> ApiResult<Vec<String>> {
@@ -107,7 +103,7 @@ pub async fn create(
             depends_on: req.depends_on,
         })
         .await?;
-    let dto = to_dto(&state.store, task).await?;
+    let dto = task_dto_of(&state.store, task).await?;
     Ok((StatusCode::CREATED, Json(dto)))
 }
 
@@ -128,7 +124,7 @@ pub async fn list(
         .await?;
     let mut out = Vec::with_capacity(tasks.len());
     for task in tasks {
-        out.push(to_dto(&state.store, task).await?);
+        out.push(task_dto_of(&state.store, task).await?);
     }
     Ok(Json(out))
 }
@@ -142,7 +138,7 @@ pub async fn get(
     Path(id): Path<String>,
 ) -> ApiResult<Json<TaskDto>> {
     let task = state.store.get_task(&id).await?;
-    Ok(Json(to_dto(&state.store, task).await?))
+    Ok(Json(task_dto_of(&state.store, task).await?))
 }
 
 /// Edit a pending/ready task (planner or user).
@@ -181,7 +177,7 @@ pub async fn update(
         state.store.set_task_dependencies(&id, &deps).await?;
     }
     let task = state.store.get_task(&task.id).await?;
-    Ok(Json(to_dto(&state.store, task).await?))
+    Ok(Json(task_dto_of(&state.store, task).await?))
 }
 
 /// Request a status transition. The actor is derived from the call context.
@@ -198,7 +194,7 @@ pub async fn transition(
     let ctx = call_ctx(&state.store, &headers).await?;
     ensure_task_scope(&ctx, &id)?;
     let task = apply_transition(&state, &ctx, &id, req).await?;
-    Ok(Json(to_dto(&state.store, task).await?))
+    Ok(Json(task_dto_of(&state.store, task).await?))
 }
 
 pub(crate) async fn apply_transition(
@@ -211,7 +207,7 @@ pub(crate) async fn apply_transition(
     if req.to == TaskStatus::Merged {
         let task = state.store.get_task(task_id).await?;
         let repo = state.store.get_repository(&task.repo_id).await?;
-        verify_merged(state, &task, &repo, req.merge_commit.as_deref()).await?;
+        landing::verify_merged(state, &task, &repo, req.merge_commit.as_deref()).await?;
     }
     let task = state
         .store
@@ -227,7 +223,7 @@ pub(crate) async fn apply_transition(
     // person or an agent asks for goes through: `notify::task_ended` writes
     // nothing for the statuses that are not endings.
     if let Some(msg) = notify::task_ended(&state.store, &task, req.reason.as_deref()).await? {
-        state.notify_scheduler_message(&msg.id).await;
+        state.notify_scheduler_message(&msg.id);
     }
     // A task going back to `ready` is a task starting over, and the only way
     // there is a retry of a failed one. Whatever it was published as is not
@@ -242,125 +238,8 @@ pub(crate) async fn apply_transition(
         }
         false => task,
     };
-    state.notify_scheduler(task_id).await;
+    state.notify_scheduler(task_id);
     Ok(task)
-}
-
-/// Prove the task really was landed, in the primary checkout and with git
-/// alone.
-///
-/// What "landed" leaves behind depends on the strategy, so the check does too.
-///
-/// `direct` rebases, squashes and fast-forwards, which leaves the base tip *as*
-/// the branch tip: the branch being an ancestor of the base is the whole of it,
-/// and no sha has to be taken on trust.
-///
-/// `pull_request` is squashed by the forge, which writes a commit no branch
-/// points at — the task branch is deliberately *not* an ancestor of the base
-/// afterwards. What can be checked here is the other half of the engineer's
-/// last step: it fetches and fast-forwards the local base onto the merge, and
-/// the sha it reports has to be on that base branch. Until it is, the change is
-/// not on this machine and the task is not finished. Asking the forge instead
-/// would be the daemon watching a request again, which is what this release
-/// stopped doing.
-async fn verify_merged(
-    state: &AppState,
-    task: &Task,
-    repo: &ariadne_store::Repository,
-    reported: Option<&str>,
-) -> ApiResult<()> {
-    let repo_path = std::path::PathBuf::from(&repo.path);
-    let on_the_base = async |rev: &str| {
-        state
-            .launcher
-            .git
-            .is_ancestor(&repo_path, rev, &repo.base_branch)
-            .await
-            .map_err(|e| ApiError::conflict(e.to_string()))
-    };
-    match repo.merge_strategy() {
-        MergeStrategy::Direct => {
-            if !on_the_base(&task.branch).await? {
-                return Err(ApiError::conflict(format!(
-                    "merge not verified: {} is not an ancestor of {} in {}",
-                    task.branch, repo.base_branch, repo.path
-                )));
-            }
-        }
-        MergeStrategy::PullRequest => {
-            let Some(sha) = reported else {
-                return Err(ApiError::conflict(
-                    "merge not verified: a published request is squashed by the forge, \
-                     so report the sha it landed as (`git rev-parse <base>`)",
-                ));
-            };
-            if !on_the_base(sha).await? {
-                return Err(ApiError::conflict(format!(
-                    "merge not verified: {sha} is not on {} in {} — fetch the remote \
-                     and fast-forward the base branch first",
-                    repo.base_branch, repo.path
-                )));
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Record the pull or merge request the engineer opened for a task.
-///
-/// The URL travels as a tool call rather than as a sentence in the
-/// conversation, so a published task is either one the UI and the CLI can
-/// point at or one that was never reported — never half-known from a message
-/// somebody has to parse.
-///
-/// Recording it writes the URL and nothing else. Telling the user where the
-/// request is belongs to the engineer that opened it — its landing briefing
-/// says to `post_message` them the link — and a notice the daemon composed
-/// beside this write would be a second author for the same news.
-#[utoipa::path(post, path = "/v1/tasks/{id}/pull-request", tag = "tasks",
-    request_body = RecordPullRequestRequest,
-    params(("id" = String, Path, description = "task id")),
-    responses(
-        (status = 200, body = TaskDto),
-        (status = 400, description = "empty URL"),
-        (status = 403, description = "not an engineer session"),
-        (status = 409, description = "the task is not approved")
-    ))]
-pub async fn record_pull_request(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    headers: HeaderMap,
-    Json(req): Json<RecordPullRequestRequest>,
-) -> ApiResult<Json<TaskDto>> {
-    let ctx = call_ctx(&state.store, &headers).await?;
-    ensure_task_scope(&ctx, &id)?;
-    if !ctx
-        .session
-        .as_ref()
-        .is_some_and(|s| s.role() == Role::Engineer)
-    {
-        return Err(ApiError::forbidden(
-            "only the engineer of a task may record its pull request",
-        ));
-    }
-    let task = state.store.get_task(&id).await?;
-    if task.status() != TaskStatus::Approved {
-        return Err(ApiError::conflict(format!(
-            "task is {}, a pull request belongs to an approved task being landed",
-            task.status
-        )));
-    }
-    let url = req.url.trim();
-    if url.is_empty() {
-        return Err(ApiError::bad_request(
-            "pass the URL `gh pr create` or `glab mr create` printed, e.g. \
-             https://github.com/owner/repo/pull/12",
-        ));
-    }
-    state.store.set_task_pull_request(&id, url).await?;
-    state.notify_scheduler(&id).await;
-    let task = state.store.get_task(&id).await?;
-    Ok(Json(to_dto(&state.store, task).await?))
 }
 
 /// Cancel a task (user).
@@ -383,7 +262,7 @@ pub async fn cancel(
         },
     )
     .await?;
-    Ok(Json(to_dto(&state.store, task).await?))
+    Ok(Json(task_dto_of(&state.store, task).await?))
 }
 
 /// Retry a failed task (user): failed -> ready.
@@ -406,7 +285,7 @@ pub async fn retry(
         },
     )
     .await?;
-    Ok(Json(to_dto(&state.store, task).await?))
+    Ok(Json(task_dto_of(&state.store, task).await?))
 }
 
 /// Transition audit log of a task.
@@ -456,146 +335,5 @@ pub async fn post_message(
     let ctx = call_ctx(&state.store, &headers).await?;
     ensure_task_scope(&ctx, &id)?;
     let task = state.store.get_task(&id).await?;
-    let recipient = match &req.to {
-        Some(to) => {
-            let participants = recipients::task_participants(&state.store, &task).await?;
-            Some(recipients::resolve(&state.store, to, &participants).await?)
-        }
-        None => None,
-    };
-    let msg = state
-        .store
-        .create_message(NewMessage {
-            goal_id: task.goal_id,
-            task_id: Some(id),
-            author_role: ctx.author_role,
-            author_session_id: ctx.session.map(|s| s.id),
-            recipient,
-            body: req.body,
-        })
-        .await?;
-    // Addressed or not, the scheduler is told: what an unaddressed message
-    // wakes is nobody, and that is its decision to make rather than the
-    // handler's.
-    state.notify_scheduler_message(&msg.id).await;
-    Ok((
-        StatusCode::CREATED,
-        Json(message_dto_of(&state.store, msg).await?),
-    ))
-}
-
-/// Reviews of a task.
-#[utoipa::path(get, path = "/v1/tasks/{id}/reviews", tag = "tasks",
-    params(("id" = String, Path, description = "task id")),
-    responses((status = 200, body = [ReviewDto])))]
-pub async fn list_reviews(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> ApiResult<Json<Vec<ReviewDto>>> {
-    state.store.get_task(&id).await?;
-    let rows = state.store.list_reviews(&id, None).await?;
-    Ok(Json(rows.into_iter().map(review_dto).collect()))
-}
-
-/// Submit a review verdict for the current round.
-#[utoipa::path(post, path = "/v1/tasks/{id}/reviews", tag = "tasks",
-    request_body = CreateReviewRequest,
-    params(("id" = String, Path, description = "task id")),
-    responses((status = 201, body = ReviewDto), (status = 409)))]
-pub async fn post_review(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    headers: HeaderMap,
-    Json(req): Json<CreateReviewRequest>,
-) -> ApiResult<(StatusCode, Json<ReviewDto>)> {
-    let ctx = call_ctx(&state.store, &headers).await?;
-    ensure_task_scope(&ctx, &id)?;
-    let task = state.store.get_task(&id).await?;
-    if task.status() != TaskStatus::UnderReview {
-        return Err(ApiError::conflict(format!(
-            "task is {}, reviews are only accepted under_review",
-            task.status
-        )));
-    }
-
-    // Reviewer identity: from the session, or explicit for user-submitted reviews.
-    let reviewer_profile_id = match (&ctx.session, &req.reviewer_profile) {
-        (Some(session), _) => {
-            if session.role() != Role::Reviewer {
-                return Err(ApiError::forbidden(
-                    "only reviewer sessions may submit reviews",
-                ));
-            }
-            session.profile_id.clone()
-        }
-        (None, Some(spec)) => state.store.resolve_profile(spec).await?.id,
-        (None, None) => {
-            return Err(ApiError::bad_request(
-                "reviewer_profile is required for user-submitted reviews",
-            ));
-        }
-    };
-    let assigned = state.store.list_task_reviewers(&id).await?;
-    if !assigned.contains(&reviewer_profile_id) {
-        return Err(ApiError::forbidden(format!(
-            "profile {reviewer_profile_id} is not an assigned reviewer of task {id}"
-        )));
-    }
-
-    let review = state
-        .store
-        .create_review(NewReview {
-            task_id: id.clone(),
-            round: task.review_round,
-            reviewer_profile_id,
-            session_id: ctx.session.map(|s| s.id),
-            verdict: req.verdict,
-            body: req.body,
-        })
-        .await?;
-    state.notify_scheduler(&id).await;
-    Ok((StatusCode::CREATED, Json(review_dto(review))))
-}
-
-/// Diff of the task branch against its base (`git diff base...branch`), or,
-/// once the task is merged, the diff its merge commit brought into the base —
-/// after the merge the branch is contained in the base, so the three-dot diff
-/// would be forever empty.
-#[utoipa::path(get, path = "/v1/tasks/{id}/diff", tag = "tasks",
-    params(("id" = String, Path, description = "task id")),
-    responses((status = 200, content_type = "text/plain", body = String), (status = 404), (status = 409)))]
-pub async fn diff(State(state): State<AppState>, Path(id): Path<String>) -> ApiResult<String> {
-    let task = state.store.get_task(&id).await?;
-    let repo = state.store.get_repository(&task.repo_id).await?;
-    let repo_path = std::path::PathBuf::from(&repo.path);
-
-    if let Some(merge_commit) = &task.merge_commit {
-        // Also the only diff that still exists once the merged branch and
-        // worktree have been cleaned up.
-        return state
-            .launcher
-            .git
-            .diff_against_first_parent(&repo_path, merge_commit)
-            .await
-            .map_err(|e| ApiError::conflict(e.to_string()));
-    }
-
-    if !state
-        .launcher
-        .git
-        .branch_exists(&repo_path, &task.branch)
-        .await
-        .map_err(|e| ApiError::conflict(e.to_string()))?
-    {
-        return Err(ApiError::conflict(format!(
-            "branch {} does not exist yet (task not started?)",
-            task.branch
-        )));
-    }
-    state
-        .launcher
-        .git
-        .diff(&repo_path, &repo.base_branch, &task.branch)
-        .await
-        .map_err(|e| ApiError::conflict(e.to_string()))
+    recipients::post(&state, ctx, Thread::Task(task), req).await
 }

@@ -10,13 +10,12 @@ use ariadne_api::Page;
 use ariadne_api::goals::{CreateGoalRequest, FinalizePlanRequest, GoalDto};
 use ariadne_api::messages::{CreateMessageRequest, MessageDto};
 use ariadne_core::{GoalStatus, Role};
-use ariadne_store::{NewGoal, NewMessage, SessionFilter};
+use ariadne_store::{Goal, NewGoal, NewMessage, SessionFilter, Store, TaskFilter};
 
 use super::AppState;
-use super::auth::call_ctx;
-use super::convert::{goal_dto, message_dto_of, message_dtos};
+use super::convert::{goal_dto, message_dtos};
 use super::error::{ApiError, ApiResult};
-use super::recipients;
+use super::recipients::{self, Thread, call_ctx};
 
 #[derive(Debug, Default, Deserialize, IntoParams)]
 pub struct GoalListQuery {
@@ -24,6 +23,13 @@ pub struct GoalListQuery {
     /// (`status=active,completed`), matching goals in any of them.
     #[param(value_type = Option<String>, example = "active,completed")]
     pub status: Option<String>,
+}
+
+/// A goal with the repositories it references, which is how every one of
+/// these endpoints answers.
+async fn to_dto(store: &Store, goal: Goal) -> ApiResult<Json<GoalDto>> {
+    let repos = store.list_goal_repositories(&goal.id).await?;
+    Ok(Json(goal_dto(goal, repos)))
 }
 
 impl GoalListQuery {
@@ -85,9 +91,8 @@ pub async fn create(
         })
         .await?;
     // The scheduler spawns the planner session for goals in planning.
-    state.notify_scheduler_goal(&goal.id).await;
-    let repos = state.store.list_goal_repositories(&goal.id).await?;
-    Ok((StatusCode::CREATED, Json(goal_dto(goal, repos))))
+    state.notify_scheduler_goal(&goal.id);
+    Ok((StatusCode::CREATED, to_dto(&state.store, goal).await?))
 }
 
 /// List goals.
@@ -115,9 +120,7 @@ pub async fn get(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<Json<GoalDto>> {
-    let goal = state.store.get_goal(&id).await?;
-    let repos = state.store.list_goal_repositories(&goal.id).await?;
-    Ok(Json(goal_dto(goal, repos)))
+    to_dto(&state.store, state.store.get_goal(&id).await?).await
 }
 
 /// Cancel a goal.
@@ -140,9 +143,8 @@ pub async fn cancel(
         .set_goal_status(&id, GoalStatus::Cancelled)
         .await?;
     // The scheduler tears down sessions/worktrees of cancelled goals.
-    state.notify_scheduler_goal(&goal.id).await;
-    let repos = state.store.list_goal_repositories(&goal.id).await?;
-    Ok(Json(goal_dto(goal, repos)))
+    state.notify_scheduler_goal(&goal.id);
+    to_dto(&state.store, goal).await
 }
 
 /// Delete a finished goal and everything under it.
@@ -219,17 +221,18 @@ pub async fn finalize(
             goal.status
         )));
     }
-    let task_count = state
+    let tasks = state
         .store
-        .list_tasks(ariadne_store::TaskFilter {
+        .list_tasks(TaskFilter {
             goal_id: Some(id.clone()),
             status: None,
         })
-        .await?
-        .len();
-    if task_count == 0 {
+        .await?;
+    if tasks.is_empty() {
         return Err(ApiError::conflict("cannot finalize a plan with no tasks"));
     }
+    // Written straight rather than through `recipients::post`: it addresses
+    // nobody, and the scheduler is woken below by every task the plan holds.
     state
         .store
         .create_message(NewMessage {
@@ -243,18 +246,10 @@ pub async fn finalize(
         .await?;
     let goal = state.store.set_goal_status(&id, GoalStatus::Active).await?;
     // Wake the scheduler: pending tasks with no deps become ready now.
-    for task in state
-        .store
-        .list_tasks(ariadne_store::TaskFilter {
-            goal_id: Some(id.clone()),
-            status: None,
-        })
-        .await?
-    {
-        state.notify_scheduler(&task.id).await;
+    for task in tasks {
+        state.notify_scheduler(&task.id);
     }
-    let repos = state.store.list_goal_repositories(&goal.id).await?;
-    Ok(Json(goal_dto(goal, repos)))
+    to_dto(&state.store, goal).await
 }
 
 /// Goal-level message thread (planner discussion).
@@ -290,32 +285,7 @@ pub async fn post_message(
 ) -> ApiResult<(StatusCode, Json<MessageDto>)> {
     let ctx = call_ctx(&state.store, &headers).await?;
     let goal = state.store.get_goal(&id).await?;
-    let recipient = match &req.to {
-        Some(to) => {
-            let participants = recipients::goal_participants(&state.store, &goal).await?;
-            Some(recipients::resolve(&state.store, to, &participants).await?)
-        }
-        None => None,
-    };
-    let msg = state
-        .store
-        .create_message(NewMessage {
-            goal_id: id,
-            task_id: None,
-            author_role: ctx.author_role,
-            author_session_id: ctx.session.map(|s| s.id),
-            recipient,
-            body: req.body,
-        })
-        .await?;
-    // Addressed or not, the scheduler is told: what an unaddressed message
-    // wakes is nobody, and that is its decision to make rather than the
-    // handler's.
-    state.notify_scheduler_message(&msg.id).await;
-    Ok((
-        StatusCode::CREATED,
-        Json(message_dto_of(&state.store, msg).await?),
-    ))
+    recipients::post(&state, ctx, Thread::Goal(goal), req).await
 }
 
 #[cfg(test)]
@@ -325,38 +295,37 @@ mod tests {
     use ariadne_core::GoalStatus;
     use axum::http::StatusCode;
 
-    fn query(status: Option<&str>) -> GoalListQuery {
+    fn statuses(status: Option<&str>) -> Result<Vec<GoalStatus>, super::ApiError> {
         GoalListQuery {
             status: status.map(str::to_string),
         }
+        .statuses()
     }
 
+    /// One status or several, in the order they were asked for; no `status`
+    /// at all means every goal.
     #[test]
-    fn no_status_param_means_every_goal() {
-        assert_eq!(query(None).statuses().unwrap(), vec![]);
+    fn the_status_filter_takes_a_list() {
+        use GoalStatus::*;
+        for (raw, expected) in [
+            (None, vec![]),
+            (Some("active"), vec![Active]),
+            (Some("active,completed"), vec![Active, Completed]),
+        ] {
+            assert_eq!(statuses(raw).unwrap(), expected, "{raw:?}");
+        }
     }
 
-    #[test]
-    fn a_single_status_still_parses() {
-        assert_eq!(
-            query(Some("active")).statuses().unwrap(),
-            vec![GoalStatus::Active]
-        );
-    }
-
-    #[test]
-    fn a_comma_separated_list_parses_in_order() {
-        assert_eq!(
-            query(Some("active,completed")).statuses().unwrap(),
-            vec![GoalStatus::Active, GoalStatus::Completed]
-        );
-    }
-
+    /// An unknown value is a 400, alone or in a list — never a filter that
+    /// quietly matches something else.
     #[test]
     fn an_unknown_status_is_a_bad_request() {
         for raw in ["nope", "active,nope", ""] {
-            let err = query(Some(raw)).statuses().unwrap_err();
-            assert_eq!(err.status, StatusCode::BAD_REQUEST);
+            assert_eq!(
+                statuses(Some(raw)).unwrap_err().status,
+                StatusCode::BAD_REQUEST,
+                "{raw:?}"
+            );
         }
     }
 }

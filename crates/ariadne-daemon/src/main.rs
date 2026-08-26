@@ -40,7 +40,7 @@ async fn main() -> Result<()> {
         .unwrap_or_else(|_| EnvFilter::new(config.log_filter.clone()));
     // Everything that passes the filter goes to stdout as before, and into
     // the in-memory buffer behind `/v1/logs`.
-    let logs = ariadne_daemon::logbuf::LogBuffer::new();
+    let logs = ariadne_daemon::log::LogBuffer::new();
     tracing_subscriber::registry()
         .with(filter)
         .with(tracing_subscriber::fmt::layer())

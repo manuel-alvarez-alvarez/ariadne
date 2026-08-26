@@ -10,7 +10,7 @@ use axum::http::{StatusCode, header};
 use tracing_subscriber::layer::SubscriberExt;
 
 use ariadne_api::logs::{LogLineDto, LogSnapshotResponse};
-use ariadne_daemon::logbuf::LogBuffer;
+use ariadne_daemon::log::LogBuffer;
 
 use common::{Harness, get, harness, next_sse_message, parse_sse};
 

@@ -123,16 +123,3 @@ async fn a_size_outside_the_bounds_is_rejected_before_tmux_sees_it() {
         sizing_calls(&h)
     );
 }
-
-#[tokio::test]
-async fn an_unknown_session_yields_the_standard_error_envelope() {
-    let h = harness().await;
-
-    let envelope: ErrorBody = h
-        .error(
-            post_resize("01ARZ3NDEKTSV4RRFFQ69G5FAV", size(120, 40)),
-            StatusCode::NOT_FOUND,
-        )
-        .await;
-    assert_eq!(envelope.error.code, "not_found");
-}

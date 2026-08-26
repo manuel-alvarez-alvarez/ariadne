@@ -3,7 +3,7 @@
 //! No tmux needed: every `tmux` here is a stub script. A session pointing at a
 //! name no stub admits to is exactly the "session already over" path — the one
 //! whose framing and lifecycle the acceptance criteria pin down. Following a
-//! live pane is the tailing logic, unit-tested in `logtail`; the one test that
+//! live pane is the tailing logic, unit-tested in `log::console`; the one test that
 //! drives a real pane is `#[ignore]`d and asks for real tmux.
 
 mod common;
@@ -17,7 +17,7 @@ use axum::http::{StatusCode, header};
 use tokio::io::AsyncWriteExt;
 
 use ariadne_core::SessionStatus;
-use ariadne_daemon::logtail::MAX_CHUNK;
+use ariadne_daemon::log::MAX_CHUNK;
 use ariadne_daemon::tmux::TmuxSpawn;
 use ariadne_store::AgentSession;
 

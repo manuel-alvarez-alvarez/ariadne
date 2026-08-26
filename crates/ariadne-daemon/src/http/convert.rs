@@ -1,4 +1,9 @@
 //! Store entity -> API DTO conversions.
+//!
+//! Every one of them is the same shape: most fields come across unchanged,
+//! and a few do not — a column the store keeps as text and the API as an
+//! enum, a derived flag, a name the caller loaded. Only the second kind is
+//! worth reading, so [`dto!`] is what writes the first.
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -14,110 +19,130 @@ use ariadne_api::sessions::SessionDto;
 use ariadne_api::tasks::{TaskDto, TaskReviewerDto, TaskTransitionDto};
 use ariadne_store::{self as store, Store, StoreError};
 
-pub fn profile_dto(p: store::Profile) -> ProfileDto {
-    ProfileDto {
+/// One conversion per entity: the fields that are not a straight move, then
+/// `..` and the ones that are.
+///
+/// The computed fields are written out first in the struct literal as well as
+/// in the macro, because several of them borrow the row (`row.status()`) and
+/// a field moved out of it first would have left it partially moved.
+macro_rules! dto {
+    ($(
+        $(#[$doc:meta])*
+        $vis:vis fn $name:ident($row:ident: $src:ty $(, $arg:ident: $arg_ty:ty)* $(,)?) -> $dst:ident {
+            $($computed:ident: $expr:expr,)*
+            .. $($moved:ident),* $(,)?
+        }
+    )*) => { $(
+        $(#[$doc])*
+        $vis fn $name($row: $src $(, $arg: $arg_ty)*) -> $dst {
+            $dst {
+                $($computed: $expr,)*
+                $($moved: $row.$moved,)*
+            }
+        }
+    )* };
+}
+
+dto! {
+    pub fn profile_dto(p: store::Profile) -> ProfileDto {
         role: p.role(),
         agent_kind: p.agent_kind(),
         system_prompt: p.effective_system_prompt().to_string(),
         system_prompt_is_default: p.system_prompt_is_default(),
-        id: p.id,
-        name: p.name,
-        model: p.model,
-        created_at: p.created_at,
-        updated_at: p.updated_at,
+        .. id, name, model, created_at, updated_at
     }
-}
 
-pub fn agent_config_dto(c: store::AgentConfig) -> AgentConfigDto {
-    AgentConfigDto {
+    pub fn agent_config_dto(c: store::AgentConfig) -> AgentConfigDto {
         agent_kind: c.agent_kind(),
         default_flags: c.default_flags(),
         extra_flags: c.extra_flags(),
+        ..
     }
-}
 
-pub fn profile_prompt_dto(p: store::ProfilePrompt) -> ProfilePromptDto {
-    ProfilePromptDto {
+    pub fn profile_prompt_dto(p: store::ProfilePrompt) -> ProfilePromptDto {
         kind: p.kind(),
-        content: p.content,
-        is_default: p.is_default,
-        updated_at: p.updated_at,
+        .. content, is_default, updated_at
     }
-}
 
-pub fn repository_dto(r: store::Repository) -> RepositoryDto {
-    RepositoryDto {
+    pub fn repository_dto(r: store::Repository) -> RepositoryDto {
         merge_strategy: r.merge_strategy(),
-        id: r.id,
-        path: r.path,
-        base_branch: r.base_branch,
-        description: r.description,
-        created_at: r.created_at,
-        updated_at: r.updated_at,
+        .. id, path, base_branch, description, created_at, updated_at
     }
-}
 
-pub fn goal_dto(g: store::Goal, repos: Vec<store::Repository>) -> GoalDto {
-    GoalDto {
+    /// `repos` are the goal's repositories, which the caller loads.
+    pub fn goal_dto(g: store::Goal, repos: Vec<store::Repository>) -> GoalDto {
         status: g.status(),
         agent_kind: g.agent_kind(),
-        id: g.id,
-        title: g.title,
-        description: g.description,
-        max_tasks: g.max_tasks,
-        required_approvals: g.required_approvals,
-        planner_profile_id: g.planner_profile_id,
-        model: g.model,
         repos: repos.into_iter().map(repository_dto).collect(),
-        created_at: g.created_at,
-        updated_at: g.updated_at,
+        .. id, title, description, max_tasks, required_approvals,
+           planner_profile_id, model, created_at, updated_at
     }
-}
 
-/// `profile_name` is the reviewer profile's name, which the caller loads.
-fn task_reviewer_dto(r: store::TaskReviewer, profile_name: Option<String>) -> TaskReviewerDto {
-    TaskReviewerDto {
+    /// `name` is the reviewer profile's name, which the caller loads.
+    fn task_reviewer_dto(r: store::TaskReviewer, name: Option<String>) -> TaskReviewerDto {
         agent_kind: r.agent_kind(),
-        profile_id: r.profile_id,
-        profile_name,
-        model: r.model,
+        profile_name: name,
+        .. profile_id, model
     }
-}
 
-/// The names come from the caller, which loads them: the engineer's, the
-/// planner's of the task's goal, and one per reviewer slot in slot order.
-fn task_dto(
-    t: store::Task,
-    reviewers: Vec<(store::TaskReviewer, Option<String>)>,
-    depends_on: Vec<String>,
-    engineer_profile_name: Option<String>,
-    planner_profile_name: Option<String>,
-) -> TaskDto {
-    TaskDto {
+    /// The names come from the caller, which loads them: the engineer's, the
+    /// planner's of the task's goal, and one per reviewer slot in slot order.
+    fn task_dto(
+        t: store::Task,
+        reviewers: Vec<(store::TaskReviewer, Option<String>)>,
+        depends_on: Vec<String>,
+        engineer_profile_name: Option<String>,
+        planner_profile_name: Option<String>,
+    ) -> TaskDto {
         status: t.status(),
         stalled: t.is_stalled(),
         agent_kind: t.agent_kind(),
-        id: t.id,
-        goal_id: t.goal_id,
-        repo_id: t.repo_id,
-        title: t.title,
-        description: t.description,
-        engineer_profile_id: t.engineer_profile_id,
-        engineer_profile_name,
-        planner_profile_name,
-        model: t.model,
         reviewers: reviewers
             .into_iter()
             .map(|(r, name)| task_reviewer_dto(r, name))
             .collect(),
-        depends_on,
-        branch: t.branch,
-        worktree_path: t.worktree_path,
-        review_round: t.review_round,
-        merge_commit: t.merge_commit,
-        pr_url: t.pr_url,
-        created_at: t.created_at,
-        updated_at: t.updated_at,
+        depends_on: depends_on,
+        engineer_profile_name: engineer_profile_name,
+        planner_profile_name: planner_profile_name,
+        .. id, goal_id, repo_id, title, description, engineer_profile_id, model,
+           branch, worktree_path, review_round, merge_commit, pr_url,
+           created_at, updated_at
+    }
+
+    pub fn transition_dto(t: store::TaskTransition) -> TaskTransitionDto {
+        .. id, from_status, to_status, actor, reason, created_at
+    }
+
+    /// `name` is the addressed profile's name, which the callers below load;
+    /// it is ignored for a message addressed to the user or to nobody.
+    fn message_dto(m: store::Message, name: Option<String>) -> MessageDto {
+        author_role: m.author_role(),
+        recipient: m.recipient().map(|r| MessageRecipientDto {
+            kind: r.kind(),
+            profile_id: r.profile_id().map(str::to_string),
+            profile_name: r.profile_id().and(name),
+        }),
+        .. id, goal_id, task_id, author_session_id, body, created_at
+    }
+
+    pub fn review_dto(r: store::Review) -> ReviewDto {
+        verdict: r.verdict(),
+        .. id, task_id, round, reviewer_profile_id, session_id, body, created_at
+    }
+
+    pub fn session_dto(s: store::AgentSession) -> SessionDto {
+        role: s.role(),
+        agent_kind: s.agent_kind(),
+        status: s.status(),
+        attention_reason: s.attention_reason(),
+        .. id, goal_id, task_id, profile_id, model, internal_session_id,
+           tmux_session, worktree_path, review_round, attention_since,
+           last_activity_at, created_at, ended_at
+    }
+
+    pub fn event_dto(e: store::AgentEvent) -> AgentEventDto {
+        payload: serde_json::from_str(&e.payload).unwrap_or(serde_json::Value::Null),
+        .. id, session_id, task_id, agent_kind, kind, created_at
     }
 }
 
@@ -147,38 +172,6 @@ pub async fn task_dto_of(store: &Store, task: store::Task) -> Result<TaskDto, St
     let planner_id = store.get_goal(&task.goal_id).await?.planner_profile_id;
     let planner = profile_name(store, &planner_id).await;
     Ok(task_dto(task, reviewers, depends_on, engineer, planner))
-}
-
-pub fn transition_dto(t: store::TaskTransition) -> TaskTransitionDto {
-    TaskTransitionDto {
-        id: t.id,
-        from_status: t.from_status,
-        to_status: t.to_status,
-        actor: t.actor,
-        reason: t.reason,
-        created_at: t.created_at,
-    }
-}
-
-/// `recipient_profile_name` is the name of the addressed profile, which the
-/// callers below load; it is ignored for a message addressed to the user or to
-/// nobody.
-fn message_dto(m: store::Message, recipient_profile_name: Option<String>) -> MessageDto {
-    let recipient = m.recipient().map(|r| MessageRecipientDto {
-        kind: r.kind(),
-        profile_id: r.profile_id().map(str::to_string),
-        profile_name: r.profile_id().and(recipient_profile_name),
-    });
-    MessageDto {
-        author_role: m.author_role(),
-        id: m.id,
-        goal_id: m.goal_id,
-        task_id: m.task_id,
-        author_session_id: m.author_session_id,
-        recipient,
-        body: m.body,
-        created_at: m.created_at,
-    }
 }
 
 /// [`message_dto`] with the addressee's name loaded from the store.
@@ -213,51 +206,4 @@ pub async fn message_dtos(
             message_dto(m, name)
         })
         .collect())
-}
-
-pub fn review_dto(r: store::Review) -> ReviewDto {
-    ReviewDto {
-        verdict: r.verdict(),
-        id: r.id,
-        task_id: r.task_id,
-        round: r.round,
-        reviewer_profile_id: r.reviewer_profile_id,
-        session_id: r.session_id,
-        body: r.body,
-        created_at: r.created_at,
-    }
-}
-
-pub fn session_dto(s: store::AgentSession) -> SessionDto {
-    SessionDto {
-        role: s.role(),
-        agent_kind: s.agent_kind(),
-        status: s.status(),
-        attention_reason: s.attention_reason(),
-        id: s.id,
-        goal_id: s.goal_id,
-        task_id: s.task_id,
-        profile_id: s.profile_id,
-        model: s.model,
-        internal_session_id: s.internal_session_id,
-        tmux_session: s.tmux_session,
-        worktree_path: s.worktree_path,
-        review_round: s.review_round,
-        attention_since: s.attention_since,
-        last_activity_at: s.last_activity_at,
-        created_at: s.created_at,
-        ended_at: s.ended_at,
-    }
-}
-
-pub fn event_dto(e: store::AgentEvent) -> AgentEventDto {
-    AgentEventDto {
-        payload: serde_json::from_str(&e.payload).unwrap_or(serde_json::Value::Null),
-        id: e.id,
-        session_id: e.session_id,
-        task_id: e.task_id,
-        agent_kind: e.agent_kind,
-        kind: e.kind,
-        created_at: e.created_at,
-    }
 }

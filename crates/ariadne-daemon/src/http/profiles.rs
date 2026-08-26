@@ -8,11 +8,17 @@ use ariadne_api::profiles::{
     CreateProfileRequest, ProfileDto, ProfileListQuery, ProfilePromptDto,
     UpdateProfilePromptRequest, UpdateProfileRequest,
 };
-use ariadne_store::{NewProfile, ProfileUpdate, parse_prompt_kind};
+use ariadne_store::{NewProfile, ProfileUpdate, Store, parse_prompt_kind};
 
 use super::AppState;
 use super::convert::{profile_dto, profile_prompt_dto};
 use super::error::{ApiError, ApiResult};
+
+/// The id behind a path segment: every profile endpoint takes an id or a
+/// unique name, as the `to` of a message does.
+async fn resolve(store: &Store, spec: &str) -> ApiResult<String> {
+    Ok(store.resolve_profile(spec).await?.id)
+}
 
 /// Create a profile.
 ///
@@ -74,8 +80,7 @@ pub async fn update(
     Path(id): Path<String>,
     Json(req): Json<UpdateProfileRequest>,
 ) -> ApiResult<Json<ProfileDto>> {
-    // Accept id or unique name, like GET.
-    let id = state.store.resolve_profile(&id).await?.id;
+    let id = resolve(&state.store, &id).await?;
     let profile = state
         .store
         .update_profile(
@@ -106,8 +111,7 @@ pub async fn delete(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
-    // Accept id or unique name, like GET.
-    let id = state.store.resolve_profile(&id).await?.id;
+    let id = resolve(&state.store, &id).await?;
     state.store.delete_profile(&id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -121,7 +125,7 @@ pub async fn list_prompts(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<Json<Vec<ProfilePromptDto>>> {
-    let id = state.store.resolve_profile(&id).await?.id;
+    let id = resolve(&state.store, &id).await?;
     let prompts = state.store.list_profile_prompts(&id).await?;
     Ok(Json(prompts.into_iter().map(profile_prompt_dto).collect()))
 }
@@ -147,7 +151,7 @@ pub async fn update_prompt(
     Path((id, kind)): Path<(String, String)>,
     Json(req): Json<UpdateProfilePromptRequest>,
 ) -> ApiResult<Json<ProfilePromptDto>> {
-    let id = state.store.resolve_profile(&id).await?.id;
+    let id = resolve(&state.store, &id).await?;
     let kind = parse_prompt_kind(&kind)?;
     let prompt = state
         .store
@@ -172,7 +176,7 @@ pub async fn reset_prompt(
     State(state): State<AppState>,
     Path((id, kind)): Path<(String, String)>,
 ) -> ApiResult<Json<ProfilePromptDto>> {
-    let id = state.store.resolve_profile(&id).await?.id;
+    let id = resolve(&state.store, &id).await?;
     let kind = parse_prompt_kind(&kind)?;
     let prompt = state.store.reset_profile_prompt(&id, kind).await?;
     Ok(Json(profile_prompt_dto(prompt)))
@@ -186,7 +190,7 @@ pub async fn reset_system_prompt(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<Json<ProfileDto>> {
-    let id = state.store.resolve_profile(&id).await?.id;
+    let id = resolve(&state.store, &id).await?;
     let profile = state.store.reset_system_prompt(&id).await?;
     Ok(Json(profile_dto(profile)))
 }

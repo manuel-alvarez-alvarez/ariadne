@@ -7,11 +7,34 @@ use axum::http::StatusCode;
 use ariadne_api::sessions::{
     SessionDto, SessionInputRequest, SessionListQuery, SessionLogsResponse, SessionResizeRequest,
 };
-use ariadne_store::SessionFilter;
+use ariadne_store::{AgentSession, SessionFilter};
 
 use super::AppState;
 use super::convert::session_dto;
 use super::error::{ApiError, ApiResult};
+
+/// The session behind `id`, with a pane to act on — or the conflict saying
+/// why there is none, in which `refusal` names what cannot be done.
+///
+/// Both halves of "live" are checked: the row's status, because a finished
+/// session must not be acted on, and tmux itself, because tmux names are
+/// reused and a call at a stale name would land in a successor's pane.
+async fn live_pane(state: &AppState, id: &str, refusal: &str) -> ApiResult<AgentSession> {
+    let session = state.store.get_session(id).await?;
+    if !session.status().is_live() {
+        return Err(ApiError::conflict(format!(
+            "session {id} is {} and {refusal}",
+            session.status
+        )));
+    }
+    if !state.launcher.tmux.has_session(&session.tmux_session).await {
+        return Err(ApiError::conflict(format!(
+            "session {id} has no live pane ({})",
+            session.tmux_session
+        )));
+    }
+    Ok(session)
+}
 
 /// List agent sessions.
 #[utoipa::path(get, path = "/v1/sessions", tag = "sessions",
@@ -107,19 +130,7 @@ pub async fn input(
     Path(id): Path<String>,
     Json(req): Json<SessionInputRequest>,
 ) -> ApiResult<StatusCode> {
-    let session = state.store.get_session(&id).await?;
-    if !session.status().is_live() {
-        return Err(ApiError::conflict(format!(
-            "session {id} is {} and cannot take input",
-            session.status
-        )));
-    }
-    if !state.launcher.tmux.has_session(&session.tmux_session).await {
-        return Err(ApiError::conflict(format!(
-            "session {id} has no live pane ({})",
-            session.tmux_session
-        )));
-    }
+    let session = live_pane(&state, &id, "cannot take input").await?;
     state
         .launcher
         .tmux
@@ -166,19 +177,7 @@ pub async fn resize(
             req.cols, req.rows
         )));
     }
-    let session = state.store.get_session(&id).await?;
-    if !session.status().is_live() {
-        return Err(ApiError::conflict(format!(
-            "session {id} is {} and has no pane to resize",
-            session.status
-        )));
-    }
-    if !state.launcher.tmux.has_session(&session.tmux_session).await {
-        return Err(ApiError::conflict(format!(
-            "session {id} has no live pane ({})",
-            session.tmux_session
-        )));
-    }
+    let session = live_pane(&state, &id, "has no pane to resize").await?;
     state
         .launcher
         .tmux
