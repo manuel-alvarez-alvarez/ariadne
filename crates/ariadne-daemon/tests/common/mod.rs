@@ -1122,6 +1122,15 @@ impl Harness {
             .await;
     }
 
+    /// A session that has been in `starting` for `secs`: the liveness sweep
+    /// leaves a start younger than its grace window alone, so a test about
+    /// what it concludes has to date the start. `created_at` is the column
+    /// that holds it for a row nothing has launched yet, and the only one of
+    /// the three the sweep reads that such a row has at all.
+    pub async fn starting_for(&self, session: &AgentSession, secs: i64) {
+        self.backdate(&["created_at"], session, secs).await;
+    }
+
     /// When this session's agent process was last started, which is what a
     /// relaunch moves.
     pub async fn launched_at(&self, session: &AgentSession) -> Option<String> {

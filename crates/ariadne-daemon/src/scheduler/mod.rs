@@ -49,7 +49,19 @@ pub enum SchedEvent {
 
 /// How often the full reconciliation tick runs.
 const TICK_SECS: u64 = 15;
-/// Spawn attempts per task before it is failed.
+/// How long a session that is starting is given to get a pane before the
+/// liveness sweep concludes there is none.
+///
+/// A row is put into `starting` before tmux has anything: the launcher writes
+/// it and then spawns, and a resume from the API kills the old pane before the
+/// new one exists. A sweep landing in that window would retire a session on
+/// its way up and raise `disconnected` on it — an alarm that clears itself the
+/// moment the agent's first hook arrives, having flashed on the strip and over
+/// SSE in the meantime. Long enough for a launch to reach tmux, short enough
+/// that one which never will is still noticed within a tick or two.
+const START_GRACE_SECS: i64 = 30;
+/// Spawn attempts before the daemon stops trying: per task, after which it is
+/// failed, and per goal, after which its planner is left alone.
 const SPAWN_RETRY_BUDGET: u32 = 3;
 /// Passes one addressed message is worth before the user is told it never
 /// arrived. A tmux that would not take it says nothing about whether the
@@ -72,8 +84,10 @@ const QUIET_RELAUNCH_SECS: i64 = 2_700;
 pub struct Scheduler {
     store: Store,
     launcher: Arc<Launcher>,
-    /// Spawn failures per task (in-memory: resets on daemon restart, which is
-    /// fine — a restart is exactly when a retry is warranted).
+    /// Spawn failures per task, and per goal whose planner will not start, by
+    /// the id of whichever it is — the two never collide, and what a failure
+    /// means is the same either way (in-memory: resets on daemon restart,
+    /// which is fine — a restart is exactly when a retry is warranted).
     spawn_failures: HashMap<String, u32>,
     /// What the quiet-clock watchdog has done about each session it has had
     /// to act on, by session id (in memory like the map above).
@@ -171,7 +185,11 @@ impl Scheduler {
     /// One reconciliation, with nowhere to hand an error: the event loop and
     /// the tick are the only callers, and what they do about a failure is say
     /// so — and, for a task, count it against the spawn-retry budget, since a
-    /// task whose agent will not start is what that budget is for.
+    /// task whose agent will not start is what that budget is for. A goal
+    /// spends the same budget on its planner, but counts it where the spawn
+    /// fails rather than here: a goal reconciliation has other ways to fail —
+    /// a store that would not answer, a nudge that went nowhere — and none of
+    /// them says anything about whether a planner can be started.
     async fn reconcile(&mut self, target: Target<'_>) {
         let failed = match target {
             Target::Goal(id) => self.reconcile_goal(id).await.err(),

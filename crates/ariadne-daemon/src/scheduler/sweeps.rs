@@ -8,9 +8,11 @@
 use tracing::{info, warn};
 
 use ariadne_core::{AttentionReason, SessionStatus};
-use ariadne_store::SessionFilter;
+use ariadne_store::{AgentSession, SessionFilter};
 
 use crate::attention;
+
+use super::START_GRACE_SECS;
 
 impl super::Scheduler {
     /// Mark sessions whose tmux process died as exited, and note the grid the
@@ -61,6 +63,17 @@ impl super::Scheduler {
                     .has_session_checked(&session.tmux_session)
                     .await
                 {
+                    // Except while it is still starting: a row goes into
+                    // `starting` before tmux has anything under it, so a
+                    // session on its way up has no pane yet and no more went
+                    // wrong than that this sweep got there first. Counted as
+                    // alive — a launch in flight is no reason to let the
+                    // machine sleep — and asked again next time, by which
+                    // point the window has either produced a pane or run out.
+                    Ok(false) if starting_up(&session) => {
+                        alive += 1;
+                        info!(session = %session.id, tmux = %session.tmux_session, "no pane yet, but the session is still starting; left for the next sweep");
+                    }
                     Ok(false) => {
                         info!(session = %session.id, tmux = %session.tmux_session, "session process gone, marking exited");
                         let _ = self
@@ -139,4 +152,37 @@ impl super::Scheduler {
             let _ = self.store.clear_session_attention(&session.id).await;
         }
     }
+}
+
+/// Whether this session went into `starting` less than [`START_GRACE_SECS`]
+/// ago: a launch that may not have reached tmux yet, rather than one that
+/// never will.
+///
+/// The start is dated from the latest of the three columns that stamp one,
+/// since which of them holds it depends on how the session got there:
+/// `created_at` for a row `create_session` has just written and not yet
+/// launched, `last_activity_at` for one `restart_session` put back on its feet
+/// under its own id, and `launched_at` for the launch itself. A row none of
+/// them dates recently has been starting for longer than the window, whatever
+/// wrote it.
+fn starting_up(session: &AgentSession) -> bool {
+    if session.status() != SessionStatus::Starting {
+        return false;
+    }
+    let stamped = |at: &str| {
+        chrono::DateTime::parse_from_rfc3339(at)
+            .ok()
+            .map(|at| at.with_timezone(&chrono::Utc))
+    };
+    [
+        stamped(&session.created_at),
+        session.last_activity_at.as_deref().and_then(stamped),
+        session.launched_at.as_deref().and_then(stamped),
+    ]
+    .into_iter()
+    .flatten()
+    .max()
+    .is_some_and(|started| {
+        chrono::Utc::now() - started < chrono::Duration::seconds(START_GRACE_SECS)
+    })
 }

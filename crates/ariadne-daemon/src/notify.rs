@@ -8,9 +8,10 @@
 //! whichever route it has.
 //!
 //! What is here is the endings: the moments a task or a goal stops being
-//! anybody's to work on. Everything up to then has an agent behind it that
-//! the user can watch; an ending has none — the sessions are killed with it —
-//! and until this a task that exhausted its spawn budget died in a log line.
+//! anybody's to work on, and the one where a goal never got started at all.
+//! Everything up to then has an agent behind it that the user can watch; an
+//! ending has none — the sessions are killed with it — and until this a task
+//! that exhausted its spawn budget died in a log line.
 
 use ariadne_core::{AuthorRole, TaskStatus};
 use ariadne_store::{Goal, Message, NewMessage, Recipient, Result, Store, Task};
@@ -82,6 +83,31 @@ pub async fn goal_completed(store: &Store, goal: &Goal) -> Result<Message> {
             recipient: None,
             body: format!(
                 "\"{}\" is complete: every task of it is merged or cancelled.",
+                goal.title
+            ),
+        })
+        .await
+}
+
+/// And tell it that its planner will not be started again.
+///
+/// Addressed to nobody, like the goal's own ending: there is no planner to
+/// read it — that is what it says — and the session the last attempt left
+/// behind already carries the flag the user acts on. What this adds is the
+/// why, in the one place a goal that never got planned has to say it.
+pub async fn planner_gave_up(store: &Store, goal: &Goal, attempts: u32) -> Result<Message> {
+    store
+        .create_message(NewMessage {
+            goal_id: goal.id.clone(),
+            task_id: None,
+            author_role: AuthorRole::System,
+            author_session_id: None,
+            recipient: None,
+            body: format!(
+                "The planner for \"{}\" could not be started, and {attempts} attempts is \
+                 all it gets: nothing more will be tried, and its last session is flagged \
+                 for you. Deal with what stopped it — the agent CLI the goal runs on, the \
+                 model it was given — and resume that session to have another go.",
                 goal.title
             ),
         })

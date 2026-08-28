@@ -3,11 +3,15 @@
 
 use tracing::{info, warn};
 
-use ariadne_core::{Actor, GoalStatus, PromptKind, Role, SessionStatus, TaskStatus};
-use ariadne_store::{SessionFilter, TaskFilter};
+use ariadne_core::{
+    Actor, AttentionReason, GoalStatus, PromptKind, Role, SessionStatus, TaskStatus,
+};
+use ariadne_store::{AgentSession, Goal, SessionFilter, TaskFilter};
 
 use crate::agents::prompts;
 use crate::notify;
+
+use super::SPAWN_RETRY_BUDGET;
 
 impl super::Scheduler {
     pub(super) async fn reconcile_goal(&mut self, goal_id: &str) -> anyhow::Result<()> {
@@ -16,9 +20,17 @@ impl super::Scheduler {
             // A goal in planning wants a live planner session.
             GoalStatus::Planning => {
                 let planners = self.live_sessions(goal_id, None, Role::Planner).await?;
-                if planners.is_empty() {
+                if !planners.is_empty() {
+                    // The goal has the planner it wants, however it came by
+                    // one: whatever earlier attempts spent is given back.
+                    self.spawn_failures.remove(goal_id);
+                } else if self.planner_wanted(&goal).await {
                     info!(goal = %goal.id, "spawning planner");
-                    self.launcher.spawn_planner(goal_id).await?;
+                    if let Err(e) = self.launcher.spawn_planner(goal_id).await {
+                        self.planner_could_not_start(&goal).await;
+                        return Err(e);
+                    }
+                    self.spawn_failures.remove(goal_id);
                 }
                 // A planner has no task to flag: its session carries the
                 // stall, which is the only place a goal still in planning has
@@ -107,6 +119,111 @@ impl super::Scheduler {
         Ok(())
     }
 
+    /// Whether to have another go at starting this goal's planner.
+    ///
+    /// Not for ever. `spawn_planner` writes the session row before it
+    /// launches, so an attempt that dies on the way leaves a `starting` row
+    /// the liveness sweep retires and flags `disconnected` — and a goal in
+    /// planning always wants a planner, so a launch nothing on this machine
+    /// can perform (a model the agent CLI does not know, a CLI that is not
+    /// installed) would put a fresh alarm on the strip every tick, for ever.
+    /// [`SPAWN_RETRY_BUDGET`] attempts is what it gets, the same budget a
+    /// task's engineer spends, out of the same map.
+    ///
+    /// What holds the daemon back afterwards is the alarm itself rather than
+    /// the count, which is how a task retried out of `failed` gets a clean
+    /// one: taking the flag down is the user saying they have dealt with what
+    /// stopped it — resuming that session does exactly that
+    /// (`restart_session`) — and the next pass starts again from zero. A
+    /// spawn that never got as far as a row has nothing to raise and nothing
+    /// to take down, so there the count alone holds it, until a daemon
+    /// restart drops it with the rest of the map.
+    async fn planner_wanted(&mut self, goal: &Goal) -> bool {
+        if self.spawn_failures.get(&goal.id).copied().unwrap_or(0) < SPAWN_RETRY_BUDGET {
+            return true;
+        }
+        // A store that would not say leaves the pass concluding nothing, the
+        // way the sweep does with a tmux it cannot reach.
+        let Some(planners) = self.planner_sessions(&goal.id).await else {
+            return false;
+        };
+        match alarm_row(&planners) {
+            Some(alarm) if alarm.attention_reason() == Some(AttentionReason::Disconnected) => false,
+            None => false,
+            _ => {
+                info!(goal = %goal.id, "the planner's alarm was dealt with; trying to start one again");
+                self.spawn_failures.remove(&goal.id);
+                true
+            }
+        }
+    }
+
+    /// Count a planner spawn that did not get off the ground, and leave one
+    /// row per goal saying anything about it.
+    ///
+    /// The row this attempt wrote is retired here rather than left for the
+    /// liveness sweep to find, and so is every row an earlier attempt left:
+    /// what the user has to see is a planner that will not start, once, not a
+    /// line per attempt. Only rows that never launched are touched — a
+    /// session that really had an agent and lost it is news of its own, and
+    /// the sweep's to tell. While the budget lasts nothing new is raised, the
+    /// next pass being about to try again; when it runs out the alarm goes up
+    /// on the row that is left, and the goal's own thread says why.
+    async fn planner_could_not_start(&mut self, goal: &Goal) {
+        let failures = self.spawn_failures.entry(goal.id.clone()).or_insert(0);
+        *failures += 1;
+        let failures = *failures;
+        let Some(planners) = self.planner_sessions(&goal.id).await else {
+            return;
+        };
+        let Some(alarm) = alarm_row(&planners).map(|s| s.id.clone()) else {
+            return;
+        };
+        for session in planners.iter().filter(|s| s.launched_at.is_none()) {
+            if session.status().is_live() {
+                let _ = self
+                    .store
+                    .set_session_status(&session.id, SessionStatus::Exited)
+                    .await;
+            }
+            if session.id != alarm
+                && session.attention_reason() == Some(AttentionReason::Disconnected)
+            {
+                let _ = self.store.clear_session_attention(&session.id).await;
+            }
+        }
+        if failures < SPAWN_RETRY_BUDGET {
+            return;
+        }
+        warn!(goal = %goal.id, session = %alarm, failures, "the planner will not start, giving up");
+        let _ = self
+            .store
+            .set_session_attention(&alarm, AttentionReason::Disconnected)
+            .await;
+        if let Err(e) = notify::planner_gave_up(&self.store, goal, failures).await {
+            warn!(goal = %goal.id, error = %e, "writing the planner's give-up notice failed");
+        }
+    }
+
+    /// The goal's planner sessions, oldest first, or `None` when the store
+    /// would not say — which is not the same as a goal that has none.
+    async fn planner_sessions(&self, goal_id: &str) -> Option<Vec<AgentSession>> {
+        let sessions = self
+            .store
+            .list_sessions(SessionFilter {
+                goal_id: Some(goal_id.to_string()),
+                ..Default::default()
+            })
+            .await
+            .ok()?;
+        Some(
+            sessions
+                .into_iter()
+                .filter(|s| s.role() == Role::Planner)
+                .collect(),
+        )
+    }
+
     /// The planner's work ends with the plan: an idle one is let go once the
     /// goal it planned is being worked on.
     ///
@@ -159,4 +276,15 @@ impl super::Scheduler {
         )
         .await;
     }
+}
+
+/// The row a goal's planner trouble is told on: the one already saying it
+/// where there is one — a pane that vanished under a planner that was running
+/// is flagged by the sweep, and that is this same trouble seen a moment
+/// earlier — and otherwise the last attempt's own row.
+fn alarm_row(planners: &[AgentSession]) -> Option<&AgentSession> {
+    planners
+        .iter()
+        .find(|s| s.attention_reason() == Some(AttentionReason::Disconnected))
+        .or_else(|| planners.last())
 }

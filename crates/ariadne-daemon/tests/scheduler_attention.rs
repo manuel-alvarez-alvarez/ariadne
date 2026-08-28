@@ -38,7 +38,9 @@ use ariadne_core::{
     Actor, AttentionReason, AuthorRole, GoalStatus, ReviewVerdict, Role, SessionStatus, TaskStatus,
 };
 use ariadne_daemon::scheduler::{self, SchedEvent};
-use ariadne_store::{AgentSession, Goal, NewMessage, NewReview, Recipient, ReviewerSlot, Task};
+use ariadne_store::{
+    AgentSession, Goal, NewMessage, NewReview, Recipient, ReviewerSlot, SessionFilter, Task,
+};
 
 use common::{Harness, eventually, harness};
 
@@ -47,6 +49,11 @@ use common::{Harness, eventually, harness};
 const NUDGE_SECS: i64 = 300;
 const FLAG_SECS: i64 = 900;
 const RELAUNCH_SECS: i64 = 2_700;
+/// And the two budgets the goal's planner and the liveness sweep spend, as
+/// `scheduler.rs` has them: how many attempts starting a planner is worth, and
+/// how long a session that is starting is given to get a pane.
+const SPAWN_RETRY_BUDGET: usize = 3;
+const START_GRACE_SECS: i64 = 30;
 /// How long a test waits for a reconciliation to reach the store. Generous
 /// because some of what is waited on is not the daemon thinking: a nudge no
 /// composer will let go of spends several seconds of widening backoff before
@@ -560,13 +567,18 @@ async fn an_agent_that_reported_an_error_is_left_alone() {
 async fn a_vanished_pane_with_work_still_active_is_flagged_disconnected() {
     let h = harness().cannot_spawn().await;
     let (goal, planner) = h.planning_goal().await;
-    // Live in the database, gone as far as tmux is concerned: never added to
-    // the stub's list of panes.
+    // Launched and running in the database, gone as far as tmux is concerned:
+    // never added to the stub's list of panes. Launched rather than merely
+    // written, since a row whose start is still in front of it has no pane yet
+    // for reasons that are nobody's alarm — which is the grace window's own
+    // test below.
     let session = h.session(&goal, None, Role::Planner, &planner.id).await;
+    h.launched_ago(&session, 60).await;
     // And a second one that was sitting on a dialog that died with it.
     let on_a_prompt = h
         .session_named(&goal, None, Role::Planner, &planner.id, "vanished-prompt")
         .await;
+    h.launched_ago(&on_a_prompt, 60).await;
     h.raise(&on_a_prompt, AttentionReason::WaitingPermission).await;
 
     // The sweep runs on the tick, and the first tick is immediate.
@@ -666,6 +678,13 @@ async fn a_vanished_pane_nobody_is_waiting_on_is_not_raised() {
         )
         .await
         .unwrap();
+
+    // All three had launched and were running when their panes went: a session
+    // still starting is inside the sweep's grace window, and left alone
+    // whoever it belongs to.
+    for gone in [&engineer, &voted, &cancelled] {
+        w.launched_ago(gone, 60).await;
+    }
 
     let _sched = w.scheduler();
     for gone in [&engineer, &voted, &cancelled] {
@@ -904,6 +923,57 @@ async fn a_stale_prompt_flag_from_before_the_daemon_started_is_swept_up() {
     );
 }
 
+/// A session on its way up has no pane yet, and that is not an agent that
+/// vanished. The row goes into `starting` before tmux has anything under it —
+/// a spawn writes it before it launches, and a resume from the API kills the
+/// old pane before the new one exists — so a sweep landing in that window used
+/// to retire a session that was coming back and raise `disconnected` on it: an
+/// alarm that took itself down again on the agent's first hook, having flashed
+/// on the strip and over SSE in between. A start older than the window is a
+/// launch that is not coming, and is swept as ever.
+#[tokio::test]
+async fn a_starting_session_is_swept_only_once_its_grace_window_has_run_out() {
+    let w = World::cannot_spawn().await;
+    w.advance(&w.task, TaskStatus::InProgress).await;
+    // Two engineers with no pane between them — neither was ever added to the
+    // stub's list — and nothing but the age of their start to tell them apart.
+    let coming_up = w
+        .session(&w.goal, Some(&w.task), Role::Engineer, &w.engineer)
+        .await;
+    let never_came_up = w
+        .session_named(
+            &w.goal,
+            Some(&w.task),
+            Role::Engineer,
+            &w.engineer,
+            "engineer-starting-since-forever",
+        )
+        .await;
+    w.starting_for(&never_came_up, START_GRACE_SECS + 60).await;
+
+    // The sweep runs on the tick, and the first tick is immediate.
+    let _sched = w.scheduler();
+    eventually(TIMEOUT, "the launch that never arrived to be swept", async || {
+        w.attention(&never_came_up).await == Some(AttentionReason::Disconnected)
+    })
+    .await;
+    assert_eq!(
+        w.session_status(&never_came_up).await,
+        SessionStatus::Exited,
+        "a session that has been starting for longer than the window is retired"
+    );
+    assert_eq!(
+        w.session_status(&coming_up).await,
+        SessionStatus::Starting,
+        "and one whose row was written a moment ago is left where it is"
+    );
+    assert_eq!(
+        w.attention(&coming_up).await,
+        None,
+        "with nothing raised on it: it has not failed to do anything yet"
+    );
+}
+
 // -- finished goals ---------------------------------------------------------
 
 /// A finished goal owns nothing live, and the scheduler keeps it that way on
@@ -991,6 +1061,96 @@ async fn a_task_that_could_never_be_started_tells_the_user_it_failed() {
         "the notice does not say what stopped it: {}",
         told[0].body
     );
+}
+
+/// A goal in planning always wants a planner, and its row goes in before the
+/// launch: a spawn that cannot get off the ground — a model the agent CLI does
+/// not know, a CLI that is not installed — used to leave a fresh
+/// "disconnected" session on the strip every fifteen seconds, for ever. So the
+/// attempts are counted the way a task's engineer's are, and when they run out
+/// one row is left carrying the alarm, with the goal's own thread saying why.
+///
+/// The user's answer to it is that alarm coming down: resuming the session it
+/// sits on is what says somebody has dealt with what stopped it, and the count
+/// starts again from there.
+#[tokio::test]
+async fn a_planner_that_can_never_be_started_gives_up_with_one_alarm() {
+    /// Every session this goal has, which on a goal with no tasks is every
+    /// planner it ever tried to start.
+    async fn planners(h: &Harness, goal: &Goal) -> Vec<AgentSession> {
+        h.store
+            .list_sessions(SessionFilter {
+                goal_id: Some(goal.id.clone()),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+    }
+
+    let h = harness().cannot_spawn().await;
+    let (goal, _planner) = h.planning_goal().await;
+    // The planner's cwd has to exist for an attempt to get as far as the
+    // launch it cannot perform — and for the user's resume to get that far
+    // too.
+    std::fs::create_dir_all(h.dir.path().join("repo")).unwrap();
+
+    let sched = Sched(scheduler::start(
+        h.store.clone(),
+        h.launcher.clone(),
+        false,
+    ));
+    for _ in 0..SPAWN_RETRY_BUDGET + 2 {
+        sched.goal(&goal);
+    }
+    eventually(TIMEOUT, "the planner's spawn budget to run out", async || {
+        !h.goal_thread(&goal).await.is_empty()
+    })
+    .await;
+
+    let told = h.goal_thread(&goal).await;
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert_eq!(told[0].author_role(), AuthorRole::System);
+    assert_eq!(told[0].recipient(), None, "it wakes nobody");
+    assert!(told[0].body.contains(&goal.title), "{}", told[0].body);
+
+    let rows = planners(&h, &goal).await;
+    let mut flagged = rows
+        .iter()
+        .filter(|s| s.attention_reason() == Some(AttentionReason::Disconnected));
+    let alarm = flagged.next().expect("a row carrying the alarm").clone();
+    assert!(
+        flagged.next().is_none(),
+        "one goal, one row that says anything: {rows:?}"
+    );
+    assert!(
+        rows.iter().all(|s| !s.status().is_live()),
+        "and no planner left running: {rows:?}"
+    );
+
+    // And the passes after it try nothing at all: no new row, no second notice.
+    for _ in 0..3 {
+        sched.goal(&goal);
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        planners(&h, &goal).await.len(),
+        rows.len(),
+        "a planner that was given up on is not spawned again"
+    );
+    assert_eq!(h.goal_thread(&goal).await.len(), 1, "nor said twice");
+
+    // The user's answer: resuming the flagged session. Nothing here can get an
+    // agent up, so the resume fails at the launch like every attempt before it
+    // — but it puts the row back on its feet and drops what it was flagged for
+    // (`restart_session`), which is what the daemon reads as dealt with.
+    let _ = h.launcher.revive_session(&alarm.id, None).await;
+    assert_eq!(h.attention(&alarm).await, None, "the alarm is down");
+
+    sched.goal(&goal);
+    eventually(TIMEOUT, "the daemon to try starting one again", async || {
+        planners(&h, &goal).await.len() > rows.len()
+    })
+    .await;
 }
 
 /// A goal the user cancelled takes its tasks with it, and every one of them
