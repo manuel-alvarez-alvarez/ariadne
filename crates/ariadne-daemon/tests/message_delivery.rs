@@ -8,11 +8,13 @@
 //! attention path instead, on the session of the agent that wrote it.
 //!
 //! The other half is what happens when the delivery does not work: a tmux
-//! that will not take the keystrokes, an agent that cannot be resumed and an
-//! addressee with no session to type into are tried again, and once the
-//! passes are gone somebody is told — the addressee on its own session, or
-//! the author on theirs when the addressee has no session at all. Nothing is
-//! ever quietly struck off.
+//! that will not take the keystrokes and an agent that cannot be resumed are
+//! tried again, and once the passes are gone the addressee's own session says
+//! so — or, where its row went from under the daemon in the meantime, the
+//! author's does, as the human's to sort out. An addressee with no session at
+//! all is not a pass at anything and spends nothing: the message waits until
+//! there is somebody to hand it to, or until its task ends and nobody ever
+//! will be. Nothing is ever quietly struck off.
 //!
 //! The whole path is exercised, from the HTTP handler both agents and the CLI
 //! post through to the keystrokes that come out the other end: the router is
@@ -30,7 +32,7 @@ use axum::http::{Method, Request, StatusCode, header};
 
 use ariadne_api::SESSION_HEADER;
 use ariadne_api::messages::MessageDto;
-use ariadne_core::{Actor, AttentionReason, Role, TaskStatus};
+use ariadne_core::{Actor, AttentionReason, Role, SessionStatus, TaskStatus};
 use ariadne_daemon::notify;
 use ariadne_store::{AgentSession, Goal, SessionFilter, Task};
 
@@ -745,9 +747,13 @@ async fn an_addressee_that_cannot_be_resumed_is_raised_for_the_user() {
     );
 }
 
-/// The last resort. An addressee that had a session and no longer has one
-/// leaves nothing to flag — so the flag goes where the answer was going to be
-/// read: on the session of whoever asked, as the user's to deal with.
+/// The last resort. An addressee whose row goes from under the daemon between
+/// the attempt and the news of it failing — a goal deleted while the
+/// keystrokes were in flight — leaves nothing to flag, so the flag goes where
+/// the answer was going to be read: on the session of whoever asked. It goes
+/// up as the human's to sort out rather than as something its agent is
+/// waiting for: the author asked nothing of the user, and a session waiting
+/// on the user is one nothing may be typed into afterwards.
 #[tokio::test]
 async fn a_message_whose_addressee_lost_its_session_raises_its_author() {
     let (h, cast) = seeded().await;
@@ -759,35 +765,53 @@ async fn a_message_whose_addressee_lost_its_session_raises_its_author() {
         .await;
     h.pane_exists(&engineer);
     h.pane_exists(&planner);
-    h.keystrokes_refused(true);
+    // A pane that takes the keystrokes and cannot be read back afterwards: a
+    // second of paste and Enter, and then a pass that failed at a session
+    // that was there for all of it.
+    h.capture_fails(true);
 
     let message = post_to_task(
         &h,
         &cast.task,
-            "Which database should this write to?",
-            Some("engineer"),
-            Some(&planner),
-        )
-        .await;
-    eventually(TIMEOUT, "the delivery to be turned away", async || !h.refused_panes().is_empty()).await;
-    // And now the addressee is gone, the way a deleted goal takes its
-    // sessions with it, with the message still owed.
+        "Which database should this write to?",
+        Some("engineer"),
+        Some(&planner),
+    )
+    .await;
+
+    // Two passes at the session it still has — a paste and an Enter each ...
+    eventually(TIMEOUT, "the first passes to be made", async || {
+        h.notify_message(&message.id);
+        h.keystrokes(&engineer) >= 4
+    })
+    .await;
+    // ... and on the last one the row goes while the keystrokes are still in
+    // flight, which leaves the pass with a session id nothing answers to.
+    eventually(TIMEOUT, "the last pass to be under way", async || {
+        h.notify_message(&message.id);
+        h.keystrokes(&engineer) >= 5
+    })
+    .await;
     h.forget_session(&engineer).await;
 
     eventually(TIMEOUT, "the author to be raised for the user", async || {
         h.notify_message(&message.id);
-        h.attention(&planner).await == Some(AttentionReason::WaitingInput)
+        h.attention(&planner).await == Some(AttentionReason::WaitingUser)
     })
     .await;
+    assert_eq!(
+        h.keystrokes(&planner),
+        0,
+        "which is a flag for the user, not a message typed at its author"
+    );
 }
 
-/// An addressee that never gets a session is the same story as one that lost
-/// it. The message keeps its place in the thread, and the passes are not
-/// endless: when they run out with nobody there to be woken, the agent that
-/// asked is raised for the user, since it is the one waiting on an answer
-/// that is not coming.
+/// An addressee with no session yet costs the message nothing. A pass that
+/// found nobody to type at tried nothing, so the message is still owed after
+/// as many passes as anyone cares to make — and the session that turns up
+/// later, when the reviewer's round finally starts, is handed it.
 #[tokio::test]
-async fn a_message_for_an_addressee_that_never_gets_a_session_raises_its_author() {
+async fn a_message_waits_for_an_addressee_that_has_no_session_yet() {
     let (h, cast) = seeded().await;
     let planner = h
         .session(&cast.goal, None, Role::Planner, &cast.planner.id)
@@ -798,19 +822,28 @@ async fn a_message_for_an_addressee_that_never_gets_a_session_raises_its_author(
     let message = post_to_task(
         &h,
         &cast.task,
-            "Have a look at the error handling once you pick this up.",
-            Some("reviewer"),
-            Some(&planner),
-        )
-        .await;
+        "Have a look at the error handling once you pick this up.",
+        Some("reviewer"),
+        Some(&planner),
+    )
+    .await;
 
-    // The passes the tick would make, asked for without waiting a quarter of
-    // a minute for each.
-    eventually(TIMEOUT, "the author to be raised for the user", async || {
+    // Far more passes than a message is worth, made the way the tick makes
+    // them and without waiting a quarter of a minute for each.
+    for _ in 0..DELIVERY_ATTEMPTS * 3 {
         h.notify_message(&message.id);
-        h.attention(&planner).await == Some(AttentionReason::WaitingInput)
+    }
+    // Behind all of them in the same queue, so its arrival means they are done.
+    post_to_task(&h, &cast.task, "Carry on.", Some("planner"), None).await;
+    eventually(TIMEOUT, "the passes to be made", async || {
+        h.pasted(&planner).contains("Carry on.")
     })
     .await;
+    assert_eq!(
+        h.attention(&planner).await,
+        None,
+        "the agent that wrote it asked nothing of the user"
+    );
     assert!(
         h.store
             .list_sessions(SessionFilter::default())
@@ -818,24 +851,102 @@ async fn a_message_for_an_addressee_that_never_gets_a_session_raises_its_author(
             .unwrap()
             .iter()
             .all(|s| s.profile_id != cast.reviewer.id),
-        "no reviewer was started for a message"
+        "and no reviewer was started for a message"
     );
-    assert_eq!(
-        h.keystrokes(&planner),
-        0,
-        "and nothing was typed at the agent that wrote it"
-    );
+
+    // And now the round starts, with the message still owed.
+    let reviewer = h
+        .session(&cast.goal, Some(&cast.task), Role::Reviewer, &cast.reviewer.id)
+        .await;
+    h.pane_exists(&reviewer);
+
+    eventually(TIMEOUT, "the reviewer to be nudged", async || {
+        h.notify_message(&message.id);
+        h.pasted(&reviewer)
+            .contains("Have a look at the error handling once you pick this up.")
+    })
+    .await;
     assert!(
         h.thread(&cast.task)
             .await
             .contains(&"Have a look at the error handling once you pick this up.".to_string()),
-        "the message is still there for whoever comes to read it"
+        "and it kept its place in the thread all along"
+    );
+}
+
+/// The waiting is the thread's to end. A task that was cancelled never starts
+/// the reviewer this message was waiting on, so the message comes off the
+/// list the tick works through rather than being carried for as long as the
+/// daemon runs — even with a session of the reviewer's there to be typed
+/// into, which is what the test above shows an owed message goes straight to.
+#[tokio::test]
+async fn a_message_whose_task_was_cancelled_is_dropped_from_the_retry_list() {
+    let (h, cast) = seeded().await;
+    let planner = h
+        .session(&cast.goal, None, Role::Planner, &cast.planner.id)
+        .await;
+    h.pane_exists(&planner);
+
+    post_to_task(
+        &h,
+        &cast.task,
+        "Have a look at the error handling.",
+        Some("reviewer"),
+        Some(&planner),
+    )
+    .await;
+    // Posted behind it and delivered: the pass that found no reviewer for the
+    // message above — the pass that left it owed — is done.
+    post_to_goal(&h, &cast.goal, "Carry on.", Some("planner"), None).await;
+    eventually(TIMEOUT, "the first pass to be made", async || {
+        h.pasted(&planner).contains("Carry on.")
+    })
+    .await;
+
+    h.store
+        .transition_task(&cast.task.id, TaskStatus::Cancelled, Actor::User, None, None)
+        .await
+        .unwrap();
+    // A session of the reviewer's, as if the round had started after all.
+    let reviewer = h
+        .session(&cast.goal, Some(&cast.task), Role::Reviewer, &cast.reviewer.id)
+        .await;
+    h.pane_exists(&reviewer);
+
+    // The tick works through what is owed before it reconciles anything, so a
+    // task that has retired this session has been through the list with the
+    // session in front of it — and typed nothing into it.
+    eventually(TICK_TIMEOUT, "the tick to come round", async || {
+        h.session_status(&reviewer).await == SessionStatus::Exited
+    })
+    .await;
+    assert_eq!(
+        h.keystrokes(&reviewer),
+        0,
+        "nothing was carried to somebody the task ended before starting"
+    );
+    assert_eq!(
+        h.attention(&reviewer).await,
+        None,
+        "and nobody was flagged over it"
+    );
+    assert_eq!(
+        h.attention(&planner).await,
+        None,
+        "the agent that wrote it least of all"
+    );
+    assert!(
+        h.thread(&cast.task)
+            .await
+            .contains(&"Have a look at the error handling.".to_string()),
+        "the message is where it was said, as ever"
     );
 }
 
 /// The goal-level fallback is the planner's alone. Profiles are reusable, so
 /// another role can have a session with no task on it; a task thread's
-/// message is not that conversation's, and is not typed into it.
+/// message is not that conversation's, and is not typed into it. It waits for
+/// a session in the task, which is whose message it is.
 #[tokio::test]
 async fn a_task_message_is_not_typed_at_another_role_working_outside_the_task() {
     let (h, cast) = seeded().await;
@@ -853,15 +964,17 @@ async fn a_task_message_is_not_typed_at_another_role_working_outside_the_task() 
     let message = post_to_task(
         &h,
         &cast.task,
-            "Skip the migration.",
-            Some("engineer"),
-            Some(&planner),
-        )
-        .await;
-
-    eventually(TIMEOUT, "the author to be raised for the user", async || {
+        "Skip the migration.",
+        Some("engineer"),
+        Some(&planner),
+    )
+    .await;
+    for _ in 0..DELIVERY_ATTEMPTS * 3 {
         h.notify_message(&message.id);
-        h.attention(&planner).await == Some(AttentionReason::WaitingInput)
+    }
+    post_to_task(&h, &cast.task, "Carry on.", Some("planner"), None).await;
+    eventually(TIMEOUT, "the passes to be made", async || {
+        h.pasted(&planner).contains("Carry on.")
     })
     .await;
     assert_eq!(
@@ -869,4 +982,20 @@ async fn a_task_message_is_not_typed_at_another_role_working_outside_the_task() 
         0,
         "the session outside the task was left to its own conversation"
     );
+    assert_eq!(
+        h.attention(&planner).await,
+        None,
+        "and nothing was raised for the user over it"
+    );
+
+    // The engineer of the task itself, once it has one, is whose it was.
+    let engineer = h
+        .session(&cast.goal, Some(&cast.task), Role::Engineer, &cast.engineer.id)
+        .await;
+    h.pane_exists(&engineer);
+    eventually(TIMEOUT, "the task's own engineer to be nudged", async || {
+        h.notify_message(&message.id);
+        h.pasted(&engineer).contains("Skip the migration.")
+    })
+    .await;
 }

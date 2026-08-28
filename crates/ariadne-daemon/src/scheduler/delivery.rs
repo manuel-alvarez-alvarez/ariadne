@@ -4,7 +4,19 @@
 //! conversation nobody can hold. What is never spent is the attempt itself: a
 //! message struck off before it was typed is one nobody receives and nobody is
 //! told about, so the only things that end a delivery are a confirmation and
-//! running out of [`DELIVERY_ATTEMPTS`].
+//! running out of [`DELIVERY_ATTEMPTS`] at a session that is there to be typed
+//! into.
+//!
+//! An addressee with no session at all — a reviewer before its round starts,
+//! an engineer whose task has not begun — is not a pass at anything: nothing
+//! was tried, so nothing is spent, and the message waits on the retry list
+//! until there is somebody to hand it to. What keeps that list finite is the
+//! conversation it was said in: once the message's task is merged or
+//! cancelled — or, for a goal thread, the goal itself — nobody will ever be
+//! started to read what is still owed, and the next pass strikes it off the
+//! list. Only what is owed: a message posted into a thread that has just
+//! ended is carried to whoever is there to read it, since the engineer of a
+//! merged task is still at its pane.
 //!
 //! Typing happens off the loop. `send_submitted` is slow by design — a paste,
 //! an Enter, and the pane read back on a widening backoff — so a pass with
@@ -69,8 +81,9 @@ impl super::Scheduler {
     /// What is never spent is the attempt itself. A message struck off before
     /// it was typed — because that is when the daemon happened to look — is a
     /// message nobody ever receives and nobody is told about, so the only
-    /// things that stop a message being tried again are a confirmation and
-    /// running out of [`DELIVERY_ATTEMPTS`].
+    /// things that stop a message being tried again are a confirmation,
+    /// running out of [`DELIVERY_ATTEMPTS`] at a session that exists, and the
+    /// conversation it was said in ending.
     async fn deliver(&mut self, message_id: &str) -> anyhow::Result<()> {
         if self.delivered.contains(message_id) || self.given_up_on(message_id) {
             return Ok(());
@@ -86,6 +99,20 @@ impl super::Scheduler {
                 Ok(())
             }
             Recipient::Profile(profile_id) => {
+                // A message already waiting for somebody who never came, in a
+                // conversation that is over, is struck off: the reviewer of a
+                // cancelled task is never started, and the list the tick
+                // works through would carry it for as long as the daemon
+                // runs. Only one that is owed, mind — a message posted into a
+                // thread that has just ended is still carried to whoever is
+                // there to read it, the way the engineer of a merged task is
+                // still at its pane. It keeps its place in the thread either
+                // way.
+                if self.attempts.contains_key(&message.id) && self.thread_is_over(&message).await? {
+                    self.attempts.remove(&message.id);
+                    info!(message = %message.id, "nobody ever came for this message and its conversation is over; it is off the retry list");
+                    return Ok(());
+                }
                 match self.wake_profile(&message, &profile_id).await? {
                     // The report it comes back with says what became of it.
                     Wake::InFlight => Ok(()),
@@ -104,9 +131,18 @@ impl super::Scheduler {
                         self.attempts.entry(message.id.clone()).or_insert(0);
                         Ok(())
                     }
-                    Wake::Failed(session_id) => {
-                        self.delivery_failed(&message.id, session_id.as_deref())
-                            .await
+                    // A pass that found no session at all tried nothing, so
+                    // it spends nothing: the message keeps its place on the
+                    // list and the later ticks ask again, until the addressee
+                    // has a session or its thread is over. Only a pass at a
+                    // session that is there — a tmux out of reach, a resume
+                    // that failed — is one of the attempts.
+                    Wake::Failed(None) => {
+                        self.attempts.entry(message.id.clone()).or_insert(0);
+                        Ok(())
+                    }
+                    Wake::Failed(Some(session_id)) => {
+                        self.delivery_failed(&message.id, &session_id).await
                     }
                 }
             }
@@ -119,6 +155,29 @@ impl super::Scheduler {
         self.attempts
             .get(message_id)
             .is_some_and(|spent| *spent >= DELIVERY_ATTEMPTS)
+    }
+
+    /// Whether the conversation this message was said in is over: its task
+    /// merged or cancelled, or — for a goal thread, which has no task — the
+    /// goal itself.
+    ///
+    /// This is what keeps the retry list finite. A message whose addressee
+    /// has no session is tried again for as long as its thread is live, which
+    /// is exactly as long as somebody might still turn up to be typed into: a
+    /// reviewer that was never spawned because the task was cancelled is
+    /// never coming, and nothing is owed for the message that waited on it.
+    /// It is asked of what a pass already owes, not of a message just posted,
+    /// which goes to whoever is at their pane whatever the thread's status.
+    async fn thread_is_over(&self, message: &Message) -> anyhow::Result<bool> {
+        if let Some(task_id) = &message.task_id {
+            return Ok(self.store.get_task(task_id).await?.status().is_terminal());
+        }
+        Ok(self
+            .store
+            .get_goal(&message.goal_id)
+            .await?
+            .status()
+            .is_terminal())
     }
 
     /// Every message still owed a delivery, offered another pass.
@@ -213,10 +272,7 @@ impl super::Scheduler {
             }
             DeliveryOutcome::Refused => match report.message_id {
                 Some(message_id) => {
-                    if let Err(e) = self
-                        .delivery_failed(&message_id, Some(&report.session_id))
-                        .await
-                    {
+                    if let Err(e) = self.delivery_failed(&message_id, &report.session_id).await {
                         warn!(message = %message_id, error = %format!("{e:#}"), "giving up on the message failed");
                     }
                 }
@@ -241,11 +297,7 @@ impl super::Scheduler {
     /// One pass that could not deliver: another tick tries again, and once
     /// the passes are gone the user is told rather than the message being
     /// left with nobody.
-    async fn delivery_failed(
-        &mut self,
-        message_id: &str,
-        session_id: Option<&str>,
-    ) -> anyhow::Result<()> {
+    async fn delivery_failed(&mut self, message_id: &str, session_id: &str) -> anyhow::Result<()> {
         let spent = {
             let spent = self.attempts.entry(message_id.to_string()).or_insert(0);
             *spent += 1;
@@ -261,23 +313,26 @@ impl super::Scheduler {
 
     /// A message that will not be delivered, put where the user will see it:
     /// on the addressee's session — stalled while its pane is still there,
-    /// disconnected once it is gone — and, when the addressee has no session
-    /// of its own to flag, on the session of whoever wrote it, which is the
-    /// pane they are watching for an answer. The message itself stays in the
-    /// thread either way; what is raised is that nobody came for it.
-    async fn give_up(&self, message: &Message, session_id: Option<&str>) -> anyhow::Result<()> {
-        let session = match session_id {
-            Some(id) => self.store.get_session(id).await.ok(),
-            None => None,
-        };
-        let Some(session) = session else {
+    /// disconnected once it is gone — and, when that session's row has gone
+    /// from under the daemon between the passes, on the session of whoever
+    /// wrote it, which is the pane they are watching for an answer. The
+    /// message itself stays in the thread either way; what is raised is that
+    /// nobody came for it.
+    ///
+    /// The author is raised as the user's to deal with rather than as an
+    /// agent waiting on an answer: it asked nothing of the human, and
+    /// `waiting_input` would leave it unreachable — the quiet watchdog skips
+    /// a session waiting on the user and nothing is typed into one either,
+    /// so the author would sit there with nobody able to reach it.
+    async fn give_up(&self, message: &Message, session_id: &str) -> anyhow::Result<()> {
+        let Ok(session) = self.store.get_session(session_id).await else {
             let Some(author) = &message.author_session_id else {
                 warn!(message = %message.id, "the message reached nobody, and there is nobody to tell");
                 return Ok(());
             };
             warn!(message = %message.id, session = %author, "the message reached nobody; raising its author for the user");
             self.store
-                .set_session_attention(author, AttentionReason::WaitingInput)
+                .set_session_attention(author, AttentionReason::WaitingUser)
                 .await?;
             return Ok(());
         };

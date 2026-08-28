@@ -4,7 +4,9 @@
 //! engineer whose task has not started, one whose session went away — is not a
 //! message lost: it keeps its place in the thread, and every briefing sends an
 //! agent to read the conversation when it next starts. It is not a message
-//! delivered either, though, so a pass at it is a pass like any other.
+//! delivered either, though, so it stays on the retry list until there is a
+//! session to hand it to — a pass that found nobody tried nothing, and costs
+//! the message none of what it is worth.
 //!
 //! A message for the human wakes nobody. It goes up the attention path the UI
 //! strip and `ariadne attention` already show, on the session of the agent
@@ -37,7 +39,8 @@ pub(super) enum Wake {
     Busy,
     /// This pass could not, with the session to raise for the user once the
     /// attempts are gone — `None` when the addressee has no session at all,
-    /// whether it has yet to have one or has lost the one it had.
+    /// whether it has yet to have one or has lost the one it had, which is a
+    /// pass that tried nothing and so spends none of them.
     Failed(Option<String>),
 }
 
@@ -49,10 +52,10 @@ impl super::Scheduler {
     /// rounds, an engineer whose task has not started, one whose session went
     /// away — is not a message lost: it keeps its place in the thread, and
     /// the briefings send every agent to read the conversation when it next
-    /// starts. It is not a message delivered either, though, so it is a pass
-    /// like any other: the later ticks find the session once it exists, and
-    /// when they run out with nobody there the author is told rather than
-    /// left waiting on an answer that is not coming.
+    /// starts. It is not a message delivered either, though, so the later
+    /// ticks go on asking until the session exists — nothing was typed, so
+    /// nothing is spent, and what ends the asking is the thread itself being
+    /// over rather than a handful of seconds of passes.
     ///
     /// What comes back is one of [`Wake`]; the caller keeps the count of what
     /// a message has spent, since only it knows how many passes have been
