@@ -44,7 +44,7 @@ impl McpRole {
                 "create_task",
                 "update_task",
                 "list_profiles",
-                "submit_plan",
+                "finalize_plan",
             ],
             McpRole::Engineer => &[
                 "get_task",
@@ -275,7 +275,7 @@ pub(crate) mod tests {
                     "create_task",
                     "update_task",
                     "list_profiles",
-                    "submit_plan",
+                    "finalize_plan",
                 ][..],
             ),
             (
@@ -309,6 +309,7 @@ pub(crate) mod tests {
         /// so a tool added or dropped is a line of this file.
         const EVERY_TOOL: &[&str] = &[
             "create_task",
+            "finalize_plan",
             "get_diff",
             "get_reviews",
             "get_task",
@@ -318,7 +319,6 @@ pub(crate) mod tests {
             "post_message",
             "record_pull_request",
             "request_review",
-            "submit_plan",
             "submit_verdict",
             "update_task",
         ];

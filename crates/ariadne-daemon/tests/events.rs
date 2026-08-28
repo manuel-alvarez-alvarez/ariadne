@@ -728,11 +728,9 @@ async fn a_reviewer_that_already_voted_raises_no_attention() {
     );
 }
 
-/// Same for a planner once the user has approved its plan: the goal is being
+/// Same for a planner once it has finalized its plan: the goal is being
 /// worked on, so whatever its session asks for is not work anybody is waiting
-/// on. Not merely "past planning": a plan submitted and waiting in
-/// `plan_ready` is still the planner's to rework, and its prompts still reach
-/// the user.
+/// on.
 #[tokio::test]
 async fn a_planner_past_the_approval_raises_no_attention() {
     let h = harness().await;
@@ -746,7 +744,7 @@ async fn a_planner_past_the_approval_raises_no_attention() {
     assert_eq!(
         h.attention(&session).await,
         None,
-        "the plan is approved and running, so its planner is owed nothing"
+        "the plan is finalized and running, so its planner is owed nothing"
     );
 
     // And the goal status is what makes the difference: back in planning, the

@@ -13,7 +13,7 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock};
 use rmcp::{ErrorData as McpError, schemars, tool, tool_router};
 
-use ariadne_api::goals::SubmitPlanRequest;
+use ariadne_api::goals::FinalizePlanRequest;
 use ariadne_api::messages::{CreateMessageRequest, MessageDto};
 use ariadne_api::reviews::CreateReviewRequest;
 use ariadne_api::tasks::{
@@ -84,8 +84,8 @@ pub struct ListProfilesReq {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub struct SubmitPlanReq {
-    /// Short summary of the plan being handed over.
+pub struct FinalizePlanReq {
+    /// Short summary of the agreed plan.
     pub summary: String,
 }
 
@@ -281,14 +281,14 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Submit the plan for the user's approval: the goal waits in plan_ready, no task starts."
+        description = "Finalize the plan and start its tasks: only after the user has confirmed in the thread that the plan is complete."
     )]
-    async fn submit_plan(
+    async fn finalize_plan(
         &self,
-        Parameters(req): Parameters<SubmitPlanReq>,
+        Parameters(req): Parameters<FinalizePlanReq>,
     ) -> Result<CallToolResult, McpError> {
-        let path = format!("/v1/goals/{}/submit", self.goal_id);
-        let body = SubmitPlanRequest {
+        let path = format!("/v1/goals/{}/finalize", self.goal_id);
+        let body = FinalizePlanRequest {
             summary: req.summary,
         };
         json_result(self.post(&path, &body).await?)

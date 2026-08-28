@@ -81,15 +81,16 @@ pub fn default_prompt_text(kind: PromptKind) -> &'static str {
     }
 }
 
-/// Planner persona and playbook, and the one place `submit_plan` is
-/// explained: it hands the plan to the user and starts nothing.
+/// Planner persona and playbook, and the one place `finalize_plan` is
+/// explained: it starts every task at once, and only the user's word in this
+/// conversation calls for it.
 const PLANNER_SYSTEM_PROMPT: &str = r#"You are the planning lead of an Ariadne goal: turn it into a small set of well-scoped tasks, each with an engineer and one or more reviewers. Never write code.
 
 1. Explore the repositories your briefing names; settle scope and trade-offs with the user here, asking rather than assuming.
 2. Break the goal into small, independently mergeable tasks, one repository each, written like a strong ticket: context, what to do, what not to touch, and acceptance criteria saying how to verify each.
 3. `create_task` with an engineer and at least one reviewer out of `list_profiles`. `depends_on` is for a task that truly needs another first: unordered tasks run concurrently in separate worktrees and must not touch the same code.
 4. `update_task` corrects a task until it starts.
-5. `submit_plan` hands the plan to the user for approval and starts nothing: call it once they agree the plan is complete, never with a question open. Their approval starts the tasks; until it comes, rework whatever they ask for and `submit_plan` again."#;
+5. `finalize_plan` starts every task of the plan at once and ends planning: call it only once the user has read the plan and confirmed here that it is complete, never with a question open, never unasked. Until they confirm, rework whatever they ask for."#;
 
 /// Engineer persona and playbook: what it may touch, what it writes, and the
 /// one place `request_review` is explained. Landing is its own too, but the
@@ -127,11 +128,10 @@ const PLANNER_BRIEFING: &str = r#"# Goal: {goal_title}
 - At most {max_tasks} tasks
 - {required_approvals} approvals per task"#;
 
-/// What a planner that has gone quiet is picked up with. Only a goal still in
-/// planning is nudged — one whose plan is already submitted waits on the user,
-/// not on its planner — so there is one thing left to do with it and two calls
-/// that end it; the goal itself the session has read already.
-const PLANNER_RESUME: &str = r#"Keep planning "{goal_title}": `create_task` for what it still needs, `submit_plan` to hand it to the user once they agree it is complete, `post_message` where you are waiting on them."#;
+/// What a planner that has gone quiet is picked up with. The goal is still in
+/// planning, so there is one thing left to do with it and two calls that end
+/// it; the goal itself the session has read already.
+const PLANNER_RESUME: &str = r#"Keep planning "{goal_title}": `create_task` for what it still needs, `finalize_plan` once the user has confirmed here that it is complete, `post_message` where you are waiting on them."#;
 
 /// Initial briefing of an engineer session: the task, and the values its
 /// commands act on.
@@ -264,10 +264,10 @@ mod tests {
     /// grand total, since a session pays for one of each.
     ///
     /// What a cap is not is a reason to say a rule badly. The system-prompt
-    /// one went from 900 to 1050 when approving a plan became the user's:
-    /// a step of the lifecycle the planner has to know about is not the kind
-    /// of growth these numbers are here to stop. Moving one is a decision to
-    /// argue for, never a way round a failing assertion.
+    /// one went from 900 to 1050 when the planner had to be told when *not*
+    /// to end planning: a step of the lifecycle the planner has to know about
+    /// is not the kind of growth these numbers are here to stop. Moving one
+    /// is a decision to argue for, never a way round a failing assertion.
     #[test]
     fn size_caps_hold() {
         const KIND_TOTAL: usize = 6000;
@@ -348,7 +348,7 @@ mod tests {
                 "one per round and the only thing that counts",
             ),
             (Role::Engineer, "you are briefed to land it"),
-            (Role::Planner, "hands the plan to the user for approval"),
+            (Role::Planner, "starts every task of the plan at once"),
         ] {
             for role in Role::ALL {
                 let prompt = default_system_prompt(role);
@@ -487,7 +487,7 @@ mod tests {
             "--ff-only",
             "`request_review` submits it",
             "`submit_verdict` is the verdict",
-            "hands the plan to the user for approval",
+            "starts every task of the plan at once",
         ] {
             let places = all_defaults()
                 .into_iter()
@@ -520,23 +520,29 @@ mod tests {
         }
     }
 
-    /// The plan is submitted, not finalized: `submit_plan` is what the
-    /// planner calls, and approving what it hands over is the user's alone —
-    /// so no default names the call it used to make, and every profile on the
-    /// defaults is briefed with the new one the moment it is read.
+    /// `finalize_plan` is what the planner calls once the user has validated
+    /// the plan in the thread, and it is the only call there is about a plan:
+    /// every planner default names it, and a default naming any other would
+    /// be briefing an agent to make a call the daemon does not answer.
     #[test]
-    fn the_planner_submits_the_plan_and_no_default_still_names_finalize_plan() {
+    fn the_planner_is_briefed_with_finalize_plan_and_no_other_plan_call() {
         for text in [
             default_system_prompt(Role::Planner),
             default_prompt_text(PromptKind::PlannerResume),
         ] {
-            assert!(text.contains("`submit_plan`"), "{text}");
+            assert!(text.contains("`finalize_plan`"), "{text}");
         }
         for (name, text) in all_defaults() {
-            assert!(
-                !text.contains("finalize_plan"),
-                "the {name} still names `finalize_plan`"
-            );
+            // The backticked names are every other span of a default: what
+            // the odd ones hold is what an agent is told to call.
+            for call in text
+                .split('`')
+                .skip(1)
+                .step_by(2)
+                .filter(|call| call.ends_with("_plan"))
+            {
+                assert_eq!(call, "finalize_plan", "the {name} names `{call}`");
+            }
         }
     }
 

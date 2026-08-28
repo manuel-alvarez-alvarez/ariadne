@@ -35,7 +35,6 @@ const LEAVES: &[(&str, bool)] = &[
     ("goal attach", false),
     ("goal cancel", true),
     ("goal create", true),
-    ("goal finalize", true),
     ("goal inspect", true),
     ("goal ls", true),
     ("goal messages", true),
@@ -160,8 +159,8 @@ fn a_filter_takes_only_the_values_the_daemon_knows() {
         [GoalStatus::Active, GoalStatus::Completed]
     );
     assert_eq!(
-        statuses(&["--status", "plan_ready"]),
-        [GoalStatus::PlanReady],
+        statuses(&["--status", "planning"]),
+        [GoalStatus::Planning],
         "a status is spelled on the command line the way the daemon spells it"
     );
     let Err(err) = try_parse(&["ariadne", "goal", "ls", "--status", "done"]) else {
@@ -194,24 +193,6 @@ fn a_filter_takes_only_the_values_the_daemon_knows() {
         try_parse(&["ariadne", "task", "ls", "--status", "integrating"]).is_err(),
         "and the status a task was landed from by a fourth role is gone"
     );
-}
-
-/// Approving a plan is what `goal finalize` does, so `goal approve` is the
-/// same command under the name the user thinks of it by: the planner submits,
-/// the user approves.
-#[test]
-fn a_plan_is_approved_under_either_name() {
-    for name in ["finalize", "approve"] {
-        let Command::Goal {
-            command: GoalCommand::Finalize { id, summary, yes },
-        } = parse(&["ariadne", "goal", name, "01GOAL"]).command
-        else {
-            panic!("goal {name}");
-        };
-        assert_eq!(id, "01GOAL");
-        assert_eq!(summary, "approved by the user");
-        assert!(!yes);
-    }
 }
 
 /// `--to` is what addresses a message, on either thread, and leaving it out is

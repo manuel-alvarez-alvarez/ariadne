@@ -7,10 +7,10 @@ use serde::Deserialize;
 use utoipa::IntoParams;
 
 use ariadne_api::Page;
-use ariadne_api::goals::{CreateGoalRequest, FinalizePlanRequest, GoalDto, SubmitPlanRequest};
+use ariadne_api::goals::{CreateGoalRequest, FinalizePlanRequest, GoalDto};
 use ariadne_api::messages::{CreateMessageRequest, MessageDto};
 use ariadne_core::{GoalStatus, Role};
-use ariadne_store::{Goal, NewGoal, NewMessage, SessionFilter, Store, Task, TaskFilter};
+use ariadne_store::{Goal, NewGoal, NewMessage, SessionFilter, Store, TaskFilter};
 
 use super::AppState;
 use super::convert::{goal_dto_of, message_dtos};
@@ -197,83 +197,9 @@ pub async fn delete(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// The tasks a plan holds, or a 409 saying it holds none: what neither
-/// submitting nor approving a plan is worth doing without.
-async fn planned_tasks(state: &AppState, id: &str, verb: &str) -> ApiResult<Vec<Task>> {
-    let tasks = state
-        .store
-        .list_tasks(TaskFilter {
-            goal_id: Some(id.to_string()),
-            status: None,
-        })
-        .await?;
-    if tasks.is_empty() {
-        return Err(ApiError::conflict(format!(
-            "cannot {verb} a plan with no tasks"
-        )));
-    }
-    Ok(tasks)
-}
-
-/// Submit the plan for the user's approval: goal moves planning -> plan_ready
-/// (planner or user). Nothing starts; only `finalize` does that.
-#[utoipa::path(post, path = "/v1/goals/{id}/submit", tag = "goals",
-    request_body = SubmitPlanRequest,
-    params(("id" = String, Path, description = "goal id")),
-    responses((status = 200, body = GoalDto), (status = 403), (status = 409)))]
-pub async fn submit(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    headers: HeaderMap,
-    Json(req): Json<SubmitPlanRequest>,
-) -> ApiResult<Json<GoalDto>> {
-    let ctx = call_ctx(&state.store, &headers).await?;
-    if !matches!(
-        ctx.author_role,
-        ariadne_core::AuthorRole::Planner | ariadne_core::AuthorRole::User
-    ) {
-        return Err(ApiError::forbidden(
-            "only the planner or the user may submit the plan",
-        ));
-    }
-    let goal = state.store.get_goal(&id).await?;
-    // `plan_ready` as well as `planning`: a plan the user sent back for
-    // changes is submitted again from where it already is, and the goal never
-    // falls back to planning in between.
-    if !matches!(goal.status(), GoalStatus::Planning | GoalStatus::PlanReady) {
-        return Err(ApiError::conflict(format!(
-            "goal is {}, expected planning or plan_ready",
-            goal.status
-        )));
-    }
-    planned_tasks(&state, &id, "submit").await?;
-    let goal = state
-        .store
-        .set_goal_status(&id, GoalStatus::PlanReady)
-        .await?;
-    // Addressed to the user, through the one path an addressed message takes:
-    // being told the plan is theirs to read is the whole point of submitting
-    // it. After the status change, so that whatever the delivery wakes finds
-    // the goal already waiting rather than still being planned.
-    let _ = recipients::post(
-        &state,
-        ctx,
-        Thread::Goal(goal.clone()),
-        CreateMessageRequest {
-            body: format!("Plan submitted for approval: {}", req.summary),
-            to: Some(recipients::USER.to_string()),
-        },
-    )
-    .await?;
-    // The planner is left alone in `plan_ready`; the wake is what tells the
-    // scheduler the goal has moved at all.
-    state.notify_scheduler_goal(&goal.id);
-    to_dto(&state.store, goal).await
-}
-
-/// Approve the plan: goal moves plan_ready (or planning) -> active, and its
-/// tasks start. The user's call alone — the planner submits, it does not
-/// approve its own plan.
+/// Finalize the plan: goal moves planning -> active and its tasks start. The
+/// planner's call alone — it makes it once the user has validated the plan in
+/// the goal thread, and there is nothing left for the user to approve.
 #[utoipa::path(post, path = "/v1/goals/{id}/finalize", tag = "goals",
     request_body = FinalizePlanRequest,
     params(("id" = String, Path, description = "goal id")),
@@ -285,19 +211,28 @@ pub async fn finalize(
     Json(req): Json<FinalizePlanRequest>,
 ) -> ApiResult<Json<GoalDto>> {
     let ctx = call_ctx(&state.store, &headers).await?;
-    if ctx.author_role != ariadne_core::AuthorRole::User {
-        return Err(ApiError::forbidden("only the user may finalize the plan"));
+    if ctx.author_role != ariadne_core::AuthorRole::Planner {
+        return Err(ApiError::forbidden(
+            "only the planner may finalize the plan",
+        ));
     }
     let goal = state.store.get_goal(&id).await?;
-    // Straight from `planning` too: a user who has read the plan need not
-    // wait for the planner to hand it over before approving it.
-    if !matches!(goal.status(), GoalStatus::Planning | GoalStatus::PlanReady) {
+    if goal.status() != GoalStatus::Planning {
         return Err(ApiError::conflict(format!(
-            "goal is {}, expected planning or plan_ready",
+            "goal is {}, expected planning",
             goal.status
         )));
     }
-    let tasks = planned_tasks(&state, &id, "finalize").await?;
+    let tasks = state
+        .store
+        .list_tasks(TaskFilter {
+            goal_id: Some(id.clone()),
+            status: None,
+        })
+        .await?;
+    if tasks.is_empty() {
+        return Err(ApiError::conflict("cannot finalize a plan with no tasks"));
+    }
     // Written straight rather than through `recipients::post`: it addresses
     // nobody, and the scheduler is woken below by every task the plan holds.
     state
@@ -377,7 +312,6 @@ mod tests {
         for (raw, expected) in [
             (None, vec![]),
             (Some("active"), vec![Active]),
-            (Some("plan_ready"), vec![PlanReady]),
             (Some("active,completed"), vec![Active, Completed]),
         ] {
             assert_eq!(statuses(raw).unwrap(), expected, "{raw:?}");
