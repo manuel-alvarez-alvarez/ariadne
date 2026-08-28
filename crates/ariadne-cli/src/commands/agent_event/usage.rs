@@ -38,6 +38,26 @@
 //!
 //! Because the daemon keys what it stores on `source`, an agent that started a
 //! new file on resume would stay correct too — but neither of these does.
+//!
+//! # Where each agent's own figure comes from, established on 2026-08-28
+//!
+//! Neither CLI has a command that prints the counters the contract asks for,
+//! so what the [`captured`] tests compare against had to be found first, on
+//! claude 2.1.251 and codex-cli 0.150.1:
+//!
+//! - **Claude Code.** `/cost` is no use on a subscription: it prints how much
+//!   of the limits the last day and week used, and no token counts at all.
+//!   `claude -p --output-format json` does print them, in two places that mean
+//!   different things — `usage` is the parent transcript on its own, and
+//!   `modelUsage` is the session including everything its subagents spent.
+//!   `modelUsage` can also carry a *second* model, a short background call
+//!   that titles the session; it is written to no transcript, so it is in
+//!   neither reader's reach and in neither reader's answer.
+//! - **Codex.** The `tokens used` a `codex exec` prints as it exits is the
+//!   spend that was not served from cache — the last `total_token_usage` of
+//!   that process, read as `input_tokens - cached_input_tokens +
+//!   output_tokens`, and so a check on the whole reading rather than a fourth
+//!   counter.
 
 use std::collections::HashSet;
 use std::fs::File;
@@ -74,6 +94,12 @@ const MAX_TRANSCRIPT_BYTES: u64 = 256 * 1024 * 1024;
 /// Their messages never appear in the parent transcript (verified: zero
 /// overlap between the two id sets) and they are part of what the session
 /// spent, so they are summed in.
+///
+/// The parent does carry one echo of them: the `Task` tool result is a `user`
+/// line whose `toolUseResult.usage` repeats the subagent's *last* message,
+/// already counted in the subagent's own file. It has no `message.id` to
+/// deduplicate it by, so what keeps it out is the assistant test in
+/// [`claude_file`].
 pub fn claude_usage(transcript: &Path) -> Option<TokenUsage> {
     let mut total = TokenUsage::default();
     let mut seen = HashSet::new();
@@ -140,7 +166,12 @@ fn claude_file(path: &Path, total: &mut TokenUsage, seen: &mut HashSet<String>) 
 /// whose `info.total_token_usage` is cumulative for the process —
 /// `input_tokens` already includes the cached part and `output_tokens` already
 /// includes reasoning. `info` is `null` on rate-limit-only updates; those are
-/// skipped.
+/// skipped — a shape rare enough that only 5 of the ~500 rollouts on the
+/// machine the fixture came from carry one.
+///
+/// The report also breaks out a `cache_write_input_tokens`, which is not read:
+/// `input_tokens` is the whole prompt whatever it is, and it has never been
+/// anything but zero anyway (0 of 3094 reports on that machine).
 ///
 /// A resume restarts that total in place (see the module docs), so the file is
 /// read as a sequence of segments — a report whose total is its own
@@ -408,5 +439,263 @@ mod tests {
         let path = write(&dir, "rollout.jsonl", "not json\ntoken_count\n{}\n");
         assert_eq!(codex_usage(&path), None);
         assert_eq!(codex_usage(&dir.path().join("absent.jsonl")), None);
+    }
+}
+
+/// The readers, against real records rather than against JSON this file wrote.
+///
+/// One session per agent was run on a developer machine on 2026-08-28 and its
+/// transcript reduced to the fields these readers touch; what each agent said
+/// it had spent was written down at the same time, and is the expected value
+/// below. `fixtures/README.md` records how each capture was made and what was
+/// stripped out of it.
+#[cfg(test)]
+mod captured {
+    use super::*;
+
+    use std::fs;
+
+    use tempfile::TempDir;
+
+    /// `~/.claude/projects/<slug>/<session>.jsonl`: three assistant messages
+    /// over five usage-bearing lines, and — on a `user` line — the `usage` the
+    /// `Task` tool result echoes back.
+    const CLAUDE_SESSION: &str = include_str!("fixtures/claude-session.jsonl");
+
+    /// `<session>/subagents/agent-*.jsonl`, written by the `Task` subagent the
+    /// session above launched.
+    const CLAUDE_SUBAGENT: &str = include_str!("fixtures/claude-subagent.jsonl");
+
+    /// `~/.codex/sessions/2026/08/28/rollout-*.jsonl`: `codex exec`, then
+    /// `codex exec resume --last` into the same file.
+    const CODEX_ROLLOUT: &str = include_str!("fixtures/codex-rollout.jsonl");
+
+    fn write(dir: &TempDir, name: &str, body: &str) -> std::path::PathBuf {
+        let path = dir.path().join(name);
+        fs::create_dir_all(path.parent().expect("a parent")).expect("create the directory");
+        fs::write(&path, body).expect("write the fixture");
+        path
+    }
+
+    /// The capture, laid out the way Claude Code laid it out.
+    fn claude_capture(dir: &TempDir) -> std::path::PathBuf {
+        let path = write(dir, "session.jsonl", CLAUDE_SESSION);
+        write(
+            dir,
+            "session/subagents/agent-ad464e423450139cd.jsonl",
+            CLAUDE_SUBAGENT,
+        );
+        path
+    }
+
+    /// What Claude Code itself reported when the captured session ended.
+    ///
+    /// `claude -p --output-format json` printed, in `modelUsage`:
+    ///
+    /// ```text
+    /// "claude-sonnet-5": { "inputTokens": 10, "cacheReadInputTokens": 55108,
+    ///                      "cacheCreationInputTokens": 19473, "outputTokens": 1059 }
+    /// ```
+    ///
+    /// Three counters against the contract's three: the prompt total is the
+    /// sum of the first three, and the cached part of it is the middle one.
+    #[test]
+    fn claude_reports_what_claude_code_reported() {
+        let dir = TempDir::new().expect("a temp dir");
+        assert_eq!(
+            claude_usage(&claude_capture(&dir)),
+            Some(TokenUsage {
+                input_tokens: 10 + 55108 + 19473,
+                cached_input_tokens: 55108,
+                output_tokens: 1059,
+            })
+        );
+    }
+
+    /// The same run's `usage` — as opposed to its `modelUsage` — is the parent
+    /// transcript alone, without the subagent: 6 input, 7339 cache creation,
+    /// 44019 cache read, 778 output. Reading the parent on its own has to give
+    /// exactly that, or the subagent files are being counted twice.
+    #[test]
+    fn a_claude_transcript_without_its_subagents_is_the_parent_alone() {
+        let dir = TempDir::new().expect("a temp dir");
+        let path = write(&dir, "session.jsonl", CLAUDE_SESSION);
+        assert_eq!(
+            claude_usage(&path),
+            Some(TokenUsage {
+                input_tokens: 6 + 7339 + 44019,
+                cached_input_tokens: 44019,
+                output_tokens: 778,
+            })
+        );
+    }
+
+    /// The contract in `crates/ariadne-api/src/usage.rs`, on the capture.
+    #[test]
+    fn the_claude_capture_keeps_the_shared_contract() {
+        let dir = TempDir::new().expect("a temp dir");
+        let usage = claude_usage(&claude_capture(&dir)).expect("the capture reports usage");
+
+        // `cached_input_tokens` is a subset of `input_tokens`, never added to
+        // it: Claude Code counts the cache read (55108) separately from the
+        // uncached prompt (10) and the cache write (19473), and the contract
+        // wants all three in `input_tokens` with only the read in the subset.
+        assert!(usage.cached_input_tokens <= usage.input_tokens);
+        assert_eq!(usage.cached_input_tokens, 55108);
+        assert_eq!(usage.input_tokens, 10 + 55108 + 19473);
+        // The cache write is in there, which is the half a `input + read` sum
+        // would silently drop.
+        assert_eq!(usage.input_tokens - usage.cached_input_tokens, 10 + 19473);
+
+        // Thinking is inside `output_tokens`, not beside it: the capture's
+        // assistant messages carry 337 thinking tokens between them, and the
+        // 1059 Claude Code reported already contains them.
+        assert_eq!(usage.output_tokens, 1059);
+        assert!(usage.output_tokens > 337);
+        assert_eq!(
+            thinking_tokens(CLAUDE_SESSION) + thinking_tokens(CLAUDE_SUBAGENT),
+            337
+        );
+
+        // One message, several lines, one usage between them. The parent's
+        // three messages arrive on five usage-bearing lines; summing lines
+        // instead of ids would count two of them twice, and the transcript
+        // has no other mark to tell a repeat from a second message.
+        assert_eq!(usage_bearing_lines(CLAUDE_SESSION), 5);
+        assert_eq!(message_ids(CLAUDE_SESSION), 3);
+    }
+
+    /// The `Task` tool result is a `user` line, and it repeats the subagent's
+    /// last `usage` — 2 input, 1045 cache creation, 11089 cache read, already
+    /// counted in the subagent's own transcript. Nothing deduplicates it,
+    /// because it carries no `message.id`; the assistant test in
+    /// [`claude_file`] is what keeps it out.
+    #[test]
+    fn a_claude_tool_result_carrying_usage_is_not_counted() {
+        let echoes = CLAUDE_SESSION
+            .lines()
+            .filter(|line| line.contains("\"usage\"") && line.contains("\"type\":\"user\""))
+            .count();
+        assert_eq!(
+            echoes, 1,
+            "the capture no longer covers the tool-result case"
+        );
+
+        let dir = TempDir::new().expect("a temp dir");
+        let usage = claude_usage(&claude_capture(&dir)).expect("the capture reports usage");
+        assert_eq!(usage.input_tokens, 10 + 55108 + 19473);
+        assert_ne!(usage.input_tokens, 10 + 55108 + 19473 + 2 + 1045 + 11089);
+    }
+
+    /// What codex itself reported for the captured rollout.
+    ///
+    /// The file holds two processes — the `codex exec` and the
+    /// `codex exec resume --last` that continued it — and each one's own last
+    /// `total_token_usage` is its whole spend:
+    ///
+    /// ```text
+    /// input 27240, cached 24064, output 280   (first process)
+    /// input 14490, cached 11008, output 154   (the resume)
+    /// ```
+    ///
+    /// and on exit each printed a `tokens used` of its own, 3456 and 3636 —
+    /// everything it was not served from cache.
+    #[test]
+    fn codex_reports_what_codex_reported() {
+        let dir = TempDir::new().expect("a temp dir");
+        let path = write(&dir, "rollout.jsonl", CODEX_ROLLOUT);
+        let usage = codex_usage(&path).expect("the capture reports usage");
+
+        assert_eq!(
+            usage,
+            TokenUsage {
+                input_tokens: 27240 + 14490,
+                cached_input_tokens: 24064 + 11008,
+                output_tokens: 280 + 154,
+            }
+        );
+        assert_eq!(
+            usage.input_tokens - usage.cached_input_tokens + usage.output_tokens,
+            3456 + 3636,
+        );
+    }
+
+    /// The contract in `crates/ariadne-api/src/usage.rs`, on the capture.
+    #[test]
+    fn the_codex_capture_keeps_the_shared_contract() {
+        let dir = TempDir::new().expect("a temp dir");
+        let path = write(&dir, "rollout.jsonl", CODEX_ROLLOUT);
+        let usage = codex_usage(&path).expect("the capture reports usage");
+
+        // Every report codex wrote says the same three things: the cached part
+        // is inside the prompt total, the reasoning is inside the completion,
+        // and codex's own `total_tokens` is the two totals and nothing else —
+        // so neither the cache nor the reasoning is a fourth thing to add.
+        let reports = codex_reports(CODEX_ROLLOUT);
+        assert_eq!(reports.len(), 3);
+        for report in &reports {
+            let field = |name: &str| report[name].as_u64().expect("a counter");
+            assert!(field("cached_input_tokens") <= field("input_tokens"));
+            assert!(field("reasoning_output_tokens") <= field("output_tokens"));
+            assert_eq!(
+                field("total_tokens"),
+                field("input_tokens") + field("output_tokens")
+            );
+        }
+        assert!(usage.cached_input_tokens <= usage.input_tokens);
+
+        // And each is cumulative for its process, so the answer is the last of
+        // each segment — never the sum of the reports, which counts the whole
+        // of the first process again on every report it made.
+        assert_eq!(usage.input_tokens, 27240 + 14490);
+        assert_ne!(usage.input_tokens, 13532 + 27240 + 14490);
+        assert_eq!(usage.output_tokens, 280 + 154);
+    }
+
+    /// Every `total_token_usage` a rollout carries, in the order codex wrote
+    /// them — the reports whose shape the reading rests on.
+    fn codex_reports(rollout: &str) -> Vec<serde_json::Value> {
+        rollout
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .map(|line| line["payload"]["info"]["total_token_usage"].clone())
+            .filter(serde_json::Value::is_object)
+            .collect()
+    }
+
+    /// The `thinking_tokens` a transcript declares, one message at a time, for
+    /// the assertion that they are already inside `output_tokens`.
+    fn thinking_tokens(transcript: &str) -> u64 {
+        let mut seen = HashSet::new();
+        assistant_lines(transcript)
+            .filter(|line| seen.insert(line["message"]["id"].to_string()))
+            .map(|line| {
+                line["message"]["usage"]["output_tokens_details"]["thinking_tokens"]
+                    .as_u64()
+                    .unwrap_or(0)
+            })
+            .sum()
+    }
+
+    /// How many lines carry a `message.usage` — more than there are messages.
+    fn usage_bearing_lines(transcript: &str) -> usize {
+        assistant_lines(transcript)
+            .filter(|line| line["message"]["usage"].is_object())
+            .count()
+    }
+
+    /// How many distinct `message.id`s those lines are between them.
+    fn message_ids(transcript: &str) -> usize {
+        assistant_lines(transcript)
+            .filter_map(|line| line["message"]["id"].as_str().map(str::to_string))
+            .collect::<HashSet<_>>()
+            .len()
+    }
+
+    fn assistant_lines(transcript: &str) -> impl Iterator<Item = serde_json::Value> {
+        transcript
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter(|line| line["type"] == "assistant")
     }
 }

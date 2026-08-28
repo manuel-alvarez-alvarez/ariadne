@@ -1,0 +1,51 @@
+[
+  {
+    "info": {
+      "id": "msg_049d64c16001WwzeFRvmvPfOge",
+      "sessionID": "ses_fb629b401ffe2bzYKDy9Z6VLrJ",
+      "role": "user",
+      "tokens": null
+    },
+    "parts": []
+  },
+  {
+    "info": {
+      "id": "msg_049d64cb2001uJa92LQ1uptObo",
+      "sessionID": "ses_fb629b401ffe2bzYKDy9Z6VLrJ",
+      "role": "assistant",
+      "providerID": "ollama",
+      "modelID": "qwen3.6-code",
+      "tokens": {
+        "total": 7453,
+        "input": 7335,
+        "output": 118,
+        "reasoning": 0,
+        "cache": {
+          "read": 0,
+          "write": 0
+        }
+      }
+    },
+    "parts": []
+  },
+  {
+    "info": {
+      "id": "msg_049d68dc3001VXvS95pgPISUNz",
+      "sessionID": "ses_fb629b401ffe2bzYKDy9Z6VLrJ",
+      "role": "assistant",
+      "providerID": "ollama",
+      "modelID": "qwen3.6-code",
+      "tokens": {
+        "total": 7499,
+        "input": 7477,
+        "output": 22,
+        "reasoning": 0,
+        "cache": {
+          "read": 0,
+          "write": 0
+        }
+      }
+    },
+    "parts": []
+  }
+]

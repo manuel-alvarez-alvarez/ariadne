@@ -1,0 +1,6 @@
+{"type":"user"}
+{"type":"attachment"}
+{"type":"attachment"}
+{"type":"assistant","message":{"id":"msg_011CeVgKmNXtq9x2PhyfCCJ2","model":"claude-sonnet-5","usage":{"input_tokens":2,"cache_creation_input_tokens":11089,"cache_read_input_tokens":0,"output_tokens":175,"output_tokens_details":{"thinking_tokens":0}}}}
+{"type":"user"}
+{"type":"assistant","message":{"id":"msg_011CeVgL3DXU9W2hizk5ynvs","model":"claude-sonnet-5","usage":{"input_tokens":2,"cache_creation_input_tokens":1045,"cache_read_input_tokens":11089,"output_tokens":106,"output_tokens_details":{"thinking_tokens":0}}}}

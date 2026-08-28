@@ -81,6 +81,20 @@ export const AriadneEvents = async ({ $, client }) => {
     return value;
   };
 
+  // What a message's `tokens` record means, read out of opencode 1.18.15's own
+  // build on 2026-08-28 — its five counters are disjoint, so the contract in
+  // `crates/ariadne-api/src/usage.rs` is reached by adding, never by trusting
+  // one of them to contain another:
+  //
+  //   input     the prompt minus both cache figures (`nonCachedInputTokens`,
+  //             built as `inputTokens - cacheRead - cacheWrite`)
+  //   cache.read / cache.write   the two cache figures, side by side with it
+  //   output    the completion minus reasoning (`visibleOutputTokens`)
+  //   reasoning the reasoning, side by side with it
+  //
+  // opencode adds them back up the same way: its own per-session total is
+  // `input + output + reasoning + cache.read + cache.write`, and its per-model
+  // stats sum `output + reasoning` into one output column, as below.
   const sumUsage = async (id) => {
     const session = record(body(await client.session.get({ path: { id } })), "session");
     if (session.parentID) return undefined;
