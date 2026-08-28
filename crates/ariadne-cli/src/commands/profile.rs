@@ -13,7 +13,7 @@ use ariadne_api::profiles::{CreateProfileRequest, ProfileDto, UpdateProfileReque
 use ariadne_client::Client;
 use ariadne_core::{AgentKind, Role};
 
-use super::{confirm, parse_agent, path_segment};
+use super::{confirm, parse_agent, path_segment, pinned, qualified_model};
 use crate::output::{Column, Format, UNCAPPED, local_time, note, print, print_kv, print_list};
 
 pub use flags::{PromptAssignment, read_prompts};
@@ -208,8 +208,7 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
                     &CreateProfileRequest {
                         name,
                         role,
-                        agent_kind: agent,
-                        model,
+                        model: qualified_model(agent.map(|a| a.as_str()), model.as_deref()),
                         system_prompt,
                     },
                 )
@@ -233,8 +232,8 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
                         p.id.clone(),
                         p.name.clone(),
                         p.role.as_str().into(),
-                        agent_label(p.agent_kind),
-                        p.model.clone().unwrap_or_else(|| "-".into()),
+                        agent_label(p.model.as_deref()),
+                        model_label(p.model.as_deref()),
                     ]
                 },
                 "no profiles yet — create one with: ariadne profile create",
@@ -247,8 +246,8 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
                     ("id", p.id.clone()),
                     ("name", p.name.clone()),
                     ("role", p.role.as_str().into()),
-                    ("agent", agent_label(p.agent_kind)),
-                    ("model", p.model.clone().unwrap_or_else(|| "-".into())),
+                    ("agent", agent_label(p.model.as_deref())),
+                    ("model", model_label(p.model.as_deref())),
                     ("created", local_time(&p.created_at)),
                     ("prompt", format!("\n---\n{}", p.system_prompt)),
                 ])
@@ -281,9 +280,12 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
                     &profile_path(&id),
                     &UpdateProfileRequest {
                         name,
-                        // Accept dash spelling too (claude-code).
-                        agent_kind: agent.map(|a| a.replace('-', "_")),
-                        model,
+                        // The two flags are one field on the wire; the dash
+                        // spelling is accepted here too (claude-code).
+                        model: qualified_model(
+                            agent.map(|a| a.replace('-', "_")).as_deref(),
+                            model.as_deref(),
+                        ),
                         system_prompt,
                     },
                 )
@@ -325,10 +327,21 @@ fn profile_path(id_or_name: &str) -> String {
     format!("/v1/profiles/{}", path_segment(id_or_name))
 }
 
-/// No agent kind pinned means auto — the first installed CLI, resolved at
-/// spawn time.
-fn agent_label(kind: Option<AgentKind>) -> String {
-    kind.map_or("auto", |k| k.as_str()).to_string()
+/// The agent CLI half of what a profile is pinned to, for the column that has
+/// always shown it. Nothing pinned means auto — the first installed CLI,
+/// resolved at spawn time.
+fn agent_label(model: Option<&str>) -> String {
+    pinned(model)
+        .map_or("auto", |p| p.agent_kind.as_str())
+        .to_string()
+}
+
+/// The model half, for the column beside it: `-` where the pin names an agent
+/// CLI and no model of it, which is that CLI on its own default.
+fn model_label(model: Option<&str>) -> String {
+    pinned(model)
+        .and_then(|p| p.model)
+        .unwrap_or_else(|| "-".into())
 }
 
 /// What `profile create` and `profile update` answer with: the profile, and —
@@ -437,7 +450,11 @@ mod tests {
             "Delete the engineer profile \"Engineer\" (01Engineer)?"
         );
         // A profile pinned to nothing runs on the first installed CLI.
-        assert_eq!(agent_label(p.agent_kind), "auto");
-        assert_eq!(agent_label(Some(AgentKind::Codex)), "codex");
+        assert_eq!(agent_label(p.model.as_deref()), "auto");
+        assert_eq!(model_label(p.model.as_deref()), "-");
+        assert_eq!(agent_label(Some("codex")), "codex");
+        assert_eq!(model_label(Some("codex")), "-", "codex's own default");
+        assert_eq!(agent_label(Some("codex:o3")), "codex");
+        assert_eq!(model_label(Some("codex:o3")), "o3");
     }
 }

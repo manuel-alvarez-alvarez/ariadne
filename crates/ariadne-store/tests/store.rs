@@ -2854,3 +2854,84 @@ async fn a_message_delivery_override_is_dropped_when_the_database_is_opened() {
         );
     }
 }
+
+/// A database written before a model carried the agent CLI it runs on: it
+/// could hold a model with no `agent_kind` beside it — auto, on a model of no
+/// CLI in particular — and that pair has no spelling any more, since what a
+/// request writes is one `<agent_kind>[:<model>]` string. `0004` puts every
+/// such row back on auto, in each of the four tables that pin one.
+///
+/// The state is reproduced rather than replayed from an old checkout: `0004`
+/// changes data and not schema, so unapplying it and planting the rows it
+/// exists to clean is exactly what the previous release left behind.
+#[tokio::test]
+async fn a_database_from_before_a_model_named_its_agent_loses_the_orphan_models() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("previous.db");
+
+    let store = Store::open(&path).await.unwrap();
+    let planner = seed_pinned_profile(&store, "planner-orphan", Role::Planner, None, None).await;
+    let engineer = seed_pinned_profile(&store, "engineer-orphan", Role::Engineer, None, None).await;
+    let reviewer = seed_pinned_profile(&store, "reviewer-orphan", Role::Reviewer, None, None).await;
+    // The one row that does name its agent, so the cleanup is read as a
+    // cleanup and not as a column emptied.
+    let pinned = seed_pinned_profile(
+        &store,
+        "engineer-pinned",
+        Role::Engineer,
+        Some(AgentKind::Codex),
+        Some("gpt-5.3-codex"),
+    )
+    .await;
+    let (goal, repo) = seed_goal(&store, &planner, None).await;
+    let task = store
+        .create_task(NewTask {
+            goal_id: goal.id.clone(),
+            repo_id: repo.id.clone(),
+            title: "task".into(),
+            description: "do things".into(),
+            engineer_profile_id: engineer.id.clone(),
+            pin: None,
+            reviewers: vec![ReviewerSlot::of(reviewer.id.clone())],
+            depends_on: vec![],
+        })
+        .await
+        .unwrap();
+    drop(store);
+
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+    for statement in [
+        "UPDATE profiles SET model = 'a-model-of-no-cli' WHERE agent_kind IS NULL",
+        "UPDATE goals SET model = 'a-model-of-no-cli' WHERE agent_kind IS NULL",
+        "UPDATE tasks SET model = 'a-model-of-no-cli' WHERE agent_kind IS NULL",
+        "UPDATE task_reviewers SET model = 'a-model-of-no-cli' WHERE agent_kind IS NULL",
+    ] {
+        sqlx::query(statement).execute(&pool).await.unwrap();
+    }
+    sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 4")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+
+    // Not called old: everything applied to it is still shipped.
+    assert_eq!(ariadne_store::pre_squash_database(&path).await, None);
+    let store = Store::open(&path).await.unwrap();
+
+    for profile in [&planner, &engineer, &reviewer] {
+        let read = store.get_profile(&profile.id).await.unwrap();
+        assert!(read.agent_kind().is_none());
+        assert_eq!(read.model, None, "{} is back on auto", read.name);
+    }
+    assert_eq!(store.get_goal(&goal.id).await.unwrap().model, None);
+    assert_eq!(store.get_task(&task.id).await.unwrap().model, None);
+    let pins = store.list_task_reviewer_pins(&task.id).await.unwrap();
+    assert_eq!(pins[0].model, None);
+
+    // And the pin that names its agent CLI keeps the model it named.
+    let read = store.get_profile(&pinned.id).await.unwrap();
+    assert_eq!(read.agent_kind(), Some(AgentKind::Codex));
+    assert_eq!(read.model.as_deref(), Some("gpt-5.3-codex"));
+}

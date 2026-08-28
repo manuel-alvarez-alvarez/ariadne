@@ -23,6 +23,8 @@ use ariadne_api::usage::TokenUsageDto;
 use ariadne_core::{Role, TokenUsage};
 use ariadne_store::{self as store, ProfileUsage, Store, StoreError};
 
+use super::pins::spelled;
+
 /// One conversion per entity: the fields that are not a straight move, then
 /// `..` and the ones that are.
 ///
@@ -50,10 +52,10 @@ macro_rules! dto {
 dto! {
     pub fn profile_dto(p: store::Profile) -> ProfileDto {
         role: p.role(),
-        agent_kind: p.agent_kind(),
+        model: spelled(p.agent_kind(), p.model.as_deref()),
         system_prompt: p.effective_system_prompt().to_string(),
         system_prompt_is_default: p.system_prompt_is_default(),
-        .. id, name, model, created_at, updated_at
+        .. id, name, created_at, updated_at
     }
 
     pub fn agent_config_dto(c: store::AgentConfig) -> AgentConfigDto {
@@ -81,18 +83,18 @@ dto! {
         usage: GoalUsageDto,
     ) -> GoalDto {
         status: g.status(),
-        agent_kind: g.agent_kind(),
+        model: spelled(g.agent_kind(), g.model.as_deref()),
         repos: repos.into_iter().map(repository_dto).collect(),
         usage: usage,
         .. id, title, description, max_tasks, required_approvals,
-           planner_profile_id, model, created_at, updated_at
+           planner_profile_id, created_at, updated_at
     }
 
     /// `name` is the reviewer profile's name, which the caller loads.
     fn task_reviewer_dto(r: store::TaskReviewer, name: Option<String>) -> TaskReviewerDto {
-        agent_kind: r.agent_kind(),
+        model: spelled(r.agent_kind(), r.model.as_deref()),
         profile_name: name,
-        .. profile_id, model
+        .. profile_id
     }
 
     /// The names come from the caller, which loads them: the engineer's, the
@@ -107,7 +109,7 @@ dto! {
     ) -> TaskDto {
         status: t.status(),
         stalled: t.is_stalled(),
-        agent_kind: t.agent_kind(),
+        model: spelled(t.agent_kind(), t.model.as_deref()),
         reviewers: reviewers
             .into_iter()
             .map(|(r, name)| task_reviewer_dto(r, name))
@@ -116,7 +118,7 @@ dto! {
         engineer_profile_name: engineer_profile_name,
         planner_profile_name: planner_profile_name,
         usage: usage,
-        .. id, goal_id, repo_id, title, description, engineer_profile_id, model,
+        .. id, goal_id, repo_id, title, description, engineer_profile_id,
            branch, worktree_path, review_round, merge_commit, pr_url,
            created_at, updated_at
     }

@@ -1,6 +1,6 @@
 //! Profile DTOs.
 
-use ariadne_core::{AgentKind, PromptKind, Role};
+use ariadne_core::{PromptKind, Role};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -9,9 +9,11 @@ pub struct ProfileDto {
     pub id: String,
     pub name: String,
     pub role: Role,
-    /// None = auto: resolved at spawn time to the first installed agent CLI
-    /// (claude_code, then codex, then opencode).
-    pub agent_kind: Option<AgentKind>,
+    /// What this profile runs on, `<agent_kind>[:<model>]`: the agent CLI and,
+    /// after a `:`, the model of it. None = auto: the first installed agent
+    /// CLI (claude_code, then codex, then opencode), resolved at spawn time,
+    /// on its own default model.
+    #[schema(example = "claude_code:claude-opus-5")]
     pub model: Option<String>,
     /// The system prompt this profile is spawned with: the one set on it, or
     /// the default of its role while it has none of its own.
@@ -28,8 +30,12 @@ pub struct CreateProfileRequest {
     #[schema(example = "rust-engineer")]
     pub name: String,
     pub role: Role,
-    /// Omit for auto: the first installed agent CLI is used at spawn time.
-    pub agent_kind: Option<AgentKind>,
+    /// What this profile runs on, `<agent_kind>[:<model>]` — the agent CLI
+    /// and, after a `:`, the model of it: `codex`, `codex:gpt-5.3-codex`,
+    /// `opencode:ollama/llama3:8b`. A string naming no agent CLI is refused.
+    /// Omitted (or "default") = auto: the first installed agent CLI at spawn
+    /// time, on its own default model.
+    #[schema(example = "codex:gpt-5.3-codex")]
     pub model: Option<String>,
     /// Absent or null = the default of the role, which the profile then
     /// follows. Briefings are set afterwards, one `PUT` per kind.
@@ -41,11 +47,10 @@ pub struct CreateProfileRequest {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
 pub struct UpdateProfileRequest {
     pub name: Option<String>,
-    /// New agent kind, or "auto" to clear it (resolve the first installed
-    /// CLI at spawn time). Absent = unchanged.
-    pub agent_kind: Option<String>,
-    /// New model, or "default" (or empty) to clear it back to the agent's
-    /// default. Absent = unchanged.
+    /// What this profile runs on, `<agent_kind>[:<model>]`, or "default" (or
+    /// the empty string) to clear it back to auto — the first installed CLI at
+    /// spawn time, on its own default model. Absent = unchanged.
+    #[schema(example = "codex:gpt-5.3-codex")]
     pub model: Option<String>,
     /// New system prompt. Absent = unchanged; putting it back on the role
     /// default is `POST /v1/profiles/{id}/system-prompt/reset`.

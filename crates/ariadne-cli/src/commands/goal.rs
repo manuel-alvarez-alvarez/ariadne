@@ -12,7 +12,7 @@ use ariadne_api::tasks::{TaskDto, TaskListQuery};
 use ariadne_client::Client;
 use ariadne_core::{AgentKind, GoalStatus};
 
-use super::{ProfileNames, confirm, parse_agent, print_messages};
+use super::{ProfileNames, confirm, parse_agent, print_messages, qualified_model};
 use crate::output::{
     Column, Format, UNCAPPED, local_time, print, print_kv, print_list, usage_cell, usage_summary,
 };
@@ -154,8 +154,7 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                         planner_profile: planner,
                         max_tasks,
                         required_approvals: approvals,
-                        agent_kind: agent,
-                        model,
+                        model: qualified_model(agent.map(|a| a.as_str()), model.as_deref()),
                     },
                 )
                 .await?;
@@ -201,11 +200,7 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                     ("status", g.status.as_str().into()),
                     (
                         "planner",
-                        profiles.pinned_label(
-                            &g.planner_profile_id,
-                            g.agent_kind,
-                            g.model.as_deref(),
-                        ),
+                        profiles.pinned_label(&g.planner_profile_id, g.model.as_deref()),
                     ),
                     ("approvals", g.required_approvals.to_string()),
                     (

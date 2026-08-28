@@ -74,29 +74,32 @@ pub mod models {
     use std::time::Duration;
 
     use axum::Json;
-    use axum::extract::Query;
 
-    use ariadne_api::models::{ModelDto, ModelListQuery};
+    use ariadne_api::models::ModelDto;
     use ariadne_core::AgentKind;
-    use ariadne_core::models::curated_models;
+    use ariadne_core::models::{ModelRef, curated_models};
 
-    /// Model candidates per agent CLI: curated catalogs for claude_code and
-    /// codex, live discovery (`opencode models`) for opencode. Without `agent`,
-    /// the union for all agents.
+    /// Everything an agent can be pinned to, `<agent_kind>[:<model>]` apiece:
+    /// each agent CLI on its own — that CLI on its own default model — and
+    /// then the models of it, curated for claude_code and codex, discovered
+    /// live (`opencode models`) for opencode.
+    ///
+    /// The union always, and grouped by agent CLI: a model is chosen by one
+    /// string that carries its CLI, so nothing scopes this catalog any more.
     #[utoipa::path(get, path = "/v1/models", tag = "models",
-        params(ModelListQuery),
         responses((status = 200, body = [ModelDto])))]
-    pub async fn list(Query(q): Query<ModelListQuery>) -> Json<Vec<ModelDto>> {
-        let kinds: &[AgentKind] = match &q.agent {
-            Some(kind) => std::slice::from_ref(kind),
-            None => &AgentKind::ALL,
-        };
+    pub async fn list() -> Json<Vec<ModelDto>> {
         let mut out = Vec::new();
-        for &kind in kinds {
+        for kind in AgentKind::ALL {
+            out.push(ModelDto {
+                id: ModelRef::of(kind).to_string(),
+                agent_kind: kind,
+                description: Some(format!("{} on its own default model", kind.as_str())),
+            });
             match kind {
                 AgentKind::Opencode => out.extend(opencode_models().await),
                 _ => out.extend(curated_models(kind).iter().map(|m| ModelDto {
-                    id: m.id.to_string(),
+                    id: qualified(kind, m.id),
                     agent_kind: kind,
                     description: Some(m.description.to_string()),
                 })),
@@ -124,10 +127,20 @@ pub mod models {
             .map(str::trim)
             .filter(|l| !l.is_empty() && l.contains('/'))
             .map(|m| ModelDto {
-                id: m.to_string(),
+                id: qualified(AgentKind::Opencode, m),
                 agent_kind: AgentKind::Opencode,
                 description: None,
             })
             .collect()
+    }
+
+    /// One catalog entry's id: the model as its agent CLI runs it, which is
+    /// what a request writes to pin it.
+    fn qualified(kind: AgentKind, model: &str) -> String {
+        ModelRef {
+            agent_kind: kind,
+            model: Some(model.to_string()),
+        }
+        .to_string()
     }
 }

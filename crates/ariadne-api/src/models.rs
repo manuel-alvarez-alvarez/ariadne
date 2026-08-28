@@ -2,21 +2,21 @@
 
 use ariadne_core::AgentKind;
 use serde::{Deserialize, Serialize};
-use utoipa::{IntoParams, ToSchema};
+use utoipa::ToSchema;
 
-/// One model an agent CLI can run, as served by `GET /v1/models`.
+/// One thing an agent can be pinned to, as served by `GET /v1/models`: an
+/// agent CLI on a model of it (`claude_code:claude-fable-5`), or an agent CLI
+/// on its own, which is that CLI on its own default model.
+///
+/// The id is what a request writes as its `model`, whole. `agent_kind` is the
+/// same fact taken apart, so a picker can group the catalog by CLI without
+/// parsing anything.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ModelDto {
-    #[schema(example = "claude-fable-5")]
+    #[schema(example = "claude_code:claude-fable-5")]
     pub id: String,
-    /// The agent CLI this model belongs to.
+    /// The agent CLI this entry runs on.
     pub agent_kind: AgentKind,
     /// One-line capability summary (absent for discovered opencode models).
     pub description: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize, Serialize, IntoParams)]
-pub struct ModelListQuery {
-    /// Filter by agent CLI.
-    pub agent: Option<AgentKind>,
 }

@@ -27,6 +27,7 @@ use serde_json::json;
 use ariadne_api::messages::{MessageDto, MessageRecipientDto};
 use ariadne_api::profiles::ProfileDto;
 use ariadne_client::{Client, endpoint};
+use ariadne_core::models::ModelRef;
 use ariadne_core::{AgentKind, RecipientKind, probe};
 
 use crate::output::{Format, local_time, note, print};
@@ -281,18 +282,21 @@ impl ProfileNames {
     }
 
     /// `Name (id) · agent · model`: the mention, plus what the agent behind it
-    /// is pinned to run on.
+    /// is pinned to run on, out of the one string that carries both halves.
     ///
     /// A profile is editable and a pin is not, so the two drift: what a task's
     /// engineer, a task's reviewer or a goal's planner runs on is the snapshot
     /// taken when it was assigned, not what the profile says today. `auto` and
     /// `default` are the same two words `profile inspect` and the web use.
-    pub fn pinned_label(&self, id: &str, agent: Option<AgentKind>, model: Option<&str>) -> String {
+    pub fn pinned_label(&self, id: &str, model: Option<&str>) -> String {
+        let pin = pinned(model);
         format!(
             "{} · {} · {}",
             self.label(id),
-            agent.map_or("auto", |k| k.as_str()),
-            model.unwrap_or("default"),
+            pin.as_ref().map_or("auto", |p| p.agent_kind.as_str()),
+            pin.as_ref()
+                .and_then(|p| p.model.as_deref())
+                .unwrap_or("default"),
         )
     }
 }
@@ -339,6 +343,38 @@ pub fn query_path(base: &str, query: &impl serde::Serialize) -> Result<String> {
 /// user reaches for (`claude-code`) name the same CLI.
 fn parse_agent(s: &str) -> Result<AgentKind, String> {
     s.replace('-', "_").parse()
+}
+
+/// What a pin says, taken apart: the agent CLI, and the model of it where one
+/// was pinned.
+///
+/// None where nothing is pinned — auto — and also where the string is one this
+/// build cannot read, which a reader shows as auto rather than failing on.
+pub fn pinned(model: Option<&str>) -> Option<ModelRef> {
+    model?.parse().ok()
+}
+
+/// The one `model` a request carries, out of the `--agent` and `--model` the
+/// command line still spells apart: `<agent_kind>[:<model>]`.
+///
+/// The daemon defines that spelling and is what refuses a bad one, so nothing
+/// is validated here — an agent this build does not know travels as typed and
+/// is named in the refusal that comes back. The words for "nothing chosen"
+/// are one word wherever they are typed: `--agent auto`, `--agent default`
+/// and a bare `--model default` all ask for the profile's own.
+pub fn qualified_model(agent: Option<&str>, model: Option<&str>) -> Option<String> {
+    /// What either flag writes to choose nothing at all.
+    const NOTHING: [&str; 3] = ["", "default", "auto"];
+    match agent {
+        // No agent to hang it on: what was typed travels as typed, whether
+        // that is a whole `agent:model` or a model the daemon will refuse.
+        None => model.map(str::to_string),
+        Some(agent) if NOTHING.contains(&agent) => Some("default".to_string()),
+        Some(agent) => Some(match model.filter(|m| !NOTHING.contains(m)) {
+            Some(model) => format!("{agent}:{model}"),
+            None => agent.to_string(),
+        }),
+    }
 }
 
 /// One caller-typed value as a single path segment.

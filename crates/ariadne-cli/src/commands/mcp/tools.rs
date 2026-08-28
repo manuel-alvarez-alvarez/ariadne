@@ -229,10 +229,8 @@ impl AriadneMcp {
             description: req.description,
             repo_id: req.repo_id,
             engineer_profile: req.engineer_profile,
-            // The planner assigns profiles; the user is who picks the agent
-            // and the model, so every task the planner creates takes the
-            // profiles' own.
-            agent_kind: None,
+            // The planner assigns profiles; the user is who picks the model,
+            // so every task the planner creates takes the profiles' own.
             model: None,
             reviewers: req
                 .reviewer_profiles
@@ -254,7 +252,6 @@ impl AriadneMcp {
         let body = UpdateTaskRequest {
             title: req.title,
             description: req.description,
-            agent_kind: None,
             model: None,
             reviewers: req
                 .reviewer_profiles
@@ -343,7 +340,10 @@ impl AriadneMcp {
         Parameters(req): Parameters<RecordPullRequestReq>,
     ) -> Result<CallToolResult, McpError> {
         let path = self.task_path(None, "/pull-request")?;
-        json_result(self.post(&path, &RecordPullRequestRequest { url: req.url }).await?)
+        json_result(
+            self.post(&path, &RecordPullRequestRequest { url: req.url })
+                .await?,
+        )
     }
 
     // ---- reviewer ----
@@ -427,7 +427,10 @@ mod tests {
         assert_eq!(addressed["to"], serde_json::json!("Engineer"));
         assert_eq!(addressed["body"], serde_json::json!("rebase first"));
         assert_eq!(addressed["author_role"], serde_json::json!("reviewer"));
-        assert_eq!(addressed_message(&message(None))["to"], serde_json::Value::Null);
+        assert_eq!(
+            addressed_message(&message(None))["to"],
+            serde_json::Value::Null
+        );
     }
 
     /// Reading a task is one round trip: the daemon names the profiles on it,

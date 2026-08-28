@@ -16,7 +16,7 @@ use ariadne_client::Client;
 use ariadne_core::{AgentKind, TaskStatus};
 
 use edit::{parse_agent_or_default, parse_reviewer, resolve_repo, update_request};
-use super::{ProfileNames, confirm, parse_agent, print_messages, query_path};
+use super::{ProfileNames, confirm, parse_agent, print_messages, qualified_model, query_path};
 use crate::output::{
     Column, Format, UNCAPPED, dash, local_time, note, print, print_kv, print_list, usage_cell,
     usage_summary, yes_no,
@@ -251,8 +251,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                         description,
                         repo_id,
                         engineer_profile: engineer,
-                        agent_kind: agent,
-                        model,
+                        model: qualified_model(agent.map(|a| a.as_str()), model.as_deref()),
                         reviewers,
                         depends_on,
                     },
@@ -316,11 +315,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                     ("status", t.status.as_str().into()),
                     (
                         "engineer",
-                        profiles.pinned_label(
-                            &t.engineer_profile_id,
-                            t.agent_kind,
-                            t.model.as_deref(),
-                        ),
+                        profiles.pinned_label(&t.engineer_profile_id, t.model.as_deref()),
                     ),
                     (
                         "reviewers",
@@ -329,9 +324,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                         // column reads down.
                         t.reviewers
                             .iter()
-                            .map(|r| {
-                                profiles.pinned_label(&r.profile_id, r.agent_kind, r.model.as_deref())
-                            })
+                            .map(|r| profiles.pinned_label(&r.profile_id, r.model.as_deref()))
                             .collect::<Vec<_>>()
                             .join(INDENT),
                     ),
@@ -568,7 +561,6 @@ mod tests {
         TaskReviewerDto {
             profile_id: profile_id.into(),
             profile_name: Some(name.into()),
-            agent_kind: None,
             model: None,
         }
     }

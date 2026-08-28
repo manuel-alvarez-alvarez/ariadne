@@ -1,6 +1,6 @@
 //! Goal DTOs.
 
-use ariadne_core::{AgentKind, GoalStatus};
+use ariadne_core::GoalStatus;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -17,13 +17,13 @@ pub struct GoalDto {
     pub max_tasks: Option<i64>,
     pub required_approvals: i64,
     pub planner_profile_id: String,
-    /// Agent CLI the planner runs on: pinned when the goal was created, from
-    /// the agent chosen for it or, where none was, from the planner profile.
-    /// Editing the profile afterwards leaves it alone. None = auto, resolved
-    /// at spawn time to the first installed CLI.
-    pub agent_kind: Option<AgentKind>,
-    /// Model the planner runs on, pinned alongside `agent_kind`. None = the
-    /// agent CLI's own default model.
+    /// What the planner runs on, `<agent_kind>[:<model>]`: the agent CLI and,
+    /// after a `:`, the model of it (`codex`, `claude_code:claude-opus-5`).
+    /// Pinned when the goal was created, from the model chosen for it or,
+    /// where none was, from the planner profile — editing the profile
+    /// afterwards leaves it alone. None = auto: the first installed CLI,
+    /// resolved at spawn time, on its own default model.
+    #[schema(example = "claude_code:claude-opus-5")]
     pub model: Option<String>,
     /// The registered repositories the goal works in, as they stand now: a
     /// goal references them, so an edit to one shows up here.
@@ -71,14 +71,13 @@ pub struct CreateGoalRequest {
     pub max_tasks: Option<i64>,
     /// Approvals required to merge a task (default 1).
     pub required_approvals: Option<i64>,
-    /// Agent CLI the planner runs on; omitted = the planner profile's own
-    /// agent and model, as they stand now.
+    /// What the planner runs on, `<agent_kind>[:<model>]` — the agent CLI and,
+    /// after a `:`, the model of it: `codex`, `codex:gpt-5.3-codex`,
+    /// `opencode:ollama/llama3:8b`. The model half is free text, handed to
+    /// that CLI as typed; an agent CLI on its own runs it on its own default
+    /// model, and a string naming no agent CLI is refused. Omitted (or
+    /// "default") = the planner profile's own model, as it stands now.
     #[serde(default)]
-    pub agent_kind: Option<AgentKind>,
-    /// Model the planner runs on, on the agent named by `agent_kind`; omitted
-    /// (or "default") = that CLI's own default model. Free text, handed to the
-    /// CLI as typed. A model without an `agent_kind` is refused: the agent is
-    /// the choice, the model narrows it.
-    #[serde(default)]
+    #[schema(example = "codex:gpt-5.3-codex")]
     pub model: Option<String>,
 }

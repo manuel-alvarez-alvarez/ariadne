@@ -294,12 +294,12 @@ fn an_agent_can_be_chosen_for_every_agent_on_the_line() {
     assert_eq!(
         reviewers
             .iter()
-            .map(|r| (r.profile.as_str(), r.agent_kind, r.model.as_deref()))
+            .map(|r| (r.profile.as_str(), r.model.as_deref()))
             .collect::<Vec<_>>(),
         [
-            ("Reviewer", Some(AgentKind::Codex), Some("o3")),
-            ("rev-strict", Some(AgentKind::Opencode), None),
-            ("Security", None, None),
+            ("Reviewer", Some("codex:o3")),
+            ("rev-strict", Some("opencode")),
+            ("Security", None),
         ],
         "in the order they were typed, which is review order"
     );

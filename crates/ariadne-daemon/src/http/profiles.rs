@@ -12,7 +12,8 @@ use ariadne_store::{NewProfile, ProfileUpdate, Store, parse_prompt_kind};
 
 use super::AppState;
 use super::convert::{profile_dto, profile_prompt_dto};
-use super::error::{ApiError, ApiResult};
+use super::error::ApiResult;
+use super::pins;
 
 /// The id behind a path segment: every profile endpoint takes an id or a
 /// unique name, as the `to` of a message does.
@@ -34,13 +35,16 @@ pub async fn create(
     State(state): State<AppState>,
     Json(req): Json<CreateProfileRequest>,
 ) -> ApiResult<(StatusCode, Json<ProfileDto>)> {
+    // A profile chooses the same way everything else does, and its "nothing
+    // chosen" is auto: no agent CLI, and so no model of one either.
+    let pin = pins::chosen(req.model.as_deref())?;
     let profile = state
         .store
         .create_profile(NewProfile {
             name: req.name,
             role: req.role,
-            agent_kind: req.agent_kind,
-            model: req.model,
+            agent_kind: pin.as_ref().map(|p| p.agent_kind),
+            model: pin.and_then(|p| p.model),
             system_prompt: req.system_prompt,
         })
         .await?;
@@ -81,21 +85,17 @@ pub async fn update(
     Json(req): Json<UpdateProfileRequest>,
 ) -> ApiResult<Json<ProfileDto>> {
     let id = resolve(&state.store, &id).await?;
+    // Both columns move together: a profile is on one model, and clearing it
+    // is what puts the profile back on auto.
+    let pin = pins::rechosen(req.model.as_deref())?;
     let profile = state
         .store
         .update_profile(
             &id,
             ProfileUpdate {
                 name: req.name,
-                agent_kind: match req.agent_kind.as_deref() {
-                    None => None,
-                    Some("auto") => Some(None),
-                    Some(kind) => Some(Some(kind.parse().map_err(ApiError::bad_request)?)),
-                },
-                model: req.model.map(|m| match m.as_str() {
-                    "" | "default" => None,
-                    _ => Some(m),
-                }),
+                agent_kind: pin.as_ref().map(|p| p.as_ref().map(|p| p.agent_kind)),
+                model: pin.map(|p| p.and_then(|p| p.model)),
                 system_prompt: req.system_prompt,
             },
         )

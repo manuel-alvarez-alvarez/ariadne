@@ -16,6 +16,7 @@ use ariadne_core::AgentKind;
 use super::checks::{HERE, THERE, describe, forge_check, required_tool};
 use super::{Availability, Check, Status};
 use crate::codex_trust::{self, Trust};
+use crate::commands::pinned;
 
 /// Re-run the installer so the service picks up what your PATH already has.
 const REINSTALL: &str = "re-run scripts/install.sh so the service picks";
@@ -58,7 +59,7 @@ pub fn agents(
         let home = codex_trust::codex_home().unwrap_or_else(|| PathBuf::from(".codex"));
         let runs_codex = profiles
             .iter()
-            .any(|p| p.agent_kind == Some(AgentKind::Codex));
+            .any(|p| runs_on(p) == Some(AgentKind::Codex));
         checks.push(codex_hooks(&Trust::read(&home), runs_codex));
     }
 
@@ -70,7 +71,10 @@ pub fn agents(
             )
             .hint(match available.stale_service_path() {
                 true => format!("they are on your PATH but not the daemon's — {REINSTALL} them up"),
-                false => "install claude, codex or opencode — sessions cannot be spawned without one".to_string(),
+                false => {
+                    "install claude, codex or opencode — sessions cannot be spawned without one"
+                        .to_string()
+                }
             }),
         );
     }
@@ -135,7 +139,7 @@ pub fn profiles(profiles: &[ProfileDto], available: &Availability) -> Vec<Check>
     let named = |kind: Option<AgentKind>| -> Vec<&str> {
         profiles
             .iter()
-            .filter(|p| p.agent_kind == kind)
+            .filter(|p| runs_on(p) == kind)
             .map(|p| p.name.as_str())
             .collect()
     };
@@ -159,7 +163,9 @@ pub fn profiles(profiles: &[ProfileDto], available: &Availability) -> Vec<Check>
             .hint(match available.only_on_client(kind) {
                 // The classic stale-service-PATH shape: present here, absent
                 // in the process that would launch it.
-                true => format!("{binary} is on your PATH but not the daemon's — {REINSTALL} it up"),
+                true => {
+                    format!("{binary} is on your PATH but not the daemon's — {REINSTALL} it up")
+                }
                 false => {
                     format!("install {binary}, or point those profiles at an installed agent")
                 }
@@ -179,21 +185,28 @@ pub fn profiles(profiles: &[ProfileDto], available: &Availability) -> Vec<Check>
                     available.viewpoint()
                 ),
             )
-            .hint(
-                match available.stale_service_path() {
-                    true => format!(
-                        "the agents are on your PATH but not the daemon's — {REINSTALL} them up"
-                    ),
-                    false => "install claude, codex or opencode".to_string(),
-                },
-            ),
+            .hint(match available.stale_service_path() {
+                true => format!(
+                    "the agents are on your PATH but not the daemon's — {REINSTALL} them up"
+                ),
+                false => "install claude, codex or opencode".to_string(),
+            }),
         });
     }
     checks
 }
 
+/// The agent CLI a profile runs on, out of the one string that carries the
+/// CLI and the model of it; None = auto, resolved at spawn time.
+fn runs_on(profile: &ProfileDto) -> Option<AgentKind> {
+    pinned(profile.model.as_deref()).map(|p| p.agent_kind)
+}
+
 /// The daemon's own environment, or the absence of one.
-pub fn daemon_environment(daemon: Option<&DaemonReportDto>, available: &Availability) -> Vec<Check> {
+pub fn daemon_environment(
+    daemon: Option<&DaemonReportDto>,
+    available: &Availability,
+) -> Vec<Check> {
     let Some(daemon) = daemon else {
         return vec![
             Check::fail(
@@ -274,7 +287,7 @@ mod tests {
 
     fn profile(name: &str, agent_kind: Option<AgentKind>) -> ProfileDto {
         ProfileDto {
-            agent_kind,
+            model: agent_kind.map(|kind| ariadne_core::models::ModelRef::of(kind).to_string()),
             ..crate::commands::fixtures::profile(name, ariadne_core::Role::Engineer)
         }
     }
@@ -339,7 +352,10 @@ mod tests {
         );
 
         let never_asked = codex_hooks(&trust_for(&[]), false);
-        assert!(never_asked.detail.contains("none of the"), "{never_asked:?}");
+        assert!(
+            never_asked.detail.contains("none of the"),
+            "{never_asked:?}"
+        );
         let never_ran = codex_hooks(
             &Trust {
                 config_exists: false,
@@ -401,7 +417,10 @@ mod tests {
         );
         assert_eq!(stale[0].status, Status::Fail);
         assert!(
-            stale[0].hint.as_deref().is_some_and(|h| h.contains("your PATH")),
+            stale[0]
+                .hint
+                .as_deref()
+                .is_some_and(|h| h.contains("your PATH")),
             "{:?}",
             stale[0]
         );
@@ -419,7 +438,11 @@ mod tests {
     fn a_missing_agent_is_a_warning_until_none_is_left() {
         let some = agent_binaries(&[AgentKind::ClaudeCode]);
         let checks = agents(&some, &[], &Availability::new(None, &some), &[]);
-        assert_eq!(checks.len(), 3, "no summary failure while one agent is there");
+        assert_eq!(
+            checks.len(),
+            3,
+            "no summary failure while one agent is there"
+        );
         assert_eq!(checks[0].status, Status::Ok);
         assert_eq!(checks[1].status, Status::Warn);
         assert_eq!(checks[2].status, Status::Warn);
