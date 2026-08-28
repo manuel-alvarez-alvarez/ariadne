@@ -122,6 +122,13 @@ impl Thread {
 ///
 /// Addressed or not, the scheduler is told: what an unaddressed message wakes
 /// is nobody, and that is its decision to make rather than the handler's.
+///
+/// A message the user wrote takes "waiting for you" down across the thread it
+/// was written in, which is the answer to whatever was waiting for them there.
+/// It happens here rather than on the scheduler's side of the notification
+/// because an unaddressed message — which is most of what a person types — is
+/// never delivered anywhere, and a rule kept there would only ever run for the
+/// ones that name somebody.
 pub async fn post(
     state: &AppState,
     ctx: CallCtx,
@@ -136,17 +143,24 @@ pub async fn post(
         None => None,
     };
     let (goal_id, task_id) = thread.ids();
+    let author_role = ctx.author_role;
     let msg = state
         .store
         .create_message(NewMessage {
-            goal_id,
-            task_id,
-            author_role: ctx.author_role,
+            goal_id: goal_id.clone(),
+            task_id: task_id.clone(),
+            author_role,
             author_session_id: ctx.session.map(|s| s.id),
             recipient,
             body: req.body,
         })
         .await?;
+    if author_role == AuthorRole::User {
+        state
+            .store
+            .clear_user_attention_in_thread(&goal_id, task_id.as_deref())
+            .await?;
+    }
     state.notify_scheduler_message(&msg.id);
     Ok((
         StatusCode::CREATED,

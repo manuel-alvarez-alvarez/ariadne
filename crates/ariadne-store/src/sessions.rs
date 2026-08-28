@@ -17,6 +17,9 @@ const PROMPTS_ONLY: &str = " AND attention_reason IN (?, ?)";
 /// and the failed turn of [`Store::clear_attention_after_idle`].
 const SILENCE_AND_ERROR: &str = " AND attention_reason IN (?, ?)";
 
+/// The clause that keeps a clear to the one flag raised for the user.
+const USER_ONLY: &str = " AND attention_reason = ?";
+
 #[derive(Debug, Clone)]
 pub struct NewSession {
     pub goal_id: String,
@@ -200,6 +203,48 @@ impl Store {
     pub async fn clear_session_attention(&self, id: &str) -> Result<()> {
         let cleared = self.clear_attention(id, "", &[]).await?;
         self.announce_attention(id, cleared).await
+    }
+
+    /// Take `waiting_user` down across a whole thread: the user has spoken in
+    /// it, so nothing in it is still waiting for them to.
+    ///
+    /// A thread is one task's conversation, or a goal's own — the sessions of
+    /// the goal that sit on no task, which is where its planner works. Every
+    /// session of it is cleared rather than only the one that wrote the
+    /// message: "waiting for you" is about the conversation the user answered,
+    /// and which agent happened to raise it there is not what they replied to.
+    ///
+    /// Only that one reason. A permission dialog an agent is holding is not
+    /// answered by anything typed in a thread, so it stays up until the pane
+    /// itself is dealt with.
+    pub async fn clear_user_attention_in_thread(
+        &self,
+        goal_id: &str,
+        task_id: Option<&str>,
+    ) -> Result<()> {
+        let scope = match task_id {
+            Some(_) => " AND task_id = ?",
+            None => " AND task_id IS NULL",
+        };
+        let mut q = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT id FROM agent_sessions
+              WHERE goal_id = ? AND attention_reason = ?{scope}"
+        )))
+        .bind(goal_id)
+        .bind(AttentionReason::WaitingUser.as_str());
+        if let Some(task_id) = task_id {
+            q = q.bind(task_id);
+        }
+        let waiting: Vec<String> = q.fetch_all(self.r()).await?;
+        // One statement each, so that every watcher is handed the session it
+        // is watching and the task stall of each is brought into line.
+        for id in waiting {
+            let cleared = self
+                .clear_attention(&id, USER_ONLY, &[AttentionReason::WaitingUser.as_str()])
+                .await?;
+            self.announce_attention(&id, cleared).await?;
+        }
+        Ok(())
     }
 
     /// Take the attention flag down, narrowed by `and`: the caller's clause

@@ -86,7 +86,7 @@ pub fn default_prompt_text(kind: PromptKind) -> &'static str {
 /// conversation calls for it.
 const PLANNER_SYSTEM_PROMPT: &str = r#"You are the planning lead of an Ariadne goal: turn it into a small set of well-scoped tasks, each with an engineer and one or more reviewers. Never write code.
 
-1. Explore the repositories your briefing names; settle scope and trade-offs with the user here, asking rather than assuming.
+1. Explore the repositories your briefing names; settle scope and trade-offs with the user here, asking rather than assuming. `post_message` to "user" only when they must act or answer; progress and summaries go unaddressed or to the agent they concern.
 2. Break the goal into small, independently mergeable tasks, one repository each, written like a strong ticket: context, what to do, what not to touch, and acceptance criteria saying how to verify each.
 3. `create_task` with an engineer and at least one reviewer out of `list_profiles`. `depends_on` is for a task that truly needs another first: unordered tasks run concurrently in separate worktrees and must not touch the same code.
 4. `update_task` corrects a task until it starts.
@@ -99,7 +99,7 @@ const ENGINEER_SYSTEM_PROMPT: &str = r#"You own one Ariadne task, from its first
 
 Work in your worktree, on your task branch: no other branch, no other worktree, nothing generated or unrelated committed.
 
-1. Read the task, its acceptance criteria and its conversation for what it requires; ask rather than guess.
+1. Read the task, its acceptance criteria and its conversation for what it requires; ask rather than guess. `post_message` to "user" only when they must act or answer; progress and summaries go unaddressed or to the agent they concern.
 2. Implement exactly that — no scope creep, no drive-by refactors — under the repository's conventions (`AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`): small commits, tests and linters green, the tests asked of you added.
 3. Nothing you write carries an authorship or tool trailer or names Ariadne; leave signing to git's configuration.
 4. `request_review` submits it, with a summary of what changed, why and how you verified it. Apply the verdicts on the same branch and call it again, or `post_message` to argue.
@@ -112,7 +112,7 @@ const REVIEWER_SYSTEM_PROMPT: &str = r#"You review one round of one Ariadne task
 Your detached worktree holds the branch under review, read-only: do not edit, commit, amend or branch. Verify empirically — install dependencies and run the build, tests and linters right here (`npm ci`, `cargo build`), never at another worktree.
 
 1. Read the task, its acceptance criteria, the engineer's summary and the earlier rounds. `get_diff` fetches the change; read the code around it too.
-2. Judge it on doing exactly what the task asks and no more; correctness, edge cases, error handling, conventions, tests, clarity. `post_message` asks where something blocks you.
+2. Judge it on doing exactly what the task asks and no more; correctness, edge cases, error handling, conventions, tests, clarity. `post_message` asks where something blocks you — to "user" only when they must act or answer, anything else unaddressed or to the agent it concerns.
 3. `submit_verdict` is the verdict, one per round and the only thing that counts: approve with a note on what you checked, or request changes as a list naming files and functions, must-fix apart from optional."#;
 
 /// Initial briefing of a planner session: the goal, and the numbers a plan
@@ -131,7 +131,7 @@ const PLANNER_BRIEFING: &str = r#"# Goal: {goal_title}
 /// What a planner that has gone quiet is picked up with. The goal is still in
 /// planning, so there is one thing left to do with it and two calls that end
 /// it; the goal itself the session has read already.
-const PLANNER_RESUME: &str = r#"Keep planning "{goal_title}": `create_task` for what it still needs, `finalize_plan` once the user has confirmed here that it is complete, `post_message` where you are waiting on them."#;
+const PLANNER_RESUME: &str = r#"Keep planning "{goal_title}": `create_task` for what it still needs, `finalize_plan` once the user has confirmed here that it is complete, `post_message` to "user" only where you are waiting on them."#;
 
 /// Initial briefing of an engineer session: the task, and the values its
 /// commands act on.
@@ -266,13 +266,17 @@ mod tests {
     /// What a cap is not is a reason to say a rule badly. The system-prompt
     /// one went from 900 to 1050 when the planner had to be told when *not*
     /// to end planning: a step of the lifecycle the planner has to know about
-    /// is not the kind of growth these numbers are here to stop. Moving one
-    /// is a decision to argue for, never a way round a failing assertion.
+    /// is not the kind of growth these numbers are here to stop. Then from
+    /// 1050 to 1200, when all three roles had to be told whom a message is
+    /// for: an agent that addresses the user for a progress report puts
+    /// "waiting for you" on its session, and one sentence per prompt is what
+    /// the daemon cannot infer on their behalf. Moving one is a decision to
+    /// argue for, never a way round a failing assertion.
     #[test]
     fn size_caps_hold() {
         const KIND_TOTAL: usize = 6000;
-        const GRAND_TOTAL: usize = 7000;
-        const SYSTEM_PROMPT: usize = 1050;
+        const GRAND_TOTAL: usize = 7200;
+        const SYSTEM_PROMPT: usize = 1200;
 
         let cap = |kind: PromptKind| match kind {
             PromptKind::LandingDirect | PromptKind::LandingPullRequest => 2000,

@@ -30,7 +30,8 @@ use axum::http::{Method, Request, StatusCode, header};
 
 use ariadne_api::SESSION_HEADER;
 use ariadne_api::messages::MessageDto;
-use ariadne_core::{AttentionReason, Role, TaskStatus};
+use ariadne_core::{Actor, AttentionReason, Role, TaskStatus};
+use ariadne_daemon::notify;
 use ariadne_store::{AgentSession, Goal, SessionFilter, Task};
 
 use common::{Cast, Harness, eventually, harness};
@@ -316,6 +317,160 @@ async fn a_message_for_the_user_raises_its_author_and_wakes_no_agent() {
         "the author is not nudged with its own question"
     );
     assert_eq!(h.keystrokes(&planner), 0, "and no other agent is either");
+}
+
+/// Walk `task` to an ending and hand the notice the daemon writes for it to
+/// the scheduler — which is `Scheduler::announce_ending`, and the HTTP
+/// transition handler, spelled out.
+async fn ends_as(h: &Harness, task: &Task, to: TaskStatus, actor: Actor, reason: Option<&str>) {
+    if to == TaskStatus::Merged {
+        for (status, by) in [
+            (TaskStatus::UnderReview, Actor::Engineer),
+            (TaskStatus::Approved, Actor::Daemon),
+        ] {
+            h.store
+                .transition_task(&task.id, status, by, None, None)
+                .await
+                .unwrap();
+        }
+    }
+    let commit = (to == TaskStatus::Merged).then_some("abc1234");
+    let ended = h
+        .store
+        .transition_task(&task.id, to, actor, reason, commit)
+        .await
+        .unwrap();
+    let notice = notify::task_ended(&h.store, &ended, reason)
+        .await
+        .unwrap()
+        .expect("an ending is written to the thread");
+    h.notify_message(&notice.id);
+}
+
+/// The daemon's own ending notice, put through the scheduler with an engineer
+/// still live behind it: the notice keeps the user as its recipient, and
+/// nothing goes up on the session, because nobody is waiting on the agent of
+/// a task that is over.
+///
+/// The flag is asserted never to have appeared rather than to be gone by now:
+/// the stale sweep took it down up to fifteen seconds later, which is a
+/// "Waiting for you" that flashes on every ending. A message posted behind the
+/// notice is what says the scheduler has been through it — the queue is one,
+/// and in order.
+async fn an_ending_raises_nothing(to: TaskStatus, actor: Actor, reason: Option<&str>) {
+    let (h, cast) = seeded().await;
+    let engineer = h
+        .session(&cast.goal, Some(&cast.task), Role::Engineer, &cast.engineer.id)
+        .await;
+    let planner = h
+        .session(&cast.goal, None, Role::Planner, &cast.planner.id)
+        .await;
+    h.pane_exists(&engineer);
+
+    ends_as(&h, &cast.task, to, actor, reason).await;
+    post_to_task(&h, &cast.task, "And that is that.", Some("engineer"), Some(&planner)).await;
+
+    eventually(TIMEOUT, "the message queued behind the notice", async || {
+        h.pasted(&engineer).contains("And that is that.")
+    })
+    .await;
+    assert_eq!(
+        h.attention(&engineer).await,
+        None,
+        "the ending put nothing on the engineer's session"
+    );
+    assert_eq!(
+        h.user_messages(&cast.task).await.len(),
+        1,
+        "and the notice is still the user's, so the thread still shows it as theirs"
+    );
+}
+
+#[tokio::test]
+async fn a_merged_task_tells_the_user_without_flagging_its_engineer() {
+    an_ending_raises_nothing(TaskStatus::Merged, Actor::Engineer, None).await;
+}
+
+#[tokio::test]
+async fn a_failed_task_tells_the_user_without_flagging_its_engineer() {
+    an_ending_raises_nothing(TaskStatus::Failed, Actor::Daemon, Some("the build never passed")).await;
+}
+
+#[tokio::test]
+async fn a_cancelled_task_tells_the_user_without_flagging_its_engineer() {
+    an_ending_raises_nothing(TaskStatus::Cancelled, Actor::User, Some("we do not need it")).await;
+}
+
+/// The other half of "waiting for you": the user answering in the thread takes
+/// it down, whether or not they addressed anybody, and only in the thread they
+/// wrote in.
+#[tokio::test]
+async fn a_message_from_the_user_takes_its_thread_off_waiting_for_them() {
+    let (h, cast) = seeded().await;
+    let engineer = h
+        .session(&cast.goal, Some(&cast.task), Role::Engineer, &cast.engineer.id)
+        .await;
+    let planner = h
+        .session(&cast.goal, None, Role::Planner, &cast.planner.id)
+        .await;
+    h.pane_exists(&engineer);
+    h.pane_exists(&planner);
+
+    // A second task of the same goal, its own engineer waiting on the user too.
+    let repo = h.store.list_goal_repositories(&cast.goal.id).await.unwrap()[0].clone();
+    let other = h
+        .task_on(&cast.goal, &repo, "Something else", &cast.engineer, &[&cast.reviewer])
+        .await;
+    let elsewhere = h
+        .session(&cast.goal, Some(&other), Role::Engineer, &cast.engineer.id)
+        .await;
+    h.raise(&engineer, AttentionReason::WaitingUser).await;
+    h.raise(&elsewhere, AttentionReason::WaitingUser).await;
+
+    // An agent talking in the thread is not the user having answered.
+    post_to_task(&h, &cast.task, "Still on it.", None, Some(&planner)).await;
+    assert_eq!(
+        h.attention(&engineer).await,
+        Some(AttentionReason::WaitingUser),
+        "another agent's message answers nothing"
+    );
+
+    post_to_task(&h, &cast.task, "The staging one, please.", None, None).await;
+    assert_eq!(
+        h.attention(&engineer).await,
+        None,
+        "the user has spoken in the thread the flag was raised in"
+    );
+    assert_eq!(
+        h.attention(&elsewhere).await,
+        Some(AttentionReason::WaitingUser),
+        "and said nothing in any other"
+    );
+}
+
+/// The goal's own thread reaches the planner working in it, and reaches into
+/// none of its tasks.
+#[tokio::test]
+async fn a_message_from_the_user_in_the_goal_thread_takes_the_planner_off_waiting() {
+    let (h, cast) = seeded().await;
+    let planner = h
+        .session(&cast.goal, None, Role::Planner, &cast.planner.id)
+        .await;
+    let engineer = h
+        .session(&cast.goal, Some(&cast.task), Role::Engineer, &cast.engineer.id)
+        .await;
+    h.pane_exists(&planner);
+    h.raise(&planner, AttentionReason::WaitingUser).await;
+    h.raise(&engineer, AttentionReason::WaitingUser).await;
+
+    post_to_goal(&h, &cast.goal, "Yes, split it in two.", None, None).await;
+
+    assert_eq!(h.attention(&planner).await, None);
+    assert_eq!(
+        h.attention(&engineer).await,
+        Some(AttentionReason::WaitingUser),
+        "a task's thread is not the goal's own"
+    );
 }
 
 /// An agent sitting on a permission dialog is left alone: the Enter behind a

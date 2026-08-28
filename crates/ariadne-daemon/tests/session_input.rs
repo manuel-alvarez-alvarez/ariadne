@@ -10,9 +10,10 @@ mod common;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 
-use ariadne_core::SessionStatus;
+use ariadne_api::stream::DomainEvent;
+use ariadne_core::{AttentionReason, SessionStatus};
 
-use common::{Harness, harness, post_json};
+use common::{Harness, harness, next_event, post_json};
 
 use ariadne_api::error::ErrorBody;
 
@@ -131,4 +132,50 @@ async fn a_long_paste_is_split_into_ordered_batches() {
         .collect();
     assert_eq!(sent, pasted, "the batches reassemble into what was pasted");
     assert!(send_keys(&h).len() > 1, "1500 bytes do not fit one batch");
+}
+
+/// Typing into a pane is the human acting on that session, so whatever it was
+/// flagged for comes down — a permission dialog it was sitting on above all,
+/// which nothing else ever takes back: a denied prompt the agent then ends its
+/// turn on used to leave "Waiting for permission" up for good.
+///
+/// Every reason goes, and the change goes out on the bus, since the strip
+/// showing the flag is a viewer of it.
+#[tokio::test]
+async fn typing_into_a_pane_takes_down_what_the_session_was_flagged_for() {
+    for reason in [AttentionReason::WaitingPermission, AttentionReason::WaitingUser] {
+        let h = harness().await;
+        let session = h.lone_session(&format!("ariadne-{}", reason.as_str())).await;
+        h.every_pane_exists();
+        h.raise(&session, reason).await;
+
+        let mut rx = h.bus.subscribe();
+        let (status, _) = h.send(post_input(&session.id, "2\r")).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+
+        assert_eq!(
+            h.attention(&session).await,
+            None,
+            "{} survived the user answering it",
+            reason.as_str()
+        );
+        next_event(&mut rx, |e| {
+            matches!(&e.event, DomainEvent::SessionUpdated(s)
+                if s.id == session.id && s.attention_reason.is_none())
+        })
+        .await;
+    }
+}
+
+/// A pane nothing was waiting on is typed into just the same, and says so to
+/// nobody: the clear only ever announces a row it changed.
+#[tokio::test]
+async fn typing_into_an_unflagged_pane_changes_nothing() {
+    let h = harness().await;
+    let session = h.lone_session("ariadne-unflagged").await;
+    h.every_pane_exists();
+
+    let (status, _) = h.send(post_input(&session.id, "hello\r")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(h.attention(&session).await, None);
 }

@@ -122,6 +122,9 @@ pub async fn kill(
 /// front of it and the echo comes back through `/logs/stream` like any other
 /// pane output. Nothing is appended — a submit carries its own `\r`.
 ///
+/// And it is the user acting on the session, so whatever it was flagged for
+/// comes down with the input.
+///
 /// Both halves of "live" are checked, as in `logs_stream`: the row's status,
 /// because a finished session must not be typed into, and tmux itself,
 /// because tmux names are reused and a `send-keys` at a stale name would land
@@ -143,6 +146,14 @@ pub async fn input(
         .send_raw(&session.tmux_session, req.data.as_bytes())
         .await
         .map_err(|e| ApiError::conflict(e.to_string()))?;
+    // The human has just acted on this pane, which is every reason a session
+    // can be flagged with: a permission dialog answered, a question typed
+    // back, a message read. All of them come down — an agent still blocked
+    // raises its own again with its next event, and until it does nothing is
+    // being waited on here. The scheduler hears about it as it does about an
+    // ingested event, so the quiet clock and the stream follow.
+    state.store.clear_session_attention(&id).await?;
+    state.notify_scheduler_session(&id);
     Ok(StatusCode::NO_CONTENT)
 }
 

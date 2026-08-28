@@ -1328,7 +1328,6 @@ async fn an_idle_report_clears_only_the_silence_and_the_error() {
             .unwrap()
             .attention_reason()
     };
-
     for raised in [AttentionReason::Stalled, AttentionReason::AgentError] {
         store
             .set_session_attention(&session.id, raised)
@@ -1360,6 +1359,87 @@ async fn an_idle_report_clears_only_the_silence_and_the_error() {
             .await
             .is_err()
     );
+}
+
+/// The user speaking in a thread is the answer to whatever was waiting for
+/// them there, and to nothing else: `waiting_user` comes down across the whole
+/// thread, every other reason stays exactly where it was, and the threads
+/// beside it are not touched.
+#[tokio::test]
+async fn a_user_message_takes_only_waiting_user_down_and_only_in_its_own_thread() {
+    let w = World::new().await;
+    let store = &w.store;
+    let engineer = w.engineer_session().await;
+    let reviewer = w
+        .session(
+            "ariadne-test-rev",
+            Role::Reviewer,
+            &w.planner.id.clone(),
+            Some(&w.task.id),
+        )
+        .await;
+    // The goal's own thread, which is where its planner works, and a second
+    // task of the same goal: two threads the message is not written in.
+    let planner = w
+        .session("ariadne-test-plan", Role::Planner, &w.planner.id.clone(), None)
+        .await;
+    let other = seed_task(store, &w.goal, &w.repo, vec![]).await;
+    let elsewhere = w
+        .session(
+            "ariadne-test-other",
+            Role::Engineer,
+            &other.engineer_profile_id.clone(),
+            Some(&other.id),
+        )
+        .await;
+    for session in [&engineer, &planner, &elsewhere] {
+        store
+            .set_session_attention(&session.id, AttentionReason::WaitingUser)
+            .await
+            .unwrap();
+    }
+    // The one flag a message answers nothing about: a dialog is on a pane.
+    store
+        .set_session_attention(&reviewer.id, AttentionReason::WaitingPermission)
+        .await
+        .unwrap();
+
+    store
+        .clear_user_attention_in_thread(&w.goal.id, Some(&w.task.id))
+        .await
+        .unwrap();
+
+    let reason = async |session: &AgentSession| {
+        store
+            .get_session(&session.id)
+            .await
+            .unwrap()
+            .attention_reason()
+    };
+    assert_eq!(reason(&engineer).await, None, "the thread it was written in");
+    assert_eq!(
+        reason(&reviewer).await,
+        Some(AttentionReason::WaitingPermission),
+        "a dialog on a pane is not answered from a conversation"
+    );
+    assert_eq!(
+        reason(&planner).await,
+        Some(AttentionReason::WaitingUser),
+        "the goal's own thread is not this task's"
+    );
+    assert_eq!(
+        reason(&elsewhere).await,
+        Some(AttentionReason::WaitingUser),
+        "and neither is another task's"
+    );
+
+    // The goal thread reaches the sessions sitting on no task, and only them.
+    store
+        .clear_user_attention_in_thread(&w.goal.id, None)
+        .await
+        .unwrap();
+    assert_eq!(reason(&planner).await, None);
+    assert_eq!(reason(&elsewhere).await, Some(AttentionReason::WaitingUser));
 }
 
 /// The summary a round was asked for review with is the round's own, read off

@@ -9,7 +9,9 @@
 //! A message for the human wakes nobody. It goes up the attention path the UI
 //! strip and `ariadne attention` already show, on the session of the agent
 //! that wrote it — the session the user answers in, and the one place the
-//! message can be traced back to.
+//! message can be traced back to — and only where somebody is still waiting
+//! on that session: a task that has just ended says so to the user in its
+//! thread, and its engineer is not an agent anybody is being asked about.
 
 use tracing::{info, warn};
 
@@ -169,25 +171,38 @@ impl super::Scheduler {
     /// request opened, an approval, a task that ended — travels as a message
     /// like everything else and goes up here, rather than beside a
     /// `create_message` call with a flag of its own.
+    ///
+    /// Raising it asks the question the prompt path already asks
+    /// ([`crate::attention::work_is_active`]): whether anybody is still
+    /// waiting on the session it would land on. A task that has just been
+    /// merged, failed or cancelled says so to the user in its thread, and its
+    /// engineer is nobody's to answer — putting "waiting for you" on that
+    /// session for the seconds until the sweep sees it is a flash on every
+    /// ending. The notice keeps the user as its recipient either way; what is
+    /// withheld is the flag.
     pub(super) async fn raise_for_user(&self, message: &Message) -> anyhow::Result<()> {
-        let session_id = match &message.author_session_id {
-            Some(session_id) => session_id.clone(),
+        let session = match &message.author_session_id {
+            Some(session_id) => self.store.get_session(session_id).await?,
             // Written by the daemon rather than by an agent, so there is no
             // author's session to point at: the flag goes on the agent the
             // task is with, which is the row its attention is read from. A
             // task with nothing running, and a notice in a goal's thread,
             // raise nothing — the message waits where it was written.
             None => match self.session_the_task_is_with(message).await? {
-                Some(session) => session.id,
+                Some(session) => session,
                 None => {
                     info!(message = %message.id, "message addressed to the user with no session to raise it on; it waits in the thread");
                     return Ok(());
                 }
             },
         };
-        info!(message = %message.id, session = %session_id, "message addressed to the user, raising it for them");
+        if !crate::attention::work_is_active(&self.store, &session).await {
+            info!(message = %message.id, session = %session.id, role = %session.role, "nobody is waiting on the session this would go up on; it waits in the thread");
+            return Ok(());
+        }
+        info!(message = %message.id, session = %session.id, "message addressed to the user, raising it for them");
         self.store
-            .set_session_attention(&session_id, AttentionReason::WaitingUser)
+            .set_session_attention(&session.id, AttentionReason::WaitingUser)
             .await?;
         Ok(())
     }
