@@ -3,12 +3,12 @@
  * request bodies.
  *
  * The part worth being careful about is the update. `UpdateProfileRequest`
- * leaves absent fields unchanged and clears the two optional ones through
- * *sentinel strings*: `agent_kind: "auto"` puts the profile back on
- * first-installed-CLI resolution, `model: "default"` (or empty) back on the
- * agent's own default. The form never asks anyone to type those — "Auto-resolve"
- * is an option in the agent select and an empty model box means the default —
- * so this module is the one place where those choices become the sentinels.
+ * leaves absent fields unchanged and clears the optional one through a
+ * *sentinel string*: `model: "default"` (or empty) puts the profile back on
+ * auto — the first installed CLI, resolved at spawn time, on its own default
+ * model. The form never asks anyone to type that — an empty model box is what
+ * says it — so this module is the one place where that choice becomes the
+ * sentinel.
  *
  * `role` is deliberately missing from the update body: the daemon has no way to
  * change a profile's role after creation.
@@ -30,21 +30,11 @@ import type {
   UpdateProfileRequest,
 } from "@/api"
 
-import { AGENT_KINDS, PROMPT_KINDS, ROLES } from "./profile-labels"
+import { modelRefField } from "./model-ref"
+import { PROMPT_KINDS, ROLES } from "./profile-labels"
 
-/**
- * The agent-kind choice standing for "no kind pinned". It is spelled like the
- * daemon's clear sentinel because that is exactly what it becomes on update.
- */
-export const AUTO_AGENT_KIND = "auto"
-
-/** What the daemon reads as "clear the model back to the agent's default". */
+/** What the daemon reads as "put this profile back on auto". */
 const DEFAULT_MODEL_SENTINEL = "default"
-
-/** Every value the agent select offers: a real CLI, or auto-resolution. */
-export const AGENT_KIND_CHOICES = [AUTO_AGENT_KIND, ...AGENT_KINDS] as const
-
-export type AgentKindChoice = (typeof AGENT_KIND_CHOICES)[number]
 
 /**
  * One briefing prompt while it is being edited: the daemon's kind and the text.
@@ -67,8 +57,9 @@ export const profileFormSchema = z.object({
     .string()
     .refine((value) => value.trim().length > 0, { message: "Give the profile a name." }),
   role: z.enum(ROLES),
-  agentKind: z.enum(AGENT_KIND_CHOICES),
-  model: z.string(),
+  // Free text, but a reference: the catalog only suggests, and what is typed
+  // still has to name the agent CLI that runs it.
+  model: modelRefField(),
   // A prompt may legitimately be emptied — the daemon takes any text — and on
   // create an empty one means the role's default, so there is nothing to
   // validate.
@@ -83,7 +74,6 @@ export function emptyProfileFormValues(role: Role = "engineer"): ProfileFormValu
   return {
     name: "",
     role,
-    agentKind: AUTO_AGENT_KIND,
     model: "",
     systemPrompt: "",
     prompts: [],
@@ -103,7 +93,6 @@ export function profileToFormValues(
   return {
     name: profile.name,
     role: profile.role,
-    agentKind: profile.agent_kind ?? AUTO_AGENT_KIND,
     model: profile.model ?? "",
     systemPrompt: profile.system_prompt,
     prompts: prompts.map((prompt) => ({ kind: prompt.kind, content: prompt.content })),
@@ -140,18 +129,22 @@ export function toCreateRequest(values: ProfileFormValues): CreateProfileRequest
     name: values.name.trim(),
     role: values.role,
     // Create takes the absent value itself rather than a sentinel.
-    agent_kind: values.agentKind === AUTO_AGENT_KIND ? null : values.agentKind,
     model: model.length > 0 ? model : null,
     system_prompt: values.systemPrompt.trim().length > 0 ? values.systemPrompt : null,
   }
 }
 
+/**
+ * The update body as the form reads, whole — which is also the record the
+ * dialog keeps of what it last stored. Which of these fields actually travel
+ * is that dialog's to decide: a partial update leaves out what nobody touched
+ * (see `withoutUnchangedFields` in `profile-form-dialog.tsx`).
+ */
 export function toUpdateRequest(values: ProfileFormValues): UpdateProfileRequest {
   const model = values.model.trim()
   return {
     name: values.name.trim(),
-    // Both of these are sentinels when the user picked the "unset" choice.
-    agent_kind: values.agentKind,
+    // An emptied box is the sentinel: the profile goes back on auto.
     model: model.length > 0 ? model : DEFAULT_MODEL_SENTINEL,
     system_prompt: values.systemPrompt,
   }

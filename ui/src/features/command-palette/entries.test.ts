@@ -39,8 +39,7 @@ const PROFILE: ProfileDto = aProfile({
   id: "01JPROF0000000000000000AA",
   name: "Reviewer (strict)",
   role: "reviewer",
-  agent_kind: "codex",
-  model: "gpt-5",
+  model: "codex:gpt-5",
 })
 
 const SOURCE = {
@@ -110,7 +109,8 @@ describe("buildPaletteEntries", () => {
     const [entry] = buildPaletteEntries(SOURCE).profiles
     expect(entry?.label).toBe("Reviewer (strict)")
     expect(entry?.detail).toBe("Reviewer")
-    expect(entry?.keywords).toContain("codex")
+    // One keyword now carries both halves, since one string is the choice.
+    expect(entry?.keywords).toContain("codex:gpt-5")
     // The pick carries its subject: the screen expands that row.
     expect(entry?.target).toEqual({ kind: "page", path: `/profiles?expand=${PROFILE.id}` })
   })

@@ -39,6 +39,7 @@ import { CopyableId, CopyableIdMenu } from "@/components/copyable-id"
 import { TokenFigure } from "@/components/token-figure"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { When } from "@/components/when"
+import { formatModelRef } from "@/features/profiles/model-ref"
 import { modelLabel } from "@/features/profiles/profile-labels"
 import { ProfileSummary } from "@/features/profiles/profile-summary"
 import { sessionCopyEntries } from "@/lib/clipboard"
@@ -131,8 +132,14 @@ export function SessionDetailView({
         )}
         <Detail label="Profile">
           {/* The session's own snapshot, not the profile's current fields: the
-              profile may have been edited since this agent was launched. */}
-          <ProfileSummary profileId={session.profile_id} pinned={session} className="text-sm" />
+              profile may have been edited since this agent was launched. A
+              session keeps the CLI and the model apart, so the id every other
+              mention carries is composed here. */}
+          <ProfileSummary
+            profileId={session.profile_id}
+            model={formatModelRef(session.agent_kind, session.model)}
+            className="text-sm"
+          />
         </Detail>
         <Detail label="Model">
           {/* Null on the wire means the agent CLI picked, which is a fact

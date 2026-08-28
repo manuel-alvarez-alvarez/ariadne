@@ -16,25 +16,22 @@
  *   arrow keys. cmdk auto-highlights the first match while typing, and an Enter
  *   that silently swapped typed free text for that match would make arbitrary
  *   models unsubmittable.
- * - With no catalog to show — loading, errored, or an agent with no models —
- *   the popover simply never opens and the field is exactly the old free-text
- *   input.
+ * - With no catalog to show — loading or errored — the popover simply never
+ *   opens and the field is exactly the old free-text input.
  *
- * The value is the model string and nothing else: which agent CLI runs it is
- * the other half of the choice, and every form that assigns one asks for it
- * first, in an agent select next to this field. That select is what scopes the
- * catalog, through {@link agentKind} — and while it names no agent there is
- * nothing for a model to narrow, so the field is {@link disabled}. The one
- * caller that scopes nothing is the profile form's "Auto-resolve", which has
- * no CLI to offer the models of yet: it gets the catalog whole, with a heading
- * per agent (see `model-combobox.tsx`).
+ * The value is the whole choice: a qualified id, `<agent_kind>[:<model>]`,
+ * which names the agent CLI and then the model of it (see `model-ref.ts`). So
+ * there is nothing beside this field to scope it and nothing to wait for
+ * before it is worth filling in: the catalog is offered whole, grouped by
+ * agent CLI in the order the daemon probes them, each group led by that CLI on
+ * its own default model.
  */
 
 import { Popover } from "@base-ui/react/popover"
 import { Command as CommandPrimitive } from "cmdk"
 import { useMemo, useRef, useState } from "react"
 
-import type { AgentKind, ModelDto } from "@/api"
+import type { ModelDto } from "@/api"
 import {
   Command,
   CommandEmpty,
@@ -51,10 +48,8 @@ export function ModelPicker({
   value,
   onChange,
   models,
-  agentKind,
   label = "Model",
   placeholder = "Provider default",
-  disabled = false,
   invalid,
   className,
 }: {
@@ -62,19 +57,9 @@ export function ModelPicker({
   onChange: (value: string) => void
   /** The catalog, or undefined while it is loading or failed to load. */
   models: ModelDto[] | undefined
-  /**
-   * Scopes the options to one agent CLI, never the value. Undefined offers the
-   * whole catalog, which is what a form with no agent control of its own wants.
-   */
-  agentKind?: AgentKind
   /** The field's accessible name; several pickers on one form each need theirs. */
   label?: string
   placeholder?: string
-  /**
-   * Gates the field: no agent is pinned, so there is no CLI whose models this
-   * could name. The catalog stays shut with it.
-   */
-  disabled?: boolean
   invalid?: boolean
   className?: string
 }) {
@@ -84,21 +69,20 @@ export function ModelPicker({
   const navigated = useRef(false)
 
   /**
-   * The options under the current scope, grouped in the order the daemon
-   * probes the CLIs. A scoped picker gets its flat list; an unscoped one gets
-   * the union with one heading per agent, the way the CLI completion prefixes
-   * it.
+   * The catalog under one heading per agent CLI, in the order the daemon
+   * probes them, and inside each the CLI on its own default model first: the
+   * shortest id of the group is also the one a slot most often wants.
    */
   const groups = useMemo(() => {
-    const scoped = (models ?? []).filter((model) => !agentKind || model.agent_kind === agentKind)
     return AGENT_KINDS.map((kind) => ({
       kind,
-      models: scoped.filter((model) => model.agent_kind === kind),
+      models: (models ?? [])
+        .filter((model) => model.agent_kind === kind)
+        .sort((a, b) => Number(a.id.includes(":")) - Number(b.id.includes(":"))),
     })).filter((group) => group.models.length > 0)
-  }, [models, agentKind])
+  }, [models])
 
-  const canOpen = groups.length > 0 && !disabled
-  const showHeadings = agentKind === undefined
+  const canOpen = groups.length > 0
 
   function pick(id: string) {
     onChange(id)
@@ -175,7 +159,6 @@ export function ModelPicker({
           }}
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
-          disabled={disabled}
           aria-invalid={invalid ? true : undefined}
           className={cn(inputClassName, "font-mono")}
         />
@@ -200,13 +183,10 @@ export function ModelPicker({
                 <CommandList label="Models" className="max-h-72">
                   <CommandEmpty>No matching models — free text is passed as-is.</CommandEmpty>
                   {groups.map((group) => (
-                    <CommandGroup
-                      key={group.kind}
-                      heading={showHeadings ? agentKindLabel(group.kind) : undefined}
-                    >
+                    <CommandGroup key={group.kind} heading={agentKindLabel(group.kind)}>
                       {group.models.map((model) => (
                         <CommandItem
-                          key={`${group.kind}:${model.id}`}
+                          key={model.id}
                           value={model.id}
                           keywords={model.description ? [model.description] : undefined}
                           onSelect={pick}

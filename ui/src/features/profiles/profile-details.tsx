@@ -15,37 +15,34 @@ import type { ProfileDto } from "@/api"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { When } from "@/components/when"
 
-import { agentKindLabel, modelLabel, roleLabel } from "./profile-labels"
+import { modelRefLabel } from "./model-ref"
+import { roleLabel } from "./profile-labels"
 import { ProfilePrompts } from "./profile-prompts"
 import { modelsQueryOptions } from "./queries"
 
 export function ProfileDetails({ profile }: { profile: ProfileDto }) {
-  // What the pinned model can do, when the catalog knows it. A model the
-  // catalog does not list — free text, or the catalog failing to load — shows
-  // exactly as before, so nothing here waits on the request.
+  // What the pinned model can do, when the catalog knows it. The id carries
+  // the agent CLI, so it is the whole key; a model the catalog does not list —
+  // free text, or the catalog failing to load — shows exactly as before, so
+  // nothing here waits on the request.
   const models = useQuery(modelsQueryOptions())
   const catalogModel = profile.model
-    ? models.data?.find(
-        (model) =>
-          model.id === profile.model &&
-          (!profile.agent_kind || model.agent_kind === profile.agent_kind),
-      )
+    ? models.data?.find((model) => model.id === profile.model)
     : undefined
 
   return (
     <div className="flex flex-col gap-5 py-2">
       <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3">
         <Detail label="Role">{roleLabel(profile.role)}</Detail>
-        <Detail label="Agent" unset={!profile.agent_kind} hint="first installed CLI, at spawn time">
-          {agentKindLabel(profile.agent_kind)}
-        </Detail>
+        {/* One row, since one string is the whole choice: the agent CLI and,
+            after a `:`, the model of it. */}
         <Detail
           label="Model"
           unset={!profile.model}
-          hint="whatever the agent CLI uses"
+          hint="first installed CLI, at spawn time, on its own default model"
           caption={catalogModel?.description}
         >
-          <span className="font-mono">{modelLabel(profile.model)}</span>
+          <span className="font-mono">{modelRefLabel(profile.model)}</span>
         </Detail>
         <Detail label="Created">
           <When at={profile.created_at} label="created" />

@@ -55,7 +55,7 @@ const TASK: TaskDto = aTask({
   title: "Do the thing",
   branch: "do-the-thing-01task",
   engineer_profile_id: "01ENGINEER",
-  reviewers: [{ profile_id: "01REVIEWER", agent_kind: null, model: null }],
+  reviewers: [{ profile_id: "01REVIEWER", model: null }],
   goal_id: GOAL.id,
 })
 

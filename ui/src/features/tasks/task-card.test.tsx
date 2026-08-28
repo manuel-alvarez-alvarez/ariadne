@@ -9,15 +9,20 @@
  * own. So the test is Tab and read: nothing here checks that a tooltip *exists*,
  * only that pressing Tab opens one, which is the whole point of the card not
  * using `title=` (see its docblock, and `components/ui/tooltip.tsx`).
+ *
+ * The fifth thing it sometimes says is what its engineer runs on, which is on
+ * the card only where that is not what the profile behind it says — so both
+ * halves of that condition are read here, against a profile seeded next to the
+ * task.
  */
 
 import { act, cleanup, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, expect, it, vi } from "vitest"
 
-import type { TaskDto } from "@/api"
+import { type ProfileDto, qk, type TaskDto } from "@/api"
 import type { SessionAttention } from "@/features/sessions/session-display"
-import { aTask } from "@/test/fixtures"
+import { aProfile, aTask } from "@/test/fixtures"
 import { renderScreen } from "@/test/harness"
 import { TaskCard } from "./task-card"
 
@@ -44,9 +49,17 @@ const TASK: TaskDto = aTask({
  * profiles what its engineer's pin is measured against.
  */
 function mountCard(attention?: SessionAttention, task: TaskDto = TASK) {
-  renderScreen(<TaskCard task={task} attention={attention} />)
+  renderScreen(<TaskCard task={task} attention={attention} />, {
+    seed: (client) => client.setQueryData(qk.profiles.list({}), [ENGINEER]),
+  })
   return userEvent.setup()
 }
+
+/** The engineer behind the task, as it stands today. */
+const ENGINEER: ProfileDto = aProfile({
+  id: TASK.engineer_profile_id,
+  model: "claude_code:claude-opus-5",
+})
 
 /** Tabs until a tooltip is showing `text`, or runs out of stops. */
 async function tabUntilHint(user: ReturnType<typeof userEvent.setup>, text: RegExp) {
@@ -97,4 +110,16 @@ it("keeps its timestamp true as the clock moves", () => {
 
   act(() => void vi.advanceTimersByTime(4 * 60_000))
   expect(screen.getByText("5 minutes ago")).not.toBeNull()
+})
+
+it("shows the engineer's model where it is not what the profile runs on", () => {
+  mountCard(undefined, { ...TASK, model: "codex:gpt-5.3-codex" })
+
+  expect(screen.getByText("codex:gpt-5.3-codex")).toBeDefined()
+})
+
+it("says nothing where the task runs on exactly what its profile does", () => {
+  mountCard(undefined, { ...TASK, model: ENGINEER.model })
+
+  expect(screen.queryByText(ENGINEER.model as string)).toBeNull()
 })

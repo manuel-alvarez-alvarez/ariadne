@@ -40,11 +40,8 @@ import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { describeError, ROLE_LABELS } from "@/lib/format"
-import { ModelCombobox } from "./model-combobox"
+import { ModelPicker } from "./model-picker"
 import {
-  AGENT_KIND_CHOICES,
-  type AgentKindChoice,
-  AUTO_AGENT_KIND,
   changedPrompts,
   emptyProfileFormValues,
   type ProfileFormValues,
@@ -53,7 +50,7 @@ import {
   toCreateRequest,
   toUpdateRequest,
 } from "./profile-form-values"
-import { agentKindLabel, promptKindLabel, ROLES } from "./profile-labels"
+import { promptKindLabel, ROLES } from "./profile-labels"
 import { ProfilePromptsField, replacePrompt, type SavedState } from "./profile-prompts-field"
 import {
   modelsQueryOptions,
@@ -102,9 +99,8 @@ export function ProfileFormDialog({
   const seededFrom = useRef<string | null>(null)
 
   const model = watch("model")
-  const agentKind = watch("agentKind")
 
-  // The catalog behind the model combobox. Only asked for while the dialog is
+  // The catalog behind the model picker. Only asked for while the dialog is
   // up, and allowed to fail: an undefined catalog leaves the field free-text.
   const models = useQuery({ ...modelsQueryOptions(), enabled: open })
 
@@ -167,7 +163,7 @@ export function ProfileFormDialog({
       try {
         const updated = await updateProfile.mutateAsync({
           id: target.id,
-          body: withoutUnchangedSystemPrompt(body, saved.current.profile),
+          body: withoutUnchangedFields(body, saved.current.profile),
         })
         saved.current.profile = body
         setSystemIsDefault(updated.system_prompt_is_default)
@@ -273,57 +269,45 @@ export function ProfileFormDialog({
               </FieldDescription>
             </Field>
 
-            <Field>
-              <FieldLabel htmlFor="profile-agent">Agent</FieldLabel>
-              <FormSelect
-                control={control}
-                name="agentKind"
-                id="profile-agent"
-                options={AGENT_KIND_CHOICES.map((value) => ({
-                  label: agentKindChoiceLabel(value),
-                  value,
-                }))}
-              />
-              <FieldDescription>
-                {agentKind === AUTO_AGENT_KIND
-                  ? "The first installed CLI, resolved at spawn time."
-                  : "Pinned: spawning fails if this CLI is not installed."}
-              </FieldDescription>
+            <Field data-invalid={formState.errors.model ? true : undefined}>
+              {/* No htmlFor: cmdk owns its input's id and names it "Model"
+                  itself, through the hidden label its aria-labelledby points at. */}
+              <FieldLabel>Model</FieldLabel>
+              <div className="flex items-center gap-2">
+                <Controller
+                  control={control}
+                  name="model"
+                  render={({ field }) => (
+                    <ModelPicker
+                      value={field.value}
+                      onChange={field.onChange}
+                      models={models.data}
+                      invalid={formState.errors.model ? true : undefined}
+                      placeholder="auto — first installed CLI"
+                    />
+                  )}
+                />
+                {model.trim().length > 0 ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setValue("model", "", { shouldDirty: true })}
+                  >
+                    Use auto
+                  </Button>
+                ) : null}
+              </div>
+              {formState.errors.model ? (
+                <FieldError errors={[formState.errors.model]} />
+              ) : (
+                <FieldDescription>
+                  The agent CLI and, after a <code>:</code>, the model of it. Empty is auto: the
+                  first installed CLI, on its own default model.
+                </FieldDescription>
+              )}
             </Field>
           </div>
-
-          <Field>
-            {/* No htmlFor: cmdk owns its input's id and names it "Model"
-                  itself, through the hidden label its aria-labelledby points at. */}
-            <FieldLabel>Model</FieldLabel>
-            <div className="flex items-center gap-2">
-              <Controller
-                control={control}
-                name="model"
-                render={({ field }) => (
-                  <ModelCombobox
-                    value={field.value}
-                    onChange={field.onChange}
-                    agentKind={agentKind}
-                    models={models.data}
-                  />
-                )}
-              />
-              {model.trim().length > 0 ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setValue("model", "", { shouldDirty: true })}
-                >
-                  Use default
-                </Button>
-              ) : null}
-            </div>
-            <FieldDescription>
-              Passed to the agent CLI as-is. Empty means the provider default.
-            </FieldDescription>
-          </Field>
 
           <ProfilePromptsField
             key={promptsKey}
@@ -345,10 +329,6 @@ export function ProfileFormDialog({
   )
 }
 
-function agentKindChoiceLabel(choice: AgentKindChoice): string {
-  return choice === AUTO_AGENT_KIND ? "Auto-resolve" : agentKindLabel(choice)
-}
-
 /**
  * Whether an update would be a no-op.
  *
@@ -360,18 +340,32 @@ function sameProfileBody(saved: UpdateProfileRequest | null, next: UpdateProfile
 }
 
 /**
- * The body with its system prompt left out when it is the text the daemon last
- * answered with — which the daemon reads as "leave it alone".
+ * The body with every field that still holds what was last stored left out —
+ * which the daemon reads as "leave it alone".
  *
- * The box holds the prompt that takes effect, and after a restore that is the
- * role's default. Sending it back with the next change of a name would store
- * the default as this profile's own text and quietly undo the restore.
+ * `UpdateProfileRequest` is a partial update, and both of these fields are
+ * boxes that always hold *something*: an untouched one would otherwise be
+ * written back on every save.
+ *
+ * For the model that is a stale overwrite waiting to happen — the box holds a
+ * qualified id, or the empty string this module turns into the "back on auto"
+ * sentinel, so a name edited on its own would re-pin the profile to whatever
+ * the box was seeded with and undo a model changed from the CLI or another
+ * window meanwhile.
+ *
+ * For the system prompt it is sharper still: the box holds the prompt that
+ * takes effect, and after a restore that is the role's default. Sending it back
+ * with the next change of a name would store the default as this profile's own
+ * text and quietly undo the restore.
  */
-function withoutUnchangedSystemPrompt(
+function withoutUnchangedFields(
   body: UpdateProfileRequest,
   saved: UpdateProfileRequest | null,
 ): UpdateProfileRequest {
-  return saved && body.system_prompt === saved.system_prompt
-    ? { ...body, system_prompt: undefined }
-    : body
+  if (!saved) return body
+  return {
+    ...body,
+    model: body.model === saved.model ? undefined : body.model,
+    system_prompt: body.system_prompt === saved.system_prompt ? undefined : body.system_prompt,
+  }
 }

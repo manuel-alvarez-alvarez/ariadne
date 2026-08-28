@@ -3,13 +3,13 @@
 /**
  * The profile dialog against a stubbed daemon.
  *
- * The model combobox is rendered rather than unit-tested because what matters
- * is the interplay: the catalog list is a convenience bolted onto a free-text
+ * The model picker is rendered rather than unit-tested because what matters is
+ * the interplay: the catalog list is a convenience bolted onto a free-text
  * field, and every test here is one of the ways that must not curdle — a pick
  * must land in the field, typed text must survive to the request untouched,
- * clearing must fall back to the daemon's `default` sentinel, and a dead
- * catalog endpoint must leave the field a plain input rather than a broken
- * combobox.
+ * a model naming no agent CLI must be refused before the request, clearing must
+ * fall back to the daemon's `default` sentinel, and a dead catalog endpoint
+ * must leave the field a plain input rather than a broken combobox.
  *
  * The prompt stack inside this dialog has its own file, next to the field it
  * is: `profile-prompts-field.test.tsx`.
@@ -29,7 +29,7 @@ const STAMP = "2026-01-01T00:00:00Z"
 const PROFILE: ProfileDto = aProfile({
   id: "01JPROF000000000000000ENG",
   name: "Builder",
-  model: "claude-opus-5",
+  model: "claude_code:claude-opus-5",
   system_prompt: "Stored system prompt.",
 })
 
@@ -61,9 +61,21 @@ const STORED_PROMPTS: ProfilePromptDto[] = [
 
 /** A slice of the daemon's curated catalog, two agents wide. */
 const CATALOG: ModelDto[] = [
-  { id: "claude-fable-5", agent_kind: "claude_code", description: "Frontier: highest capability" },
-  { id: "claude-opus-5", agent_kind: "claude_code", description: "Opus tier: deep analysis" },
-  { id: "gpt-5.5-codex", agent_kind: "codex", description: "Frontier reasoning: agentic loops" },
+  {
+    id: "claude_code:claude-fable-5",
+    agent_kind: "claude_code",
+    description: "Frontier: highest capability",
+  },
+  {
+    id: "claude_code:claude-opus-5",
+    agent_kind: "claude_code",
+    description: "Opus tier: deep analysis",
+  },
+  {
+    id: "codex:gpt-5.5-codex",
+    agent_kind: "codex",
+    description: "Frontier reasoning: agentic loops",
+  },
 ]
 
 interface Recorded {
@@ -179,7 +191,7 @@ beforeEach(() => {
   stubDaemon()
 })
 
-describe("the model combobox", () => {
+describe("the model picker", () => {
   it("lists the catalog with descriptions on click, and a pick fills the field", async () => {
     const user = userEvent.setup()
     renderDialog(null)
@@ -188,14 +200,14 @@ describe("the model combobox", () => {
     await user.click(box)
     const options = await listbox()
 
-    // With Auto-resolve selected the union is grouped, one heading per agent.
+    // The catalog whole, grouped one heading per agent CLI.
     expect(within(options).getByText("Claude Code")).toBeDefined()
     expect(within(options).getByText("Codex")).toBeDefined()
     expect(within(options).getByText("Opus tier: deep analysis")).toBeDefined()
 
-    await user.click(within(options).getByText("claude-opus-5"))
+    await user.click(within(options).getByText("claude_code:claude-opus-5"))
 
-    expect(box.value).toBe("claude-opus-5")
+    expect(box.value).toBe("claude_code:claude-opus-5")
     await waitFor(() => {
       expect(screen.queryByRole("listbox", { name: "Models" })).toBeNull()
     })
@@ -210,9 +222,9 @@ describe("the model combobox", () => {
     const options = await listbox()
 
     await waitFor(() => {
-      expect(within(options).queryByText("claude-fable-5")).toBeNull()
+      expect(within(options).queryByText("claude_code:claude-fable-5")).toBeNull()
     })
-    expect(within(options).getByText("claude-opus-5")).toBeDefined()
+    expect(within(options).getByText("claude_code:claude-opus-5")).toBeDefined()
   })
 
   it("filters while typing and picks with the keyboard", async () => {
@@ -220,36 +232,16 @@ describe("the model combobox", () => {
     renderDialog(null)
     const box = await modelBox()
 
-    await user.type(box, "codex")
+    await user.type(box, "gpt-5.5")
     const options = await listbox()
     await waitFor(() => {
-      expect(within(options).queryByText("claude-fable-5")).toBeNull()
+      expect(within(options).queryByText("claude_code:claude-fable-5")).toBeNull()
     })
-    expect(within(options).getByText("gpt-5.5-codex")).toBeDefined()
+    expect(within(options).getByText("codex:gpt-5.5-codex")).toBeDefined()
 
     await user.keyboard("{ArrowDown}{Enter}")
 
-    expect(box.value).toBe("gpt-5.5-codex")
-  })
-
-  it("re-scopes the options to the agent choice without touching the value", async () => {
-    const user = userEvent.setup()
-    renderDialog(null)
-    const box = await modelBox()
-    await user.type(box, "kept-as-typed")
-
-    await user.click(screen.getByRole("combobox", { name: "Agent" }))
-    await user.click(await screen.findByRole("option", { name: "Codex" }))
-
-    expect(box.value).toBe("kept-as-typed")
-
-    await user.click(box)
-    const options = await listbox()
-    // The filter still applies ("kept-as-typed" matches nothing), so widen it.
-    await user.clear(box)
-    expect(within(options).getByText("gpt-5.5-codex")).toBeDefined()
-    expect(within(options).queryByText("claude-opus-5")).toBeNull()
-    expect(within(options).queryByText("Codex")).toBeNull() // no heading when pinned
+    expect(box.value).toBe("codex:gpt-5.5-codex")
   })
 
   it("sends typed free text as the model, matched by nothing in the catalog", async () => {
@@ -257,23 +249,35 @@ describe("the model combobox", () => {
     renderDialog(null)
 
     await user.type(screen.getByLabelText("Name"), "custom")
-    await user.type(await modelBox(), "my-weird-model")
+    await user.type(await modelBox(), "opencode:my-weird-model")
     await user.type(screen.getByLabelText("System prompt"), "Do things.")
     await user.click(screen.getByRole("button", { name: "Create profile" }))
 
     await waitFor(() => {
       expect(lastRequest("POST", "/v1/profiles")).toBeDefined()
     })
-    expect(lastRequest("POST", "/v1/profiles")?.body?.model).toBe("my-weird-model")
+    expect(lastRequest("POST", "/v1/profiles")?.body?.model).toBe("opencode:my-weird-model")
   })
 
-  it("clears back to the provider default, which the update spells as its sentinel", async () => {
+  it("refuses a model that names no agent CLI, before the daemon is asked", async () => {
+    const user = userEvent.setup()
+    renderDialog(null)
+
+    await user.type(screen.getByLabelText("Name"), "custom")
+    await user.type(await modelBox(), "claude-opus-5")
+    await user.click(screen.getByRole("button", { name: "Create profile" }))
+
+    expect(await screen.findByText(/claude_code:claude-opus-5/)).toBeDefined()
+    expect(lastRequest("POST", "/v1/profiles")).toBeUndefined()
+  })
+
+  it("clears back to auto, which the update spells as its sentinel", async () => {
     const user = userEvent.setup()
     renderDialog(PROFILE)
     const box = await modelBox()
-    expect(box.value).toBe("claude-opus-5")
+    expect(box.value).toBe("claude_code:claude-opus-5")
 
-    await user.click(screen.getByRole("button", { name: "Use default" }))
+    await user.click(screen.getByRole("button", { name: "Use auto" }))
     expect(box.value).toBe("")
 
     await user.click(screen.getByRole("button", { name: "Save changes" }))
@@ -284,6 +288,45 @@ describe("the model combobox", () => {
     expect(lastRequest("PUT", `/v1/profiles/${PROFILE.id}`)?.body?.model).toBe("default")
   })
 
+  it("says nothing about a model nobody touched, so a rename cannot re-pin it", async () => {
+    const user = userEvent.setup()
+    renderDialog(PROFILE)
+    // The box holds the profile's pin, as it does on every open — and that is
+    // exactly what must not travel: `PUT` is a partial update, so re-sending it
+    // would overwrite a model moved from the CLI or another window meanwhile.
+    expect((await modelBox()).value).toBe("claude_code:claude-opus-5")
+
+    await user.type(screen.getByLabelText("Name"), "-renamed")
+    await user.click(screen.getByRole("button", { name: "Save changes" }))
+
+    const request = await waitFor(() => {
+      const sent = lastRequest("PUT", `/v1/profiles/${PROFILE.id}`)
+      if (!sent) throw new Error("nothing written yet")
+      return sent
+    })
+    expect(request.body?.name).toBe("Builder-renamed")
+    expect(request.body).not.toHaveProperty("model")
+  })
+
+  it("sends a model that was changed, beside the name it was changed with", async () => {
+    const user = userEvent.setup()
+    renderDialog(PROFILE)
+    await waitFor(async () => expect((await modelBox()).value).toBe("claude_code:claude-opus-5"))
+
+    await user.type(screen.getByLabelText("Name"), "-renamed")
+    await user.clear(await modelBox())
+    await user.type(await modelBox(), "codex:gpt-5.5-codex")
+    await user.click(screen.getByRole("button", { name: "Save changes" }))
+
+    await waitFor(() => {
+      expect(lastRequest("PUT", `/v1/profiles/${PROFILE.id}`)).toBeDefined()
+    })
+    expect(lastRequest("PUT", `/v1/profiles/${PROFILE.id}`)?.body).toMatchObject({
+      name: "Builder-renamed",
+      model: "codex:gpt-5.5-codex",
+    })
+  })
+
   it("degrades to a plain free-text field when the catalog cannot be fetched", async () => {
     const user = userEvent.setup()
     stubDaemon({ models: "error" })
@@ -292,9 +335,9 @@ describe("the model combobox", () => {
 
     // No catalog: clicking and typing open nothing, and saving still works.
     await user.click(box)
-    await user.type(box, "still-typable")
+    await user.type(box, "codex:still-typable")
     expect(screen.queryByRole("listbox", { name: "Models" })).toBeNull()
-    expect(box.value).toBe("still-typable")
+    expect(box.value).toBe("codex:still-typable")
 
     await user.type(screen.getByLabelText("Name"), "offline")
     await user.type(screen.getByLabelText("System prompt"), "Do things.")
@@ -303,7 +346,7 @@ describe("the model combobox", () => {
     await waitFor(() => {
       expect(lastRequest("POST", "/v1/profiles")).toBeDefined()
     })
-    expect(lastRequest("POST", "/v1/profiles")?.body?.model).toBe("still-typable")
+    expect(lastRequest("POST", "/v1/profiles")?.body?.model).toBe("codex:still-typable")
   })
 })
 

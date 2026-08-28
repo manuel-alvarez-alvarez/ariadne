@@ -30,7 +30,7 @@ const STAMP = "2026-01-01T00:00:00Z"
 const PROFILE: ProfileDto = aProfile({
   id: "01JPROF000000000000000ENG",
   name: "Builder",
-  model: "claude-opus-5",
+  model: "claude_code:claude-opus-5",
   system_prompt: "Stored system prompt.",
 })
 
@@ -62,9 +62,21 @@ const STORED_PROMPTS: ProfilePromptDto[] = [
 
 /** A slice of the daemon's curated catalog, two agents wide. */
 const CATALOG: ModelDto[] = [
-  { id: "claude-fable-5", agent_kind: "claude_code", description: "Frontier: highest capability" },
-  { id: "claude-opus-5", agent_kind: "claude_code", description: "Opus tier: deep analysis" },
-  { id: "gpt-5.5-codex", agent_kind: "codex", description: "Frontier reasoning: agentic loops" },
+  {
+    id: "claude_code:claude-fable-5",
+    agent_kind: "claude_code",
+    description: "Frontier: highest capability",
+  },
+  {
+    id: "claude_code:claude-opus-5",
+    agent_kind: "claude_code",
+    description: "Opus tier: deep analysis",
+  },
+  {
+    id: "codex:gpt-5.5-codex",
+    agent_kind: "codex",
+    description: "Frontier reasoning: agentic loops",
+  },
 ]
 
 interface Recorded {

@@ -116,7 +116,7 @@ export function buildPaletteEntries({
       value: `${profile.name} ${shortId(profile.id)}`,
       label: profile.name,
       detail: roleLabel(profile.role),
-      keywords: [profile.id, profile.role, profile.agent_kind ?? "", profile.model ?? ""],
+      keywords: [profile.id, profile.role, profile.model ?? ""],
       // The one entity with no panel of its own: the screen expands its row,
       // so the pick is carried there rather than dropped at `/profiles`.
       target: { kind: "page", path: paths.profile(profile.id) },

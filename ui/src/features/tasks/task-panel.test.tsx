@@ -3,16 +3,16 @@
 /**
  * What the panel says a task's agents run on.
  *
- * A profile is editable and a task is not: the agent CLI and the model land on
- * the task and on each reviewer slot when the task is created, and that is what
- * the daemon launches from. The panel used to render the profile's live values
+ * A profile is editable and a task is not: what each slot runs on lands on the
+ * task and on each reviewer slot when the task is created, and that is what the
+ * daemon launches from. The panel used to render the profile's live value
  * instead, so the one moment the question matters — somebody moved the profile
  * onto another model — was the moment the panel lied about work already under
  * way.
  *
  * So both rows are read here against profiles that have since moved, including
- * the two reviewer slots that share nothing but their order, and the pin that
- * says `auto · default` rather than borrowing the profile's answer.
+ * the two reviewer slots that share nothing but their order, and the slot with
+ * no pin, which says `auto` rather than borrowing the profile's answer.
  *
  * The pull request row is here because it exists only sometimes.
  *
@@ -43,8 +43,7 @@ const PROFILES: ProfileDto[] = [
     id: ENGINEER,
     name: "Builder",
     role: "engineer",
-    agent_kind: "opencode",
-    model: "grok-4",
+    model: "opencode:grok-4",
     system_prompt: "",
     system_prompt_is_default: false,
     created_at: "2026-01-01T00:00:00Z",
@@ -54,8 +53,7 @@ const PROFILES: ProfileDto[] = [
     id: STRICT,
     name: "Strict",
     role: "reviewer",
-    agent_kind: "opencode",
-    model: "grok-4",
+    model: "opencode:grok-4",
     system_prompt: "",
     system_prompt_is_default: false,
     created_at: "2026-01-01T00:00:00Z",
@@ -65,8 +63,7 @@ const PROFILES: ProfileDto[] = [
     id: AUTO,
     name: "Second",
     role: "reviewer",
-    agent_kind: "opencode",
-    model: "grok-4",
+    model: "opencode:grok-4",
     system_prompt: "",
     system_prompt_is_default: false,
     created_at: "2026-01-01T00:00:00Z",
@@ -84,13 +81,12 @@ const TASK: TaskDto = {
   branch: "surface-the-pins-000001",
   depends_on: [],
   engineer_profile_id: ENGINEER,
-  agent_kind: "codex",
-  model: "gpt-5",
+  model: "codex:gpt-5",
   reviewers: [
-    { profile_id: STRICT, agent_kind: "claude_code", model: "claude-sonnet-5" },
-    // Assigned on auto, with no model: the agent CLI is resolved at spawn time
+    { profile_id: STRICT, model: "claude_code:claude-sonnet-5" },
+    // Assigned with no model at all: the agent CLI is resolved at spawn time
     // and it takes that CLI's default. A pin like any other.
-    { profile_id: AUTO, agent_kind: null, model: null },
+    { profile_id: AUTO, model: null },
   ],
   review_round: 0,
   stalled: false,
@@ -149,7 +145,7 @@ it("shows the engineer's pin, not what its profile says today", () => {
   mount()
 
   expect(fact("Engineer")).toContain("Builder")
-  expect(fact("Engineer")).toContain("Codex · gpt-5")
+  expect(fact("Engineer")).toContain("codex:gpt-5")
   expect(fact("Engineer")).not.toContain("grok-4")
 })
 
@@ -157,9 +153,9 @@ it("shows each reviewer slot's own pin, in review order", () => {
   mount()
 
   const reviewers = fact("Reviewers")
-  expect(reviewers).toContain("Strict · Claude Code · claude-sonnet-5")
-  // Both reviewer profiles now say `opencode · grok-4`; the slots do not.
-  expect(reviewers).toContain("Second · auto · default")
+  expect(reviewers).toContain("Strict · claude_code:claude-sonnet-5")
+  // Both reviewer profiles now say `opencode:grok-4`; the slots do not.
+  expect(reviewers).toContain("Second · auto")
   expect(reviewers).not.toContain("grok-4")
 })
 

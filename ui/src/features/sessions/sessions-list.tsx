@@ -7,7 +7,7 @@
  * screen turns the pick into a link of its own.
  *
  * Six columns in a panel, because the table has to fit a 48rem one as well as
- * a full screen without scrolling sideways: the agent kind and the model ride
+ * a full screen without scrolling sideways: what the agent runs on rides
  * along with the profile, the review round with the role, and the end of the
  * session with its last activity — the last two in the hint behind the cell,
  * where they were worth a column each only for the sessions that have them.
@@ -52,6 +52,7 @@ import { When, WhenDetail } from "@/components/when"
 // barrel: `@/features/tasks` re-exports the task panel, whose sessions tab is
 // this very component, and the round trip is an import cycle.
 import { goalsQueryOptions } from "@/features/goals/queries"
+import { formatModelRef } from "@/features/profiles/model-ref"
 import { ProfileSummary } from "@/features/profiles/profile-summary"
 import { taskListQueryOptions } from "@/features/tasks/queries"
 import { sessionCopyEntries } from "@/lib/clipboard"
@@ -248,11 +249,15 @@ function SessionRow({
           </Tooltip>
         ) : null}
       </TableCell>
-      {/* The agent kind and the model ride along with the name: which CLI and
-          which model an agent is running is what the column is read for, and
-          they were a `title=` nobody hovers. */}
+      {/* What the agent runs on rides along with the name: which CLI and which
+          model of it is what the column is read for, and it was a `title=`
+          nobody hovers. A session keeps the two apart, so the id the badge
+          takes is composed here. */}
       <TableCell className="max-w-56 text-xs">
-        <ProfileSummary profileId={session.profile_id} pinned={session} />
+        <ProfileSummary
+          profileId={session.profile_id}
+          model={formatModelRef(session.agent_kind, session.model)}
+        />
       </TableCell>
       {/* The reason rides in the status cell rather than taking a seventh
           column: it is empty for almost every row, and where it is not it is

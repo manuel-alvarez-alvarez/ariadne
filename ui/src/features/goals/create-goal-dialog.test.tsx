@@ -18,9 +18,10 @@
  * left behind.
  *
  * What the planner runs on is the other field with a rule of its own, and it
- * is asked for agent first: the agent CLI is on the wire when it was picked,
- * the model only beside it, and neither when nothing was picked — which is
- * what runs the planner on its profile's own.
+ * is one: a model that names the agent CLI running it, on the wire when it was
+ * filled in and left out entirely when it was not — which is what runs the
+ * planner on its profile's own. A model naming no CLI never reaches the
+ * daemon: the field refuses it first.
  */
 
 import { screen, waitFor, within } from "@testing-library/react"
@@ -46,8 +47,16 @@ const ARIADNE: RepositoryDto = aRepository({
 
 /** Two agents' worth of catalog, which the picker offers whole. */
 const CATALOG: ModelDto[] = [
-  { id: "claude-opus-5", agent_kind: "claude_code", description: "Opus tier: deep analysis" },
-  { id: "gpt-5.3-codex", agent_kind: "codex", description: "Frontier reasoning: agentic loops" },
+  {
+    id: "claude_code:claude-opus-5",
+    agent_kind: "claude_code",
+    description: "Opus tier: deep analysis",
+  },
+  {
+    id: "codex:gpt-5.3-codex",
+    agent_kind: "codex",
+    description: "Frontier reasoning: agentic loops",
+  },
 ]
 
 const SANDBOX: RepositoryDto = aRepository({
@@ -63,7 +72,6 @@ interface Recorded {
   body: {
     repository_ids?: string[]
     title?: string
-    agent_kind?: string
     model?: string
   } | null
 }
@@ -291,9 +299,9 @@ describe("dismissing the dialog", () => {
 })
 
 /**
- * The planner is pinned agent first: the CLI is the choice, and the model
- * narrows it to one of that CLI's own — so the box is worth nothing until an
- * agent is named, and neither field is a value the daemon would take empty.
+ * The planner is pinned with one field, whose value carries the agent CLI: it
+ * goes on the wire as typed or picked, and an empty box is left out rather
+ * than sent empty.
  */
 describe("choosing what the planner runs on", () => {
   /** Fills the required fields, so the submit is about the pin alone. */
@@ -304,76 +312,58 @@ describe("choosing what the planner runs on", () => {
     await user.keyboard("{Escape}")
   }
 
-  /** The model field, which the agent select above it gates. */
+  /** The one field the choice is made in, catalog and all. */
   async function modelBox(): Promise<HTMLInputElement> {
     return (await screen.findByRole("combobox", { name: "Planner model" })) as HTMLInputElement
   }
 
-  /** Picks one of the agent CLIs, or puts the select back on the profile's. */
-  async function pickAgent(user: ReturnType<typeof userEvent.setup>, label: string) {
-    await user.click(await screen.findByLabelText("Planner agent"))
-    await user.click(await screen.findByRole("option", { name: label }))
-  }
-
-  it("keeps the model box shut until an agent is picked", async () => {
+  it("offers the catalog whole, grouped by the agent CLI each model runs on", async () => {
     const user = userEvent.setup()
     renderDialog()
 
-    expect((await modelBox()).disabled).toBe(true)
-
-    await pickAgent(user, "Codex")
-
-    expect((await modelBox()).disabled).toBe(false)
-  })
-
-  it("offers the picked agent's models and no others", async () => {
-    const user = userEvent.setup()
-    renderDialog()
-
-    await pickAgent(user, "Codex")
     await user.click(await modelBox())
 
     const models = await screen.findByRole("listbox", { name: "Models" })
-    expect(within(models).getByText("gpt-5.3-codex")).toBeDefined()
-    expect(within(models).queryByText("claude-opus-5")).toBeNull()
+    expect(within(models).getByText("Codex")).toBeDefined()
+    expect(within(models).getByText("codex:gpt-5.3-codex")).toBeDefined()
+    expect(within(models).getByText("Claude Code")).toBeDefined()
+    expect(within(models).getByText("claude_code:claude-opus-5")).toBeDefined()
   })
 
-  it("sends the agent alone when its box was left empty", async () => {
+  it("sends the picked id, which names the CLI and the model together", async () => {
     const user = userEvent.setup()
     renderDialog()
 
     await fillRequired(user)
-    await pickAgent(user, "Codex")
-    await user.click(screen.getByRole("button", { name: "Create goal" }))
-
-    await waitFor(() => {
-      expect(lastWrite()).toBeDefined()
-    })
-    expect(lastWrite()?.body?.agent_kind).toBe("codex")
-    expect(lastWrite()?.body).not.toHaveProperty("model")
-  })
-
-  it("sends the model beside the agent it was picked under", async () => {
-    const user = userEvent.setup()
-    renderDialog()
-
-    await fillRequired(user)
-    // A codex model on the claude_code Planner profile: the pin is the slot's,
-    // not the profile's.
-    await pickAgent(user, "Codex")
+    // A codex model on the Planner profile: the pin is the slot's, not the
+    // profile's.
     await user.click(await modelBox())
     const models = await screen.findByRole("listbox", { name: "Models" })
-    await user.click(within(models).getByText("gpt-5.3-codex"))
+    await user.click(within(models).getByText("codex:gpt-5.3-codex"))
 
     await user.click(screen.getByRole("button", { name: "Create goal" }))
 
     await waitFor(() => {
       expect(lastWrite()).toBeDefined()
     })
-    expect(lastWrite()?.body).toMatchObject({ agent_kind: "codex", model: "gpt-5.3-codex" })
+    expect(lastWrite()?.body).toMatchObject({ model: "codex:gpt-5.3-codex" })
   })
 
-  it("sends neither when the planner is left on its profile's own", async () => {
+  it("sends an agent CLI on its own, which is that CLI's own default model", async () => {
+    const user = userEvent.setup()
+    renderDialog()
+
+    await fillRequired(user)
+    await user.type(await modelBox(), "codex")
+    await user.click(screen.getByRole("button", { name: "Create goal" }))
+
+    await waitFor(() => {
+      expect(lastWrite()).toBeDefined()
+    })
+    expect(lastWrite()?.body?.model).toBe("codex")
+  })
+
+  it("sends no model when the planner is left on its profile's own", async () => {
     const user = userEvent.setup()
     renderDialog()
 
@@ -383,7 +373,18 @@ describe("choosing what the planner runs on", () => {
     await waitFor(() => {
       expect(lastWrite()).toBeDefined()
     })
-    expect(lastWrite()?.body).not.toHaveProperty("agent_kind")
     expect(lastWrite()?.body).not.toHaveProperty("model")
+  })
+
+  it("refuses a model that names no agent CLI, before the daemon is asked", async () => {
+    const user = userEvent.setup()
+    renderDialog()
+
+    await fillRequired(user)
+    await user.type(await modelBox(), "claude-opus-5")
+    await user.click(screen.getByRole("button", { name: "Create goal" }))
+
+    expect(await screen.findByText(/claude_code:claude-opus-5/)).toBeDefined()
+    expect(lastWrite()).toBeUndefined()
   })
 })

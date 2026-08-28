@@ -294,9 +294,12 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Model candidates per agent CLI: curated catalogs for claude_code and
-         *     codex, live discovery (`opencode models`) for opencode. Without `agent`,
-         *     the union for all agents.
+         * Everything an agent can be pinned to, `<agent_kind>[:<model>]` apiece:
+         *     each agent CLI on its own — that CLI on its own default model — and
+         *     then the models of it, curated for claude_code and codex, discovered
+         *     live (`opencode models`) for opencode.
+         * @description The union always, and grouped by agent CLI: a model is chosen by one
+         *     string that carries its CLI, so nothing scopes this catalog any more.
          */
         get: operations["models_list"];
         put?: never;
@@ -927,7 +930,6 @@ export interface components {
             version?: string | null;
         };
         CreateGoalRequest: {
-            agent_kind?: null | components["schemas"]["AgentKind"];
             description?: string;
             /**
              * Format: int64
@@ -935,10 +937,13 @@ export interface components {
              */
             max_tasks?: number | null;
             /**
-             * @description Model the planner runs on, on the agent named by `agent_kind`; omitted
-             *     (or "default") = that CLI's own default model. Free text, handed to the
-             *     CLI as typed. A model without an `agent_kind` is refused: the agent is
-             *     the choice, the model narrows it.
+             * @description What the planner runs on, `<agent_kind>[:<model>]` — the agent CLI and,
+             *     after a `:`, the model of it: `codex`, `codex:gpt-5.3-codex`,
+             *     `opencode:ollama/llama3:8b`. The model half is free text, handed to
+             *     that CLI as typed; an agent CLI on its own runs it on its own default
+             *     model, and a string naming no agent CLI is refused. Omitted (or
+             *     "default") = the planner profile's own model, as it stands now.
+             * @example codex:gpt-5.3-codex
              */
             model?: string | null;
             /** @description Planner profile id or unique name. */
@@ -963,7 +968,14 @@ export interface components {
             to?: string | null;
         };
         CreateProfileRequest: {
-            agent_kind?: null | components["schemas"]["AgentKind"];
+            /**
+             * @description What this profile runs on, `<agent_kind>[:<model>]` — the agent CLI
+             *     and, after a `:`, the model of it: `codex`, `codex:gpt-5.3-codex`,
+             *     `opencode:ollama/llama3:8b`. A string naming no agent CLI is refused.
+             *     Omitted (or "default") = auto: the first installed agent CLI at spawn
+             *     time, on its own default model.
+             * @example codex:gpt-5.3-codex
+             */
             model?: string | null;
             /** @example rust-engineer */
             name: string;
@@ -995,15 +1007,16 @@ export interface components {
             verdict: components["schemas"]["ReviewVerdict"];
         };
         CreateTaskRequest: {
-            agent_kind?: null | components["schemas"]["AgentKind"];
             /** @description Task ids this task depends on. */
             depends_on?: string[];
             description?: string;
             /** @description Engineer profile id or unique name. */
             engineer_profile: string;
             /**
-             * @description Model the engineer runs on there; omitted (or "default") = that CLI's
-             *     own default model. A model without an `agent_kind` is refused.
+             * @description What the engineer runs on, `<agent_kind>[:<model>]`; omitted (or
+             *     "default") = the engineer profile's own model. Resolved the way
+             *     [`ReviewerAssignment::model`] is.
+             * @example codex:gpt-5.3-codex
              */
             model?: string | null;
             /**
@@ -1124,7 +1137,6 @@ export interface components {
             summary: string;
         };
         GoalDto: {
-            agent_kind?: null | components["schemas"]["AgentKind"];
             created_at: string;
             description: string;
             id: string;
@@ -1134,8 +1146,13 @@ export interface components {
              */
             max_tasks?: number | null;
             /**
-             * @description Model the planner runs on, pinned alongside `agent_kind`. None = the
-             *     agent CLI's own default model.
+             * @description What the planner runs on, `<agent_kind>[:<model>]`: the agent CLI and,
+             *     after a `:`, the model of it (`codex`, `claude_code:claude-opus-5`).
+             *     Pinned when the goal was created, from the model chosen for it or,
+             *     where none was, from the planner profile — editing the profile
+             *     afterwards leaves it alone. None = auto: the first installed CLI,
+             *     resolved at spawn time, on its own default model.
+             * @example claude_code:claude-opus-5
              */
             model?: string | null;
             planner_profile_id: string;
@@ -1242,13 +1259,21 @@ export interface components {
             /** @description That profile's name, unless the profile is gone. */
             profile_name?: string | null;
         };
-        /** @description One model an agent CLI can run, as served by `GET /v1/models`. */
+        /**
+         * @description One thing an agent can be pinned to, as served by `GET /v1/models`: an
+         *     agent CLI on a model of it (`claude_code:claude-fable-5`), or an agent CLI
+         *     on its own, which is that CLI on its own default model.
+         *
+         *     The id is what a request writes as its `model`, whole. `agent_kind` is the
+         *     same fact taken apart, so a picker can group the catalog by CLI without
+         *     parsing anything.
+         */
         ModelDto: {
-            /** @description The agent CLI this model belongs to. */
+            /** @description The agent CLI this entry runs on. */
             agent_kind: components["schemas"]["AgentKind"];
             /** @description One-line capability summary (absent for discovered opencode models). */
             description?: string | null;
-            /** @example claude-fable-5 */
+            /** @example claude_code:claude-fable-5 */
             id: string;
         };
         /** @description A file or directory the daemon depends on. */
@@ -1265,9 +1290,15 @@ export interface components {
             writable: boolean;
         };
         ProfileDto: {
-            agent_kind?: null | components["schemas"]["AgentKind"];
             created_at: string;
             id: string;
+            /**
+             * @description What this profile runs on, `<agent_kind>[:<model>]`: the agent CLI and,
+             *     after a `:`, the model of it. None = auto: the first installed agent
+             *     CLI (claude_code, then codex, then opencode), resolved at spawn time,
+             *     on its own default model.
+             * @example claude_code:claude-opus-5
+             */
             model?: string | null;
             name: string;
             role: components["schemas"]["Role"];
@@ -1382,17 +1413,17 @@ export interface components {
         /**
          * @description One reviewer of a task: the profile that reviews, and what it is to run on.
          *
-         *     The agent CLI is the choice and the model narrows it: an `agent_kind` alone
-         *     runs that CLI on its own default model, an `agent_kind` with a `model` pins
-         *     both, and a `model` with no `agent_kind` is refused — nothing here derives
-         *     one from the other. Omitted, the slot takes the profile's own agent and
-         *     model as they stand when it is assigned.
+         *     The model is written `<agent_kind>[:<model>]`: the agent CLI on its own
+         *     runs it on its own default model, an agent with a model after the `:` pins
+         *     both, and a string naming no agent CLI is refused — nothing here derives
+         *     one from the other. Omitted, the slot takes the profile's own model as it
+         *     stands when the slot is assigned.
          */
         ReviewerAssignment: {
-            agent_kind?: null | components["schemas"]["AgentKind"];
             /**
-             * @description Model it runs on there; omitted (or "default") = the CLI's own default
-             *     model. Free text, handed to the CLI as typed.
+             * @description What this reviewer runs on, `<agent_kind>[:<model>]`; omitted (or
+             *     "default") = the profile's own.
+             * @example codex:o3
              */
             model?: string | null;
             /** @description Reviewer profile id or unique name. */
@@ -1500,7 +1531,6 @@ export interface components {
          */
         SessionStatus: "starting" | "running" | "idle" | "exited" | "failed";
         TaskDto: {
-            agent_kind?: null | components["schemas"]["AgentKind"];
             branch: string;
             created_at: string;
             /** @description Ids of tasks that must merge before this one starts. */
@@ -1516,8 +1546,13 @@ export interface components {
             id: string;
             merge_commit?: string | null;
             /**
-             * @description Model the engineer runs on, pinned alongside `agent_kind`. None = the
-             *     agent CLI's own default model.
+             * @description What the engineer runs on, `<agent_kind>[:<model>]`: the agent CLI and,
+             *     after a `:`, the model of it (`codex`, `claude_code:claude-opus-5`).
+             *     Pinned when the task was created, from the model chosen for it at
+             *     creation or on an edit or, where none was, from the engineer profile —
+             *     editing the profile afterwards leaves it alone. None = auto: the first
+             *     installed CLI, resolved at spawn time, on its own default model.
+             * @example claude_code:claude-opus-5
              */
             model?: string | null;
             /**
@@ -1548,13 +1583,16 @@ export interface components {
         /**
          * @description One reviewer slot of a task: which profile reviews it, and what that
          *     reviewer was pinned to run on when the slot was assigned — the profile's
-         *     own agent and model, or the agent chosen for the slot. Pinned the same way
-         *     the engineer is, and read the same way: what a reviewer of this task runs
-         *     on, not what its profile says today.
+         *     own model, or the one chosen for the slot. Pinned the same way the engineer
+         *     is, and read the same way: what a reviewer of this task runs on, not what
+         *     its profile says today.
          */
         TaskReviewerDto: {
-            agent_kind?: null | components["schemas"]["AgentKind"];
-            /** @description None = the agent CLI's own default model. */
+            /**
+             * @description What this reviewer runs on, `<agent_kind>[:<model>]`. None = auto: the
+             *     first installed CLI, resolved at spawn time, on its own default model.
+             * @example codex:o3
+             */
             model?: string | null;
             profile_id: string;
             /**
@@ -1641,13 +1679,10 @@ export interface components {
         /** @description Partial update; absent fields stay unchanged. */
         UpdateProfileRequest: {
             /**
-             * @description New agent kind, or "auto" to clear it (resolve the first installed
-             *     CLI at spawn time). Absent = unchanged.
-             */
-            agent_kind?: string | null;
-            /**
-             * @description New model, or "default" (or empty) to clear it back to the agent's
-             *     default. Absent = unchanged.
+             * @description What this profile runs on, `<agent_kind>[:<model>]`, or "default" (or
+             *     the empty string) to clear it back to auto — the first installed CLI at
+             *     spawn time, on its own default model. Absent = unchanged.
+             * @example codex:gpt-5.3-codex
              */
             model?: string | null;
             name?: string | null;
@@ -1667,25 +1702,20 @@ export interface components {
         };
         /** @description Partial update; only allowed while the task is pending/ready. */
         UpdateTaskRequest: {
-            /**
-             * @description Agent CLI the engineer runs on: absent leaves the task's pins alone,
-             *     "default" (or the empty string) puts them back on the engineer
-             *     profile's agent and model as they stand now, and a kind pins that kind
-             *     — together with `model` where one is given. The same convention
-             *     `UpdateProfileRequest::agent_kind` takes for its "auto".
-             */
-            agent_kind?: string | null;
             depends_on?: string[] | null;
             description?: string | null;
             /**
-             * @description Model the engineer runs on there; "default" (or the empty string) is
-             *     the agent CLI's own default model. A model with no `agent_kind` beside
-             *     it is refused, as it is on a creation.
+             * @description What the engineer runs on, `<agent_kind>[:<model>]`: absent leaves the
+             *     task's pins alone, "default" (or the empty string) puts them back on
+             *     the engineer profile's own model as it stands now, and anything else
+             *     pins what it spells. The same clearing word
+             *     [`crate::profiles::UpdateProfileRequest::model`] takes.
+             * @example codex:gpt-5.3-codex
              */
             model?: string | null;
             /**
              * @description The whole reviewer list, replaced: each slot is cut afresh and pinned
-             *     to its own agent and model or, where it names none, to its profile's.
+             *     to the model it names or, where it names none, to its profile's.
              */
             reviewers?: components["schemas"]["ReviewerAssignment"][] | null;
             title?: string | null;
@@ -2188,10 +2218,7 @@ export interface operations {
     };
     models_list: {
         parameters: {
-            query?: {
-                /** @description Filter by agent CLI. */
-                agent?: null | components["schemas"]["AgentKind"];
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;

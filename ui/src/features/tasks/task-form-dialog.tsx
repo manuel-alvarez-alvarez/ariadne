@@ -18,11 +18,10 @@
  * /v1/tasks/{id}` carries neither — so edit mode leaves those fields out; the
  * task panel's facts card keeps showing what they are.
  *
- * What each agent runs on can be chosen in both modes, one pair per slot: the
- * engineer's and every reviewer's. The agent CLI is the choice and the model
- * only narrows it, so each slot has an agent select with the model box beside
- * it, scoped to whatever that select names and shut while it names nothing —
- * which is the slot on its profile's own agent and model.
+ * What each agent runs on can be chosen in both modes, one field per slot: the
+ * engineer's and every reviewer's. It is one string — the agent CLI and, after
+ * a `:`, the model of it — so each slot has a single model box, offering the
+ * catalog whole; an empty one is the slot on its profile's own model.
  */
 
 import { zodResolver } from "@hookform/resolvers/zod"
@@ -31,7 +30,7 @@ import { PlusIcon, XIcon } from "lucide-react"
 import { useEffect, useMemo } from "react"
 import { Controller, useFieldArray, useForm } from "react-hook-form"
 import { toast } from "sonner"
-import { type AgentKind, ApiError, type GoalDto, type ProfileDto, type TaskDto } from "@/api"
+import { ApiError, type GoalDto, type ProfileDto, type TaskDto } from "@/api"
 import {
   FormDialog,
   FormDialogContent,
@@ -43,13 +42,8 @@ import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import {
-  AGENT_PIN_OPTIONS,
-  PROFILE_AGENT_KIND,
-  pinnedAgentKind,
-} from "@/features/profiles/agent-pin"
 import { ModelPicker } from "@/features/profiles/model-picker"
-import { agentKindLabel, modelLabel } from "@/features/profiles/profile-labels"
+import { modelRefLabel } from "@/features/profiles/model-ref"
 import { modelsQueryOptions, profilesQueryOptions } from "@/features/profiles/queries"
 import { taskListQueryOptions, useCreateTask, useUpdateTask } from "./queries"
 import {
@@ -188,11 +182,6 @@ function TaskFormDialog({
     () => engineerOptions.find((profile) => profile.id === selectedEngineer),
     [engineerOptions, selectedEngineer],
   )
-  // The agent the engineer's model box is scoped to, and the gate on the box
-  // itself: with no agent picked there is no CLI whose models it could name.
-  const engineerAgentKind = pinnedAgentKind(form.watch("engineer_agent"))
-  // Watched whole, so each row's box knows the agent it sits beside.
-  const reviewerRowValues = form.watch("reviewers")
 
   // The daemon ships built-in "Engineer" and "Reviewer" profiles; preselect
   // them (or the only choice there is) so the common case is one click, the
@@ -225,10 +214,7 @@ function TaskFormDialog({
         // the re-seed effect above, and `toUpdateTaskRequest`).
         const seeded = form.formState.defaultValues
         const task = await updateTask.mutateAsync(
-          toUpdateTaskRequest(values, {
-            agent: seeded?.engineer_agent ?? PROFILE_AGENT_KIND,
-            model: seeded?.engineer_model ?? "",
-          }),
+          toUpdateTaskRequest(values, seeded?.engineer_model ?? ""),
         )
         toast.success("Task updated", { description: task.title })
         onOpenChange(false)
@@ -304,46 +290,31 @@ function TaskFormDialog({
           </Field>
         ) : null}
 
-        {/* Editable in both modes, unlike the profile beside them: the daemon
+        {/* Editable in both modes, unlike the profile beside it: the daemon
             takes a pin on `PATCH` too, for as long as the task waits. */}
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field>
-            <FieldLabel htmlFor="task-engineer-agent">Engineer agent</FieldLabel>
-            <FormSelect
-              control={form.control}
-              name="engineer_agent"
-              id="task-engineer-agent"
-              options={AGENT_PIN_OPTIONS}
-            />
-            <FieldDescription>
-              {engineerPinHint(engineerAgentKind, engineerProfile)}
-            </FieldDescription>
-          </Field>
-
-          <Field>
-            {/* No htmlFor: cmdk owns its input's id and names it itself. */}
-            <FieldLabel>Engineer model</FieldLabel>
-            <Controller
-              control={form.control}
-              name="engineer_model"
-              render={({ field }) => (
-                <ModelPicker
-                  label="Engineer model"
-                  value={field.value}
-                  onChange={field.onChange}
-                  models={models.data}
-                  agentKind={engineerAgentKind}
-                  disabled={!engineerAgentKind}
-                  placeholder="Agent default"
-                />
-              )}
-            />
-            <FieldDescription>
-              Picking an agent runs the engineer on it; leave the model empty for that CLI's own
-              default.
-            </FieldDescription>
-          </Field>
-        </div>
+        <Field data-invalid={form.formState.errors.engineer_model ? "" : undefined}>
+          {/* No htmlFor: cmdk owns its input's id and names it itself. */}
+          <FieldLabel>Engineer model</FieldLabel>
+          <Controller
+            control={form.control}
+            name="engineer_model"
+            render={({ field }) => (
+              <ModelPicker
+                label="Engineer model"
+                value={field.value}
+                onChange={field.onChange}
+                models={models.data}
+                invalid={form.formState.errors.engineer_model ? true : undefined}
+                placeholder={pinPlaceholder(engineerProfile)}
+              />
+            )}
+          />
+          {form.formState.errors.engineer_model ? (
+            <FieldError>{form.formState.errors.engineer_model.message}</FieldError>
+          ) : (
+            <FieldDescription>{engineerPinHint(engineerProfile)}</FieldDescription>
+          )}
+        </Field>
 
         <Field>
           {/* A row is a reviewer now, not only a profile: the slot carries the
@@ -352,14 +323,12 @@ function TaskFormDialog({
           <div className="flex flex-col gap-2">
             {reviewerRows.fields.map((row, index) => {
               const error = form.formState.errors.reviewers?.[index]?.profile
-              const agentKind = pinnedAgentKind(
-                reviewerRowValues?.[index]?.agent ?? PROFILE_AGENT_KIND,
-              )
+              const modelError = form.formState.errors.reviewers?.[index]?.model
               return (
                 <div key={row.id} className="flex flex-col gap-1">
                   {/* The profile and what it runs on, side by side: one row is
-                      one reviewer, and the agent and model belong to the slot
-                      rather than to the profile it names. */}
+                      one reviewer, and the model belongs to the slot rather
+                      than to the profile it names. */}
                   <div className="flex items-start gap-2">
                     <FormSelect
                       control={form.control}
@@ -371,13 +340,6 @@ function TaskFormDialog({
                       disabled={!reviewerOptions.length}
                       placeholder={profilePlaceholder(reviewers, "reviewer")}
                     />
-                    <FormSelect
-                      control={form.control}
-                      name={`reviewers.${index}.agent`}
-                      ariaLabel={`Reviewer ${index + 1} agent`}
-                      className="w-40 shrink-0"
-                      options={AGENT_PIN_OPTIONS}
-                    />
                     <Controller
                       control={form.control}
                       name={`reviewers.${index}.model`}
@@ -387,9 +349,8 @@ function TaskFormDialog({
                           value={field.value}
                           onChange={field.onChange}
                           models={models.data}
-                          agentKind={agentKind}
-                          disabled={!agentKind}
-                          placeholder="Agent default"
+                          invalid={modelError ? true : undefined}
+                          placeholder="The profile's own"
                           className="flex-1"
                         />
                       )}
@@ -405,7 +366,7 @@ function TaskFormDialog({
                       <XIcon />
                     </Button>
                   </div>
-                  <FieldError>{error?.message}</FieldError>
+                  <FieldError>{error?.message ?? modelError?.message}</FieldError>
                 </div>
               )
             })}
@@ -415,9 +376,7 @@ function TaskFormDialog({
               type="button"
               variant="outline"
               size="sm"
-              onClick={() =>
-                reviewerRows.append({ profile: "", agent: PROFILE_AGENT_KIND, model: "" })
-              }
+              onClick={() => reviewerRows.append({ profile: "", model: "" })}
             >
               <PlusIcon />
               Add reviewer
@@ -503,14 +462,15 @@ function TaskFormDialog({
 }
 
 /**
- * What the engineer would run on with no agent picked: its profile's own pair,
- * named where the profile is known, so that leaving the select alone is an
- * informed choice rather than a blank.
+ * What an empty box means, in the box itself: the engineer profile's own
+ * model, named where the profile is known so that leaving the field alone is
+ * an informed choice rather than a blank.
  */
-function engineerPinHint(
-  agentKind: AgentKind | undefined,
-  profile: ProfileDto | undefined,
-): string {
-  if (agentKind) return "Pinned: the engineer is spawned on this CLI."
-  return `The engineer profile's own: ${agentKindLabel(profile?.agent_kind)} · ${modelLabel(profile?.model)}.`
+function pinPlaceholder(profile: ProfileDto | undefined): string {
+  return profile ? `The profile's own — ${modelRefLabel(profile.model)}` : "The profile's own"
+}
+
+/** The line under the engineer's box, which spells the same choice out. */
+function engineerPinHint(profile: ProfileDto | undefined): string {
+  return `The agent CLI and, after a ":", the model of it. Empty runs the engineer on its profile's own: ${modelRefLabel(profile?.model)}.`
 }

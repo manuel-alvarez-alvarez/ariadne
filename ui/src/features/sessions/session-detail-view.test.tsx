@@ -48,7 +48,7 @@ const TASK: TaskDto = aTask({
 const PROFILE: ProfileDto = aProfile({
   id: TASK.engineer_profile_id,
   name: "engineer-default",
-  model: "claude-sonnet-5",
+  model: "claude_code:claude-sonnet-5",
 })
 
 const SESSION: SessionDto = aSession({
@@ -206,10 +206,11 @@ it("shows the model the session was launched with", async () => {
   renderView()
 
   expect(detail("Model")).toBe("claude-opus-5")
-  // The profile has `claude-sonnet-5` pinned today; what this agent runs is
-  // the snapshot taken when it started, not the profile as edited since.
+  // The profile has `claude_code:claude-sonnet-5` pinned today; what this agent
+  // runs is the snapshot taken when it started, not the profile as edited
+  // since — and the badge spells that snapshot's two fields as one id.
   await waitFor(() => expect(detail("Profile")).toContain("engineer-default"))
-  expect(detail("Profile")).toContain("Claude Code · claude-opus-5")
+  expect(detail("Profile")).toContain("claude_code:claude-opus-5")
 })
 
 it("names the agent CLI's own choice where no model was recorded", () => {

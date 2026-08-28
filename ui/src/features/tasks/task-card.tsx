@@ -25,7 +25,7 @@ import { CopyableId } from "@/components/copyable-id"
 import { StatusBadge } from "@/components/status-badge"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { When } from "@/components/when"
-import { agentKindLabel, modelLabel } from "@/features/profiles/profile-labels"
+import { modelRefLabel } from "@/features/profiles/model-ref"
 import { isPinOverride } from "@/features/profiles/profile-summary"
 import { profilesQueryOptions } from "@/features/profiles/queries"
 import {
@@ -188,9 +188,9 @@ export function TaskCard({
 function EnginePin({ task }: { task: TaskDto }) {
   const profiles = useQuery(profilesQueryOptions())
   const profile = profiles.data?.find((item) => item.id === task.engineer_profile_id)
-  if (!isPinOverride(profile, task)) return null
+  if (!isPinOverride(profile, task.model)) return null
 
-  const pin = `${agentKindLabel(task.agent_kind)} · ${modelLabel(task.model)}`
+  const pin = modelRefLabel(task.model)
   return (
     <Tooltip>
       <TooltipTrigger

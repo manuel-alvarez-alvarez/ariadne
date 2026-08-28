@@ -38,9 +38,10 @@ import { cn, plural, ROLE_LABELS } from "@/lib/format"
 import { PROFILE_EXPAND_PARAM } from "@/routes/paths"
 
 import { DeleteProfileDialog } from "./delete-profile-dialog"
+import { modelRefLabel } from "./model-ref"
 import { ProfileDetails } from "./profile-details"
 import { ProfileFormDialog } from "./profile-form-dialog"
-import { agentKindLabel, modelLabel, ROLES } from "./profile-labels"
+import { ROLES } from "./profile-labels"
 import { profilesQueryOptions } from "./queries"
 
 /** The role tabs, where "all" means the unfiltered request. */
@@ -55,7 +56,6 @@ const ALL = "all"
 const COLUMNS = [
   { header: "Name" },
   { header: "Role" },
-  { header: "Agent" },
   { header: "Model" },
   { header: "Updated" },
   { className: "w-20 text-right" },
@@ -159,7 +159,7 @@ export function ProfilesPage() {
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Profiles"
-        description="What an agent runs as: a role in the orchestration, an agent CLI and model, and the system prompt it is spawned with."
+        description="What an agent runs as: a role in the orchestration, the model that names the CLI running it, and the system prompt it is spawned with."
         actions={
           <Button onClick={openCreate}>
             <PlusIcon />
@@ -247,11 +247,10 @@ function ProfileRow({
         <TableCell>
           <Badge variant="secondary">{ROLE_LABELS[profile.role]}</Badge>
         </TableCell>
-        <TableCell>
-          <Unset when={!profile.agent_kind}>{agentKindLabel(profile.agent_kind)}</Unset>
-        </TableCell>
+        {/* The agent CLI is the first half of this id, so it is not a column
+            of its own: `codex`, `claude_code:claude-opus-5`. */}
         <TableCell className="font-mono text-xs">
-          <Unset when={!profile.model}>{modelLabel(profile.model)}</Unset>
+          <Unset when={!profile.model}>{modelRefLabel(profile.model)}</Unset>
         </TableCell>
         {/* The age is what a table is read for; the full stamp is the hint
             behind it, the same way every other timestamp in the app shows it. */}

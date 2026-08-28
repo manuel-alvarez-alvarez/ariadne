@@ -284,7 +284,7 @@ function GoalMetadata({ goal }: { goal: GoalDto }) {
       <Detail label="Planner">
         {/* The goal's pin: what the planner runs on, which a later edit to its
             profile leaves alone. */}
-        <ProfileSummary profileId={goal.planner_profile_id} pinned={goal} />
+        <ProfileSummary profileId={goal.planner_profile_id} model={goal.model} />
       </Detail>
       <Detail label="Approvals">
         <span className="tabular-nums">{goal.required_approvals}</span>

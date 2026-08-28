@@ -684,26 +684,9 @@
         "tags": [
           "models"
         ],
-        "summary": "Model candidates per agent CLI: curated catalogs for claude_code and\ncodex, live discovery (`opencode models`) for opencode. Without `agent`,\nthe union for all agents.",
+        "summary": "Everything an agent can be pinned to, `<agent_kind>[:<model>]` apiece:\neach agent CLI on its own — that CLI on its own default model — and\nthen the models of it, curated for claude_code and codex, discovered\nlive (`opencode models`) for opencode.",
+        "description": "The union always, and grouped by agent CLI: a model is chosen by one\nstring that carries its CLI, so nothing scopes this catalog any more.",
         "operationId": "list",
-        "parameters": [
-          {
-            "name": "agent",
-            "in": "query",
-            "description": "Filter by agent CLI.",
-            "required": false,
-            "schema": {
-              "oneOf": [
-                {
-                  "type": "null"
-                },
-                {
-                  "$ref": "#/components/schemas/AgentKind"
-                }
-              ]
-            }
-          }
-        ],
         "responses": {
           "200": {
             "description": "",
@@ -2332,17 +2315,6 @@
           "planner_profile"
         ],
         "properties": {
-          "agent_kind": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/AgentKind",
-                "description": "Agent CLI the planner runs on; omitted = the planner profile's own\nagent and model, as they stand now."
-              }
-            ]
-          },
           "description": {
             "type": "string"
           },
@@ -2359,7 +2331,8 @@
               "string",
               "null"
             ],
-            "description": "Model the planner runs on, on the agent named by `agent_kind`; omitted\n(or \"default\") = that CLI's own default model. Free text, handed to the\nCLI as typed. A model without an `agent_kind` is refused: the agent is\nthe choice, the model narrows it."
+            "description": "What the planner runs on, `<agent_kind>[:<model>]` — the agent CLI and,\nafter a `:`, the model of it: `codex`, `codex:gpt-5.3-codex`,\n`opencode:ollama/llama3:8b`. The model half is free text, handed to\nthat CLI as typed; an agent CLI on its own runs it on its own default\nmodel, and a string naming no agent CLI is refused. Omitted (or\n\"default\") = the planner profile's own model, as it stands now.",
+            "example": "codex:gpt-5.3-codex"
           },
           "planner_profile": {
             "type": "string",
@@ -2411,22 +2384,13 @@
           "role"
         ],
         "properties": {
-          "agent_kind": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/AgentKind",
-                "description": "Omit for auto: the first installed agent CLI is used at spawn time."
-              }
-            ]
-          },
           "model": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "What this profile runs on, `<agent_kind>[:<model>]` — the agent CLI\nand, after a `:`, the model of it: `codex`, `codex:gpt-5.3-codex`,\n`opencode:ollama/llama3:8b`. A string naming no agent CLI is refused.\nOmitted (or \"default\") = auto: the first installed agent CLI at spawn\ntime, on its own default model.",
+            "example": "codex:gpt-5.3-codex"
           },
           "name": {
             "type": "string",
@@ -2513,17 +2477,6 @@
           "reviewers"
         ],
         "properties": {
-          "agent_kind": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/AgentKind",
-                "description": "Agent CLI the engineer runs on; omitted = the engineer profile's own\nagent and model. Resolved the way [`ReviewerAssignment::agent_kind`]\nis."
-              }
-            ]
-          },
           "depends_on": {
             "type": "array",
             "items": {
@@ -2543,7 +2496,8 @@
               "string",
               "null"
             ],
-            "description": "Model the engineer runs on there; omitted (or \"default\") = that CLI's\nown default model. A model without an `agent_kind` is refused."
+            "description": "What the engineer runs on, `<agent_kind>[:<model>]`; omitted (or\n\"default\") = the engineer profile's own model. Resolved the way\n[`ReviewerAssignment::model`] is.",
+            "example": "codex:gpt-5.3-codex"
           },
           "repo_id": {
             "type": [
@@ -2960,17 +2914,6 @@
           "updated_at"
         ],
         "properties": {
-          "agent_kind": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/AgentKind",
-                "description": "Agent CLI the planner runs on: pinned when the goal was created, from\nthe agent chosen for it or, where none was, from the planner profile.\nEditing the profile afterwards leaves it alone. None = auto, resolved\nat spawn time to the first installed CLI."
-              }
-            ]
-          },
           "created_at": {
             "type": "string"
           },
@@ -2993,7 +2936,8 @@
               "string",
               "null"
             ],
-            "description": "Model the planner runs on, pinned alongside `agent_kind`. None = the\nagent CLI's own default model."
+            "description": "What the planner runs on, `<agent_kind>[:<model>]`: the agent CLI and,\nafter a `:`, the model of it (`codex`, `claude_code:claude-opus-5`).\nPinned when the goal was created, from the model chosen for it or,\nwhere none was, from the planner profile — editing the profile\nafterwards leaves it alone. None = auto: the first installed CLI,\nresolved at spawn time, on its own default model.",
+            "example": "claude_code:claude-opus-5"
           },
           "planner_profile_id": {
             "type": "string"
@@ -3216,7 +3160,7 @@
       },
       "ModelDto": {
         "type": "object",
-        "description": "One model an agent CLI can run, as served by `GET /v1/models`.",
+        "description": "One thing an agent can be pinned to, as served by `GET /v1/models`: an\nagent CLI on a model of it (`claude_code:claude-fable-5`), or an agent CLI\non its own, which is that CLI on its own default model.\n\nThe id is what a request writes as its `model`, whole. `agent_kind` is the\nsame fact taken apart, so a picker can group the catalog by CLI without\nparsing anything.",
         "required": [
           "id",
           "agent_kind"
@@ -3224,7 +3168,7 @@
         "properties": {
           "agent_kind": {
             "$ref": "#/components/schemas/AgentKind",
-            "description": "The agent CLI this model belongs to."
+            "description": "The agent CLI this entry runs on."
           },
           "description": {
             "type": [
@@ -3235,7 +3179,7 @@
           },
           "id": {
             "type": "string",
-            "example": "claude-fable-5"
+            "example": "claude_code:claude-fable-5"
           }
         }
       },
@@ -3272,17 +3216,6 @@
           "updated_at"
         ],
         "properties": {
-          "agent_kind": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/AgentKind",
-                "description": "None = auto: resolved at spawn time to the first installed agent CLI\n(claude_code, then codex, then opencode)."
-              }
-            ]
-          },
           "created_at": {
             "type": "string"
           },
@@ -3293,7 +3226,9 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "What this profile runs on, `<agent_kind>[:<model>]`: the agent CLI and,\nafter a `:`, the model of it. None = auto: the first installed agent\nCLI (claude_code, then codex, then opencode), resolved at spawn time,\non its own default model.",
+            "example": "claude_code:claude-opus-5"
           },
           "name": {
             "type": "string"
@@ -3511,28 +3446,18 @@
       },
       "ReviewerAssignment": {
         "type": "object",
-        "description": "One reviewer of a task: the profile that reviews, and what it is to run on.\n\nThe agent CLI is the choice and the model narrows it: an `agent_kind` alone\nruns that CLI on its own default model, an `agent_kind` with a `model` pins\nboth, and a `model` with no `agent_kind` is refused — nothing here derives\none from the other. Omitted, the slot takes the profile's own agent and\nmodel as they stand when it is assigned.",
+        "description": "One reviewer of a task: the profile that reviews, and what it is to run on.\n\nThe model is written `<agent_kind>[:<model>]`: the agent CLI on its own\nruns it on its own default model, an agent with a model after the `:` pins\nboth, and a string naming no agent CLI is refused — nothing here derives\none from the other. Omitted, the slot takes the profile's own model as it\nstands when the slot is assigned.",
         "required": [
           "profile"
         ],
         "properties": {
-          "agent_kind": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/AgentKind",
-                "description": "Agent CLI this reviewer runs on; omitted = the profile's own."
-              }
-            ]
-          },
           "model": {
             "type": [
               "string",
               "null"
             ],
-            "description": "Model it runs on there; omitted (or \"default\") = the CLI's own default\nmodel. Free text, handed to the CLI as typed."
+            "description": "What this reviewer runs on, `<agent_kind>[:<model>]`; omitted (or\n\"default\") = the profile's own.",
+            "example": "codex:o3"
           },
           "profile": {
             "type": "string",
@@ -3787,17 +3712,6 @@
           "updated_at"
         ],
         "properties": {
-          "agent_kind": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/AgentKind",
-                "description": "Agent CLI the engineer runs on: pinned when the task was created, from\nthe agent chosen for it at creation or on an edit or, where none was,\nfrom the engineer profile. Editing the profile afterwards leaves it\nalone. None = auto, resolved at spawn time to the first installed CLI."
-              }
-            ]
-          },
           "branch": {
             "type": "string"
           },
@@ -3841,7 +3755,8 @@
               "string",
               "null"
             ],
-            "description": "Model the engineer runs on, pinned alongside `agent_kind`. None = the\nagent CLI's own default model."
+            "description": "What the engineer runs on, `<agent_kind>[:<model>]`: the agent CLI and,\nafter a `:`, the model of it (`codex`, `claude_code:claude-opus-5`).\nPinned when the task was created, from the model chosen for it at\ncreation or on an edit or, where none was, from the engineer profile —\nediting the profile afterwards leaves it alone. None = auto: the first\ninstalled CLI, resolved at spawn time, on its own default model.",
+            "example": "claude_code:claude-opus-5"
           },
           "planner_profile_name": {
             "type": [
@@ -3899,28 +3814,18 @@
       },
       "TaskReviewerDto": {
         "type": "object",
-        "description": "One reviewer slot of a task: which profile reviews it, and what that\nreviewer was pinned to run on when the slot was assigned — the profile's\nown agent and model, or the agent chosen for the slot. Pinned the same way\nthe engineer is, and read the same way: what a reviewer of this task runs\non, not what its profile says today.",
+        "description": "One reviewer slot of a task: which profile reviews it, and what that\nreviewer was pinned to run on when the slot was assigned — the profile's\nown model, or the one chosen for the slot. Pinned the same way the engineer\nis, and read the same way: what a reviewer of this task runs on, not what\nits profile says today.",
         "required": [
           "profile_id"
         ],
         "properties": {
-          "agent_kind": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/AgentKind",
-                "description": "None = auto, resolved at spawn time to the first installed CLI."
-              }
-            ]
-          },
           "model": {
             "type": [
               "string",
               "null"
             ],
-            "description": "None = the agent CLI's own default model."
+            "description": "What this reviewer runs on, `<agent_kind>[:<model>]`. None = auto: the\nfirst installed CLI, resolved at spawn time, on its own default model.",
+            "example": "codex:o3"
           },
           "profile_id": {
             "type": "string"
@@ -4115,19 +4020,13 @@
         "type": "object",
         "description": "Partial update; absent fields stay unchanged.",
         "properties": {
-          "agent_kind": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "New agent kind, or \"auto\" to clear it (resolve the first installed\nCLI at spawn time). Absent = unchanged."
-          },
           "model": {
             "type": [
               "string",
               "null"
             ],
-            "description": "New model, or \"default\" (or empty) to clear it back to the agent's\ndefault. Absent = unchanged."
+            "description": "What this profile runs on, `<agent_kind>[:<model>]`, or \"default\" (or\nthe empty string) to clear it back to auto — the first installed CLI at\nspawn time, on its own default model. Absent = unchanged.",
+            "example": "codex:gpt-5.3-codex"
           },
           "name": {
             "type": [
@@ -4183,13 +4082,6 @@
         "type": "object",
         "description": "Partial update; only allowed while the task is pending/ready.",
         "properties": {
-          "agent_kind": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Agent CLI the engineer runs on: absent leaves the task's pins alone,\n\"default\" (or the empty string) puts them back on the engineer\nprofile's agent and model as they stand now, and a kind pins that kind\n— together with `model` where one is given. The same convention\n`UpdateProfileRequest::agent_kind` takes for its \"auto\"."
-          },
           "depends_on": {
             "type": [
               "array",
@@ -4210,7 +4102,8 @@
               "string",
               "null"
             ],
-            "description": "Model the engineer runs on there; \"default\" (or the empty string) is\nthe agent CLI's own default model. A model with no `agent_kind` beside\nit is refused, as it is on a creation."
+            "description": "What the engineer runs on, `<agent_kind>[:<model>]`: absent leaves the\ntask's pins alone, \"default\" (or the empty string) puts them back on\nthe engineer profile's own model as it stands now, and anything else\npins what it spells. The same clearing word\n[`crate::profiles::UpdateProfileRequest::model`] takes.",
+            "example": "codex:gpt-5.3-codex"
           },
           "reviewers": {
             "type": [
@@ -4220,7 +4113,7 @@
             "items": {
               "$ref": "#/components/schemas/ReviewerAssignment"
             },
-            "description": "The whole reviewer list, replaced: each slot is cut afresh and pinned\nto its own agent and model or, where it names none, to its profile's."
+            "description": "The whole reviewer list, replaced: each slot is cut afresh and pinned\nto the model it names or, where it names none, to its profile's."
           },
           "title": {
             "type": [

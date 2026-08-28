@@ -12,7 +12,8 @@
  *
  * Grouped by role rather than by profile on purpose: past the planner, each
  * role is as many agents as the goal has tasks, and the task panels are where
- * those names are.
+ * those names are. The Planner fact is the exception, and it says what that
+ * agent runs on: the goal's own pin, not the profile as edited since.
  *
  * Everything is seeded into the query cache; what the daemon returns is
  * `queries.ts`'s story.
@@ -22,8 +23,8 @@ import { screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { expect, it } from "vitest"
 
-import { type GoalDto, qk } from "@/api"
-import { aGoal } from "@/test/fixtures"
+import { type GoalDto, type ProfileDto, qk } from "@/api"
+import { aGoal, aProfile } from "@/test/fixtures"
 import { renderScreen } from "@/test/harness"
 import { GoalPanel } from "./goal-panel"
 
@@ -37,10 +38,22 @@ const GOAL: GoalDto = aGoal({
   },
 })
 
+/** The planner profile as it stands today, moved on from the goal's own pin. */
+const PLANNER: ProfileDto = aProfile({
+  id: GOAL.planner_profile_id,
+  // Not "Planner": that is also the label of the fact this reads.
+  name: "plan-lead",
+  role: "planner",
+  model: "opencode:grok-4",
+})
+
 function mount(goal: GoalDto = GOAL) {
   renderScreen(<GoalPanel goalId={goal.id} onClose={() => {}} />, {
     route: `/goals?goal=${goal.id}`,
-    seed: (client) => client.setQueryData(qk.goals.detail(goal.id), goal),
+    seed: (client) => {
+      client.setQueryData(qk.goals.detail(goal.id), goal)
+      client.setQueryData(qk.profiles.list({}), [PLANNER])
+    },
   })
 }
 
@@ -98,4 +111,19 @@ it("keeps the sessions tab to the sessions, with no breakdown above them", async
   // The figure in the facts carries the total and its split; a card repeating
   // both above a table whose rows carry their own figures said it all twice.
   expect(screen.queryByRole("heading", { name: "Tokens" })).toBeNull()
+})
+
+it("shows what the planner runs on: the goal's pin, and that it overrides", () => {
+  mount(aGoal({ model: "codex:gpt-5.3-codex" }))
+
+  const planner = detail("Planner").textContent ?? ""
+  expect(planner).toContain("codex:gpt-5.3-codex")
+  expect(planner).toContain("(overrides)")
+  expect(planner).not.toContain("grok-4")
+})
+
+it("says `auto` for a goal that pinned nothing, rather than the profile's own", () => {
+  mount(aGoal({ model: null }))
+
+  expect(detail("Planner").textContent).toContain("auto")
 })

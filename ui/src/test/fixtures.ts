@@ -106,7 +106,6 @@ export function aProfile(overrides: Partial<ProfileDto> = {}): ProfileDto {
     id: PROFILE_ID,
     name: "Engineer",
     role: "engineer",
-    agent_kind: "claude_code",
     model: null,
     system_prompt: "",
     system_prompt_is_default: false,

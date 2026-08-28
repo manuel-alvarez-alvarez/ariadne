@@ -43,12 +43,16 @@ const PINNED: ProfileDto = {
   ...ENGINEER,
   id: "01JPROF000000000000000PIN",
   name: "Pinned",
-  model: "claude-opus-5",
+  model: "claude_code:claude-opus-5",
 }
 
 /** The model catalog an expanded row asks for, to caption a known model with. */
 const CATALOG: ModelDto[] = [
-  { id: "claude-opus-5", agent_kind: "claude_code", description: "Opus tier: deep analysis" },
+  {
+    id: "claude_code:claude-opus-5",
+    agent_kind: "claude_code",
+    description: "Opus tier: deep analysis",
+  },
 ]
 
 /**
@@ -209,6 +213,25 @@ describe("ProfilesPage, on a reload", () => {
     })
     expect(new URLSearchParams(currentSearch()).get(PROFILE_EXPAND_PARAM)).toBe(REVIEWER.id)
     expect(screen.getByRole("button", { name: "Critic", expanded: true })).toBeDefined()
+  })
+})
+
+describe("ProfilesPage, the model column", () => {
+  it("shows the qualified id, which is where the agent CLI is now named", async () => {
+    renderPage()
+
+    const row = (await screen.findByRole("button", { name: "Pinned" })).closest("tr")
+    expect(row?.textContent).toContain("claude_code:claude-opus-5")
+    // The CLI is the first half of that id, so it is no column of its own.
+    expect(screen.queryByRole("columnheader", { name: "Agent" })).toBeNull()
+    expect(screen.getByRole("columnheader", { name: "Model" })).toBeDefined()
+  })
+
+  it("says `auto` where a profile pins nothing, rather than leaving a blank", async () => {
+    renderPage()
+
+    const row = (await screen.findByRole("button", { name: "Builder" })).closest("tr")
+    expect(row?.textContent).toContain("auto")
   })
 })
 
