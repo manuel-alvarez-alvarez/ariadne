@@ -43,6 +43,30 @@ impl super::Scheduler {
 
         match task.status() {
             TaskStatus::Pending => {
+                // A dependency that ended without merging is never going to,
+                // so neither is the wait on it: the task ends too, naming what
+                // stopped it, and the user can retry it once the dependency
+                // has landed. Only the terminal endings count — a dependency
+                // retried and working again is one this task can still wait
+                // for. A goal being cancelled never reaches here: its tasks
+                // are cancelled by `reconcile_goal`, and this pass returns
+                // above as soon as the goal is no longer active.
+                if let Some(blocker) = self.store.task_dependencies_blocked(&task.id).await? {
+                    let reason = blocked_reason(&blocker);
+                    warn!(task = %task.id, dependency = %blocker.id, "dependency ended unmerged, failing task");
+                    let task = self
+                        .store
+                        .transition_task(
+                            &task.id,
+                            TaskStatus::Failed,
+                            Actor::Daemon,
+                            Some(&reason),
+                            None,
+                        )
+                        .await?;
+                    self.announce_ending(&task, Some(&reason)).await;
+                    return Ok(());
+                }
                 if self.store.task_dependencies_merged(&task.id).await? {
                     info!(task = %task.id, "dependencies merged, task ready");
                     self.store
@@ -446,5 +470,29 @@ impl super::Scheduler {
                 .set_session_attention(&previous.id, AttentionReason::Disconnected)
                 .await;
         }
+    }
+}
+
+/// Why a task waiting on a dependency that ended is ending too: which
+/// dependency it was, and how it ended.
+fn blocked_reason(dependency: &Task) -> String {
+    let ended = match dependency.status() {
+        TaskStatus::Cancelled => "was cancelled",
+        _ => "failed",
+    };
+    format!(
+        "dependency \"{}\" ({}) {ended}",
+        dependency.title,
+        short_id(&dependency.id)
+    )
+}
+
+/// An id as a person can read it back: 26-character ULIDs are unreadable in
+/// full, and the tail is enough to tell two apart — the same shortening the
+/// CLI's attention board and the UI show.
+fn short_id(id: &str) -> String {
+    match id.char_indices().nth_back(7) {
+        Some((i, _)) if id.len() > 10 => format!("…{}", &id[i..]),
+        _ => id.to_string(),
     }
 }

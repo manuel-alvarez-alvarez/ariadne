@@ -593,6 +593,26 @@ impl Store {
         Ok(unmerged == 0)
     }
 
+    /// The first dependency of the task that ended without merging — `failed`
+    /// or `cancelled` — if there is one.
+    ///
+    /// Such a dependency is never going to merge, so the task behind it is
+    /// never going to start: the scheduler reads this to end it rather than
+    /// leave it waiting for ever. `None` while every dependency can still get
+    /// there, merged ones included.
+    pub async fn task_dependencies_blocked(&self, task_id: &str) -> Result<Option<Task>> {
+        Ok(sqlx::query_as::<_, Task>(
+            "SELECT dep.* FROM task_dependencies td
+             JOIN tasks dep ON dep.id = td.depends_on_task_id
+             WHERE td.task_id = ? AND dep.status IN ('failed', 'cancelled')
+             ORDER BY dep.id
+             LIMIT 1",
+        )
+        .bind(task_id)
+        .fetch_optional(self.r())
+        .await?)
+    }
+
     pub async fn set_task_worktree(
         &self,
         task_id: &str,

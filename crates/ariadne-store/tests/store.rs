@@ -684,6 +684,64 @@ async fn dependencies_gate_and_reject_cycles() {
     assert!(store.task_dependencies_merged(&b.id).await.unwrap());
 }
 
+/// A dependency that ended without merging is one nothing behind it can go on
+/// waiting for; every other status is still on its way there.
+#[tokio::test]
+async fn a_dependency_that_ended_unmerged_is_reported_as_blocking() {
+    let w = World::new().await;
+    let (store, dep) = (&w.store, &w.task);
+    let task = seed_task(store, &w.goal, &w.repo, vec![dep.id.clone()]).await;
+    let blocked = async || {
+        store
+            .task_dependencies_blocked(&task.id)
+            .await
+            .unwrap()
+            .map(|t| t.id)
+    };
+
+    assert_eq!(blocked().await, None, "a pending dependency is on its way");
+    walk_to(store, &dep.id, TaskStatus::InProgress).await;
+    assert_eq!(blocked().await, None, "and so is one in progress");
+
+    store
+        .transition_task(&dep.id, TaskStatus::Failed, Actor::Daemon, None, None)
+        .await
+        .unwrap();
+    assert_eq!(blocked().await, Some(dep.id.clone()), "a failed one is not");
+
+    // Retried, it is on its way again — and merged, it is where the task
+    // waiting on it wanted it.
+    store
+        .transition_task(&dep.id, TaskStatus::Ready, Actor::User, None, None)
+        .await
+        .unwrap();
+    assert_eq!(blocked().await, None, "a retried dependency blocks nothing");
+    walk_to(store, &dep.id, TaskStatus::Merged).await;
+    assert_eq!(blocked().await, None);
+
+    // And a cancelled dependency is as final as a failed one.
+    let cancelled = seed_task(store, &w.goal, &w.repo, vec![]).await;
+    let waiting = seed_task(store, &w.goal, &w.repo, vec![cancelled.id.clone()]).await;
+    store
+        .transition_task(
+            &cancelled.id,
+            TaskStatus::Cancelled,
+            Actor::User,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .task_dependencies_blocked(&waiting.id)
+            .await
+            .unwrap()
+            .map(|t| t.id),
+        Some(cancelled.id)
+    );
+}
+
 #[tokio::test]
 async fn setting_the_dependencies_of_a_ready_task_downgrades_it_with_audit() {
     let w = World::new().await;
