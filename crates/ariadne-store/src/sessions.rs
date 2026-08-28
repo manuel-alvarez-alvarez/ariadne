@@ -20,6 +20,11 @@ const SILENCE_AND_ERROR: &str = " AND attention_reason IN (?, ?)";
 /// The clause that keeps a clear to the one flag raised for the user.
 const USER_ONLY: &str = " AND attention_reason = ?";
 
+/// The clause that leaves what a human is owed where it is: a raise an agent's
+/// own detectors made does not land on a row carrying
+/// [`AttentionReason::is_for_the_user`].
+const NOT_OVER_THE_USER: &str = " AND (attention_reason IS NULL OR attention_reason <> ?)";
+
 #[derive(Debug, Clone)]
 pub struct NewSession {
     pub goal_id: String,
@@ -128,32 +133,46 @@ impl Store {
     /// not keep resetting how long the agent has been stuck on it.
     ///
     /// A prompt-style reason additionally only lands on a session that is
-    /// still live, and that half of the question rides in the `UPDATE` rather
-    /// than being asked first: the caller's view of the status is always a
-    /// moment old, and a permission event ingested as the session is retired
-    /// must not write the dialog back onto the row the retirement just
-    /// cleaned. A withheld raise is not an error — the session exists, the
-    /// flag just means nothing there.
+    /// still live, and a reason an agent raised for itself does not land on a
+    /// row already flagged for the user: `waiting_user` says a person owes
+    /// this task something — a message written to them, a request that is
+    /// theirs to merge — and a permission dialog, a disconnect or a stall
+    /// neither settles that nor is more use to whoever reads the strip. The
+    /// agent's flag comes back on its own the moment the user's is taken
+    /// down, since every detector behind it runs again.
+    ///
+    /// Both guards ride in the `UPDATE` rather than being asked first: the
+    /// caller's view of the row is always a moment old, and a permission
+    /// event ingested as the session is retired must not write the dialog
+    /// back onto the row the retirement just cleaned. A withheld raise is not
+    /// an error — the session exists, the flag just means nothing there.
     pub async fn set_session_attention(&self, id: &str, reason: AttentionReason) -> Result<()> {
         let while_live = match reason.is_prompt() {
             true => LIVE_STATUSES,
             false => "",
         };
-        let n = sqlx::query(sqlx::AssertSqlSafe(format!(
+        let over_the_user = match reason.is_for_the_user() {
+            true => "",
+            false => NOT_OVER_THE_USER,
+        };
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE agent_sessions
                 SET attention_reason = ?, attention_since = ?
-              WHERE id = ? AND (attention_reason IS NULL OR attention_reason <> ?){while_live}"
+              WHERE id = ? AND (attention_reason IS NULL OR attention_reason <> ?)
+                    {over_the_user}{while_live}"
         )))
         .bind(reason.as_str())
         .bind(now())
         .bind(id)
-        .bind(reason.as_str())
-        .execute(self.w())
-        .await?
-        .rows_affected();
+        .bind(reason.as_str());
+        if !over_the_user.is_empty() {
+            q = q.bind(AttentionReason::WaitingUser.as_str());
+        }
+        let n = q.execute(self.w()).await?.rows_affected();
         // A write that changed nothing: the session is gone, it already
-        // carries this reason, or it has ended and cannot be waiting on a
-        // dialog. Only the first of those is an error.
+        // carries this reason, it is flagged for the user instead, or it has
+        // ended and cannot be waiting on a dialog. Only the first of those is
+        // an error.
         self.announce_attention(id, n).await
     }
 

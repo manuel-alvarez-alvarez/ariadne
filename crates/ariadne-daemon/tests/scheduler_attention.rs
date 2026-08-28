@@ -1583,6 +1583,58 @@ async fn a_wedged_agent_flagged_for_the_user_keeps_the_flag_and_is_relaunched() 
     );
 }
 
+/// And the flag comes back up for an engineer that was never carrying it, on
+/// the one thing a restart cannot settle: a task published as a request.
+///
+/// The chain this is about is the whole of an approved task's ending. The
+/// engineer opens the request, tells the user it is theirs to merge, and stops
+/// — it has nothing left to do until they do. Its pane going away is read as a
+/// disconnect, since landing the change is still the engineer's turn, and the
+/// resume that answers the disconnect wipes the row clean. Nothing in any of
+/// that merged anything, so the task must still say who it is waiting for
+/// afterwards.
+#[tokio::test]
+async fn a_published_task_still_says_the_merge_is_the_users_after_its_engineer_is_resumed() {
+    let w = World::active().await;
+    w.advance(&w.task, TaskStatus::UnderReview).await;
+    // Live in the database and gone as far as tmux is concerned: the pane is
+    // never added to the stub's list, which is the agent that stopped.
+    let session = w
+        .session(&w.goal, Some(&w.task), Role::Engineer, &w.engineer)
+        .await;
+    w.make_resumable(&w.task, &session).await;
+    w.store
+        .transition_task(&w.task.id, TaskStatus::Approved, Actor::Daemon, None, None)
+        .await
+        .unwrap();
+    w.store
+        .set_task_pull_request(&w.task.id, "https://example.test/pull/1")
+        .await
+        .unwrap();
+
+    // One pass does all of it: the sweep retires the vanished pane and raises
+    // the disconnect, and the task's own reconciliation puts an engineer back
+    // on it.
+    let _sched = w.scheduler();
+    eventually(TIMEOUT, "the engineer to be put back on the task", async || {
+        // Launched at all, and running now: the row it comes back in is the
+        // one that went down, since the conversation was there to resume.
+        w.launched_at(&session).await.is_some()
+            && w.session_status(&session).await == SessionStatus::Running
+    })
+    .await;
+    eventually(
+        TIMEOUT,
+        "the request to still be the user's to merge",
+        async || w.attention(&session).await == Some(AttentionReason::WaitingUser),
+    )
+    .await;
+    assert!(
+        !w.store.get_task(&w.task.id).await.unwrap().is_stalled(),
+        "and what the user is owed is not the task stalling"
+    );
+}
+
 impl World {
     /// A message in the task's thread, addressed to its engineer.
     async fn message_to_engineer(&self, body: &str) -> String {

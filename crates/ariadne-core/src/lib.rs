@@ -518,6 +518,19 @@ impl AttentionReason {
             AttentionReason::WaitingPermission | AttentionReason::WaitingInput
         )
     }
+
+    /// Whether this reason is one only the user can answer.
+    ///
+    /// The other half of whose flag a reason is. Every one but this is the
+    /// agent's own — its detectors raise it, its next event takes it down,
+    /// and a relaunch is the recovery for it. This one is raised on the
+    /// session the work is with for something no agent can do: a message
+    /// written to the user, a published request that is theirs to merge.
+    /// Nothing an agent reports settles it, which is why nothing an agent
+    /// raises replaces it either.
+    pub fn is_for_the_user(&self) -> bool {
+        matches!(self, AttentionReason::WaitingUser)
+    }
 }
 
 /// Review verdict for one reviewer in one round.

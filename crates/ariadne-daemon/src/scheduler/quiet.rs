@@ -217,15 +217,10 @@ impl super::Scheduler {
     /// already rendered, through the same `revive_session` a message addressed
     /// to a dead agent takes.
     ///
-    /// What the user is owed outlives the relaunch. Putting an agent back on
-    /// its feet drops the row's attention (`restart_session`), which is right
-    /// for every reason the agent raised for itself and wrong for the one
-    /// nobody raised on its behalf: a published request is still theirs to
-    /// merge and a message written to them is still unread, however many
-    /// times the agent underneath is restarted. So `waiting_user` is put back
-    /// — on whatever came back up, since a resume keeps the row and a spawn
-    /// that had to start afresh does not, and the flag belongs to the agent
-    /// the work is with either way.
+    /// What the user is owed outlives the relaunch: whatever this session was
+    /// carrying for them goes back on whatever came back up
+    /// ([`Self::keep_waiting_user`]), since a relaunch is not the user having
+    /// merged the request or read the message.
     async fn relaunch_wedged(
         &mut self,
         session: &AgentSession,
@@ -267,7 +262,7 @@ impl super::Scheduler {
             return Ok(());
         }
         info!(session = %session.id, role = %session.role, relaunch = spent, "the agent has reported nothing for too long, relaunching it");
-        let for_the_user = session.attention_reason() == Some(AttentionReason::WaitingUser);
+        let carried = session.attention_reason();
         self.launcher.kill_session(&session.id).await?;
         if let Some(task_id) = session.task_id.clone()
             && session.role() == Role::Engineer
@@ -279,13 +274,8 @@ impl super::Scheduler {
                 .revive_session(&session.id, Some(revival))
                 .await?;
         }
-        if for_the_user {
-            let back = self.relaunched_session(session).await;
-            self.store
-                .set_session_attention(&back, AttentionReason::WaitingUser)
-                .await?;
-        }
-        Ok(())
+        let back = self.relaunched_session(session).await;
+        self.keep_waiting_user(&back, carried).await
     }
 
     /// The session the agent came back as: the same row wherever it was
@@ -293,12 +283,11 @@ impl super::Scheduler {
     /// spawn afresh instead. The row that was killed is the answer of last
     /// resort — a relaunch that left nothing running is not a row to lose the
     /// flag over.
-    async fn relaunched_session(&self, session: &AgentSession) -> String {
+    async fn relaunched_session(&self, session: &AgentSession) -> AgentSession {
         self.live_sessions(&session.goal_id, session.task_id.as_deref(), session.role())
             .await
             .ok()
             .and_then(|mut live| live.pop())
-            .map(|live| live.id)
-            .unwrap_or_else(|| session.id.clone())
+            .unwrap_or_else(|| session.clone())
     }
 }

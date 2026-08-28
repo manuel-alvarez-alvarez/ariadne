@@ -1442,6 +1442,92 @@ async fn a_user_message_takes_only_waiting_user_down_and_only_in_its_own_thread(
     assert_eq!(reason(&elsewhere).await, Some(AttentionReason::WaitingUser));
 }
 
+/// What an agent's own detectors may raise over, and what they may not.
+///
+/// `waiting_user` is the one flag no agent put up: it says a person owes this
+/// task something — a message written to them, a request that is theirs to
+/// merge — and a prompt, a disconnect or a stall neither settles that nor is
+/// more use to whoever is reading the strip. So a raise from any of them is
+/// withheld, clock included, and the write says nothing to the watchers
+/// either: nothing about the session changed.
+#[tokio::test]
+async fn an_agents_own_reason_does_not_replace_the_attention_raised_for_the_user() {
+    let w = World::new().await;
+    let store = &w.store;
+    let session = w.engineer_session().await;
+    // Installed after the seeding, so what it holds is this test's writes.
+    let mut changes = store.watch_changes().expect("the only watcher");
+
+    store
+        .set_session_attention(&session.id, AttentionReason::WaitingUser)
+        .await
+        .unwrap();
+    let owed = store.get_session(&session.id).await.unwrap();
+    let since = owed.attention_since.clone().expect("a clock on the flag");
+    changes.recv().await.expect("the raise is announced");
+
+    // Every reason an agent raises for itself, over the one it did not.
+    for raised in [
+        AttentionReason::Disconnected,
+        AttentionReason::Stalled,
+        AttentionReason::WaitingPermission,
+        AttentionReason::WaitingInput,
+        AttentionReason::AgentError,
+    ] {
+        store
+            .set_session_attention(&session.id, raised)
+            .await
+            .expect("a withheld raise is not an error");
+        let still = store.get_session(&session.id).await.unwrap();
+        assert_eq!(
+            still.attention_reason(),
+            Some(AttentionReason::WaitingUser),
+            "{raised:?} does not replace what the user is owed"
+        );
+        assert_eq!(
+            still.attention_since, owed.attention_since,
+            "{raised:?} does not restart the clock on it either"
+        );
+    }
+    assert!(
+        changes.try_recv().is_err(),
+        "a withheld raise changed nothing, so it announces nothing"
+    );
+
+    // The other way round it does replace: what the user is owed is news
+    // whatever the agent had up.
+    store.clear_session_attention(&session.id).await.unwrap();
+    store
+        .set_session_attention(&session.id, AttentionReason::AgentError)
+        .await
+        .unwrap();
+    store
+        .set_session_attention(&session.id, AttentionReason::WaitingUser)
+        .await
+        .unwrap();
+    let replaced = store.get_session(&session.id).await.unwrap();
+    assert_eq!(
+        replaced.attention_reason(),
+        Some(AttentionReason::WaitingUser)
+    );
+    assert_ne!(
+        replaced.attention_since,
+        Some(since),
+        "and it is a raise of its own, with a clock of its own"
+    );
+
+    // And the sweep's clear takes it down like any other.
+    store.clear_session_attention(&session.id).await.unwrap();
+    assert_eq!(
+        store
+            .get_session(&session.id)
+            .await
+            .unwrap()
+            .attention_reason(),
+        None
+    );
+}
+
 /// The summary a round was asked for review with is the round's own, read off
 /// the transition that opened it — the latest one, so a second round answers
 /// with what was submitted for it and not for the first.
