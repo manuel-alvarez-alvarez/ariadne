@@ -62,20 +62,6 @@ export interface AttentionTaskItem extends AttentionRow {
   reason: AttentionReason
 }
 
-/**
- * A plan the planner has handed over, waiting for the user to approve it.
- *
- * The only kind of row that is not about something going wrong: nothing is
- * stuck, the goal is simply the user's move now, and until it is made not one
- * of its tasks starts. That is exactly what "what is waiting for me" means, so
- * it belongs here rather than only in the goal's own lane.
- */
-export interface AttentionGoalItem extends AttentionRow {
-  kind: "goal"
-  /** Narrowed: the goals list is read whole, this is the one status it keeps. */
-  goal: GoalDto
-}
-
 export interface AttentionSessionItem extends AttentionRow {
   kind: "session"
   session: SessionDto
@@ -89,7 +75,7 @@ export interface AttentionSessionItem extends AttentionRow {
   task: TaskDto | undefined
 }
 
-type AttentionItem = AttentionGoalItem | AttentionTaskItem | AttentionSessionItem
+type AttentionItem = AttentionTaskItem | AttentionSessionItem
 
 interface Attention {
   /** Tasks and sessions in one list, most recently updated first. */
@@ -141,7 +127,7 @@ export function useAttention(): Attention {
 }
 
 /**
- * The three kinds interleaved into one list, newest first.
+ * The two kinds interleaved into one list, newest first.
  *
  * Which sessions belong is {@link sessionAttention}'s call, not this list's,
  * so the strip and `ariadne attention` include and label the same ones.
@@ -159,11 +145,6 @@ export function collectAttention(
   const goalsById = new Map((goals ?? []).map((goal) => [goal.id, goal]))
   const tasksById = new Map((tasks ?? []).map((task) => [task.id, task]))
   const items: AttentionItem[] = []
-
-  for (const goal of goals ?? []) {
-    if (goal.status !== "plan_ready") continue
-    items.push({ kind: "goal", id: goal.id, goalId: goal.id, goal, at: goal.updated_at })
-  }
 
   for (const task of tasks ?? []) {
     const reason = taskAttentionReason(task)

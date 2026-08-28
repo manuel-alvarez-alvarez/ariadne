@@ -126,27 +126,6 @@ export function useCreateGoal() {
   })
 }
 
-export function useFinalizeGoalPlan(goalId: string) {
-  return useRowAction(
-    qk.goals,
-    goalId,
-    (summary: string) =>
-      unwrap(
-        api().POST("/v1/goals/{id}/finalize", {
-          params: { path: { id: goalId } },
-          body: { summary },
-        }),
-      ),
-    {
-      alsoInvalidates: (queryClient) => {
-        // Finalizing records a message in the thread and readies the tasks.
-        void queryClient.invalidateQueries({ queryKey: qk.goals.messages(goalId) })
-        void queryClient.invalidateQueries({ queryKey: qk.tasks.lists() })
-      },
-    },
-  )
-}
-
 /**
  * Cancelling is optimistic on the goal itself: the user confirmed it, the
  * status it lands in is known, and the goal header should stop saying "active"

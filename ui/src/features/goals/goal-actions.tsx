@@ -1,24 +1,21 @@
 /**
- * The three things a user can do to a goal from outside the thread.
+ * The two things a user can do to a goal from outside the thread.
  *
- * Each is confirmed first — approving the plan starts every task whose
- * dependencies are met, cancelling tears the goal's sessions and worktrees
+ * Each is confirmed first — cancelling tears the goal's sessions and worktrees
  * down, deleting drops the goal and every trace of it — and each surfaces the
- * daemon's 409 in the dialog rather than closing on a failure ("cannot
- * finalize a plan with no tasks" is the one a user will actually hit).
+ * daemon's 409 in the dialog rather than closing on a failure ("this goal is
+ * running again" is the one a user will actually hit).
  *
  * They divide the lifecycle between them, the way `ariadne goal` does:
- * approving belongs to a goal whose plan is still the user's to accept —
- * `plan_ready`, where the planner handed it over, and `planning`, where it has
- * not yet — cancelling to one that has not stopped, deleting to one that has. Cancelling and deleting are therefore
- * exact opposites — every goal offers one of them and never both — which is
- * why this row always has something to show and the three dialogs are always
- * mounted. A trigger that goes away mid-flow (cancelling is optimistic, so the
- * goal is terminal by the time the request leaves) leaves its dialog behind to
- * finish, spinner, refusal and all.
+ * cancelling belongs to a goal that has not stopped, deleting to one that has.
+ * They are therefore exact opposites — every goal offers one of them and never
+ * both — which is why this row always has something to show and both dialogs
+ * are always mounted. A trigger that goes away mid-flow (cancelling is
+ * optimistic, so the goal is terminal by the time the request leaves) leaves
+ * its dialog behind to finish, spinner, refusal and all.
  */
 
-import { CheckCheckIcon, CircleSlashIcon, Trash2Icon } from "lucide-react"
+import { CircleSlashIcon, Trash2Icon } from "lucide-react"
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
 
@@ -26,10 +23,8 @@ import type { GoalDto } from "@/api"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { DeleteDialog } from "@/components/delete-dialog"
 import { Button } from "@/components/ui/button"
-import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
-import { Textarea } from "@/components/ui/textarea"
-import { useCancelGoal, useDeleteGoal, useFinalizeGoalPlan } from "./queries"
-import { awaitsPlanApproval, isTerminalGoalStatus } from "./status"
+import { useCancelGoal, useDeleteGoal } from "./queries"
+import { isTerminalGoalStatus } from "./status"
 
 export function GoalActions({
   goal,
@@ -43,17 +38,11 @@ export function GoalActions({
    */
   onDeleted?: () => void
 }) {
-  const [finalizeOpen, setFinalizeOpen] = useState(false)
   const [cancelOpen, setCancelOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
-  const finalize = useFinalizeGoalPlan(goal.id)
   const cancel = useCancelGoal(goal.id)
 
   const terminal = isTerminalGoalStatus(goal.status)
-  // The user's approval is the only thing that starts a goal's tasks, and it
-  // is offered wherever the plan is still waiting on it: `plan_ready` is the
-  // planner saying it is done, `planning` the user approving ahead of it.
-  const canFinalize = awaitsPlanApproval(goal.status)
   const canCancel = !terminal
   // A running goal still owns tmux sessions and git worktrees that only
   // cancelling tears down, so the daemon refuses to delete one — and the
@@ -62,12 +51,6 @@ export function GoalActions({
 
   return (
     <div className="flex items-center gap-2">
-      {canFinalize ? (
-        <Button variant="outline" size="sm" onClick={() => setFinalizeOpen(true)}>
-          <CheckCheckIcon />
-          Approve plan
-        </Button>
-      ) : null}
       {canCancel ? (
         // Only opens the confirm; the solid red is on the click inside it.
         <Button variant="destructive-ghost" size="sm" onClick={() => setCancelOpen(true)}>
@@ -82,7 +65,6 @@ export function GoalActions({
         </Button>
       ) : null}
 
-      <FinalizePlanDialog open={finalizeOpen} onOpenChange={setFinalizeOpen} finalize={finalize} />
       <CancelGoalDialog
         goal={goal}
         open={cancelOpen}
@@ -96,62 +78,6 @@ export function GoalActions({
         onDeleted={onDeleted}
       />
     </div>
-  )
-}
-
-function FinalizePlanDialog({
-  open,
-  onOpenChange,
-  finalize,
-}: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  /** Owned by `GoalActions`, so it survives the goal leaving `plan_ready`. */
-  finalize: ReturnType<typeof useFinalizeGoalPlan>
-}) {
-  const [summary, setSummary] = useState("")
-
-  useEffect(() => {
-    if (open) {
-      setSummary("")
-      finalize.reset()
-    }
-  }, [open, finalize.reset])
-
-  async function confirm() {
-    try {
-      await finalize.mutateAsync(summary.trim())
-      toast.success("Plan approved", { description: "The goal is now active." })
-      onOpenChange(false)
-    } catch {
-      // Shown in the dialog; the 409 is the interesting case.
-    }
-  }
-
-  return (
-    <ConfirmDialog
-      open={open}
-      onClose={() => onOpenChange(false)}
-      className="sm:max-w-lg"
-      title="Approve the plan?"
-      description="The goal becomes active and every task whose dependencies are met starts at once; the rest follow as their dependencies merge. The planner cannot add to the plan afterwards."
-      confirmLabel="Approve plan"
-      pending={finalize.isPending}
-      error={finalize.error}
-      errorTitle="Could not approve the plan"
-      onConfirm={() => void confirm()}
-    >
-      <Field>
-        <FieldLabel htmlFor="finalize-summary">Summary</FieldLabel>
-        <Textarea
-          id="finalize-summary"
-          value={summary}
-          onChange={(event) => setSummary(event.target.value)}
-          placeholder="Optional — recorded in the goal thread."
-        />
-        <FieldDescription>Posted to the thread as “Plan finalized: …”.</FieldDescription>
-      </Field>
-    </ConfirmDialog>
   )
 }
 

@@ -11,7 +11,6 @@ import type { GoalStatus } from "@/api"
 /** The goal statuses, in lifecycle order — also the order of the filter. */
 export const GOAL_STATUSES: readonly GoalStatus[] = [
   "planning",
-  "plan_ready",
   "active",
   "completed",
   "cancelled",
@@ -26,10 +25,7 @@ interface GoalStatusMeta {
    * carries dark mode, so the tint is never a light one left on a dark screen.
    *
    * The steps are the goal's counterparts of the task ones: planning is the
-   * planner's violet, an active goal is the accent, completed is done. A plan
-   * waiting to be approved takes the warm step: it is the one status of the
-   * five that is waiting on the *user*, and warm is how the board says so
-   * everywhere else.
+   * planner's violet, an active goal is the accent, completed is done.
    */
   badge: string
 }
@@ -38,10 +34,6 @@ export const GOAL_STATUS_META: Record<GoalStatus, GoalStatusMeta> = {
   planning: {
     label: "Planning",
     badge: "bg-status-review-soft text-status-review-fg",
-  },
-  plan_ready: {
-    label: "Plan ready",
-    badge: "bg-status-warn-soft text-status-warn-fg",
   },
   active: {
     label: "Active",
@@ -58,12 +50,12 @@ export const GOAL_STATUS_META: Record<GoalStatus, GoalStatusMeta> = {
 }
 
 /**
- * Whether the goal's plan is still the user's to approve — its tasks are held
- * back until it is, whether they are `pending` or `ready`, and the board keeps
- * them all in its first column to say so.
+ * Whether the planner is still writing the plan — its tasks are held back
+ * until it finalizes it, whether they are `pending` or `ready`, and the board
+ * keeps them all in its first column to say so.
  */
-export function awaitsPlanApproval(status: GoalStatus): boolean {
-  return status === "planning" || status === "plan_ready"
+export function isStillPlanning(status: GoalStatus): boolean {
+  return status === "planning"
 }
 
 /** Statuses a goal cannot leave: no actions apply to them. */

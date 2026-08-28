@@ -13,8 +13,8 @@
  *
  * The columns are here for the same reason: which cell a card lands in is a
  * property of the mounted grid, and `ready` folding into Pending is exactly
- * that — as is a goal whose plan nobody has approved yet holding every one of
- * its tasks in the first column, whatever each task's own status says.
+ * that — as is a goal the planner is still writing a plan for holding every
+ * one of its tasks in the first column, whatever each task's own status says.
  *
  * The lane header carries what the whole goal has spent, which is the one
  * figure the board shows without opening anything — and it is a number on a
@@ -176,29 +176,29 @@ it("puts the tasks their engineers are landing in the Approved column", async ()
   expect(cell?.textContent).toContain(published.title)
 })
 
-it("holds every task of a plan waiting for approval in the first column", async () => {
-  const planReady: GoalDto = { ...GOAL, status: "plan_ready" }
+it("holds every task of a plan still being written in the first column", async () => {
+  const planning: GoalDto = { ...GOAL, status: "planning" }
   const pending: TaskDto = { ...TASK, id: `${TASK.id}P`, title: "Waiting on a dependency" }
   pending.status = "pending"
   const ready: TaskDto = { ...TASK, id: `${TASK.id}R`, title: "Dependencies all merged" }
   ready.status = "ready"
   stubDaemon({ tasks: [pending, ready] })
-  renderBoard(planReady)
+  renderBoard(planning)
 
   const { cell, column } = cellOf(await screen.findByText(ready.title))
   expect(column).toBe(0)
   expect(cell.textContent).toContain(pending.title)
 
-  // And each card says what it is really waiting for, which is the reader.
-  expect(within(cell).getAllByText("Awaiting approval")).toHaveLength(2)
+  // And each card says what it is really waiting for, which is the planner.
+  expect(within(cell).getAllByText("Awaiting plan")).toHaveLength(2)
 })
 
-it("says nothing about approval once the goal is active", async () => {
+it("says nothing about the plan once the goal is active", async () => {
   stubDaemon({ tasks: [{ ...TASK, status: "ready" }] })
   renderBoard()
 
   await screen.findByText(TASK.title)
-  expect(screen.queryByText("Awaiting approval")).toBeNull()
+  expect(screen.queryByText("Awaiting plan")).toBeNull()
 })
 
 it("carries the goal's own total in the lane header", async () => {

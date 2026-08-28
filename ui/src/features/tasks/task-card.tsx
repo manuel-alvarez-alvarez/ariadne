@@ -40,8 +40,8 @@ import { primaryStatus, subStatus, TASK_STATUS_META } from "./status"
 
 /** What the card says about a task its goal's plan is still holding back. */
 const AWAITING_PLAN = {
-  label: "Awaiting approval",
-  hint: "Its goal's plan is waiting for you: nothing starts until the plan is approved.",
+  label: "Awaiting plan",
+  hint: "Its goal is still being planned: nothing starts until the planner finalizes the plan.",
   badge: "bg-status-warn-soft text-status-warn-fg",
 }
 
@@ -65,8 +65,8 @@ export function TaskCard({
   attention?: SessionAttention | null
   /**
    * Whether this task is held by its goal's plan rather than by anything of
-   * its own — what the board says about every card of a `planning` or
-   * `plan_ready` goal, which is why it is the lane's word and not the card's.
+   * its own — what the board says about every card of a `planning` goal, which
+   * is why it is the lane's word and not the card's.
    */
   awaitingPlan?: boolean
 }) {
@@ -113,8 +113,8 @@ export function TaskCard({
             </Tooltip>
           )}
           {/* After the status, because it refines it: a pending or ready task
-              of an unapproved plan is not waiting on an engineer, it is
-              waiting on the reader. */}
+              of a plan still being written is not waiting on an engineer, it
+              is waiting on the planner. */}
           {awaitingPlan && (
             <Tooltip>
               <TooltipTrigger render={<span className="flex" />}>

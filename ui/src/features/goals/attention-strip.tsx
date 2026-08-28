@@ -9,9 +9,8 @@
  * headings. Each row names its goal instead, since nothing above it does.
  *
  * The rows are links into the panel scheme the rest of the app uses — `?task=`
- * for a task, `?session=` for a session, `?goal=` for a plan waiting to be
- * approved — so reading the list and acting on it are the same gesture, and
- * the board stays underneath.
+ * for a task, `?session=` for a session — so reading the list and acting on it
+ * are the same gesture, and the board stays underneath.
  *
  * Nothing here polls, and nothing here reads the board's status filter; see
  * `attention.ts`.
@@ -26,15 +25,10 @@ import { When } from "@/components/when"
 import { SESSION_ATTENTION_META, SessionAttentionBadge } from "@/features/sessions/session-display"
 import { STALLED_META, StalledBadge, TASK_STATUS_META } from "@/features/tasks"
 import { describeError, plural, ROLE_LABELS, shortId } from "@/lib/format"
-import { goalPanelTo, sessionPanelTo, taskPanelTo } from "@/routes/paths"
+import { sessionPanelTo, taskPanelTo } from "@/routes/paths"
 
-import {
-  type AttentionGoalItem,
-  type AttentionSessionItem,
-  type AttentionTaskItem,
-  useAttention,
-} from "./attention"
-import { GOAL_STATUS_META } from "./status"
+import { type AttentionSessionItem, type AttentionTaskItem, useAttention } from "./attention"
+
 export function AttentionStrip() {
   const attention = useAttention()
 
@@ -56,9 +50,7 @@ export function AttentionStrip() {
           so the cap is a little taller than the handful it used to hold. */}
       <ul className="max-h-64 divide-y overflow-y-auto">
         {attention.items.map((item) =>
-          item.kind === "goal" ? (
-            <GoalRow key={item.id} item={item} />
-          ) : item.kind === "task" ? (
+          item.kind === "task" ? (
             <TaskRow key={item.id} item={item} />
           ) : (
             <SessionRow key={item.id} item={item} />
@@ -86,33 +78,9 @@ export function AttentionStrip() {
   )
 }
 
-/** The three row kinds sit under one another, so they carry the same tails. */
+/** The two row kinds sit under one another, so they carry the same tails. */
 const ROW_LINK =
   "flex flex-wrap items-center gap-2 px-3 py-2 text-sm transition-colors hover:bg-muted/50"
-
-/**
- * A plan waiting on its approval, which opens the goal's own panel: the plan
- * is read there — its tasks, its thread — and approved from the same header.
- */
-function GoalRow({ item: { goal, at } }: { item: AttentionGoalItem }) {
-  const [search] = useSearchParams()
-  const meta = GOAL_STATUS_META.plan_ready
-
-  return (
-    <li>
-      <Link to={goalPanelTo(search, goal.id)} className={ROW_LINK}>
-        <StatusBadge box="badge" label={meta.label} tone={meta.badge} />
-        <Subject
-          subject={goal.title}
-          detail="Goal · Plan ready for approval — none of its tasks start until you approve it"
-        />
-        <GoalRef goalId={goal.id} goal={goal} />
-        <When at={at} label="last moved" className="text-xs text-muted-foreground" />
-        <RowId id={goal.id} />
-      </Link>
-    </li>
-  )
-}
 
 function TaskRow({ item: { task, reason, goalId, goal } }: { item: AttentionTaskItem }) {
   const [search] = useSearchParams()

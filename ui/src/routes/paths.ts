@@ -69,21 +69,6 @@ export function taskPanelTo(current: URLSearchParams, taskId: string): { search:
   return { search: `?${next.toString()}` }
 }
 
-/**
- * Link target that opens the goal's panel over the current screen, the way
- * {@link taskPanelTo} opens a task's: same pathname, `?goal=` added, the
- * board's own filter kept, and the params that belong to whatever panel was
- * open dropped.
- */
-export function goalPanelTo(current: URLSearchParams, goalId: string): { search: string } {
-  const next = new URLSearchParams(current)
-  next.set("goal", goalId)
-  next.delete("task")
-  next.delete("tab")
-  next.delete("session")
-  return { search: `?${next.toString()}` }
-}
-
 /** `taskPanelTo` against the current location, for links outside a list. */
 export function useTaskPanelTo(taskId: string): { search: string } {
   const [search] = useSearchParams()

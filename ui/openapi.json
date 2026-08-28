@@ -454,7 +454,7 @@
         "tags": [
           "goals"
         ],
-        "summary": "Approve the plan: goal moves plan_ready (or planning) -> active, and its\ntasks start. The user's call alone — the planner submits, it does not\napprove its own plan.",
+        "summary": "Finalize the plan: goal moves planning -> active and its tasks start. The\nplanner's call alone — it makes it once the user has validated the plan in\nthe goal thread, and there is nothing left for the user to approve.",
         "operationId": "finalize",
         "parameters": [
           {
@@ -596,54 +596,6 @@
           },
           "400": {
             "description": "unknown addressee, or one taking no part in the goal"
-          }
-        }
-      }
-    },
-    "/v1/goals/{id}/submit": {
-      "post": {
-        "tags": [
-          "goals"
-        ],
-        "summary": "Submit the plan for the user's approval: goal moves planning -> plan_ready\n(planner or user). Nothing starts; only `finalize` does that.",
-        "operationId": "submit",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "goal id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SubmitPlanRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GoalDto"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": ""
-          },
-          "409": {
-            "description": ""
           }
         }
       }
@@ -2982,7 +2934,7 @@
       },
       "FinalizePlanRequest": {
         "type": "object",
-        "description": "Body of `POST /v1/goals/{id}/finalize`: the user approves the plan,\nplanning ends and execution starts. The user's call, not the planner's.",
+        "description": "Body of `POST /v1/goals/{id}/finalize`: the planner ends planning once the\nuser has validated the plan in the goal thread, and execution starts. The\nplanner's call, not the user's.",
         "required": [
           "summary"
         ],
@@ -3077,7 +3029,6 @@
         "description": "Goal lifecycle status.",
         "enum": [
           "planning",
-          "plan_ready",
           "active",
           "completed",
           "cancelled"
@@ -3815,19 +3766,6 @@
           "exited",
           "failed"
         ]
-      },
-      "SubmitPlanRequest": {
-        "type": "object",
-        "description": "Body of `POST /v1/goals/{id}/submit`: the planner hands the plan to the\nuser for approval. The goal waits in `plan_ready` and no task starts.",
-        "required": [
-          "summary"
-        ],
-        "properties": {
-          "summary": {
-            "type": "string",
-            "description": "Plan summary, posted to the goal thread addressed to the user."
-          }
-        }
       },
       "TaskDto": {
         "type": "object",

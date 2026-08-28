@@ -38,7 +38,7 @@ import { cn, plural } from "@/lib/format"
 import { paths } from "@/routes/paths"
 import { type BoardAttention, useBoardAttention } from "./attention"
 import { useCollapsedLanes } from "./collapsed-lanes"
-import { awaitsPlanApproval, GOAL_STATUS_META } from "./status"
+import { GOAL_STATUS_META, isStillPlanning } from "./status"
 
 /**
  * One template for the header row and every lane, so the columns line up: one
@@ -220,10 +220,11 @@ function Lane({
   // ask for a person. It is shown collapsed too — a lane folded away is
   // exactly where a stuck planner would otherwise go unseen.
   const planner: SessionAttention | undefined = attention.byGoal.get(goal.id)
-  // Nothing under an unapproved plan has started, whatever each task's own
-  // status says, so every card of this lane says what it is really waiting
-  // for. It is the goal's fact, which is why the lane hands it down.
-  const awaitingPlan = awaitsPlanApproval(goal.status)
+  // Nothing under a plan the planner has not finalized has started, whatever
+  // each task's own status says, so every card of this lane says what it is
+  // really waiting for. It is the goal's fact, which is why the lane hands it
+  // down.
+  const awaitingPlan = isStillPlanning(goal.status)
 
   return (
     <section className="border-b last:border-b-0">
@@ -276,11 +277,7 @@ function Lane({
 
       {collapsed ? null : total === 0 ? (
         <p className="sticky left-0 w-fit px-3 pt-1 pb-3 text-xs text-muted-foreground">
-          {goal.status === "planning"
-            ? "No tasks yet — the planner is still working"
-            : goal.status === "plan_ready"
-              ? "Waiting for your approval"
-              : "No tasks"}
+          {goal.status === "planning" ? "No tasks yet — the planner is still working" : "No tasks"}
         </p>
       ) : (
         <div className={cn(COLUMNS_GRID, "px-3 pt-1 pb-2.5")}>
@@ -367,17 +364,15 @@ interface GoalTasks {
 /**
  * The tasks of each lane, in the cell each one belongs in.
  *
- * A goal whose plan has not been approved holds all of its tasks in the first
- * column, `pending` and `ready` alike: nothing under it has been handed to an
+ * A goal still being planned holds all of its tasks in the first column,
+ * `pending` and `ready` alike: nothing under it has been handed to an
  * engineer, so a card further down the pipeline would say a task is moving
- * when it is waiting on the reader. That is the goal's status talking, which
+ * when it is waiting on the planner. That is the goal's status talking, which
  * is why the goals are an argument here.
  */
 function groupByGoal(tasks: TaskDto[], goals: GoalDto[]): Map<string, GoalTasks> {
   const lanes = new Map<string, GoalTasks>()
-  const held = new Set(
-    goals.filter((goal) => awaitsPlanApproval(goal.status)).map((goal) => goal.id),
-  )
+  const held = new Set(goals.filter((goal) => isStillPlanning(goal.status)).map((goal) => goal.id))
   for (const task of tasks) {
     let lane = lanes.get(task.goal_id)
     if (!lane) {

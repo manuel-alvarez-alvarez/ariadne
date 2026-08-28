@@ -198,9 +198,9 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Approve the plan: goal moves plan_ready (or planning) -> active, and its
-         *     tasks start. The user's call alone — the planner submits, it does not
-         *     approve its own plan.
+         * Finalize the plan: goal moves planning -> active and its tasks start. The
+         *     planner's call alone — it makes it once the user has validated the plan in
+         *     the goal thread, and there is nothing left for the user to approve.
          */
         post: operations["goals_finalize"];
         delete?: never;
@@ -221,26 +221,6 @@ export interface paths {
         put?: never;
         /** Post to the goal-level thread. */
         post: operations["goals_post_message"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/goals/{id}/submit": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Submit the plan for the user's approval: goal moves planning -> plan_ready
-         *     (planner or user). Nothing starts; only `finalize` does that.
-         */
-        post: operations["goals_submit"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1135,8 +1115,9 @@ export interface components {
             event: "repository_deleted";
         };
         /**
-         * @description Body of `POST /v1/goals/{id}/finalize`: the user approves the plan,
-         *     planning ends and execution starts. The user's call, not the planner's.
+         * @description Body of `POST /v1/goals/{id}/finalize`: the planner ends planning once the
+         *     user has validated the plan in the goal thread, and execution starts. The
+         *     planner's call, not the user's.
          */
         FinalizePlanRequest: {
             /** @description Plan summary, recorded in the goal thread. */
@@ -1175,7 +1156,7 @@ export interface components {
          * @description Goal lifecycle status.
          * @enum {string}
          */
-        GoalStatus: "planning" | "plan_ready" | "active" | "completed" | "cancelled";
+        GoalStatus: "planning" | "active" | "completed" | "cancelled";
         /**
          * @description What a goal cost, by the role that spent it. Grouped by role rather than
          *     by profile: a goal's engineers are as many as it has tasks, and what is
@@ -1518,14 +1499,6 @@ export interface components {
          * @enum {string}
          */
         SessionStatus: "starting" | "running" | "idle" | "exited" | "failed";
-        /**
-         * @description Body of `POST /v1/goals/{id}/submit`: the planner hands the plan to the
-         *     user for approval. The goal waits in `plan_ready` and no task starts.
-         */
-        SubmitPlanRequest: {
-            /** @description Plan summary, posted to the goal thread addressed to the user. */
-            summary: string;
-        };
         TaskDto: {
             agent_kind?: null | components["schemas"]["AgentKind"];
             branch: string;
@@ -2144,44 +2117,6 @@ export interface operations {
             };
             /** @description unknown addressee, or one taking no part in the goal */
             400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    goals_submit: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description goal id */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SubmitPlanRequest"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GoalDto"];
-                };
-            };
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            409: {
                 headers: {
                     [name: string]: unknown;
                 };

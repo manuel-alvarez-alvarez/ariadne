@@ -12,11 +12,6 @@
  * between the render and the click — so it stays on screen and the button
  * stops being clickable.
  *
- * Approving the plan is the other gate worth pinning, for the same reason:
- * only the user starts a goal's tasks, and the button that does it is offered
- * exactly where the daemon still accepts it — `plan_ready`, where the planner
- * handed the plan over, and `planning`, where the user is ahead of it.
- *
  * jsdom is asked for by this file alone (the docblock above): the rest of the
  * goal tests are pure and have no business paying for a DOM.
  */
@@ -153,41 +148,5 @@ describe("deleting a goal", () => {
     // The dialog stays up, and re-confirming would only ask the same question.
     expect((await confirmDelete()).hasAttribute("disabled")).toBe(true)
     expect(onDeleted).not.toHaveBeenCalled()
-  })
-})
-
-describe("approving the plan", () => {
-  it.each(["plan_ready", "planning"] as const)("is offered on a %s goal", (status) => {
-    renderActions(status)
-
-    expect(screen.getByRole("button", { name: "Approve plan" })).toBeDefined()
-  })
-
-  it.each(["active", "completed", "cancelled"] as const)(
-    "is not offered on a %s goal, which the daemon would refuse",
-    (status) => {
-      renderActions(status)
-
-      expect(screen.queryByRole("button", { name: "Approve plan" })).toBeNull()
-    },
-  )
-
-  it("asks what the approval starts, and only the confirm sends the finalize", async () => {
-    const user = userEvent.setup()
-    renderActions("plan_ready")
-
-    await user.click(screen.getByRole("button", { name: "Approve plan" }))
-
-    const dialog = await screen.findByRole("dialog")
-    expect(within(dialog).getByText(/every task whose dependencies are met/)).toBeDefined()
-    expect(wire()).toEqual([])
-
-    await user.click(within(dialog).getByRole("button", { name: "Approve plan" }))
-
-    await waitFor(() => {
-      expect(wire()).toEqual([
-        { method: "POST", path: `/v1/goals/${goal("plan_ready").id}/finalize` },
-      ])
-    })
   })
 })

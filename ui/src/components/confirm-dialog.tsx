@@ -2,9 +2,9 @@
  * "Are you sure?", for every action that cannot be taken back.
  *
  * The daemon is the authority on whether the action is allowed, so a refusal
- * is shown in the dialog and the dialog stays open — a 409 ("cannot finalize a
- * plan with no tasks", "the profile is still in use") is the answer the user
- * needs to read, not something to toast away.
+ * is shown in the dialog and the dialog stays open — a 409 ("this goal is
+ * running again", "the profile is still in use") is the answer the user needs
+ * to read, not something to toast away.
  *
  * The dismiss button says "Cancel" unless the dangerous verb is itself
  * "Cancel …", where the caller passes the opposite ("Keep goal") so the same
