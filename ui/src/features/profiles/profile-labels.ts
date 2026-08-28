@@ -60,7 +60,6 @@ export const PROMPT_KIND_LABELS: Record<PromptKind, string> = {
   reviewer_resume: "Reviewer resume",
   landing_direct: "Landing (direct)",
   landing_pull_request: "Landing (pull request)",
-  message_delivery: "Message delivery",
 }
 
 /**
@@ -79,7 +78,6 @@ export const PROMPT_KINDS = [
   "reviewer_resume",
   "landing_direct",
   "landing_pull_request",
-  "message_delivery",
 ] as const satisfies readonly PromptKind[]
 
 /** When each briefing is sent, one line under the editor that holds it. */
@@ -96,7 +94,6 @@ export const PROMPT_KIND_HINTS: Record<PromptKind, string> = {
     "Lands an approved task where its repository squashes the change onto the base branch itself.",
   landing_pull_request:
     "Lands an approved task where its repository takes the change as a pull or merge request.",
-  message_delivery: "Wakes any agent with a message addressed to it.",
 }
 
 export function promptKindLabel(kind: PromptKind): string {

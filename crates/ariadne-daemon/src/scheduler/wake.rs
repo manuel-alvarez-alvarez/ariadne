@@ -13,7 +13,7 @@
 
 use tracing::{info, warn};
 
-use ariadne_core::{AttentionReason, PromptKind, Role};
+use ariadne_core::{AttentionReason, Role};
 use ariadne_store::{AgentSession, Message, SessionFilter, Task};
 
 use crate::agents::prompts;
@@ -64,9 +64,7 @@ impl super::Scheduler {
         if message.author_session_id.as_deref() == Some(session.id.as_str()) {
             return Ok(Wake::Nothing);
         }
-        let template =
-            prompts::template_for(&self.store, profile_id, PromptKind::MessageDelivery).await;
-        let text = prompts::message_delivery(&template, message);
+        let text = prompts::message_delivery(message);
         // Asked rather than assumed, the way the spawn guards ask: a tmux
         // that cannot be reached has said nothing about the pane, and an
         // agent relaunched on top of a live one is two agents on one task.

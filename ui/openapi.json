@@ -3417,7 +3417,7 @@
       },
       "PromptKind": {
         "type": "string",
-        "description": "A prompt a profile owns beside its system prompt: one of the texts an\nagent of that role is started, resumed or nudged with. Every text Ariadne\nputs in front of an agent is one of these, and each kind belongs to the\nrole — or, for [`PromptKind::MessageDelivery`], the roles — that receive it\n(see [`PromptKind::roles`]).",
+        "description": "A prompt a profile owns beside its system prompt: one of the texts an\nagent of that role is started, resumed or nudged with. Every briefing a\nprofile carries is one of these, and each kind belongs to the role that\nreceives it (see [`PromptKind::roles`]).",
         "enum": [
           "planner_briefing",
           "planner_resume",
@@ -3427,8 +3427,7 @@
           "reviewer_briefing",
           "reviewer_resume",
           "landing_direct",
-          "landing_pull_request",
-          "message_delivery"
+          "landing_pull_request"
         ]
       },
       "RecipientKind": {

@@ -109,9 +109,9 @@ impl Owner<'_> {
         if kind.owned_by(self.role()) {
             return Ok(arg);
         }
-        // One role for every kind that briefs a role through its own
-        // lifecycle, and all of them for the notice an addressed agent is
-        // woken with.
+        // Which role owns it is `roles`' word rather than this sentence's, so
+        // the refusal stays right however many it answers with — one, for
+        // every kind there is: each briefs a role through its own lifecycle.
         let owner = kind.roles().iter().map(|r| r.as_str()).collect::<Vec<_>>();
         let owner = owner.join("/");
         let (kind, prompts) = (kind.as_str(), spelled(&owned(Some(self.role()))));
@@ -372,12 +372,12 @@ mod tests {
         let kinds = |role| spelled(&owned(Some(role)));
         assert_eq!(
             kinds(Role::Planner),
-            "system, planner_briefing, planner_resume, message_delivery"
+            "system, planner_briefing, planner_resume"
         );
         assert_eq!(
             kinds(Role::Engineer),
             "system, engineer_briefing, engineer_resume, changes_requested, \
-             landing_direct, landing_pull_request, message_delivery"
+             landing_direct, landing_pull_request"
         );
     }
 
@@ -441,7 +441,7 @@ mod tests {
         );
         assert_eq!(
             reset_question(&p, &owned(Some(p.role)), true),
-            "Reset all 7 prompts of Engineer (01Engineer) to the engineer defaults?"
+            "Reset all 6 prompts of Engineer (01Engineer) to the engineer defaults?"
         );
     }
 

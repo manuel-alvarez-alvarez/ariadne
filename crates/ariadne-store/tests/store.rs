@@ -2780,3 +2780,77 @@ async fn a_database_from_before_token_usage_gets_the_table_on_open() {
         usage(1, 0, 2)
     );
 }
+
+/// The notice a message wakes an agent with is the daemon's own text now, not
+/// a prompt kind anybody owns, so an override somebody wrote for it is text no
+/// code will ever read again: `0003` deletes it on open, and leaves every
+/// other override where it was.
+///
+/// The state is reproduced rather than replayed from an old checkout, the way
+/// the usage-table upgrade above is: a row of the retired kind, with `0003`
+/// unapplied.
+#[tokio::test]
+async fn a_message_delivery_override_is_dropped_when_the_database_is_opened() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("previous.db");
+    let store = Store::open(&path).await.unwrap();
+    let engineer = store.get_profile_by_name("Engineer").await.unwrap();
+    store
+        .update_profile_prompt(&engineer.id, PromptKind::EngineerResume, "back to it")
+        .await
+        .unwrap();
+    drop(store);
+
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO profile_prompts (profile_id, kind, content, updated_at)
+         VALUES (?, 'message_delivery', 'Someone wrote to you.', '2026-01-01T00:00:00Z')",
+    )
+    .bind(&engineer.id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 3")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+    assert_eq!(prompt_rows_at(&path).await, 2);
+
+    // Not called old: everything applied to it is still shipped.
+    assert_eq!(ariadne_store::pre_squash_database(&path).await, None);
+    let store = Store::open(&path).await.unwrap();
+    assert_eq!(
+        prompt_rows_at(&path).await,
+        1,
+        "the retired kind is gone and the other override is not"
+    );
+    assert_eq!(
+        store
+            .get_profile_prompt(&engineer.id, PromptKind::EngineerResume)
+            .await
+            .unwrap()
+            .content,
+        "back to it"
+    );
+
+    // And no role is briefed with the kind any more, whatever was stored.
+    for (name, role) in [
+        ("Planner", Role::Planner),
+        ("Engineer", Role::Engineer),
+        ("Reviewer", Role::Reviewer),
+    ] {
+        let profile = store.get_profile_by_name(name).await.unwrap();
+        let prompts = store.list_profile_prompts(&profile.id).await.unwrap();
+        assert_eq!(
+            prompts.iter().map(|p| p.kind()).collect::<Vec<_>>(),
+            PromptKind::for_role(role)
+        );
+        assert!(
+            prompts.iter().all(|p| p.kind != "message_delivery"),
+            "{name} still owns a message delivery prompt"
+        );
+    }
+}

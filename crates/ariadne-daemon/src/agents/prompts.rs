@@ -1,8 +1,11 @@
 //! Prompt assembly from the database.
 //!
-//! Every prompt an agent runs on belongs to its profile, and either layer may
-//! be the default of the code — which is what a profile nobody edited runs on,
-//! without anything having been copied into the database first.
+//! Every briefing an agent is started or resumed on belongs to its profile,
+//! and either layer may be the default of the code — which is what a profile
+//! nobody edited runs on, without anything having been copied into the
+//! database first. What Ariadne says on its own behalf is not a briefing and
+//! belongs to no profile: [`message_delivery`] is the daemon's own notice,
+//! worded here and nowhere else.
 //!
 //! Those templates are editable, so they are also breakable. Rendering is
 //! lenient by construction: an unknown `{token}`, a brace that never closes,
@@ -244,15 +247,26 @@ pub fn landing_briefing(template: &str, task: &Task, repo: &Repository) -> Strin
     )
 }
 
+/// The notice an agent of any role is woken with when a message addresses it.
+///
+/// Ariadne's own plumbing rather than a persona text, so it is worded here and
+/// is nobody's to edit. The message is quoted whole rather than pointed at: an
+/// agent sent to go and read what it was woken for has been woken for nothing.
+const MESSAGE_DELIVERY: &str = r#"New message from the {author} in {thread}:
+
+{body}
+
+`list_messages` reads the rest of it, `post_message` answers."#;
+
 /// What an agent of any role is woken with when a message addresses it: who
 /// wrote, what they wrote, and which conversation it is in.
-pub fn message_delivery(template: &str, message: &Message) -> String {
+pub fn message_delivery(message: &Message) -> String {
     let thread = match message.task_id {
         Some(_) => "your task conversation",
         None => "the goal's planning thread",
     };
     render(
-        template,
+        MESSAGE_DELIVERY,
         &[
             ("author", message.author_role().as_str()),
             ("thread", thread),
@@ -412,7 +426,6 @@ mod tests {
                 PromptKind::LandingDirect | PromptKind::LandingPullRequest => {
                     landing_briefing(&template, &task, &repo)
                 }
-                PromptKind::MessageDelivery => message_delivery(&template, &message()),
             };
             assert!(
                 !rendered.contains('{'),
@@ -465,7 +478,6 @@ mod tests {
             repo.merge_strategy().as_str()
         );
         let round = task.review_round.to_string();
-        let message = message();
 
         // The values every kind is rendered with, and what the briefing that
         // owns it renders.
@@ -580,15 +592,6 @@ mod tests {
                     ("branch", &task.branch),
                     ("base_branch", &repo.base_branch),
                     ("repo_path", &repo.path),
-                ],
-            ),
-            (
-                PromptKind::MessageDelivery,
-                message_delivery(default(PromptKind::MessageDelivery), &message),
-                vec![
-                    ("author", "planner"),
-                    ("thread", "your task conversation"),
-                    ("body", &message.body),
                 ],
             ),
         ];
@@ -707,8 +710,7 @@ mod tests {
     /// pointer to go and read it, and names the two calls it hands the agent.
     #[test]
     fn the_delivery_notice_quotes_the_message_and_names_its_tools() {
-        let template = default(PromptKind::MessageDelivery);
-        let text = message_delivery(template, &message());
+        let text = message_delivery(&message());
         assert!(
             text.contains("New message from the planner in your task conversation"),
             "{text}"
@@ -723,13 +725,10 @@ mod tests {
         );
         assert!(!text.contains("  "), "{text}");
 
-        let planning = message_delivery(
-            template,
-            &Message {
-                task_id: None,
-                ..message()
-            },
-        );
+        let planning = message_delivery(&Message {
+            task_id: None,
+            ..message()
+        });
         assert!(
             planning.contains("in the goal's planning thread"),
             "{planning}"

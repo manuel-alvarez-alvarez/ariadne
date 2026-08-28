@@ -78,7 +78,6 @@ pub fn default_prompt_text(kind: PromptKind) -> &'static str {
         PromptKind::LandingPullRequest => LANDING_PULL_REQUEST,
         PromptKind::ReviewerBriefing => REVIEWER_BRIEFING,
         PromptKind::ReviewerResume => REVIEWER_RESUME,
-        PromptKind::MessageDelivery => MESSAGE_DELIVERY,
     }
 }
 
@@ -230,17 +229,6 @@ const REVIEWER_RESUME: &str = r#"Round {review_round} of "{task_title}" is waiti
 
 Its summary: {summary}"#;
 
-/// The notice an agent of any role is woken with when a message addresses it.
-///
-/// The message is quoted whole rather than pointed at: an agent sent to go and
-/// read what it was woken for has been woken for nothing. `{thread}` is the
-/// conversation it was written in.
-const MESSAGE_DELIVERY: &str = r#"New message from the {author} in {thread}:
-
-{body}
-
-`list_messages` reads the rest of it, `post_message` answers."#;
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -288,10 +276,9 @@ mod tests {
 
         let cap = |kind: PromptKind| match kind {
             PromptKind::LandingDirect | PromptKind::LandingPullRequest => 2000,
-            PromptKind::PlannerResume
-            | PromptKind::EngineerResume
-            | PromptKind::ReviewerResume
-            | PromptKind::MessageDelivery => 250,
+            PromptKind::PlannerResume | PromptKind::EngineerResume | PromptKind::ReviewerResume => {
+                250
+            }
             _ => 400,
         };
 

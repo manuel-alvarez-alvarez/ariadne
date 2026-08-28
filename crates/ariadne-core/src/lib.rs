@@ -99,10 +99,9 @@ wire_enum! { MergeStrategy, "merge strategy", [
 ]}
 
 /// A prompt a profile owns beside its system prompt: one of the texts an
-/// agent of that role is started, resumed or nudged with. Every text Ariadne
-/// puts in front of an agent is one of these, and each kind belongs to the
-/// role — or, for [`PromptKind::MessageDelivery`], the roles — that receive it
-/// (see [`PromptKind::roles`]).
+/// agent of that role is started, resumed or nudged with. Every briefing a
+/// profile carries is one of these, and each kind belongs to the role that
+/// receives it (see [`PromptKind::roles`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(
@@ -132,8 +131,6 @@ pub enum PromptKind {
     LandingDirect,
     /// Landing briefing of a repository that takes a pull or merge request.
     LandingPullRequest,
-    /// The notice an agent is woken with when a message addresses it.
-    MessageDelivery,
 }
 
 wire_enum! { PromptKind, "prompt kind", [
@@ -146,7 +143,6 @@ wire_enum! { PromptKind, "prompt kind", [
     LandingPullRequest = "landing_pull_request",
     ReviewerBriefing = "reviewer_briefing",
     ReviewerResume = "reviewer_resume",
-    MessageDelivery = "message_delivery",
 ]}
 
 impl PromptKind {
@@ -162,9 +158,7 @@ impl PromptKind {
         }
     }
 
-    /// The roles whose profiles own this prompt. All three for
-    /// [`PromptKind::MessageDelivery`]: an addressed message reaches whoever
-    /// it names, so every role words its own notice.
+    /// The roles whose profiles own this prompt.
     pub fn roles(&self) -> &'static [Role] {
         match self {
             PromptKind::PlannerBriefing | PromptKind::PlannerResume => &[Role::Planner],
@@ -174,7 +168,6 @@ impl PromptKind {
             | PromptKind::LandingDirect
             | PromptKind::LandingPullRequest => &[Role::Engineer],
             PromptKind::ReviewerBriefing | PromptKind::ReviewerResume => &[Role::Reviewer],
-            PromptKind::MessageDelivery => &Role::ALL,
         }
     }
 
@@ -186,24 +179,15 @@ impl PromptKind {
     /// The prompts a profile of `role` owns, in briefing order.
     pub fn for_role(role: Role) -> &'static [PromptKind] {
         match role {
-            Role::Planner => &[
-                PromptKind::PlannerBriefing,
-                PromptKind::PlannerResume,
-                PromptKind::MessageDelivery,
-            ],
+            Role::Planner => &[PromptKind::PlannerBriefing, PromptKind::PlannerResume],
             Role::Engineer => &[
                 PromptKind::EngineerBriefing,
                 PromptKind::EngineerResume,
                 PromptKind::ChangesRequested,
                 PromptKind::LandingDirect,
                 PromptKind::LandingPullRequest,
-                PromptKind::MessageDelivery,
             ],
-            Role::Reviewer => &[
-                PromptKind::ReviewerBriefing,
-                PromptKind::ReviewerResume,
-                PromptKind::MessageDelivery,
-            ],
+            Role::Reviewer => &[PromptKind::ReviewerBriefing, PromptKind::ReviewerResume],
         }
     }
 
@@ -262,7 +246,6 @@ impl PromptKind {
             // moved under it, and the goal and the repository are things it
             // already read last round.
             PromptKind::ReviewerResume => &["review_round", "task_title", "branch", "summary"],
-            PromptKind::MessageDelivery => &["author", "thread", "body"],
         }
     }
 
@@ -627,21 +610,6 @@ mod tests {
                     kind.as_str()
                 );
             }
-        }
-    }
-
-    /// The one notice every role receives: a message addressed to an agent
-    /// reaches whichever role it names, so all three own the text they are
-    /// woken with.
-    #[test]
-    fn the_message_notice_belongs_to_every_role() {
-        assert_eq!(PromptKind::MessageDelivery.roles(), &Role::ALL);
-        for role in Role::ALL {
-            assert!(
-                PromptKind::for_role(role).contains(&PromptKind::MessageDelivery),
-                "{} has no message notice",
-                role.as_str()
-            );
         }
     }
 
