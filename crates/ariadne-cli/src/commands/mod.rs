@@ -28,7 +28,7 @@ use ariadne_api::messages::{MessageDto, MessageRecipientDto};
 use ariadne_api::profiles::ProfileDto;
 use ariadne_client::{Client, endpoint};
 use ariadne_core::models::ModelRef;
-use ariadne_core::{AgentKind, RecipientKind, probe};
+use ariadne_core::{RecipientKind, probe};
 
 use crate::output::{Format, local_time, note, print};
 
@@ -281,22 +281,19 @@ impl ProfileNames {
         }
     }
 
-    /// `Name (id) · agent · model`: the mention, plus what the agent behind it
-    /// is pinned to run on, out of the one string that carries both halves.
+    /// `Name (id) · model`: the mention, plus the one string that says what
+    /// the agent behind it runs on.
     ///
     /// A profile is editable and a pin is not, so the two drift: what a task's
     /// engineer, a task's reviewer or a goal's planner runs on is the snapshot
-    /// taken when it was assigned, not what the profile says today. `auto` and
-    /// `default` are the same two words `profile inspect` and the web use.
+    /// taken when it was assigned, not what the profile says today — and where
+    /// nothing was pinned, whatever the profile says at spawn time, which is
+    /// what "the profile's own" stands for.
     pub fn pinned_label(&self, id: &str, model: Option<&str>) -> String {
-        let pin = pinned(model);
         format!(
-            "{} · {} · {}",
+            "{} · {}",
             self.label(id),
-            pin.as_ref().map_or("auto", |p| p.agent_kind.as_str()),
-            pin.as_ref()
-                .and_then(|p| p.model.as_deref())
-                .unwrap_or("default"),
+            model.unwrap_or("the profile's own")
         )
     }
 }
@@ -338,11 +335,30 @@ pub fn query_path(base: &str, query: &impl serde::Serialize) -> Result<String> {
     })
 }
 
-/// One `--agent <kind>` off the command line, in either of its spellings: the
-/// wire one the daemon uses (`claude_code`) and the hyphenated one a shell
-/// user reaches for (`claude-code`) name the same CLI.
-fn parse_agent(s: &str) -> Result<AgentKind, String> {
-    s.replace('-', "_").parse()
+/// The word every `--model` that takes one writes for "pin nothing at all",
+/// which is also how the daemon reads it: `task update --model default` runs
+/// the engineer on whatever its profile is on, and `profile update --model
+/// default` puts the profile itself back on auto.
+pub const DEFAULT: &str = "default";
+
+/// One `--model <agent>[:<model>]` off the command line, as the daemon spells
+/// it back: the agent CLI is the choice, and a `:` after it narrows that CLI to
+/// one model of it.
+///
+/// [`ModelRef`] is where the spelling lives, so a typo is refused here in the
+/// same words the daemon would have refused it in — and never leaves the shell.
+/// The hyphenated spelling of a CLI (`claude-code`) names the same one, and
+/// travels as the daemon writes it.
+pub fn parse_model(s: &str) -> Result<String, String> {
+    s.parse::<ModelRef>().map(|m| m.to_string())
+}
+
+/// The same, plus the one word an update takes beside a model: [`DEFAULT`].
+pub fn parse_model_or_default(s: &str) -> Result<String, String> {
+    if s == DEFAULT {
+        return Ok(DEFAULT.to_string());
+    }
+    parse_model(s).map_err(|e| format!("{e}; or \"{DEFAULT}\" to pin nothing at all"))
 }
 
 /// What a pin says, taken apart: the agent CLI, and the model of it where one
@@ -352,29 +368,6 @@ fn parse_agent(s: &str) -> Result<AgentKind, String> {
 /// build cannot read, which a reader shows as auto rather than failing on.
 pub fn pinned(model: Option<&str>) -> Option<ModelRef> {
     model?.parse().ok()
-}
-
-/// The one `model` a request carries, out of the `--agent` and `--model` the
-/// command line still spells apart: `<agent_kind>[:<model>]`.
-///
-/// The daemon defines that spelling and is what refuses a bad one, so nothing
-/// is validated here — an agent this build does not know travels as typed and
-/// is named in the refusal that comes back. The words for "nothing chosen"
-/// are one word wherever they are typed: `--agent auto`, `--agent default`
-/// and a bare `--model default` all ask for the profile's own.
-pub fn qualified_model(agent: Option<&str>, model: Option<&str>) -> Option<String> {
-    /// What either flag writes to choose nothing at all.
-    const NOTHING: [&str; 3] = ["", "default", "auto"];
-    match agent {
-        // No agent to hang it on: what was typed travels as typed, whether
-        // that is a whole `agent:model` or a model the daemon will refuse.
-        None => model.map(str::to_string),
-        Some(agent) if NOTHING.contains(&agent) => Some("default".to_string()),
-        Some(agent) => Some(match model.filter(|m| !NOTHING.contains(m)) {
-            Some(model) => format!("{agent}:{model}"),
-            None => agent.to_string(),
-        }),
-    }
 }
 
 /// One caller-typed value as a single path segment.

@@ -25,12 +25,13 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    repositories it works in (`ariadne repo add`), how many reviewer approvals
    a task needs (default 1) and optionally a max task count. The daemon spawns
    the **planner** in tmux; `ariadne goal attach` drops you into the
-   conversation. `--agent` runs that planner on an agent CLI of your choosing
-   rather than on its profile's — `--agent codex` on codex, on its own default
-   model — and `--model` after it narrows that to one model of it (`--agent
-   codex --model gpt-5.3-codex`). A model never travels alone: `--model`
-   without `--agent` is a usage error, since a model does not say which CLI
-   runs it.
+   conversation. `--model` runs that planner on something other than what its
+   profile is on, and it is the whole choice: a model is spelled
+   `<agent>[:<model>]` — the agent CLI that runs it (`claude_code`, `codex`,
+   `opencode`) and, after a colon, one model of that CLI (`--model
+   codex:gpt-5.3-codex`). The agent CLI on its own (`--model codex`) runs it on
+   that CLI's own default model, and a model naming no CLI is a usage error,
+   since nothing says which CLI would run it.
 2. The planner discusses the breakdown with you, creates tasks through the
    Ariadne MCP tools (assigning an engineer profile and reviewer profiles per
    task, with optional `depends_on` ordering). Nothing runs while the goal is
@@ -38,13 +39,12 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    update`) or ask the planner for changes, and once you confirm in the
    conversation that the plan is right it calls `finalize_plan`, which starts
    the work. What each agent runs on is yours to pick, not the planner's: its
-   tasks run on the agents and models their profiles are on until you say
-   otherwise with `ariadne task update <task-id> --agent claude_code
-   --reviewer Reviewer=codex:o3`, which a task takes while it is still pending
-   or ready (`--agent default` hands it back to the profile's). A reviewer
-   slot is spelled `<profile>`, `<profile>=<agent>` or
-   `<profile>=<agent>:<model>`, and `ariadne task create` takes the same
-   flags.
+   tasks run on whatever their profiles are on until you say otherwise with
+   `ariadne task update <task-id> --model claude_code --reviewer
+   Reviewer=codex:o3`, which a task takes while it is still pending or ready
+   (`--model default` hands it back to the profile's). A reviewer slot is
+   spelled `<profile>` or `<profile>=<model>`, and `ariadne task create` takes
+   the same flags.
 3. The scheduler takes over: when a task's dependencies are merged it becomes
    `ready` and an **engineer** is spawned in a dedicated git worktree, on a
    branch named after the task — its title slugged plus a short tail of its
@@ -165,8 +165,8 @@ cargo build --release          # builds `ariadned` and `ariadne`
 
 ariadne daemon start           # unix socket at ~/.ariadne/ariadne.sock
 
-# Planner / Engineer / Reviewer profiles are seeded automatically with no agent
-# kind or model: at spawn time the first installed CLI is used, in order
+# Planner / Engineer / Reviewer profiles are seeded automatically with no model
+# of their own: at spawn time the first installed CLI is used, in order
 # claude_code -> codex -> opencode. A repository is registered once and
 # referenced by every goal that works in it (--branch defaults to the
 # checked-out branch), so this already works:
@@ -176,9 +176,9 @@ ariadne goal attach <goal-id>
 
 # an agent CLI of your own, and a model of it where you want one
 ariadne goal create --title "Add rate limiting" --repo ~/projects/api \
-    --agent codex --model gpt-5.3-codex
-ariadne task update <task-id> --agent claude_code --reviewer Reviewer=codex:o3
-ariadne task update <task-id> --agent default   # back to the profile's own
+    --model codex:gpt-5.3-codex
+ariadne task update <task-id> --model claude_code --reviewer Reviewer=codex:o3
+ariadne task update <task-id> --model default   # back to the profile's own
 
 # watch it run
 ariadne attention                      # what is waiting for you, across every goal

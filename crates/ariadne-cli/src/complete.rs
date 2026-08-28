@@ -12,6 +12,7 @@ use clap_complete::engine::{CompletionCandidate, PathCompleter, ValueCompleter};
 
 use ariadne_client::Client;
 use ariadne_core::AgentKind;
+use ariadne_core::models::ModelRef;
 
 /// Completion must be snappy: local unix socket, hard budget.
 const BUDGET: Duration = Duration::from_millis(800);
@@ -102,11 +103,8 @@ fn profiles(role: Option<&str>) -> Vec<CompletionCandidate> {
     fetch(&path)
         .iter()
         .map(|p| {
-            let agent = p
-                .get("agent_kind")
-                .and_then(|a| a.as_str())
-                .unwrap_or("auto");
-            candidate(s(p, "name"), format!("{} ({agent})", s(p, "role")))
+            let model = p.get("model").and_then(|m| m.as_str()).unwrap_or("auto");
+            candidate(s(p, "name"), format!("{} ({model})", s(p, "role")))
         })
         .collect()
 }
@@ -157,7 +155,7 @@ pub fn repo_ids() -> Vec<CompletionCandidate> {
 /// Repositories of the goal being created in (`task create <goal> --repo`).
 ///
 /// Only that goal's repositories are candidates, so the id has to come off the
-/// command line the same way `--model` reads `--agent` from it.
+/// command line, where the goal was named as a positional.
 pub fn goal_repositories() -> Vec<CompletionCandidate> {
     let Some(goal) = ulid_after("create") else {
         return Vec::new();
@@ -192,33 +190,14 @@ fn ulid_after(verb: &str) -> Option<String> {
         .cloned()
 }
 
-/// Agent kinds for `--agent`: `profile create`, `goal create` and `task
-/// create`, where the choice is the agent CLI and only then a model of it.
+/// The agent CLIs, for `ariadne agent update <kind>` — the one place left
+/// where an agent CLI is named on its own, since what an agent *runs on* is
+/// chosen as a whole model (`--model`).
 pub fn agent_kinds() -> Vec<CompletionCandidate> {
     AgentKind::ALL
         .into_iter()
         .map(|kind| CompletionCandidate::new(kind.as_str()))
         .collect()
-}
-
-/// Agent kinds plus "auto" for `profile update --agent`.
-pub fn agent_kinds_or_auto() -> Vec<CompletionCandidate> {
-    let mut out = agent_kinds();
-    out.push(
-        CompletionCandidate::new("auto").help(Some("first installed CLI at spawn time".into())),
-    );
-    out
-}
-
-/// Agent kinds plus "default" for `task update --agent`, which is how a task
-/// is handed back to the pins of the profile behind it.
-pub fn agent_kinds_or_default() -> Vec<CompletionCandidate> {
-    let mut out = agent_kinds();
-    out.push(
-        CompletionCandidate::new("default")
-            .help(Some("the engineer profile's own agent and model".into())),
-    );
-    out
 }
 
 /// Prompt kinds for `profile prompt get|set|reset`, plus "system".
@@ -279,52 +258,59 @@ fn assignment_kinds(current: &str) -> Vec<CompletionCandidate> {
         .collect()
 }
 
-/// Model candidates for `--model`, scoped to the agent in play: the `--agent`
-/// earlier on the line wins — and on `goal create`, `task create` and `task
-/// update` it is the only thing that scopes them, since `--model` is not
-/// accepted without it; otherwise, when updating an existing profile, its
-/// stored agent kind; otherwise the union of all agents.
+/// Model candidates for `--model`: everything an agent can be pinned to, in
+/// the one spelling that pins it — `<agent_kind>[:<model>]`, the bare agent
+/// CLI included, which is that CLI on its own default model.
 ///
 /// The catalog comes from the daemon (`GET /v1/models`, the list the UI
 /// offers, opencode discovery included) when it answers within the budget; a
-/// daemon that is down or slow leaves the compiled-in curated lists, and
-/// opencode's own `opencode models` for the one agent that lists them itself.
+/// daemon that is down or slow leaves the compiled-in curated lists, each
+/// entry qualified here the way the daemon qualifies it, and opencode's own
+/// `opencode models` for the one agent that lists them itself.
 pub fn models() -> Vec<CompletionCandidate> {
-    let hint = agent_hint();
-    if let Some(from_daemon) = daemon_models(hint) {
-        return from_daemon;
-    }
-    match hint {
-        Some(AgentKind::Opencode) => opencode_models(),
-        Some(kind) => curated_models(kind),
-        None => {
-            let mut out = curated_models(AgentKind::ClaudeCode);
-            out.extend(curated_models(AgentKind::Codex));
-            out.extend(opencode_models());
-            out
-        }
-    }
+    daemon_models().unwrap_or_else(|| {
+        AgentKind::ALL
+            .into_iter()
+            .flat_map(|kind| {
+                let mut out = vec![candidate(
+                    kind.as_str(),
+                    format!("{} on its own default model", kind.as_str()),
+                )];
+                out.extend(match kind {
+                    AgentKind::Opencode => opencode_models(),
+                    _ => curated_models(kind),
+                });
+                out
+            })
+            .collect()
+    })
+}
+
+/// The same, plus the word an update writes to pin nothing at all: `task
+/// update --model` and `profile update --model`.
+pub fn models_or_default() -> Vec<CompletionCandidate> {
+    let mut out = models();
+    out.push(
+        CompletionCandidate::new(crate::commands::DEFAULT)
+            .help(Some("pin nothing: run on whatever the profile is on".into())),
+    );
+    out
 }
 
 /// The daemon's model catalog, or nothing at all when it will not answer —
 /// telling "no daemon" from "a daemon with no models" so only the former
 /// falls back to the curated lists.
-fn daemon_models(kind: Option<AgentKind>) -> Option<Vec<CompletionCandidate>> {
-    let path = match kind {
-        Some(k) => format!("/v1/models?agent={}", k.as_str()),
-        None => "/v1/models".to_string(),
-    };
-    let serde_json::Value::Array(models) = fetch_value(&path)? else {
+fn daemon_models() -> Option<Vec<CompletionCandidate>> {
+    let serde_json::Value::Array(models) = fetch_value("/v1/models")? else {
         return None;
     };
     Some(
         models
             .iter()
             .map(|m| {
-                let agent = s(m, "agent_kind");
                 let help = match m.get("description").and_then(|d| d.as_str()) {
-                    Some(d) => format!("{agent} — {d}"),
-                    None => agent.to_string(),
+                    Some(d) => d.to_string(),
+                    None => s(m, "agent_kind").to_string(),
                 };
                 candidate(s(m, "id"), help)
             })
@@ -332,30 +318,22 @@ fn daemon_models(kind: Option<AgentKind>) -> Option<Vec<CompletionCandidate>> {
     )
 }
 
-/// The completion request carries the full command line (after `--`): scan it
-/// for context instead of guessing.
-fn agent_hint() -> Option<AgentKind> {
-    let words: Vec<String> = std::env::args().collect();
-    // Explicit --agent on the line.
-    if let Some(i) = words.iter().position(|w| w == "--agent")
-        && let Some(value) = words.get(i + 1)
-        && let Ok(kind) = value.replace('-', "_").parse()
-    {
-        return Some(kind);
-    }
-    // `profile update <name>`: the profile's stored agent kind.
-    let i = words.iter().position(|w| w == "update")?;
-    let name = words.get(i + 1).filter(|w| !w.starts_with('-'))?;
-    let path = format!("/v1/profiles/{}", crate::commands::path_segment(name));
-    fetch_value(&path)?.get("agent_kind")?.as_str()?.parse().ok()
-}
-
-/// A curated catalog from ariadne-core, for the agents that discover nothing.
+/// A curated catalog from ariadne-core, for the agents that discover nothing:
+/// each id under the CLI that runs it, which is how it is pinned.
 fn curated_models(kind: AgentKind) -> Vec<CompletionCandidate> {
     ariadne_core::models::curated_models(kind)
         .iter()
-        .map(|m| candidate(m.id, format!("{} — {}", kind.as_str(), m.description)))
+        .map(|m| candidate(&qualified(kind, m.id), m.description.to_string()))
         .collect()
+}
+
+/// One model as it is pinned: the CLI that runs it, then the model.
+fn qualified(kind: AgentKind, model: &str) -> String {
+    ModelRef {
+        agent_kind: kind,
+        model: Some(model.to_string()),
+    }
+    .to_string()
 }
 
 /// OpenCode lists its models natively (`opencode models`, provider/model).
@@ -385,6 +363,6 @@ fn opencode_models() -> Vec<CompletionCandidate> {
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty() && l.contains('/'))
-        .map(|m| candidate(m, "opencode".into()))
+        .map(|m| candidate(&qualified(AgentKind::Opencode, m), "opencode".into()))
         .collect()
 }

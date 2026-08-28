@@ -11,9 +11,9 @@ use serde_json::json;
 
 use ariadne_api::profiles::{CreateProfileRequest, ProfileDto, UpdateProfileRequest};
 use ariadne_client::Client;
-use ariadne_core::{AgentKind, Role};
+use ariadne_core::Role;
 
-use super::{confirm, parse_agent, path_segment, pinned, qualified_model};
+use super::{confirm, parse_model, parse_model_or_default, path_segment};
 use crate::output::{Column, Format, UNCAPPED, local_time, note, print, print_kv, print_list};
 
 pub use flags::{PromptAssignment, read_prompts};
@@ -25,8 +25,7 @@ const LS: &[Column] = &[
     ("id", UNCAPPED),
     ("name", 32),
     ("role", UNCAPPED),
-    ("agent", UNCAPPED),
-    ("model", 28),
+    ("model", 32),
 ];
 
 #[derive(Subcommand)]
@@ -53,11 +52,11 @@ pub enum ProfileCommand {
         /// What this profile is spawned as
         #[arg(long, value_enum)]
         role: Role,
-        /// claude_code | codex | opencode (omit for auto: first installed CLI)
-        #[arg(long, value_parser = parse_agent, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::agent_kinds))]
-        agent: Option<AgentKind>,
-        /// Model the agent CLI runs (default: the agent's own default)
-        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
+        /// What this profile runs on: AGENT[:MODEL] — an agent CLI
+        /// (claude_code | codex | opencode) on its own default model, or one
+        /// model of it after the colon (codex:gpt-5.3-codex). Omit for auto:
+        /// the first installed CLI, resolved at spawn time
+        #[arg(long, value_name = "MODEL", value_parser = parse_model, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
         model: Option<String>,
         /// Set one prompt from the command line: <kind>=<text>, repeatable
         #[arg(long = "prompt", value_name = "KIND=TEXT", value_parser = flags::parse_prompt_text, add = clap_complete::engine::ArgValueCompleter::new(crate::complete::prompt_assignment))]
@@ -103,12 +102,11 @@ pub enum ProfileCommand {
         /// New profile name
         #[arg(long)]
         name: Option<String>,
-        /// claude_code | codex | opencode, or "auto" to resolve the first
-        /// installed CLI at spawn time
-        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::agent_kinds_or_auto))]
-        agent: Option<String>,
-        /// Model name, or "default" to clear back to the agent's default
-        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
+        /// What this profile runs on: AGENT[:MODEL] — an agent CLI
+        /// (claude_code | codex | opencode) on its own default model, or one
+        /// model of it after the colon (codex:gpt-5.3-codex); "default" puts
+        /// it back on auto, the first installed CLI at spawn time
+        #[arg(long, value_name = "MODEL|default", value_parser = parse_model_or_default, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models_or_default))]
         model: Option<String>,
         /// Replace one prompt with this text: <kind>=<text>, repeatable
         #[arg(long = "prompt", value_name = "KIND=TEXT", value_parser = flags::parse_prompt_text, add = clap_complete::engine::ArgValueCompleter::new(crate::complete::prompt_assignment))]
@@ -192,7 +190,6 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
         ProfileCommand::Create {
             name,
             role,
-            agent,
             model,
             prompts,
             prompt_files,
@@ -208,7 +205,7 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
                     &CreateProfileRequest {
                         name,
                         role,
-                        model: qualified_model(agent.map(|a| a.as_str()), model.as_deref()),
+                        model,
                         system_prompt,
                     },
                 )
@@ -232,7 +229,6 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
                         p.id.clone(),
                         p.name.clone(),
                         p.role.as_str().into(),
-                        agent_label(p.model.as_deref()),
                         model_label(p.model.as_deref()),
                     ]
                 },
@@ -246,7 +242,6 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
                     ("id", p.id.clone()),
                     ("name", p.name.clone()),
                     ("role", p.role.as_str().into()),
-                    ("agent", agent_label(p.model.as_deref())),
                     ("model", model_label(p.model.as_deref())),
                     ("created", local_time(&p.created_at)),
                     ("prompt", format!("\n---\n{}", p.system_prompt)),
@@ -256,7 +251,6 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
         ProfileCommand::Update {
             id,
             name,
-            agent,
             model,
             prompts,
             prompt_files,
@@ -280,12 +274,7 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
                     &profile_path(&id),
                     &UpdateProfileRequest {
                         name,
-                        // The two flags are one field on the wire; the dash
-                        // spelling is accepted here too (claude-code).
-                        model: qualified_model(
-                            agent.map(|a| a.replace('-', "_")).as_deref(),
-                            model.as_deref(),
-                        ),
+                        model,
                         system_prompt,
                     },
                 )
@@ -327,21 +316,12 @@ fn profile_path(id_or_name: &str) -> String {
     format!("/v1/profiles/{}", path_segment(id_or_name))
 }
 
-/// The agent CLI half of what a profile is pinned to, for the column that has
-/// always shown it. Nothing pinned means auto — the first installed CLI,
-/// resolved at spawn time.
-fn agent_label(model: Option<&str>) -> String {
-    pinned(model)
-        .map_or("auto", |p| p.agent_kind.as_str())
-        .to_string()
-}
-
-/// The model half, for the column beside it: `-` where the pin names an agent
-/// CLI and no model of it, which is that CLI on its own default.
+/// What a profile runs on, for the one column that shows it: the whole
+/// `<agent_kind>[:<model>]` it is pinned to, which is what `--model` takes
+/// back. Nothing pinned is `auto` — the first installed CLI, resolved at spawn
+/// time, on its own default model.
 fn model_label(model: Option<&str>) -> String {
-    pinned(model)
-        .and_then(|p| p.model)
-        .unwrap_or_else(|| "-".into())
+    model.unwrap_or("auto").to_string()
 }
 
 /// What `profile create` and `profile update` answer with: the profile, and —
@@ -397,7 +377,6 @@ mod tests {
         ProfileCommand::Update {
             id: "Engineer".into(),
             name: None,
-            agent: None,
             model: None,
             prompts,
             prompt_files: files,
@@ -449,12 +428,10 @@ mod tests {
             rm_question(&p),
             "Delete the engineer profile \"Engineer\" (01Engineer)?"
         );
-        // A profile pinned to nothing runs on the first installed CLI.
-        assert_eq!(agent_label(p.model.as_deref()), "auto");
-        assert_eq!(model_label(p.model.as_deref()), "-");
-        assert_eq!(agent_label(Some("codex")), "codex");
-        assert_eq!(model_label(Some("codex")), "-", "codex's own default");
-        assert_eq!(agent_label(Some("codex:o3")), "codex");
-        assert_eq!(model_label(Some("codex:o3")), "o3");
+        // A profile pinned to nothing runs on the first installed CLI; one
+        // that is pinned shows the whole string it was pinned with.
+        assert_eq!(model_label(p.model.as_deref()), "auto");
+        assert_eq!(model_label(Some("codex")), "codex", "codex's own default");
+        assert_eq!(model_label(Some("codex:o3")), "codex:o3");
     }
 }

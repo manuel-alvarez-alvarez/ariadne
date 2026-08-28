@@ -10,9 +10,9 @@ use ariadne_api::messages::{CreateMessageRequest, MessageDto};
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::tasks::{TaskDto, TaskListQuery};
 use ariadne_client::Client;
-use ariadne_core::{AgentKind, GoalStatus};
+use ariadne_core::GoalStatus;
 
-use super::{ProfileNames, confirm, parse_agent, print_messages, qualified_model};
+use super::{ProfileNames, confirm, parse_model, print_messages};
 use crate::output::{
     Column, Format, UNCAPPED, local_time, print, print_kv, print_list, usage_cell, usage_summary,
 };
@@ -52,13 +52,11 @@ pub enum GoalCommand {
         /// Planner profile id or name (default: the built-in Planner profile)
         #[arg(long, default_value = "Planner", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::planner_profiles))]
         planner: String,
-        /// Agent CLI the planner runs on: claude_code | codex | opencode
-        /// (default: the planner profile's own agent and model)
-        #[arg(long, value_parser = parse_agent, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::agent_kinds))]
-        agent: Option<AgentKind>,
-        /// Model that agent CLI runs the planner on (default: its own default
-        /// model); only alongside --agent, which is what places a model
-        #[arg(long, requires = "agent", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
+        /// What the planner runs on: AGENT[:MODEL] — an agent CLI
+        /// (claude_code | codex | opencode) on its own default model, or one
+        /// model of it after the colon (codex:gpt-5.3-codex). Default: the
+        /// planner profile's own
+        #[arg(long, value_name = "MODEL", value_parser = parse_model, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
         model: Option<String>,
         /// Reviewer approvals required to merge a task
         #[arg(long)]
@@ -139,7 +137,6 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
             description,
             repos,
             planner,
-            agent,
             model,
             approvals,
             max_tasks,
@@ -154,7 +151,7 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                         planner_profile: planner,
                         max_tasks,
                         required_approvals: approvals,
-                        model: qualified_model(agent.map(|a| a.as_str()), model.as_deref()),
+                        model,
                     },
                 )
                 .await?;
