@@ -138,6 +138,15 @@ pub(super) fn usage_for_event(payload: &serde_json::Value) -> Option<(String, To
 /// that only send `message`. Both matches are deliberately narrow: an
 /// unrecognized notification is recorded as an event and nothing more —
 /// flagging a working agent as blocked is worse than missing a prompt.
+///
+/// Narrow enough to leave `idle_prompt` out, which is the notification the
+/// hook fires a minute after *any* turn ends. Under Ariadne an agent that
+/// ended its turn with the work still in front of it is waiting for the
+/// daemon's nudge, not for a person: reading that minute as "waiting for
+/// input" put up a flag that said a human was needed, and took the session
+/// out of the quiet watchdog — which skips one that is waiting on a person —
+/// so it was never nudged, stalled or relaunched. The message text `waiting
+/// for your input` is the same notification on an older CLI, and goes with it.
 fn attention_for_notification(
     payload: &serde_json::Value,
 ) -> Option<ariadne_core::AttentionReason> {
@@ -145,14 +154,15 @@ fn attention_for_notification(
     if let Some(kind) = payload.get("notification_type").and_then(|v| v.as_str()) {
         return match kind {
             "permission_prompt" | "worker_permission_prompt" => Some(A::WaitingPermission),
-            "idle_prompt" | "agent_needs_input" => Some(A::WaitingInput),
+            // A subagent asking a question of its own: somebody has to answer.
+            "agent_needs_input" => Some(A::WaitingInput),
             _ => None,
         };
     }
     let message = payload.get("message").and_then(|v| v.as_str())?;
     if message.contains("needs your permission") || message.contains("needs permission for") {
         Some(A::WaitingPermission)
-    } else if message.contains("waiting for your input") || message.contains("needs your input") {
+    } else if message.contains("needs your input") {
         Some(A::WaitingInput)
     } else {
         None
@@ -317,13 +327,6 @@ mod tests {
             (
                 "notification",
                 json!({"hook_event_name": "Notification",
-                       "message": "Claude is waiting for your input",
-                       "notification_type": "idle_prompt"}),
-                WaitingInput,
-            ),
-            (
-                "notification",
-                json!({"hook_event_name": "Notification",
                        "message": "docs-writer needs your input: pick a heading",
                        "notification_type": "agent_needs_input"}),
                 WaitingInput,
@@ -384,6 +387,29 @@ mod tests {
         }
     }
 
+    /// An agent sitting at its prompt is not an agent waiting on a person.
+    ///
+    /// Claude's hook fires `idle_prompt` a minute after any turn ends, and
+    /// under Ariadne what such an agent waits for is the daemon's nudge: a
+    /// flag here says a human is needed, and takes the session out of the
+    /// watchdog that would have nudged, stalled and relaunched it. The message
+    /// text is the same notification on an older CLI.
+    #[test]
+    fn an_agent_idle_at_its_prompt_is_waiting_on_nobody() {
+        for payload in [
+            json!({"hook_event_name": "Notification", "notification_type": "idle_prompt",
+                   "message": "Claude is waiting for your input"}),
+            json!({"hook_event_name": "Notification",
+                   "message": "Claude is waiting for your input"}),
+        ] {
+            assert_eq!(
+                attention_for_event("notification", &payload),
+                None,
+                "{payload}"
+            );
+        }
+    }
+
     /// Older CLIs send only `message`; the text is the fallback discriminator.
     #[test]
     fn notifications_without_a_type_fall_back_to_the_message() {
@@ -393,7 +419,7 @@ mod tests {
                 AttentionReason::WaitingPermission,
             ),
             (
-                "Claude is waiting for your input",
+                "docs-writer needs your input: pick a heading",
                 AttentionReason::WaitingInput,
             ),
         ] {

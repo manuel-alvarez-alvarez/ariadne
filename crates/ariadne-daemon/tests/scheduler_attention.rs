@@ -380,6 +380,47 @@ async fn a_session_waiting_on_a_person_is_never_nudged() {
     );
 }
 
+/// The notification Claude fires a minute after every turn is not a person
+/// being waited for.
+///
+/// An engineer that ended its turn mid-task is waiting for the daemon's nudge,
+/// and nothing tells the two apart: the hook is registered with no matcher, so
+/// the same `idle_prompt` arrives whether the agent asked something or simply
+/// stopped. Reading it as a wait on the user put the session behind the
+/// watchdog's skip list, where it was never nudged, never raised and never
+/// relaunched.
+#[tokio::test]
+async fn a_claude_agent_idle_at_its_prompt_is_nudged_like_any_other() {
+    let w = World::active().await;
+    let session = w.engineer_on(&w.task, TaskStatus::InProgress).await;
+    w.ingest(
+        &session,
+        "notification",
+        serde_json::json!({
+            "session_id": "5f3b1c8e-1234-4a2b-9d0e-0123456789ab",
+            "cwd": "/tmp/wt",
+            "hook_event_name": "Notification",
+            "message": "Claude is waiting for your input",
+            "notification_type": "idle_prompt",
+        }),
+    )
+    .await;
+    assert_eq!(
+        w.attention(&session).await,
+        None,
+        "an agent sitting at its prompt is asking nobody for anything"
+    );
+
+    // And the silence behind that notification is measured like any other.
+    w.idle_for(&session, NUDGE_SECS + 60).await;
+    let sched = w.scheduler();
+    sched.task(&w.task);
+    eventually(TIMEOUT, "the engineer to be nudged", async || {
+        w.keystrokes(&session) > 0
+    })
+    .await;
+}
+
 /// A resume whose instruction never left the composer: the agent is running,
 /// has reported nothing at all, and would sit there for ever. The pane says
 /// which it is — the instruction is still drawn in the composer — and what

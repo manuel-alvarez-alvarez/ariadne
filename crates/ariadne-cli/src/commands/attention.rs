@@ -66,7 +66,9 @@ impl Reason {
 /// spoken and the daemon resumes the engineer itself, so that task waits on an
 /// agent. A resume that does not happen shows up as the session's own
 /// `disconnected` or `stalled` flag. And `stalled` is checked last because it
-/// is a flag on top of a status, so a task that also failed reads as failed.
+/// is a flag on top of a status — the task's column mirrors any of its
+/// sessions carrying `stalled` and comes down when that session's does — so a
+/// task that also failed reads as failed.
 fn task_reason(task: &TaskDto) -> Option<Reason> {
     match task.status {
         TaskStatus::Failed => Some(Reason::Failed),

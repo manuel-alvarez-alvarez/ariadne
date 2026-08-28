@@ -349,8 +349,8 @@ async fn launcher_session_writes_emit_session_events() {
 
 /// Attention rides the same ingestion path as liveness: an agent that reports
 /// an error needs the user, and one that goes back to work does not — while
-/// going idle, which is exactly when a prompt may be waiting, leaves the flag
-/// alone. Every change reaches the bus as a `session_updated`.
+/// going idle takes down only what it disproves, which is the failed turn it
+/// recovered from. Every change reaches the bus as a `session_updated`.
 #[tokio::test]
 async fn ingested_events_raise_and_clear_session_attention() {
     let h = harness().await;
@@ -386,16 +386,14 @@ async fn ingested_events_raise_and_clear_session_attention() {
     .await;
     assert_eq!(event.task_id.as_deref(), Some(cast.task.id.as_str()));
 
-    // Going idle is when a permission prompt or a question is waiting: it
-    // must not clear anything.
+    // A turn that ends on idle rather than on another error has recovered:
+    // the error goes, and the session is nobody's business again.
     h.ingest(&session, "session.idle", serde_json::json!({}))
         .await;
-    assert_eq!(
-        h.attention(&session).await,
-        Some(AttentionReason::AgentError)
-    );
+    assert_eq!(h.attention(&session).await, None);
 
-    // Back to work: the agent needs nobody now.
+    // Back to work, with the error raised again: the agent needs nobody now.
+    h.raise(&session, AttentionReason::AgentError).await;
     h.ingest(&session, "tool.execute.before", serde_json::json!({}))
         .await;
     let cleared = h.store.get_session(&session.id).await.unwrap();
@@ -429,6 +427,75 @@ async fn ingested_events_raise_and_clear_session_attention() {
     assert_eq!(
         h.attention(&session).await,
         Some(AttentionReason::Disconnected)
+    );
+}
+
+/// A session that says it went idle is not a silent one, and one that says it
+/// after a failed turn has recovered from it: those two flags come down, and
+/// the task's stall column with them.
+///
+/// Nothing else does. Going idle is exactly when a permission dialog or a
+/// question is up, so a prompt survives it, and `waiting_user` was never the
+/// agent's to take down.
+#[tokio::test]
+async fn an_idle_report_clears_the_stall_and_the_error_and_nothing_else() {
+    let h = harness().await;
+    let cast = h.active_cast().await;
+    hand_to_engineer(&h, &cast.task).await;
+    let stalled = async || h.store.get_task(&cast.task.id).await.unwrap().is_stalled();
+    let claude = h
+        .session(&cast.goal, Some(&cast.task), Role::Engineer, &cast.engineer.id)
+        .await;
+    let opencode = h
+        .session_on(
+            &cast.goal,
+            Some(&cast.task),
+            Role::Engineer,
+            &cast.engineer.id,
+            AgentKind::Opencode,
+        )
+        .await;
+
+    // A stalled Claude engineer that answers its nudge: the `stop` ending the
+    // turn is the agent reporting, which is the one thing the flag denied.
+    h.raise(&claude, AttentionReason::Stalled).await;
+    assert!(stalled().await, "the task says what its agent's flag says");
+    h.ingest(&claude, "stop", serde_json::json!({})).await;
+    assert_eq!(h.attention(&claude).await, None);
+    assert!(!stalled().await, "and follows it back down");
+
+    // The opencode half of the same sentence: a turn of assistant text alone
+    // ends on `session.idle`, which never reads as liveness.
+    h.raise(&opencode, AttentionReason::Stalled).await;
+    assert!(stalled().await);
+    h.ingest(&opencode, "session.idle", serde_json::json!({}))
+        .await;
+    assert_eq!(h.attention(&opencode).await, None);
+    assert!(!stalled().await);
+
+    // A turn that failed and then ended on idle is a turn that recovered.
+    h.raise(&opencode, AttentionReason::AgentError).await;
+    h.ingest(&opencode, "session.idle", serde_json::json!({}))
+        .await;
+    assert_eq!(h.attention(&opencode).await, None);
+
+    // The dialog the user still has to answer stands through the idle it is
+    // waiting in...
+    h.raise(&claude, AttentionReason::WaitingPermission).await;
+    h.ingest(&claude, "stop", serde_json::json!({})).await;
+    assert_eq!(
+        h.attention(&claude).await,
+        Some(AttentionReason::WaitingPermission)
+    );
+
+    // ...and so does what the daemon raised for the user, which no event of
+    // the agent's has ever been allowed to clear.
+    h.raise(&opencode, AttentionReason::WaitingUser).await;
+    h.ingest(&opencode, "session.idle", serde_json::json!({}))
+        .await;
+    assert_eq!(
+        h.attention(&opencode).await,
+        Some(AttentionReason::WaitingUser)
     );
 }
 
@@ -624,11 +691,11 @@ async fn a_claude_notification_flags_the_session_as_blocked() {
     assert_eq!(cleared.attention_reason(), None);
     assert_eq!(cleared.status(), SessionStatus::Running);
 
-    // Idle at the prompt: waiting for an answer, not for permission.
+    // A subagent asking a question of its own: the other wait on a person.
     h.ingest(
         &session,
         "notification",
-        notification("idle_prompt", "Claude is waiting for your input"),
+        notification("agent_needs_input", "docs-writer needs your input: a heading"),
     )
     .await;
     assert_eq!(
@@ -645,6 +712,17 @@ async fn a_claude_notification_flags_the_session_as_blocked() {
     .await;
     assert_eq!(h.attention(&session).await, None);
 
+    // The notification an idle Claude fires a minute after every turn says
+    // nothing about a person: under Ariadne that agent is waiting for the
+    // daemon's nudge, and a flag here is what used to stop it ever coming.
+    h.ingest(
+        &session,
+        "notification",
+        notification("idle_prompt", "Claude is waiting for your input"),
+    )
+    .await;
+    assert_eq!(h.attention(&session).await, None);
+
     // An unrecognized notification is recorded but changes nothing.
     h.ingest(
         &session,
@@ -655,7 +733,7 @@ async fn a_claude_notification_flags_the_session_as_blocked() {
     let untouched = h.store.get_session(&session.id).await.unwrap();
     assert_eq!(untouched.attention_reason(), None);
     assert_eq!(untouched.status(), SessionStatus::Running);
-    assert_eq!(notifications_recorded(&h, &session.id).await, 3);
+    assert_eq!(notifications_recorded(&h, &session.id).await, 4);
 }
 
 /// Attention says a human must act, so it is only raised on an agent somebody

@@ -37,8 +37,9 @@ export type AttentionReason = "failed" | "stalled"
  * daemon decides a human is wanted.
  *
  * `stalled` is checked last because it is a flag *on top of* a status: the
- * daemon sets it when an agent went idle without advancing the task and clears
- * it on the next transition, so a task that also failed is reported as failed.
+ * task's column mirrors any of its sessions carrying the daemon's `stalled`
+ * flag, and comes down when that session's does, so a task that also failed is
+ * reported as failed.
  */
 export function taskAttentionReason(task: TaskDto): AttentionReason | null {
   if (task.status === "failed") return "failed"

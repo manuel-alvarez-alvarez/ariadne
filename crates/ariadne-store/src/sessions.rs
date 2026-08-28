@@ -13,6 +13,10 @@ const LIVE_STATUSES: &str = " AND status IN ('starting', 'running', 'idle')";
 /// on ([`AttentionReason::is_prompt`]).
 const PROMPTS_ONLY: &str = " AND attention_reason IN (?, ?)";
 
+/// The clause naming the reasons an agent's own idle disproves — the silence
+/// and the failed turn of [`Store::clear_attention_after_idle`].
+const SILENCE_AND_ERROR: &str = " AND attention_reason IN (?, ?)";
+
 #[derive(Debug, Clone)]
 pub struct NewSession {
     pub goal_id: String,
@@ -166,6 +170,29 @@ impl Store {
                 &[AttentionReason::WaitingUser.as_str()],
             )
             .await?;
+        self.announce_attention(id, cleared).await
+    }
+
+    /// The clear a session reporting itself idle makes: the two reasons its
+    /// own report has just disproved, and no others.
+    ///
+    /// `stalled` says the agent stopped reporting, and an agent that reported
+    /// anything at all is not silent. `agent_error` says a turn failed, and a
+    /// turn that ends on idle rather than on another error has recovered — the
+    /// session is back at its prompt, which is where the next instruction is
+    /// taken.
+    ///
+    /// Everything else stands. Going idle is exactly when a permission prompt
+    /// or a question is up, so the prompt reasons survive it, and
+    /// `waiting_user` was never the agent's to take down — see
+    /// [`Store::clear_agent_attention`], which is the clear a session going
+    /// back to *work* makes instead.
+    pub async fn clear_attention_after_idle(&self, id: &str) -> Result<()> {
+        let reasons = [
+            AttentionReason::Stalled.as_str(),
+            AttentionReason::AgentError.as_str(),
+        ];
+        let cleared = self.clear_attention(id, SILENCE_AND_ERROR, &reasons).await?;
         self.announce_attention(id, cleared).await
     }
 

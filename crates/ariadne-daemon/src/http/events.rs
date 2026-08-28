@@ -89,15 +89,20 @@ pub async fn ingest(
     }
 
     // Attention follows the event too: an agent that reported an error needs
-    // the user, and one that is working again does not. Only a
-    // running-mapped event on a live session clears it — going idle is
-    // exactly when a permission prompt or a question is waiting, so
-    // idle/exit must leave the flag be, and a stray event on an ended
-    // session must not wipe the reason it ended needing attention. And what
-    // it clears is the agent's own flags: a `waiting_user` is not one of them
-    // (`clear_agent_attention`), or the daemon telling the user their pull
-    // request is theirs to merge would be undone by the next tool call of the
-    // agent that happened to be running at the time.
+    // the user, and one that is working again does not. A running-mapped
+    // event on a live session clears the agent's own flags — a `waiting_user`
+    // is not one of them (`clear_agent_attention`), or the daemon telling the
+    // user their pull request is theirs to merge would be undone by the next
+    // tool call of the agent that happened to be running at the time.
+    //
+    // An idle-mapped one clears the two reasons it disproves and nothing more
+    // (`clear_attention_after_idle`): a session that reported anything at all
+    // is not the silent one `stalled` describes, and one whose turn ended on
+    // idle rather than on another error has recovered from the failed turn
+    // `agent_error` was raised for. The prompts stand — going idle is exactly
+    // when a dialog or a question is waiting — and so, either way, does what
+    // an ended session ended carrying: a stray event must not wipe the reason
+    // it ended needing attention.
     //
     // Raising it asks one thing more: whether anybody is still waiting on
     // this agent. A reviewer's approval dialog after it has voted, or a
@@ -115,8 +120,16 @@ pub async fn ingest(
                 .set_session_attention(&session.id, reason)
                 .await?;
         }
-    } else if session.status().is_live() && status == Some(ariadne_core::SessionStatus::Running) {
-        state.store.clear_agent_attention(&session.id).await?;
+    } else if session.status().is_live() {
+        match status {
+            Some(ariadne_core::SessionStatus::Running) => {
+                state.store.clear_agent_attention(&session.id).await?;
+            }
+            Some(ariadne_core::SessionStatus::Idle) => {
+                state.store.clear_attention_after_idle(&session.id).await?;
+            }
+            _ => {}
+        }
     }
 
     state.store.touch_session(&session.id).await?;

@@ -1310,6 +1310,58 @@ async fn an_agents_own_event_does_not_clear_the_attention_raised_for_the_user() 
     );
 }
 
+/// What a session reporting itself idle may take down: the silence it just
+/// broke and the failed turn it recovered from, and nothing else.
+///
+/// Going idle is exactly when a permission dialog or a question is up, so the
+/// prompts survive it — and `waiting_user` is no more the agent's here than it
+/// is anywhere else.
+#[tokio::test]
+async fn an_idle_report_clears_only_the_silence_and_the_error() {
+    let w = World::new().await;
+    let store = &w.store;
+    let session = w.engineer_session().await;
+    let reason = async || {
+        store
+            .get_session(&session.id)
+            .await
+            .unwrap()
+            .attention_reason()
+    };
+
+    for raised in [AttentionReason::Stalled, AttentionReason::AgentError] {
+        store
+            .set_session_attention(&session.id, raised)
+            .await
+            .unwrap();
+        store.clear_attention_after_idle(&session.id).await.unwrap();
+        assert_eq!(reason().await, None, "{raised:?}");
+    }
+
+    for kept in [
+        AttentionReason::WaitingPermission,
+        AttentionReason::WaitingInput,
+        AttentionReason::WaitingUser,
+    ] {
+        store
+            .set_session_attention(&session.id, kept)
+            .await
+            .unwrap();
+        store.clear_attention_after_idle(&session.id).await.unwrap();
+        assert_eq!(reason().await, Some(kept), "{kept:?}");
+    }
+
+    // A session with nothing up is a no-op; an id that names none still says so.
+    store.clear_session_attention(&session.id).await.unwrap();
+    store.clear_attention_after_idle(&session.id).await.unwrap();
+    assert!(
+        store
+            .clear_attention_after_idle("01ARZ3NDEKTSV4RRFFQ69G5FAV")
+            .await
+            .is_err()
+    );
+}
+
 /// The summary a round was asked for review with is the round's own, read off
 /// the transition that opened it — the latest one, so a second round answers
 /// with what was submitted for it and not for the first.
