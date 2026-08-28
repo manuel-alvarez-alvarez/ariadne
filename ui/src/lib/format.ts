@@ -27,8 +27,8 @@ import {
 /**
  * The language every formatted value is spelled in, pinned rather than taken
  * from the system: these strings sit in the middle of English sentences
- * ("updated 3 minutes ago", "In 1,234,567 (cached 1,100,000)"), and a machine
- * set to another language would produce half-translated lines.
+ * ("updated 3 minutes ago", "Input 1,234,567"), and a machine set to another
+ * language would produce half-translated lines.
  */
 const LOCALE = "en"
 
@@ -96,24 +96,41 @@ function decimal(value: number): string {
 const EXACT = new Intl.NumberFormat(LOCALE)
 
 /**
- * What an agent spent, to the digit: `In 1,234,567 (cached 1,100,000) · Out
- * 45,300`.
+ * A count to the digit, grouped: `1,234,567`.
  *
- * This is the hint behind a compact figure and nothing else's text — which is
- * why it is spelled out rather than rounded: two counts a hundred thousand
- * apart both read as `1.2M`, and the exact pair has to be reachable somewhere.
- *
- * Cached input is a subset of the input beside it rather than a third number
- * to add up, which is why it reads as a parenthesis on that half. It is shown
- * even at zero: a run with no cache hits is a fact about the run, and a
- * parenthesis that comes and goes is harder to read than one that says `0`.
+ * The exact form of a number {@link formatTokens} rounds — two counts a
+ * hundred thousand apart both read as `1.2M`, so the pair has to be reachable
+ * somewhere, and that somewhere is the hint behind every compact figure.
  */
-export function usageSummary({
-  input_tokens,
-  cached_input_tokens,
-  output_tokens,
-}: TokenUsage): string {
-  return `In ${EXACT.format(input_tokens)} (cached ${EXACT.format(cached_input_tokens)}) · Out ${EXACT.format(output_tokens)}`
+export function exactTokens(count: number): string {
+  return EXACT.format(count)
+}
+
+/**
+ * What share of the input the cache served, as a whole percent: `95%`.
+ *
+ * Almost all of the input is cache reads, so the raw pair of counts buries the
+ * one thing a reader wants from them: the two are eight digits long and a
+ * hundred thousand apart, and telling 89% from 92% by eye off `1,234,567` and
+ * `1,100,000` is arithmetic, not reading. The percent does the arithmetic.
+ *
+ * No decimals: a tenth of a percent moves nothing anyone would act on, and the
+ * figure this sits beside is already rounded to three digits.
+ *
+ * An input of zero is `0%` rather than a dash or a blank. Nothing was sent, so
+ * nothing was cached — that is an answer, and a figure that comes and goes as
+ * a run starts up is harder to read than one that says zero. The clamp is for
+ * a daemon that ever reported more cached than input: a share above 100% would
+ * be this function repeating a bad number rather than spelling a share.
+ *
+ * The same rule as the CLI's own share (see `crates/ariadne-cli/src/output.rs`):
+ * the same usage has to read the same in a terminal and on a screen, or the
+ * two look like they disagree about a number neither of them is wrong about.
+ */
+export function cachedShare({ input_tokens, cached_input_tokens }: TokenUsage): string {
+  if (input_tokens <= 0) return "0%"
+  const share = Math.round((cached_input_tokens / input_tokens) * 100)
+  return `${Math.min(100, Math.max(0, share))}%`
 }
 
 // ── Identifiers ───────────────────────────────────────────────────────────

@@ -25,7 +25,7 @@
  * `queries.ts`'s story, and the tabs are `task-panel.tsx`'s own.
  */
 
-import { screen } from "@testing-library/react"
+import { screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { expect, it } from "vitest"
 
@@ -135,7 +135,7 @@ async function hint(label: string): Promise<HTMLElement> {
     .nextElementSibling?.querySelector<HTMLElement>("[data-slot='tooltip-trigger']")
   if (!figure) throw new Error(`no figure under "${label}"`)
   figure.focus()
-  const exact = await screen.findByText(/^In \d/)
+  const exact = await screen.findByText("Input")
   const popup = exact.closest<HTMLElement>("[data-slot='tooltip-content']")
   if (!popup) throw new Error("no hint around the exact counts")
   return popup
@@ -185,7 +185,9 @@ it("leaves the pull request row out of a task landed locally", () => {
 it("shows the task's total, as the daemon aggregated it", () => {
   mount()
 
-  expect(fact("Tokens")).toBe("1.2M in, 45k out")
+  // The share is read off the exact counts, not the rounded halves beside
+  // it: 1,100,000 of 1,234,567 is 89%, where 1.1M of 1.2M would say 92%.
+  expect(fact("Tokens")).toBe("1.2M in, 89% cached, 45k out")
 })
 
 it("says zero for a task whose agents have reported nothing", () => {
@@ -198,7 +200,9 @@ it("says zero for a task whose agents have reported nothing", () => {
     },
   })
 
-  expect(fact("Tokens")).toBe("0 in, 0 out")
+  // A share of zero rather than a gap: nothing was sent, so nothing was
+  // cached, and that is an answer.
+  expect(fact("Tokens")).toBe("0 in, 0% cached, 0 out")
 })
 
 it("breaks the total down by the agent that spent it, reviewers named", async () => {
@@ -213,11 +217,18 @@ it("breaks the total down by the agent that spent it, reviewers named", async ()
   expect(popup.textContent).not.toContain("Second")
 
   const figures = [...popup.querySelectorAll("dd")].map((figure) => figure.textContent)
-  expect(figures).toEqual(["1M in, 40k out", "235k in, 5.3k out"])
+  expect(figures).toEqual(["1M in, 90% cached, 40k out", "235k in, 85% cached, 5.3k out"])
 
-  // The exact counts lead the hint, and they are the task's own total rather
-  // than the lines under it added up.
-  expect(popup.textContent).toContain("In 1,234,567 (cached 1,100,000) · Out 45,300")
+  // The exact counts lead the hint, labelled and each on its own line, and
+  // they are the task's own total rather than the lines under it added up.
+  const exact = within(popup)
+  expect(exact.getByText("Input").nextElementSibling?.textContent).toBe("1,234,567")
+  // The cached line is under Input and part of it, carrying the same share
+  // the figure itself shows rather than a total of its own.
+  const cached = exact.getByText("cached")
+  expect(cached.nextElementSibling?.textContent).toBe("1,100,000")
+  expect(cached.nextElementSibling?.nextElementSibling?.textContent).toBe("89%")
+  expect(exact.getByText("Output").nextElementSibling?.textContent).toBe("45,300")
 })
 
 it("keeps the sessions tab to the sessions, with no breakdown above them", async () => {

@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest"
 
 import { ApiError } from "@/api"
 import {
+  cachedShare,
   describeError,
+  exactTokens,
   formatAbsolute,
   formatAge,
   formatDuration,
@@ -12,7 +14,6 @@ import {
   plural,
   shortId,
   shortSha,
-  usageSummary,
 } from "./format"
 
 describe("plural", () => {
@@ -61,21 +62,50 @@ describe("formatTokens", () => {
   })
 })
 
-describe("usageSummary", () => {
-  it("spells every digit, since it is what a rounded figure hides", () => {
-    expect(
-      usageSummary({
-        input_tokens: 1_234_567,
-        cached_input_tokens: 1_100_000,
-        output_tokens: 45_300,
-      }),
-    ).toBe("In 1,234,567 (cached 1,100,000) · Out 45,300")
+describe("exactTokens", () => {
+  it("groups every digit, since it is what a rounded figure hides", () => {
+    expect(exactTokens(1_234_567)).toBe("1,234,567")
+    expect(exactTokens(45_300)).toBe("45,300")
   })
 
   it("says zero for an agent that has reported nothing, rather than going blank", () => {
-    expect(usageSummary({ input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 })).toBe(
-      "In 0 (cached 0) · Out 0",
-    )
+    expect(exactTokens(0)).toBe("0")
+  })
+})
+
+describe("cachedShare", () => {
+  /** A share is only ever read off the input pair; the output is along for the ride. */
+  const share = (input: number, cached: number) =>
+    cachedShare({ input_tokens: input, cached_input_tokens: cached, output_tokens: 0 })
+
+  it("is the cached part of the input, to the whole percent", () => {
+    // The fixture the figure's own tests use: 1,100,000 of 1,234,567 is
+    // 89.1%, not the 92% the two rounded figures beside it would suggest —
+    // which is the whole reason the share is computed rather than eyeballed.
+    expect(share(1_234_567, 1_100_000)).toBe("89%")
+    expect(share(1_000_000, 900_000)).toBe("90%")
+  })
+
+  it("rounds to the nearer percent, and keeps no decimals", () => {
+    expect(share(1_000, 894)).toBe("89%")
+    expect(share(1_000, 895)).toBe("90%")
+    expect(share(3, 1)).toBe("33%")
+  })
+
+  it("is 100% where the cache served the whole input", () => {
+    expect(share(1_234_567, 1_234_567)).toBe("100%")
+  })
+
+  it("is 0% for a run that sent nothing, rather than dividing by it", () => {
+    // A run that sent nothing cached nothing. Not `NaN%`, and not a dash: a
+    // figure that comes and goes as a session starts up is harder to read.
+    expect(share(0, 0)).toBe("0%")
+    expect(share(0, 5_000)).toBe("0%")
+  })
+
+  it("clamps a count the daemon could only report by being wrong", () => {
+    expect(share(1_000, 2_000)).toBe("100%")
+    expect(share(1_000, -100)).toBe("0%")
   })
 })
 

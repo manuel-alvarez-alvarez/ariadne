@@ -11,10 +11,11 @@
  * along with the profile, the review round with the role, and the end of the
  * session with its last activity — the last two in the hint behind the cell,
  * where they were worth a column each only for the sessions that have them.
- * Tokens are two of the three counters, `in/out`, for the same reason: the
- * cached share of the input is what explains the figure rather than a figure
- * of its own, so it rides in the hint with the exact counts. The seventh, the
- * context, is the screen's alone.
+ * The tokens cell is the whole figure, both counts and the cached share of the
+ * input: the share is a property of the input rather than a column of its own,
+ * and it is the number that says whether a figure that looks expensive was.
+ * Only the exact counts are behind its hint. The seventh column, the context,
+ * is the screen's alone.
  *
  * The filters come from the caller (`{goal}`, `{task}`, whatever the panel
  * has); this component only reads them — but it reads them for more than the
@@ -272,8 +273,8 @@ function SessionRow({
         </div>
       </TableCell>
       {/* What this agent has spent, compact and right-aligned so the column
-          reads down: the exact counts and the cached share of the input are
-          the hint behind it. */}
+          reads down: both counts and the share of the input the cache served,
+          with the exact counts in the hint behind them. */}
       <TableCell className="text-right text-xs text-muted-foreground">
         <TokenFigure usage={session.usage} />
       </TableCell>

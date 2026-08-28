@@ -19,7 +19,7 @@
  * `queries.ts`'s story.
  */
 
-import { screen } from "@testing-library/react"
+import { screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { expect, it } from "vitest"
 
@@ -70,7 +70,7 @@ async function hint(value: HTMLElement): Promise<HTMLElement> {
   const figure = value.querySelector<HTMLElement>("[data-slot='tooltip-trigger']")
   if (!figure) throw new Error("no figure to open a hint on")
   figure.focus()
-  const exact = await screen.findByText(/^In \d/)
+  const exact = await screen.findByText("Input")
   const popup = exact.closest<HTMLElement>("[data-slot='tooltip-content']")
   if (!popup) throw new Error("no hint around the exact counts")
   return popup
@@ -79,13 +79,13 @@ async function hint(value: HTMLElement): Promise<HTMLElement> {
 it("shows the goal's total among its facts, as the pair it is", () => {
   mount()
 
-  expect(detail("Tokens").textContent).toBe("1.2M in, 45k out")
+  expect(detail("Tokens").textContent).toBe("1.2M in, 89% cached, 45k out")
 })
 
 it("says zero for a goal whose agents have reported nothing", () => {
   mount(aGoal())
 
-  expect(detail("Tokens").textContent).toBe("0 in, 0 out")
+  expect(detail("Tokens").textContent).toBe("0 in, 0% cached, 0 out")
 })
 
 it("breaks the total down by the role that spent it, behind the figure", async () => {
@@ -97,11 +97,23 @@ it("breaks the total down by the role that spent it, behind the figure", async (
   const roles = [...popup.querySelectorAll("dt")].map((role) => role.textContent)
   expect(roles).toEqual(["Planner", "Engineers", "Reviewers"])
   const figures = [...popup.querySelectorAll("dd")].map((figure) => figure.textContent)
-  expect(figures).toEqual(["235k in, 5.3k out", "1M in, 40k out", "0 in, 0 out"])
+  expect(figures).toEqual([
+    "235k in, 85% cached, 5.3k out",
+    "1M in, 90% cached, 40k out",
+    "0 in, 0% cached, 0 out",
+  ])
 
-  // The exact counts lead the hint, and they are the goal's own total: the
-  // planner and the two roles under it, none of it added up here.
-  expect(popup.textContent).toContain("In 1,234,567 (cached 1,100,000) · Out 45,300")
+  // The exact counts lead the hint, labelled and each on its own line, and
+  // they are the goal's own total: the planner and the two roles under it,
+  // none of it added up here.
+  const exact = within(popup)
+  expect(exact.getByText("Input").nextElementSibling?.textContent).toBe("1,234,567")
+  // The cached line is under Input and part of it, carrying the same share
+  // the figure itself shows rather than a total of its own.
+  const cached = exact.getByText("cached")
+  expect(cached.nextElementSibling?.textContent).toBe("1,100,000")
+  expect(cached.nextElementSibling?.nextElementSibling?.textContent).toBe("89%")
+  expect(exact.getByText("Output").nextElementSibling?.textContent).toBe("45,300")
 })
 
 it("keeps the sessions tab to the sessions, with no breakdown above them", async () => {

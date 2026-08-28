@@ -213,7 +213,7 @@ it("carries the goal's own total in the lane header", async () => {
   // Input first and output after it, each behind its own arrow; the word the
   // arrows stand for is there for a screen reader and nowhere else, since the
   // header has no room to spell "tokens" out beside them.
-  expect(meta.textContent).toContain("1.2M in, 45k out")
+  expect(meta.textContent).toContain("1.2M in, 89% cached, 45k out")
   expect(meta.textContent).not.toContain("tokens")
 })
 
@@ -224,5 +224,5 @@ it("says zero for a goal whose agents have spent nothing", async () => {
   await screen.findByText(TASK.title)
   // Both halves, and a figure rather than a dash: an agent that has spent
   // nothing has spent nothing, which is a number the daemon knows.
-  expect(screen.getByText(/1 task · created/).textContent).toContain("0 in, 0 out")
+  expect(screen.getByText(/1 task · created/).textContent).toContain("0 in, 0% cached, 0 out")
 })

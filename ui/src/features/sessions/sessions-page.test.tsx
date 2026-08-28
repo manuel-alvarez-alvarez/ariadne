@@ -326,18 +326,31 @@ it("restores the filters under a panel the entry opened", async () => {
 it("carries each session's tokens, and zero for one that has reported none", async () => {
   renderPage()
 
-  expect(tokens(await row("Open Engineer session")).textContent).toBe("1.2M in, 45k out")
+  expect(tokens(await row("Open Engineer session")).textContent).toBe(
+    "1.2M in, 89% cached, 45k out",
+  )
   // The planner has spent nothing yet, which is a figure of its own — both
   // halves of it: a blank cell would read as a column the daemon has no
   // answer for.
-  expect(tokens(await row("Open Planner session")).textContent).toBe("0 in, 0 out")
+  expect(tokens(await row("Open Planner session")).textContent).toBe("0 in, 0% cached, 0 out")
 })
 
 it("puts the exact counts behind the tokens column in reach of a keyboard", async () => {
   renderPage()
 
-  // The cached share and every digit of the two counts are what the column
-  // has no room for; the hint opens on focus, like the table's other two.
+  // Every digit of the counts is what the column has no room for; the hint
+  // opens on focus, like the table's other two.
   tokens(await row("Open Engineer session")).focus()
-  expect(await screen.findByText("In 1,234,567 (cached 1,100,000) · Out 45,300")).not.toBeNull()
+  const label = await screen.findByText("Input")
+  const popup = label.closest<HTMLElement>("[data-slot='tooltip-content']")
+  if (!popup) throw new Error("no hint around the exact counts")
+
+  const exact = within(popup)
+  expect(exact.getByText("Input").nextElementSibling?.textContent).toBe("1,234,567")
+  // The cached line is under Input and part of it, carrying the same share
+  // the figure itself shows rather than a total of its own.
+  const cached = exact.getByText("cached")
+  expect(cached.nextElementSibling?.textContent).toBe("1,100,000")
+  expect(cached.nextElementSibling?.nextElementSibling?.textContent).toBe("89%")
+  expect(exact.getByText("Output").nextElementSibling?.textContent).toBe("45,300")
 })
