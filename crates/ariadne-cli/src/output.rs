@@ -172,28 +172,115 @@ pub fn tokens(count: u64) -> String {
     }
 }
 
-/// What one agent, task or goal spent, in a line: the cell, and then how much
-/// of what went in the prompt cache served.
+/// How much of what went in the prompt cache served, as a whole percent:
+/// `92%`.
 ///
-/// It opens on exactly what the table cell shows, so the figure a row was
-/// scanned for is the figure the block starts with.
-pub fn usage_summary(usage: &TokenUsageDto) -> String {
+/// `0%` where nothing went in at all — a spend of nothing served nothing, and
+/// a dash there would read as a figure the daemon does not have — and never
+/// past `100%`, whatever an agent's own transcript says about a cache that
+/// served more than the prompt it was serving. The same rule
+/// `ui/src/lib/format.ts` renders, so the share reads the same in a terminal
+/// and on a screen.
+pub fn cached_share(usage: &TokenUsageDto) -> String {
+    let share = match usage.input_tokens {
+        0 => 0,
+        input => {
+            let (cached, input) = (u128::from(usage.cached_input_tokens), u128::from(input));
+            ((cached * 100 + input / 2) / input).min(100)
+        }
+    };
+    format!("{share}%")
+}
+
+/// A spend as a table cell: what went in under an up arrow, how much of it
+/// the cache served, and what came out under a down one.
+///
+/// The share rides on the input it is a share of rather than sitting at the
+/// end, because that is the half it qualifies: a column is read downwards,
+/// and `↑1.2M 92%` is one figure to hold against the row above. The exact
+/// counts are left to [`usage_block`] — a cell is for comparing rows, not
+/// for reading one.
+pub fn usage_cell(usage: &TokenUsageDto) -> String {
     format!(
-        "{} ({} cached)",
-        usage_cell(usage),
-        tokens(usage.cached_input_tokens),
+        "↑{} {} ↓{}",
+        tokens(usage.input_tokens),
+        cached_share(usage),
+        tokens(usage.output_tokens)
     )
 }
 
-/// The same spend as a table cell: what went in under an up arrow and what
-/// came out under a down one, with the cache left to [`usage_summary`] — a
-/// column is for comparing rows, not for reading one.
-pub fn usage_cell(usage: &TokenUsageDto) -> String {
-    format!(
-        "↑{} ↓{}",
-        tokens(usage.input_tokens),
-        tokens(usage.output_tokens)
-    )
+/// What one agent, task or goal spent, as an inspect block: the total to the
+/// digit, and then who spent it.
+///
+/// A cell rounds — two counts a hundred thousand apart both read as `1.2M` —
+/// and `inspect` is where the digits it rounded away are. The three parts of
+/// the total are labelled rather than spelled with arrows, since there is no
+/// column here to keep narrow, and their counts are right-aligned so they can
+/// be read against each other. `cached` is a part of the `input` above it
+/// rather than a third figure to add up, which is why it is the line that
+/// carries the share — the same share the table cell showed.
+///
+/// `breakdown` is who spent it — a goal's roles, a task's agents — each named
+/// and carrying that same pair exactly; `session inspect` has nobody to break
+/// down and passes none. `indent` is where a continuation line starts:
+/// [`print_kv`] pads its keys, and every line after the first lines up under
+/// the first.
+pub fn usage_block(
+    total: &TokenUsageDto,
+    breakdown: &[(String, TokenUsageDto)],
+    indent: &str,
+) -> String {
+    let counts = [
+        ("input", thousands(total.input_tokens), None),
+        (
+            "cached",
+            thousands(total.cached_input_tokens),
+            Some(cached_share(total)),
+        ),
+        ("output", thousands(total.output_tokens), None),
+    ];
+    let label = counts.iter().map(|(name, ..)| name.len()).max().unwrap_or(0);
+    // A separated count is digits and commas, so bytes and characters agree.
+    let digits = counts.iter().map(|(_, c, _)| c.len()).max().unwrap_or(0);
+    let mut lines: Vec<String> = counts
+        .iter()
+        .map(|(name, count, share)| match share {
+            Some(share) => format!("{name:<label$}  {count:>digits$}  {share}"),
+            None => format!("{name:<label$}  {count:>digits$}"),
+        })
+        .collect();
+
+    let width = breakdown
+        .iter()
+        .map(|(name, _)| name.chars().count())
+        .max()
+        .unwrap_or(0);
+    lines.extend(breakdown.iter().map(|(name, usage)| {
+        format!(
+            "{name:<width$}  ↑{} ↓{}",
+            thousands(usage.input_tokens),
+            thousands(usage.output_tokens)
+        )
+    }));
+    lines.join(indent)
+}
+
+/// A count with its thousands separated: `1,234,567`.
+///
+/// Rust has no separator of its own, and this is the whole of what the CLI
+/// wants from one — no locale, no decimals, no sign — so it is written here
+/// rather than pulled in. The comma is English's, the language every figure
+/// this binary prints is spelled in, the way the web pins its own locale.
+fn thousands(count: u64) -> String {
+    let digits = count.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, digit) in digits.char_indices() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
 }
 
 /// `count` over `unit` to a tenth, with a trailing `.0` dropped: `1.2k`, `2k`.
@@ -358,43 +445,93 @@ mod tests {
         assert_eq!(tokens(12_345_678), "12M");
     }
 
-    /// Nothing spent is `0` spent: a blank or a dash in this line would read
-    /// as a figure the daemon does not have.
-    #[test]
-    fn a_spend_of_nothing_is_zeros_and_not_a_dash() {
-        assert_eq!(usage_cell(&TokenUsageDto::default()), "↑0 ↓0");
-        assert_eq!(usage_summary(&TokenUsageDto::default()), "↑0 ↓0 (0 cached)");
+    fn usage(input: u64, cached: u64, output: u64) -> TokenUsageDto {
+        TokenUsageDto {
+            input_tokens: input,
+            cached_input_tokens: cached,
+            output_tokens: output,
+        }
     }
 
-    /// The cell is what went in and what came out, the block line is that
-    /// same pair plus the cache: one is read on its own, the other against
-    /// the rows around it, and the second opens on the first.
+    /// Nothing spent is `0` spent: a blank or a dash in either of these would
+    /// read as a figure the daemon does not have.
+    ///
+    /// A share of nothing is `0%` and not a division by zero: a session that
+    /// has not sent a prompt yet has sent nothing the cache could serve.
     #[test]
-    fn a_spend_reads_as_arrows_in_a_cell_and_carries_the_cache_in_a_block() {
-        let usage = TokenUsageDto {
-            input_tokens: 1_234_567,
-            cached_input_tokens: 1_100_000,
-            output_tokens: 45_300,
-        };
-        assert_eq!(usage_cell(&usage), "↑1.2M ↓45k");
-        assert_eq!(usage_summary(&usage), "↑1.2M ↓45k (1.1M cached)");
+    fn a_spend_of_nothing_is_zeros_and_not_a_dash() {
+        assert_eq!(cached_share(&TokenUsageDto::default()), "0%");
+        assert_eq!(usage_cell(&TokenUsageDto::default()), "↑0 0% ↓0");
+        assert_eq!(
+            usage_block(&TokenUsageDto::default(), &[], "\n"),
+            ["input   0", "cached  0  0%", "output  0"].join("\n")
+        );
+    }
+
+    /// A whole percent, rounded half away from zero the way every other
+    /// figure here is, and never past `100%`: an agent that reports a cache
+    /// serving more than the prompt it served is reporting `100%`, not a
+    /// share no reader could place.
+    #[test]
+    fn the_cached_share_is_a_whole_percent_between_zero_and_a_hundred() {
+        assert_eq!(cached_share(&usage(8, 3, 0)), "38%");
+        assert_eq!(cached_share(&usage(3, 1, 0)), "33%");
+        assert_eq!(cached_share(&usage(1_234_567, 1_100_000, 0)), "89%");
+        assert_eq!(cached_share(&usage(100, 0, 0)), "0%");
+        assert_eq!(cached_share(&usage(100, 100, 0)), "100%");
+        assert_eq!(cached_share(&usage(100, 1_000, 0)), "100%");
+    }
+
+    /// The cell is the three figures a row is scanned by, rounded; the block
+    /// is the same spend to the digit, with the share on the line it is a
+    /// share of.
+    #[test]
+    fn a_spend_reads_as_arrows_in_a_cell_and_as_labelled_counts_in_a_block() {
+        let spent = usage(1_234_567, 1_100_000, 45_300);
+        assert_eq!(usage_cell(&spent), "↑1.2M 89% ↓45k");
+        assert_eq!(
+            usage_block(
+                &spent,
+                &[
+                    ("engineer".into(), spent),
+                    ("Reviewer".into(), usage(4_600, 0, 300)),
+                ],
+                "\n",
+            ),
+            [
+                "input   1,234,567",
+                "cached  1,100,000  89%",
+                "output     45,300",
+                "engineer  ↑1,234,567 ↓45,300",
+                "Reviewer  ↑4,600 ↓300",
+            ]
+            .join("\n")
+        );
+    }
+
+    /// Eight digits are unreadable in a run; the same eight in threes are the
+    /// figure a cell rounded away, which is the whole point of the block.
+    #[test]
+    fn a_count_is_written_in_threes() {
+        assert_eq!(thousands(0), "0");
+        assert_eq!(thousands(999), "999");
+        assert_eq!(thousands(1_000), "1,000");
+        assert_eq!(thousands(45_300), "45,300");
+        assert_eq!(thousands(1_234_567), "1,234,567");
+        assert_eq!(thousands(12_345_678), "12,345,678");
     }
 
     /// The arrows are three bytes each, and a column padded by bytes would
     /// leave every row with a spend in it short of the one above.
     #[test]
     fn columns_stay_aligned_when_a_cell_carries_the_arrows() {
-        let usage = |input, output| {
-            usage_cell(&TokenUsageDto {
-                input_tokens: input,
-                cached_input_tokens: 0,
-                output_tokens: output,
-            })
-        };
         let cols: &[Column] = &[("tokens", UNCAPPED), ("branch", UNCAPPED)];
         let rows = [
-            vec![usage(1_234_567, 45_300), "one".into()],
-            vec![usage(0, 0), "two".into()],
+            vec![
+                usage_cell(&usage(1_234_567, 1_100_000, 45_300)),
+                "one".into(),
+            ],
+            vec![usage_cell(&TokenUsageDto::default()), "two".into()],
         ];
         let out = table_lines(cols, &rows, false);
         let branch = |line: &String| {

@@ -14,13 +14,14 @@ use ariadne_core::GoalStatus;
 
 use super::{ProfileNames, confirm, parse_model, print_messages};
 use crate::output::{
-    Column, Format, UNCAPPED, local_time, print, print_kv, print_list, usage_cell, usage_summary,
+    Column, Format, UNCAPPED, local_time, print, print_kv, print_list, usage_block, usage_cell,
 };
 use super::query_path;
 
 /// Columns of `goal ls`. `tokens` is what every agent of the goal spent
-/// between them, in over an up arrow and out over a down one; the roles it
-/// splits into are in `goal inspect`.
+/// between them, in over an up arrow and out over a down one, with the share
+/// of the input the prompt cache served; the roles it splits into, and the
+/// counts to the digit, are in `goal inspect`.
 const LS: &[Column] = &[
     ("id", UNCAPPED),
     ("title", 48),
@@ -277,17 +278,11 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
 /// figure, not a gap.
 fn usage_lines(g: &GoalDto) -> String {
     let roles = [
-        ("planner", &g.usage.planner),
-        ("engineers", &g.usage.engineers),
-        ("reviewers", &g.usage.reviewers),
+        ("planner".to_string(), g.usage.planner),
+        ("engineers".to_string(), g.usage.engineers),
+        ("reviewers".to_string(), g.usage.reviewers),
     ];
-    let width = roles.iter().map(|(name, _)| name.len()).max().unwrap_or(0);
-    let mut out = usage_summary(&g.usage.total);
-    for (name, usage) in roles {
-        out.push_str(INDENT);
-        out.push_str(&format!("{name:<width$}  {}", usage_summary(usage)));
-    }
-    out
+    usage_block(&g.usage.total, &roles, INDENT)
 }
 
 fn goal_path(id: &str) -> String {
@@ -438,10 +433,12 @@ mod tests {
         assert_eq!(
             usage_lines(&g),
             [
-                "↑12M ↓456k (11M cached)",
-                "             planner    ↑345k ↓6k (300k cached)",
-                "             engineers  ↑10M ↓400k (9M cached)",
-                "             reviewers  ↑2M ↓50k (1.7M cached)",
+                "input   12,345,000",
+                "             cached  11,000,000  89%",
+                "             output     456,000",
+                "             planner    ↑345,000 ↓6,000",
+                "             engineers  ↑10,000,000 ↓400,000",
+                "             reviewers  ↑2,000,000 ↓50,000",
             ]
             .join("\n")
         );
@@ -455,10 +452,12 @@ mod tests {
         assert_eq!(
             usage_lines(&g),
             [
-                "↑0 ↓0 (0 cached)",
-                "             planner    ↑0 ↓0 (0 cached)",
-                "             engineers  ↑0 ↓0 (0 cached)",
-                "             reviewers  ↑0 ↓0 (0 cached)",
+                "input   0",
+                "             cached  0  0%",
+                "             output  0",
+                "             planner    ↑0 ↓0",
+                "             engineers  ↑0 ↓0",
+                "             reviewers  ↑0 ↓0",
             ]
             .join("\n")
         );

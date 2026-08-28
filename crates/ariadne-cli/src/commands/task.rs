@@ -20,8 +20,8 @@ use super::{
     ProfileNames, confirm, parse_model, parse_model_or_default, print_messages, query_path,
 };
 use crate::output::{
-    Column, Format, UNCAPPED, dash, local_time, note, print, print_kv, print_list, usage_cell,
-    usage_summary, yes_no,
+    Column, Format, UNCAPPED, dash, local_time, note, print, print_kv, print_list, usage_block,
+    usage_cell, yes_no,
 };
 
 /// Columns of `task ls`. Titles and branches are the long ones: a task whose
@@ -483,17 +483,7 @@ fn usage_lines(t: &TaskDto) -> String {
             }),
     );
 
-    let width = agents
-        .iter()
-        .map(|(name, _)| name.chars().count())
-        .max()
-        .unwrap_or(0);
-    let mut out = usage_summary(&t.usage.total);
-    for (name, usage) in agents {
-        out.push_str(INDENT);
-        out.push_str(&format!("{name:<width$}  {}", usage_summary(&usage)));
-    }
-    out
+    usage_block(&t.usage.total, &agents, INDENT)
 }
 
 /// What one reviewer profile spent on the task, if the daemon reported it at
@@ -564,11 +554,10 @@ mod tests {
     /// know".
     #[test]
     fn a_task_that_has_spent_nothing_says_zero() {
-        assert_eq!(ls_row(&dto())[6], "↑0 ↓0");
-        assert_eq!(
-            usage_lines(&dto()).lines().next().unwrap(),
-            "↑0 ↓0 (0 cached)"
-        );
+        assert_eq!(ls_row(&dto())[6], "↑0 0% ↓0");
+        let block = usage_lines(&dto());
+        assert_eq!(block.lines().next().unwrap(), "input   0");
+        assert!(block.contains("cached  0  0%"), "{block}");
     }
 
     /// The block is the total and then who spent it: the engineer, and every
@@ -593,14 +582,20 @@ mod tests {
         assert_eq!(
             usage_lines(&t),
             [
-                "↑1.2M ↓45k (1.1M cached)",
-                "              engineer  ↑1.2M ↓45k (1.1M cached)",
-                "              Reviewer  ↑4.6k ↓300 (0 cached)",
-                "              Security  ↑0 ↓0 (0 cached)",
+                "input   1,204,567",
+                "              cached  1,100,000  91%",
+                "              output     45,300",
+                "              engineer  ↑1,200,000 ↓45,000",
+                "              Reviewer  ↑4,567 ↓300",
+                "              Security  ↑0 ↓0",
             ]
             .join("\n")
         );
-        assert_eq!(ls_row(&t)[6], "↑1.2M ↓45k", "the row carries the total");
+        assert_eq!(
+            ls_row(&t)[6],
+            "↑1.2M 91% ↓45k",
+            "the row carries the total, and the same share"
+        );
     }
 
     /// A profile that spent on the task without holding one of its slots is
@@ -620,7 +615,7 @@ mod tests {
             ..dto()
         };
         assert!(
-            usage_lines(&t).contains("01GONE    ↑400 ↓40 (0 cached)"),
+            usage_lines(&t).contains("01GONE    ↑400 ↓40"),
             "{}",
             usage_lines(&t)
         );
@@ -666,7 +661,7 @@ mod tests {
                 "0",
                 "-",
                 "yes",
-                "↑0 ↓0",
+                "↑0 0% ↓0",
                 "add-the-frobnicator-01task",
             ]
         );

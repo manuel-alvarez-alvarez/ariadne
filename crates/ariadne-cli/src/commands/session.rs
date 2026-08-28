@@ -14,8 +14,8 @@ use ariadne_core::{AttentionReason, Role, SessionStatus};
 use super::attention::reason_label;
 use super::{ProfileNames, confirm, query_path};
 use crate::output::{
-    Column, Format, UNCAPPED, at, dash, local_time, print, print_kv, print_list, usage_cell,
-    usage_summary,
+    Column, Format, UNCAPPED, at, dash, local_time, print, print_kv, print_list, usage_block,
+    usage_cell,
 };
 
 /// Columns of `session ls`. `context` is the one written by a human, so it is
@@ -24,8 +24,9 @@ use crate::output::{
 /// still `running`, and the status alone says nothing about it.
 ///
 /// `tokens` is what the session spent, in over an up arrow and out over a
-/// down one; the cache is in `session inspect`, since a column is scanned
-/// rather than read.
+/// down one, with the share of the input the prompt cache served; the counts
+/// to the digit are in `session inspect`, since a column is scanned rather
+/// than read.
 const LS: &[Column] = &[
     ("id", UNCAPPED),
     ("context", 40),
@@ -37,6 +38,11 @@ const LS: &[Column] = &[
     ("tmux", 32),
     ("internal id", 36),
 ];
+
+/// Where a continuation line of `session inspect` starts: [`print_kv`] pads
+/// its keys to the longest one — `attention since` — and then two spaces, and
+/// a block that spills over several lines lines them all up under the first.
+const INDENT: &str = "\n                 ";
 
 #[derive(Subcommand)]
 pub enum SessionCommand {
@@ -174,7 +180,7 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
                         s.review_round.map_or("-".into(), |r| r.to_string()),
                     ),
                     ("internal id", dash(s.internal_session_id.as_deref())),
-                    ("tokens", usage_summary(&s.usage)),
+                    ("tokens", usage_block(&s.usage, &[], INDENT)),
                     ("activity", at(s.last_activity_at.as_deref())),
                     ("created", local_time(&s.created_at)),
                     ("ended", at(s.ended_at.as_deref())),
