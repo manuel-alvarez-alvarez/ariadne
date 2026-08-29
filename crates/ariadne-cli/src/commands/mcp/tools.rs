@@ -706,17 +706,24 @@ mod tests {
     }
 
     /// The catalog is what a planner sizes a task from, so it reaches it whole
-    /// — every effort a model takes and the one it runs at by default — and an
-    /// agent kind narrows the answer rather than the question, since
-    /// `GET /v1/models` takes no filter.
+    /// — what each model is for, and every effort it takes with what that
+    /// effort buys — and an agent kind narrows the answer rather than the
+    /// question, since `GET /v1/models` takes no filter.
     #[tokio::test]
     async fn the_catalog_reaches_the_planner_with_the_efforts_on_it() {
         const CATALOG: &str = r#"[
             {"id": "codex:gpt-5.6-sol", "agent_kind": "codex",
-             "description": "frontier", "efforts": ["low", "high", "xhigh"],
-             "default_effort": "high"},
+             "description": "frontier", "tier": "frontier", "cost": 4, "speed": 2,
+             "best_for": ["cross-subsystem design"], "avoid_for": ["small fixes"],
+             "efforts": [
+               {"id": "low", "description": "lighter reasoning", "default": false},
+               {"id": "high", "description": "greater depth", "default": true},
+               {"id": "xhigh", "description": "deeper still", "default": false}
+             ]},
             {"id": "claude_code:claude-haiku-4-5", "agent_kind": "claude_code",
-             "description": "cheap", "efforts": [], "default_effort": null}
+             "description": "cheap", "tier": "fast", "cost": 2, "speed": 5,
+             "best_for": ["inline edits"], "avoid_for": ["cross-subsystem design"],
+             "efforts": []}
         ]"#;
         for (filter, ids) in [
             (
@@ -752,11 +759,26 @@ mod tests {
                 "filtered by {filter:?}"
             );
             if filter.is_none() {
+                assert_eq!(models[0]["tier"], serde_json::json!("frontier"));
+                assert_eq!(models[0]["cost"], serde_json::json!(4));
                 assert_eq!(
-                    models[0]["efforts"],
-                    serde_json::json!(["low", "high", "xhigh"])
+                    models[0]["best_for"],
+                    serde_json::json!(["cross-subsystem design"])
                 );
-                assert_eq!(models[0]["default_effort"], serde_json::json!("high"));
+                assert_eq!(
+                    models[0]["efforts"]
+                        .as_array()
+                        .expect("the efforts")
+                        .iter()
+                        .map(|e| e["id"].clone())
+                        .collect::<Vec<_>>(),
+                    ["low", "high", "xhigh"].map(|id| serde_json::json!(id))
+                );
+                assert_eq!(models[0]["efforts"][1]["default"], serde_json::json!(true));
+                assert_eq!(
+                    models[0]["efforts"][1]["description"],
+                    serde_json::json!("greater depth")
+                );
                 assert_eq!(models[1]["efforts"], serde_json::json!([]));
             }
         }

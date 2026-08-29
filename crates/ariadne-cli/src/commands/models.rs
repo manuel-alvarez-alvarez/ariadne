@@ -51,7 +51,12 @@ pub async fn run(client: &Client, cmd: ModelsCommand, format: Format) -> Result<
                 m.id.clone(),
                 match m.efforts.is_empty() {
                     true => "-".into(),
-                    false => m.efforts.join(", "),
+                    false => m
+                        .efforts
+                        .iter()
+                        .map(|e| e.id.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", "),
                 },
                 m.description.clone().unwrap_or_else(|| "-".into()),
             ]
@@ -78,6 +83,8 @@ fn of_agent(models: Vec<ModelDto>, agent: Option<AgentKind>) -> Vec<ModelDto> {
 
 #[cfg(test)]
 mod tests {
+    use ariadne_core::ModelTier;
+
     use super::*;
 
     fn model(id: &str, agent_kind: AgentKind) -> ModelDto {
@@ -85,8 +92,12 @@ mod tests {
             id: id.to_string(),
             agent_kind,
             description: None,
+            tier: ModelTier::Unknown,
+            cost: None,
+            speed: None,
+            best_for: Vec::new(),
+            avoid_for: Vec::new(),
             efforts: Vec::new(),
-            default_effort: None,
         }
     }
 

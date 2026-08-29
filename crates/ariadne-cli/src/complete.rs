@@ -538,14 +538,16 @@ pub fn efforts_or_default() -> Vec<CompletionCandidate> {
     out
 }
 
-/// The efforts one catalog entry lists, in the order it lists them.
+/// The efforts one catalog entry lists, in the order it lists them — the id
+/// of each, which is the word `--effort` takes; what the entry says about it
+/// is for a picker with room to show it.
 fn catalog_efforts(m: &Value) -> Vec<String> {
     m.get("efforts")
         .and_then(Value::as_array)
         .map(|efforts| {
             efforts
                 .iter()
-                .filter_map(Value::as_str)
+                .filter_map(|e| e.get("id").and_then(Value::as_str))
                 .map(str::to_string)
                 .collect()
         })
@@ -641,9 +643,20 @@ fn cached_models(max_age: Option<Duration>) -> Option<Vec<Value>> {
         }
     }
     match serde_json::from_slice(&std::fs::read(&path).ok()?).ok()? {
-        Value::Array(models) => Some(models),
+        Value::Array(models) if current_shape(&models) => Some(models),
         _ => None,
     }
+}
+
+/// Whether a written catalog is one this version can read: efforts used to be
+/// bare words and are now objects, and a cache left by an older CLI is worth
+/// no more than no cache at all — it is refetched rather than half-read.
+fn current_shape(models: &[Value]) -> bool {
+    models.iter().all(|m| match m.get("efforts") {
+        Some(Value::Array(efforts)) => efforts.iter().all(Value::is_object),
+        Some(_) => false,
+        None => true,
+    })
 }
 
 /// Write the catalog back, best-effort: a completion that cannot write its
@@ -830,7 +843,10 @@ mod tests {
     #[test]
     fn an_entry_offers_the_efforts_it_lists_and_no_others() {
         assert_eq!(
-            catalog_efforts(&json!({"id": "codex:gpt-5.6-sol", "efforts": ["low", "high"]})),
+            catalog_efforts(&json!({"id": "codex:gpt-5.6-sol", "efforts": [
+                {"id": "low", "description": "lighter reasoning", "default": false},
+                {"id": "high", "description": "greater depth", "default": true},
+            ]})),
             words(&["low", "high"])
         );
         assert_eq!(
@@ -841,6 +857,29 @@ mod tests {
             catalog_efforts(&json!({"id": "claude_code"})),
             Vec::<String>::new()
         );
+    }
+
+    /// A catalog written by an older CLI spelled its efforts as bare words.
+    /// It is not read at all — the daemon is asked again — rather than
+    /// completing an entry with no efforts on it.
+    #[test]
+    fn a_catalog_of_the_old_shape_is_no_catalog() {
+        let current = json!([
+            {"id": "codex:gpt-5.6-sol", "efforts": [{"id": "low", "default": true}]},
+            {"id": "codex", "efforts": []},
+            {"id": "claude_code"},
+        ]);
+        assert!(current_shape(current.as_array().expect("an array")));
+        for stale in [
+            json!([{"id": "codex:gpt-5.6-sol", "efforts": ["low", "high"]}]),
+            json!([{"id": "codex:gpt-5.6-sol", "efforts": "low"}]),
+        ] {
+            assert!(
+                !current_shape(stale.as_array().expect("an array")),
+                "{stale}"
+            );
+        }
+        assert!(current_shape(&[]), "a daemon that serves no models");
     }
 
     /// Ids are ULIDs, so the daemon's oldest-first list read backwards is
