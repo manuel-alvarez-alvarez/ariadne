@@ -13,7 +13,7 @@ use axum::http::StatusCode;
 
 use ariadne_api::profiles::{ProfileDto, ProfilePromptDto};
 use ariadne_core::{PromptKind, Role};
-use ariadne_store::defaults::{default_prompt, default_system_prompt};
+use ariadne_store::defaults::{BUILTIN_PROFILES, default_prompt, default_system_prompt};
 
 use common::{Harness, get, harness, post, post_json, put_json};
 
@@ -280,4 +280,54 @@ async fn a_created_profile_starts_on_the_defaults_its_system_prompt_aside() {
     assert_eq!(reset.id, own.id);
     assert_eq!(reset.system_prompt, default_system_prompt(Role::Engineer));
     assert!(reset.system_prompt_is_default);
+}
+
+/// The planner sizes each slot it assigns, and that rule reaches a planner
+/// nobody has edited: it is a constant, never a row, so the seeded Planner and
+/// every profile still on the default answer with the text the code ships
+/// today rather than the one that was current when they were created.
+#[tokio::test]
+async fn a_planner_on_the_default_prompt_is_briefed_to_size_the_slots_it_assigns() {
+    let h = harness().await;
+    let seeded = BUILTIN_PROFILES
+        .iter()
+        .find(|b| b.role == Role::Planner)
+        .expect("a Planner is seeded");
+
+    let fresh: ProfileDto = h
+        .json(
+            post_json(
+                "/v1/profiles",
+                serde_json::json!({ "name": "plan", "role": "planner" }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+
+    for id in [seeded.id, &fresh.id] {
+        let profile: ProfileDto = h.get(&format!("/v1/profiles/{id}")).await;
+        assert!(profile.system_prompt_is_default, "{id} was edited");
+        assert_eq!(profile.system_prompt, default_system_prompt(Role::Planner));
+        for guidance in [
+            "`list_models`",
+            "by the task's complexity",
+            "never by default",
+            "a reviewer usually needs less than its engineer",
+        ] {
+            assert!(
+                profile.system_prompt.contains(guidance),
+                "the {id} prompt does not say {guidance}: {}",
+                profile.system_prompt
+            );
+        }
+    }
+
+    // And none of it was copied anywhere: the text a profile answers with is
+    // the code's until somebody sets one of its own.
+    let stored: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM profiles WHERE system_prompt IS NOT NULL")
+            .fetch_one(h.db())
+            .await
+            .unwrap();
+    assert_eq!(stored, 0);
 }

@@ -89,8 +89,9 @@ const PLANNER_SYSTEM_PROMPT: &str = r#"You are the planning lead of an Ariadne g
 1. Explore the repositories your briefing names; settle scope and trade-offs with the user here, asking rather than assuming. Every question for them is asked where they are notified — `post_message` to "user", or your CLI's question tool where it has one (Claude Code's `AskUserQuestion`), one at a time — never as plain text you end a turn on; progress and summaries go unaddressed or to the agent they concern.
 2. Break the goal into small, independently mergeable tasks, one repository each, written like a strong ticket: context, what to do, what not to touch, and acceptance criteria saying how to verify each.
 3. `create_task` with an engineer and at least one reviewer out of `list_profiles`. `depends_on` is for a task that truly needs another first: unordered tasks run concurrently in separate worktrees and must not touch the same code.
-4. `update_task` corrects a task until it starts.
-5. After the last `create_task`, post the plan to "user" and ask whether it is complete. `finalize_plan` starts every task of the plan at once and ends planning: call it only on an explicit yes here, never on your own judgement or on answers to earlier questions. Until then, rework whatever they ask for."#;
+4. Pick each engineer's and each reviewer's model and effort out of `list_models`, by the task's complexity: a routine, well-specified change runs on a cheaper model at low or medium effort; one that spans subsystems, needs design judgement or carries subtle correctness risk earns a frontier model at high or above. `xhigh`/`max`/`ultra` only where the difficulty justifies the tokens, never by default; a reviewer usually needs less than its engineer. Leave a slot on its profile's own where you have no reason to deviate.
+5. `update_task` corrects a task until it starts.
+6. After the last `create_task`, post the plan to "user" and ask whether it is complete. `finalize_plan` starts every task of the plan at once and ends planning: call it only on an explicit yes here, never on your own judgement or on answers to earlier questions. Until then, rework whatever they ask for."#;
 
 /// Engineer persona and playbook: what it may touch, what it writes, and the
 /// one place `request_review` is explained. Landing is its own too, but the
@@ -276,13 +277,18 @@ mod tests {
     /// ends its turn on a question nobody is notified of, and one reading the
     /// answers to its scoping questions as consent finalizes a plan the user
     /// never saw. Both leave the user waiting on a session that is waiting on
-    /// them, and neither is anything the daemon can infer. Moving one is a
-    /// decision to argue for, never a way round a failing assertion.
+    /// them, and neither is anything the daemon can infer. Then from 1400 to
+    /// 1900, when sizing a task's engineer and reviewers to the work became
+    /// the planner's: what a model is worth on a given task is a judgement
+    /// nothing else in Ariadne makes, and a step that only said "pick one"
+    /// would have a one-line change spending a frontier model's tokens.
+    /// Moving one is a decision to argue for, never a way round a failing
+    /// assertion.
     #[test]
     fn size_caps_hold() {
         const KIND_TOTAL: usize = 6000;
-        const GRAND_TOTAL: usize = 7500;
-        const SYSTEM_PROMPT: usize = 1400;
+        const GRAND_TOTAL: usize = 8100;
+        const SYSTEM_PROMPT: usize = 1900;
 
         let cap = |kind: PromptKind| match kind {
             PromptKind::LandingDirect | PromptKind::LandingPullRequest => 2000,

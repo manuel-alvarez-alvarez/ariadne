@@ -43,6 +43,7 @@ impl McpRole {
                 "post_message",
                 "create_task",
                 "update_task",
+                "list_models",
                 "list_profiles",
                 "finalize_plan",
             ],
@@ -274,6 +275,7 @@ pub(crate) mod tests {
                     "post_message",
                     "create_task",
                     "update_task",
+                    "list_models",
                     "list_profiles",
                     "finalize_plan",
                 ][..],
@@ -314,6 +316,7 @@ pub(crate) mod tests {
             "get_reviews",
             "get_task",
             "list_messages",
+            "list_models",
             "list_profiles",
             "mark_merged",
             "post_message",
@@ -399,6 +402,14 @@ pub(crate) mod tests {
     /// empty JSON object: enough to count the requests one tool call makes and
     /// to read what it sent.
     pub(crate) async fn recording_daemon() -> (String, std::sync::Arc<std::sync::Mutex<Vec<Seen>>>) {
+        recording_daemon_answering("{}").await
+    }
+
+    /// The same daemon, answering every call with one body of a test's own:
+    /// what a tool that reads a listing rather than writing one needs.
+    pub(crate) async fn recording_daemon_answering(
+        answer: &'static str,
+    ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<Seen>>>) {
         use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -445,11 +456,11 @@ pub(crate) mod tests {
                     });
                     break;
                 }
-                let _ = socket
-                    .write_all(
-                        b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 2\r\n\r\n{}",
-                    )
-                    .await;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{answer}",
+                    answer.len()
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
             }
         });
         (endpoint, seen)

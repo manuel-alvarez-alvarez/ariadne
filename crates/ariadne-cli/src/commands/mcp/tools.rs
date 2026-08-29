@@ -49,6 +49,21 @@ pub struct PostMessageReq {
     pub to: Option<String>,
 }
 
+/// One reviewer of a task as a planner names it: the profile that reviews,
+/// and what this task is worth having it run on.
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct ReviewerReq {
+    /// Reviewer profile id or name.
+    pub profile: String,
+    /// What this reviewer runs on, `<agent_kind>[:<model>]` as `list_models`
+    /// spells it; omit it for the profile's own.
+    pub model: Option<String>,
+    /// The effort to run that model at, one `list_models` lists for it; omit
+    /// it for the model's own default.
+    pub effort: Option<String>,
+}
+
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub struct CreateTaskReq {
@@ -56,8 +71,14 @@ pub struct CreateTaskReq {
     pub description: String,
     /// Engineer profile id or name that will own the task.
     pub engineer_profile: String,
-    /// Reviewer profile ids or names, in review order (at least one).
-    pub reviewer_profiles: Vec<String>,
+    /// What the engineer runs on, `<agent_kind>[:<model>]` as `list_models`
+    /// spells it; omit it for the profile's own.
+    pub engineer_model: Option<String>,
+    /// The effort to run that model at, one `list_models` lists for it; omit
+    /// it for the model's own default.
+    pub engineer_effort: Option<String>,
+    /// The reviewers of the task, in review order (at least one).
+    pub reviewers: Vec<ReviewerReq>,
     /// Ids of tasks that must merge before this one starts.
     pub depends_on: Option<Vec<String>>,
     /// Repository id; only needed when the goal works in several.
@@ -70,9 +91,22 @@ pub struct UpdateTaskReq {
     pub task_id: String,
     pub title: Option<String>,
     pub description: Option<String>,
-    pub reviewer_profiles: Option<Vec<String>>,
+    /// What the engineer runs on; "default" hands it back to the profile's
+    /// own model.
+    pub engineer_model: Option<String>,
+    /// The effort to run it at; "default" hands it back to the model's own.
+    pub engineer_effort: Option<String>,
+    /// Full replacement list of the reviewers, in review order.
+    pub reviewers: Option<Vec<ReviewerReq>>,
     /// Full replacement list of the ids of the tasks that must merge first.
     pub depends_on: Option<Vec<String>>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct ListModelsReq {
+    /// Filter: claude_code | codex | opencode
+    pub agent_kind: Option<String>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -148,6 +182,29 @@ fn addressed_message(message: &MessageDto) -> serde_json::Value {
     })
 }
 
+/// The reviewer slot a planner named, as the API takes it: the profile, and
+/// the pin it is to be cut at.
+fn assignment(reviewer: ReviewerReq) -> ReviewerAssignment {
+    ReviewerAssignment {
+        profile: reviewer.profile,
+        model: reviewer.model,
+        effort: reviewer.effort,
+    }
+}
+
+/// The catalog narrowed to one agent CLI, or all of it. Entries pass through
+/// as the daemon wrote them: what a model is called and what it can be run at
+/// is the daemon's answer, not this file's.
+fn of_agent(models: Vec<serde_json::Value>, agent_kind: Option<String>) -> Vec<serde_json::Value> {
+    let Some(kind) = agent_kind else {
+        return models;
+    };
+    models
+        .into_iter()
+        .filter(|m| m["agent_kind"] == serde_json::Value::String(kind.clone()))
+        .collect()
+}
+
 /// The review the daemon records for a verdict, refusing a change request
 /// with nothing in it: the body is what the engineer is resumed with, so a
 /// round that asks for changes and says nothing asks for nothing.
@@ -217,7 +274,7 @@ impl AriadneMcp {
     // ---- planner ----
 
     #[tool(
-        description = "Create one task in the goal, owned by one engineer profile and gated by at least one reviewer profile. Each agent runs on the model its profile is on; which model that is, is the user's choice to make and change, not yours."
+        description = "Create one task in the goal, owned by one engineer profile and gated by at least one reviewer profile. Name, for the engineer and for each reviewer, the model and the effort this task deserves, out of `list_models`; omit either and that slot runs its profile's own. The user may still override any of it until the task starts."
     )]
     async fn create_task(
         &self,
@@ -229,22 +286,16 @@ impl AriadneMcp {
             description: req.description,
             repo_id: req.repo_id,
             engineer_profile: req.engineer_profile,
-            // The planner assigns profiles; the user is who picks the model,
-            // so every task the planner creates takes the profiles' own.
-            model: None,
-            effort: None,
-            reviewers: req
-                .reviewer_profiles
-                .into_iter()
-                .map(ReviewerAssignment::of)
-                .collect(),
+            model: req.engineer_model,
+            effort: req.engineer_effort,
+            reviewers: req.reviewers.into_iter().map(assignment).collect(),
             depends_on: req.depends_on.unwrap_or_default(),
         };
         json_result(self.post(&path, &body).await?)
     }
 
     #[tool(
-        description = "Edit a task's title, description, reviewers or dependencies, as long as it has not started."
+        description = "Edit a task's title, description, reviewers, dependencies or the model and effort its engineer and its reviewers run at, as long as it has not started. `reviewers` replaces the whole list; \"default\" as a model or an effort hands that slot back to its profile's own."
     )]
     async fn update_task(
         &self,
@@ -253,11 +304,11 @@ impl AriadneMcp {
         let body = UpdateTaskRequest {
             title: req.title,
             description: req.description,
-            model: None,
-            effort: None,
+            model: req.engineer_model,
+            effort: req.engineer_effort,
             reviewers: req
-                .reviewer_profiles
-                .map(|profiles| profiles.into_iter().map(ReviewerAssignment::of).collect()),
+                .reviewers
+                .map(|reviewers| reviewers.into_iter().map(assignment).collect()),
             depends_on: req.depends_on,
         };
         let path = format!("/v1/tasks/{}", req.task_id);
@@ -266,7 +317,20 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "List the agent profiles a task can be assigned to, each with the name, model and system prompt that say what it is for."
+        description = "List what an engineer or a reviewer can be pinned to: every agent CLI and model, spelled the way a task takes it, with the efforts each can be run at and the one it runs at by default."
+    )]
+    async fn list_models(
+        &self,
+        Parameters(req): Parameters<ListModelsReq>,
+    ) -> Result<CallToolResult, McpError> {
+        // The catalog is the union and takes no filter, so an agent kind
+        // narrows what it answered rather than what was asked for.
+        let models: Vec<serde_json::Value> = self.get("/v1/models").await?;
+        json_result(serde_json::Value::Array(of_agent(models, req.agent_kind)))
+    }
+
+    #[tool(
+        description = "List the agent profiles a task can be assigned to, each with the name, model, effort and system prompt that say what it is for."
     )]
     async fn list_profiles(
         &self,
@@ -404,7 +468,25 @@ mod tests {
     use ariadne_core::{AuthorRole, RecipientKind};
 
     use crate::commands::mcp::McpRole;
-    use crate::commands::mcp::tests::{recording_daemon, server_at};
+    use crate::commands::mcp::tests::{recording_daemon, recording_daemon_answering, server_at};
+
+    /// The schema of one tool, as the agent reading the listing gets it.
+    fn tool_schema(name: &str) -> serde_json::Value {
+        let tool = AriadneMcp::tool_router()
+            .list_all()
+            .into_iter()
+            .find(|t| t.name == name)
+            .unwrap_or_else(|| panic!("no {name} tool"));
+        serde_json::to_value(&tool.input_schema).expect("schema")
+    }
+
+    /// A planner server against a daemon that records what it is sent.
+    fn planner_at(endpoint: &str) -> AriadneMcp {
+        server_at(
+            McpRole::Planner,
+            Client::resolve(Some(endpoint), None).with_session("01SESSION"),
+        )
+    }
 
     /// An agent reads a thread to know who was asked; the addressee it reads
     /// is spelled the way `post_message`'s `to` would address them back.
@@ -515,5 +597,168 @@ mod tests {
         let approved = review_request(Verdict::Approve, None).expect("approval");
         assert_eq!(approved.verdict, ReviewVerdict::Approve);
         assert!(approved.body.is_none());
+    }
+
+    /// What a planner may write per slot is the schema an agent reads, and it
+    /// is a pin per slot now: the engineer's model and effort beside its
+    /// profile, and a reviewer object carrying its own — not the list of bare
+    /// profile names those replaced, which an agent that still sent one would
+    /// have silently dropped its pins with.
+    #[test]
+    fn the_task_tools_ask_for_a_model_and_an_effort_per_slot() {
+        for tool in ["create_task", "update_task"] {
+            let schema = tool_schema(tool);
+            let props = schema["properties"].as_object().expect("properties");
+            for field in ["engineer_model", "engineer_effort", "reviewers"] {
+                assert!(props.contains_key(field), "{tool} takes no {field}");
+            }
+            assert!(
+                !props.contains_key("reviewer_profiles"),
+                "{tool} still takes the bare profile list"
+            );
+            let reviewer = schema["$defs"]["ReviewerReq"]["properties"]
+                .as_object()
+                .unwrap_or_else(|| panic!("{tool} has no reviewer object"));
+            for field in ["profile", "model", "effort"] {
+                assert!(reviewer.contains_key(field), "{tool}: no reviewer {field}");
+            }
+        }
+        assert!(
+            tool_schema("create_task")["properties"]
+                .get("engineer_profile")
+                .is_some(),
+            "the engineer's profile is still what owns the task"
+        );
+    }
+
+    /// A pin the planner named is the pin the daemon is asked for, slot by
+    /// slot: whatever this passes on is what the task is cut at, and a field
+    /// quietly left out here is a task running on something nobody chose.
+    #[tokio::test]
+    async fn a_created_task_is_pinned_to_what_the_planner_named() {
+        let (endpoint, seen) = recording_daemon().await;
+        planner_at(&endpoint)
+            .create_task(Parameters(CreateTaskReq {
+                title: "Pin the effort".into(),
+                description: "Beside the model.".into(),
+                engineer_profile: "Engineer".into(),
+                engineer_model: Some("codex:gpt-5.6-sol".into()),
+                engineer_effort: Some("xhigh".into()),
+                reviewers: vec![ReviewerReq {
+                    profile: "Reviewer".into(),
+                    model: None,
+                    effort: Some("low".into()),
+                }],
+                depends_on: None,
+                repo_id: None,
+            }))
+            .await
+            .expect("create the task");
+
+        let seen = seen.lock().expect("lock").clone();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert_eq!(seen[0].method, "POST");
+        assert_eq!(seen[0].path, "/v1/goals/01GOAL/tasks");
+        let sent: serde_json::Value = serde_json::from_str(&seen[0].body).expect("json");
+        assert_eq!(sent["engineer_profile"], serde_json::json!("Engineer"));
+        assert_eq!(sent["model"], serde_json::json!("codex:gpt-5.6-sol"));
+        assert_eq!(sent["effort"], serde_json::json!("xhigh"));
+        assert_eq!(
+            sent["reviewers"],
+            serde_json::json!([{ "profile": "Reviewer", "model": null, "effort": "low" }])
+        );
+    }
+
+    /// The word that hands a slot back to its profile travels as it was
+    /// written: the daemon is what knows "default" clears a pin, so anything
+    /// resolving it here would be a second answer to the same question.
+    #[tokio::test]
+    async fn an_edit_hands_a_slot_back_with_the_word_the_daemon_clears_it_by() {
+        let (endpoint, seen) = recording_daemon().await;
+        planner_at(&endpoint)
+            .update_task(Parameters(UpdateTaskReq {
+                task_id: "01TASK".into(),
+                title: None,
+                description: None,
+                engineer_model: None,
+                engineer_effort: Some("default".into()),
+                reviewers: Some(vec![ReviewerReq {
+                    profile: "Reviewer".into(),
+                    model: Some("default".into()),
+                    effort: None,
+                }]),
+                depends_on: None,
+            }))
+            .await
+            .expect("edit the task");
+
+        let seen = seen.lock().expect("lock").clone();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert_eq!(seen[0].method, "PATCH");
+        assert_eq!(seen[0].path, "/v1/tasks/01TASK");
+        let sent: serde_json::Value = serde_json::from_str(&seen[0].body).expect("json");
+        assert_eq!(sent["effort"], serde_json::json!("default"));
+        assert_eq!(sent["model"], serde_json::Value::Null);
+        assert_eq!(
+            sent["reviewers"],
+            serde_json::json!([{ "profile": "Reviewer", "model": "default", "effort": null }])
+        );
+    }
+
+    /// The catalog is what a planner sizes a task from, so it reaches it whole
+    /// — every effort a model takes and the one it runs at by default — and an
+    /// agent kind narrows the answer rather than the question, since
+    /// `GET /v1/models` takes no filter.
+    #[tokio::test]
+    async fn the_catalog_reaches_the_planner_with_the_efforts_on_it() {
+        const CATALOG: &str = r#"[
+            {"id": "codex:gpt-5.6-sol", "agent_kind": "codex",
+             "description": "frontier", "efforts": ["low", "high", "xhigh"],
+             "default_effort": "high"},
+            {"id": "claude_code:claude-haiku-4-5", "agent_kind": "claude_code",
+             "description": "cheap", "efforts": [], "default_effort": null}
+        ]"#;
+        for (filter, ids) in [
+            (
+                None,
+                vec!["codex:gpt-5.6-sol", "claude_code:claude-haiku-4-5"],
+            ),
+            (Some("codex"), vec!["codex:gpt-5.6-sol"]),
+            (Some("opencode"), vec![]),
+        ] {
+            let (endpoint, seen) = recording_daemon_answering(CATALOG).await;
+            let answered = planner_at(&endpoint)
+                .list_models(Parameters(ListModelsReq {
+                    agent_kind: filter.map(str::to_string),
+                }))
+                .await
+                .expect("list the models");
+
+            let seen = seen.lock().expect("lock").clone();
+            assert_eq!(seen.len(), 1, "{seen:?}");
+            assert_eq!(seen[0].method, "GET");
+            assert_eq!(seen[0].path, "/v1/models");
+
+            let ContentBlock::Text(text) = &answered.content[0] else {
+                panic!("the catalog came back as something other than text");
+            };
+            let models: Vec<serde_json::Value> =
+                serde_json::from_str(&text.text).expect("the catalog is json");
+            assert_eq!(
+                models.iter().map(|m| m["id"].clone()).collect::<Vec<_>>(),
+                ids.iter()
+                    .map(|id| serde_json::json!(id))
+                    .collect::<Vec<_>>(),
+                "filtered by {filter:?}"
+            );
+            if filter.is_none() {
+                assert_eq!(
+                    models[0]["efforts"],
+                    serde_json::json!(["low", "high", "xhigh"])
+                );
+                assert_eq!(models[0]["default_effort"], serde_json::json!("high"));
+                assert_eq!(models[1]["efforts"], serde_json::json!([]));
+            }
+        }
     }
 }

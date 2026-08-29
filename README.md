@@ -41,8 +41,8 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    in `planning`: read the tasks, edit what they still need (`ariadne task
    update`) or ask the planner for changes, and once you confirm in the
    conversation that the plan is right it calls `finalize_plan`, which starts
-   the work. What each agent runs on is yours to pick, not the planner's: its
-   tasks run on whatever their profiles are on until you say otherwise with
+   the work. The planner also picks what each of those agents runs on, sizing
+   the model and the effort to the task it wrote; the last word is yours, with
    `ariadne task update <task-id> --model claude_code:claude-opus-5 --effort
    xhigh --reviewer Reviewer=codex:gpt-5.6-luna@high`, which a task takes while
    it is still pending or ready (`--model default` hands it back to the
