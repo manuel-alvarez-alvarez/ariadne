@@ -17,6 +17,7 @@ ariadne-core = { workspace = true, features = ["clap"] }
 # from before the schema was squashed. `ariadne doctor` is what is left running
 # to answer it, and answering it takes reading the file.
 ariadne-store = { workspace = true }
+anstyle = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
@@ -24,8 +25,10 @@ clap_complete = { workspace = true }
 dirs = { workspace = true }
 http = { workspace = true }
 rmcp = { version = "3", features = ["server", "transport-io", "macros"] }
-# For one question: the uid whose launchd domain the daemon's service lives in
-# (`gui/<uid>/dev.ariadne.daemon`), which std does not expose.
+# For two questions std does not answer: the uid whose launchd domain the
+# daemon's service lives in (`gui/<uid>/dev.ariadne.daemon`), and how wide the
+# terminal is (`ioctl(TIOCGWINSZ)`). rustix is the workspace's wrapper over the
+# POSIX calls behind both.
 rustix = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

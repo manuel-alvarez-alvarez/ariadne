@@ -2,16 +2,30 @@
 //!
 //! Two rules the whole CLI follows. Tables are for eyes: cells are one line,
 //! long ones are cut to the column's cap with `…` (docker-style, `--no-trunc`
-//! restores them), and timestamps read as local time. `--format json` is for
-//! scripts: it is the daemon's own payload, RFC3339 timestamps and all.
+//! restores them), columns the terminal has no room for are dropped (`-o
+//! wide` keeps them), statuses are coloured and carry a glyph, and timestamps
+//! read as local time. `--format json` is for scripts: it is the daemon's own
+//! payload, RFC3339 timestamps and all — and so is `-q`, which prints one id
+//! per line and nothing else.
 //!
 //! Anything that is not the payload — "no tasks yet", a confirmation prompt —
 //! goes to stderr, so stdout stays exactly what a pipe wants.
+//!
+//! How much of that happens is one decision, taken once from the command line
+//! and the environment ([`init`]) and read back by every renderer ([`view`]).
+
+pub mod pager;
+pub mod style;
+pub mod table;
 
 use std::io::Write;
+use std::sync::OnceLock;
 
 use ariadne_api::usage::TokenUsageDto;
 use serde::Serialize;
+
+pub use style::ColorChoice;
+pub use table::{Column, UNCAPPED, View, col, render_table};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum Format {
@@ -19,15 +33,64 @@ pub enum Format {
     Json,
 }
 
-/// A table column: its header, and the width its cells are cut to
-/// ([`UNCAPPED`] for the ones that must stay whole, like ids).
-pub type Column = (&'static str, usize);
+/// How this run renders, settled before the first line is printed.
+static VIEW: OnceLock<View> = OnceLock::new();
 
-/// Width for a column that is never truncated.
-pub const UNCAPPED: usize = 0;
+/// Settle how this run renders. Called once, from `main`, before any command
+/// prints: everything after it reads the answer rather than asking the
+/// environment again, so one run cannot colour half its output.
+pub fn init(view: View) {
+    let _ = VIEW.set(view);
+}
 
-/// The ellipsis a cut cell ends with.
-const ELLIPSIS: char = '…';
+/// How this run renders — the plainest possible view where nothing was
+/// settled, which is what a unit test and a fallback both want.
+pub fn view() -> &'static View {
+    VIEW.get_or_init(View::default)
+}
+
+/// How wide the terminal is, or `None` when there is no terminal to fit:
+/// output into a pipe or a file is not laid out for a screen that is not
+/// there, and gets every column.
+pub fn terminal_width() -> Option<usize> {
+    let stdout = std::io::stdout();
+    fitted_width(
+        std::io::IsTerminal::is_terminal(&stdout),
+        std::env::var("COLUMNS").ok().as_deref(),
+        || {
+            rustix::termios::tcgetwinsize(&stdout)
+                .ok()
+                .map(|size| usize::from(size.ws_col))
+        },
+    )
+}
+
+/// The width a table is laid out for, from the three things that decide it.
+///
+/// A terminal or nothing: whether there is a screen is the first question,
+/// and a `COLUMNS` a shell happens to export is not a screen. Asking it the
+/// other way round is how `ariadne task ls | cat` from an interactive shell
+/// ends up cut to that shell's width — output a script is reading, quietly
+/// short of columns nobody asked to drop.
+///
+/// With a terminal, `COLUMNS` wins over the ioctl: it is how a width is
+/// forced for a screenshot or a demo, and how a shell reports a width the
+/// kernel has not caught up with. Anything unreadable or zero falls through
+/// to what the terminal itself says.
+fn fitted_width(
+    is_terminal: bool,
+    columns: Option<&str>,
+    ioctl: impl FnOnce() -> Option<usize>,
+) -> Option<usize> {
+    if !is_terminal {
+        return None;
+    }
+    let readable = |columns: usize| (columns > 0).then_some(columns);
+    columns
+        .and_then(|columns| columns.trim().parse().ok())
+        .and_then(readable)
+        .or_else(|| ioctl().and_then(readable))
+}
 
 /// Print any serializable value as pretty JSON.
 pub fn print_json<T: Serialize>(value: &T) -> anyhow::Result<()> {
@@ -40,7 +103,11 @@ pub fn print_json<T: Serialize>(value: &T) -> anyhow::Result<()> {
 ///
 /// Nearly every command is this shape — fetch, then render one way or the
 /// other — and writing the `match` out each time is how the two halves drift.
-pub fn print<T: Serialize>(format: Format, payload: &T, table: impl FnOnce()) -> anyhow::Result<()> {
+pub fn print<T: Serialize>(
+    format: Format,
+    payload: &T,
+    table: impl FnOnce(),
+) -> anyhow::Result<()> {
     match format {
         Format::Json => print_json(payload),
         Format::Table => {
@@ -53,78 +120,36 @@ pub fn print<T: Serialize>(format: Format, payload: &T, table: impl FnOnce()) ->
 /// A listing: the payload as json, an aligned table otherwise — with `empty`
 /// said to the terminal when no row came back, since an empty table on its own
 /// does not say whether that is a filter or an empty system.
+///
+/// `-q` is the third answer, and the one a pipe wants: the first cell of every
+/// row — the id — and nothing else, header included.
 pub fn print_list<T: Serialize>(
     format: Format,
     items: &[T],
     columns: &[Column],
-    no_trunc: bool,
     row: impl Fn(&T) -> Vec<String>,
     empty: &str,
 ) -> anyhow::Result<()> {
-    print(format, &items, || {
-        print_table(columns, &items.iter().map(row).collect::<Vec<_>>(), no_trunc);
-        if items.is_empty() && !empty.is_empty() {
-            note(empty);
-        }
-    })
+    if let Format::Json = format {
+        return print_json(&items);
+    }
+    let rows: Vec<Vec<String>> = items.iter().map(row).collect();
+    match view().quiet {
+        true if !rows.is_empty() => println!("{}", table::quiet_lines(&rows)),
+        true => {}
+        false => print_table(columns, &rows)?,
+    }
+    if items.is_empty() && !empty.is_empty() {
+        note(empty);
+    }
+    Ok(())
 }
 
-/// Print rows as an aligned table with an uppercase header.
-pub fn print_table(columns: &[Column], rows: &[Vec<String>], no_trunc: bool) {
-    for line in table_lines(columns, rows, no_trunc) {
-        println!("{line}");
-    }
-}
-
-/// The table as lines: header first, then one line per row.
-///
-/// Cells are truncated to their column's cap unless `no_trunc` is set, and
-/// always flattened to a single line: a multi-line cell would tear the table
-/// apart, so its newlines become spaces whether or not it is cut.
-fn table_lines(columns: &[Column], rows: &[Vec<String>], no_trunc: bool) -> Vec<String> {
-    let cells: Vec<Vec<String>> = rows
-        .iter()
-        .map(|row| {
-            row.iter()
-                .enumerate()
-                .map(|(i, cell)| {
-                    let cap = columns.get(i).map_or(UNCAPPED, |c| c.1);
-                    fit(cell, if no_trunc { UNCAPPED } else { cap })
-                })
-                .collect()
-        })
-        .collect();
-
-    let mut widths: Vec<usize> = columns.iter().map(|(h, _)| width(h)).collect();
-    for row in &cells {
-        for (i, cell) in row.iter().enumerate() {
-            if i < widths.len() {
-                widths[i] = widths[i].max(width(cell));
-            }
-        }
-    }
-    let line = |cells: Vec<String>| {
-        let mut out = String::new();
-        for (i, cell) in cells.iter().enumerate() {
-            if i > 0 {
-                out.push_str("   ");
-            }
-            out.push_str(cell);
-            // The last column needs no padding, and padding it would leave
-            // every row trailing blanks.
-            if i + 1 < cells.len() {
-                let pad = widths.get(i).copied().unwrap_or(0);
-                out.extend(std::iter::repeat_n(' ', pad.saturating_sub(width(cell))));
-            }
-        }
-        out
-    };
-
-    let mut out = vec![line(
-        columns.iter().map(|(h, _)| h.to_uppercase()).collect(),
-    )];
-    out.extend(cells.into_iter().map(line));
-    out
+/// Print rows as an aligned table with an uppercase header, laid out for this
+/// terminal.
+pub fn print_table(columns: &[Column], rows: &[Vec<String>]) -> anyhow::Result<()> {
+    println!("{}", render_table(columns, rows, view())?);
+    Ok(())
 }
 
 /// Print a key/value inspect block.
@@ -140,9 +165,63 @@ pub fn dash(value: Option<&str>) -> String {
     value.unwrap_or("-").to_string()
 }
 
-/// An optional timestamp, in local time, or a dash.
+/// An optional timestamp as an inspect block spells it, or a dash.
 pub fn at(rfc3339: Option<&str>) -> String {
-    rfc3339.map_or_else(|| "-".to_string(), local_time)
+    rfc3339.map_or_else(|| "-".to_string(), moment)
+}
+
+/// A timestamp as an inspect block spells it: when it was, and how long ago
+/// that was — `2026-08-29 01:34:33 (3h ago)`.
+///
+/// Both, because a block is read for either: the absolute time to line an
+/// event up against a log, the age to see at a glance that it is stale. A
+/// table has no room for both and carries the age alone.
+pub fn moment(rfc3339: &str) -> String {
+    let absolute = local_time(rfc3339);
+    match relative(rfc3339, chrono::Utc::now()) {
+        Some(age) => format!("{absolute} ({age} ago)"),
+        None => absolute,
+    }
+}
+
+/// How long ago that was, as a table cell: `12s`, `4m`, `3h`, `2d` — floored,
+/// never rounded, so 89 seconds is "1m" and not the "2m" rounding would jump
+/// to a second early. Anything unparseable is passed through, as
+/// [`local_time`].
+pub fn age(rfc3339: &str, now: chrono::DateTime<chrono::Utc>) -> String {
+    relative(rfc3339, now).unwrap_or_else(|| rfc3339.to_string())
+}
+
+/// The same, and `None` for a timestamp that is not one.
+fn relative(rfc3339: &str, now: chrono::DateTime<chrono::Utc>) -> Option<String> {
+    let then = chrono::DateTime::parse_from_rfc3339(rfc3339).ok()?;
+    let seconds = (now - then.with_timezone(&chrono::Utc))
+        .num_seconds()
+        .max(0);
+    Some(match seconds {
+        s if s < 60 => format!("{s}s"),
+        s if s < 3600 => format!("{}m", s / 60),
+        s if s < 86400 => format!("{}h", s / 3600),
+        s => format!("{}d", s / 86400),
+    })
+}
+
+/// A span of seconds as a person reads it: `12s`, `4m 20s`, `3h 12m`,
+/// `2d 3h`. Two units at most — a daemon that has been up for two days and
+/// three hours has not been up for `2d 3h 7m 12s`.
+pub fn duration(seconds: u64) -> String {
+    let (days, hours, minutes, secs) = (
+        seconds / 86_400,
+        (seconds % 86_400) / 3_600,
+        (seconds % 3_600) / 60,
+        seconds % 60,
+    );
+    match (days, hours, minutes) {
+        (0, 0, 0) => format!("{secs}s"),
+        (0, 0, _) => format!("{minutes}m {secs}s"),
+        (0, _, _) => format!("{hours}h {minutes}m"),
+        _ => format!("{days}d {hours}h"),
+    }
 }
 
 /// A token count as a person reads it: the digits under a thousand, then
@@ -253,7 +332,11 @@ pub fn usage_block(
         ),
         ("output", tokens(total.output_tokens), None),
     ];
-    let label = counts.iter().map(|(name, ..)| name.len()).max().unwrap_or(0);
+    let label = counts
+        .iter()
+        .map(|(name, ..)| name.len())
+        .max()
+        .unwrap_or(0);
     // A compact count is digits, a dot and a unit, so bytes and characters
     // agree.
     let digits = counts.iter().map(|(_, c, _)| c.len()).max().unwrap_or(0);
@@ -308,6 +391,12 @@ pub fn yes_no(flag: bool, no_word: &str) -> String {
     }
 }
 
+/// A note that something looks wrong, in the same place and the same colour
+/// wherever it is said: stderr, so it never lands in what a pipe is reading.
+pub fn warn(message: &str) {
+    note(&style::paint(view().color, style::WARN, message));
+}
+
 /// A word to the person at the terminal — "no tasks yet", "aborted" — never
 /// part of the output a script is reading. Always stderr, so `ls | wc -l`
 /// counts rows and nothing else.
@@ -330,21 +419,6 @@ pub fn local_time(rfc3339: &str) -> String {
     }
 }
 
-/// A cell as a table can print it: one line, at most `cap` characters
-/// (`cap` = [`UNCAPPED`] for no limit), the last one `…` when cut.
-fn fit(cell: &str, cap: usize) -> String {
-    let flat: String = cell
-        .chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect();
-    if cap == UNCAPPED || flat.chars().count() <= cap {
-        return flat;
-    }
-    let mut out: String = flat.chars().take(cap.saturating_sub(1)).collect();
-    out.push(ELLIPSIS);
-    out
-}
-
 /// Column width in characters — `str::len` counts bytes, and a title with an
 /// accent in it would push its column one space out of line per byte.
 fn width(cell: &str) -> usize {
@@ -354,65 +428,6 @@ fn width(cell: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const COLS: &[Column] = &[("id", UNCAPPED), ("title", 10), ("status", UNCAPPED)];
-
-    fn row(id: &str, title: &str, status: &str) -> Vec<String> {
-        vec![id.into(), title.into(), status.into()]
-    }
-
-    /// One line, at most `cap` characters — counted in characters, since
-    /// cutting on bytes would both cut an accented title short and risk
-    /// splitting a character in half.
-    #[test]
-    fn a_cell_is_flattened_to_one_line_and_cut_to_its_cap() {
-        assert_eq!(fit("a title far too long to fit", 10), "a title f…");
-        assert_eq!(fit("a title f", 10), "a title f");
-        assert_eq!(fit("ááááááááá", 10), "ááááááááá");
-        assert_eq!(fit("ááááááááááá", 10), "ááááááááá…");
-        assert_eq!(fit("first\nsecond", UNCAPPED), "first second");
-    }
-
-    #[test]
-    fn the_header_is_uppercase() {
-        assert_eq!(table_lines(COLS, &[], false), ["ID   TITLE   STATUS"]);
-    }
-
-    #[test]
-    fn no_trunc_keeps_the_whole_cell() {
-        let rows = [row("id1", "a title far too long to fit", "ready")];
-        let out = table_lines(COLS, &rows, true);
-        assert!(out[1].contains("a title far too long to fit"), "{out:?}");
-    }
-
-    #[test]
-    fn columns_stay_aligned_when_a_cell_is_cut() {
-        let rows = [
-            row("id1", "a title far too long to fit", "ready"),
-            row("identifier2", "short", "merged"),
-        ];
-        let out = table_lines(COLS, &rows, false);
-        // In characters: `…` is three bytes, and a byte offset would call
-        // these two lines misaligned when the terminal shows them level.
-        let status = |line: &String| {
-            line.find("ready")
-                .or_else(|| line.find("merged"))
-                .map(|byte| line[..byte].chars().count())
-        };
-        assert_eq!(status(&out[1]), status(&out[2]), "{out:?}");
-        assert!(out[1].contains("a title f…"), "{out:?}");
-    }
-
-    #[test]
-    fn a_row_never_ends_in_trailing_spaces() {
-        let rows = [
-            row("id1", "short", "ready"),
-            row("identifier2", "s", "merged"),
-        ];
-        for line in table_lines(COLS, &rows, false) {
-            assert_eq!(line.trim_end(), line, "trailing space in {line:?}");
-        }
-    }
 
     /// Three figures at most while a unit is left to carry into, and the
     /// digits themselves while they still mean something: a table is read
@@ -524,27 +539,6 @@ mod tests {
         );
     }
 
-    /// The arrows are three bytes each, and a column padded by bytes would
-    /// leave every row with a spend in it short of the one above.
-    #[test]
-    fn columns_stay_aligned_when_a_cell_carries_the_arrows() {
-        let cols: &[Column] = &[("tokens", UNCAPPED), ("branch", UNCAPPED)];
-        let rows = [
-            vec![
-                usage_cell(&usage(1_234_567, 1_100_000, 45_300)),
-                "one".into(),
-            ],
-            vec![usage_cell(&TokenUsageDto::default()), "two".into()],
-        ];
-        let out = table_lines(cols, &rows, false);
-        let branch = |line: &String| {
-            line.find("one")
-                .or_else(|| line.find("two"))
-                .map(|byte| line[..byte].chars().count())
-        };
-        assert_eq!(branch(&out[1]), branch(&out[2]), "{out:?}");
-    }
-
     #[test]
     fn a_timestamp_that_is_not_rfc3339_is_printed_as_it_came() {
         assert_eq!(local_time("not a time"), "not a time");
@@ -561,5 +555,79 @@ mod tests {
             .to_string();
         assert_eq!(rendered, expected);
         assert!(!rendered.contains('T'), "{rendered}");
+    }
+
+    /// A pipe gets every column, `COLUMNS` or no `COLUMNS`.
+    ///
+    /// An interactive shell may export its own width, and `ariadne task ls |
+    /// wc -l` inherits it; reading it there would cut the output a script is
+    /// parsing down to the width of a screen that is not in the picture. Only
+    /// a terminal has a width worth fitting.
+    #[test]
+    fn there_is_no_width_to_fit_without_a_terminal() {
+        let no_ioctl = || None;
+        assert_eq!(fitted_width(false, Some("80"), no_ioctl), None);
+        assert_eq!(fitted_width(false, None, || Some(120)), None);
+        assert_eq!(fitted_width(false, Some("80"), || Some(120)), None);
+    }
+
+    /// With a terminal: `COLUMNS` if it says something, else what the
+    /// terminal itself reports — and a value that is neither a number nor a
+    /// width falls through to it rather than turning fitting off.
+    #[test]
+    fn a_terminal_is_measured_by_columns_then_by_the_ioctl() {
+        let ioctl = || Some(120);
+        assert_eq!(fitted_width(true, Some("80"), ioctl), Some(80));
+        assert_eq!(fitted_width(true, Some(" 80 "), ioctl), Some(80));
+        assert_eq!(fitted_width(true, None, ioctl), Some(120));
+        assert_eq!(fitted_width(true, Some(""), ioctl), Some(120));
+        assert_eq!(fitted_width(true, Some("wide"), ioctl), Some(120));
+        assert_eq!(fitted_width(true, Some("0"), ioctl), Some(120));
+        assert_eq!(fitted_width(true, Some("0"), || Some(0)), None);
+        assert_eq!(fitted_width(true, None, || None), None);
+    }
+
+    /// Floored at every unit, clamped at zero for a stamp from the future
+    /// (clock skew), passed through when unparseable — the same age
+    /// `ariadne attention` has always shown, now in every `ls`.
+    #[test]
+    fn an_age_is_compact_and_floored() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-08-18T12:00:00Z")
+            .expect("parse")
+            .with_timezone(&chrono::Utc);
+        let at = |s: &str| age(s, now);
+        assert_eq!(at("2026-08-18T11:59:49Z"), "11s");
+        assert_eq!(at("2026-08-18T11:58:31Z"), "1m");
+        assert_eq!(at("2026-08-18T09:00:01Z"), "2h");
+        assert_eq!(at("2026-08-15T12:00:00Z"), "3d");
+        assert_eq!(at("2026-08-18T12:00:05Z"), "0s");
+        assert_eq!(at("not a time"), "not a time");
+    }
+
+    /// An inspect block carries both halves: when, and how long ago — and
+    /// only the first when the stamp is not one we can read.
+    #[test]
+    fn a_moment_is_the_time_and_the_age_together() {
+        let rendered = moment("2026-08-17T00:08:50.415Z");
+        assert!(
+            rendered.starts_with(&local_time("2026-08-17T00:08:50.415Z")),
+            "{rendered}"
+        );
+        assert!(rendered.ends_with(" ago)"), "{rendered}");
+        assert_eq!(moment("not a time"), "not a time");
+        assert_eq!(at(None), "-");
+    }
+
+    /// Two units at most, and seconds only while they are the whole story:
+    /// `uptime: 2902s` is a number to divide, `48m 22s` is an answer.
+    #[test]
+    fn a_duration_reads_as_two_units_at_most() {
+        assert_eq!(duration(0), "0s");
+        assert_eq!(duration(45), "45s");
+        assert_eq!(duration(2_902), "48m 22s");
+        assert_eq!(duration(3_600), "1h 0m");
+        assert_eq!(duration(11_520), "3h 12m");
+        assert_eq!(duration(86_400), "1d 0h");
+        assert_eq!(duration(183_600), "2d 3h");
     }
 }

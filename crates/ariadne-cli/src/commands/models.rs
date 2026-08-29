@@ -7,16 +7,19 @@ use ariadne_api::models::ModelDto;
 use ariadne_client::Client;
 use ariadne_core::AgentKind;
 
-use crate::output::{Column, Format, UNCAPPED, print_list};
+use crate::output::{Column, Format, UNCAPPED, col, print_list};
 
 /// Columns of `models ls`. `model` is the whole id — `claude_code:o3`, not
 /// `o3` — because that is the string `--model` takes, and a column somebody
 /// copies out of has to be copyable. `agent` repeats the half of it that
 /// groups the table, which is what the eye scans by.
+/// The description is the one cell a narrow terminal can do without: the
+/// model id is what a reader came for, and what they will paste into
+/// `--model`.
 const LS: &[Column] = &[
-    ("agent", UNCAPPED),
-    ("model", UNCAPPED),
-    ("description", 60),
+    col("agent", UNCAPPED),
+    col("model", UNCAPPED).title(),
+    col("description", 60).rank(0),
 ];
 
 #[derive(Subcommand)]
@@ -27,14 +30,11 @@ pub enum ModelsCommand {
         #[arg(long, value_parser = super::agent::parse_kind,
               add = clap_complete::engine::ArgValueCandidates::new(crate::complete::agent_kinds))]
         agent: Option<AgentKind>,
-        /// Print cells in full instead of cutting them to the column width
-        #[arg(long)]
-        no_trunc: bool,
     },
 }
 
 pub async fn run(client: &Client, cmd: ModelsCommand, format: Format) -> Result<()> {
-    let ModelsCommand::Ls { agent, no_trunc } = cmd;
+    let ModelsCommand::Ls { agent } = cmd;
     let models: Vec<ModelDto> = client.get_json("/v1/models").await?;
     // `GET /v1/models` takes no filter: the catalogue is the union, so an
     // agent narrows what it answered rather than what was asked for.
@@ -43,7 +43,6 @@ pub async fn run(client: &Client, cmd: ModelsCommand, format: Format) -> Result<
         format,
         &models,
         LS,
-        no_trunc,
         |m| {
             vec![
                 m.agent_kind.as_str().to_string(),

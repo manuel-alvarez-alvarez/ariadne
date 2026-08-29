@@ -13,7 +13,7 @@ use crate::commands::profile::ProfileCommand;
 use crate::commands::repo::RepoCommand;
 use crate::commands::session::SessionCommand;
 use crate::commands::task::TaskCommand;
-use crate::output::Format;
+use crate::output::{ColorChoice, Format};
 
 /// Where the two flags every command takes are listed. They belong to no
 /// command in particular, so they are not filed under any command's options.
@@ -148,8 +148,68 @@ pub struct Cli {
     )]
     pub format: Format,
 
+    /// When to colour: auto (a terminal, unless NO_COLOR), always, never
+    ///
+    /// Colour is never the only signal: a status carries a glyph too, so the
+    /// same table reads through a pipe, through NO_COLOR and to a
+    /// colour-blind eye. The set is ● running, ○ pending or idle, ✓ done
+    /// (merged, completed, exited), ✗ failed or cancelled, ? waiting on you.
+    #[arg(
+        long,
+        global = true,
+        value_enum,
+        default_value = "auto",
+        value_name = "WHEN",
+        help_heading = GLOBAL
+    )]
+    pub color: ColorChoice,
+
+    /// Print cells in full instead of cutting them to the column width
+    #[arg(long, global = true, help_heading = GLOBAL)]
+    pub no_trunc: bool,
+
+    /// Print one id per line and nothing else, ready to pipe
+    #[arg(short, long, global = true, help_heading = GLOBAL)]
+    pub quiet: bool,
+
+    /// Print every column, instead of dropping the least important ones to
+    /// fit the terminal
+    #[arg(
+        short = 'o',
+        long = "output",
+        global = true,
+        value_enum,
+        default_value = "normal",
+        value_name = "LAYOUT",
+        help_heading = GLOBAL
+    )]
+    pub layout: Layout,
+
+    /// Print exactly these columns, by header name, in this order
+    #[arg(
+        long,
+        global = true,
+        value_delimiter = ',',
+        value_name = "A,B,C",
+        help_heading = GLOBAL
+    )]
+    pub columns: Vec<String>,
+
+    /// Print long output straight to stdout instead of through $PAGER
+    #[arg(long, global = true, help_heading = GLOBAL)]
+    pub no_pager: bool,
+
     #[command(subcommand)]
     pub command: Command,
+}
+
+/// How much of a table to print: what fits the terminal, or all of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum Layout {
+    /// Drop the least important columns until the row fits.
+    Normal,
+    /// Every column the table has, whatever the terminal's width.
+    Wide,
 }
 
 #[derive(Subcommand)]
@@ -254,11 +314,7 @@ pub enum Command {
     /// The UI's Attention page from the terminal: tasks that failed or
     /// stalled, plus agent sessions waiting on a permission prompt or an
     /// answer, in error, disconnected or stalled.
-    Attention {
-        /// Print cells in full instead of cutting them to the column width
-        #[arg(long)]
-        no_trunc: bool,
-    },
+    Attention,
     /// Attach to the tmux session of a session, task or goal id
     ///
     /// The terminal of whichever agent that id names, revived first when its
@@ -374,30 +430,131 @@ const NO_FORMAT: &[&[&str]] = &[
     &["task", "attach"],
 ];
 
-/// The clap command, with `--format` hidden wherever it does nothing.
+/// Subcommands that render a table, and so are the ones the listing flags —
+/// `--no-trunc`, `-q`, `-o` and `--columns` — mean anything to. They are
+/// global so `ariadne -o wide task ls` works; that is also what would
+/// otherwise advertise `--columns` on `task cancel`.
+const LISTINGS: &[&str] = &[
+    "agent ls",
+    "attention",
+    "goal ls",
+    "models ls",
+    "profile ls",
+    "profile prompts",
+    "repo ls",
+    "session ls",
+    "task ls",
+    "task reviews",
+];
+
+/// Subcommands that print something long enough to page.
+const PAGED: &[&str] = &["session logs", "task diff", "task logs"];
+
+/// The clap command, with each global flag hidden wherever it does nothing.
+///
+/// The colour of clap's own help and usage errors is settled here too, from
+/// the `--color` on the command line it is about to parse: by the time we
+/// hold a parsed `Cli`, the help it refused the line with has been printed.
 pub fn command() -> clap::Command {
-    NO_FORMAT
-        .iter()
-        .fold(Cli::command(), |cmd, path| hide_format(cmd, path))
+    let cmd = Cli::command().color(ColorChoice::from_argv(std::env::args()).for_clap());
+    let cmd = NO_FORMAT.iter().fold(cmd, |cmd, path| {
+        hide(hide(cmd, path, format_arg()), path, color_arg())
+    });
+    let cmd = listing_args()
+        .into_iter()
+        .fold(cmd, |cmd, arg| hide_unless(cmd, "", LISTINGS, arg));
+    hide_unless(cmd, "", PAGED, pager_arg())
 }
 
-/// Hide `--format` on the subcommand at `path` (`[]` = this command itself).
+/// Hide `arg` on the subcommand at `path` (`[]` = this command itself).
 ///
 /// A global argument is not there to mutate: clap only copies it into the
 /// subcommands as it builds them, and skips the copy where the subcommand
 /// declares that name itself. So this declares it — same flag, same values,
-/// out of the help.
-fn hide_format(cmd: clap::Command, path: &[&str]) -> clap::Command {
+/// out of the help. Hiding it on a command hides it on everything under that
+/// command.
+fn hide(cmd: clap::Command, path: &[&str], arg: clap::Arg) -> clap::Command {
     match path {
-        [] => cmd.arg(
-            clap::Arg::new("format")
-                .long("format")
-                .hide(true)
-                .value_parser(clap::value_parser!(Format))
-                .default_value("table"),
-        ),
-        [name, rest @ ..] => cmd.mut_subcommand(name, |sub| hide_format(sub, rest)),
+        [] => cmd.arg(arg),
+        [name, rest @ ..] => cmd.mut_subcommand(name, |sub| hide(sub, rest, arg)),
     }
+}
+
+/// Hide `arg` on every runnable command except the ones `shown` names.
+///
+/// The same shadowing as [`hide`], applied the other way round: the flags
+/// that only a listing (or only a pager) honours are worth naming by where
+/// they belong rather than by the twenty places they do not.
+fn hide_unless(cmd: clap::Command, path: &str, shown: &[&str], arg: clap::Arg) -> clap::Command {
+    let subcommands: Vec<String> = cmd
+        .get_subcommands()
+        .map(|s| s.get_name().to_string())
+        .collect();
+    if subcommands.is_empty() {
+        return match shown.contains(&path) {
+            true => cmd,
+            false => cmd.arg(arg),
+        };
+    }
+    subcommands.into_iter().fold(cmd, |cmd, name| {
+        let arg = arg.clone();
+        cmd.mut_subcommand(name.clone(), |sub| {
+            let below = match path {
+                "" => name.clone(),
+                _ => format!("{path} {name}"),
+            };
+            hide_unless(sub, &below, shown, arg)
+        })
+    })
+}
+
+/// The shadow copies: every flag as its derive declares it, minus the help.
+fn format_arg() -> clap::Arg {
+    clap::Arg::new("format")
+        .long("format")
+        .hide(true)
+        .value_parser(clap::value_parser!(Format))
+        .default_value("table")
+}
+
+fn color_arg() -> clap::Arg {
+    clap::Arg::new("color")
+        .long("color")
+        .hide(true)
+        .value_parser(clap::value_parser!(ColorChoice))
+        .default_value("auto")
+}
+
+fn pager_arg() -> clap::Arg {
+    clap::Arg::new("no_pager")
+        .long("no-pager")
+        .hide(true)
+        .action(clap::ArgAction::SetTrue)
+}
+
+fn listing_args() -> Vec<clap::Arg> {
+    vec![
+        clap::Arg::new("no_trunc")
+            .long("no-trunc")
+            .hide(true)
+            .action(clap::ArgAction::SetTrue),
+        clap::Arg::new("quiet")
+            .long("quiet")
+            .short('q')
+            .hide(true)
+            .action(clap::ArgAction::SetTrue),
+        clap::Arg::new("layout")
+            .long("output")
+            .short('o')
+            .hide(true)
+            .value_parser(clap::value_parser!(Layout))
+            .default_value("normal"),
+        clap::Arg::new("columns")
+            .long("columns")
+            .hide(true)
+            .value_delimiter(',')
+            .action(clap::ArgAction::Append),
+    ]
 }
 
 #[cfg(test)]

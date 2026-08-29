@@ -11,18 +11,22 @@ use ariadne_api::sessions::SessionDto;
 use ariadne_api::tasks::TaskDto;
 
 use super::{Reason, session_at, session_reason, task_reason};
-use crate::output::{Column, UNCAPPED};
+use crate::output::{Column, UNCAPPED, age, col};
 
 /// Columns of one goal's section. Task rows leave `task` empty (their id is
 /// the task); session rows name their role in `title` and the task they were
 /// run for here — by its title, the way the UI's strip names it, since a bare
 /// ULID says nothing about which work is blocked.
+///
+/// The reason is why the row is here at all, so it stays with the id and the
+/// title however narrow the terminal is; the task it belongs to is the one
+/// thing the goal heading above already half answers.
 pub const ROWS: &[Column] = &[
-    ("id", UNCAPPED),
-    ("title", 48),
-    ("reason", UNCAPPED),
-    ("task", 40),
-    ("age", UNCAPPED),
+    col("id", UNCAPPED).id(),
+    col("title", 48).title(),
+    col("reason", UNCAPPED).attention(),
+    col("task", 40).rank(1),
+    col("age", UNCAPPED).rank(2),
 ];
 
 /// The `--format json` document: goals → items, ready for scripting.
@@ -179,25 +183,6 @@ fn short_id(id: &str) -> String {
     }
 }
 
-/// How long ago that was: `12s`, `4m`, `3h`, `2d` — floored, never rounded, so
-/// 89 seconds is "1m" and not the "2m" rounding would jump to a second early.
-/// Anything unparseable is passed through, as [`crate::output::local_time`].
-fn age(rfc3339: &str, now: chrono::DateTime<chrono::Utc>) -> String {
-    match chrono::DateTime::parse_from_rfc3339(rfc3339) {
-        Ok(t) => {
-            let total = (now - t.with_timezone(&chrono::Utc)).num_seconds().max(0);
-            match total {
-                s if s < 60 => format!("{s}s"),
-                s if s < 3600 => format!("{}m", s / 60),
-                s if s < 86400 => format!("{}h", s / 3600),
-                s => format!("{}d", s / 86400),
-            }
-        }
-        Err(_) => rfc3339.to_string(),
-    }
-}
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,22 +295,6 @@ mod tests {
         assert_eq!(heading(&with), "CLI vs App (…Q69G5FAV)");
         assert_eq!(heading(&Group { goal: None, ..with }), "Goal …Q69G5FAV");
         assert_eq!(short_id("0123456789"), "0123456789");
-    }
-
-    /// Floored at every unit, clamped at zero for a stamp from the future
-    /// (clock skew), passed through when unparseable.
-    #[test]
-    fn an_age_is_compact_and_floored() {
-        let now = chrono::DateTime::parse_from_rfc3339("2026-08-18T12:00:00Z")
-            .expect("parse")
-            .with_timezone(&chrono::Utc);
-        let at = |s: &str| age(s, now);
-        assert_eq!(at("2026-08-18T11:59:49Z"), "11s");
-        assert_eq!(at("2026-08-18T11:58:31Z"), "1m");
-        assert_eq!(at("2026-08-18T09:00:01Z"), "2h");
-        assert_eq!(at("2026-08-15T12:00:00Z"), "3d");
-        assert_eq!(at("2026-08-18T12:00:05Z"), "0s");
-        assert_eq!(at("not a time"), "not a time");
     }
 
     /// `--format json` is for scripts: wire spellings, full DTOs.

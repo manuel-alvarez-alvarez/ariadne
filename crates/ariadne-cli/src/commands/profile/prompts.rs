@@ -23,14 +23,15 @@ use super::PromptCommand;
 
 use super::{get_profile, profile_path};
 use crate::commands::confirm;
-use crate::output::{Column, Format, UNCAPPED, local_time, print, print_table};
+use crate::output::{Column, Format, UNCAPPED, col, local_time, print, print_json, print_table};
 
-/// Columns of `profile prompts`.
+/// Columns of `profile prompts`. The kind is what the row is about, and the
+/// opening of the text is what says whether it is the one you meant.
 const PROMPTS: &[Column] = &[
-    ("kind", UNCAPPED),
-    ("status", UNCAPPED),
-    ("updated", UNCAPPED),
-    ("content", 48),
+    col("kind", UNCAPPED).title(),
+    col("status", UNCAPPED),
+    col("updated", UNCAPPED).rank(1),
+    col("content", 48),
 ];
 
 /// How the system prompt is spelled on a command line.
@@ -71,7 +72,9 @@ pub(super) fn owned(role: Option<Role>) -> Vec<PromptArg> {
         None => &PromptKind::ALL,
     };
     let briefings = briefings.iter().map(|k| PromptArg::Briefing(*k));
-    std::iter::once(PromptArg::System).chain(briefings).collect()
+    std::iter::once(PromptArg::System)
+        .chain(briefings)
+        .collect()
 }
 
 /// Prompt kinds as a command line spells them, comma-separated.
@@ -214,13 +217,14 @@ impl From<ProfilePromptDto> for Prompt {
 /// `ariadne profile prompts <id>`. A table shows that a prompt is there and
 /// whether it has been touched; json is how a script reads what it says, so it
 /// carries the whole text.
-pub async fn list(client: &Client, id: &str, no_trunc: bool, format: Format) -> Result<()> {
+pub async fn list(client: &Client, id: &str, format: Format) -> Result<()> {
     let profile = get_profile(client, id).await?;
     let prompts = all(client, &profile).await?;
     let rows: Vec<Vec<String>> = prompts.iter().map(Prompt::row).collect();
-    print(format, &documents(&prompts), || {
-        print_table(PROMPTS, &rows, no_trunc)
-    })
+    match format {
+        Format::Json => print_json(&documents(&prompts)),
+        Format::Table => print_table(PROMPTS, &rows),
+    }
 }
 
 /// Every prompt of a profile: its system prompt first, then its briefings.
@@ -444,7 +448,10 @@ mod tests {
     #[test]
     fn every_role_owns_its_system_prompt_and_its_own_briefings() {
         for role in Role::ALL {
-            assert_eq!(owns(role, PromptArg::System).expect(SYSTEM), PromptArg::System);
+            assert_eq!(
+                owns(role, PromptArg::System).expect(SYSTEM),
+                PromptArg::System
+            );
         }
         for kind in PromptKind::ALL {
             for role in kind.roles() {
@@ -493,7 +500,10 @@ mod tests {
             std::fs::write(&path, raw).expect("write");
             read_content(Some(path)).expect("content")
         };
-        assert_eq!(write("prompt.md", "  Brief.\n\nEnd.\n"), "  Brief.\n\nEnd.\n");
+        assert_eq!(
+            write("prompt.md", "  Brief.\n\nEnd.\n"),
+            "  Brief.\n\nEnd.\n"
+        );
         assert_eq!(write("empty.md", ""), "");
 
         let err = read_content(Some("/no/such/prompt.md".into())).expect_err("missing");

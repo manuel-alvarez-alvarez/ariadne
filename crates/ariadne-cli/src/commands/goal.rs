@@ -13,23 +13,28 @@ use ariadne_client::Client;
 use ariadne_core::GoalStatus;
 
 use super::query_path;
-use super::{ProfileNames, confirm, parse_model, print_messages};
+use super::{ProfileNames, confirm, parse_model, print_thread};
 use crate::cli::values::Spelling;
 use crate::output::{
-    Column, Format, UNCAPPED, local_time, print, print_kv, print_list, usage_block, usage_cell,
+    Column, Format, UNCAPPED, age, col, moment, print, print_kv, print_list, usage_block,
+    usage_cell,
 };
 
 /// Columns of `goal ls`. `tokens` is what every agent of the goal spent
 /// between them, in over an up arrow and out over a down one, with the share
 /// of the input the prompt cache served; the roles it splits into, and the
 /// counts to the digit, are in `goal inspect`.
+///
+/// What the goal is and where it got to stay whatever the terminal's width;
+/// the repositories are the widest cell and the first to go.
 const LS: &[Column] = &[
-    ("id", UNCAPPED),
-    ("title", 48),
-    ("status", UNCAPPED),
-    ("approvals", UNCAPPED),
-    ("tokens", UNCAPPED),
-    ("repos", 40),
+    col("id", UNCAPPED).id(),
+    col("title", 48).title(),
+    col("status", UNCAPPED).status(),
+    col("age", UNCAPPED).rank(3),
+    col("approvals", UNCAPPED).rank(2),
+    col("tokens", UNCAPPED).rank(1),
+    col("repos", 40).rank(0),
 ];
 
 /// Where a continuation line of `goal inspect` starts: [`print_kv`] pads its
@@ -89,15 +94,18 @@ pub enum GoalCommand {
         #[arg(long)]
         max_tasks: Option<i64>,
     },
-    /// List goals
+    /// List goals: the live ones, newest first (--all includes finished)
     Ls {
         /// Filter by status, at the daemon; repeatable and comma-separated,
-        /// and a goal in any of the named statuses is listed
+        /// and a goal in any of the named statuses is listed. Names the
+        /// statuses precisely, so it replaces the live/finished split --all
+        /// makes
         #[arg(long = "status", value_parser = Spelling::<GoalStatus>::new(), value_delimiter = ',')]
         statuses: Vec<GoalStatus>,
-        /// Print cells in full instead of cutting them to the column width
-        #[arg(long)]
-        no_trunc: bool,
+        /// Include finished goals (completed/cancelled), not just live ones;
+        /// nothing to add once --status names one
+        #[arg(short, long)]
+        all: bool,
     },
     /// Show a goal
     Inspect {
@@ -132,6 +140,13 @@ pub enum GoalCommand {
         /// Goal id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
         id: String,
+        /// Read this many messages from the start of the thread
+        /// (default 200)
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..), conflicts_with = "tail")]
+        limit: Option<u32>,
+        /// Read this many messages from the end of the thread instead
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+        tail: Option<u32>,
     },
     /// Post a message into the goal-level conversation
     Msg {
@@ -181,18 +196,20 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                 .await?;
             print(format, &goal, || println!("{}", goal.id))?;
         }
-        GoalCommand::Ls { statuses, no_trunc } => {
+        GoalCommand::Ls { statuses, all } => {
             let goals: Vec<GoalDto> = client.get_json(&goals_path(&statuses)?).await?;
+            let goals = visible(goals, all, &statuses);
+            let now = chrono::Utc::now();
             print_list(
                 format,
                 &goals,
                 LS,
-                no_trunc,
                 |g| {
                     vec![
                         g.id.clone(),
                         g.title.clone(),
                         g.status.as_str().into(),
+                        age(&g.created_at, now),
                         g.required_approvals.to_string(),
                         usage_cell(&g.usage.total),
                         g.repos
@@ -205,9 +222,10 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                 // An empty list under a filter is not an empty system, and
                 // telling the reader to create a goal would hide the ones that
                 // are right there.
-                match statuses.is_empty() {
-                    true => "no goals yet — create one with: ariadne goal create",
-                    false => "no goals match that filter",
+                match (statuses.is_empty(), all) {
+                    (false, _) => "no goals match that filter",
+                    (true, true) => "no goals yet — create one with: ariadne goal create",
+                    (true, false) => "no goals under way — finished ones are behind --all",
                 },
             )?;
         }
@@ -237,7 +255,7 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                             .join(INDENT),
                     ),
                     ("tokens", usage_lines(&g)),
-                    ("created", local_time(&g.created_at)),
+                    ("created", moment(&g.created_at)),
                     ("description", format!("\n---\n{}", g.description)),
                 ])
             })?;
@@ -272,11 +290,15 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
         GoalCommand::Attach { id } => {
             crate::commands::attach::attach(client, &id, None).await?;
         }
-        GoalCommand::Thread { id } => {
-            let msgs: Vec<MessageDto> = client
-                .get_json(&format!("/v1/goals/{id}/messages?limit=200"))
-                .await?;
-            print_messages(&msgs, format)?;
+        GoalCommand::Thread { id, limit, tail } => {
+            print_thread(
+                client,
+                &format!("/v1/goals/{id}/messages"),
+                limit,
+                tail,
+                format,
+            )
+            .await?;
         }
         GoalCommand::Msg { id, body, to } => {
             let m: MessageDto = client
@@ -306,6 +328,27 @@ fn usage_lines(g: &GoalDto) -> String {
         ("reviewers".to_string(), g.usage.reviewers),
     ];
     usage_block(&g.usage.total, &roles, INDENT)
+}
+
+/// Which of the goals the daemon answered with `goal ls` shows: the ones
+/// still under way, newest first, with everything behind --all.
+///
+/// The same default as `session ls`, and for the same reason: a list of every
+/// goal there has ever been is a history, and what one asks a list for is
+/// what is happening now. A named --status is that choice made precisely, so
+/// it takes over — `--status completed` that then dropped every finished goal
+/// would answer nothing.
+///
+/// Newest first because ids are ULIDs: the order they sort in is the order
+/// they were created in, so the goal one is working on is the row at the top
+/// rather than the row after the fiftieth.
+fn visible(goals: Vec<GoalDto>, all: bool, statuses: &[GoalStatus]) -> Vec<GoalDto> {
+    let mut goals: Vec<GoalDto> = goals
+        .into_iter()
+        .filter(|g| all || !statuses.is_empty() || !g.status.is_terminal())
+        .collect();
+    goals.sort_by(|a, b| b.id.cmp(&a.id));
+    goals
 }
 
 fn goal_path(id: &str) -> String {

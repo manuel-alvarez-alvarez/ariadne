@@ -14,7 +14,8 @@ use clap::FromArgMatches;
 
 use ariadne_client::Client;
 
-use crate::cli::{Cli, Command, DaemonCommand, McpCommand, SetupCommand, command};
+use crate::cli::{Cli, Command, DaemonCommand, Layout, McpCommand, SetupCommand, command};
+use crate::output::View;
 
 /// Failures are reported by [`error::report`] rather than by anyhow's default
 /// `Error: ...` + `Caused by:` block: one line, and exit code 1. Usage errors
@@ -31,6 +32,17 @@ fn main() -> ExitCode {
         Err(e) => e.exit(),
     };
     let format = cli.format;
+    // How everything after this renders: colour, width and the listing flags,
+    // settled once from the command line and the environment.
+    output::init(View {
+        color: cli.color.enabled(),
+        no_trunc: cli.no_trunc,
+        quiet: cli.quiet,
+        wide: cli.layout == Layout::Wide,
+        columns: cli.columns.clone(),
+        width: output::terminal_width(),
+        pager: !cli.no_pager,
+    });
 
     // `_spawn` does not talk to the daemon: it *becomes* the agent. It is
     // handled before the runtime starts because what tmux is watching is this
@@ -100,7 +112,7 @@ async fn run(cli: Cli) -> Result<ExitCode> {
         Command::Task { command } => commands::task::run(&client, command, format).await,
         Command::Session { command } => commands::session::run(&client, command, format).await,
         Command::Models { command } => commands::models::run(&client, command, format).await,
-        Command::Attention { no_trunc } => commands::attention::run(&client, no_trunc, format).await,
+        Command::Attention => commands::attention::run(&client, format).await,
         Command::Setup {
             command: SetupCommand::CodexHooks { cli_bin },
         } => commands::setup::codex_hooks(cli_bin),

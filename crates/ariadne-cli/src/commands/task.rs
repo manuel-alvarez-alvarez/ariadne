@@ -16,12 +16,12 @@ use ariadne_client::Client;
 use ariadne_core::TaskStatus;
 
 use super::{
-    ProfileNames, confirm, one_of, parse_model, parse_model_or_default, print_messages, query_path,
+    ProfileNames, confirm, one_of, parse_model, parse_model_or_default, print_thread, query_path,
 };
 use crate::cli::values::Spelling;
 use crate::output::{
-    Column, Format, UNCAPPED, dash, local_time, note, print, print_kv, print_list, usage_block,
-    usage_cell, yes_no,
+    Column, Format, UNCAPPED, age, col, dash, local_time, moment, note, pager, print, print_json,
+    print_kv, print_list, usage_block, usage_cell, view, yes_no,
 };
 use edit::{parse_reviewer, resolve_repo, update_request};
 
@@ -31,15 +31,20 @@ use edit::{parse_reviewer, resolve_repo, update_request};
 /// `pr` says whether the task has been published yet rather than where: a
 /// table is for scanning, and `task inspect` and `--format json` carry the
 /// link itself.
+///
+/// What the task is and where it got to are what an 80-column terminal is
+/// left with; the branch goes first, since it is the title again in
+/// kebab-case, and the spend last of the droppable ones.
 const LS: &[Column] = &[
-    ("id", UNCAPPED),
-    ("title", 48),
-    ("status", UNCAPPED),
-    ("round", UNCAPPED),
-    ("stalled", UNCAPPED),
-    ("pr", UNCAPPED),
-    ("tokens", UNCAPPED),
-    ("branch", 40),
+    col("id", UNCAPPED).id(),
+    col("title", 48).title(),
+    col("status", UNCAPPED).status(),
+    col("age", UNCAPPED).rank(5),
+    col("round", UNCAPPED).rank(4),
+    col("stalled", UNCAPPED).rank(3),
+    col("pr", UNCAPPED).rank(2),
+    col("tokens", UNCAPPED).rank(1),
+    col("branch", 40).rank(0),
 ];
 
 /// Where a continuation line of `task inspect` starts: [`print_kv`] pads its
@@ -50,10 +55,10 @@ const INDENT: &str = "\n              ";
 /// Columns of `task reviews`. A review body is prose, and only its opening
 /// belongs in a table — `task reviews --format json` has all of it.
 const REVIEWS: &[Column] = &[
-    ("round", UNCAPPED),
-    ("reviewer", 24),
-    ("verdict", UNCAPPED),
-    ("body", 60),
+    col("round", UNCAPPED),
+    col("reviewer", 24).title(),
+    col("verdict", UNCAPPED),
+    col("body", 60).rank(0),
 ];
 
 /// What `task create --help` ends with.
@@ -155,18 +160,20 @@ pub enum TaskCommand {
         #[arg(long)]
         clear_depends_on: bool,
     },
-    /// List tasks
+    /// List tasks: the unfinished ones, newest first (--all includes the rest)
     Ls {
         /// Filter by goal id
         #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
         goal: Option<String>,
         /// Filter by status; repeatable and comma-separated, and a task in
-        /// any of the named statuses is listed
+        /// any of the named statuses is listed. Names the statuses precisely,
+        /// so it replaces the unfinished/finished split --all makes
         #[arg(long = "status", value_parser = Spelling::<TaskStatus>::new(), value_delimiter = ',')]
         statuses: Vec<TaskStatus>,
-        /// Print cells in full instead of cutting them to the column width
-        #[arg(long)]
-        no_trunc: bool,
+        /// Include finished tasks (merged/cancelled/failed), not just the ones
+        /// still going; nothing to add once --status names one
+        #[arg(short, long)]
+        all: bool,
     },
     /// Show a task
     Inspect {
@@ -179,6 +186,13 @@ pub enum TaskCommand {
         /// Task id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
         id: String,
+        /// Read this many messages from the start of the thread
+        /// (default 200)
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..), conflicts_with = "tail")]
+        limit: Option<u32>,
+        /// Read this many messages from the end of the thread instead
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+        tail: Option<u32>,
     },
     /// Post a message into a task's conversation
     Msg {
@@ -198,9 +212,6 @@ pub enum TaskCommand {
         /// Task id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
         id: String,
-        /// Print cells in full instead of cutting them to the column width
-        #[arg(long)]
-        no_trunc: bool,
     },
     /// Show a task's transition history
     History {
@@ -304,25 +315,28 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
         TaskCommand::Ls {
             goal,
             statuses,
-            no_trunc,
+            all,
         } => {
             let filtered = goal.is_some() || !statuses.is_empty();
+            // `GET /v1/tasks` takes one status, so one is asked for and the
+            // rest is narrowed on the answer — with the live/finished split.
             let status = one_of(&statuses);
             let path = query_path("/v1/tasks", &TaskListQuery { goal, status })?;
-            let mut tasks: Vec<TaskDto> = client.get_json(&path).await?;
-            tasks.retain(|t| statuses.is_empty() || statuses.contains(&t.status));
+            let tasks: Vec<TaskDto> = client.get_json(&path).await?;
+            let tasks = visible(tasks, all, &statuses);
+            let now = chrono::Utc::now();
             print_list(
                 format,
                 &tasks,
                 LS,
-                no_trunc,
-                ls_row,
+                |t| ls_row(t, now),
                 // An empty list under a filter is not an empty system, and
                 // saying so would send the reader looking for tasks that are
                 // right there.
-                match filtered {
-                    true => "no tasks match that filter",
-                    false => "no tasks yet — the planner creates them from a goal",
+                match (filtered, all) {
+                    (true, _) => "no tasks match that filter",
+                    (false, true) => "no tasks yet — the planner creates them from a goal",
+                    (false, false) => "no tasks under way — finished ones are behind --all",
                 },
             )?;
         }
@@ -367,16 +381,20 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                     // task's story is; only an engineer that opened one
                     // reports it.
                     ("pull_request", dash(t.pr_url.as_deref())),
-                    ("created", local_time(&t.created_at)),
+                    ("created", moment(&t.created_at)),
                     ("description", format!("\n---\n{}", t.description)),
                 ])
             })?;
         }
-        TaskCommand::Thread { id } => {
-            let msgs: Vec<MessageDto> = client
-                .get_json(&format!("/v1/tasks/{id}/messages?limit=200"))
-                .await?;
-            print_messages(&msgs, format)?;
+        TaskCommand::Thread { id, limit, tail } => {
+            print_thread(
+                client,
+                &format!("/v1/tasks/{id}/messages"),
+                limit,
+                tail,
+                format,
+            )
+            .await?;
         }
         TaskCommand::Msg { id, body, to } => {
             let m: MessageDto = client
@@ -387,7 +405,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                 .await?;
             print(format, &m, || println!("posted {}", m.id))?;
         }
-        TaskCommand::Reviews { id, no_trunc } => {
+        TaskCommand::Reviews { id } => {
             let reviews: Vec<ReviewDto> =
                 client.get_json(&format!("/v1/tasks/{id}/reviews")).await?;
             let profiles = ProfileNames::for_format(client, format).await;
@@ -395,7 +413,6 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                 format,
                 &reviews,
                 REVIEWS,
-                no_trunc,
                 |r| {
                     vec![
                         r.round.to_string(),
@@ -442,11 +459,16 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
         }
         TaskCommand::Diff { id } => {
             let diff = client.get_text(&format!("/v1/tasks/{id}/diff")).await?;
-            // A diff is text, not a document; json mode still has to be
-            // parseable, so it travels as one.
-            print(format, &json!({"task_id": id, "diff": diff}), || {
-                print!("{diff}")
-            })?;
+            match format {
+                // A diff is text, not a document; json mode still has to be
+                // parseable, so it travels as one.
+                Format::Json => print_json(&json!({"task_id": id, "diff": diff}))?,
+                // On a terminal: coloured, and through the pager, since a
+                // review-sized diff is not something one reads by scrolling
+                // back. In a pipe: the bytes the daemon sent, so `task diff |
+                // git apply` still works.
+                Format::Table => pager::page(&pager::diff(&diff, view().color))?,
+            }
         }
         TaskCommand::Attach { id, role } => {
             crate::commands::attach::attach(client, &id, role).await?;
@@ -456,7 +478,10 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             let logs: ariadne_api::sessions::SessionLogsResponse = client
                 .get_json(&format!("/v1/sessions/{}/logs", session.id))
                 .await?;
-            print(format, &logs, || print!("{}", logs.logs))?;
+            match format {
+                Format::Json => print_json(&logs)?,
+                Format::Table => pager::page(&logs.logs)?,
+            }
         }
     }
     Ok(())
@@ -467,17 +492,38 @@ fn task_path(id: &str) -> String {
 }
 
 /// One row of `task ls`, in [`LS`]'s order.
-fn ls_row(t: &TaskDto) -> Vec<String> {
+fn ls_row(t: &TaskDto, now: chrono::DateTime<chrono::Utc>) -> Vec<String> {
     vec![
         t.id.clone(),
         t.title.clone(),
         t.status.as_str().into(),
+        age(&t.created_at, now),
         t.review_round.to_string(),
         yes_no(t.stalled, "-"),
         yes_no(t.pr_url.is_some(), "-"),
         usage_cell(&t.usage.total),
         t.branch.clone(),
     ]
+}
+
+/// Which of the tasks the daemon answered with `task ls` shows: the ones
+/// still going, newest first, with everything behind --all.
+///
+/// The same default as `session ls` and `goal ls`. A goal that has run its
+/// course is thirty merged tasks and the two that matter, and the two are
+/// what a list is read for; `--status merged` is how one asks for the thirty.
+/// A named --status takes over, since it has already said which tasks are
+/// wanted.
+fn visible(tasks: Vec<TaskDto>, all: bool, statuses: &[TaskStatus]) -> Vec<TaskDto> {
+    let mut tasks: Vec<TaskDto> = tasks
+        .into_iter()
+        // `--status` is asked of the daemon one at a time; the rest of what it
+        // named is narrowed here, as `session ls --role` has always been.
+        .filter(|t| statuses.is_empty() || statuses.contains(&t.status))
+        .filter(|t| all || !statuses.is_empty() || !t.status.is_terminal())
+        .collect();
+    tasks.sort_by(|a, b| b.id.cmp(&a.id));
+    tasks
 }
 
 /// What the task cost, spender by spender: the total first, then the
@@ -552,6 +598,15 @@ mod tests {
 
     use crate::commands::fixtures;
 
+    /// Three hours after every fixture was created, so an `AGE` cell is a
+    /// figure a test can name.
+    fn now() -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::parse_from_rfc3339(fixtures::NOW)
+            .expect("parse")
+            .with_timezone(&chrono::Utc)
+            + chrono::Duration::hours(3)
+    }
+
     /// A plain task, for the blocks that render one.
     fn dto() -> TaskDto {
         TaskDto {
@@ -582,7 +637,7 @@ mod tests {
     /// know".
     #[test]
     fn a_task_that_has_spent_nothing_says_zero() {
-        assert_eq!(ls_row(&dto())[6], "↑0 0% ↓0");
+        assert_eq!(ls_row(&dto(), now())[7], "↑0 0% ↓0");
         let block = usage_lines(&dto());
         assert_eq!(block.lines().next().unwrap(), "input   0  0%");
         assert!(block.contains("output  0"), "{block}");
@@ -619,7 +674,7 @@ mod tests {
             .join("\n")
         );
         assert_eq!(
-            ls_row(&t)[6],
+            ls_row(&t, now())[7],
             "↑1.2M 91% ↓45k",
             "the row carries the total, and the same share"
         );
@@ -677,7 +732,7 @@ mod tests {
             pr_url: Some("https://github.com/owner/repo/pull/12".into()),
             ..dto()
         };
-        let row = ls_row(&published);
+        let row = ls_row(&published, now());
         assert_eq!(row.len(), LS.len(), "a row per column, in LS's order");
         assert_eq!(
             row,
@@ -685,6 +740,7 @@ mod tests {
                 "01TASK",
                 "Add the frobnicator",
                 "approved",
+                "3h",
                 "0",
                 "-",
                 "yes",
@@ -692,6 +748,10 @@ mod tests {
                 "add-the-frobnicator-01task",
             ]
         );
-        assert_eq!(ls_row(&dto())[5], "-", "and a task nobody published says nothing");
+        assert_eq!(
+            ls_row(&dto(), now())[6],
+            "-",
+            "and a task nobody published says nothing"
+        );
     }
 }

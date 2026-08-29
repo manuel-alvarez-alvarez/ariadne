@@ -46,6 +46,9 @@ toml = "0.9"
 
 # cli
 clap = { version = "4.6", features = ["derive", "env", "unstable-ext"] }
+# ANSI styling: the vocabulary clap already ships, so the CLI colours its own
+# tables in the same one.
+anstyle = "1"
 clap_complete = { version = "4", features = ["unstable-dynamic"] }
 
 # errors / logging
@@ -58,7 +61,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Safe wrappers over the POSIX calls std does not expose. Used for access(2):
 # whether *this* process may write a directory is a question only the kernel
 # can answer, and `ariadne doctor` must ask it without writing anything.
-rustix = { version = "1", features = ["fs", "process"] }
+rustix = { version = "1", features = ["fs", "process", "termios"] }
 ulid = { version = "3", features = ["serde"] }
 # Filesystem notifications: the console-log streamer is woken by the writes
 # themselves instead of polling for them (see `ariadne-daemon/src/logwatch.rs`).

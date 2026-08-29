@@ -20,7 +20,7 @@ use ariadne_client::{Client, endpoint};
 
 use self::service::{Action, Service};
 use super::{ariadne_home, find_ariadned};
-use crate::output::{Format, print};
+use crate::output::{Format, duration, print};
 
 /// How long `daemon start` waits for a daemon it just launched to answer.
 const READY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -149,11 +149,18 @@ pub async fn restart(home: Option<PathBuf>, timeout: u64, format: Format) -> Res
 /// manager is asked about the service this home was installed with.
 pub async fn status(client: &Client, home: Option<PathBuf>, format: Format) -> Result<()> {
     let h = client.health().await?;
-    let service = Service::detect(&ariadne_home(home)).await;
+    let root = ariadne_home(home);
+    let service = Service::detect(&root).await;
+    let version = client.version().await.ok();
+    let (pid, tcp) = local(client, &root);
     let payload = json!({
         "status": h.status,
         "uptime_secs": h.uptime_secs,
+        "uptime": duration(h.uptime_secs),
+        "version": version.as_ref().map(|v| v.version.clone()),
+        "pid": pid,
         "endpoint": client.endpoint(),
+        "tcp_listen": tcp,
         "service": service.as_ref().map(|s| json!({
             "manager": s.manager.as_str(),
             "unit": s.manager.unit(),
@@ -162,11 +169,44 @@ pub async fn status(client: &Client, home: Option<PathBuf>, format: Format) -> R
         })),
     });
     print(format, &payload, || {
-        println!("status:  {}", h.status);
-        println!("uptime:  {}s", h.uptime_secs);
-        println!("socket:  {}", client.endpoint());
-        println!("service: {}", management(service.as_ref()));
+        println!("status:   {}", h.status);
+        println!(
+            "version:  {}",
+            version.map_or("-".into(), |v| format!("{} {}", v.name, v.version))
+        );
+        // Seconds are a number to divide; `2d 3h` is the answer one was
+        // after. The exact count stays in `--format json`.
+        println!("uptime:   {}", duration(h.uptime_secs));
+        println!(
+            "pid:      {}",
+            pid.map_or("-".into(), |pid| pid.to_string())
+        );
+        println!("socket:   {}", client.endpoint());
+        println!("tcp:      {}", tcp.unwrap_or_else(|| "disabled".into()));
+        println!("service:  {}", management(service.as_ref()));
     })
+}
+
+/// What only the home on this machine can say — the pid its daemon wrote and
+/// whether it also listens on TCP — for the daemon `status` actually reached.
+///
+/// Both are read from `root`, and only when `root`'s socket is the endpoint we
+/// talked to: `--endpoint` wins over `--home` here, and a daemon somewhere
+/// else is another process entirely — reporting this home's pid for it would
+/// be a lie a reader has no way to catch.
+fn local(client: &Client, root: &Path) -> (Option<u32>, Option<String>) {
+    if endpoint::socket_path(root) != Path::new(client.endpoint()) {
+        return (None, None);
+    }
+    let pid = std::fs::read_to_string(endpoint::pid_file(root))
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u32>().ok());
+    let tcp = endpoint::parse_config(root)
+        .ok()
+        .flatten()
+        .and_then(|config| config.tcp_listen)
+        .map(|addr| addr.to_string());
+    (pid, tcp)
 }
 
 /// `ariadne daemon logs [-f]` — show the log of this home's daemon via tail.

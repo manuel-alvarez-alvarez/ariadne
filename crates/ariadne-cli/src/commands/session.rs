@@ -15,8 +15,8 @@ use super::attention::reason_label;
 use super::{ProfileNames, confirm, one_of, query_path};
 use crate::cli::values::Spelling;
 use crate::output::{
-    Column, Format, UNCAPPED, at, dash, local_time, print, print_kv, print_list, usage_block,
-    usage_cell,
+    Column, Format, UNCAPPED, age, at, col, dash, moment, pager, print, print_json, print_kv,
+    print_list, usage_block, usage_cell,
 };
 
 /// Columns of `session ls`. `context` is the one written by a human, so it is
@@ -28,16 +28,19 @@ use crate::output::{
 /// down one, with the share of the input the prompt cache served; the counts
 /// to the digit are in `session inspect`, since a column is scanned rather
 /// than read.
+///
+/// The tmux session and the agent's own internal id are not here: they are
+/// what one goes to `session inspect` for, and they cost eight columns each
+/// of a row nobody reads them from.
 const LS: &[Column] = &[
-    ("id", UNCAPPED),
-    ("context", 40),
-    ("role", UNCAPPED),
-    ("agent", UNCAPPED),
-    ("status", UNCAPPED),
-    ("attention", UNCAPPED),
-    ("tokens", UNCAPPED),
-    ("tmux", 32),
-    ("internal id", 36),
+    col("id", UNCAPPED).id(),
+    col("context", 40).title(),
+    col("status", UNCAPPED).status(),
+    col("attention", UNCAPPED).attention().rank(4),
+    col("age", UNCAPPED).rank(3),
+    col("role", UNCAPPED).rank(2),
+    col("agent", UNCAPPED).rank(1),
+    col("tokens", UNCAPPED).rank(0),
 ];
 
 /// Where a continuation line of `session inspect` starts: [`print_kv`] pads
@@ -84,9 +87,6 @@ pub enum SessionCommand {
         /// nothing to add once --status names one
         #[arg(short, long)]
         all: bool,
-        /// Print cells in full instead of cutting them to the column width
-        #[arg(long)]
-        no_trunc: bool,
     },
     /// Show a session
     Inspect {
@@ -141,7 +141,6 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
             role,
             attention,
             all,
-            no_trunc,
         } => {
             let filtered = goal.is_some()
                 || task.is_some()
@@ -164,22 +163,21 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
                 Format::Table => SessionContext::fetch_for(client, &sessions).await,
                 Format::Json => SessionContext::default(),
             };
+            let now = chrono::Utc::now();
             print_list(
                 format,
                 &sessions,
                 LS,
-                no_trunc,
                 |s| {
                     vec![
                         s.id.clone(),
                         context.label(s),
-                        s.role.as_str().into(),
-                        s.agent_kind.as_str().into(),
                         s.status.as_str().into(),
                         attention_label(s.attention_reason),
+                        age(&s.created_at, now),
+                        s.role.as_str().into(),
+                        s.agent_kind.as_str().into(),
                         usage_cell(&s.usage),
-                        s.tmux_session.clone(),
-                        s.internal_session_id.clone().unwrap_or_else(|| "-".into()),
                     ]
                 },
                 // A named status already says which sessions were asked for,
@@ -220,7 +218,7 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
                     ("internal id", dash(s.internal_session_id.as_deref())),
                     ("tokens", usage_block(&s.usage, &[], INDENT)),
                     ("activity", at(s.last_activity_at.as_deref())),
-                    ("created", local_time(&s.created_at)),
+                    ("created", moment(&s.created_at)),
                     ("ended", at(s.ended_at.as_deref())),
                 ])
             })?;
@@ -247,7 +245,12 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
         SessionCommand::Logs { id } => {
             let logs: ariadne_api::sessions::SessionLogsResponse =
                 client.get_json(&format!("/v1/sessions/{id}/logs")).await?;
-            print(format, &logs, || print!("{}", logs.logs))?;
+            match format {
+                Format::Json => print_json(&logs)?,
+                // A pane's scrollback is longer than a screen: it goes
+                // through the pager when there is somebody to page for.
+                Format::Table => pager::page(&logs.logs)?,
+            }
         }
         SessionCommand::Resume { id } => {
             // The daemon answers with this same session either way: relaunched
@@ -419,8 +422,14 @@ mod tests {
     #[test]
     fn an_unknown_id_stands_in_for_its_title() {
         let empty = SessionContext::default();
-        assert_eq!(empty.label(&session("01SESS", "01GOAL", Some("01OTHER"))), "01OTHER");
-        assert_eq!(empty.label(&session("01SESS", "01GOAL", None)), "goal: 01GOAL");
+        assert_eq!(
+            empty.label(&session("01SESS", "01GOAL", Some("01OTHER"))),
+            "01OTHER"
+        );
+        assert_eq!(
+            empty.label(&session("01SESS", "01GOAL", None)),
+            "goal: 01GOAL"
+        );
     }
 
     /// One session per role and per liveness, as `session ls` receives them

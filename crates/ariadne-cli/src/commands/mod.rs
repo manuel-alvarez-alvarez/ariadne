@@ -30,7 +30,7 @@ use ariadne_client::{Client, endpoint};
 use ariadne_core::models::ModelRef;
 use ariadne_core::{RecipientKind, probe};
 
-use crate::output::{Format, local_time, note, print};
+use crate::output::{Format, local_time, note, print, warn};
 
 /// `ariadne version` — client version always, daemon version when reachable.
 ///
@@ -39,21 +39,44 @@ use crate::output::{Format, local_time, note, print};
 /// error (Connect)" in it.
 pub async fn version(client: &Client, format: Format) -> Result<()> {
     let daemon = client.version().await;
+    let client_version = env!("CARGO_PKG_VERSION");
+    // Two builds talking to each other is where the odd 404 and the missing
+    // field come from, so it is said out loud rather than left to be noticed.
+    let mismatch = daemon
+        .as_ref()
+        .ok()
+        .map(|v| v.version.as_str())
+        .filter(|version| *version != client_version);
     let payload = json!({
-        "client": {"name": "ariadne", "version": env!("CARGO_PKG_VERSION")},
+        "client": {"name": "ariadne", "version": client_version},
         "daemon": match &daemon {
             Ok(v) => json!({"name": v.name, "version": v.version}),
             Err(e) => json!({"error": e.human()}),
         },
         "endpoint": client.endpoint(),
+        "mismatch": mismatch.is_some(),
     });
     print(format, &payload, || {
-        println!("client:  ariadne {}", env!("CARGO_PKG_VERSION"));
-        match daemon {
-            Ok(v) => println!("daemon:  {} {}", v.name, v.version),
-            Err(e) => println!("daemon:  {}", e.human()),
+        println!("client:    ariadne {client_version}");
+        match &daemon {
+            Ok(v) => println!("daemon:    {} {}", v.name, v.version),
+            Err(e) => println!("daemon:    {}", e.human()),
+        }
+        // The endpoint has been in `--format json` all along: which daemon
+        // answered is half of what the two versions mean.
+        println!("endpoint:  {}", client.endpoint());
+        if let Some(version) = mismatch {
+            warn(&version_mismatch(client_version, version));
         }
     })
+}
+
+/// What a client and a daemon of different builds are told to do about it.
+fn version_mismatch(client: &str, daemon: &str) -> String {
+    format!(
+        "warning: this client is {client} and the daemon is {daemon} — restart it \
+         with: ariadne daemon stop && ariadne daemon start"
+    )
 }
 
 /// Ask before something irreversible, and take silence for "no".
@@ -136,6 +159,96 @@ pub fn print_messages(messages: &[MessageDto], format: Format) -> Result<()> {
             note("no messages yet");
         }
     })
+}
+
+/// How much of a conversation is read when nothing was asked for.
+pub const THREAD_LIMIT: u32 = 200;
+
+/// The most `GET .../messages` answers in one request — `ariadne_api::Page`
+/// clamps `limit` there — and so the size of a page when there is more to
+/// read than that.
+const PAGE: u32 = 200;
+
+/// A conversation, from the daemon and onto the terminal: the oldest
+/// `--limit` messages, or the newest `--tail` ones, with a word on stderr
+/// when there were more.
+///
+/// The cap used to be silent, which is the worst of both: a thread that had
+/// run past 200 messages was cut with nothing to say it had been. What is
+/// left out is now said, and both ends of the thread are reachable — the
+/// daemon pages, so neither is limited to what one request holds.
+pub async fn print_thread(
+    client: &Client,
+    path: &str,
+    limit: Option<u32>,
+    tail: Option<u32>,
+    format: Format,
+) -> Result<()> {
+    let want = tail.or(limit).unwrap_or(THREAD_LIMIT);
+    let (messages, more) = match tail {
+        // The end of a thread is only knowable from its start: keyset
+        // pagination pages forward, so the tail is what is left after reading
+        // the whole of it.
+        Some(_) => {
+            let all = read_thread(client, path, u32::MAX).await?;
+            let more = all.len().saturating_sub(want as usize);
+            let messages = all[all.len() - want.min(all.len() as u32) as usize..].to_vec();
+            (messages, more)
+        }
+        None => {
+            // One more than asked for, which is what says whether the answer
+            // was the whole thread or the start of it.
+            let mut all = read_thread(client, path, want.saturating_add(1)).await?;
+            let more = all.len().saturating_sub(want as usize);
+            all.truncate(want as usize);
+            (all, more)
+        }
+    };
+    print_messages(&messages, format)?;
+    if more > 0 && matches!(format, Format::Table) {
+        note(&match tail {
+            Some(_) => format!(
+                "{more} earlier message{} not shown — read from the start with --limit",
+                plural(more)
+            ),
+            None => {
+                format!("more messages follow — raise --limit, or read the end with --tail {want}")
+            }
+        });
+    }
+    Ok(())
+}
+
+/// Up to `want` messages of a thread, oldest first, in as many requests as
+/// the daemon's page size makes necessary.
+async fn read_thread(client: &Client, path: &str, want: u32) -> Result<Vec<MessageDto>> {
+    let mut out: Vec<MessageDto> = Vec::new();
+    loop {
+        let remaining = want.saturating_sub(out.len() as u32);
+        if remaining == 0 {
+            return Ok(out);
+        }
+        let limit = remaining.min(PAGE);
+        let after = out.last().map(|m| m.id.clone());
+        let query = match &after {
+            Some(id) => format!("?limit={limit}&after={id}"),
+            None => format!("?limit={limit}"),
+        };
+        let page: Vec<MessageDto> = client.get_json(&format!("{path}{query}")).await?;
+        let last = page.len() < limit as usize;
+        out.extend(page);
+        if last {
+            return Ok(out);
+        }
+    }
+}
+
+/// An `s` where there is more than one of something.
+fn plural(count: usize) -> &'static str {
+    match count {
+        1 => "",
+        _ => "s",
+    }
 }
 
 /// Profile ids paired with the names they are known by.
@@ -361,6 +474,18 @@ mod tests {
             )))),
             "[not a time] engineer → Reviewer: rebased onto main"
         );
+    }
+
+    /// A client and a daemon of different builds is the cause of the odd 404
+    /// and the missing field, so the warning names both versions and the two
+    /// commands that fix it.
+    #[test]
+    fn a_version_mismatch_says_which_two_and_what_to_do() {
+        let warning = version_mismatch("0.4.0", "0.3.1");
+        assert!(warning.contains("0.4.0"), "{warning}");
+        assert!(warning.contains("0.3.1"), "{warning}");
+        assert!(warning.contains("ariadne daemon stop"), "{warning}");
+        assert!(warning.contains("ariadne daemon start"), "{warning}");
     }
 
     /// `-y` answers for the caller: nothing is read, and nothing blocks.

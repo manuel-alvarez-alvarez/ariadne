@@ -9,6 +9,7 @@ use ariadne_core::{AgentKind, GoalStatus, MergeStrategy, Role, SessionStatus, Ta
 
 use crate::commands::models::ModelsCommand;
 use crate::commands::profile::{PromptAssignment, PromptCommand};
+use crate::output::ColorChoice;
 
 /// clap's own consistency check over the whole tree, shadowed `--format`
 /// arguments included.
@@ -152,10 +153,11 @@ fn every_command_in_the_tree_is_classified() {
 
 #[test]
 fn format_is_advertised_exactly_where_it_is_honored() {
+    let cmd = built();
     for (path, honored) in LEAVES {
         let path: Vec<&str> = path.split(' ').collect();
         assert_eq!(
-            advertises_format(&path),
+            advertises(&cmd, &path, "format"),
             *honored,
             "--format is {} on {path:?}",
             if *honored { "missing" } else { "advertised" }
@@ -163,12 +165,155 @@ fn format_is_advertised_exactly_where_it_is_honored() {
     }
 }
 
+/// The listing flags belong to the commands that print a table, and the
+/// pager flag to the ones that print something long — advertised there and
+/// nowhere else, so `ariadne task cancel --help` is still four lines.
+///
+/// Every path they name is checked against the real tree at the same time: a
+/// renamed subcommand would otherwise quietly stop advertising its own flags.
+#[test]
+fn the_listing_flags_are_advertised_exactly_where_they_are_honored() {
+    let cmd = built();
+    let leaves = leaf_paths();
+    for named in LISTINGS.iter().chain(PAGED) {
+        assert!(
+            leaves.iter().any(|leaf| leaf == named),
+            "no such command: {named}"
+        );
+    }
+    for leaf in &leaves {
+        let path: Vec<&str> = leaf.split(' ').collect();
+        let listing = LISTINGS.contains(&leaf.as_str());
+        for id in ["quiet", "no_trunc", "layout", "columns"] {
+            assert_eq!(advertises(&cmd, &path, id), listing, "{id} on {leaf:?}");
+        }
+        assert_eq!(
+            advertises(&cmd, &path, "no_pager"),
+            PAGED.contains(&leaf.as_str()),
+            "--no-pager on {leaf:?}"
+        );
+        // Colour goes wherever output does, which is wherever `--format`
+        // does: the two answer the same question about the same commands.
+        assert_eq!(
+            advertises(&cmd, &path, "color"),
+            advertises(&cmd, &path, "format"),
+            "--color on {leaf:?}"
+        );
+    }
+}
+
+/// The display flags are global, so they may be typed before the subcommand
+/// or after it, and every one of them lands in the field the renderer reads.
+#[test]
+fn the_display_flags_parse_on_either_side_of_the_subcommand() {
+    let before = parse(&[
+        "ariadne",
+        "--color",
+        "never",
+        "--no-trunc",
+        "-q",
+        "-o",
+        "wide",
+        "--columns",
+        "id,title",
+        "task",
+        "ls",
+    ]);
+    let after = parse(&[
+        "ariadne",
+        "task",
+        "ls",
+        "--color",
+        "never",
+        "--no-trunc",
+        "-q",
+        "-o",
+        "wide",
+        "--columns",
+        "id,title",
+    ]);
+    for cli in [before, after] {
+        assert_eq!(cli.color, ColorChoice::Never);
+        assert!(cli.no_trunc);
+        assert!(cli.quiet);
+        assert_eq!(cli.layout, Layout::Wide);
+        assert_eq!(cli.columns, ["id", "title"]);
+    }
+
+    let plain = parse(&["ariadne", "task", "ls"]);
+    assert_eq!(plain.color, ColorChoice::Auto);
+    assert_eq!(plain.layout, Layout::Normal);
+    assert!(!plain.quiet && !plain.no_trunc && !plain.no_pager);
+    assert!(plain.columns.is_empty());
+    assert!(
+        try_parse(&["ariadne", "task", "ls", "--color", "purple"]).is_err(),
+        "a colour choice is one of three words"
+    );
+}
+
+/// Every `ls` that hides finished work behind `--all` takes the same short
+/// flag for it, and the thread commands take a window of the same two.
+#[test]
+fn a_listing_hides_what_is_finished_behind_the_same_flag() {
+    let all = |argv: &[&str]| match parse(argv).command {
+        Command::Goal {
+            command: GoalCommand::Ls { all, .. },
+        } => all,
+        Command::Task {
+            command: TaskCommand::Ls { all, .. },
+        } => all,
+        Command::Session {
+            command: SessionCommand::Ls { all, .. },
+        } => all,
+        _ => panic!("ls"),
+    };
+    for argv in [
+        vec!["ariadne", "goal", "ls"],
+        vec!["ariadne", "task", "ls"],
+        vec!["ariadne", "session", "ls"],
+    ] {
+        assert!(!all(&argv), "{argv:?} lists what is going on");
+        let mut with = argv.clone();
+        with.push("-a");
+        assert!(all(&with), "{with:?} lists everything");
+    }
+
+    let window = |argv: &[&str]| match parse(argv).command {
+        Command::Goal {
+            command: GoalCommand::Thread { limit, tail, .. },
+        } => (limit, tail),
+        Command::Task {
+            command: TaskCommand::Thread { limit, tail, .. },
+        } => (limit, tail),
+        _ => panic!("thread"),
+    };
+    assert_eq!(window(&["ariadne", "task", "thread", "01T"]), (None, None));
+    assert_eq!(
+        window(&["ariadne", "task", "thread", "01T", "--tail", "20"]),
+        (None, Some(20))
+    );
+    assert_eq!(
+        window(&["ariadne", "goal", "thread", "01G", "--limit", "5"]),
+        (Some(5), None)
+    );
+    assert!(
+        try_parse(&[
+            "ariadne", "goal", "thread", "01G", "--limit", "5", "--tail", "5"
+        ])
+        .is_err(),
+        "one end of the thread or the other, not both"
+    );
+    assert!(
+        try_parse(&["ariadne", "goal", "thread", "01G", "--limit", "0"]).is_err(),
+        "a window of no messages is not a window"
+    );
+}
+
 /// `_spawn` is tmux's end of a launch, not a command anyone types: it takes
 /// the plan path and stays out of the help.
 #[test]
 fn the_spawn_command_takes_a_plan_path_and_is_hidden() {
-    let Command::Spawn { plan } = parse(&["ariadne", "_spawn", "/run/s/spawn.json"]).command
-    else {
+    let Command::Spawn { plan } = parse(&["ariadne", "_spawn", "/run/s/spawn.json"]).command else {
         panic!("_spawn");
     };
     assert_eq!(plan, PathBuf::from("/run/s/spawn.json"));
@@ -376,7 +521,10 @@ fn a_message_is_addressed_only_when_to_says_so() {
     );
     assert_eq!(to(&["ariadne", "task", "msg", "01TASK", "ping"]), None);
     assert_eq!(
-        to(&["ariadne", "task", "msg", "01TASK", "ping", "--to", "Engineer"]).as_deref(),
+        to(&[
+            "ariadne", "task", "msg", "01TASK", "ping", "--to", "Engineer"
+        ])
+        .as_deref(),
         Some("Engineer")
     );
 }
@@ -421,10 +569,9 @@ fn a_model_can_be_chosen_for_every_agent_on_the_line() {
     );
 
     let Command::Task {
-        command:
-            TaskCommand::Create {
-                model, reviewers, ..
-            },
+        command: TaskCommand::Create {
+            model, reviewers, ..
+        },
     } = parse(&[
         "ariadne",
         "task",
@@ -494,7 +641,14 @@ fn a_model_can_be_chosen_for_every_agent_on_the_line() {
 fn a_model_naming_no_agent_is_a_usage_error() {
     let lines: [&[&str]; 3] = [
         &[
-            "ariadne", "goal", "create", "--title", "Ship it", "--repo", "01REPO", "--model",
+            "ariadne",
+            "goal",
+            "create",
+            "--title",
+            "Ship it",
+            "--repo",
+            "01REPO",
+            "--model",
             "gpt-5.3-codex",
         ],
         &[
@@ -508,7 +662,14 @@ fn a_model_naming_no_agent_is_a_usage_error() {
             "gpt-5.3-codex",
         ],
         &[
-            "ariadne", "profile", "create", "--name", "eng", "--role", "engineer", "--model",
+            "ariadne",
+            "profile",
+            "create",
+            "--name",
+            "eng",
+            "--role",
+            "engineer",
+            "--model",
             "gpt-5.3-codex",
         ],
     ];
@@ -553,7 +714,14 @@ fn a_model_on_an_agent_that_is_no_cli_is_a_usage_error() {
 fn a_reviewer_that_names_no_real_agent_is_a_usage_error() {
     let refused = |spec: &str| {
         try_parse(&[
-            "ariadne", "task", "create", "01GOAL", "--title", "Do it", "--reviewer", spec,
+            "ariadne",
+            "task",
+            "create",
+            "01GOAL",
+            "--title",
+            "Do it",
+            "--reviewer",
+            spec,
         ])
         .map(|_| ())
         .expect_err("a reviewer that says half of what it means")
@@ -999,15 +1167,21 @@ fn subcommand(path: &[&str]) -> clap::Command {
     found.clone()
 }
 
-/// Whether `--format` shows up in that subcommand's help.
-fn advertises_format(path: &[&str]) -> bool {
+/// The whole tree, built: globals only reach the subcommands once it is.
+/// Building it is the expensive half, so a test that asks about every leaf
+/// builds it once.
+fn built() -> clap::Command {
     let mut cmd = command();
-    // Globals only reach the subcommands once the tree is built.
     cmd.build();
-    let mut sub = &cmd;
+    cmd
+}
+
+/// Whether the global argument `id` shows up in that subcommand's help.
+fn advertises(cmd: &clap::Command, path: &[&str], id: &str) -> bool {
+    let mut sub = cmd;
     for name in path {
         sub = sub.find_subcommand(name).expect("subcommand");
     }
     sub.get_arguments()
-        .any(|a| a.get_id() == "format" && !a.is_hide_set())
+        .any(|a| a.get_id() == id && !a.is_hide_set())
 }

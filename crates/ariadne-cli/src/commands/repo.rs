@@ -10,15 +10,17 @@ use serde_json::json;
 
 use super::confirm;
 use crate::cli::values::Spelling;
-use crate::output::{Column, Format, UNCAPPED, local_time, print, print_kv, print_list};
+use crate::output::{Column, Format, UNCAPPED, age, col, moment, print, print_kv, print_list};
 
-/// Columns of `repo ls`.
+/// Columns of `repo ls`. The path is what a repository is, so it stays
+/// whatever the terminal's width; the description is the first thing to go.
 const LS: &[Column] = &[
-    ("id", UNCAPPED),
-    ("path", 48),
-    ("branch", 24),
-    ("merge", UNCAPPED),
-    ("description", 40),
+    col("id", UNCAPPED).id(),
+    col("path", 48).title(),
+    col("age", UNCAPPED).rank(4),
+    col("branch", 24).rank(3),
+    col("merge", UNCAPPED).rank(2),
+    col("description", 40).rank(1),
 ];
 
 #[derive(Subcommand)]
@@ -39,11 +41,7 @@ pub enum RepoCommand {
         merge_strategy: MergeStrategy,
     },
     /// List repositories
-    Ls {
-        /// Print cells in full instead of cutting them to the column width
-        #[arg(long)]
-        no_trunc: bool,
-    },
+    Ls,
     /// Show a repository
     Inspect {
         /// Repository id
@@ -100,17 +98,18 @@ pub async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Result<()
                 .await?;
             print(format, &repo, || println!("{}", repo.id))?;
         }
-        RepoCommand::Ls { no_trunc } => {
+        RepoCommand::Ls => {
             let repos: Vec<RepositoryDto> = client.get_json("/v1/repositories").await?;
+            let now = chrono::Utc::now();
             print_list(
                 format,
                 &repos,
                 LS,
-                no_trunc,
                 |r| {
                     vec![
                         r.id.clone(),
                         r.path.clone(),
+                        age(&r.created_at, now),
                         r.base_branch.clone(),
                         r.merge_strategy.as_str().into(),
                         r.description.clone().unwrap_or_else(|| "-".into()),
@@ -131,8 +130,8 @@ pub async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Result<()
                         "description",
                         r.description.clone().unwrap_or_else(|| "-".into()),
                     ),
-                    ("created", local_time(&r.created_at)),
-                    ("updated", local_time(&r.updated_at)),
+                    ("created", moment(&r.created_at)),
+                    ("updated", moment(&r.updated_at)),
                 ])
             })?;
         }

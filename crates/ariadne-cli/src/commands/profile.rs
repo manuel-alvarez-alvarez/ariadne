@@ -15,18 +15,22 @@ use ariadne_core::Role;
 
 use super::{confirm, parse_model, parse_model_or_default, path_segment};
 use crate::cli::values::Spelling;
-use crate::output::{Column, Format, UNCAPPED, local_time, note, print, print_kv, print_list};
+use crate::output::{
+    Column, Format, UNCAPPED, age, col, moment, note, print, print_kv, print_list,
+};
 
 pub use flags::{PromptAssignment, read_prompts};
 use flags::{owned_prompts, split_system, write_briefings};
 use prompts::{Owner, PromptArg, parse_prompt_arg};
 
-/// Columns of `profile ls`.
+/// Columns of `profile ls`. A profile is its name and its role; how old it is
+/// is the least of what one asks a profile.
 const LS: &[Column] = &[
-    ("id", UNCAPPED),
-    ("name", 32),
-    ("role", UNCAPPED),
-    ("model", 32),
+    col("id", UNCAPPED).id(),
+    col("name", 32).title(),
+    col("role", UNCAPPED).rank(3),
+    col("model", 32).rank(2),
+    col("age", UNCAPPED).rank(1),
 ];
 
 #[derive(Subcommand)]
@@ -71,9 +75,6 @@ pub enum ProfileCommand {
         /// Filter by role
         #[arg(long, value_parser = Spelling::<Role>::new())]
         role: Option<Role>,
-        /// Print cells in full instead of cutting them to the column width
-        #[arg(long)]
-        no_trunc: bool,
     },
     /// Show a profile (by id or name)
     Inspect {
@@ -130,9 +131,6 @@ pub enum ProfileCommand {
         /// Profile id or name
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::profile_names))]
         id: String,
-        /// Print cells in full instead of cutting them to the column width
-        #[arg(long)]
-        no_trunc: bool,
     },
     /// Show, pipe out or reset one prompt (set them with create|update
     /// --prompt)
@@ -214,23 +212,24 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
             let written = write_briefings(client, &profile, briefings, false).await?;
             print_written(&profile, &written, format)?;
         }
-        ProfileCommand::Ls { role, no_trunc } => {
+        ProfileCommand::Ls { role } => {
             let path = match role {
                 Some(r) => format!("/v1/profiles?role={}", r.as_str()),
                 None => "/v1/profiles".to_string(),
             };
             let profiles: Vec<ProfileDto> = client.get_json(&path).await?;
+            let now = chrono::Utc::now();
             print_list(
                 format,
                 &profiles,
                 LS,
-                no_trunc,
                 |p| {
                     vec![
                         p.id.clone(),
                         p.name.clone(),
                         p.role.as_str().into(),
                         model_label(p.model.as_deref()),
+                        age(&p.created_at, now),
                     ]
                 },
                 "no profiles yet — create one with: ariadne profile create",
@@ -244,7 +243,7 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
                     ("name", p.name.clone()),
                     ("role", p.role.as_str().into()),
                     ("model", model_label(p.model.as_deref())),
-                    ("created", local_time(&p.created_at)),
+                    ("created", moment(&p.created_at)),
                     ("prompt", format!("\n---\n{}", p.system_prompt)),
                 ])
             })?;
@@ -295,9 +294,7 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
                 println!("deleted {id}")
             })?;
         }
-        ProfileCommand::Prompts { id, no_trunc } => {
-            prompts::list(client, &id, no_trunc, format).await?
-        }
+        ProfileCommand::Prompts { id } => prompts::list(client, &id, format).await?,
         ProfileCommand::Prompt { command } => prompts::run(client, command, format).await?,
     }
     Ok(())

@@ -185,7 +185,7 @@ ariadne task update <task-id> --model default   # back to the profile's own
 
 # watch it run
 ariadne attention                      # what is waiting for you, across every goal
-ariadne task ls --goal <goal-id>
+ariadne task ls --goal <goal-id>       # what is going on; -a adds the finished work
 ariadne task attach <task-id>          # engineer terminal (or --role reviewer)
 ariadne task msg <task-id> "hold on, use the middleware crate instead"
 ariadne attach <id>                    # session, task or goal id
@@ -194,6 +194,13 @@ ariadne attach <id>                    # session, task or goal id
 ariadne models ls --agent codex        # everything --model can be pinned to
 ariadne session ls --attention         # the agents waiting on a human
 ariadne session send <session-id> y    # type into a live agent, as the UI does
+
+# lists are for reading and for piping
+ariadne task ls -o wide                # every column, however narrow the terminal
+ariadne task ls --columns id,title,age # or exactly the ones you name
+ariadne task ls -q | xargs -n1 ariadne task inspect
+ariadne task diff <task-id>            # coloured, and through $PAGER on a terminal
+ariadne task thread <task-id> --tail 20 # the last of a long conversation
 ```
 
 `ariadne --help` lists every command and `ariadne <command> --help` every flag:
@@ -205,6 +212,24 @@ that prints data takes `--format json` (the ones that hand the terminal to
 another program — `attach`, `daemon logs`, `completions`, `setup` — do not).
 The daemon serves its full API as OpenAPI at `/api-docs/openapi.json`, Swagger
 UI at `/docs`, and a live event stream at `/v1/events/stream`.
+
+Tables are laid out for the terminal they are printed in: the least important
+columns are dropped until the row fits, and `-o wide` puts them all back.
+`--columns a,b,c` prints exactly the ones you name, `--no-trunc` prints the
+cells whole, and `-q` prints one id per line and nothing else — the flag to
+pipe a listing into whatever acts on it. `ariadne goal ls`, `task ls` and
+`session ls` show what is going on rather than everything there has ever been;
+`-a/--all` includes the finished work, and `--status` names the statuses
+precisely. A pipe or a file gets every column, since there is no screen to fit.
+`goal thread` and `task thread` read the last `--tail N` messages, or the first
+`--limit N`, and say when there are more.
+
+Statuses are coloured and carry a glyph — `●` running, `○` pending, `✓` done,
+`✗` failed or cancelled, `?` waiting on you — so a table reads the same
+without colour. `--color auto|always|never` decides, `NO_COLOR` is honoured,
+and a pipe is plain unless you ask otherwise (`--color always`). `task diff`
+and the `logs` snapshots go through `$PAGER` (`less -R`) on a terminal;
+`--no-pager` streams them instead.
 
 ## Configuration
 

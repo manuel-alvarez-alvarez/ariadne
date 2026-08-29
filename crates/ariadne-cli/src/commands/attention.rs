@@ -25,8 +25,8 @@ use ariadne_api::tasks::TaskDto;
 use ariadne_client::Client;
 use ariadne_core::{AttentionReason, TaskStatus};
 
+use crate::output::{Format, note, print_json, print_table, view};
 use board::{ROWS, group, heading, rows, task_titles};
-use crate::output::{Format, note, print_json, print_table};
 
 /// Why a row is on the list — the task reasons and the session reasons in one
 /// vocabulary, since one table lists both. `failed` is a task's alone: a
@@ -119,7 +119,7 @@ fn session_at(session: &SessionDto) -> &str {
         .unwrap_or(&session.created_at)
 }
 
-pub async fn run(client: &Client, no_trunc: bool, format: Format) -> Result<()> {
+pub async fn run(client: &Client, format: Format) -> Result<()> {
     let goals: Vec<GoalDto> = client.get_json("/v1/goals").await?;
     let tasks: Vec<TaskDto> = client.get_json("/v1/tasks").await?;
     // Unfiltered, and narrowed by `session_reason` below rather than by the
@@ -132,15 +132,26 @@ pub async fn run(client: &Client, no_trunc: bool, format: Format) -> Result<()> 
     // the task it was run for, which is usually a task that is doing fine.
     let titles = task_titles(&tasks);
     let attention = group(goals, tasks, sessions);
+    let now = chrono::Utc::now();
     match format {
         Format::Json => print_json(&attention)?,
+        // `-q` is the same promise here as in every `ls`: the ids, one per
+        // line, so what is stuck can be piped into whatever unsticks it. The
+        // goal headings are for eyes and go with the table.
+        Format::Table if view().quiet => {
+            for group in &attention.goals {
+                for row in rows(group, &titles, now) {
+                    println!("{}", row[0]);
+                }
+            }
+        }
         Format::Table => {
             for (i, group) in attention.goals.iter().enumerate() {
                 if i > 0 {
                     println!();
                 }
                 println!("{}", heading(group));
-                print_table(ROWS, &rows(group, &titles, chrono::Utc::now()), no_trunc);
+                print_table(ROWS, &rows(group, &titles, now))?;
             }
             if attention.goals.is_empty() {
                 note("nothing needs attention");
@@ -292,5 +303,4 @@ pub(crate) mod tests {
         // Failed, but the daemon never stamped an end on it.
         assert_eq!(session_at(&dead("01S", "01GA", None)), NOW);
     }
-
 }

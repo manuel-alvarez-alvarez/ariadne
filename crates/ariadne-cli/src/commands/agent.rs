@@ -7,10 +7,15 @@ use ariadne_api::agents::AgentConfigDto;
 use ariadne_client::Client;
 use ariadne_core::AgentKind;
 
-use crate::output::{Column, Format, UNCAPPED, note, print, print_list};
+use crate::output::{Column, Format, UNCAPPED, col, note, print, print_list};
 
-/// Columns of `agent ls`.
-const LS: &[Column] = &[("agent", UNCAPPED), ("flags", 44), ("defaults", 44)];
+/// Columns of `agent ls`. There are three agent CLIs and no ids: the row is
+/// the agent, and the two flag lists are what there is to read.
+const LS: &[Column] = &[
+    col("agent", UNCAPPED).title(),
+    col("flags", 44),
+    col("defaults", 44).rank(1),
+];
 
 /// What an empty flag list looks like in a table: a cell nobody can mistake
 /// for a flag.
@@ -25,11 +30,7 @@ const EMPTY: &str = "-";
 #[derive(Subcommand)]
 pub enum AgentCommand {
     /// List the agent CLIs, their flags and the defaults they came from
-    Ls {
-        /// Print cells in full instead of cutting them to the column width
-        #[arg(long)]
-        no_trunc: bool,
-    },
+    Ls,
     /// Replace an agent CLI's flags
     ///
     /// The list is replaced whole: `--flag` names every flag the agent is to
@@ -99,13 +100,12 @@ async fn default_flags(client: &Client, kind: AgentKind) -> Result<Vec<String>> 
 
 pub async fn run(client: &Client, cmd: AgentCommand, format: Format) -> Result<()> {
     match cmd {
-        AgentCommand::Ls { no_trunc } => {
+        AgentCommand::Ls => {
             let configs: Vec<AgentConfigDto> = client.list_agent_configs().await?;
             print_list(
                 format,
                 &configs,
                 LS,
-                no_trunc,
                 |c| {
                     vec![
                         c.agent_kind.as_str().into(),
