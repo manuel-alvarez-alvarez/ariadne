@@ -505,7 +505,7 @@ pub fn models_or_default() -> Vec<CompletionCandidate> {
 }
 
 /// Effort candidates for `--effort`: every effort the catalog knows, once
-/// each, cheapest first.
+/// each, cheapest first, described by what it buys.
 ///
 /// Which of them a given model takes is the model's own business, and clap
 /// cannot see the `--model` sitting on the same line — so the union is what
@@ -516,14 +516,103 @@ pub fn models_or_default() -> Vec<CompletionCandidate> {
 /// wherever they overlap, so they are merged rather than concatenated: what
 /// comes out reads from cheapest to deepest across every agent CLI.
 pub fn efforts() -> Vec<CompletionCandidate> {
-    let known = match model_catalog() {
-        Some(catalog) => catalog.iter().map(catalog_efforts).collect(),
-        None => curated_efforts(),
+    let (known, entries) = match model_catalog() {
+        Some(catalog) => (
+            catalog.iter().map(catalog_efforts).collect(),
+            catalog_effort_entries(&catalog),
+        ),
+        None => (curated_efforts(), curated_effort_entries()),
     };
     merged(known)
         .into_iter()
-        .map(CompletionCandidate::new)
+        .map(|id| match effort_help(&id, &entries) {
+            Some(help) => candidate(&id, help),
+            None => CompletionCandidate::new(id),
+        })
         .collect()
+}
+
+/// One effort as one agent CLI describes it: which CLI, the effort's own id,
+/// and what it buys where that CLI has written one.
+struct EffortEntry {
+    kind: String,
+    id: String,
+    description: Option<String>,
+}
+
+/// Every effort of every model in a fetched catalog, in the order the
+/// catalog lists them — the order [`effort_help`] reads "the first entry
+/// that lists it" in.
+fn catalog_effort_entries(catalog: &[Value]) -> Vec<EffortEntry> {
+    catalog
+        .iter()
+        .flat_map(|m| {
+            let kind = s(m, "agent_kind").to_string();
+            m.get("efforts")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .map(move |e| EffortEntry {
+                    kind: kind.clone(),
+                    id: s(e, "id").to_string(),
+                    description: e
+                        .get("description")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                })
+        })
+        .collect()
+}
+
+/// The same, from the compiled-in ladders, for a machine that has never
+/// reached a daemon.
+fn curated_effort_entries() -> Vec<EffortEntry> {
+    AgentKind::ALL
+        .into_iter()
+        .flat_map(|kind| {
+            ariadne_core::models::known_efforts(kind)
+                .iter()
+                .map(move |effort| EffortEntry {
+                    kind: kind.as_str().to_string(),
+                    id: (*effort).to_string(),
+                    description: ariadne_core::models::effort_description(kind, effort)
+                        .map(str::to_string),
+                })
+        })
+        .collect()
+}
+
+/// What `--effort <id>` is described as: the description every agent CLI
+/// that takes it agrees on, when they agree — an effort means the same thing
+/// on every model of one agent CLI, but not necessarily between two of them —
+/// or, where two CLIs write different words for it, each named beside its
+/// own: `low — claude_code: …; codex: …`.
+///
+/// `None` where nothing that lists this effort has written a description for
+/// it at all.
+fn effort_help(id: &str, entries: &[EffortEntry]) -> Option<String> {
+    let mut described: Vec<(&str, &str)> = Vec::new();
+    let mut seen: Vec<&str> = Vec::new();
+    for e in entries {
+        if e.id != id || seen.contains(&e.kind.as_str()) {
+            continue;
+        }
+        seen.push(&e.kind);
+        if let Some(d) = &e.description {
+            described.push((&e.kind, d.as_str()));
+        }
+    }
+    match described.as_slice() {
+        [] => None,
+        [(_, d)] => Some((*d).to_string()),
+        many if many.windows(2).all(|w| w[0].1 == w[1].1) => Some(many[0].1.to_string()),
+        many => Some(
+            many.iter()
+                .map(|(kind, d)| format!("{kind}: {d}"))
+                .collect::<Vec<_>>()
+                .join("; "),
+        ),
+    }
 }
 
 /// The same, plus the word an update writes to run the model at whatever its
@@ -679,11 +768,35 @@ fn store_models(models: &[Value]) {
 }
 
 fn model_candidate(m: &Value) -> CompletionCandidate {
-    let help = match m.get("description").and_then(|d| d.as_str()) {
-        Some(d) => d.to_string(),
-        None => s(m, "agent_kind").to_string(),
+    let tier = s(m, "tier");
+    let tier = if tier.is_empty() { "unknown" } else { tier };
+    let cost = m.get("cost").and_then(Value::as_u64).map(|n| n as u8);
+    let speed = m.get("speed").and_then(Value::as_u64).map(|n| n as u8);
+    let description = match m.get("description").and_then(|d| d.as_str()) {
+        Some(d) => d,
+        None => s(m, "agent_kind"),
     };
-    candidate(s(m, "id"), help)
+    candidate(s(m, "id"), model_help(tier, cost, speed, description))
+}
+
+/// A `--model` candidate's help: the three figures a picker sizes a task
+/// from, then the sentence they summarize — `frontier · cost 5/5 · speed
+/// 2/5 — deepest reasoning there is`.
+fn model_help(tier: &str, cost: Option<u8>, speed: Option<u8>, description: &str) -> String {
+    format!(
+        "{tier} · cost {} · speed {} — {description}",
+        band(cost),
+        band(speed)
+    )
+}
+
+/// A cost or speed band as `--model` help spells it: `3/5`, or `-` where
+/// nothing has ranked it.
+fn band(n: Option<u8>) -> String {
+    match n {
+        Some(n) => format!("{n}/5"),
+        None => "-".to_string(),
+    }
 }
 
 /// The compiled-in catalog, for a machine that has never reached a daemon:
@@ -696,9 +809,18 @@ fn curated_catalog() -> Vec<CompletionCandidate> {
     AgentKind::ALL
         .into_iter()
         .flat_map(|kind| {
+            // The bare CLI carries no bands of its own — it is every model of
+            // that CLI at once, not one of them — so it gets the same
+            // "unknown · cost - · speed -" a fetched catalog gives an entry
+            // nothing has ranked, rather than the description on its own.
             let mut out = vec![candidate(
                 kind.as_str(),
-                format!("{} on its own default model", kind.as_str()),
+                model_help(
+                    "unknown",
+                    None,
+                    None,
+                    &format!("{} on its own default model", kind.as_str()),
+                ),
             )];
             out.extend(curated_models(kind));
             out
@@ -709,7 +831,12 @@ fn curated_catalog() -> Vec<CompletionCandidate> {
 fn curated_models(kind: AgentKind) -> Vec<CompletionCandidate> {
     ariadne_core::models::curated_models(kind)
         .iter()
-        .map(|m| candidate(&qualified(kind, m.id), m.description.to_string()))
+        .map(|m| {
+            candidate(
+                &qualified(kind, m.id),
+                model_help(m.tier.as_str(), m.cost, m.speed, m.description),
+            )
+        })
         .collect()
 }
 
@@ -856,6 +983,75 @@ mod tests {
         assert_eq!(
             catalog_efforts(&json!({"id": "claude_code"})),
             Vec::<String>::new()
+        );
+    }
+
+    /// A `--model` candidate's help leads with the three figures a picker
+    /// sizes a task from, then the description — bands and all, or dashes
+    /// where nothing has ranked them.
+    #[test]
+    fn a_models_help_leads_with_its_bands_then_its_description() {
+        assert_eq!(
+            model_help("frontier", Some(5), Some(2), "deepest reasoning there is"),
+            "frontier · cost 5/5 · speed 2/5 — deepest reasoning there is"
+        );
+        assert_eq!(
+            model_help("unknown", None, None, "codex"),
+            "unknown · cost - · speed - — codex"
+        );
+    }
+
+    /// A machine that has never reached a daemon offers the compiled-in
+    /// catalog, and its bare-CLI entries carry the same "unknown · cost - ·
+    /// speed -" bands a fetched catalog gives an entry nothing has ranked,
+    /// rather than the description on its own.
+    #[test]
+    fn the_curated_fallback_bands_its_bare_cli_entries_too() {
+        let claude_code = curated_catalog()
+            .into_iter()
+            .find(|c| c.get_value().to_string_lossy() == "claude_code")
+            .expect("claude_code is offered on its own");
+        assert_eq!(
+            claude_code.get_help().expect("help").to_string(),
+            "unknown · cost - · speed - — claude_code on its own default model"
+        );
+    }
+
+    /// An effort every entry that lists it agrees about is described once;
+    /// one that two agent CLIs describe differently is described per CLI,
+    /// each named beside its own words; one nothing has described at all
+    /// carries no help.
+    #[test]
+    fn an_effort_is_described_once_when_every_cli_agrees_and_per_cli_when_they_do_not() {
+        let entries = catalog_effort_entries(
+            json!([
+                {"agent_kind": "claude_code", "efforts": [
+                    {"id": "high", "description": "greater depth"},
+                    {"id": "low", "description": "lighter reasoning"},
+                ]},
+                {"agent_kind": "codex", "efforts": [
+                    {"id": "high", "description": "more thinking time"},
+                    {"id": "low", "description": "lighter reasoning"},
+                    {"id": "minimal"},
+                ]},
+            ])
+            .as_array()
+            .expect("an array"),
+        );
+        assert_eq!(
+            effort_help("low", &entries).as_deref(),
+            Some("lighter reasoning"),
+            "the two CLIs agree, so it is said once"
+        );
+        assert_eq!(
+            effort_help("high", &entries).as_deref(),
+            Some("claude_code: greater depth; codex: more thinking time"),
+            "and where they do not, each is named beside its own"
+        );
+        assert_eq!(
+            effort_help("minimal", &entries),
+            None,
+            "nothing here has written what minimal buys"
         );
     }
 

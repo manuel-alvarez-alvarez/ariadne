@@ -199,7 +199,9 @@ ariadne completions fish > ~/.config/fish/completions/ariadne.fish
 `ariadne completions <shell>` prints that registration, so `source <(ariadne
 completions zsh)` works in a shell you have open now. A daemon that is down or
 slow leaves TAB with nothing rather than an error, and `--model` and
-`--effort` complete from a catalog cached under the ariadne home. For somewhere a completion has
+`--effort` complete from a catalog cached under the ariadne home — `--model`
+candidates carry the tier, cost and speed beside the description, and
+`--effort` candidates carry what that effort buys. For somewhere a completion has
 to be a file on disk, `ariadne completions <shell> --static` prints the old
 snapshot script, which has the command tree but none of the live candidates.
 
@@ -236,7 +238,8 @@ ariadne task msg <task-id> "hold on, use the middleware crate instead"
 ariadne attach <id>                    # session, task or goal id
 
 # without attaching to a terminal
-ariadne models ls --agent codex        # what --model pins, and the efforts each takes
+ariadne models ls --agent codex        # what --model pins, its tier/cost/speed, and the efforts each takes
+ariadne models show codex:gpt-5.6-luna # one model's card: what it's for, and what each effort buys
 ariadne session ls --attention         # the agents waiting on a human
 ariadne session send <session-id> y    # type into a live agent, as the UI does
 

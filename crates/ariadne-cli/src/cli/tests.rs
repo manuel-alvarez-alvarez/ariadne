@@ -106,6 +106,7 @@ const LEAVES: &[(&str, bool)] = &[
     ("goal thread", true),
     ("mcp serve", false),
     ("models ls", true),
+    ("models show", true),
     ("profile create", true),
     ("profile inspect", true),
     ("profile ls", true),
@@ -1263,6 +1264,30 @@ fn models_ls_takes_an_agent_to_narrow_the_catalogue() {
         err.contains("opencode"),
         "the refusal lists the real ones: {err}"
     );
+}
+
+/// `models show` takes a model in the same spelling `--model` does, and
+/// refuses the same way `--model` would.
+#[test]
+fn models_show_takes_a_model_in_the_spelling_dash_dash_model_takes() {
+    let model = |argv: &[&str]| {
+        let Command::Models {
+            command: ModelsCommand::Show { model },
+        } = parse(argv).command
+        else {
+            panic!("models show");
+        };
+        model
+    };
+    assert_eq!(
+        model(&["ariadne", "models", "show", "codex:gpt-5.6-luna"]),
+        "codex:gpt-5.6-luna"
+    );
+    assert_eq!(model(&["ariadne", "models", "show", "codex"]), "codex");
+    let Err(err) = try_parse(&["ariadne", "models", "show", "gemini:nope"]) else {
+        panic!("\"gemini\" is not an agent CLI");
+    };
+    assert!(err.to_string().contains("unknown agent `gemini`"));
 }
 
 fn parse(argv: &[&str]) -> Cli {
