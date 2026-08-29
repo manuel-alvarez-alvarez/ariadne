@@ -18,8 +18,8 @@ pub struct NewGoal {
     /// The goal reads them live, so editing one moves the goal with it.
     pub repository_ids: Vec<String>,
     /// What the planner is pinned to run on. None = the planner profile's own
-    /// agent and model, which is what every goal took before models could be
-    /// chosen per goal.
+    /// agent, model and effort, which is what every goal took before models
+    /// could be chosen per goal.
     pub pin: Option<AgentPin>,
 }
 
@@ -45,17 +45,18 @@ impl Store {
         let id = new_id();
         let ts = now();
         let mut tx = self.w().begin().await?;
-        // The planner's agent and model are copied onto the goal here and
-        // never re-read: editing the profile later must not move a goal that
-        // is already being planned. A goal created with a model of its own is
-        // pinned to that instead, and to the agent CLI that runs it.
+        // The planner's agent, model and effort are copied onto the goal here
+        // and never re-read: editing the profile later must not move a goal
+        // that is already being planned. A goal created with a model of its
+        // own is pinned to that instead, and to the agent CLI that runs it.
         let planner: Profile =
             Self::fetch_by_in_tx(&mut tx, "profile", "profiles", &new.planner_profile_id).await?;
-        let (agent_kind, model) = AgentPin::or_profile(new.pin.as_ref(), &planner);
+        let (agent_kind, model, effort) = AgentPin::or_profile(new.pin.as_ref(), &planner);
         sqlx::query(
             "INSERT INTO goals (id, title, description, status, max_tasks, required_approvals,
-                                planner_profile_id, agent_kind, model, created_at, updated_at)
-             VALUES (?, ?, ?, 'planning', ?, ?, ?, ?, ?, ?, ?)",
+                                planner_profile_id, agent_kind, model, effort,
+                                created_at, updated_at)
+             VALUES (?, ?, ?, 'planning', ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&new.title)
@@ -65,6 +66,7 @@ impl Store {
         .bind(&new.planner_profile_id)
         .bind(&agent_kind)
         .bind(&model)
+        .bind(&effort)
         .bind(&ts)
         .bind(&ts)
         .execute(&mut *tx)

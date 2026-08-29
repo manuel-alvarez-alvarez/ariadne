@@ -193,6 +193,9 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                         max_tasks,
                         required_approvals: approvals,
                         model,
+                        // The CLI has no flag for it yet: the pin an
+                        // `ariadne goal add` writes carries no effort.
+                        effort: None,
                     },
                 )
                 .await?;

@@ -206,6 +206,7 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
                         name,
                         role,
                         model,
+                        effort: None,
                         system_prompt,
                     },
                 )
@@ -275,6 +276,7 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
                     &UpdateProfileRequest {
                         name,
                         model,
+                        effort: None,
                         system_prompt,
                     },
                 )

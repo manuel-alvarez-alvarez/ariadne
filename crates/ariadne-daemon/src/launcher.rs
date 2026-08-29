@@ -516,6 +516,7 @@ impl Launcher {
                 agent_kind: self
                     .resolve_agent_kind(goal.agent_kind(), &format!("goal {}", goal.id))?,
                 model: goal.model.clone(),
+                effort: goal.effort.clone(),
                 tmux_session: session_name(&goal.id, None, "planner", None),
                 worktree_path: None,
                 review_round: None,
@@ -555,6 +556,7 @@ impl Launcher {
                 agent_kind: self
                     .resolve_agent_kind(task.agent_kind(), &format!("task {}", task.id))?,
                 model: task.model.clone(),
+                effort: task.effort.clone(),
                 tmux_session: session_name(&goal.id, Some(&task.id), "engineer", None),
                 worktree_path: Some(worktree.display().to_string()),
                 review_round: None,
@@ -682,6 +684,7 @@ impl Launcher {
                     &format!("reviewer {} of task {}", profile.id, task.id),
                 )?,
                 model: slot.model.clone(),
+                effort: slot.effort.clone(),
                 tmux_session: session_name(
                     &goal.id,
                     Some(&task.id),

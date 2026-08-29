@@ -341,6 +341,7 @@ mod tests {
             engineer_profile_id: "profile-1".into(),
             agent_kind: None,
             model: None,
+            effort: None,
             branch: "work".into(),
             worktree_path: Some(repo.display().to_string()),
             review_round: 0,

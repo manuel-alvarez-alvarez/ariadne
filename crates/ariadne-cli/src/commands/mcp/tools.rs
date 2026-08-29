@@ -232,6 +232,7 @@ impl AriadneMcp {
             // The planner assigns profiles; the user is who picks the model,
             // so every task the planner creates takes the profiles' own.
             model: None,
+            effort: None,
             reviewers: req
                 .reviewer_profiles
                 .into_iter()
@@ -253,6 +254,7 @@ impl AriadneMcp {
             title: req.title,
             description: req.description,
             model: None,
+            effort: None,
             reviewers: req
                 .reviewer_profiles
                 .map(|profiles| profiles.into_iter().map(ReviewerAssignment::of).collect()),

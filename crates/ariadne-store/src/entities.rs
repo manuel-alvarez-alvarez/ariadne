@@ -66,6 +66,9 @@ pub struct Profile {
     /// NULL = auto-resolve at spawn time (first installed agent CLI).
     pub agent_kind: Option<String>,
     pub model: Option<String>,
+    /// The reasoning effort this profile's model is run at. None = whatever
+    /// the agent CLI runs it at on its own.
+    pub effort: Option<String>,
     /// The system prompt set on this profile, or NULL while it runs on the
     /// default of its role. Read through [`Profile::effective_system_prompt`],
     /// which is what the agent is spawned with.
@@ -144,12 +147,13 @@ pub struct Repository {
     pub updated_at: String,
 }
 
-/// The agent CLI, and optionally the model, a goal, a task or a reviewer slot
-/// is pinned to because the user chose them, rather than because its profile
-/// was on them.
+/// The agent CLI, and optionally the model and the effort, a goal, a task or a
+/// reviewer slot is pinned to because the user chose them, rather than because
+/// its profile was on them.
 ///
 /// The agent is the choice: a pin with no model runs that CLI on its own
-/// default. Which choice it is belongs to whoever took the request — the store
+/// default, and a pin with no effort runs the model at whatever the CLI runs
+/// it at. Which choice it is belongs to whoever took the request — the store
 /// is handed a pin already resolved, and writes it exactly where the profile's
 /// own pins would have gone.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -157,19 +161,39 @@ pub struct AgentPin {
     pub agent_kind: AgentKind,
     /// None = the agent CLI's own default model.
     pub model: Option<String>,
+    /// None = whatever the agent CLI runs that model at.
+    pub effort: Option<String>,
 }
 
 impl AgentPin {
-    /// The `(agent_kind, model)` a row is written with: the override where the
-    /// caller gave one, and `profile`'s own where it did not.
+    /// The `(agent_kind, model, effort)` a row is written with.
+    ///
+    /// The model is the override's where the caller gave one, and `profile`'s
+    /// own where it did not. The effort is the override's, or else the
+    /// profile's — but only where the model is the profile's too: an override
+    /// that moves the row onto another model and names no effort runs at that
+    /// CLI's own default, since the effort the profile was on may not exist on
+    /// the model it was moved to.
     pub(crate) fn or_profile(
         pin: Option<&AgentPin>,
         profile: &Profile,
-    ) -> (Option<String>, Option<String>) {
-        match pin {
-            Some(pin) => (Some(pin.agent_kind.as_str().to_string()), pin.model.clone()),
-            None => (profile.agent_kind.clone(), profile.model.clone()),
-        }
+    ) -> (Option<String>, Option<String>, Option<String>) {
+        let Some(pin) = pin else {
+            return (
+                profile.agent_kind.clone(),
+                profile.model.clone(),
+                profile.effort.clone(),
+            );
+        };
+        let agent_kind = pin.agent_kind.as_str().to_string();
+        let on_the_profiles_model = profile.agent_kind.as_deref() == Some(agent_kind.as_str())
+            && profile.model == pin.model;
+        let inherited = match on_the_profiles_model {
+            true => profile.effort.clone(),
+            false => None,
+        };
+        let effort = pin.effort.clone().or(inherited);
+        (Some(agent_kind), pin.model.clone(), effort)
     }
 }
 
@@ -189,6 +213,9 @@ pub struct Goal {
     /// Model the planner of this goal runs on, snapshotted like `agent_kind`.
     /// None = the agent CLI's own default.
     pub model: Option<String>,
+    /// Effort that model is run at, snapshotted like `model`. None = whatever
+    /// the agent CLI runs it at.
+    pub effort: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -209,6 +236,9 @@ pub struct Task {
     /// Model the engineer of this task runs on, snapshotted like
     /// `agent_kind`. None = the agent CLI's own default.
     pub model: Option<String>,
+    /// Effort that model is run at, snapshotted like `model`. None = whatever
+    /// the agent CLI runs it at.
+    pub effort: Option<String>,
     pub branch: String,
     pub worktree_path: Option<String>,
     pub review_round: i64,
@@ -241,6 +271,9 @@ pub struct TaskReviewer {
     /// Model this reviewer runs on, snapshotted like `agent_kind`.
     /// None = the agent CLI's own default.
     pub model: Option<String>,
+    /// Effort that model is run at, snapshotted like `model`. None = whatever
+    /// the agent CLI runs it at.
+    pub effort: Option<String>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -256,6 +289,9 @@ pub struct AgentSession {
     /// the session is created and never rewritten, so neither a profile edit
     /// nor a resume moves a running conversation onto another model.
     pub model: Option<String>,
+    /// Effort this session's model is run at, copied off the same pin as
+    /// `model` and never rewritten either. None = the CLI's own.
+    pub effort: Option<String>,
     pub internal_session_id: Option<String>,
     pub tmux_session: String,
     pub worktree_path: Option<String>,

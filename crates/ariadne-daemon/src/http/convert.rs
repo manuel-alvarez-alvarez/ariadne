@@ -55,7 +55,7 @@ dto! {
         model: spelled(p.agent_kind(), p.model.as_deref()),
         system_prompt: p.effective_system_prompt().to_string(),
         system_prompt_is_default: p.system_prompt_is_default(),
-        .. id, name, created_at, updated_at
+        .. id, name, effort, created_at, updated_at
     }
 
     pub fn agent_config_dto(c: store::AgentConfig) -> AgentConfigDto {
@@ -87,14 +87,14 @@ dto! {
         repos: repos.into_iter().map(repository_dto).collect(),
         usage: usage,
         .. id, title, description, max_tasks, required_approvals,
-           planner_profile_id, created_at, updated_at
+           planner_profile_id, effort, created_at, updated_at
     }
 
     /// `name` is the reviewer profile's name, which the caller loads.
     fn task_reviewer_dto(r: store::TaskReviewer, name: Option<String>) -> TaskReviewerDto {
         model: spelled(r.agent_kind(), r.model.as_deref()),
         profile_name: name,
-        .. profile_id
+        .. profile_id, effort
     }
 
     /// The names come from the caller, which loads them: the engineer's, the
@@ -119,7 +119,7 @@ dto! {
         planner_profile_name: planner_profile_name,
         usage: usage,
         .. id, goal_id, repo_id, title, description, engineer_profile_id,
-           branch, worktree_path, review_round, merge_commit, pr_url,
+           effort, branch, worktree_path, review_round, merge_commit, pr_url,
            created_at, updated_at
     }
 
@@ -151,7 +151,7 @@ dto! {
         status: s.status(),
         attention_reason: s.attention_reason(),
         usage: usage,
-        .. id, goal_id, task_id, profile_id, model, internal_session_id,
+        .. id, goal_id, task_id, profile_id, model, effort, internal_session_id,
            tmux_session, worktree_path, review_round, attention_since,
            last_activity_at, created_at, ended_at
     }

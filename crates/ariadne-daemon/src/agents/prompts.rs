@@ -290,6 +290,7 @@ mod tests {
             planner_profile_id: "01plannerxxxxxxxxxxxxxxxxx".into(),
             agent_kind: None,
             model: None,
+            effort: None,
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:00Z".into(),
         }
@@ -318,6 +319,7 @@ mod tests {
             engineer_profile_id: "01engineerxxxxxxxxxxxxxxxx".into(),
             agent_kind: None,
             model: None,
+            effort: None,
             branch: "render-prompts-from-the-database-xxxxxx".into(),
             worktree_path: Some("/worktrees/task-eng".into()),
             review_round: 3,

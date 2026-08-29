@@ -13,7 +13,7 @@ use ariadne_store::{NewProfile, ProfileUpdate, Store, parse_prompt_kind};
 use super::AppState;
 use super::convert::{profile_dto, profile_prompt_dto};
 use super::error::ApiResult;
-use super::pins;
+use super::pins::{self, Repin, Standing};
 
 /// The id behind a path segment: every profile endpoint takes an id or a
 /// unique name, as the `to` of a message does.
@@ -36,15 +36,22 @@ pub async fn create(
     Json(req): Json<CreateProfileRequest>,
 ) -> ApiResult<(StatusCode, Json<ProfileDto>)> {
     // A profile chooses the same way everything else does, and its "nothing
-    // chosen" is auto: no agent CLI, and so no model of one either.
-    let pin = pins::chosen(req.model.as_deref())?;
+    // chosen" is auto: no agent CLI, and so no model of one either — which is
+    // also no model an effort of its own could be run at.
+    let pin = pins::chosen(
+        req.model.as_deref(),
+        req.effort.as_deref(),
+        Standing::auto(),
+    )
+    .await?;
     let profile = state
         .store
         .create_profile(NewProfile {
             name: req.name,
             role: req.role,
             agent_kind: pin.as_ref().map(|p| p.agent_kind),
-            model: pin.and_then(|p| p.model),
+            model: pin.as_ref().and_then(|p| p.model.clone()),
+            effort: pin.and_then(|p| p.effort),
             system_prompt: req.system_prompt,
         })
         .await?;
@@ -84,18 +91,42 @@ pub async fn update(
     Path(id): Path<String>,
     Json(req): Json<UpdateProfileRequest>,
 ) -> ApiResult<Json<ProfileDto>> {
-    let id = resolve(&state.store, &id).await?;
-    // Both columns move together: a profile is on one model, and clearing it
-    // is what puts the profile back on auto.
-    let pin = pins::rechosen(req.model.as_deref())?;
+    // Read rather than resolved to an id alone: an effort written on its own
+    // is run at the model this profile is on, so that is what it is checked
+    // against.
+    let current = state.store.resolve_profile(&id).await?;
+    // A model moves all three columns together — a profile is on one model, at
+    // one effort of it, and clearing the model puts the profile back on auto
+    // with neither of the other two left behind. An effort on its own moves
+    // only itself, leaving the model it is run at where it is.
+    let (agent_kind, model, effort) = match pins::rechosen(
+        req.model.as_deref(),
+        req.effort.as_deref(),
+        Standing {
+            agent_kind: current.agent_kind(),
+            model: current.model.as_deref(),
+        },
+    )
+    .await?
+    {
+        Repin::Untouched => (None, None, None),
+        Repin::Profile => (Some(None), Some(None), Some(None)),
+        Repin::To(pin) => (
+            Some(Some(pin.agent_kind)),
+            Some(pin.model),
+            Some(pin.effort),
+        ),
+        Repin::Effort(effort) => (None, None, Some(effort)),
+    };
     let profile = state
         .store
         .update_profile(
-            &id,
+            &current.id,
             ProfileUpdate {
                 name: req.name,
-                agent_kind: pin.as_ref().map(|p| p.as_ref().map(|p| p.agent_kind)),
-                model: pin.map(|p| p.and_then(|p| p.model)),
+                agent_kind,
+                model,
+                effort,
                 system_prompt: req.system_prompt,
             },
         )

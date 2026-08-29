@@ -25,6 +25,10 @@ pub struct GoalDto {
     /// resolved at spawn time, on its own default model.
     #[schema(example = "claude_code:claude-opus-5")]
     pub model: Option<String>,
+    /// The reasoning effort that model is run at, pinned like `model`. None =
+    /// whatever the agent CLI runs it at on its own.
+    #[schema(example = "high")]
+    pub effort: Option<String>,
     /// The registered repositories the goal works in, as they stand now: a
     /// goal references them, so an edit to one shows up here.
     pub repos: Vec<RepositoryDto>,
@@ -80,4 +84,13 @@ pub struct CreateGoalRequest {
     #[serde(default)]
     #[schema(example = "codex:gpt-5.3-codex")]
     pub model: Option<String>,
+    /// The reasoning effort to run that model at, one of the efforts
+    /// `GET /v1/models` lists for it; anything else is refused. Omitted (or
+    /// "default") = whatever the agent CLI runs the model at, and where
+    /// `model` is omitted too, the planner profile's own effort. Named where
+    /// `model` is omitted, the goal takes the planner profile's own model at
+    /// this effort.
+    #[serde(default)]
+    #[schema(example = "high")]
+    pub effort: Option<String>,
 }

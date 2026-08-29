@@ -15,7 +15,7 @@ use ariadne_store::{Goal, NewGoal, NewMessage, SessionFilter, Store, TaskFilter}
 use super::AppState;
 use super::convert::{goal_dto_of, message_dtos};
 use super::error::{ApiError, ApiResult};
-use super::pins;
+use super::pins::{self, Standing};
 use super::recipients::{self, Thread, call_ctx};
 
 #[derive(Debug, Default, Deserialize, IntoParams)]
@@ -65,9 +65,11 @@ pub async fn create(
     if req.repository_ids.is_empty() {
         return Err(ApiError::bad_request("a goal needs at least one repo"));
     }
-    // Resolved before anything is looked up: a model that names no agent CLI
-    // is a fact about the request, not about the profiles it names.
-    let pin = pins::chosen(req.model.as_deref())?;
+    // Refused before anything is looked up: a model that names no agent CLI is
+    // a fact about the request, not about the profiles it names. The effort
+    // beside it is checked below, since an effort written on its own is run at
+    // whatever the planner profile is on.
+    pins::readable(req.model.as_deref())?;
 
     let planner = state.store.resolve_profile(&req.planner_profile).await?;
     if planner.role() != Role::Planner {
@@ -81,6 +83,15 @@ pub async fn create(
     for id in &req.repository_ids {
         state.store.get_repository(id).await?;
     }
+    let pin = pins::chosen(
+        req.model.as_deref(),
+        req.effort.as_deref(),
+        Standing {
+            agent_kind: planner.agent_kind(),
+            model: planner.model.as_deref(),
+        },
+    )
+    .await?;
 
     let goal = state
         .store

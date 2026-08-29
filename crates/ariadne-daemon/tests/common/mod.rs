@@ -590,6 +590,7 @@ impl Harness {
                 role,
                 agent_kind,
                 model: model.map(str::to_string),
+                effort: None,
                 system_prompt: Some(format!("You are {name}.")),
             })
             .await
@@ -872,6 +873,7 @@ impl Harness {
                 profile_id: profile_id.to_string(),
                 agent_kind,
                 model: None,
+                effort: None,
                 tmux_session: tmux_session.to_string(),
                 worktree_path: Some(worktree.display().to_string()),
                 review_round: task.map(|t| t.review_round),

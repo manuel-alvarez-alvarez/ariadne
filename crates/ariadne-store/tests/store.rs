@@ -20,6 +20,7 @@ async fn seed_profile(store: &Store, name: &str, role: Role) -> Profile {
             role,
             agent_kind: Some(AgentKind::ClaudeCode),
             model: None,
+            effort: None,
             system_prompt: Some(format!("You are {name}.")),
         })
         .await
@@ -102,6 +103,7 @@ impl World {
                 profile_id: profile_id.to_string(),
                 agent_kind: AgentKind::ClaudeCode,
                 model: None,
+                effort: None,
                 tmux_session: tmux.into(),
                 worktree_path: Some("/tmp/wt".into()),
                 review_round: None,
@@ -267,6 +269,7 @@ async fn profile_crud_and_delete_guard() {
             role: Role::Planner,
             agent_kind: Some(AgentKind::Codex),
             model: None,
+            effort: None,
             system_prompt: Some("x".into()),
         })
         .await;
@@ -2113,6 +2116,7 @@ async fn a_new_profile_starts_on_the_role_defaults_and_stores_none_of_them() {
             role: Role::Reviewer,
             agent_kind: None,
             model: None,
+            effort: None,
             system_prompt: None,
         })
         .await
@@ -2320,6 +2324,7 @@ async fn seed_pinned_profile(
             role,
             agent_kind,
             model: model.map(str::to_string),
+            effort: None,
             system_prompt: Some(format!("You are {name}.")),
         })
         .await
@@ -2607,6 +2612,7 @@ async fn a_chosen_pin_is_written_in_place_of_the_profiles() {
             pin: Some(AgentPin {
                 agent_kind: AgentKind::Codex,
                 model: Some("gpt-5.3-codex".into()),
+                effort: None,
             }),
         })
         .await
@@ -2624,6 +2630,7 @@ async fn a_chosen_pin_is_written_in_place_of_the_profiles() {
             pin: Some(AgentPin {
                 agent_kind: AgentKind::Codex,
                 model: Some("gpt-5.6-sol".into()),
+                effort: None,
             }),
             reviewers: vec![
                 ReviewerSlot {
@@ -2631,6 +2638,7 @@ async fn a_chosen_pin_is_written_in_place_of_the_profiles() {
                     pin: Some(AgentPin {
                         agent_kind: AgentKind::Opencode,
                         model: Some("ollama/llama3:8b".into()),
+                        effort: None,
                     }),
                 },
                 ReviewerSlot::of(&untouched.id),
@@ -2681,6 +2689,7 @@ async fn a_chosen_pin_is_written_in_place_of_the_profiles() {
             pin: Some(AgentPin {
                 agent_kind: AgentKind::Opencode,
                 model: None,
+                effort: None,
             }),
         })
         .await
@@ -2734,12 +2743,14 @@ async fn a_task_pin_can_be_moved_and_cleared_back_to_the_profiles() {
                 pin: Some(Some(AgentPin {
                     agent_kind: AgentKind::Codex,
                     model: Some("gpt-5.3-codex".into()),
+                    effort: None,
                 })),
                 reviewers: Some(vec![ReviewerSlot {
                     profile_id: reviewer.id.clone(),
                     pin: Some(AgentPin {
                         agent_kind: AgentKind::Codex,
                         model: Some("o3".into()),
+                        effort: None,
                     }),
                 }]),
                 ..Default::default()
@@ -2795,6 +2806,424 @@ async fn a_task_pin_can_be_moved_and_cleared_back_to_the_profiles() {
     let pins = store.list_task_reviewer_pins(&task.id).await.unwrap();
     assert_eq!(pins[0].agent_kind(), Some(AgentKind::ClaudeCode));
     assert_eq!(pins[0].model.as_deref(), Some("claude-opus-5"));
+}
+
+/// A profile with an agent, a model and an effort of its own, for the effort
+/// tests: what a goal, a task and a slot pin off it.
+async fn seed_profile_at(
+    store: &Store,
+    name: &str,
+    role: Role,
+    agent_kind: Option<AgentKind>,
+    model: Option<&str>,
+    effort: Option<&str>,
+) -> Profile {
+    store
+        .create_profile(NewProfile {
+            name: name.into(),
+            role,
+            agent_kind,
+            model: model.map(str::to_string),
+            effort: effort.map(str::to_string),
+            system_prompt: Some(format!("You are {name}.")),
+        })
+        .await
+        .unwrap()
+}
+
+/// A profile keeps the effort it was created at, an edit moves it, and
+/// clearing it puts the profile back on whatever the CLI runs its model at —
+/// the same three things `model` does, in its own column.
+#[tokio::test]
+async fn a_profile_keeps_moves_and_clears_the_effort_it_runs_at() {
+    let (store, _dir) = test_store().await;
+    let profile = seed_profile_at(
+        &store,
+        "engineer-effort",
+        Role::Engineer,
+        Some(AgentKind::ClaudeCode),
+        Some("claude-opus-5"),
+        Some("xhigh"),
+    )
+    .await;
+    assert_eq!(profile.effort.as_deref(), Some("xhigh"));
+    let read = store.get_profile(&profile.id).await.unwrap();
+    assert_eq!(read.effort.as_deref(), Some("xhigh"), "and it round-trips");
+
+    // An edit about something else leaves it exactly where it was.
+    let renamed = store
+        .update_profile(
+            &profile.id,
+            ProfileUpdate {
+                name: Some("renamed".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(renamed.effort.as_deref(), Some("xhigh"));
+
+    let moved = store
+        .update_profile(
+            &profile.id,
+            ProfileUpdate {
+                effort: Some(Some("max".into())),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(moved.effort.as_deref(), Some("max"));
+
+    let cleared = store
+        .update_profile(
+            &profile.id,
+            ProfileUpdate {
+                effort: Some(None),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(cleared.effort, None);
+    assert_eq!(
+        cleared.model.as_deref(),
+        Some("claude-opus-5"),
+        "clearing the effort leaves the model it was run at alone"
+    );
+}
+
+/// The effort is pinned everywhere the model is: off the profile behind a
+/// goal, a task and every reviewer slot at creation, moved and handed back by
+/// an edit, and copied onto the session the launcher opens.
+#[tokio::test]
+async fn creation_pins_the_effort_beside_the_model() {
+    let (store, _dir) = test_store().await;
+    let planner = seed_profile_at(
+        &store,
+        "planner-effort",
+        Role::Planner,
+        Some(AgentKind::ClaudeCode),
+        Some("claude-opus-5"),
+        Some("high"),
+    )
+    .await;
+    let engineer = seed_profile_at(
+        &store,
+        "engineer-effort",
+        Role::Engineer,
+        Some(AgentKind::Codex),
+        Some("gpt-5.6-sol"),
+        Some("ultra"),
+    )
+    .await;
+    let inherits = seed_profile_at(
+        &store,
+        "reviewer-inherits",
+        Role::Reviewer,
+        Some(AgentKind::ClaudeCode),
+        Some("claude-sonnet-5"),
+        Some("low"),
+    )
+    .await;
+    let chosen = seed_profile_at(
+        &store,
+        "reviewer-chosen",
+        Role::Reviewer,
+        Some(AgentKind::ClaudeCode),
+        Some("claude-sonnet-5"),
+        Some("low"),
+    )
+    .await;
+
+    let (goal, repo) = seed_goal(&store, &planner, None).await;
+    assert_eq!(goal.effort.as_deref(), Some("high"));
+
+    let task = store
+        .create_task(NewTask {
+            goal_id: goal.id.clone(),
+            repo_id: repo.id.clone(),
+            title: "task".into(),
+            description: "do things".into(),
+            engineer_profile_id: engineer.id.clone(),
+            pin: None,
+            reviewers: vec![
+                ReviewerSlot::of(&inherits.id),
+                ReviewerSlot {
+                    profile_id: chosen.id.clone(),
+                    pin: Some(AgentPin {
+                        agent_kind: AgentKind::Codex,
+                        model: Some("gpt-5.6-luna".into()),
+                        effort: Some("max".into()),
+                    }),
+                },
+            ],
+            depends_on: vec![],
+        })
+        .await
+        .unwrap();
+    assert_eq!(task.effort.as_deref(), Some("ultra"));
+    let pins = store.list_task_reviewer_pins(&task.id).await.unwrap();
+    assert_eq!(pins[0].effort.as_deref(), Some("low"), "the profile's own");
+    assert_eq!(pins[1].model.as_deref(), Some("gpt-5.6-luna"));
+    assert_eq!(pins[1].effort.as_deref(), Some("max"), "the slot's own");
+
+    // An edit moves the pair, and handing it back hands back the profile's.
+    let moved = store
+        .update_task(
+            &task.id,
+            TaskUpdate {
+                pin: Some(Some(AgentPin {
+                    agent_kind: AgentKind::ClaudeCode,
+                    model: Some("claude-opus-5".into()),
+                    effort: Some("xhigh".into()),
+                })),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(moved.model.as_deref(), Some("claude-opus-5"));
+    assert_eq!(moved.effort.as_deref(), Some("xhigh"));
+
+    let back = store
+        .update_task(
+            &task.id,
+            TaskUpdate {
+                pin: Some(None),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(back.model.as_deref(), Some("gpt-5.6-sol"));
+    assert_eq!(back.effort.as_deref(), Some("ultra"));
+
+    // An effort of its own moves alone, and clears alone: the model the task
+    // is pinned to is what it is run at, and it stays where it is.
+    let raised = store
+        .update_task(
+            &task.id,
+            TaskUpdate {
+                effort: Some(Some("low".into())),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(raised.model.as_deref(), Some("gpt-5.6-sol"));
+    assert_eq!(raised.effort.as_deref(), Some("low"));
+    let dropped = store
+        .update_task(
+            &task.id,
+            TaskUpdate {
+                effort: Some(None),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(dropped.model.as_deref(), Some("gpt-5.6-sol"));
+    assert_eq!(dropped.effort, None);
+
+    // A pin that moves carries its own effort, and the field beside it is not
+    // read: one edit says one thing about what the task runs at.
+    let both = store
+        .update_task(
+            &task.id,
+            TaskUpdate {
+                pin: Some(Some(AgentPin {
+                    agent_kind: AgentKind::Codex,
+                    model: Some("gpt-5.6-luna".into()),
+                    effort: Some("max".into()),
+                })),
+                effort: Some(Some("low".into())),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(both.model.as_deref(), Some("gpt-5.6-luna"));
+    assert_eq!(both.effort.as_deref(), Some("max"));
+
+    // Back where the session below expects it.
+    let back = store
+        .update_task(
+            &task.id,
+            TaskUpdate {
+                pin: Some(None),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    // And the session the launcher opens carries what the task was pinned to.
+    let session = store
+        .create_session(NewSession {
+            goal_id: goal.id.clone(),
+            task_id: Some(task.id.clone()),
+            role: Role::Engineer,
+            profile_id: engineer.id.clone(),
+            agent_kind: AgentKind::Codex,
+            model: back.model.clone(),
+            effort: back.effort.clone(),
+            tmux_session: "ariadne-effort".into(),
+            worktree_path: None,
+            review_round: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(session.effort.as_deref(), Some("ultra"));
+    let read = store.get_session(&session.id).await.unwrap();
+    assert_eq!(read.effort.as_deref(), Some("ultra"), "and it round-trips");
+}
+
+/// The rule an override is resolved by: the model is the override's, and the
+/// effort is the override's or else the profile's — but the profile's only
+/// where the model is the profile's too, since the effort it was on may not
+/// exist on the model the row was moved to.
+#[tokio::test]
+async fn an_override_takes_the_profiles_effort_only_on_the_profiles_model() {
+    let (store, _dir) = test_store().await;
+    let planner = seed_profile_at(&store, "planner-rule", Role::Planner, None, None, None).await;
+    let (goal, repo) = seed_goal(&store, &planner, None).await;
+
+    let sol = || Some("gpt-5.6-sol".to_string());
+    // Each case is what it is called, the override it writes, and the model
+    // and effort the row must come out on.
+    let cases = vec![
+        (
+            "an override naming both takes both",
+            Some(AgentPin {
+                agent_kind: AgentKind::Codex,
+                model: Some("gpt-5.6-luna".into()),
+                effort: Some("max".into()),
+            }),
+            Some("gpt-5.6-luna"),
+            Some("max"),
+        ),
+        (
+            "an override on the profile's own model keeps its effort",
+            Some(AgentPin {
+                agent_kind: AgentKind::Codex,
+                model: sol(),
+                effort: None,
+            }),
+            Some("gpt-5.6-sol"),
+            Some("ultra"),
+        ),
+        (
+            "an override onto another model runs at the CLI's own default",
+            Some(AgentPin {
+                agent_kind: AgentKind::Codex,
+                model: Some("gpt-5.6-luna".into()),
+                effort: None,
+            }),
+            Some("gpt-5.6-luna"),
+            None,
+        ),
+        (
+            "and another CLI's model of the same name is another model",
+            Some(AgentPin {
+                agent_kind: AgentKind::ClaudeCode,
+                model: sol(),
+                effort: None,
+            }),
+            Some("gpt-5.6-sol"),
+            None,
+        ),
+        (
+            "no override at all is the profile's, effort and all",
+            None,
+            Some("gpt-5.6-sol"),
+            Some("ultra"),
+        ),
+    ];
+
+    for (n, (case, pin, model, effort)) in cases.into_iter().enumerate() {
+        // A profile apiece: a slot is one row per profile, so every case needs
+        // its own pair to pin off.
+        let engineer = seed_profile_at(
+            &store,
+            &format!("engineer-rule-{n}"),
+            Role::Engineer,
+            Some(AgentKind::Codex),
+            Some("gpt-5.6-sol"),
+            Some("ultra"),
+        )
+        .await;
+        let reviewer = seed_profile_at(
+            &store,
+            &format!("reviewer-rule-{n}"),
+            Role::Reviewer,
+            Some(AgentKind::Codex),
+            Some("gpt-5.6-sol"),
+            Some("ultra"),
+        )
+        .await;
+        let task = store
+            .create_task(NewTask {
+                goal_id: goal.id.clone(),
+                repo_id: repo.id.clone(),
+                title: case.into(),
+                description: "do things".into(),
+                engineer_profile_id: engineer.id.clone(),
+                pin: pin.clone(),
+                reviewers: vec![ReviewerSlot {
+                    profile_id: reviewer.id.clone(),
+                    pin: pin.clone(),
+                }],
+                depends_on: vec![],
+            })
+            .await
+            .unwrap();
+        assert_eq!(task.model.as_deref(), model, "{case}");
+        assert_eq!(task.effort.as_deref(), effort, "{case}");
+        let pins = store.list_task_reviewer_pins(&task.id).await.unwrap();
+        assert_eq!(pins[0].model.as_deref(), model, "the slot too: {case}");
+        assert_eq!(pins[0].effort.as_deref(), effort, "the slot too: {case}");
+    }
+
+    // A profile on no effort of its own has none to hand down, whatever the
+    // override leaves open.
+    let plain = seed_profile_at(
+        &store,
+        "engineer-rule-plain",
+        Role::Engineer,
+        Some(AgentKind::Codex),
+        Some("gpt-5.6-sol"),
+        None,
+    )
+    .await;
+    let reviewer = seed_profile_at(
+        &store,
+        "reviewer-rule-plain",
+        Role::Reviewer,
+        Some(AgentKind::Codex),
+        Some("gpt-5.6-sol"),
+        None,
+    )
+    .await;
+    let task = store
+        .create_task(NewTask {
+            goal_id: goal.id.clone(),
+            repo_id: repo.id.clone(),
+            title: "no effort to inherit".into(),
+            description: "do things".into(),
+            engineer_profile_id: plain.id.clone(),
+            pin: Some(AgentPin {
+                agent_kind: AgentKind::Codex,
+                model: sol(),
+                effort: None,
+            }),
+            reviewers: vec![ReviewerSlot::of(&reviewer.id)],
+            depends_on: vec![],
+        })
+        .await
+        .unwrap();
+    assert_eq!(task.model.as_deref(), Some("gpt-5.6-sol"));
+    assert_eq!(task.effort, None);
 }
 
 /// A database written by a release from before the schema was squashed into

@@ -35,6 +35,8 @@ pub struct NewSession {
     pub agent_kind: AgentKind,
     /// Model to launch with; None = the agent CLI's own default.
     pub model: Option<String>,
+    /// Effort to run that model at; None = whatever the CLI runs it at.
+    pub effort: Option<String>,
     pub tmux_session: String,
     pub worktree_path: Option<String>,
     pub review_round: Option<i64>,
@@ -57,8 +59,9 @@ impl Store {
         let id = new_id();
         sqlx::query(
             "INSERT INTO agent_sessions (id, goal_id, task_id, role, profile_id, agent_kind, model,
-                                         tmux_session, worktree_path, review_round, status, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?)",
+                                         effort, tmux_session, worktree_path, review_round, status,
+                                         created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?)",
         )
         .bind(&id)
         .bind(&new.goal_id)
@@ -67,6 +70,7 @@ impl Store {
         .bind(&new.profile_id)
         .bind(new.agent_kind.as_str())
         .bind(&new.model)
+        .bind(&new.effort)
         .bind(&new.tmux_session)
         .bind(&new.worktree_path)
         .bind(new.review_round)

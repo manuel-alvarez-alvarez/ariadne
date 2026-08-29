@@ -44,7 +44,11 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    Reviewer=codex:o3`, which a task takes while it is still pending or ready
    (`--model default` hands it back to the profile's). A reviewer slot is
    spelled `<profile>` or `<profile>=<model>`, and `ariadne task create` takes
-   the same flags.
+   the same flags. A pin also carries the **effort** its model is reasoned at,
+   one of the ones `ariadne models ls` lists for that model, and it belongs to
+   the model it runs at: a pin that names a model and no effort runs at the
+   CLI's own default, and only a pin left on the profile's own model keeps the
+   profile's effort.
 3. The scheduler takes over: when a task's dependencies are merged it becomes
    `ready` and an **engineer** is spawned in a dedicated git worktree, on a
    branch named after the task — its title slugged plus a short tail of its

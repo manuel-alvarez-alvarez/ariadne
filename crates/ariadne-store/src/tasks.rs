@@ -20,7 +20,7 @@ pub struct NewTask {
     pub description: String,
     pub engineer_profile_id: String,
     /// What the engineer is pinned to run on. None = the engineer profile's
-    /// own agent and model.
+    /// own agent, model and effort.
     pub pin: Option<AgentPin>,
     /// The reviewer slots to cut, in review order; at least one.
     pub reviewers: Vec<ReviewerSlot>,
@@ -28,8 +28,8 @@ pub struct NewTask {
 }
 
 /// One reviewer slot to write: which profile reviews, and what it is pinned to
-/// run on — its own override, or, as None, the profile's agent and model as
-/// they stand when the slot is cut.
+/// run on — its own override, or, as None, the profile's agent, model and
+/// effort as they stand when the slot is cut.
 #[derive(Debug, Clone)]
 pub struct ReviewerSlot {
     pub profile_id: String,
@@ -52,9 +52,14 @@ pub struct TaskUpdate {
     pub title: Option<String>,
     pub description: Option<String>,
     /// What the engineer runs on: `Some(Some(pin))` moves it there,
-    /// `Some(None)` puts it back on the engineer profile's agent and model as
-    /// they stand now, None leaves the task's pins alone.
+    /// `Some(None)` puts it back on the engineer profile's agent, model and
+    /// effort as they stand now, None leaves the task's pins alone.
     pub pin: Option<Option<AgentPin>>,
+    /// The effort alone, for an edit that leaves the model where it is:
+    /// `Some(Some(effort))` runs the pinned model at it, `Some(None)` runs it
+    /// at whatever the CLI runs it at, None says nothing. Read only where
+    /// `pin` says nothing — a pin that moves carries its own effort.
+    pub effort: Option<Option<String>>,
     /// The whole reviewer list, replaced: each slot is cut afresh and pinned
     /// to its own override, or to its profile's as it stands now.
     pub reviewers: Option<Vec<ReviewerSlot>>,
@@ -180,19 +185,19 @@ impl Store {
             }
         }
 
-        // The engineer's agent and model are copied onto the task here and
-        // never re-read: editing the profile later must not move a task that
-        // is already defined, let alone one mid-flight. A task created with a
-        // model of its own is pinned to that instead.
+        // The engineer's agent, model and effort are copied onto the task here
+        // and never re-read: editing the profile later must not move a task
+        // that is already defined, let alone one mid-flight. A task created
+        // with a model of its own is pinned to that instead.
         let engineer: Profile =
             Self::fetch_by_in_tx(&mut tx, "profile", "profiles", &new.engineer_profile_id).await?;
-        let (agent_kind, model) = AgentPin::or_profile(new.pin.as_ref(), &engineer);
+        let (agent_kind, model, effort) = AgentPin::or_profile(new.pin.as_ref(), &engineer);
 
         sqlx::query(
             "INSERT INTO tasks (id, goal_id, repo_id, title, description, status,
-                                engineer_profile_id, agent_kind, model, branch,
+                                engineer_profile_id, agent_kind, model, effort, branch,
                                 created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&goal.id)
@@ -202,6 +207,7 @@ impl Store {
         .bind(&new.engineer_profile_id)
         .bind(&agent_kind)
         .bind(&model)
+        .bind(&effort)
         .bind(&branch)
         .bind(&ts)
         .bind(&ts)
@@ -353,8 +359,14 @@ impl Store {
         // A pin the caller did not touch stays exactly as it was written;
         // clearing one reads the engineer profile again, so what comes back is
         // what that profile is on now rather than what it was on at creation.
-        let (agent_kind, model) = match &update.pin {
-            None => (task.agent_kind.clone(), task.model.clone()),
+        let (agent_kind, model, effort) = match &update.pin {
+            // The model stands, so an effort of its own moves alone: what it
+            // is run at is the model the task is already pinned to.
+            None => (
+                task.agent_kind.clone(),
+                task.model.clone(),
+                update.effort.clone().unwrap_or_else(|| task.effort.clone()),
+            ),
             Some(pin) => {
                 let engineer: Profile =
                     Self::fetch_by_in_tx(&mut tx, "profile", "profiles", &task.engineer_profile_id)
@@ -363,13 +375,15 @@ impl Store {
             }
         };
         sqlx::query(
-            "UPDATE tasks SET title = ?, description = ?, agent_kind = ?, model = ?, updated_at = ?
+            "UPDATE tasks SET title = ?, description = ?, agent_kind = ?, model = ?, effort = ?,
+                              updated_at = ?
              WHERE id = ?",
         )
         .bind(&title)
         .bind(&description)
         .bind(&agent_kind)
         .bind(&model)
+        .bind(&effort)
         .bind(now())
         .bind(id)
         .execute(&mut *tx)
@@ -555,16 +569,18 @@ impl Store {
         for (position, reviewer) in reviewers.iter().enumerate() {
             let profile: Profile =
                 Self::fetch_by_in_tx(tx, "profile", "profiles", &reviewer.profile_id).await?;
-            let (agent_kind, model) = AgentPin::or_profile(reviewer.pin.as_ref(), &profile);
+            let (agent_kind, model, effort) = AgentPin::or_profile(reviewer.pin.as_ref(), &profile);
             sqlx::query(
-                "INSERT INTO task_reviewers (task_id, profile_id, position, agent_kind, model)
-                 VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO task_reviewers (task_id, profile_id, position, agent_kind, model,
+                                             effort)
+                 VALUES (?, ?, ?, ?, ?, ?)",
             )
             .bind(task_id)
             .bind(&profile.id)
             .bind(position as i64)
             .bind(&agent_kind)
             .bind(&model)
+            .bind(&effort)
             .execute(&mut **tx)
             .await?;
         }

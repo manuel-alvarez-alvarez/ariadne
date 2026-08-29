@@ -15,6 +15,11 @@ pub struct ProfileDto {
     /// on its own default model.
     #[schema(example = "claude_code:claude-opus-5")]
     pub model: Option<String>,
+    /// The reasoning effort that model is run at, one of the efforts
+    /// `GET /v1/models` lists for it. None = whatever the agent CLI runs it
+    /// at on its own.
+    #[schema(example = "high")]
+    pub effort: Option<String>,
     /// The system prompt this profile is spawned with: the one set on it, or
     /// the default of its role while it has none of its own.
     pub system_prompt: String,
@@ -37,6 +42,14 @@ pub struct CreateProfileRequest {
     /// time, on its own default model.
     #[schema(example = "codex:gpt-5.3-codex")]
     pub model: Option<String>,
+    /// The reasoning effort to run that model at, one of the efforts
+    /// `GET /v1/models` lists for it; anything else is refused. Omitted (or
+    /// "default") = whatever the agent CLI runs the model at on its own. An
+    /// effort is run at a model, and a profile created on auto has none of its
+    /// own, so an effort written where `model` names none is refused.
+    #[serde(default)]
+    #[schema(example = "high")]
+    pub effort: Option<String>,
     /// Absent or null = the default of the role, which the profile then
     /// follows. Briefings are set afterwards, one `PUT` per kind.
     #[serde(default)]
@@ -52,6 +65,15 @@ pub struct UpdateProfileRequest {
     /// spawn time, on its own default model. Absent = unchanged.
     #[schema(example = "codex:gpt-5.3-codex")]
     pub model: Option<String>,
+    /// The reasoning effort to run the model at: absent leaves it alone,
+    /// "default" (or the empty string) puts it back on whatever the agent CLI
+    /// runs the model at, and anything else is checked against the model it
+    /// will run at — the one this request names, or the profile's own where it
+    /// names none — and refused where that model does not take it. A `model`
+    /// written without an effort runs at the CLI's own default: the effort
+    /// belonged to the model that was left behind.
+    #[schema(example = "high")]
+    pub effort: Option<String>,
     /// New system prompt. Absent = unchanged; putting it back on the role
     /// default is `POST /v1/profiles/{id}/system-prompt/reset`.
     pub system_prompt: Option<String>,

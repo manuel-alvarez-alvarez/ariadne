@@ -300,6 +300,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                         repo_id,
                         engineer_profile: engineer,
                         model,
+                        effort: None,
                         reviewers,
                         depends_on,
                     },
@@ -706,6 +707,7 @@ mod tests {
             profile_id: profile_id.into(),
             profile_name: Some(name.into()),
             model: None,
+            effort: None,
         }
     }
 

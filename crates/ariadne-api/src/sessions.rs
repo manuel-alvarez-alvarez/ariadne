@@ -17,6 +17,10 @@ pub struct SessionDto {
     pub agent_kind: AgentKind,
     /// Model requested at launch; null = the agent CLI's default.
     pub model: Option<String>,
+    /// Effort that model was launched at, off the same pin as `model`; null =
+    /// whatever the agent CLI runs it at.
+    #[schema(example = "high")]
+    pub effort: Option<String>,
     /// Agent-internal id: claude session uuid / codex thread id / opencode session id.
     pub internal_session_id: Option<String>,
     pub tmux_session: String,

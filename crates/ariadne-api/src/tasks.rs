@@ -30,6 +30,10 @@ pub struct TaskDto {
     /// installed CLI, resolved at spawn time, on its own default model.
     #[schema(example = "claude_code:claude-opus-5")]
     pub model: Option<String>,
+    /// The reasoning effort that model is run at, pinned like `model`. None =
+    /// whatever the agent CLI runs it at on its own.
+    #[schema(example = "xhigh")]
+    pub effort: Option<String>,
     /// Reviewer slots in planner-assigned order, each carrying its own pin.
     pub reviewers: Vec<TaskReviewerDto>,
     /// Ids of tasks that must merge before this one starts.
@@ -88,6 +92,10 @@ pub struct TaskReviewerDto {
     /// first installed CLI, resolved at spawn time, on its own default model.
     #[schema(example = "codex:o3")]
     pub model: Option<String>,
+    /// The reasoning effort that model is run at, pinned like `model`. None =
+    /// whatever the agent CLI runs it at on its own.
+    #[schema(example = "high")]
+    pub effort: Option<String>,
 }
 
 /// One reviewer of a task: the profile that reviews, and what it is to run on.
@@ -106,6 +114,14 @@ pub struct ReviewerAssignment {
     #[serde(default)]
     #[schema(example = "codex:o3")]
     pub model: Option<String>,
+    /// The reasoning effort to run that model at, one of the efforts
+    /// `GET /v1/models` lists for it; anything else is refused. Omitted (or
+    /// "default") = whatever the agent CLI runs the model at, and where
+    /// `model` is omitted too, the profile's own effort. Named where `model`
+    /// is omitted, the slot takes the profile's own model at this effort.
+    #[serde(default)]
+    #[schema(example = "high")]
+    pub effort: Option<String>,
 }
 
 impl ReviewerAssignment {
@@ -114,6 +130,7 @@ impl ReviewerAssignment {
         Self {
             profile: profile.into(),
             model: None,
+            effort: None,
         }
     }
 }
@@ -134,6 +151,11 @@ pub struct CreateTaskRequest {
     #[serde(default)]
     #[schema(example = "codex:gpt-5.3-codex")]
     pub model: Option<String>,
+    /// The reasoning effort to run that model at, resolved and refused the
+    /// way [`ReviewerAssignment::effort`] is.
+    #[serde(default)]
+    #[schema(example = "xhigh")]
+    pub effort: Option<String>,
     /// The reviewers of the task, in review order. At least one.
     pub reviewers: Vec<ReviewerAssignment>,
     /// Task ids this task depends on.
@@ -153,6 +175,15 @@ pub struct UpdateTaskRequest {
     /// [`crate::profiles::UpdateProfileRequest::model`] takes.
     #[schema(example = "codex:gpt-5.3-codex")]
     pub model: Option<String>,
+    /// The reasoning effort to run the model at: absent leaves it alone,
+    /// "default" (or the empty string) puts it back on whatever the agent CLI
+    /// runs the model at, and anything else is checked against the model it
+    /// will run at — the one this request names, or the task's own where it
+    /// names none — and refused where that model does not take it. A `model`
+    /// written without an effort runs at the CLI's own default: the effort
+    /// belonged to the model that was left behind.
+    #[schema(example = "xhigh")]
+    pub effort: Option<String>,
     /// The whole reviewer list, replaced: each slot is cut afresh and pinned
     /// to the model it names or, where it names none, to its profile's.
     pub reviewers: Option<Vec<ReviewerAssignment>>,

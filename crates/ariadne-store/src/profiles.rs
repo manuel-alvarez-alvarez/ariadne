@@ -13,6 +13,8 @@ pub struct NewProfile {
     /// None = auto: resolved at spawn time to the first installed agent CLI.
     pub agent_kind: Option<AgentKind>,
     pub model: Option<String>,
+    /// None = whatever the agent CLI runs that model at.
+    pub effort: Option<String>,
     /// None = the default of the role, which the profile then follows.
     pub system_prompt: Option<String>,
 }
@@ -24,6 +26,8 @@ pub struct ProfileUpdate {
     pub agent_kind: Option<Option<AgentKind>>,
     /// Some(None) clears back to the agent default.
     pub model: Option<Option<String>>,
+    /// Some(None) clears back to whatever the agent CLI runs the model at.
+    pub effort: Option<Option<String>>,
     /// Some = the new text; None leaves whatever the profile has. Putting it
     /// back on the role default is [`Store::reset_system_prompt`].
     pub system_prompt: Option<String>,
@@ -36,14 +40,16 @@ impl Store {
         let id = new_id();
         let ts = now();
         sqlx::query(
-            "INSERT INTO profiles (id, name, role, agent_kind, model, system_prompt, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO profiles (id, name, role, agent_kind, model, effort, system_prompt,
+                                   created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&new.name)
         .bind(new.role.as_str())
         .bind(new.agent_kind.map(|k| k.as_str()))
         .bind(&new.model)
+        .bind(&new.effort)
         .bind(&new.system_prompt)
         .bind(&ts)
         .bind(&ts)
@@ -86,14 +92,17 @@ impl Store {
             None => current.agent_kind,
         };
         let model = update.model.unwrap_or(current.model);
+        let effort = update.effort.unwrap_or(current.effort);
         let system_prompt = update.system_prompt.or(current.system_prompt);
         sqlx::query(
-            "UPDATE profiles SET name = ?, agent_kind = ?, model = ?, system_prompt = ?, updated_at = ?
+            "UPDATE profiles SET name = ?, agent_kind = ?, model = ?, effort = ?,
+                                 system_prompt = ?, updated_at = ?
              WHERE id = ?",
         )
         .bind(&name)
         .bind(&agent_kind)
         .bind(&model)
+        .bind(&effort)
         .bind(&system_prompt)
         .bind(now())
         .bind(id)

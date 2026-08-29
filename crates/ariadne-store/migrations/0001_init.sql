@@ -25,6 +25,10 @@ CREATE TABLE profiles (
     agent_kind    TEXT CHECK (agent_kind IN ('claude_code', 'codex', 'opencode')),
     -- NULL = the agent CLI's own default.
     model         TEXT,
+    -- NULL = whatever the agent CLI runs that model at on its own; otherwise
+    -- one of the efforts the model accepts, checked against the catalog
+    -- (`GET /v1/models`) when it is written.
+    effort        TEXT,
     -- NULL = the default system prompt of `role`.
     system_prompt TEXT,
     created_at    TEXT NOT NULL,
@@ -71,11 +75,15 @@ CREATE TABLE repositories (
     UNIQUE (path, base_branch)
 );
 
--- The agent and model columns on `goals`, `tasks` and `task_reviewers` are
--- pins: creation snapshots them off the profile it names, and the row is what
--- the launcher reads from there on, so a profile edit only reaches work
--- created after it. Both NULLs are meaningful — NULL agent_kind means auto,
--- NULL model means the CLI's own default — exactly as on `profiles`. The
+-- The agent, model and effort columns on `goals`, `tasks` and
+-- `task_reviewers` are pins: creation snapshots them off the profile it names,
+-- and the row is what the launcher reads from there on, so a profile edit only
+-- reaches work created after it. All three NULLs are meaningful — NULL
+-- agent_kind means auto, NULL model means the CLI's own default, NULL effort
+-- means whatever that CLI runs the model at — exactly as on `profiles`. An
+-- effort is snapshotted off the profile only where the model is the profile's
+-- too: an override that moves the row to another model runs it at that CLI's
+-- own default, since the profile's effort may not exist on the new model. The
 -- system prompt is deliberately not pinned: rewording a briefing is meant to
 -- reach running work.
 CREATE TABLE goals (
@@ -91,7 +99,8 @@ CREATE TABLE goals (
     updated_at          TEXT NOT NULL,
     agent_kind          TEXT
                         CHECK (agent_kind IN ('claude_code', 'codex', 'opencode')),
-    model               TEXT
+    model               TEXT,
+    effort              TEXT
 );
 
 -- Which repositories a goal works in, by reference.
@@ -116,6 +125,7 @@ CREATE TABLE tasks (
     engineer_profile_id TEXT NOT NULL REFERENCES profiles (id),
     agent_kind          TEXT CHECK (agent_kind IN ('claude_code', 'codex', 'opencode')),
     model               TEXT,
+    effort              TEXT,
     branch              TEXT NOT NULL,
     worktree_path       TEXT,
     review_round        INTEGER NOT NULL DEFAULT 0,
@@ -136,6 +146,7 @@ CREATE TABLE task_reviewers (
     agent_kind TEXT
                CHECK (agent_kind IN ('claude_code', 'codex', 'opencode')),
     model      TEXT,
+    effort     TEXT,
     PRIMARY KEY (task_id, profile_id)
 );
 
@@ -178,6 +189,8 @@ CREATE TABLE agent_sessions (
                                                     'disconnected', 'stalled')),
     attention_since     TEXT,
     model               TEXT,
+    -- Copied off the pin the session's role carries, beside its model.
+    effort              TEXT,
     launched_at         TEXT
 );
 CREATE INDEX idx_sessions_task ON agent_sessions (task_id);

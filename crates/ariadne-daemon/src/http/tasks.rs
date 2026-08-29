@@ -12,19 +12,22 @@ use ariadne_api::tasks::{
     TransitionRequest, UpdateTaskRequest,
 };
 use ariadne_core::{Actor, Role, TaskStatus};
-use ariadne_store::{NewTask, ReviewerSlot, Store, Task, TaskFilter, TaskUpdate};
+use ariadne_store::{NewTask, Profile, ReviewerSlot, Store, Task, TaskFilter, TaskUpdate};
 
 use super::AppState;
 use super::convert::{message_dtos, task_dto_of, transition_dto};
 use super::error::{ApiError, ApiResult};
 use super::landing;
-use super::pins;
+use super::pins::{self, Repin, Standing};
 use super::recipients::{self, CallCtx, Thread, call_ctx, ensure_task_scope};
 use crate::notify;
 
 /// Resolve one profile id-or-name, checking it has `role`: the shape every
 /// profile assignment takes.
-async fn resolve_profile(store: &Store, spec: &str, role: Role) -> ApiResult<String> {
+///
+/// The profile itself rather than its id, because what it is pinned to is what
+/// an effort written with no model beside it is run at.
+async fn resolve_profile(store: &Store, spec: &str, role: Role) -> ApiResult<Profile> {
     let p = store.resolve_profile(spec).await?;
     if p.role() != role {
         return Err(ApiError::bad_request(format!(
@@ -34,22 +37,37 @@ async fn resolve_profile(store: &Store, spec: &str, role: Role) -> ApiResult<Str
             role.as_str()
         )));
     }
-    Ok(p.id)
+    Ok(p)
+}
+
+/// What a profile is pinned to, as the fallback an effort of its own is
+/// checked against and pinned to.
+fn standing(profile: &Profile) -> Standing<'_> {
+    Standing {
+        agent_kind: profile.agent_kind(),
+        model: profile.model.as_deref(),
+    }
 }
 
 /// The reviewer slots an assignment list asks for, in the order it names them:
-/// each profile resolved as any other, each slot carrying the model chosen for
-/// it or, where none was, nothing — which is the store's cue to pin the
-/// profile's own.
+/// each profile resolved as any other, each slot carrying the model and effort
+/// chosen for it or, where none was, nothing — which is the store's cue to pin
+/// the profile's own.
 async fn resolve_reviewers(
     store: &Store,
     assignments: &[ReviewerAssignment],
 ) -> ApiResult<Vec<ReviewerSlot>> {
     let mut slots = Vec::with_capacity(assignments.len());
     for assignment in assignments {
+        let profile = resolve_profile(store, &assignment.profile, Role::Reviewer).await?;
         slots.push(ReviewerSlot {
-            profile_id: resolve_profile(store, &assignment.profile, Role::Reviewer).await?,
-            pin: pins::chosen(assignment.model.as_deref())?,
+            pin: pins::chosen(
+                assignment.model.as_deref(),
+                assignment.effort.as_deref(),
+                standing(&profile),
+            )
+            .await?,
+            profile_id: profile.id,
         });
     }
     Ok(slots)
@@ -99,6 +117,12 @@ pub async fn create(
 
     let engineer = resolve_profile(&state.store, &req.engineer_profile, Role::Engineer).await?;
     let reviewers = resolve_reviewers(&state.store, &req.reviewers).await?;
+    let pin = pins::chosen(
+        req.model.as_deref(),
+        req.effort.as_deref(),
+        standing(&engineer),
+    )
+    .await?;
 
     let task = state
         .store
@@ -107,8 +131,8 @@ pub async fn create(
             repo_id,
             title: req.title,
             description: req.description,
-            engineer_profile_id: engineer,
-            pin: pins::chosen(req.model.as_deref())?,
+            engineer_profile_id: engineer.id,
+            pin,
             reviewers,
             depends_on: req.depends_on,
         })
@@ -172,6 +196,24 @@ pub async fn update(
         Some(assignments) => Some(resolve_reviewers(&state.store, assignments).await?),
         None => None,
     };
+    // What the task is pinned to now: an effort written on its own is run at
+    // that model, and moves without disturbing it.
+    let current = state.store.get_task(&id).await?;
+    let (pin, effort) = match pins::rechosen(
+        req.model.as_deref(),
+        req.effort.as_deref(),
+        Standing {
+            agent_kind: current.agent_kind(),
+            model: current.model.as_deref(),
+        },
+    )
+    .await?
+    {
+        Repin::Untouched => (None, None),
+        Repin::Profile => (Some(None), None),
+        Repin::To(pin) => (Some(Some(pin)), None),
+        Repin::Effort(effort) => (None, Some(effort)),
+    };
     let task = state
         .store
         .update_task(
@@ -179,7 +221,8 @@ pub async fn update(
             TaskUpdate {
                 title: req.title,
                 description: req.description,
-                pin: pins::rechosen(req.model.as_deref())?,
+                pin,
+                effort,
                 reviewers,
             },
         )

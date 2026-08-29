@@ -118,6 +118,33 @@ pub mod models {
         Json(out)
     }
 
+    /// The efforts one model can be run at, as this catalog knows them: the
+    /// curated entry for claude_code and codex, and, for opencode, whatever
+    /// discovery prints right now.
+    ///
+    /// None where nothing here lists the model — a hand-typed id, or an agent
+    /// CLI on its own default model — which is what
+    /// [`ariadne_core::models::effort_error`] reads as "hold it to everything
+    /// that CLI accepts".
+    ///
+    /// Discovery is re-run rather than cached: it is asked only where a write
+    /// names an opencode effort, which is rare, and a remembered list would
+    /// start refusing the variants a newly configured model really takes.
+    pub async fn efforts_of(kind: AgentKind, model: Option<&str>) -> Option<Vec<String>> {
+        let model = model?;
+        match kind {
+            AgentKind::Opencode => opencode_models()
+                .await
+                .into_iter()
+                .find(|m| m.id == qualified(kind, model))
+                .map(|m| m.efforts),
+            _ => curated_models(kind)
+                .iter()
+                .find(|m| m.id == model)
+                .map(|m| m.efforts.iter().map(|e| e.to_string()).collect()),
+        }
+    }
+
     /// OpenCode lists its models natively, and `--verbose` lists what each one
     /// can be run at: a `provider/model` line, then that model's JSON.
     /// Fail-soft: a missing or hung binary yields no models, never an error.

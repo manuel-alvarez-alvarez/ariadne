@@ -9,7 +9,8 @@
 //!
 //! One field carries the whole choice, `<agent_kind>[:<model>]`, on the way in
 //! and on the way out: an agent CLI on its own is that CLI on its own default
-//! model, and null is auto.
+//! model, and null is auto. The effort rides in the field beside it, checked
+//! against the model it is to run at before anything is written.
 //!
 //! No tmux, no git, no agent CLI: nothing here launches anything.
 
@@ -33,35 +34,61 @@ struct Seeded {
     auto: Profile,
 }
 
-/// A goal and a task, each agent on a different agent CLI and model so no
-/// assertion can pass by reading somebody else's pin. The reviewers are two:
+/// A profile on an agent, a model and an effort of that model: the three
+/// halves of a pin, so that nothing below can pass by carrying two of them.
+async fn profile_at(
+    h: &Harness,
+    name: &str,
+    role: Role,
+    kind: AgentKind,
+    model: &str,
+    effort: &str,
+) -> Profile {
+    let profile = h.profile_on(name, role, Some(kind), Some(model)).await;
+    h.store
+        .update_profile(
+            &profile.id,
+            ProfileUpdate {
+                effort: Some(Some(effort.into())),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap()
+}
+
+/// A goal and a task, each agent on a different agent CLI, model and effort so
+/// no assertion can pass by reading somebody else's pin. The reviewers are two:
 /// one pinned to a model, one left on the agent's default and on auto. Every
 /// profile then moves, after the goal and the task were created from them.
 async fn seeded(h: &Harness) -> Seeded {
-    let planner = h
-        .profile_on(
-            "planner",
-            Role::Planner,
-            Some(AgentKind::ClaudeCode),
-            Some("opus"),
-        )
-        .await;
-    let engineer = h
-        .profile_on(
-            "engineer",
-            Role::Engineer,
-            Some(AgentKind::Codex),
-            Some("gpt-5"),
-        )
-        .await;
-    let strict = h
-        .profile_on(
-            "strict",
-            Role::Reviewer,
-            Some(AgentKind::ClaudeCode),
-            Some("sonnet"),
-        )
-        .await;
+    let planner = profile_at(
+        h,
+        "planner",
+        Role::Planner,
+        AgentKind::ClaudeCode,
+        "opus",
+        "high",
+    )
+    .await;
+    let engineer = profile_at(
+        h,
+        "engineer",
+        Role::Engineer,
+        AgentKind::Codex,
+        "gpt-5",
+        "medium",
+    )
+    .await;
+    let strict = profile_at(
+        h,
+        "strict",
+        Role::Reviewer,
+        AgentKind::ClaudeCode,
+        "sonnet",
+        "low",
+    )
+    .await;
     let auto = h.profile_on("auto", Role::Reviewer, None, None).await;
 
     let (goal, repo) = h.goal(&planner).await;
@@ -69,11 +96,11 @@ async fn seeded(h: &Harness) -> Seeded {
         .task_on(&goal, &repo, "Surfaces", &engineer, &[&strict, &auto])
         .await;
 
-    for (profile, kind, model) in [
-        (&planner, AgentKind::Opencode, "grok"),
-        (&engineer, AgentKind::ClaudeCode, "haiku"),
-        (&strict, AgentKind::Codex, "gpt-5-mini"),
-        (&auto, AgentKind::Codex, "gpt-5-mini"),
+    for (profile, kind, model, effort) in [
+        (&planner, AgentKind::Opencode, "grok", "fast"),
+        (&engineer, AgentKind::ClaudeCode, "haiku", "max"),
+        (&strict, AgentKind::Codex, "gpt-5-mini", "minimal"),
+        (&auto, AgentKind::Codex, "gpt-5-mini", "minimal"),
     ] {
         h.store
             .update_profile(
@@ -81,6 +108,7 @@ async fn seeded(h: &Harness) -> Seeded {
                 ProfileUpdate {
                     agent_kind: Some(Some(kind)),
                     model: Some(Some(model.into())),
+                    effort: Some(Some(effort.into())),
                     ..Default::default()
                 },
             )
@@ -107,18 +135,25 @@ async fn a_task_carries_the_pins_its_profiles_no_longer_have() {
 
     let dto: TaskDto = h.get(&format!("/v1/tasks/{}", task.id)).await;
     assert_eq!(dto.model.as_deref(), Some("codex:gpt-5"));
+    assert_eq!(dto.effort.as_deref(), Some("medium"));
     let pins: Vec<_> = dto
         .reviewers
         .iter()
-        .map(|r| (r.profile_id.as_str(), r.model.as_deref()))
+        .map(|r| {
+            (
+                r.profile_id.as_str(),
+                r.model.as_deref(),
+                r.effort.as_deref(),
+            )
+        })
         .collect();
     assert_eq!(
         pins,
         // The second was created on auto with no model, and auto is a pin
         // like any other: it stays auto, not the agent the profile moved to.
         vec![
-            (strict.id.as_str(), Some("claude_code:sonnet")),
-            (auto.id.as_str(), None),
+            (strict.id.as_str(), Some("claude_code:sonnet"), Some("low")),
+            (auto.id.as_str(), None, None),
         ]
     );
 }
@@ -130,6 +165,7 @@ async fn a_goal_carries_the_planner_pin_its_profile_no_longer_has() {
 
     let dto: GoalDto = h.get(&format!("/v1/goals/{}", goal.id)).await;
     assert_eq!(dto.model.as_deref(), Some("claude_code:opus"));
+    assert_eq!(dto.effort.as_deref(), Some("high"));
 }
 
 /// The list is what the board reads, and it goes through the same conversion:
@@ -142,6 +178,7 @@ async fn the_task_list_carries_the_pins_too() {
     let listed: Vec<TaskDto> = h.get("/v1/tasks").await;
     let found = listed.iter().find(|t| t.id == task.id).expect("the task");
     assert_eq!(found.model.as_deref(), Some("codex:gpt-5"));
+    assert_eq!(found.effort.as_deref(), Some("medium"));
     assert_eq!(found.reviewers.len(), 2);
 }
 
@@ -669,4 +706,537 @@ async fn a_profile_is_pinned_and_cleared_by_the_one_field() {
         .await;
     assert_eq!(renamed.name, "renamed");
     assert_eq!(renamed.model, None);
+}
+
+// -- the effort it runs at --------------------------------------------------
+
+/// An effort belongs to the model it runs at, so that is what it is checked
+/// against: the model's own efforts where the catalog lists them, and
+/// everything the agent CLI accepts where nothing does.
+#[tokio::test]
+async fn an_effort_is_checked_against_the_model_it_runs_at() {
+    let h = harness().await;
+    let profile_with = |name: &str, pin: serde_json::Value| {
+        let mut body = serde_json::json!({"name": name, "role": "engineer"});
+        let object = body.as_object_mut().expect("an object");
+        for (key, value) in pin.as_object().expect("an object") {
+            object.insert(key.clone(), value.clone());
+        }
+        post_json("/v1/profiles", body)
+    };
+
+    // The fast Codex model takes five efforts and `ultra` is not one of them.
+    let err = h
+        .error(
+            profile_with(
+                "too-deep",
+                serde_json::json!({"model": "codex:gpt-5.6-luna", "effort": "ultra"}),
+            ),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+    assert!(
+        err.error
+            .message
+            .contains("`ultra` is no effort of that model")
+            && err.error.message.contains("low, medium, high, xhigh, max"),
+        "the refusal names the effort and lists the ones there are: {}",
+        err.error.message
+    );
+
+    let created: ProfileDto = h
+        .json(
+            profile_with(
+                "deep-enough",
+                serde_json::json!({"model": "codex:gpt-5.6-luna", "effort": "max"}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(created.model.as_deref(), Some("codex:gpt-5.6-luna"));
+    assert_eq!(created.effort.as_deref(), Some("max"));
+
+    // Cleared, and the model it was run at left where it is.
+    let path = format!("/v1/profiles/{}", created.id);
+    let cleared: ProfileDto = h
+        .json(
+            put_json(
+                &path,
+                serde_json::json!({"model": "codex:gpt-5.6-luna", "effort": "default"}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(cleared.model.as_deref(), Some("codex:gpt-5.6-luna"));
+    assert_eq!(cleared.effort, None);
+    let stored = h.store.get_profile(&created.id).await.unwrap();
+    assert_eq!(stored.effort, None);
+
+    // A model no catalog lists is held to everything its CLI accepts, which
+    // is the most that can be said about an id somebody typed by hand.
+    let new_model: ProfileDto = h
+        .json(
+            profile_with(
+                "unlisted",
+                serde_json::json!({"model": "claude_code:some-new-model", "effort": "xhigh"}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(new_model.effort.as_deref(), Some("xhigh"));
+    let err = h
+        .error(
+            profile_with(
+                "unlisted-too-deep",
+                serde_json::json!({"model": "claude_code:some-new-model", "effort": "ultra"}),
+            ),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+    assert!(
+        err.error
+            .message
+            .contains("`ultra` is no effort of claude_code"),
+        "{}",
+        err.error.message
+    );
+
+    // And so is an agent CLI on its own default model: which model that is is
+    // the CLI's business, so the effort is held to the CLI's own list.
+    let cli_default: ProfileDto = h
+        .json(
+            profile_with(
+                "cli-default",
+                serde_json::json!({"model": "codex", "effort": "minimal"}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(cli_default.model.as_deref(), Some("codex"));
+    assert_eq!(cli_default.effort.as_deref(), Some("minimal"));
+    let err = h
+        .error(
+            profile_with(
+                "cli-default-nonsense",
+                serde_json::json!({"model": "codex", "effort": "gigantic"}),
+            ),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+    assert!(
+        err.error
+            .message
+            .contains("`gigantic` is no effort of codex"),
+        "{}",
+        err.error.message
+    );
+
+    // An effort with no model beside it has nothing to be run at, and saying
+    // so beats guessing which model it was meant for.
+    let err = h
+        .error(
+            profile_with("no-model", serde_json::json!({"effort": "high"})),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+    assert!(
+        err.error
+            .message
+            .contains("`high` is an effort with no model to run at"),
+        "{}",
+        err.error.message
+    );
+}
+
+/// A task, its reviewer slots and its goal each carry an effort of their own,
+/// checked the same way and pinned beside the model — and a model moved
+/// without one runs at the CLI's own default, since the effort it was on need
+/// not exist on the model it was moved to.
+#[tokio::test]
+async fn a_task_pins_the_effort_beside_the_model_and_moves_with_it() {
+    let h = harness().await;
+    let (planner, engineer, chosen, untouched) = on_claude(&h).await;
+    let repo = h.repository(&h.git_repo("repo")).await;
+
+    let goal: GoalDto = h
+        .json(
+            post_json(
+                "/v1/goals",
+                serde_json::json!({
+                    "title": "Ship it",
+                    "repository_ids": [repo.id],
+                    "planner_profile": planner.name,
+                    "model": "claude_code:claude-opus-5",
+                    "effort": "max",
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(goal.model.as_deref(), Some("claude_code:claude-opus-5"));
+    assert_eq!(goal.effort.as_deref(), Some("max"));
+
+    let tasks = format!("/v1/goals/{}/tasks", goal.id);
+    let task: TaskDto = h
+        .json(
+            post_json(
+                &tasks,
+                serde_json::json!({
+                    "title": "Do the thing",
+                    "engineer_profile": engineer.name,
+                    "model": "claude_code:claude-opus-5",
+                    "effort": "xhigh",
+                    "reviewers": [
+                        {"profile": chosen.name, "model": "codex:gpt-5.6-luna", "effort": "max"},
+                        {"profile": untouched.name},
+                    ],
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(task.model.as_deref(), Some("claude_code:claude-opus-5"));
+    assert_eq!(task.effort.as_deref(), Some("xhigh"));
+    assert_eq!(task.reviewers[0].effort.as_deref(), Some("max"));
+    assert_eq!(
+        task.reviewers[1].effort, None,
+        "the slot that chose nothing took its profile's, which is on none"
+    );
+
+    // A slot's effort is refused the way the engineer's is.
+    let err = h
+        .error(
+            post_json(
+                &tasks,
+                serde_json::json!({
+                    "title": "Do it deeper",
+                    "engineer_profile": engineer.name,
+                    "reviewers": [
+                        {"profile": chosen.name, "model": "codex:gpt-5.6-luna", "effort": "ultra"},
+                    ],
+                }),
+            ),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+    assert!(
+        err.error
+            .message
+            .contains("`ultra` is no effort of that model"),
+        "{}",
+        err.error.message
+    );
+
+    // The session is opened on what the task was pinned to, effort and all.
+    let session = h.launcher.spawn_engineer(&task.id).await.unwrap();
+    assert_eq!(session.model.as_deref(), Some("claude-opus-5"));
+    assert_eq!(session.effort.as_deref(), Some("xhigh"));
+
+    // An edit that names a model and no effort runs it at the CLI's own
+    // default: the effort belonged to the model that was left behind.
+    let moved: TaskDto = h
+        .json(
+            patch_json(
+                &format!("/v1/tasks/{}", task.id),
+                serde_json::json!({"model": "codex:gpt-5.6-luna"}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(moved.model.as_deref(), Some("codex:gpt-5.6-luna"));
+    assert_eq!(moved.effort, None);
+
+    // And an edit naming both moves both.
+    let deeper: TaskDto = h
+        .json(
+            patch_json(
+                &format!("/v1/tasks/{}", task.id),
+                serde_json::json!({"model": "codex:gpt-5.6-luna", "effort": "max"}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(deeper.effort.as_deref(), Some("max"));
+
+    // An effort of its own moves alone: what it is run at is the model the
+    // task is already pinned to, which stays exactly where it is.
+    let lowered: TaskDto = h
+        .json(
+            patch_json(
+                &format!("/v1/tasks/{}", task.id),
+                serde_json::json!({"effort": "low"}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(lowered.model.as_deref(), Some("codex:gpt-5.6-luna"));
+    assert_eq!(lowered.effort.as_deref(), Some("low"));
+
+    // Checked against that same model, and cleared on its own.
+    let err = h
+        .error(
+            patch_json(
+                &format!("/v1/tasks/{}", task.id),
+                serde_json::json!({"effort": "ultra"}),
+            ),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+    assert!(
+        err.error
+            .message
+            .contains("`ultra` is no effort of that model"),
+        "{}",
+        err.error.message
+    );
+    let cleared: TaskDto = h
+        .json(
+            patch_json(
+                &format!("/v1/tasks/{}", task.id),
+                serde_json::json!({"effort": "default"}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(cleared.model.as_deref(), Some("codex:gpt-5.6-luna"));
+    assert_eq!(cleared.effort, None);
+}
+
+/// An effort written with no model beside it is about the effort alone: it is
+/// checked against the model the row would run on anyway — the profile's on a
+/// creation, its own on an edit — pinned to that model, and cleared without
+/// disturbing it.
+#[tokio::test]
+async fn an_effort_of_its_own_is_run_at_the_model_already_pinned() {
+    let h = harness().await;
+
+    let created: ProfileDto = h
+        .json(
+            post_json(
+                "/v1/profiles",
+                serde_json::json!({
+                    "name": "rust-engineer",
+                    "role": "engineer",
+                    "model": "codex:gpt-5.6-luna",
+                    "effort": "max",
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let path = format!("/v1/profiles/{}", created.id);
+
+    // The model it is run at stays where it is.
+    let lowered: ProfileDto = h
+        .json(
+            put_json(&path, serde_json::json!({"effort": "low"})),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(lowered.model.as_deref(), Some("codex:gpt-5.6-luna"));
+    assert_eq!(lowered.effort.as_deref(), Some("low"));
+
+    // And it is that model the effort is checked against.
+    let err = h
+        .error(
+            put_json(&path, serde_json::json!({"effort": "ultra"})),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+    assert!(
+        err.error
+            .message
+            .contains("`ultra` is no effort of that model")
+            && err.error.message.contains("low, medium, high, xhigh, max"),
+        "{}",
+        err.error.message
+    );
+
+    // Cleared on its own, in either spelling, with the model left alone.
+    for word in ["default", ""] {
+        h.json::<ProfileDto>(
+            put_json(&path, serde_json::json!({"effort": "high"})),
+            StatusCode::OK,
+        )
+        .await;
+        let cleared: ProfileDto = h
+            .json(
+                put_json(&path, serde_json::json!({"effort": word})),
+                StatusCode::OK,
+            )
+            .await;
+        assert_eq!(cleared.effort, None, "cleared by `{word}`");
+        assert_eq!(cleared.model.as_deref(), Some("codex:gpt-5.6-luna"));
+        let stored = h.store.get_profile(&created.id).await.unwrap();
+        assert_eq!(stored.effort, None);
+        assert_eq!(stored.model.as_deref(), Some("gpt-5.6-luna"));
+    }
+
+    // An edit about something else still leaves the effort alone.
+    h.json::<ProfileDto>(
+        put_json(&path, serde_json::json!({"effort": "high"})),
+        StatusCode::OK,
+    )
+    .await;
+    let renamed: ProfileDto = h
+        .json(
+            put_json(&path, serde_json::json!({"name": "renamed"})),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(renamed.name, "renamed");
+    assert_eq!(renamed.effort.as_deref(), Some("high"));
+
+    // Handing the model back to the profile takes the effort with it, so an
+    // effort named beside that has no model here to be checked against.
+    let err = h
+        .error(
+            put_json(
+                &path,
+                serde_json::json!({"model": "default", "effort": "high"}),
+            ),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+    assert!(
+        err.error
+            .message
+            .contains("`high` is an effort beside a model handed back to its profile"),
+        "{}",
+        err.error.message
+    );
+
+    // A profile on auto is pinned to no agent CLI, so there is nothing an
+    // effort of its own could be run at.
+    let auto: ProfileDto = h
+        .json(
+            post_json(
+                "/v1/profiles",
+                serde_json::json!({"name": "auto", "role": "reviewer"}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let err = h
+        .error(
+            put_json(
+                &format!("/v1/profiles/{}", auto.id),
+                serde_json::json!({"effort": "high"}),
+            ),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+    assert!(
+        err.error
+            .message
+            .contains("`high` is an effort with no model to run at"),
+        "{}",
+        err.error.message
+    );
+}
+
+/// A goal, a task and a reviewer slot created with an effort and no model run
+/// the profile's own model at that effort — the model is what the profile is
+/// on, and only the effort was chosen.
+#[tokio::test]
+async fn an_effort_chosen_with_no_model_runs_the_profiles_own_at_it() {
+    let h = harness().await;
+    let (planner, engineer, chosen, untouched) = on_claude(&h).await;
+    let repo = h.repository(&h.dir.path().join("repo")).await;
+
+    let goal: GoalDto = h
+        .json(
+            post_json(
+                "/v1/goals",
+                serde_json::json!({
+                    "title": "Ship it",
+                    "repository_ids": [repo.id],
+                    "planner_profile": planner.name,
+                    "effort": "max",
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(goal.model.as_deref(), Some("claude_code:claude-opus-5"));
+    assert_eq!(goal.effort.as_deref(), Some("max"));
+
+    let tasks = format!("/v1/goals/{}/tasks", goal.id);
+    let task: TaskDto = h
+        .json(
+            post_json(
+                &tasks,
+                serde_json::json!({
+                    "title": "Do the thing",
+                    "engineer_profile": engineer.name,
+                    "effort": "xhigh",
+                    "reviewers": [
+                        {"profile": chosen.name, "effort": "low"},
+                        {"profile": untouched.name},
+                    ],
+                }),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(task.model.as_deref(), Some("claude_code:claude-opus-5"));
+    assert_eq!(task.effort.as_deref(), Some("xhigh"));
+    assert_eq!(
+        task.reviewers[0].model.as_deref(),
+        Some("claude_code:claude-opus-5")
+    );
+    assert_eq!(task.reviewers[0].effort.as_deref(), Some("low"));
+    assert_eq!(
+        task.reviewers[1].effort, None,
+        "the slot that chose nothing is on the profile's own, which has none"
+    );
+
+    // Checked against that profile's model, not against the CLI at large.
+    let err = h
+        .error(
+            post_json(
+                &tasks,
+                serde_json::json!({
+                    "title": "Deeper than it goes",
+                    "engineer_profile": engineer.name,
+                    "effort": "ultra",
+                    "reviewers": [{"profile": chosen.name}],
+                }),
+            ),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+    assert!(
+        err.error
+            .message
+            .contains("`ultra` is no effort of that model"),
+        "{}",
+        err.error.message
+    );
+
+    // And a profile on auto has no model to run one at.
+    let auto = h
+        .profile_on("auto-engineer", Role::Engineer, None, None)
+        .await;
+    let err = h
+        .error(
+            post_json(
+                &tasks,
+                serde_json::json!({
+                    "title": "Nothing to run it at",
+                    "engineer_profile": auto.name,
+                    "effort": "high",
+                    "reviewers": [{"profile": chosen.name}],
+                }),
+            ),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+    assert!(
+        err.error
+            .message
+            .contains("`high` is an effort with no model to run at"),
+        "{}",
+        err.error.message
+    );
 }

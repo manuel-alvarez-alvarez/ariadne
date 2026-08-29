@@ -45,6 +45,7 @@ pub fn parse_reviewer(s: &str) -> Result<ReviewerAssignment, String> {
     Ok(ReviewerAssignment {
         profile: profile.to_string(),
         model: Some(model),
+        effort: None,
     })
 }
 
@@ -77,6 +78,7 @@ pub fn update_request(
         // included, which is its word for handing the pins back to the
         // engineer profile's own.
         model,
+        effort: None,
         reviewers: (!reviewers.is_empty()).then_some(reviewers),
         depends_on: match (clear_depends_on, depends_on.is_empty()) {
             (true, _) => Some(Vec::new()),
@@ -112,6 +114,7 @@ pub async fn resolved_reviewers(
         out.push(ReviewerAssignment {
             profile: profiles.id(&reviewer.profile).await?,
             model: reviewer.model,
+            effort: reviewer.effort,
         });
     }
     Ok(out)

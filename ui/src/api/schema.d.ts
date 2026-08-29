@@ -951,6 +951,16 @@ export interface components {
         CreateGoalRequest: {
             description?: string;
             /**
+             * @description The reasoning effort to run that model at, one of the efforts
+             *     `GET /v1/models` lists for it; anything else is refused. Omitted (or
+             *     "default") = whatever the agent CLI runs the model at, and where
+             *     `model` is omitted too, the planner profile's own effort. Named where
+             *     `model` is omitted, the goal takes the planner profile's own model at
+             *     this effort.
+             * @example high
+             */
+            effort?: string | null;
+            /**
              * Format: int64
              * @description Max tasks the planner may create (default: unbounded).
              */
@@ -987,6 +997,15 @@ export interface components {
             to?: string | null;
         };
         CreateProfileRequest: {
+            /**
+             * @description The reasoning effort to run that model at, one of the efforts
+             *     `GET /v1/models` lists for it; anything else is refused. Omitted (or
+             *     "default") = whatever the agent CLI runs the model at on its own. An
+             *     effort is run at a model, and a profile created on auto has none of its
+             *     own, so an effort written where `model` names none is refused.
+             * @example high
+             */
+            effort?: string | null;
             /**
              * @description What this profile runs on, `<agent_kind>[:<model>]` — the agent CLI
              *     and, after a `:`, the model of it: `codex`, `codex:gpt-5.3-codex`,
@@ -1029,6 +1048,12 @@ export interface components {
             /** @description Task ids this task depends on. */
             depends_on?: string[];
             description?: string;
+            /**
+             * @description The reasoning effort to run that model at, resolved and refused the
+             *     way [`ReviewerAssignment::effort`] is.
+             * @example xhigh
+             */
+            effort?: string | null;
             /** @description Engineer profile id or unique name. */
             engineer_profile: string;
             /**
@@ -1166,6 +1191,12 @@ export interface components {
         GoalDto: {
             created_at: string;
             description: string;
+            /**
+             * @description The reasoning effort that model is run at, pinned like `model`. None =
+             *     whatever the agent CLI runs it at on its own.
+             * @example high
+             */
+            effort?: string | null;
             id: string;
             /**
              * Format: int64
@@ -1342,6 +1373,13 @@ export interface components {
         };
         ProfileDto: {
             created_at: string;
+            /**
+             * @description The reasoning effort that model is run at, one of the efforts
+             *     `GET /v1/models` lists for it. None = whatever the agent CLI runs it
+             *     at on its own.
+             * @example high
+             */
+            effort?: string | null;
             id: string;
             /**
              * @description What this profile runs on, `<agent_kind>[:<model>]`: the agent CLI and,
@@ -1472,6 +1510,15 @@ export interface components {
          */
         ReviewerAssignment: {
             /**
+             * @description The reasoning effort to run that model at, one of the efforts
+             *     `GET /v1/models` lists for it; anything else is refused. Omitted (or
+             *     "default") = whatever the agent CLI runs the model at, and where
+             *     `model` is omitted too, the profile's own effort. Named where `model`
+             *     is omitted, the slot takes the profile's own model at this effort.
+             * @example high
+             */
+            effort?: string | null;
+            /**
              * @description What this reviewer runs on, `<agent_kind>[:<model>]`; omitted (or
              *     "default") = the profile's own.
              * @example codex:o3
@@ -1491,6 +1538,12 @@ export interface components {
             /** @description When the current `attention_reason` was first raised. */
             attention_since?: string | null;
             created_at: string;
+            /**
+             * @description Effort that model was launched at, off the same pin as `model`; null =
+             *     whatever the agent CLI runs it at.
+             * @example high
+             */
+            effort?: string | null;
             ended_at?: string | null;
             goal_id: string;
             id: string;
@@ -1601,6 +1654,12 @@ export interface components {
             /** @description Ids of tasks that must merge before this one starts. */
             depends_on: string[];
             description: string;
+            /**
+             * @description The reasoning effort that model is run at, pinned like `model`. None =
+             *     whatever the agent CLI runs it at on its own.
+             * @example xhigh
+             */
+            effort?: string | null;
             engineer_profile_id: string;
             /**
              * @description Name of the engineer's profile, the way a message addresses it; None
@@ -1653,6 +1712,12 @@ export interface components {
          *     its profile says today.
          */
         TaskReviewerDto: {
+            /**
+             * @description The reasoning effort that model is run at, pinned like `model`. None =
+             *     whatever the agent CLI runs it at on its own.
+             * @example high
+             */
+            effort?: string | null;
             /**
              * @description What this reviewer runs on, `<agent_kind>[:<model>]`. None = auto: the
              *     first installed CLI, resolved at spawn time, on its own default model.
@@ -1744,6 +1809,17 @@ export interface components {
         /** @description Partial update; absent fields stay unchanged. */
         UpdateProfileRequest: {
             /**
+             * @description The reasoning effort to run the model at: absent leaves it alone,
+             *     "default" (or the empty string) puts it back on whatever the agent CLI
+             *     runs the model at, and anything else is checked against the model it
+             *     will run at — the one this request names, or the profile's own where it
+             *     names none — and refused where that model does not take it. A `model`
+             *     written without an effort runs at the CLI's own default: the effort
+             *     belonged to the model that was left behind.
+             * @example high
+             */
+            effort?: string | null;
+            /**
              * @description What this profile runs on, `<agent_kind>[:<model>]`, or "default" (or
              *     the empty string) to clear it back to auto — the first installed CLI at
              *     spawn time, on its own default model. Absent = unchanged.
@@ -1769,6 +1845,17 @@ export interface components {
         UpdateTaskRequest: {
             depends_on?: string[] | null;
             description?: string | null;
+            /**
+             * @description The reasoning effort to run the model at: absent leaves it alone,
+             *     "default" (or the empty string) puts it back on whatever the agent CLI
+             *     runs the model at, and anything else is checked against the model it
+             *     will run at — the one this request names, or the task's own where it
+             *     names none — and refused where that model does not take it. A `model`
+             *     written without an effort runs at the CLI's own default: the effort
+             *     belonged to the model that was left behind.
+             * @example xhigh
+             */
+            effort?: string | null;
             /**
              * @description What the engineer runs on, `<agent_kind>[:<model>]`: absent leaves the
              *     task's pins alone, "default" (or the empty string) puts them back on
