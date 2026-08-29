@@ -98,6 +98,14 @@ export interface paths {
          *     `Last-Event-ID` is ignored. On (re)connect, refetch the REST state you care
          *     about and then follow the stream.
          *
+         *     Besides the domain events there is a `heartbeat` event (a `HeartbeatDto`:
+         *     the daemon's `version` and its `started_at`), sent as the connection opens
+         *     and every 15 s an idle connection goes without one. It is a named event
+         *     rather than the SSE comment other streams keep alive with, because a
+         *     browser's `EventSource` never surfaces a comment: a client watches it to
+         *     tell a live daemon from a dead one, and a changed `started_at` to tell a
+         *     restarted daemon from the one it was talking to.
+         *
          *     A client that falls too far behind loses events. It is never left silently
          *     stale: the daemon sends a final `resync` event (`{"missed": n}`) and closes
          *     the connection, so an `EventSource` reconnects and takes the refetch path
@@ -515,6 +523,9 @@ export interface paths {
          * @description The bytes go to tmux verbatim, so the agent sees exactly what was typed in
          *     front of it and the echo comes back through `/logs/stream` like any other
          *     pane output. Nothing is appended — a submit carries its own `\r`.
+         *
+         *     And it is the user acting on the session, so whatever it was flagged for
+         *     comes down with the input.
          *
          *     Both halves of "live" are checked, as in `logs_stream`: the row's status,
          *     because a finished session must not be typed into, and tmux itself,
@@ -1202,6 +1213,20 @@ export interface components {
              */
             uptime_secs: number;
         };
+        /**
+         * @description Payload of the `heartbeat` control event.
+         *
+         *     Sent when a connection opens and on every idle interval afterwards, so a
+         *     client can tell a live daemon from a dead one without polling, and tell a
+         *     restarted daemon from the one it was talking to: `started_at` changes when
+         *     the daemon does.
+         */
+        HeartbeatDto: {
+            /** @description When this daemon started, RFC 3339 in UTC. */
+            started_at: string;
+            /** @description The daemon's version, as `GET /v1/version` reports it. */
+            version: string;
+        };
         /** @description One captured daemon log line. */
         LogLineDto: {
             /**
@@ -1850,7 +1875,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description SSE stream of domain events (text/event-stream). No replay on reconnect: refetch REST state first. A lagging client gets a final `resync` event (ResyncDto) and the connection is closed. */
+            /** @description SSE stream of domain events (text/event-stream). No replay on reconnect: refetch REST state first. A `heartbeat` event (HeartbeatDto) opens the connection and repeats every 15 idle seconds. A lagging client gets a final `resync` event (ResyncDto) and the connection is closed. */
             200: {
                 headers: {
                     [name: string]: unknown;

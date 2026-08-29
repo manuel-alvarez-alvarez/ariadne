@@ -76,6 +76,7 @@ async fn main() -> Result<()> {
     let state = AppState {
         store,
         started_at: Instant::now(),
+        started_at_utc: chrono::Utc::now(),
         launcher,
         sched_tx: Some(sched_tx),
         events,

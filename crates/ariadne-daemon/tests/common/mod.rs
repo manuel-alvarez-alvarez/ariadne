@@ -190,6 +190,7 @@ impl HarnessBuilder {
         let state = AppState {
             store: store.clone(),
             started_at: Instant::now(),
+            started_at_utc: chrono::Utc::now(),
             launcher: launcher.clone(),
             sched_tx: sched.clone(),
             events: bus.clone(),

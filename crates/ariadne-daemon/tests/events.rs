@@ -21,7 +21,7 @@ use ariadne_daemon::http::{self, AppState};
 use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_store::{EventFilter, NewReview, Task};
 
-use common::{Harness, TIMEOUT, get, harness, next_event, next_sse_message, post_json};
+use common::{Harness, TIMEOUT, expect_sse, get, harness, next_event, next_sse_message, post_json};
 
 /// Hand a task to its engineer, which is the state a live engineer session is
 /// actually in.
@@ -153,6 +153,38 @@ async fn scheduler_transition_emits_task_updated_without_http() {
     assert_eq!(transition.actor, "daemon");
 }
 
+/// A browser's `EventSource` never surfaces the comment the other streams
+/// keep alive with, so this one opens by saying, in a frame a client can see,
+/// that the daemon is there and which daemon it is.
+#[tokio::test]
+async fn sse_stream_opens_with_a_heartbeat() {
+    let h = harness().await;
+    let mut body = h.stream(get("/v1/events/stream")).await;
+
+    let beat = expect_sse(&mut body, "heartbeat").await;
+    assert_eq!(
+        beat["version"],
+        env!("CARGO_PKG_VERSION"),
+        "the heartbeat carries the version /v1/version reports: {beat}"
+    );
+    let started_at = beat["started_at"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the heartbeat carries a start time: {beat}"));
+    chrono::DateTime::parse_from_rfc3339(started_at)
+        .unwrap_or_else(|e| panic!("started_at is RFC 3339: {started_at:?} ({e})"));
+
+    // And the domain events still follow it.
+    h.bus.publish(BusEvent {
+        event: DomainEvent::ProfileDeleted(DeletedDto {
+            id: "profile-gone".into(),
+        }),
+        goal_id: None,
+        task_id: None,
+    });
+    let payload = expect_sse(&mut body, "profile_deleted").await;
+    assert_eq!(payload["id"], "profile-gone");
+}
+
 #[tokio::test]
 async fn sse_stream_frames_events_and_honours_its_filters() {
     let h = harness().await;
@@ -170,6 +202,8 @@ async fn sse_stream_frames_events_and_honours_its_filters() {
         Some("text/event-stream")
     );
     let mut body = response.into_body();
+    // Every connection opens with a heartbeat; the domain events follow it.
+    expect_sse(&mut body, "heartbeat").await;
 
     // Out of scope for this goal: must not reach the stream.
     h.profile("unrelated", Role::Engineer).await;
@@ -200,6 +234,7 @@ async fn sse_stream_frames_events_and_honours_its_filters() {
     let mut body = h
         .stream(get(&format!("/v1/events/stream?task={}", cast.task.id)))
         .await;
+    expect_sse(&mut body, "heartbeat").await;
     h.store
         .set_goal_status(&cast.goal.id, GoalStatus::Cancelled)
         .await
@@ -252,6 +287,13 @@ async fn sse_stream_signals_resync_and_closes_when_a_client_lags() {
         });
     }
 
+    // Past the opening heartbeat is what the connection has to say about the
+    // events it lost.
+    let beat = next_sse_message(&mut body).await;
+    assert!(
+        beat.contains("event: heartbeat"),
+        "a connection opens with a heartbeat, got: {beat:?}"
+    );
     let message = next_sse_message(&mut body).await;
     assert!(
         message.contains("event: resync"),

@@ -3,8 +3,10 @@
 //! Events are *fat*: each one carries the full updated DTO so a client can
 //! patch its state without a refetch. There is no replay — a client that
 //! (re)connects bootstraps over REST and then follows the stream. Besides the
-//! [`DomainEvent`] kinds there is one control event, `resync` ([`ResyncDto`]),
-//! sent when a connection has lost events.
+//! [`DomainEvent`] kinds there are two control events: `heartbeat`
+//! ([`HeartbeatDto`]), which says the daemon is still there and which daemon
+//! it is, and `resync` ([`ResyncDto`]), sent when a connection has lost
+//! events.
 
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
@@ -32,6 +34,20 @@ pub struct TaskUpdatedDto {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DeletedDto {
     pub id: String,
+}
+
+/// Payload of the `heartbeat` control event.
+///
+/// Sent when a connection opens and on every idle interval afterwards, so a
+/// client can tell a live daemon from a dead one without polling, and tell a
+/// restarted daemon from the one it was talking to: `started_at` changes when
+/// the daemon does.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct HeartbeatDto {
+    /// The daemon's version, as `GET /v1/version` reports it.
+    pub version: String,
+    /// When this daemon started, RFC 3339 in UTC.
+    pub started_at: String,
 }
 
 /// Payload of the `resync` control event.

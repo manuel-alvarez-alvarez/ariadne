@@ -182,7 +182,7 @@
           "events"
         ],
         "summary": "Subscribe to the live domain-event stream.",
-        "description": "Every state change in the daemon — from HTTP calls, from the scheduler and\nfrom agent activity alike — is published here. Each message carries a fresh\nULID `id`, the event kind as its `event` name, and the full updated DTO as\n`data`, so clients patch their state without refetching.\n\nThere is **no replay or backfill**: the `id` is informational and\n`Last-Event-ID` is ignored. On (re)connect, refetch the REST state you care\nabout and then follow the stream.\n\nA client that falls too far behind loses events. It is never left silently\nstale: the daemon sends a final `resync` event (`{\"missed\": n}`) and closes\nthe connection, so an `EventSource` reconnects and takes the refetch path\nabove.",
+        "description": "Every state change in the daemon — from HTTP calls, from the scheduler and\nfrom agent activity alike — is published here. Each message carries a fresh\nULID `id`, the event kind as its `event` name, and the full updated DTO as\n`data`, so clients patch their state without refetching.\n\nThere is **no replay or backfill**: the `id` is informational and\n`Last-Event-ID` is ignored. On (re)connect, refetch the REST state you care\nabout and then follow the stream.\n\nBesides the domain events there is a `heartbeat` event (a `HeartbeatDto`:\nthe daemon's `version` and its `started_at`), sent as the connection opens\nand every 15 s an idle connection goes without one. It is a named event\nrather than the SSE comment other streams keep alive with, because a\nbrowser's `EventSource` never surfaces a comment: a client watches it to\ntell a live daemon from a dead one, and a changed `started_at` to tell a\nrestarted daemon from the one it was talking to.\n\nA client that falls too far behind loses events. It is never left silently\nstale: the daemon sends a final `resync` event (`{\"missed\": n}`) and closes\nthe connection, so an `EventSource` reconnects and takes the refetch path\nabove.",
         "operationId": "stream",
         "parameters": [
           {
@@ -212,7 +212,7 @@
         ],
         "responses": {
           "200": {
-            "description": "SSE stream of domain events (text/event-stream). No replay on reconnect: refetch REST state first. A lagging client gets a final `resync` event (ResyncDto) and the connection is closed.",
+            "description": "SSE stream of domain events (text/event-stream). No replay on reconnect: refetch REST state first. A `heartbeat` event (HeartbeatDto) opens the connection and repeats every 15 idle seconds. A lagging client gets a final `resync` event (ResyncDto) and the connection is closed.",
             "content": {
               "text/event-stream": {
                 "schema": {
@@ -1351,7 +1351,7 @@
           "sessions"
         ],
         "summary": "Type into a session's pane: the write counterpart of the log stream.",
-        "description": "The bytes go to tmux verbatim, so the agent sees exactly what was typed in\nfront of it and the echo comes back through `/logs/stream` like any other\npane output. Nothing is appended — a submit carries its own `\\r`.\n\nBoth halves of \"live\" are checked, as in `logs_stream`: the row's status,\nbecause a finished session must not be typed into, and tmux itself,\nbecause tmux names are reused and a `send-keys` at a stale name would land\nin a successor's pane.",
+        "description": "The bytes go to tmux verbatim, so the agent sees exactly what was typed in\nfront of it and the echo comes back through `/logs/stream` like any other\npane output. Nothing is appended — a submit carries its own `\\r`.\n\nAnd it is the user acting on the session, so whatever it was flagged for\ncomes down with the input.\n\nBoth halves of \"live\" are checked, as in `logs_stream`: the row's status,\nbecause a finished session must not be typed into, and tmux itself,\nbecause tmux names are reused and a `send-keys` at a stale name would land\nin a successor's pane.",
         "operationId": "input",
         "parameters": [
           {
@@ -3024,6 +3024,24 @@
             "format": "int64",
             "description": "Seconds since the daemon started.",
             "minimum": 0
+          }
+        }
+      },
+      "HeartbeatDto": {
+        "type": "object",
+        "description": "Payload of the `heartbeat` control event.\n\nSent when a connection opens and on every idle interval afterwards, so a\nclient can tell a live daemon from a dead one without polling, and tell a\nrestarted daemon from the one it was talking to: `started_at` changes when\nthe daemon does.",
+        "required": [
+          "version",
+          "started_at"
+        ],
+        "properties": {
+          "started_at": {
+            "type": "string",
+            "description": "When this daemon started, RFC 3339 in UTC."
+          },
+          "version": {
+            "type": "string",
+            "description": "The daemon's version, as `GET /v1/version` reports it."
           }
         }
       },

@@ -26,11 +26,13 @@ use std::time::Instant;
 use axum::extract::State;
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
+use chrono::{DateTime, SecondsFormat, Utc};
 use tokio::sync::mpsc;
 use tower_http::cors::CorsLayer;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
+use ariadne_api::stream::HeartbeatDto;
 use ariadne_api::{HealthResponse, VersionResponse};
 use ariadne_store::Store;
 
@@ -45,7 +47,11 @@ use crate::scheduler::SchedEvent;
 #[derive(Clone)]
 pub struct AppState {
     pub store: Store,
+    /// Monotonic, so uptime is immune to the clock being set.
     pub started_at: Instant,
+    /// The same moment as wall-clock time, which is the only one that can be
+    /// written down: the heartbeat tells clients which daemon they are on.
+    pub started_at_utc: DateTime<Utc>,
     pub launcher: Arc<Launcher>,
     /// Present once the scheduler is running; handlers poke it after writes.
     pub sched_tx: Option<mpsc::UnboundedSender<SchedEvent>>,
@@ -56,6 +62,16 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Who this daemon is, for the `heartbeat` control event.
+    fn heartbeat(&self) -> HeartbeatDto {
+        HeartbeatDto {
+            version: env!("CARGO_PKG_VERSION").into(),
+            started_at: self
+                .started_at_utc
+                .to_rfc3339_opts(SecondsFormat::Millis, true),
+        }
+    }
+
     /// Poke the scheduler, if one is running. Whether an event is worth
     /// acting on is its decision, not the handler's.
     fn wake(&self, event: SchedEvent) {
@@ -116,6 +132,7 @@ impl AppState {
     ),
     components(schemas(
         ariadne_api::stream::DomainEvent, ariadne_api::stream::ResyncDto,
+        ariadne_api::stream::HeartbeatDto,
         ariadne_api::sessions::SessionLogChunk, ariadne_api::sessions::SessionLogEnd,
         ariadne_api::sessions::SessionPaneSize,
         ariadne_api::logs::LogLineDto, ariadne_api::logs::LogSnapshotResponse,

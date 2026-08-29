@@ -19,15 +19,42 @@ use ariadne_core::id::new_id;
 use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::error::RecvError;
 
-/// How often a keep-alive comment is sent on an idle stream.
+/// How often an idle stream says it is still there.
 const KEEP_ALIVE: Duration = Duration::from_secs(15);
 
 /// Wrap a stream of events as the response every SSE endpoint here returns.
+///
+/// An idle connection is kept alive with an SSE comment, which a browser's
+/// `EventSource` never surfaces — for a stream whose client has to see the
+/// keep-alive, use [`respond_alive`].
 pub fn respond<S>(events: S) -> Sse<impl Stream<Item = Result<Event, Infallible>>>
 where
     S: Stream<Item = Result<Event, Infallible>> + Send + 'static,
 {
-    Sse::new(events).keep_alive(KeepAlive::new().interval(KEEP_ALIVE))
+    keep_alive(events, KeepAlive::new())
+}
+
+/// The same, with `alive` sent on an idle connection instead of a comment, so
+/// a client can see for itself that the daemon is still there.
+pub fn respond_alive<S>(
+    events: S,
+    alive: Event,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>>
+where
+    S: Stream<Item = Result<Event, Infallible>> + Send + 'static,
+{
+    keep_alive(events, KeepAlive::new().event(alive))
+}
+
+/// One interval for all of them, whatever they send on it.
+fn keep_alive<S>(
+    events: S,
+    keep_alive: KeepAlive,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>>
+where
+    S: Stream<Item = Result<Event, Infallible>> + Send + 'static,
+{
+    Sse::new(events).keep_alive(keep_alive.interval(KEEP_ALIVE))
 }
 
 /// One named event carrying `payload` as compact JSON.
