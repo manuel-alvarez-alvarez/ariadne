@@ -130,6 +130,7 @@ dependencies = [
  "sigpipe",
  "sqlx",
  "tempfile",
+ "thiserror",
  "tokio",
  "toml",
 ]

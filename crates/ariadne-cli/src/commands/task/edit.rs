@@ -13,6 +13,7 @@ use ariadne_api::tasks::{ReviewerAssignment, UpdateTaskRequest};
 use ariadne_client::Client;
 
 use crate::commands::parse_model;
+use crate::commands::resolve;
 
 /// One `--reviewer PROFILE[=MODEL]`: who reviews, and — after an `=` — what
 /// that reviewer runs on instead of what its profile is on, in the one
@@ -99,6 +100,23 @@ pub fn update_request(
     Ok(req)
 }
 
+/// Reviewer assignments as the daemon should receive them: the profile half
+/// resolved the way every other profile argument is, and what follows the `=`
+/// — the model that reviewer runs on — carried through untouched.
+pub async fn resolved_reviewers(
+    profiles: &mut resolve::Profiles<'_>,
+    reviewers: Vec<ReviewerAssignment>,
+) -> Result<Vec<ReviewerAssignment>> {
+    let mut out = Vec::with_capacity(reviewers.len());
+    for reviewer in reviewers {
+        out.push(ReviewerAssignment {
+            profile: profiles.id(&reviewer.profile).await?,
+            model: reviewer.model,
+        });
+    }
+    Ok(out)
+}
+
 /// A `--repo` argument as the repo id the API wants.
 ///
 /// The goal's repositories answer to their id or to their registered path —
@@ -119,12 +137,20 @@ pub async fn resolve_repo(client: &Client, goal_id: &str, spec: &str) -> Result<
     }
 }
 
-/// The id of the goal repository a `--repo` argument names, by id or by path.
+/// The id of the goal repository a `--repo` argument names: by path, or by
+/// its id in any of the spellings one is shown in — a whole one, the head of
+/// one, or the `…last8` a table prints.
 fn pick_repo(repos: &[RepositoryDto], spec: &str) -> Option<String> {
-    repos
-        .iter()
-        .find(|r| r.id == spec || r.path == spec)
-        .map(|r| r.id.clone())
+    if let Some(repo) = repos.iter().find(|r| r.path == spec) {
+        return Some(repo.id.clone());
+    }
+    resolve::among(
+        resolve::Kind::Repo,
+        repos.iter().map(|r| resolve::row(&r.id, &r.path)),
+    )
+    .pick(spec)
+    .ok()
+    .map(|row| row.id.clone())
 }
 
 #[cfg(test)]
@@ -142,6 +168,42 @@ mod tests {
         assert_eq!(pick_repo(&repos, "01REPOUI").as_deref(), Some("01REPOUI"));
         assert_eq!(pick_repo(&repos, "/home/me/api").as_deref(), Some("01REPOAPI"));
         assert_eq!(pick_repo(&repos, "/home/me/other"), None);
+        // And by the tail of an id, which is all a table of them shows.
+        assert_eq!(pick_repo(&repos, "REPOUI").as_deref(), Some("01REPOUI"));
+    }
+
+    /// The profile half is resolved like every other profile argument; what
+    /// follows the `=` is a model, and nothing here may touch it.
+    #[tokio::test]
+    async fn a_reviewer_keeps_what_it_runs_on_when_its_profile_is_resolved() {
+        let mut profiles = resolve::Profiles::List(resolve::among(
+            resolve::Kind::Profile,
+            [resolve::Row {
+                id: "01m0prof0000000000000abcde".into(),
+                label: "Reviewer (reviewer)".into(),
+                alias: Some("Reviewer".into()),
+            }],
+        ));
+        let given = vec![
+            parse_reviewer("Reviewer").expect("a name"),
+            parse_reviewer("0000abcde=opencode:ollama/llama3:8b").expect("a short id"),
+        ];
+        let resolved = resolved_reviewers(&mut profiles, given)
+            .await
+            .expect("both resolved");
+        assert_eq!(
+            resolved
+                .iter()
+                .map(|r| (r.profile.as_str(), r.model.as_deref()))
+                .collect::<Vec<_>>(),
+            [
+                ("01m0prof0000000000000abcde", None),
+                (
+                    "01m0prof0000000000000abcde",
+                    Some("opencode:ollama/llama3:8b")
+                ),
+            ]
+        );
     }
 
     /// A reviewer is a profile, and after an `=` what it runs on: an agent

@@ -99,9 +99,18 @@ impl ClientError {
     }
 
     /// What to do about it, when there is a single obvious answer.
-    pub fn hint(&self) -> Option<&'static str> {
+    ///
+    /// `ariadne daemon start` starts the daemon of an ariadne *home*, on that
+    /// home's unix socket — so it is the way out of a socket that answers
+    /// nothing, and no help at all when the endpoint is a `http://host:port`
+    /// somebody else is meant to be listening on.
+    pub fn hint(&self) -> Option<String> {
         match self {
-            Self::Unreachable { .. } => Some("is it running? try: ariadne daemon start"),
+            Self::Unreachable { endpoint, .. } if is_url(endpoint) => Some(format!(
+                "is a daemon listening at {endpoint}? \
+                 ariadne daemon start only starts a local one, on a socket"
+            )),
+            Self::Unreachable { .. } => Some("is it running? try: ariadne daemon start".into()),
             _ => None,
         }
     }
@@ -116,6 +125,13 @@ impl ClientError {
             Self::Timeout => "timeout",
         }
     }
+}
+
+/// Whether an endpoint is a TCP base URL rather than a unix socket path —
+/// which is what decides the transport, and what a daemon that will not
+/// answer can be advised about.
+fn is_url(endpoint: &str) -> bool {
+    endpoint.starts_with("http://") || endpoint.starts_with("https://")
 }
 
 enum Transport {
@@ -208,7 +224,7 @@ impl Client {
 
     fn from_parts(explicit: Option<String>, socket: impl FnOnce() -> PathBuf) -> Self {
         match explicit {
-            Some(v) if v.starts_with("http://") || v.starts_with("https://") => Self::tcp(v),
+            Some(v) if is_url(&v) => Self::tcp(v),
             Some(v) => Self::unix(v),
             None => Self::unix(socket()),
         }
@@ -588,8 +604,24 @@ mod tests {
             err.human(),
             "cannot reach the ariadne daemon at /tmp/x.sock"
         );
-        assert_eq!(err.hint(), Some("is it running? try: ariadne daemon start"));
+        assert_eq!(
+            err.hint().as_deref(),
+            Some("is it running? try: ariadne daemon start")
+        );
         assert_eq!(err.code(), "daemon_unreachable");
+    }
+
+    /// `ariadne daemon start` starts a daemon on a home's socket and nothing
+    /// else, so a TCP endpoint is told what it can actually check.
+    #[test]
+    fn a_tcp_endpoint_is_not_told_to_start_a_local_daemon() {
+        let err = ClientError::Unreachable {
+            endpoint: "http://127.0.0.1:1".into(),
+            source: "client error (Connect)".into(),
+        };
+        let hint = err.hint().expect("a hint");
+        assert!(hint.contains("http://127.0.0.1:1"), "{hint}");
+        assert!(!hint.starts_with("is it running?"), "{hint}");
     }
 
     /// Status, code and message otherwise say the same thing three times.
@@ -601,7 +633,7 @@ mod tests {
             message: "task not found: badid123".into(),
         };
         assert_eq!(err.human(), "task not found: badid123");
-        assert_eq!(err.hint(), None);
+        assert!(err.hint().is_none());
         assert_eq!(err.code(), "not_found");
     }
 

@@ -103,6 +103,19 @@ Examples:
   ariadne attach <session-id>              # that one session
 ";
 
+/// What a failed command exits with, for whoever is reading the code rather
+/// than the line. The codes themselves are [`crate::error::Exit`]; this is the
+/// only place they are spelled out for a user, so the two must not drift.
+const EXIT_CODES: &str = "\
+Exit codes:
+  0  it worked
+  1  it did not, and nothing below says why
+  2  the command as typed cannot be run: a bad argument, an id that names
+     several things, or something irreversible refused without --yes
+  3  nothing answered at the daemon endpoint
+  4  no goal, task, session, repository or profile of that name
+  5  the daemon refused: the thing is not in a state that allows it";
+
 #[derive(Parser)]
 #[command(
     name = "ariadne",
@@ -115,7 +128,7 @@ Examples:
         behind reviewer agents. Each of them works in a tmux session `ariadne \
         attach` drops you into, and `ariadne attention` is what says which of \
         them is waiting for you.",
-    after_help = EXAMPLES
+    after_help = format!("{EXAMPLES}\n{EXIT_CODES}")
 )]
 pub struct Cli {
     /// Daemon endpoint: unix socket path or http://host:port

@@ -165,6 +165,17 @@ pub fn dash(value: Option<&str>) -> String {
     value.unwrap_or("-").to_string()
 }
 
+/// An id as every table's tail and the whole web UI print it: `…last8`.
+///
+/// Ids are 26-character ULIDs — unreadable in full, and the tail is enough to
+/// tell two of them apart. Anything too short to shorten is left alone.
+pub fn short_id(id: &str) -> String {
+    match id.char_indices().nth_back(7) {
+        Some((i, _)) if id.len() > 10 => format!("…{}", &id[i..]),
+        _ => id.to_string(),
+    }
+}
+
 /// An optional timestamp as an inspect block spells it, or a dash.
 pub fn at(rfc3339: Option<&str>) -> String {
     rfc3339.map_or_else(|| "-".to_string(), moment)

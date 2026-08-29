@@ -12,11 +12,12 @@ use ariadne_client::Client;
 use ariadne_core::{AttentionReason, Role, SessionStatus};
 
 use super::attention::reason_label;
-use super::{ProfileNames, confirm, one_of, query_path};
+use super::resolve::{self, Kind};
+use super::{ProfileNames, Subject, confirm, one_of, query_path};
 use crate::cli::values::Spelling;
 use crate::output::{
     Column, Format, UNCAPPED, age, at, col, dash, moment, pager, print, print_json, print_kv,
-    print_list, usage_block, usage_cell,
+    print_list, short_id, usage_block, usage_cell,
 };
 
 /// Columns of `session ls`. `context` is the one written by a human, so it is
@@ -147,6 +148,14 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
                 || !statuses.is_empty()
                 || role.is_some()
                 || attention;
+            let goal = match goal {
+                Some(goal) => Some(resolve::id(client, Kind::Goal, &goal).await?),
+                None => None,
+            };
+            let task = match task {
+                Some(task) => Some(resolve::id(client, Kind::Task, &task).await?),
+                None => None,
+            };
             let query = SessionListQuery {
                 goal,
                 task,
@@ -193,6 +202,7 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
             )?;
         }
         SessionCommand::Inspect { id } => {
+            let id = resolve::id(client, Kind::Session, &id).await?;
             let s: SessionDto = client.get_json(&session_path(&id)).await?;
             let profiles = ProfileNames::for_format(client, format).await;
             print(format, &s, || {
@@ -243,6 +253,7 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
             )?;
         }
         SessionCommand::Logs { id } => {
+            let id = resolve::id(client, Kind::Session, &id).await?;
             let logs: ariadne_api::sessions::SessionLogsResponse =
                 client.get_json(&format!("/v1/sessions/{id}/logs")).await?;
             match format {
@@ -253,6 +264,7 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
             }
         }
         SessionCommand::Resume { id } => {
+            let id = resolve::id(client, Kind::Session, &id).await?;
             // The daemon answers with this same session either way: relaunched
             // when it really resumed it, or untouched when its pane turned out
             // to be alive already. What the row said before the call is what
@@ -275,8 +287,10 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
             )?;
         }
         SessionCommand::Kill { id, yes } => {
+            let id = resolve::id(client, Kind::Session, &id).await?;
             let s: SessionDto = client.get_json(&session_path(&id)).await?;
-            confirm(&kill_question(&s), yes)?;
+            let subject = Subject::new("session", what_for(&s), &s.id);
+            confirm("kill", &subject, &kill_question(&s, &subject), yes)?;
             let s: SessionDto = client
                 .post_empty(&format!("/v1/sessions/{id}/kill"))
                 .await?;
@@ -374,14 +388,23 @@ fn attention_label(reason: Option<AttentionReason>) -> String {
     reason.map_or("-".into(), |r| reason_label(r).to_string())
 }
 
+/// Whose terminal it is: a session has no title, and the role and the piece
+/// of work it was spawned for are what stand in for one.
+fn what_for(s: &SessionDto) -> String {
+    match &s.task_id {
+        Some(task) => format!("{} on task {}", s.role.as_str(), short_id(task)),
+        None => format!("{} of goal {}", s.role.as_str(), short_id(&s.goal_id)),
+    }
+}
+
 /// What `session kill` asks: a live agent is about to lose its terminal, and
 /// the id alone does not say whose.
-fn kill_question(s: &SessionDto) -> String {
-    let what = match &s.task_id {
-        Some(task) => format!("{} on task {task}", s.role.as_str()),
-        None => format!("{} of goal {}", s.role.as_str(), s.goal_id),
-    };
-    format!("Kill session {} ({what}, {})?", s.id, s.status.as_str())
+fn kill_question(s: &SessionDto, subject: &Subject) -> String {
+    format!(
+        "Kill the {} session {}?",
+        s.status.as_str(),
+        subject.named()
+    )
 }
 
 #[cfg(test)]

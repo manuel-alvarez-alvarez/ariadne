@@ -170,6 +170,10 @@ pub async fn attach(client: &Client, id: &str, role: Option<Role>) -> Result<()>
 
 /// `ariadne attach <id>`: session, task or goal id.
 pub async fn attach_any(client: &Client, id: &str, role: Option<Role>) -> Result<()> {
+    // Which of the three it is decides everything below, so a short id that
+    // names one of each is refused here rather than resolved to whichever
+    // list happens to be probed first.
+    let id = &crate::commands::resolve::attachable(client, id).await?;
     if let Some(session) = found::<SessionDto>(client, &format!("/v1/sessions/{id}")).await? {
         if role.is_some() {
             bail!(

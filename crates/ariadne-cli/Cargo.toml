@@ -38,6 +38,7 @@ serde_urlencoded = { workspace = true }
 # macro. The workspace forbids `unsafe_code`, so the `signal(2)` call has to
 # live in a dependency.
 sigpipe = "0.1.3"
+thiserror = { workspace = true }
 tokio = { workspace = true }
 toml = { workspace = true }
 

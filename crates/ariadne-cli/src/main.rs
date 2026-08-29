@@ -18,8 +18,10 @@ use crate::cli::{Cli, Command, DaemonCommand, Layout, McpCommand, SetupCommand, 
 use crate::output::View;
 
 /// Failures are reported by [`error::report`] rather than by anyhow's default
-/// `Error: ...` + `Caused by:` block: one line, and exit code 1. Usage errors
-/// never reach here — clap prints and exits 2 itself.
+/// `Error: ...` + `Caused by:` block: one line, and the exit code that says
+/// what kind of failure it was ([`error::Exit`], listed in `ariadne --help`).
+/// A line clap itself refuses never reaches here — it prints and exits 2, the
+/// same code this gives a command refused for how it was typed.
 fn main() -> ExitCode {
     // Rust starts every process with SIGPIPE ignored, which turns a reader
     // that walked away (`ariadne task ls | head`) into a write error and a
@@ -58,14 +60,14 @@ fn main() -> ExitCode {
     if let Command::Spawn { plan } = &cli.command {
         let Err(e) = commands::spawn::exec_plan(plan);
         error::report(&e, format);
-        return ExitCode::FAILURE;
+        return error::exit_code(&e);
     }
 
     match block_on(cli) {
         Ok(code) => code,
         Err(e) => {
             error::report(&e, format);
-            ExitCode::FAILURE
+            error::exit_code(&e)
         }
     }
 }

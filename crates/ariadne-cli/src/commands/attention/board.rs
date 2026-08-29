@@ -11,7 +11,7 @@ use ariadne_api::sessions::SessionDto;
 use ariadne_api::tasks::TaskDto;
 
 use super::{Reason, session_at, session_reason, task_reason};
-use crate::output::{Column, UNCAPPED, age, col};
+use crate::output::{Column, UNCAPPED, age, col, short_id};
 
 /// Columns of one goal's section. Task rows leave `task` empty (their id is
 /// the task); session rows name their role in `title` and the task they were
@@ -171,16 +171,6 @@ pub fn rows(
         ]
     }));
     rows
-}
-
-/// Ids are 26-character ULIDs: unreadable in full, but the tail is enough to
-/// tell two of them apart — the same shortening the UI uses. The full id
-/// stays in the table rows.
-fn short_id(id: &str) -> String {
-    match id.char_indices().nth_back(7) {
-        Some((i, _)) if id.len() > 10 => format!("…{}", &id[i..]),
-        _ => id.to_string(),
-    }
 }
 
 #[cfg(test)]

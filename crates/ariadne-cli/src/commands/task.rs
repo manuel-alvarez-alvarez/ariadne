@@ -15,15 +15,17 @@ use ariadne_api::usage::TokenUsageDto;
 use ariadne_client::Client;
 use ariadne_core::TaskStatus;
 
+use super::resolve::{self, Kind};
 use super::{
-    ProfileNames, confirm, one_of, parse_model, parse_model_or_default, print_thread, query_path,
+    ProfileNames, Subject, confirm, one_of, parse_model, parse_model_or_default, print_thread,
+    query_path, recipient,
 };
 use crate::cli::values::Spelling;
 use crate::output::{
     Column, Format, UNCAPPED, age, col, dash, local_time, moment, note, pager, print, print_json,
     print_kv, print_list, usage_block, usage_cell, view, yes_no,
 };
-use edit::{parse_reviewer, resolve_repo, update_request};
+use edit::{parse_reviewer, resolve_repo, resolved_reviewers, update_request};
 
 /// Columns of `task ls`. Titles and branches are the long ones: a task whose
 /// title runs to a paragraph would otherwise push status and round off-screen.
@@ -272,6 +274,11 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             depends_on,
             repo,
         } => {
+            let goal = resolve::id(client, Kind::Goal, &goal).await?;
+            let depends_on = resolve::ids(client, Kind::Task, &depends_on).await?;
+            let mut profiles = resolve::Profiles::new(client);
+            let engineer = profiles.id(&engineer).await?;
+            let reviewers = resolved_reviewers(&mut profiles, reviewers).await?;
             let repo_id = match repo {
                 Some(spec) => Some(resolve_repo(client, &goal, &spec).await?),
                 None => None,
@@ -301,6 +308,10 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             depends_on,
             clear_depends_on,
         } => {
+            let id = resolve::id(client, Kind::Task, &id).await?;
+            let depends_on = resolve::ids(client, Kind::Task, &depends_on).await?;
+            let reviewers =
+                resolved_reviewers(&mut resolve::Profiles::new(client), reviewers).await?;
             let body = update_request(
                 title,
                 description,
@@ -321,6 +332,10 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             // `GET /v1/tasks` takes one status, so one is asked for and the
             // rest is narrowed on the answer — with the live/finished split.
             let status = one_of(&statuses);
+            let goal = match goal {
+                Some(goal) => Some(resolve::id(client, Kind::Goal, &goal).await?),
+                None => None,
+            };
             let path = query_path("/v1/tasks", &TaskListQuery { goal, status })?;
             let tasks: Vec<TaskDto> = client.get_json(&path).await?;
             let tasks = visible(tasks, all, &statuses);
@@ -341,6 +356,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             )?;
         }
         TaskCommand::Inspect { id } => {
+            let id = resolve::id(client, Kind::Task, &id).await?;
             let t: TaskDto = client.get_json(&task_path(&id)).await?;
             let profiles = ProfileNames::for_format(client, format).await;
             print(format, &t, || {
@@ -387,6 +403,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             })?;
         }
         TaskCommand::Thread { id, limit, tail } => {
+            let id = resolve::id(client, Kind::Task, &id).await?;
             print_thread(
                 client,
                 &format!("/v1/tasks/{id}/messages"),
@@ -397,6 +414,8 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             .await?;
         }
         TaskCommand::Msg { id, body, to } => {
+            let id = resolve::id(client, Kind::Task, &id).await?;
+            let to = recipient(client, to).await?;
             let m: MessageDto = client
                 .post_json(
                     &format!("/v1/tasks/{id}/messages"),
@@ -406,6 +425,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             print(format, &m, || println!("posted {}", m.id))?;
         }
         TaskCommand::Reviews { id } => {
+            let id = resolve::id(client, Kind::Task, &id).await?;
             let reviews: Vec<ReviewDto> =
                 client.get_json(&format!("/v1/tasks/{id}/reviews")).await?;
             let profiles = ProfileNames::for_format(client, format).await;
@@ -425,6 +445,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             )?;
         }
         TaskCommand::History { id } => {
+            let id = resolve::id(client, Kind::Task, &id).await?;
             let rows: Vec<TaskTransitionDto> = client
                 .get_json(&format!("/v1/tasks/{id}/transitions"))
                 .await?;
@@ -448,16 +469,20 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             })?;
         }
         TaskCommand::Cancel { id, yes } => {
+            let id = resolve::id(client, Kind::Task, &id).await?;
             let t: TaskDto = client.get_json(&task_path(&id)).await?;
-            confirm(&cancel_question(&t), yes)?;
+            let subject = Subject::new("task", &t.title, &t.id);
+            confirm("cancel", &subject, &cancel_question(&t, &subject), yes)?;
             let t: TaskDto = client.post_empty(&format!("/v1/tasks/{id}/cancel")).await?;
             print_status(&t, format)?;
         }
         TaskCommand::Retry { id } => {
+            let id = resolve::id(client, Kind::Task, &id).await?;
             let t: TaskDto = client.post_empty(&format!("/v1/tasks/{id}/retry")).await?;
             print_status(&t, format)?;
         }
         TaskCommand::Diff { id } => {
+            let id = resolve::id(client, Kind::Task, &id).await?;
             let diff = client.get_text(&format!("/v1/tasks/{id}/diff")).await?;
             match format {
                 // A diff is text, not a document; json mode still has to be
@@ -471,9 +496,11 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             }
         }
         TaskCommand::Attach { id, role } => {
+            let id = resolve::id(client, Kind::Task, &id).await?;
             crate::commands::attach::attach(client, &id, role).await?;
         }
         TaskCommand::Logs { id, role } => {
+            let id = resolve::id(client, Kind::Task, &id).await?;
             let session = crate::commands::attach::resolve_tmux(client, &id, role).await?;
             let logs: ariadne_api::sessions::SessionLogsResponse = client
                 .get_json(&format!("/v1/sessions/{}/logs", session.id))
@@ -579,8 +606,8 @@ fn profile_label(name: Option<&str>, profile_id: &str) -> String {
 /// What `task cancel` asks before the work is thrown away: cancelling is
 /// irreversible and the id alone does not say which work that is, so the
 /// question names the task and where it got to.
-fn cancel_question(t: &TaskDto) -> String {
-    format!("Cancel task \"{}\" ({})?", t.title, t.status.as_str())
+fn cancel_question(t: &TaskDto, subject: &Subject) -> String {
+    format!("Cancel {} task {}?", t.status.as_str(), subject.named())
 }
 
 /// What a mutation prints: the task it produced, or where it got to.
@@ -707,9 +734,14 @@ mod tests {
     /// task, so it says which task by title, not by the id already typed.
     #[test]
     fn the_cancel_question_names_the_task_and_its_status() {
+        let t = TaskDto {
+            id: "01m15jmta93b130wka2qdn2p1x".into(),
+            ..dto()
+        };
+        let subject = Subject::new("task", &t.title, &t.id);
         assert_eq!(
-            cancel_question(&dto()),
-            "Cancel task \"Add the frobnicator\" (in_progress)?"
+            cancel_question(&t, &subject),
+            "Cancel in_progress task \"Add the frobnicator\" (…2qdn2p1x)?"
         );
     }
 

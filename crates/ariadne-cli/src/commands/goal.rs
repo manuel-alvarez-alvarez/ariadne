@@ -13,7 +13,8 @@ use ariadne_client::Client;
 use ariadne_core::GoalStatus;
 
 use super::query_path;
-use super::{ProfileNames, confirm, parse_model, print_thread};
+use super::resolve::{self, Kind};
+use super::{ProfileNames, Subject, confirm, parse_model, print_thread, recipient};
 use crate::cli::values::Spelling;
 use crate::output::{
     Column, Format, UNCAPPED, age, col, moment, print, print_kv, print_list, usage_block,
@@ -180,6 +181,7 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
             approvals,
             max_tasks,
         } => {
+            let planner = resolve::Profiles::new(client).id(&planner).await?;
             let goal: GoalDto = client
                 .post_json(
                     "/v1/goals",
@@ -230,6 +232,7 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
             )?;
         }
         GoalCommand::Inspect { id } => {
+            let id = resolve::id(client, Kind::Goal, &id).await?;
             let g: GoalDto = client.get_json(&goal_path(&id)).await?;
             let profiles = ProfileNames::for_format(client, format).await;
             print(format, &g, || {
@@ -261,23 +264,39 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
             })?;
         }
         GoalCommand::Cancel { id, yes } => {
+            let id = resolve::id(client, Kind::Goal, &id).await?;
             let g: GoalDto = client.get_json(&goal_path(&id)).await?;
-            confirm(&cancel_question(client, &g).await, yes)?;
+            let subject = Subject::new("goal", &g.title, &g.id);
+            confirm(
+                "cancel",
+                &subject,
+                &cancel_question(client, &g, &subject).await,
+                yes,
+            )?;
             let g: GoalDto = client.post_empty(&format!("/v1/goals/{id}/cancel")).await?;
             print_status(&g, format)?;
         }
         GoalCommand::Rm { id, yes } => {
+            let id = resolve::id(client, Kind::Goal, &id).await?;
             let g: GoalDto = client.get_json(&goal_path(&id)).await?;
             // The daemon decides this too (and answers 409 if the goal moves
             // between these two calls); asking here is what turns the refusal
             // into the command that unblocks it.
             if !g.status.is_terminal() {
-                bail!(
-                    "goal {id} is {} — cancel it first: ariadne goal cancel {id}",
+                return Err(crate::error::Failure::conflict(format!(
+                    "goal {id} is {}",
                     g.status.as_str()
-                );
+                ))
+                .hint(format!("cancel it first: ariadne goal cancel {id}"))
+                .err());
             }
-            confirm(&rm_question(client, &g).await, yes)?;
+            let subject = Subject::new("goal", &g.title, &g.id);
+            confirm(
+                "delete",
+                &subject,
+                &rm_question(client, &g, &subject).await,
+                yes,
+            )?;
             client
                 .send_no_content::<()>(http::Method::DELETE, &goal_path(&id), None)
                 .await?;
@@ -288,9 +307,11 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
             })?;
         }
         GoalCommand::Attach { id } => {
+            let id = resolve::id(client, Kind::Goal, &id).await?;
             crate::commands::attach::attach(client, &id, None).await?;
         }
         GoalCommand::Thread { id, limit, tail } => {
+            let id = resolve::id(client, Kind::Goal, &id).await?;
             print_thread(
                 client,
                 &format!("/v1/goals/{id}/messages"),
@@ -301,6 +322,8 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
             .await?;
         }
         GoalCommand::Msg { id, body, to } => {
+            let id = resolve::id(client, Kind::Goal, &id).await?;
+            let to = recipient(client, to).await?;
             let m: MessageDto = client
                 .post_json(
                     &format!("/v1/goals/{id}/messages"),
@@ -385,29 +408,29 @@ fn goals_path(statuses: &[GoalStatus]) -> Result<String> {
 
 /// What `goal cancel` asks before it fans out: cancelling is irreversible and
 /// takes every task that has not finished with it, so the question names both.
-async fn cancel_question(client: &Client, goal: &GoalDto) -> String {
+async fn cancel_question(client: &Client, goal: &GoalDto, subject: &Subject) -> String {
     let tasks = goal_tasks(client, &goal.id).await;
     let tail = match tasks.iter().filter(|t| !t.status.is_terminal()).count() {
         0 => "no task is still running".into(),
         1 => "1 live task will be cancelled too".into(),
         n => format!("{n} live tasks will be cancelled too"),
     };
-    format!("Cancel goal \"{}\" ({tail})?", goal.title)
+    format!("Cancel goal {} — {tail}?", subject.named())
 }
 
 /// What `goal rm` asks before it deletes: the goal's tasks, messages and
 /// review history go with it and none of it comes back, so the question names
 /// how much history is about to be dropped.
-async fn rm_question(client: &Client, goal: &GoalDto) -> String {
+async fn rm_question(client: &Client, goal: &GoalDto, subject: &Subject) -> String {
     let tail = match goal_tasks(client, &goal.id).await.len() {
         0 => "no tasks".into(),
         1 => "1 task".into(),
         n => format!("{n} tasks"),
     };
     format!(
-        "Delete goal \"{}\" ({}) for good, with {tail} and their messages?",
-        goal.title,
-        goal.status.as_str()
+        "Delete {} goal {} for good, with {tail} and their messages?",
+        goal.status.as_str(),
+        subject.named()
     )
 }
 
@@ -444,9 +467,7 @@ fn pick_repository(repos: &[RepositoryDto], spec: &str) -> Result<String> {
     let by_path: Vec<&RepositoryDto> = repos.iter().filter(|r| r.path == spec).collect();
     match by_path.as_slice() {
         [repo] => Ok(repo.id.clone()),
-        [] => {
-            bail!("unknown repository \"{spec}\" — register it first with: ariadne repo add {spec}")
-        }
+        [] => by_short_id(repos, spec),
         several => bail!(
             "{spec} is registered on several base branches ({}) — name the one you mean by id",
             several
@@ -455,6 +476,27 @@ fn pick_repository(repos: &[RepositoryDto], spec: &str) -> Result<String> {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+    }
+}
+
+/// The registered repository a short id names: the `…last8` every table and
+/// the UI show, or the head of one. Only ids — a path that matches none of
+/// them is not a typo to disambiguate but a repository nobody registered.
+fn by_short_id(repos: &[RepositoryDto], spec: &str) -> Result<String> {
+    let catalog = resolve::among(
+        Kind::Repo,
+        repos
+            .iter()
+            .map(|r| resolve::row(&r.id, format!("{} [{}]", r.path, r.base_branch))),
+    );
+    match catalog.pick(spec) {
+        Ok(row) => Ok(row.id.clone()),
+        Err(e) if crate::error::exit(&e) == crate::error::Exit::NotFound => Err(
+            crate::error::Failure::not_found(format!("unknown repository \"{spec}\""))
+                .hint(format!("register it first with: ariadne repo add {spec}"))
+                .err(),
+        ),
+        Err(e) => Err(e),
     }
 }
 
@@ -537,13 +579,33 @@ mod tests {
     }
 
     /// Nothing is registered on the fly any more, so the refusal says where
-    /// registering happens.
+    /// registering happens — and it is a missing thing, which exits 4.
     #[test]
     fn an_unknown_repository_points_at_repo_add() {
         let err = pick_repository(&repos(), "/home/me/other").unwrap_err();
         assert!(
-            err.to_string().contains("ariadne repo add /home/me/other"),
+            crate::error::human_line(&err).contains("ariadne repo add /home/me/other"),
             "{err}"
+        );
+        assert_eq!(crate::error::exit(&err), crate::error::Exit::NotFound);
+    }
+
+    /// A repository is named by the same short spellings as everything else:
+    /// the `…last8` the tables print, or the head of an id.
+    #[test]
+    fn a_repository_is_named_by_a_short_id_too() {
+        let repos = [repository(
+            "01m0repo00000000000000abcd",
+            "/home/me/api",
+            "main",
+        )];
+        assert_eq!(
+            pick_repository(&repos, "000abcd").unwrap(),
+            "01m0repo00000000000000abcd"
+        );
+        assert_eq!(
+            pick_repository(&repos, "01M0REPO").unwrap(),
+            "01m0repo00000000000000abcd"
         );
     }
 

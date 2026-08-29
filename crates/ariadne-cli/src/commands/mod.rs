@@ -14,6 +14,7 @@ pub mod mcp;
 pub mod models;
 pub mod profile;
 pub mod repo;
+pub mod resolve;
 pub mod session;
 pub mod setup;
 pub mod spawn;
@@ -22,7 +23,7 @@ pub mod task;
 use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use serde_json::json;
 
 use ariadne_api::messages::{MessageDto, MessageRecipientDto};
@@ -31,7 +32,7 @@ use ariadne_client::{Client, endpoint};
 use ariadne_core::models::ModelRef;
 use ariadne_core::{RecipientKind, probe};
 
-use crate::output::{Format, local_time, note, print, warn};
+use crate::output::{Format, local_time, note, print, short_id, warn};
 
 /// `ariadne version` — client version always, daemon version when reachable.
 ///
@@ -80,15 +81,54 @@ fn version_mismatch(client: &str, daemon: &str) -> String {
     )
 }
 
+/// What an irreversible command is about to act on: the kind of thing, the
+/// title a person recognises it by, and the id that pins it down.
+///
+/// Both halves of [`confirm`] need it — the question a person answers and the
+/// refusal a script gets — and neither may name something other than what is
+/// about to go.
+pub struct Subject {
+    kind: &'static str,
+    title: String,
+    id: String,
+}
+
+impl Subject {
+    pub fn new(kind: &'static str, title: impl Into<String>, id: impl Into<String>) -> Self {
+        Self {
+            kind,
+            title: title.into(),
+            id: id.into(),
+        }
+    }
+
+    /// How a question names it: the title, and the short id every table and
+    /// the whole UI show — which is what the reader has in front of them.
+    pub fn named(&self) -> String {
+        format!("\"{}\" ({})", self.title, short_id(&self.id))
+    }
+}
+
 /// Ask before something irreversible, and take silence for "no".
 ///
-/// `yes` (`-y`) answers for the caller, and so does a stdin that is not a
-/// terminal: a script has nobody to ask, and a prompt written into a pipe
-/// would hang a cron job rather than fail it. Declining is an error, so
-/// `ariadne goal cancel x && deploy` does not run the second half.
-pub fn confirm(question: &str, yes: bool) -> Result<()> {
-    if yes || !std::io::stdin().is_terminal() {
+/// `yes` (`-y`) answers for the caller. A stdin that is not a terminal has
+/// nobody to ask, and used to be taken for a yes: `echo | ariadne goal rm
+/// <id>` and a cron line deleted without ever saying `--yes`. It is refused
+/// instead, the way docker and gh refuse it — the caller writes `--yes` when
+/// that is what they meant. Declining is an error too, so `ariadne goal
+/// cancel x && deploy` does not run the second half.
+pub fn confirm(verb: &str, subject: &Subject, question: &str, yes: bool) -> Result<()> {
+    if yes {
         return Ok(());
+    }
+    if !std::io::stdin().is_terminal() {
+        // The full id, not the short one the question shows: this line is
+        // read out of a log, where the id is what identifies the thing.
+        return Err(crate::error::Failure::usage(format!(
+            "refusing to {verb} {} \"{}\" ({}) without --yes: stdin is not a terminal",
+            subject.kind, subject.title, subject.id
+        ))
+        .err());
     }
     // The prompt is not output: it belongs on stderr with the other notes.
     eprint!("{question} [y/N] ");
@@ -99,7 +139,20 @@ pub fn confirm(question: &str, yes: bool) -> Result<()> {
         .context("reading your answer")?;
     match answer.trim().to_ascii_lowercase().as_str() {
         "y" | "yes" => Ok(()),
-        _ => bail!("aborted"),
+        _ => Err(crate::error::Failure::usage("aborted").err()),
+    }
+}
+
+/// A `--to` as the daemon should receive it, or nothing where the message
+/// addresses nobody.
+///
+/// The one profile argument that is not always a profile: `user` is the human
+/// and travels as itself, and so does anything the profiles do not answer to
+/// — the daemon answers that with the people this thread can address.
+pub async fn recipient(client: &Client, to: Option<String>) -> Result<Option<String>> {
+    match to {
+        Some(to) => Ok(Some(resolve::Profiles::new(client).recipient(&to).await?)),
+        None => Ok(None),
     }
 }
 
@@ -492,7 +545,32 @@ mod tests {
     /// `-y` answers for the caller: nothing is read, and nothing blocks.
     #[test]
     fn yes_skips_the_confirmation() {
-        assert!(confirm("Delete it?", true).is_ok());
+        let subject = Subject::new("goal", "Ship the board", "01m15hg1d4j6de91a4amkhsfgt");
+        assert!(confirm("delete", &subject, "Delete it?", true).is_ok());
+    }
+
+    /// Nobody is there to answer in a pipe or a cron line, so the command
+    /// refuses rather than acting: exit 2, and a line naming what it did not
+    /// touch and the flag that would have let it.
+    #[test]
+    fn a_pipe_is_refused_rather_than_taken_for_a_yes() {
+        let subject = Subject::new("goal", "Ship the board", "01m15hg1d4j6de91a4amkhsfgt");
+        // Cargo runs tests with stdin closed, which is the case this is about.
+        let err = confirm("delete", &subject, "Delete it?", false).expect_err("a refusal");
+        assert_eq!(
+            err.to_string(),
+            "refusing to delete goal \"Ship the board\" (01m15hg1d4j6de91a4amkhsfgt) \
+             without --yes: stdin is not a terminal"
+        );
+        assert_eq!(crate::error::exit(&err), crate::error::Exit::Usage);
+    }
+
+    /// A question names the short id beside the title: the id a table or the
+    /// UI put in front of whoever is about to answer it.
+    #[test]
+    fn a_subject_is_named_by_its_title_and_its_short_id() {
+        let subject = Subject::new("goal", "Ship the board", "01m15hg1d4j6de91a4amkhsfgt");
+        assert_eq!(subject.named(), "\"Ship the board\" (…amkhsfgt)");
     }
 
     /// Filters that were not given leave no trace, and the ones that were are

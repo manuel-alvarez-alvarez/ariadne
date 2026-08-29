@@ -10,10 +10,11 @@ use clap::Subcommand;
 use serde_json::json;
 
 use ariadne_api::profiles::{CreateProfileRequest, ProfileDto, UpdateProfileRequest};
-use ariadne_client::Client;
+use ariadne_client::{Client, ClientError};
 use ariadne_core::Role;
 
-use super::{confirm, parse_model, parse_model_or_default, path_segment};
+use super::resolve::{self, Kind};
+use super::{Subject, confirm, parse_model, parse_model_or_default, path_segment};
 use crate::cli::values::Spelling;
 use crate::output::{
     Column, Format, UNCAPPED, age, col, moment, note, print, print_kv, print_list,
@@ -257,21 +258,20 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
         } => {
             // Everything that can be settled without the daemon is settled
             // first, so a line that repeats a kind or names an unreadable
-            // file sends nothing. Which prompts exist does depend on the
-            // role, so that one check costs a GET — still before any write.
+            // file sends nothing. What the profile is — which id the name or
+            // short id names, and which prompts its role owns — does take a
+            // GET, still before any write.
             let given = read_prompts(prompts, prompt_files)?;
+            let profile = get_profile(client, &id).await?;
             let given = match given.is_empty() {
                 true => given,
-                false => {
-                    let profile = get_profile(client, &id).await?;
-                    owned_prompts(Owner::Profile(&profile), given)?
-                }
+                false => owned_prompts(Owner::Profile(&profile), given)?,
             };
             let (system_prompt, briefings) = split_system(given);
             let system = system_prompt.is_some();
             let p: ProfileDto = client
                 .put_json(
-                    &profile_path(&id),
+                    &profile_path(&profile.id),
                     &UpdateProfileRequest {
                         name,
                         model,
@@ -284,12 +284,14 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
         }
         ProfileCommand::Rm { id, yes } => {
             let p = get_profile(client, &id).await?;
-            confirm(&rm_question(&p), yes)?;
+            let subject = Subject::new("profile", &p.name, &p.id);
+            confirm("delete", &subject, &rm_question(&p, &subject), yes)?;
             client
-                .send_no_content::<()>(http::Method::DELETE, &profile_path(&id), None)
+                .send_no_content::<()>(http::Method::DELETE, &profile_path(&p.id), None)
                 .await?;
             // The profile is gone, so there is no DTO left to print: what the
             // caller asked about, and that it happened.
+            let id = p.id;
             print(format, &json!({"profile": id, "deleted": true}), || {
                 println!("deleted {id}")
             })?;
@@ -303,8 +305,20 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
 /// A profile by id or name — the lookup every prompt command starts with: it
 /// is what tells a kind from a kind of another role, and what puts a name
 /// beside the id in the output.
+///
+/// A name and a whole id are what `/v1/profiles/{id}` itself resolves, so
+/// they are asked outright and cost the one request they always did; only
+/// something it does not know is looked for among the profiles as the short
+/// id it may be.
 async fn get_profile(client: &Client, id: &str) -> Result<ProfileDto> {
-    Ok(client.get_json(&profile_path(id)).await?)
+    match client.get_json(&profile_path(id)).await {
+        Ok(profile) => Ok(profile),
+        Err(ClientError::Api { status, .. }) if status == http::StatusCode::NOT_FOUND => {
+            let id = resolve::id(client, Kind::Profile, id).await?;
+            Ok(client.get_json(&profile_path(&id)).await?)
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// The endpoint of one profile, named the way the caller named it: by id, or
@@ -335,12 +349,11 @@ fn print_written(p: &ProfileDto, written: &[&str], format: Format) -> Result<()>
 
 /// What `profile rm` asks before it deletes: the id alone does not say which
 /// agent setup is about to go, so the question names the profile and its role.
-fn rm_question(p: &ProfileDto) -> String {
+fn rm_question(p: &ProfileDto, subject: &Subject) -> String {
     format!(
-        "Delete the {} profile \"{}\" ({})?",
+        "Delete the {} profile {}?",
         p.role.as_str(),
-        p.name,
-        p.id
+        subject.named()
     )
 }
 
@@ -421,10 +434,14 @@ mod tests {
     /// profile, so it says which one by name and role, not by the id typed.
     #[test]
     fn the_rm_question_names_the_profile_and_its_role() {
-        let p = super::super::fixtures::profile("Engineer", Role::Engineer);
+        let p = ProfileDto {
+            id: "01m0prof0000000000000abcde".into(),
+            ..super::super::fixtures::profile("Engineer", Role::Engineer)
+        };
+        let subject = Subject::new("profile", &p.name, &p.id);
         assert_eq!(
-            rm_question(&p),
-            "Delete the engineer profile \"Engineer\" (01Engineer)?"
+            rm_question(&p, &subject),
+            "Delete the engineer profile \"Engineer\" (…000abcde)?"
         );
         // A profile pinned to nothing runs on the first installed CLI; one
         // that is pinned shows the whole string it was pinned with.

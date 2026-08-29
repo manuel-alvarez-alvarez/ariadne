@@ -1,16 +1,111 @@
-//! What a failed command prints: one line, no plumbing.
+//! What a failed command prints, and what it exits with: one line, no
+//! plumbing, and a code that says what kind of failure it was.
 //!
 //! Human output gets `error: <sentence>` and nothing else — no anyhow
 //! `Caused by:` block, no transport detail, no repetition of the daemon's
 //! error envelope. `--format json` gets that envelope instead, so scripts keep
 //! the status and code the human line drops.
+//!
+//! The exit code is the same answer for a script that cannot read either:
+//! [`Exit`], documented in `ariadne --help`.
+
+use std::process::ExitCode;
 
 use ariadne_client::ClientError;
+use http::StatusCode;
 
 use crate::output::Format;
 
-/// Print a failed command's error and nothing more. Exit code stays 1 (usage
-/// errors exit 2, from clap, before we ever get here).
+/// What a failed command exits with. `0` is success and is not in here;
+/// everything else says which kind of failure it was, so a script can branch
+/// on it without reading prose.
+///
+/// The list is documented in the root `after_help`; the two must not drift.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Exit {
+    /// Anything with no better answer.
+    Failed = 1,
+    /// The command as typed cannot be run: a bad argument, an ambiguous id,
+    /// or something irreversible refused for want of `--yes`.
+    Usage = 2,
+    /// Nothing answered at the endpoint.
+    Unreachable = 3,
+    /// No goal, task, session, repository or profile of that name.
+    NotFound = 4,
+    /// The daemon refused: the thing is not in a state that allows it.
+    Conflict = 5,
+}
+
+impl From<Exit> for ExitCode {
+    fn from(exit: Exit) -> Self {
+        ExitCode::from(exit as u8)
+    }
+}
+
+/// A failure the CLI itself decided on, carrying the code it exits with and,
+/// where there is one, the way out.
+///
+/// Everything the daemon decided is a [`ClientError`] and is classified from
+/// its status instead ([`exit_code`]).
+#[derive(Debug, thiserror::Error)]
+#[error("{message}")]
+pub struct Failure {
+    exit: Exit,
+    message: String,
+    hint: Option<String>,
+}
+
+impl Failure {
+    /// A command that cannot be run as typed: exit [`Exit::Usage`].
+    pub fn usage(message: impl Into<String>) -> Self {
+        Self::new(Exit::Usage, message)
+    }
+
+    /// Nothing of that name: exit [`Exit::NotFound`].
+    pub fn not_found(message: impl Into<String>) -> Self {
+        Self::new(Exit::NotFound, message)
+    }
+
+    /// The thing is not in a state that allows it: exit [`Exit::Conflict`],
+    /// the same code the daemon's own 409 gets — a refusal is the refusal
+    /// whether it was seen coming or answered by the daemon.
+    pub fn conflict(message: impl Into<String>) -> Self {
+        Self::new(Exit::Conflict, message)
+    }
+
+    fn new(exit: Exit, message: impl Into<String>) -> Self {
+        Self {
+            exit,
+            message: message.into(),
+            hint: None,
+        }
+    }
+
+    /// The one thing to do about it, printed in parentheses after the line —
+    /// the same shape a [`ClientError`] hint is printed in.
+    pub fn hint(mut self, hint: impl Into<String>) -> Self {
+        self.hint = Some(hint.into());
+        self
+    }
+
+    /// This failure as the error the commands pass around.
+    pub fn err(self) -> anyhow::Error {
+        anyhow::Error::new(self)
+    }
+
+    /// The slug `--format json` reports it under.
+    fn code(&self) -> &'static str {
+        match self.exit {
+            Exit::Failed => "cli_error",
+            Exit::Usage => "usage",
+            Exit::Unreachable => "daemon_unreachable",
+            Exit::NotFound => "not_found",
+            Exit::Conflict => "conflict",
+        }
+    }
+}
+
+/// Print a failed command's error and nothing more.
 pub fn report(err: &anyhow::Error, format: Format) {
     match format {
         Format::Json => eprintln!("{}", serde_json::json!({"error": json_error(err)})),
@@ -18,8 +113,32 @@ pub fn report(err: &anyhow::Error, format: Format) {
     }
 }
 
+/// What the process exits with: what the CLI decided, else what the daemon's
+/// answer amounts to, else "something went wrong".
+pub fn exit_code(err: &anyhow::Error) -> ExitCode {
+    exit(err).into()
+}
+
+/// The same, as the enum — what the mapping is actually tested on.
+pub fn exit(err: &anyhow::Error) -> Exit {
+    if let Some(failure) = err.chain().find_map(|e| e.downcast_ref::<Failure>()) {
+        return failure.exit;
+    }
+    match client_error(err) {
+        // A daemon that never answered and one that took too long are the
+        // same fact to whoever is waiting on it.
+        Some(ClientError::Unreachable { .. } | ClientError::Timeout) => Exit::Unreachable,
+        Some(ClientError::Api { status, .. }) => match *status {
+            StatusCode::NOT_FOUND => Exit::NotFound,
+            StatusCode::CONFLICT => Exit::Conflict,
+            _ => Exit::Failed,
+        },
+        _ => Exit::Failed,
+    }
+}
+
 /// The one line a human reads.
-fn human_line(err: &anyhow::Error) -> String {
+pub fn human_line(err: &anyhow::Error) -> String {
     // A daemon-side failure already reads as prose, and it is the whole story:
     // the transport source and the envelope's machine half stay out of it.
     if let Some(client) = client_error(err) {
@@ -28,6 +147,11 @@ fn human_line(err: &anyhow::Error) -> String {
             None => client.human(),
         };
     }
+    if let Some(failure) = err.chain().find_map(|e| e.downcast_ref::<Failure>())
+        && let Some(hint) = &failure.hint
+    {
+        return format!("{} ({hint})", flatten(err));
+    }
     flatten(err)
 }
 
@@ -35,7 +159,18 @@ fn human_line(err: &anyhow::Error) -> String {
 /// sent them, plus the status it answered with.
 fn json_error(err: &anyhow::Error) -> serde_json::Value {
     let Some(client) = client_error(err) else {
-        return serde_json::json!({"code": "cli_error", "message": flatten(err)});
+        return match err.chain().find_map(|e| e.downcast_ref::<Failure>()) {
+            Some(failure) => {
+                let mut out = serde_json::json!({"code": failure.code(), "message": flatten(err)});
+                if let Some(hint) = &failure.hint {
+                    out.as_object_mut()
+                        .expect("json object")
+                        .insert("hint".into(), hint.as_str().into());
+                }
+                out
+            }
+            None => serde_json::json!({"code": "cli_error", "message": flatten(err)}),
+        };
     };
     let mut out = serde_json::json!({"code": client.code(), "message": client.human()});
     let map = out.as_object_mut().expect("json object");
@@ -71,8 +206,6 @@ fn flatten(err: &anyhow::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use http::StatusCode;
 
     fn unreachable() -> ClientError {
         ClientError::Unreachable {
@@ -160,6 +293,68 @@ mod tests {
         assert_eq!(
             human_line(&anyhow::anyhow!("provide --prompt or --prompt-file")),
             "provide --prompt or --prompt-file"
+        );
+    }
+
+    /// The whole point of the codes: a script tells a missing id from a
+    /// daemon that is not there from a refusal, without reading the line.
+    #[test]
+    fn every_kind_of_failure_has_an_exit_code_of_its_own() {
+        let api = |status: StatusCode| {
+            anyhow::Error::new(ClientError::Api {
+                status,
+                code: "whatever".into(),
+                message: "no".into(),
+            })
+        };
+        assert_eq!(exit(&anyhow::Error::new(unreachable())), Exit::Unreachable);
+        assert_eq!(
+            exit(&anyhow::Error::new(ClientError::Timeout)),
+            Exit::Unreachable,
+            "a daemon that never finished answering is one that did not answer"
+        );
+        assert_eq!(exit(&api(StatusCode::NOT_FOUND)), Exit::NotFound);
+        assert_eq!(exit(&api(StatusCode::CONFLICT)), Exit::Conflict);
+        assert_eq!(exit(&api(StatusCode::BAD_REQUEST)), Exit::Failed);
+        assert_eq!(exit(&anyhow::anyhow!("boom")), Exit::Failed);
+        assert_eq!(exit(&Failure::usage("refusing").err()), Exit::Usage);
+        assert_eq!(exit(&Failure::not_found("no task").err()), Exit::NotFound);
+        assert_eq!(
+            exit(&Failure::conflict("goal is planning").err()),
+            Exit::Conflict,
+            "a refusal we saw coming exits as the daemon's own would have"
+        );
+    }
+
+    /// A code the CLI decided on survives the context wrapped around it: the
+    /// command that failed says what it was doing, not what it exits with.
+    #[test]
+    fn context_does_not_change_what_a_failure_exits_with() {
+        let err = Failure::not_found("no task matches \"01x\"")
+            .hint("ariadne task ls lists them")
+            .err()
+            .context("inspecting task 01x");
+        assert_eq!(exit(&err), Exit::NotFound);
+        assert_eq!(
+            human_line(&err),
+            "inspecting task 01x: no task matches \"01x\" (ariadne task ls lists them)"
+        );
+    }
+
+    /// The same failure as a script reads it: the slug of its code, its line,
+    /// and the way out beside it.
+    #[test]
+    fn a_cli_failure_carries_its_code_and_hint_into_json() {
+        let err = Failure::not_found("no task matches \"01x\"")
+            .hint("ariadne task ls lists them")
+            .err();
+        assert_eq!(
+            json_error(&err),
+            serde_json::json!({
+                "code": "not_found",
+                "message": "no task matches \"01x\"",
+                "hint": "ariadne task ls lists them",
+            })
         );
     }
 

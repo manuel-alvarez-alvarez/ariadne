@@ -22,7 +22,7 @@ use ariadne_core::{PromptKind, Role};
 use super::PromptCommand;
 
 use super::{get_profile, profile_path};
-use crate::commands::confirm;
+use crate::commands::{Subject, confirm};
 use crate::output::{Column, Format, UNCAPPED, col, local_time, print, print_json, print_table};
 
 /// Columns of `profile prompts`. The kind is what the row is about, and the
@@ -262,7 +262,13 @@ pub async fn run(client: &Client, cmd: PromptCommand, format: Format) -> Result<
                 Some(kind) => vec![Owner::Profile(&profile).owns(kind)?],
                 None => owned(Some(profile.role)),
             };
-            confirm(&reset_question(&profile, &kinds, all), yes)?;
+            let subject = Subject::new("profile", &profile.name, &profile.id);
+            confirm(
+                "reset the prompts of",
+                &subject,
+                &reset_question(&profile, &kinds, all, &subject),
+                yes,
+            )?;
             let mut done = Vec::new();
             for kind in kinds {
                 done.push(write(client, &profile, kind, None).await?);
@@ -333,15 +339,19 @@ async fn write(
 /// What `prompt reset` asks before it overwrites: whatever the prompt says now
 /// is gone, so the question names how much of the profile it is about to
 /// replace.
-fn reset_question(profile: &ProfileDto, kinds: &[PromptArg], all: bool) -> String {
+fn reset_question(
+    profile: &ProfileDto,
+    kinds: &[PromptArg],
+    all: bool,
+    subject: &Subject,
+) -> String {
     let (what, defaults) = match (all, kinds) {
         (false, [one]) => (format!("the {} prompt", one.spelling()), "default"),
         _ => (format!("all {} prompts", kinds.len()), "defaults"),
     };
     format!(
-        "Reset {what} of {} ({}) to the {} {defaults}?",
-        profile.name,
-        profile.id,
+        "Reset {what} of {} to the {} {defaults}?",
+        subject.named(),
         profile.role.as_str()
     )
 }
@@ -477,15 +487,20 @@ mod tests {
     /// including the system prompt it takes with it.
     #[test]
     fn the_reset_question_names_what_it_is_about_to_replace() {
-        let p = profile(Role::Engineer);
+        let p = ProfileDto {
+            id: "01m0prof0000000000000abcde".into(),
+            ..profile(Role::Engineer)
+        };
+        let subject = Subject::new("profile", &p.name, &p.id);
         let one = [PromptArg::Briefing(PromptKind::ChangesRequested)];
         assert_eq!(
-            reset_question(&p, &one, false),
-            "Reset the changes-requested prompt of Engineer (01Engineer) to the engineer default?"
+            reset_question(&p, &one, false, &subject),
+            "Reset the changes-requested prompt of \"Engineer\" (…000abcde) \
+             to the engineer default?"
         );
         assert_eq!(
-            reset_question(&p, &owned(Some(p.role)), true),
-            "Reset all 6 prompts of Engineer (01Engineer) to the engineer defaults?"
+            reset_question(&p, &owned(Some(p.role)), true, &subject),
+            "Reset all 6 prompts of \"Engineer\" (…000abcde) to the engineer defaults?"
         );
     }
 

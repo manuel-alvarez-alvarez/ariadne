@@ -8,7 +8,8 @@ use ariadne_client::Client;
 use ariadne_core::MergeStrategy;
 use serde_json::json;
 
-use super::confirm;
+use super::resolve::{self, Kind};
+use super::{Subject, confirm};
 use crate::cli::values::Spelling;
 use crate::output::{Column, Format, UNCAPPED, age, col, moment, print, print_kv, print_list};
 
@@ -119,6 +120,7 @@ pub async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Result<()
             )?;
         }
         RepoCommand::Inspect { id } => {
+            let id = resolve::id(client, Kind::Repo, &id).await?;
             let r: RepositoryDto = client.get_json(&repo_path(&id)).await?;
             print(format, &r, || {
                 print_kv(&[
@@ -142,6 +144,7 @@ pub async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Result<()
             description,
             merge_strategy,
         } => {
+            let id = resolve::id(client, Kind::Repo, &id).await?;
             let r: RepositoryDto = client
                 .put_json(
                     &repo_path(&id),
@@ -156,8 +159,10 @@ pub async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Result<()
             print(format, &r, || println!("{}", r.id))?;
         }
         RepoCommand::Rm { id, yes } => {
+            let id = resolve::id(client, Kind::Repo, &id).await?;
             let r: RepositoryDto = client.get_json(&repo_path(&id)).await?;
-            confirm(&rm_question(&r), yes)?;
+            let subject = Subject::new("repository", &r.path, &r.id);
+            confirm("delete", &subject, &rm_question(&r, &subject), yes)?;
             client
                 .send_no_content::<()>(http::Method::DELETE, &repo_path(&id), None)
                 .await?;
@@ -177,9 +182,10 @@ fn repo_path(id: &str) -> String {
 
 /// What `repo rm` asks before it deletes: the checkout on disk is untouched,
 /// so the question names the registration it is about to drop.
-fn rm_question(r: &RepositoryDto) -> String {
+fn rm_question(r: &RepositoryDto, subject: &Subject) -> String {
     format!(
-        "Delete the repository {} [{}] ({})?",
-        r.path, r.base_branch, r.id
+        "Delete the repository {} on {}?",
+        subject.named(),
+        r.base_branch
     )
 }
