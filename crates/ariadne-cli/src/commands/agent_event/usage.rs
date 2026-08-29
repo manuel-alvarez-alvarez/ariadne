@@ -18,10 +18,11 @@
 //!   transcript file**. Nothing is rewritten, so summing the file is right.
 //! - `codex resume <thread>` also **continues the same rollout file**, but the
 //!   resumed process starts its own `total_token_usage` from zero, and no
-//!   `session_meta` line marks the boundary (real rollouts carry exactly one,
-//!   written at creation). Reading only the last `token_count` would therefore
-//!   lose everything before the last resume, so [`codex_usage`] splits the
-//!   file into segments and sums the last total of each.
+//!   `session_meta` line marks the boundary (a rollout carries one, written at
+//!   creation — a sub-agent's carries a second, see below). Reading only the
+//!   last `token_count` would therefore lose everything before the last
+//!   resume, so [`codex_usage`] splits the file into segments and sums the
+//!   last total of each.
 //!
 //!   A segment boundary is not a drop in the running total: the resumed
 //!   process re-sends the whole conversation as its first prompt, so its first
@@ -58,11 +59,58 @@
 //!   that process, read as `input_tokens - cached_input_tokens +
 //!   output_tokens`, and so a check on the whole reading rather than a fourth
 //!   counter.
+//!
+//! # What a Codex sub-agent looks like, verified on 2026-08-29
+//!
+//! codex-cli 0.150.1, `multi_agent` stable and enabled, spawning one sub-agent
+//! from a `codex exec` and waiting for it. Every spawned agent is a *thread* of
+//! its own, with its own rollout file and its own `total_token_usage`; the
+//! parent's reports never include it, so [`codex_usage`] reads the children
+//! too.
+//!
+//! - **The parent names its children.** A spawn writes an `event_msg` of
+//!   `item_completed` whose `item` is
+//!   `{"type":"SubAgentActivity","kind":"started","agent_thread_id":"<child>",
+//!   "agent_path":"/root/<task name>"}`, and a second one with
+//!   `"kind":"completed"` when the child finishes. That `agent_thread_id` is
+//!   the only place the child's id appears: the `spawn_agent` call is a
+//!   `function_call` in the `collaboration` namespace whose output is nothing
+//!   but `{"task_name":"/root/<task name>"}`, and the `wait_agent` call's
+//!   `CollabAgentToolCall` item had empty `receiver_thread_ids`.
+//! - **The child is a rollout beside the parent's.**
+//!   `<sessions>/YYYY/MM/DD/rollout-<timestamp>-<child thread id>.jsonl`,
+//!   under the date the child was *created* — the parent's own day directory
+//!   for anything but a session that crossed midnight, and never an earlier
+//!   one. That is what bounds the lookup in [`codex_rollout_of`].
+//! - **The child says whose it is.** Its first `session_meta` carries
+//!   `"thread_source":"subagent"`, `parent_thread_id`, `forked_from_id`, a
+//!   `source` of `{"subagent":{"thread_spawn":{"parent_thread_id":…,
+//!   "depth":1,"agent_path":…}}}` and `subagent_history_start_ordinal`, the
+//!   turn the fork was taken at. Only the `thread_source` is read, and only to
+//!   answer the paragraph below — finding a child is the parent's job, and
+//!   reading rollouts to learn whose they are would mean opening the whole
+//!   sessions tree.
+//! - **A child rollout carries two `session_meta` lines**, not the one every
+//!   other rollout has: its own first, then a copy of the parent's, as the
+//!   head of the history it was forked with. So the thread a rollout *is* is
+//!   the first one, and taking the last would name the parent.
+//! - **Codex runs Ariadne's hooks for a sub-agent thread too.** A child's own
+//!   tool calls fire `PreToolUse` and `PostToolUse` with the *child's* rollout
+//!   as `transcript_path` and the *parent's* thread id as `session_id` — so
+//!   they arrive as the same Ariadne session, and `post_tool_use` is one of
+//!   the events that reads the transcript. Left alone, a child would be
+//!   counted twice: once inside the figure its parent now reports, and once
+//!   again under a `source` of its own. So [`codex_usage`] answers `None` for
+//!   a sub-agent's rollout, which is Ariadne's side of what the OpenCode
+//!   plugin does with `if (session.parentID) return undefined`. (The verified
+//!   run fired no `SessionStart`, `UserPromptSubmit`, `Stop` or `SessionEnd`
+//!   for the child; those are the other events that read a transcript, and
+//!   the same answer covers them.)
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Cumulative counters for one transcript.
 ///
@@ -159,7 +207,25 @@ fn claude_file(path: &Path, total: &mut TokenUsage, seen: &mut HashSet<String>) 
     found
 }
 
-/// Read the running totals out of a Codex rollout.
+/// How many rollouts one reading may open, the thread it was asked about
+/// included.
+///
+/// A team of codex agents is a handful of threads — the developer message the
+/// verified run carried offers four concurrency slots — and a spawn tree far
+/// past this is a runaway rather than a session. The hook has 2s for
+/// everything it does, so it stops counting rather than keeps opening files.
+const MAX_ROLLOUTS: usize = 64;
+
+/// How far into a rollout a `session_meta` line can be.
+///
+/// Codex writes one at creation, and a sub-agent's rollout opens with its own
+/// and then a copy of its parent's — lines 0 and 1 of the verified capture.
+/// Nothing past the head of the file is scanned for it, so a rollout that
+/// carries none costs one extra look at four lines rather than at every line
+/// of a multi-megabyte one.
+const META_LINES: usize = 4;
+
+/// Sum a Codex rollout, and every rollout the threads in it spawned.
 ///
 /// `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` carries
 /// `{"type":"event_msg","payload":{"type":"token_count","info":{…}}}` lines
@@ -173,71 +239,272 @@ fn claude_file(path: &Path, total: &mut TokenUsage, seen: &mut HashSet<String>) 
 /// `input_tokens` is the whole prompt whatever it is, and it has never been
 /// anything but zero anyway (0 of 3094 reports on that machine).
 ///
-/// A resume restarts that total in place (see the module docs), so the file is
-/// read as a sequence of segments — a report whose total is its own
+/// A resume restarts that total in place (see the module docs), so each file
+/// is read as a sequence of segments — a report whose total is its own
 /// `last_token_usage` rather than the previous total plus it starts a new one
-/// — and the answer is the sum of the last total of each.
+/// — and its figure is the sum of the last total of each.
+///
+/// A sub-agent is a thread of its own whose spend appears in no rollout but
+/// its own (see the module docs), so the rollouts a thread spawned are read
+/// too, and the ones *they* spawned after them. Every one of those is a bonus:
+/// a child that cannot be found, or is unreadable, or is empty, adds nothing
+/// and leaves the answer the parent's own. A thread counts once however many
+/// routes name it — a rollout names each child twice, spawned and finished,
+/// and a sibling forked from the same parent carries the history that named
+/// the earlier ones.
+///
+/// And a sub-agent's own rollout answers nothing at all. Codex runs the hooks
+/// of a child thread under the parent's `session_id`, so an answer here would
+/// reach the daemon as a second `source` of the same session and count the
+/// child twice. Its spend is the thread that spawned it to report.
 pub fn codex_usage(transcript: &Path) -> Option<TokenUsage> {
+    let mut total = TokenUsage::default();
+    let mut found = false;
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut queue = VecDeque::from([transcript.to_path_buf()]);
+    // True while the rollout in hand is still the one the caller asked about.
+    let mut asked_about = true;
+
+    for _ in 0..MAX_ROLLOUTS {
+        let Some(path) = queue.pop_front() else {
+            break;
+        };
+        let rollout = codex_file(&path);
+        if asked_about && rollout.subagent {
+            return None;
+        }
+        asked_about = false;
+        if let Some(usage) = rollout.usage {
+            total.input_tokens += usage.input_tokens;
+            total.cached_input_tokens += usage.cached_input_tokens;
+            total.output_tokens += usage.output_tokens;
+            found = true;
+        }
+        // Before the children, so that a rollout naming itself — or an
+        // ancestor — is a thread already seen rather than one to open again.
+        if let Some(thread) = rollout.thread {
+            seen.insert(thread);
+        }
+        for child in rollout.children {
+            if seen.insert(child.clone())
+                && let Some(path) = codex_rollout_of(&path, &child)
+            {
+                queue.push_back(path);
+            }
+        }
+    }
+
+    found.then_some(total)
+}
+
+/// One codex rollout, read once.
+struct Rollout {
+    /// What the processes that wrote it spent, or `None` if it reported
+    /// nothing — an unreadable file among them.
+    usage: Option<TokenUsage>,
+    /// The thread it is, from the *first* `session_meta`: a sub-agent's
+    /// rollout carries the parent's after its own.
+    thread: Option<String>,
+    /// Whether that first `session_meta` calls it a sub-agent's.
+    subagent: bool,
+    /// The threads it spawned, in the order it named them.
+    children: Vec<String>,
+}
+
+fn codex_file(path: &Path) -> Rollout {
+    let mut banked = TokenUsage::default();
+    let mut segment: Option<TokenUsage> = None;
+    let mut thread: Option<String> = None;
+    let mut subagent = false;
+    let mut meta_read = false;
+    let mut children = Vec::new();
+
+    for (index, line) in lines(path).enumerate() {
+        // Cheap gates, and one scan of a line before it is rejected: both
+        // shapes the counting rests on are `event_msg`s, so the conversation
+        // itself — the bulk of a rollout, and the multi-megabyte part of a
+        // large one — costs the same single `contains` it always did. What
+        // reaches the second scan and the parse is a few dozen small lines.
+        if line.contains("\"event_msg\"") {
+            if line.contains("token_count") {
+                token_count(&line, &mut banked, &mut segment);
+            } else if line.contains("SubAgentActivity") {
+                spawned_thread(&line, &mut children);
+            }
+        } else if index < META_LINES && !meta_read && line.contains("session_meta") {
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+                continue;
+            };
+            if value.get("type").and_then(|v| v.as_str()) != Some("session_meta") {
+                continue;
+            }
+            meta_read = true;
+            thread = value["payload"]["id"].as_str().map(str::to_string);
+            subagent = value["payload"]["thread_source"] == "subagent";
+        }
+    }
+
+    Rollout {
+        usage: segment.map(|last| TokenUsage {
+            input_tokens: banked.input_tokens + last.input_tokens,
+            cached_input_tokens: banked.cached_input_tokens + last.cached_input_tokens,
+            output_tokens: banked.output_tokens + last.output_tokens,
+        }),
+        thread,
+        subagent,
+        children,
+    }
+}
+
+/// Fold one `token_count` line into the segments read so far.
+fn token_count(line: &str, banked: &mut TokenUsage, segment: &mut Option<TokenUsage>) {
     /// What a report has to be compared on: `cached_input_tokens` is a subset
     /// of `input_tokens` and would count twice in a sum.
     fn spent(usage: &TokenUsage) -> u64 {
         usage.input_tokens + usage.output_tokens
     }
 
-    let mut banked = TokenUsage::default();
-    let mut segment: Option<TokenUsage> = None;
-
-    for line in lines(transcript) {
-        if !line.contains("token_count") {
-            continue;
-        }
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
-            continue;
-        };
-        let payload = &value["payload"];
-        if value.get("type").and_then(|v| v.as_str()) != Some("event_msg")
-            || payload.get("type").and_then(|v| v.as_str()) != Some("token_count")
-        {
-            continue;
-        }
-        // Skipped by the same miss as the `"info": null` rate-limit updates.
-        let Some(total) = counters(&payload["info"]["total_token_usage"]) else {
-            continue;
-        };
-        // A report codex emitted twice: every counter stands still, so there
-        // is nothing to add and nothing to start. It has to be caught before
-        // the segment test, or a repeated *first* report of a process — which
-        // is its own `last_token_usage`, and so looks exactly like a restart —
-        // would bank the segment it repeats and count it twice.
-        if segment == Some(total) {
-            continue;
-        }
-        let last = counters(&payload["info"]["last_token_usage"]);
-
-        let restarted = match (segment, last) {
-            // A process's first report is its own last one. Without a
-            // `last_token_usage` to say so, only a total that went backwards
-            // is evidence of a restart.
-            (Some(previous), Some(last)) => {
-                spent(&total) == spent(&last) && spent(&total) != spent(&previous) + spent(&last)
-            }
-            (Some(previous), None) => spent(&total) < spent(&previous),
-            (None, _) => false,
-        };
-        if restarted && let Some(previous) = segment {
-            banked.input_tokens += previous.input_tokens;
-            banked.cached_input_tokens += previous.cached_input_tokens;
-            banked.output_tokens += previous.output_tokens;
-        }
-        segment = Some(total);
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+        return;
+    };
+    let payload = &value["payload"];
+    if value.get("type").and_then(|v| v.as_str()) != Some("event_msg")
+        || payload.get("type").and_then(|v| v.as_str()) != Some("token_count")
+    {
+        return;
     }
+    // Skipped by the same miss as the `"info": null` rate-limit updates.
+    let Some(total) = counters(&payload["info"]["total_token_usage"]) else {
+        return;
+    };
+    // A report codex emitted twice: every counter stands still, so there is
+    // nothing to add and nothing to start. It has to be caught before the
+    // segment test, or a repeated *first* report of a process — which is its
+    // own `last_token_usage`, and so looks exactly like a restart — would bank
+    // the segment it repeats and count it twice.
+    if *segment == Some(total) {
+        return;
+    }
+    let last = counters(&payload["info"]["last_token_usage"]);
 
-    let last = segment?;
-    Some(TokenUsage {
-        input_tokens: banked.input_tokens + last.input_tokens,
-        cached_input_tokens: banked.cached_input_tokens + last.cached_input_tokens,
-        output_tokens: banked.output_tokens + last.output_tokens,
+    let restarted = match (*segment, last) {
+        // A process's first report is its own last one. Without a
+        // `last_token_usage` to say so, only a total that went backwards is
+        // evidence of a restart.
+        (Some(previous), Some(last)) => {
+            spent(&total) == spent(&last) && spent(&total) != spent(&previous) + spent(&last)
+        }
+        (Some(previous), None) => spent(&total) < spent(&previous),
+        (None, _) => false,
+    };
+    if restarted && let Some(previous) = *segment {
+        banked.input_tokens += previous.input_tokens;
+        banked.cached_input_tokens += previous.cached_input_tokens;
+        banked.output_tokens += previous.output_tokens;
+    }
+    *segment = Some(total);
+}
+
+/// Add the thread one `SubAgentActivity` line names to `children`.
+fn spawned_thread(line: &str, children: &mut Vec<String>) {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+        return;
+    };
+    let item = &value["payload"]["item"];
+    if item.get("type").and_then(|v| v.as_str()) != Some("SubAgentActivity") {
+        return;
+    }
+    if let Some(child) = item.get("agent_thread_id").and_then(|v| v.as_str()) {
+        children.push(child.to_string());
+    }
+}
+
+/// The rollout of `thread`, given the rollout of the thread that spawned it.
+///
+/// Codex files a rollout under `<sessions>/YYYY/MM/DD/` by the local date the
+/// thread was created on, and names it `rollout-<timestamp>-<thread>.jsonl`. A
+/// spawned thread is created no earlier than its spawner, so its file is in
+/// the spawner's own day directory — where everything but a session that
+/// crossed midnight ends — or in a later one, and the days before it are never
+/// opened.
+///
+/// That bound is the point. The other way to find a child is to read every
+/// rollout under `~/.codex/sessions` for the `parent_thread_id` in its
+/// `session_meta`; the tree holds hundreds of files across years of days and
+/// the hook has 2s for everything it does, so nothing here opens a file it was
+/// not sent to by name.
+fn codex_rollout_of(spawner: &Path, thread: &str) -> Option<PathBuf> {
+    let day = spawner.parent()?;
+    rollout_in(day, thread).or_else(|| {
+        later_days(day)
+            .into_iter()
+            .find_map(|dir| rollout_in(&dir, thread))
     })
+}
+
+/// The rollout of `thread` in one day directory, by the id its name ends with.
+fn rollout_in(dir: &Path, thread: &str) -> Option<PathBuf> {
+    let suffix = format!("-{thread}.jsonl");
+    std::fs::read_dir(dir).ok()?.flatten().find_map(|entry| {
+        let path = entry.path();
+        path.file_name()?
+            .to_str()?
+            .ends_with(&suffix)
+            .then_some(path)
+    })
+}
+
+/// The `<sessions>/YYYY/MM/DD` directories after `day`, oldest first.
+///
+/// The components are zero-padded and fixed-width, so they sort as the dates
+/// do and a year or a month before the spawner's is skipped whole.
+fn later_days(day: &Path) -> Vec<PathBuf> {
+    let Some((root, from_year, from_month, from_day)) = day_parts(day) else {
+        return Vec::new();
+    };
+    let mut days = Vec::new();
+    for year in sorted_dirs(&root).into_iter().filter(|it| *it >= from_year) {
+        let in_year = root.join(&year);
+        for month in sorted_dirs(&in_year)
+            .into_iter()
+            .filter(|it| year > from_year || *it >= from_month)
+        {
+            let in_month = in_year.join(&month);
+            days.extend(
+                sorted_dirs(&in_month)
+                    .into_iter()
+                    .filter(|it| year > from_year || month > from_month || *it > from_day)
+                    .map(|it| in_month.join(it)),
+            );
+        }
+    }
+    days
+}
+
+/// A `<sessions>/YYYY/MM/DD` path, split into the sessions root and the date.
+fn day_parts(day: &Path) -> Option<(PathBuf, String, String, String)> {
+    let name = |dir: &Path| dir.file_name()?.to_str().map(str::to_string);
+    let month = day.parent()?;
+    let year = month.parent()?;
+    Some((
+        year.parent()?.to_path_buf(),
+        name(year)?,
+        name(month)?,
+        name(day)?,
+    ))
+}
+
+/// The subdirectory names of `dir`, sorted; none of them if it cannot be read.
+fn sorted_dirs(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .collect();
+    names.sort();
+    names
 }
 
 /// One `*_token_usage` object of a codex report.
@@ -296,6 +563,65 @@ mod tests {
             r#"{{"type":"event_msg","payload":{{"type":"token_count","info":{{"total_token_usage":{},"last_token_usage":{}}}}}}}"#,
             usage(total),
             usage(last),
+        )
+    }
+
+    /// The `session_meta` a rollout opens with, naming the thread it is.
+    fn session_meta(thread: &str) -> String {
+        format!(r#"{{"type":"session_meta","payload":{{"id":"{thread}","thread_source":"user"}}}}"#)
+    }
+
+    /// The one a sub-agent's rollout opens with, and the copy of its parent's
+    /// that follows it.
+    fn subagent_meta(thread: &str, parent: &str) -> String {
+        format!(
+            "{}\n{}",
+            format_args!(
+                r#"{{"type":"session_meta","payload":{{"id":"{thread}","parent_thread_id":"{parent}","thread_source":"subagent"}}}}"#
+            ),
+            session_meta(parent),
+        )
+    }
+
+    /// What a spawn writes in the rollout of the thread that spawned it.
+    fn sub_agent(child: &str) -> String {
+        format!(
+            r#"{{"type":"event_msg","payload":{{"type":"item_completed","item":{{"type":"SubAgentActivity","kind":"started","agent_thread_id":"{child}"}}}}}}"#
+        )
+    }
+
+    /// A rollout of one thread: what it is, what it spawned, what it spent.
+    fn rollout(thread: &str, children: &[&str], total: (u64, u64, u64)) -> String {
+        spawned_rollout(&session_meta(thread), children, total)
+    }
+
+    /// The same, for a thread another one spawned.
+    fn subagent_rollout(
+        thread: &str,
+        parent: &str,
+        children: &[&str],
+        total: (u64, u64, u64),
+    ) -> String {
+        spawned_rollout(&subagent_meta(thread, parent), children, total)
+    }
+
+    fn spawned_rollout(meta: &str, children: &[&str], total: (u64, u64, u64)) -> String {
+        let mut body = meta.to_string();
+        for child in children {
+            body.push('\n');
+            body.push_str(&sub_agent(child));
+        }
+        body.push('\n');
+        body.push_str(&token_count(total, total));
+        body.push('\n');
+        body
+    }
+
+    /// Where codex files the rollout of `thread` created on `day`.
+    fn rollout_path(day: &str, thread: &str) -> String {
+        format!(
+            "{day}/rollout-{}T00-00-00-{thread}.jsonl",
+            day.replace('/', "-")
         )
     }
 
@@ -440,6 +766,179 @@ mod tests {
         assert_eq!(codex_usage(&path), None);
         assert_eq!(codex_usage(&dir.path().join("absent.jsonl")), None);
     }
+
+    /// A sub-agent's spend is in its own rollout and in no other, so the
+    /// thread it was spawned from answers for both — and for what its own
+    /// sub-agents spent under it.
+    #[test]
+    fn codex_subagent_rollouts_are_summed_in() {
+        let dir = TempDir::new().expect("a temp dir");
+        let day = "2026/08/29";
+        let path = write(
+            &dir,
+            &rollout_path(day, "01a0aaaa"),
+            &rollout("01a0aaaa", &["01a0bbbb"], (1000, 800, 20)),
+        );
+        write(
+            &dir,
+            &rollout_path(day, "01a0bbbb"),
+            &subagent_rollout("01a0bbbb", "01a0aaaa", &["01a0cccc"], (500, 100, 9)),
+        );
+        write(
+            &dir,
+            &rollout_path(day, "01a0cccc"),
+            &subagent_rollout("01a0cccc", "01a0bbbb", &[], (70, 30, 4)),
+        );
+
+        assert_eq!(
+            codex_usage(&path),
+            Some(TokenUsage {
+                input_tokens: 1000 + 500 + 70,
+                cached_input_tokens: 800 + 100 + 30,
+                output_tokens: 20 + 9 + 4,
+            })
+        );
+    }
+
+    /// A child is a bonus: one that was never written, or cannot be read,
+    /// leaves the figure the parent's own rather than taking it away.
+    #[test]
+    fn a_codex_subagent_rollout_that_is_gone_leaves_the_parent_alone() {
+        let dir = TempDir::new().expect("a temp dir");
+        let day = "2026/08/29";
+        let path = write(
+            &dir,
+            &rollout_path(day, "01a0aaaa"),
+            &rollout("01a0aaaa", &["01a0bbbb", "01a0cccc"], (1000, 800, 20)),
+        );
+        write(&dir, &rollout_path(day, "01a0cccc"), "not json\n{}\n");
+
+        assert_eq!(
+            codex_usage(&path),
+            Some(TokenUsage {
+                input_tokens: 1000,
+                cached_input_tokens: 800,
+                output_tokens: 20,
+            })
+        );
+    }
+
+    /// One thread, however many routes name it: a rollout names each child
+    /// twice — spawned, then finished — and two siblings forked from the same
+    /// parent carry the history that named the first of them.
+    #[test]
+    fn a_codex_thread_reachable_twice_counts_once() {
+        let dir = TempDir::new().expect("a temp dir");
+        let day = "2026/08/29";
+        let path = write(
+            &dir,
+            &rollout_path(day, "01a0aaaa"),
+            &rollout(
+                "01a0aaaa",
+                &["01a0bbbb", "01a0cccc", "01a0bbbb"],
+                (1000, 800, 20),
+            ),
+        );
+        write(
+            &dir,
+            &rollout_path(day, "01a0bbbb"),
+            &subagent_rollout("01a0bbbb", "01a0aaaa", &[], (500, 100, 9)),
+        );
+        // The second child was forked after the first was spawned, so its own
+        // history names it too.
+        write(
+            &dir,
+            &rollout_path(day, "01a0cccc"),
+            &subagent_rollout("01a0cccc", "01a0aaaa", &["01a0bbbb"], (70, 30, 4)),
+        );
+
+        assert_eq!(
+            codex_usage(&path),
+            Some(TokenUsage {
+                input_tokens: 1000 + 500 + 70,
+                cached_input_tokens: 800 + 100 + 30,
+                output_tokens: 20 + 9 + 4,
+            })
+        );
+    }
+
+    /// And a rollout that names itself is a thread already counted, not a
+    /// file to open again.
+    #[test]
+    fn a_codex_rollout_that_names_itself_counts_once() {
+        let dir = TempDir::new().expect("a temp dir");
+        let day = "2026/08/29";
+        let path = write(
+            &dir,
+            &rollout_path(day, "01a0aaaa"),
+            &rollout("01a0aaaa", &["01a0aaaa"], (1000, 800, 20)),
+        );
+
+        assert_eq!(
+            codex_usage(&path),
+            Some(TokenUsage {
+                input_tokens: 1000,
+                cached_input_tokens: 800,
+                output_tokens: 20,
+            })
+        );
+    }
+
+    /// Codex fires a child thread's hooks under the parent's `session_id`, so
+    /// a rollout that is a sub-agent's answers nothing: the thread that
+    /// spawned it reports its spend, and a second answer here would be the
+    /// same tokens under a second `source` of the same session.
+    #[test]
+    fn a_codex_subagent_rollout_asked_about_on_its_own_reports_nothing() {
+        let dir = TempDir::new().expect("a temp dir");
+        let day = "2026/08/29";
+        write(
+            &dir,
+            &rollout_path(day, "01a0aaaa"),
+            &rollout("01a0aaaa", &["01a0bbbb"], (1000, 800, 20)),
+        );
+        let child = write(
+            &dir,
+            &rollout_path(day, "01a0bbbb"),
+            &subagent_rollout("01a0bbbb", "01a0aaaa", &[], (500, 100, 9)),
+        );
+
+        assert_eq!(codex_usage(&child), None);
+    }
+
+    /// A session that crossed midnight spawns into the next day's directory,
+    /// so the lookup goes on past the parent's own — and no further back than
+    /// it, which is what keeps the walk off the rest of the tree.
+    #[test]
+    fn a_codex_subagent_is_looked_for_from_the_parents_day_onwards() {
+        let dir = TempDir::new().expect("a temp dir");
+        let path = write(
+            &dir,
+            &rollout_path("2026/08/29", "01a0aaaa"),
+            &rollout("01a0aaaa", &["01a0bbbb", "01a0cccc"], (1000, 800, 20)),
+        );
+        write(
+            &dir,
+            &rollout_path("2026/09/01", "01a0bbbb"),
+            &subagent_rollout("01a0bbbb", "01a0aaaa", &[], (500, 100, 9)),
+        );
+        // A thread of the day before cannot be one this session spawned, and
+        // is never opened.
+        write(
+            &dir,
+            &rollout_path("2026/08/28", "01a0cccc"),
+            &subagent_rollout("01a0cccc", "01a0aaaa", &[], (70, 30, 4)),
+        );
+
+        assert_eq!(
+            codex_usage(&path),
+            Some(TokenUsage {
+                input_tokens: 1000 + 500,
+                cached_input_tokens: 800 + 100,
+                output_tokens: 20 + 9,
+            })
+        );
+    }
 }
 
 /// The readers, against real records rather than against JSON this file wrote.
@@ -469,6 +968,22 @@ mod captured {
     /// `~/.codex/sessions/2026/08/28/rollout-*.jsonl`: `codex exec`, then
     /// `codex exec resume --last` into the same file.
     const CODEX_ROLLOUT: &str = include_str!("fixtures/codex-rollout.jsonl");
+
+    /// `~/.codex/sessions/2026/08/29/rollout-*.jsonl`: the `codex exec` that
+    /// spawned one sub-agent through the `collaboration` tools and waited for
+    /// it.
+    const CODEX_PARENT: &str = include_str!("fixtures/codex-parent-rollout.jsonl");
+
+    /// The rollout that sub-agent wrote, filed under the same day beside its
+    /// parent's.
+    const CODEX_CHILD: &str = include_str!("fixtures/codex-child-rollout.jsonl");
+
+    /// The names codex gave the two, kept because the child is found by the
+    /// thread id its own file name ends with.
+    const CODEX_PARENT_FILE: &str =
+        "2026/08/29/rollout-2026-08-29T03-26-49-01a04b20-646d-71c2-b14f-4d98e40ae172.jsonl";
+    const CODEX_CHILD_FILE: &str =
+        "2026/08/29/rollout-2026-08-29T03-26-53-01a04b20-766c-7213-83a2-332002c3af62.jsonl";
 
     fn write(dir: &TempDir, name: &str, body: &str) -> std::path::PathBuf {
         let path = dir.path().join(name);
@@ -650,6 +1165,131 @@ mod captured {
         assert_eq!(usage.input_tokens, 27240 + 14490);
         assert_ne!(usage.input_tokens, 13532 + 27240 + 14490);
         assert_eq!(usage.output_tokens, 280 + 154);
+    }
+
+    /// The spawn capture, laid out the way codex laid it out.
+    fn codex_spawn_capture(dir: &TempDir) -> std::path::PathBuf {
+        let parent = write(dir, CODEX_PARENT_FILE, CODEX_PARENT);
+        write(dir, CODEX_CHILD_FILE, CODEX_CHILD);
+        parent
+    }
+
+    /// What codex itself reported for the two processes of the spawn capture.
+    ///
+    /// Each is a thread with a rollout and a running total of its own, and the
+    /// last `total_token_usage` of each is its whole spend:
+    ///
+    /// ```text
+    /// input 45845, cached 40192, output 122   (the parent, /root)
+    /// input 30645, cached 22016, output 170   (the sub-agent, /root/read_notes)
+    /// ```
+    ///
+    /// The `codex exec` printed a `tokens used` of 5775 as it exited, which is
+    /// the parent's line and nothing of the child's — the sub-agent's 8799 is
+    /// what was silently missing from the task before this reader followed it.
+    #[test]
+    fn codex_reports_what_the_parent_and_its_subagent_reported() {
+        let dir = TempDir::new().expect("a temp dir");
+        let usage = codex_usage(&codex_spawn_capture(&dir)).expect("the capture reports usage");
+
+        assert_eq!(
+            usage,
+            TokenUsage {
+                input_tokens: 45845 + 30645,
+                cached_input_tokens: 40192 + 22016,
+                output_tokens: 122 + 170,
+            }
+        );
+        assert_eq!(
+            usage.input_tokens - usage.cached_input_tokens + usage.output_tokens,
+            5775 + 8799,
+        );
+    }
+
+    /// The same parent without its sub-agent's rollout beside it is the
+    /// parent alone — the `tokens used` its own process printed.
+    #[test]
+    fn a_codex_rollout_without_its_subagents_is_the_parent_alone() {
+        let dir = TempDir::new().expect("a temp dir");
+        let path = write(&dir, CODEX_PARENT_FILE, CODEX_PARENT);
+        let usage = codex_usage(&path).expect("the capture reports usage");
+
+        assert_eq!(
+            usage,
+            TokenUsage {
+                input_tokens: 45845,
+                cached_input_tokens: 40192,
+                output_tokens: 122,
+            }
+        );
+        assert_eq!(
+            usage.input_tokens - usage.cached_input_tokens + usage.output_tokens,
+            5775,
+        );
+    }
+
+    /// The capture names its one sub-agent twice — `kind` `started` when the
+    /// spawn returns and `completed` when the wait does — and the child's
+    /// 30645 is in the answer once.
+    #[test]
+    fn the_subagent_the_capture_names_twice_counts_once() {
+        let named = CODEX_PARENT
+            .lines()
+            .filter(|line| line.contains("SubAgentActivity"))
+            .count();
+        assert_eq!(named, 2, "the capture no longer covers the repeated case");
+
+        let dir = TempDir::new().expect("a temp dir");
+        let usage = codex_usage(&codex_spawn_capture(&dir)).expect("the capture reports usage");
+        assert_eq!(usage.input_tokens, 45845 + 30645);
+        assert_ne!(usage.input_tokens, 45845 + 30645 + 30645);
+    }
+
+    /// A sub-agent's rollout opens with two `session_meta` lines — its own,
+    /// then the parent's, at the head of the history it was forked with — so
+    /// the thread a rollout *is* has to be read off the first. Taken off the
+    /// last, the child would call itself the parent, and the parent would be
+    /// a thread already seen and never read.
+    #[test]
+    fn a_codex_subagent_rollout_is_its_own_thread_not_its_parents() {
+        let metas: Vec<serde_json::Value> = CODEX_CHILD
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter(|line| line["type"] == "session_meta")
+            .collect();
+        assert_eq!(metas.len(), 2);
+        assert_eq!(
+            metas[0]["payload"]["id"],
+            "01a04b20-766c-7213-83a2-332002c3af62"
+        );
+        assert_eq!(metas[0]["payload"]["thread_source"], "subagent");
+        assert_eq!(
+            metas[0]["payload"]["parent_thread_id"],
+            "01a04b20-646d-71c2-b14f-4d98e40ae172"
+        );
+        assert_eq!(
+            metas[1]["payload"]["id"],
+            "01a04b20-646d-71c2-b14f-4d98e40ae172"
+        );
+
+        // Both files read, both figures in: the parent was not skipped as a
+        // thread the child claimed to be.
+        let dir = TempDir::new().expect("a temp dir");
+        assert_eq!(
+            codex_usage(&codex_spawn_capture(&dir)).map(|usage| usage.input_tokens),
+            Some(45845 + 30645)
+        );
+    }
+
+    /// And the sub-agent's own rollout, handed over as its own hooks hand it
+    /// over, reports nothing — the 30645 is already inside the parent's
+    /// answer, and a second report of it would reach the daemon as another
+    /// `source` of the same session.
+    #[test]
+    fn the_captured_subagent_rollout_reports_nothing_of_its_own() {
+        let dir = TempDir::new().expect("a temp dir");
+        codex_spawn_capture(&dir);
+        assert_eq!(codex_usage(&dir.path().join(CODEX_CHILD_FILE)), None);
     }
 
     /// Every `total_token_usage` a rollout carries, in the order codex wrote
