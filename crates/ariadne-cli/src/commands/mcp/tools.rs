@@ -57,10 +57,11 @@ pub struct ReviewerReq {
     /// Reviewer profile id or name.
     pub profile: String,
     /// What this reviewer runs on, `<agent_kind>[:<model>]` as `list_models`
-    /// spells it; omit it for the profile's own.
+    /// spells it, whose entries compare on tier, cost and speed; omit it for
+    /// the profile's own.
     pub model: Option<String>,
-    /// The effort to run that model at, one `list_models` lists for it; omit
-    /// it for the model's own default.
+    /// One of the `efforts[].id` `list_models` lists for that model; omit it
+    /// for the model's own default.
     pub effort: Option<String>,
 }
 
@@ -72,10 +73,11 @@ pub struct CreateTaskReq {
     /// Engineer profile id or name that will own the task.
     pub engineer_profile: String,
     /// What the engineer runs on, `<agent_kind>[:<model>]` as `list_models`
-    /// spells it; omit it for the profile's own.
+    /// spells it, whose entries compare on tier, cost and speed; omit it for
+    /// the profile's own.
     pub engineer_model: Option<String>,
-    /// The effort to run that model at, one `list_models` lists for it; omit
-    /// it for the model's own default.
+    /// One of the `efforts[].id` `list_models` lists for that model; omit it
+    /// for the model's own default.
     pub engineer_effort: Option<String>,
     /// The reviewers of the task, in review order (at least one).
     pub reviewers: Vec<ReviewerReq>,
@@ -91,10 +93,11 @@ pub struct UpdateTaskReq {
     pub task_id: String,
     pub title: Option<String>,
     pub description: Option<String>,
-    /// What the engineer runs on; "default" hands it back to the profile's
-    /// own model.
+    /// What the engineer runs on, comparable on `list_models`' tier, cost and
+    /// speed; "default" hands it back to the profile's own model.
     pub engineer_model: Option<String>,
-    /// The effort to run it at; "default" hands it back to the model's own.
+    /// One of the `efforts[].id` `list_models` lists for that model;
+    /// "default" hands it back to the model's own.
     pub engineer_effort: Option<String>,
     /// Full replacement list of the reviewers, in review order.
     pub reviewers: Option<Vec<ReviewerReq>>,
@@ -317,7 +320,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "List what an engineer or a reviewer can be pinned to: every agent CLI and model, spelled the way a task takes it, with the efforts each can be run at and the one it runs at by default."
+        description = "List what an engineer or a reviewer can be pinned to: every agent CLI and model, spelled the way a task takes it, each with a one-line description; a `tier` (frontier, strong, balanced, fast, or `unknown` where nothing is curated about it, in which case there are no cost/speed bands or best_for/avoid_for either); a `cost` and a `speed`, both 1-5 bands ranked across the whole catalog, cost low to high and speed slow to fast; `best_for` and `avoid_for`, the task shapes it does and does not suit; and `efforts`, each with an id, a description of what it buys, and one flagged `default` for the effort its agent CLI runs it at without `--effort`."
     )]
     async fn list_models(
         &self,

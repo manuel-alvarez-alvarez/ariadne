@@ -54,7 +54,11 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    `ariadne models ls` lists for that model, and it belongs to the model it
    runs at: a pin that names a model and no effort runs at the CLI's own
    default, and only a pin left on the profile's own model keeps the profile's
-   effort.
+   effort. `list_models` describes what the planner sizes a task from: each
+   model's tier, a cost and a speed band, what task shapes it is and is not a
+   fit for, and what each of its efforts buys — `ariadne models show
+   <model>` prints the same card (or, until that lands, `ariadne models ls
+   --format json` carries the same fields).
 3. The scheduler takes over: when a task's dependencies are merged it becomes
    `ready` and an **engineer** is spawned in a dedicated git worktree, on a
    branch named after the task — its title slugged plus a short tail of its
