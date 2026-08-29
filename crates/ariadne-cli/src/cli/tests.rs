@@ -95,6 +95,7 @@ const LEAVES: &[(&str, bool)] = &[
     ("daemon status", true),
     ("daemon stop", true),
     ("doctor", true),
+    ("events", true),
     ("goal attach", false),
     ("goal cancel", true),
     ("goal create", true),

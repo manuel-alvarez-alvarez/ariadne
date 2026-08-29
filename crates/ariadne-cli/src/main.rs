@@ -112,7 +112,13 @@ async fn run(cli: Cli) -> Result<ExitCode> {
                 let client = Client::resolve(cli.endpoint.as_deref(), home.clone());
                 commands::daemon::status(&client, home, format).await
             }
-            DaemonCommand::Logs { follow } => commands::daemon::logs(home, follow),
+            // Read like `status` rather than driven like the rest: the log
+            // comes from the daemon itself, so `--endpoint` reaches the one it
+            // names, and the home is only what the file fallback is found in.
+            DaemonCommand::Logs { follow } => {
+                let client = Client::resolve(cli.endpoint.as_deref(), home.clone());
+                commands::daemon::logs(&client, home, follow).await
+            }
         },
         Command::Attach { id, role } => commands::attach::attach_any(&client, &id, role).await,
         Command::Agent { command } => commands::agent::run(&client, command, format).await,
@@ -122,7 +128,22 @@ async fn run(cli: Cli) -> Result<ExitCode> {
         Command::Task { command } => commands::task::run(&client, command, format).await,
         Command::Session { command } => commands::session::run(&client, command, format).await,
         Command::Models { command } => commands::models::run(&client, command, format).await,
-        Command::Attention => commands::attention::run(&client, format).await,
+        Command::Attention { watch } => commands::attention::run(&client, watch, format).await,
+        Command::Events {
+            follow,
+            goal,
+            task,
+            session,
+            kinds,
+        } => {
+            let filters = commands::events::Filters {
+                goal,
+                task,
+                session,
+                kinds,
+            };
+            commands::events::run(&client, filters, follow, format).await
+        }
         Command::Setup {
             command: SetupCommand::CodexHooks { cli_bin },
         } => commands::setup::codex_hooks(cli_bin),

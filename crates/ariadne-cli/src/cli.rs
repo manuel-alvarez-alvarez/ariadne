@@ -350,12 +350,39 @@ pub enum Command {
         #[command(subcommand)]
         command: SessionCommand,
     },
+    /// Show what the daemon has been doing, one line per event
+    ///
+    /// The agent events already recorded, and with -f the live stream on top
+    /// of them: goals, tasks, sessions, messages and reviews as they change.
+    /// Each line is `time · kind · subject · detail`; `--format json` writes
+    /// one object per line, so a pipe can read it as it goes.
+    Events {
+        /// Keep printing events as they happen
+        #[arg(short, long)]
+        follow: bool,
+        /// Only events of this goal
+        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
+        goal: Option<String>,
+        /// Only events of this task
+        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
+        task: Option<String>,
+        /// Only events of this agent session
+        #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::session_ids))]
+        session: Option<String>,
+        /// Only events of this kind (repeatable): task_updated, stop, ...
+        #[arg(long = "kind", value_name = "KIND")]
+        kinds: Vec<String>,
+    },
     /// Show everything that needs a human, grouped by goal
     ///
     /// The UI's Attention page from the terminal: tasks that failed or
     /// stalled, plus agent sessions waiting on a permission prompt or an
     /// answer, in error, disconnected or stalled.
-    Attention,
+    Attention {
+        /// Redraw the list whenever something on it changes, until Ctrl-C
+        #[arg(long)]
+        watch: bool,
+    },
     /// Attach to the tmux session of a session, task or goal id
     ///
     /// The terminal of whichever agent that id names, revived first when its
@@ -441,8 +468,12 @@ pub enum DaemonCommand {
     /// Show daemon status, and which service manages it
     Status,
     /// Show (or follow) the daemon log
+    ///
+    /// Read from the daemon itself, which is where its log is whether or not
+    /// anything wrote it to a file; the file under the ariadne home is the
+    /// fallback for a daemon that is not answering.
     Logs {
-        /// Follow the log (tail -f)
+        /// Keep printing lines as the daemon writes them
         #[arg(short, long)]
         follow: bool,
     },

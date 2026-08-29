@@ -22,8 +22,10 @@ use serde::Serialize;
 use ariadne_api::goals::GoalDto;
 use ariadne_api::sessions::SessionDto;
 use ariadne_api::tasks::TaskDto;
-use ariadne_client::Client;
+use ariadne_client::{Client, SseEvent};
 use ariadne_core::{AttentionReason, TaskStatus};
+
+use super::follow;
 
 use crate::output::{Format, note, print_json, print_table, view};
 use board::{ROWS, group, heading, rows, task_titles};
@@ -119,7 +121,36 @@ fn session_at(session: &SessionDto) -> &str {
         .unwrap_or(&session.created_at)
 }
 
-pub async fn run(client: &Client, format: Format) -> Result<()> {
+/// The events that can put a row on this list or take one off it: a task's
+/// status or stall flag, a session's attention flag, and a goal appearing or
+/// going. Nothing else redraws it — an agent event moves the daemon, and it is
+/// the daemon's own write that arrives here as a session update.
+fn relevant(frame: &SseEvent) -> bool {
+    matches!(
+        frame.event.as_str(),
+        "goal_created"
+            | "goal_updated"
+            | "goal_deleted"
+            | "task_created"
+            | "task_updated"
+            | "session_created"
+            | "session_updated"
+    )
+}
+
+pub async fn run(client: &Client, watch: bool, format: Format) -> Result<()> {
+    if !watch {
+        return render(client, format).await;
+    }
+    follow::watch(client, "/v1/events/stream", relevant, async || {
+        render(client, format).await
+    })
+    .await
+}
+
+/// The list as it stands, read afresh: a redraw is the current answer, never
+/// the last one patched up from the events that woke it.
+async fn render(client: &Client, format: Format) -> Result<()> {
     let goals: Vec<GoalDto> = client.get_json("/v1/goals").await?;
     let tasks: Vec<TaskDto> = client.get_json("/v1/tasks").await?;
     // Unfiltered, and narrowed by `session_reason` below rather than by the

@@ -8,13 +8,15 @@ use serde_json::json;
 
 use ariadne_api::messages::{CreateMessageRequest, MessageDto};
 use ariadne_api::reviews::ReviewDto;
+use ariadne_api::stream::EventStreamQuery;
 use ariadne_api::tasks::{
     CreateTaskRequest, ReviewerAssignment, TaskDto, TaskListQuery, TaskTransitionDto,
 };
 use ariadne_api::usage::TokenUsageDto;
-use ariadne_client::Client;
+use ariadne_client::{Client, SseEvent};
 use ariadne_core::TaskStatus;
 
+use super::follow;
 use super::resolve::{self, Kind};
 use super::{
     ProfileNames, Subject, confirm, one_of, parse_model, parse_model_or_default, print_thread,
@@ -176,6 +178,9 @@ pub enum TaskCommand {
         /// still going; nothing to add once --status names one
         #[arg(short, long)]
         all: bool,
+        /// Redraw the table whenever a task changes, until Ctrl-C
+        #[arg(long)]
+        watch: bool,
     },
     /// Show a task
     Inspect {
@@ -259,6 +264,9 @@ pub enum TaskCommand {
         /// engineer (default) or reviewer
         #[arg(long, value_parser = Spelling::<ariadne_core::Role>::new())]
         role: Option<ariadne_core::Role>,
+        /// Keep printing output until the session ends
+        #[arg(short, long)]
+        follow: bool,
     },
 }
 
@@ -327,34 +335,8 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             goal,
             statuses,
             all,
-        } => {
-            let filtered = goal.is_some() || !statuses.is_empty();
-            // `GET /v1/tasks` takes one status, so one is asked for and the
-            // rest is narrowed on the answer — with the live/finished split.
-            let status = one_of(&statuses);
-            let goal = match goal {
-                Some(goal) => Some(resolve::id(client, Kind::Goal, &goal).await?),
-                None => None,
-            };
-            let path = query_path("/v1/tasks", &TaskListQuery { goal, status })?;
-            let tasks: Vec<TaskDto> = client.get_json(&path).await?;
-            let tasks = visible(tasks, all, &statuses);
-            let now = chrono::Utc::now();
-            print_list(
-                format,
-                &tasks,
-                LS,
-                |t| ls_row(t, now),
-                // An empty list under a filter is not an empty system, and
-                // saying so would send the reader looking for tasks that are
-                // right there.
-                match (filtered, all) {
-                    (true, _) => "no tasks match that filter",
-                    (false, true) => "no tasks yet — the planner creates them from a goal",
-                    (false, false) => "no tasks under way — finished ones are behind --all",
-                },
-            )?;
-        }
+            watch,
+        } => ls(client, goal, statuses, all, watch, format).await?,
         TaskCommand::Inspect { id } => {
             let id = resolve::id(client, Kind::Task, &id).await?;
             let t: TaskDto = client.get_json(&task_path(&id)).await?;
@@ -499,16 +481,10 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             let id = resolve::id(client, Kind::Task, &id).await?;
             crate::commands::attach::attach(client, &id, role).await?;
         }
-        TaskCommand::Logs { id, role } => {
+        TaskCommand::Logs { id, role, follow } => {
             let id = resolve::id(client, Kind::Task, &id).await?;
             let session = crate::commands::attach::resolve_tmux(client, &id, role).await?;
-            let logs: ariadne_api::sessions::SessionLogsResponse = client
-                .get_json(&format!("/v1/sessions/{}/logs", session.id))
-                .await?;
-            match format {
-                Format::Json => print_json(&logs)?,
-                Format::Table => pager::page(&logs.logs)?,
-            }
+            crate::commands::session::logs(client, &session.id, follow, format).await?;
         }
     }
     Ok(())
@@ -516,6 +492,80 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
 
 fn task_path(id: &str) -> String {
     format!("/v1/tasks/{id}")
+}
+
+/// The events that change what `task ls` shows. A goal going takes its tasks
+/// with it, which no `task_*` event says.
+fn relevant(frame: &SseEvent) -> bool {
+    matches!(
+        frame.event.as_str(),
+        "task_created" | "task_updated" | "goal_deleted"
+    )
+}
+
+/// `task ls [--watch]`: the table, and with `--watch` the table again every
+/// time a task moves.
+async fn ls(
+    client: &Client,
+    goal: Option<String>,
+    statuses: Vec<TaskStatus>,
+    all: bool,
+    watch: bool,
+    format: Format,
+) -> Result<()> {
+    // Resolved once rather than per redraw: what the caller typed names the
+    // same goal every time round, and a watch is not a new question.
+    let goal = match goal {
+        Some(goal) => Some(resolve::id(client, Kind::Goal, &goal).await?),
+        None => None,
+    };
+    if !watch {
+        return render(client, goal, &statuses, all, format).await;
+    }
+    // The stream takes the same goal filter the list does, so a watch on one
+    // goal is not woken by every other goal in the system.
+    let path = query_path(
+        "/v1/events/stream",
+        &EventStreamQuery {
+            goal: goal.clone(),
+            task: None,
+        },
+    )?;
+    follow::watch(client, &path, relevant, async || {
+        render(client, goal.clone(), &statuses, all, format).await
+    })
+    .await
+}
+
+/// The table as it stands, read afresh.
+async fn render(
+    client: &Client,
+    goal: Option<String>,
+    statuses: &[TaskStatus],
+    all: bool,
+    format: Format,
+) -> Result<()> {
+    let filtered = goal.is_some() || !statuses.is_empty();
+    // `GET /v1/tasks` takes one status, so one is asked for and the rest is
+    // narrowed on the answer — with the live/finished split.
+    let status = one_of(statuses);
+    let path = query_path("/v1/tasks", &TaskListQuery { goal, status })?;
+    let tasks: Vec<TaskDto> = client.get_json(&path).await?;
+    let tasks = visible(tasks, all, statuses);
+    let now = chrono::Utc::now();
+    print_list(
+        format,
+        &tasks,
+        LS,
+        |t| ls_row(t, now),
+        // An empty list under a filter is not an empty system, and saying so
+        // would send the reader looking for tasks that are right there.
+        match (filtered, all) {
+            (true, _) => "no tasks match that filter",
+            (false, true) => "no tasks yet — the planner creates them from a goal",
+            (false, false) => "no tasks under way — finished ones are behind --all",
+        },
+    )
 }
 
 /// One row of `task ls`, in [`LS`]'s order.

@@ -2,13 +2,15 @@
 //! docker-style) or TCP where the daemon exposes one. Used by the CLI and the
 //! MCP server.
 
+use std::collections::VecDeque;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use bytes::Bytes;
-use http::{Method, Request, StatusCode, header};
+use http::{Method, Request, Response, StatusCode, header};
 use http_body_util::{BodyExt, Full};
+use hyper::body::Incoming;
 use hyper_util::client::legacy::Client as HyperClient;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
@@ -24,6 +26,9 @@ use ariadne_api::{HealthResponse, VersionResponse};
 use ariadne_core::{AgentKind, PromptKind};
 
 pub mod endpoint;
+pub mod sse;
+
+pub use sse::{SseEvent, SseParser};
 
 /// Environment variable pointing at the daemon endpoint. Either a filesystem
 /// path (unix socket) or an `http://host:port` URL (TCP).
@@ -389,6 +394,40 @@ impl Client {
         Ok(serde_json::from_slice(&bytes)?)
     }
 
+    /// Follow a server-sent-event endpoint: [`SseStream`] hands out the
+    /// frames the daemon writes, for as long as it keeps the connection open.
+    ///
+    /// The response is awaited under the usual timeout — headers are the
+    /// daemon's to send promptly — and the body is then read without one: an
+    /// idle stream is a stream with nothing to say, not a stalled request, and
+    /// the daemon's own keep-alive is what proves it is still there.
+    ///
+    /// Nothing is sent for `Last-Event-ID`. None of the daemon's streams
+    /// replays: each one opens with a snapshot of the state it follows, which
+    /// is the resync, and it documents the header as ignored.
+    ///
+    /// Cancelling is dropping: the caller stops awaiting [`SseStream::next`]
+    /// — on Ctrl-C, say — and the connection goes with the stream.
+    pub async fn stream(&self, path: &str) -> Result<SseStream, ClientError> {
+        let mut builder = Request::builder()
+            .method(Method::GET)
+            .header(header::ACCEPT, "text/event-stream");
+        if let Some(session) = &self.session_id {
+            builder = builder.header(ariadne_api::SESSION_HEADER, session);
+        }
+        let response = self.send(builder, path, Bytes::new()).await?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(self.api_error(status, self.collect(response).await?));
+        }
+        Ok(SseStream {
+            body: response.into_body(),
+            parser: sse::SseParser::new(),
+            ready: VecDeque::new(),
+            endpoint: self.endpoint.clone(),
+        })
+    }
+
     /// Send a request; return the raw success body, mapping non-2xx onto the
     /// uniform error envelope.
     async fn request_raw<B: Serialize>(
@@ -410,43 +449,62 @@ impl Client {
             builder = builder.header(ariadne_api::SESSION_HEADER, session);
         }
 
-        let response = match &self.transport {
+        let response = self.send(builder, path, payload).await?;
+        let status = response.status();
+        let bytes = self.collect(response).await?;
+
+        match status.is_success() {
+            true => Ok(bytes),
+            false => Err(self.api_error(status, bytes)),
+        }
+    }
+
+    /// One request at the uri this client's transport spells, awaited under
+    /// the request timeout.
+    async fn send(
+        &self,
+        builder: http::request::Builder,
+        path: &str,
+        payload: Bytes,
+    ) -> Result<Response<Incoming>, ClientError> {
+        match &self.transport {
             Transport::Unix { client, socket } => {
                 let uri: http::Uri = UnixUri::new(socket, path).into();
                 self.awaiting(client.request(request(builder, uri, payload)))
-                    .await?
+                    .await
             }
             Transport::Tcp { client, base } => {
                 let uri: http::Uri = format!("{base}{path}").parse().expect("valid TCP uri");
                 self.awaiting(client.request(request(builder, uri, payload)))
-                    .await?
+                    .await
             }
-        };
+        }
+    }
 
-        let status = response.status();
-        let bytes = response
+    /// A whole response body, however many frames it arrived in.
+    async fn collect(&self, response: Response<Incoming>) -> Result<Bytes, ClientError> {
+        Ok(response
             .into_body()
             .collect()
             .await
             .map_err(|e| self.unreachable(e))?
-            .to_bytes();
+            .to_bytes())
+    }
 
-        if status.is_success() {
-            Ok(bytes)
-        } else {
-            // Try the uniform error envelope, fall back to raw text.
-            match serde_json::from_slice::<ErrorBody>(&bytes) {
-                Ok(body) => Err(ClientError::Api {
-                    status,
-                    code: body.error.code,
-                    message: body.error.message,
-                }),
-                Err(_) => Err(ClientError::Api {
-                    status,
-                    code: "unknown_error".into(),
-                    message: String::from_utf8_lossy(&bytes).into_owned(),
-                }),
-            }
+    /// A failed response as an error: the uniform envelope where the daemon
+    /// sent one, the raw text where it did not.
+    fn api_error(&self, status: StatusCode, bytes: Bytes) -> ClientError {
+        match serde_json::from_slice::<ErrorBody>(&bytes) {
+            Ok(body) => ClientError::Api {
+                status,
+                code: body.error.code,
+                message: body.error.message,
+            },
+            Err(_) => ClientError::Api {
+                status,
+                code: "unknown_error".into(),
+                message: String::from_utf8_lossy(&bytes).into_owned(),
+            },
         }
     }
 
@@ -476,6 +534,52 @@ impl Client {
     #[cfg(test)]
     fn is_tcp(&self) -> bool {
         matches!(self.transport, Transport::Tcp { .. })
+    }
+}
+
+/// A server-sent-event response being read, frame by frame.
+///
+/// Opened by [`Client::stream`] and the same over either transport: what
+/// differs between a unix socket and a TCP port is behind `Incoming`, not in
+/// the framing. Dropping it closes the connection, which is how a follow mode
+/// stops.
+pub struct SseStream {
+    body: Incoming,
+    parser: sse::SseParser,
+    /// Frames one body chunk completed, waiting to be handed out.
+    ready: VecDeque<SseEvent>,
+    /// For the error a broken connection is reported as.
+    endpoint: String,
+}
+
+impl SseStream {
+    /// The next frame, or `None` once the daemon has closed the stream.
+    ///
+    /// Cancel-safe in the one way a follow mode needs: a `next` dropped
+    /// unfinished — by a `select!` on Ctrl-C — loses at most the chunk in
+    /// flight, and the stream is being dropped with it.
+    pub async fn next(&mut self) -> Option<Result<SseEvent, ClientError>> {
+        loop {
+            if let Some(event) = self.ready.pop_front() {
+                return Some(Ok(event));
+            }
+            match self.body.frame().await? {
+                Ok(frame) => {
+                    // Trailers carry no events; only data frames are wire.
+                    if let Some(chunk) = frame.data_ref() {
+                        let mut out = Vec::new();
+                        self.parser.push(chunk, &mut out);
+                        self.ready.extend(out);
+                    }
+                }
+                Err(e) => {
+                    return Some(Err(ClientError::Unreachable {
+                        endpoint: self.endpoint.clone(),
+                        source: Box::new(e),
+                    }));
+                }
+            }
+        }
     }
 }
 

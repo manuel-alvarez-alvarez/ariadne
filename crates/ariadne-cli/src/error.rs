@@ -184,7 +184,7 @@ fn json_error(err: &anyhow::Error) -> serde_json::Value {
 }
 
 /// The daemon-side failure behind an error, if that is what went wrong.
-fn client_error(err: &anyhow::Error) -> Option<&ClientError> {
+pub(crate) fn client_error(err: &anyhow::Error) -> Option<&ClientError> {
     err.chain().find_map(|e| e.downcast_ref::<ClientError>())
 }
 

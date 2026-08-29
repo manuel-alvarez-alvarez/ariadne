@@ -6,17 +6,20 @@ use anyhow::Result;
 use clap::Subcommand;
 
 use ariadne_api::goals::GoalDto;
-use ariadne_api::sessions::{SessionDto, SessionInputRequest, SessionListQuery};
+use ariadne_api::sessions::{
+    SessionDto, SessionInputRequest, SessionListQuery, SessionLogChunk, SessionLogsResponse,
+};
 use ariadne_api::tasks::TaskDto;
 use ariadne_client::Client;
 use ariadne_core::{AttentionReason, Role, SessionStatus};
 
 use super::attention::reason_label;
+use super::follow::{self, Ending, Next};
 use super::resolve::{self, Kind};
 use super::{ProfileNames, Subject, confirm, one_of, query_path};
 use crate::cli::values::Spelling;
 use crate::output::{
-    Column, Format, UNCAPPED, age, at, col, dash, moment, pager, print, print_json, print_kv,
+    Column, Format, UNCAPPED, age, at, col, dash, moment, note, pager, print, print_json, print_kv,
     print_list, short_id, usage_block, usage_cell,
 };
 
@@ -115,6 +118,9 @@ pub enum SessionCommand {
         /// Session id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::session_ids))]
         id: String,
+        /// Keep printing output until the session ends
+        #[arg(short, long)]
+        follow: bool,
     },
     /// Revive an ended session: new tmux, same agent conversation
     Resume {
@@ -252,16 +258,9 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
                 || println!("typed into session {id}"),
             )?;
         }
-        SessionCommand::Logs { id } => {
+        SessionCommand::Logs { id, follow } => {
             let id = resolve::id(client, Kind::Session, &id).await?;
-            let logs: ariadne_api::sessions::SessionLogsResponse =
-                client.get_json(&format!("/v1/sessions/{id}/logs")).await?;
-            match format {
-                Format::Json => print_json(&logs)?,
-                // A pane's scrollback is longer than a screen: it goes
-                // through the pager when there is somebody to page for.
-                Format::Table => pager::page(&logs.logs)?,
-            }
+            logs(client, &id, follow, format).await?;
         }
         SessionCommand::Resume { id } => {
             let id = resolve::id(client, Kind::Session, &id).await?;
@@ -317,6 +316,86 @@ fn keystrokes(text: &str, no_newline: bool) -> String {
 
 fn session_path(id: &str) -> String {
     format!("/v1/sessions/{id}")
+}
+
+/// `session logs` and `task logs`: the pane's recent output, and with
+/// `follow` everything it prints from here until the session ends.
+///
+/// A followed snapshot comes from the stream rather than from `GET
+/// /v1/sessions/{id}/logs`: the stream opens with the same scrollback, drawn
+/// at the grid the pane is actually using, and taking it from there is what
+/// leaves no gap between the snapshot and the output that follows it. Reading
+/// both would print the overlap twice.
+pub async fn logs(client: &Client, id: &str, follow_it: bool, format: Format) -> Result<()> {
+    if !follow_it {
+        let logs: SessionLogsResponse = client.get_json(&format!("/v1/sessions/{id}/logs")).await?;
+        return match format {
+            Format::Json => print_json(&logs),
+            // A pane's scrollback is longer than a screen: it goes through
+            // the pager when there is somebody to page for. A follow has no
+            // end to page and writes straight out.
+            Format::Table => pager::page(&logs.logs),
+        };
+    }
+    let mut opened = false;
+    let ending = follow::frames(client, &format!("/v1/sessions/{id}/logs/stream"), |frame| {
+        Ok(match frame.event.as_str() {
+            // Both carry a chunk of terminal output. A `snapshot` after the
+            // first one is the pane redrawn at a grid it has been resized to,
+            // and means "replace everything" — which a terminal that has
+            // already scrolled cannot do, so it is said instead and the fresh
+            // screen printed under it.
+            "snapshot" | "delta" => {
+                if frame.event == "snapshot" && std::mem::replace(&mut opened, true) {
+                    note(&format!(
+                        "the pane of {id} was resized — what follows is its screen at the new size"
+                    ));
+                }
+                if let Ok(chunk) = serde_json::from_str::<SessionLogChunk>(&frame.data) {
+                    print_chunk(format, &frame.event, &chunk.chunk);
+                }
+                Next::Go
+            }
+            // The pane's grid: nothing to print, and the snapshot behind it is
+            // what says the size changed.
+            "resize" => Next::Go,
+            "end" => Next::Stop,
+            _ => Next::Go,
+        })
+    })
+    .await?;
+
+    // The one line that says why the output stopped, on stderr so a redirected
+    // log is only the log.
+    match ending {
+        Ending::Done => note(&ended(client, id).await),
+        Ending::Dropped => note(&format!(
+            "log stream for {id} closed while the session was still live — \
+             run it again to reconnect"
+        )),
+        Ending::Interrupted => {}
+    }
+    Ok(())
+}
+
+/// One chunk of terminal output, as it was written — escape sequences and all,
+/// which is what makes it look like the pane it came from. Flushed as it goes:
+/// a tail nobody sees until the buffer fills is not a tail.
+fn print_chunk(format: Format, event: &str, chunk: &str) {
+    match format {
+        Format::Json => println!("{}", serde_json::json!({"event": event, "chunk": chunk})),
+        Format::Table => print!("{chunk}"),
+    }
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+}
+
+/// What the session ended as, for the last line of a follow. The status is
+/// worth a second call: `end` says the output is over and nothing else.
+async fn ended(client: &Client, id: &str) -> String {
+    match client.get_json::<SessionDto>(&session_path(id)).await {
+        Ok(s) => format!("session {id} ended ({})", s.status.as_str()),
+        Err(_) => format!("session {id} ended"),
+    }
 }
 
 /// Which of the sessions the daemon answered with `session ls` shows.

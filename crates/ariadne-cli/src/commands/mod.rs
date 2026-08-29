@@ -7,8 +7,10 @@ pub mod attention;
 pub mod completions;
 pub mod daemon;
 pub mod doctor;
+pub mod events;
 #[cfg(test)]
 pub mod fixtures;
+pub mod follow;
 pub mod goal;
 pub mod mcp;
 pub mod models;

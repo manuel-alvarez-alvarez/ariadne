@@ -16,11 +16,13 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use serde_json::json;
 
+use ariadne_api::logs::{LogLineDto, LogSnapshotResponse, LogsQuery};
 use ariadne_client::{Client, endpoint};
 
 use self::service::{Action, Service};
-use super::{ariadne_home, find_ariadned};
-use crate::output::{Format, duration, print};
+use super::follow::{self, Next};
+use super::{ariadne_home, find_ariadned, query_path};
+use crate::output::{Format, duration, local_time, note, pager, print};
 
 /// How long `daemon start` waits for a daemon it just launched to answer.
 const READY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -209,15 +211,177 @@ fn local(client: &Client, root: &Path) -> (Option<u32>, Option<String>) {
     (pid, tcp)
 }
 
-/// `ariadne daemon logs [-f]` — show the log of this home's daemon via tail.
-pub fn logs(home: Option<PathBuf>, follow: bool) -> Result<()> {
+/// How many lines of the daemon's buffer `daemon logs` shows, and how many of
+/// the file the fallback tails.
+const LOG_TAIL: usize = 200;
+
+/// `ariadne daemon logs [-f]` — the daemon's own log, from the daemon.
+///
+/// Asked of the API rather than of a file, because under a service manager
+/// there is usually no file: `ariadned`'s stdout is the journal's, and the
+/// only place its log is reliably readable is the ring buffer it keeps for
+/// `/v1/logs`. It also means `--endpoint` reaches the daemon it names, which
+/// a path under a home on this machine never could.
+///
+/// The file is the fallback, for the one case the API cannot serve: a daemon
+/// that is not answering, which is exactly when its last lines are wanted.
+pub async fn logs(client: &Client, home: Option<PathBuf>, follow: bool) -> Result<()> {
+    let served = match follow {
+        true => follow_log(client).await,
+        false => print_log(client).await,
+    };
+    match served {
+        Err(e) if follow::unreachable(&e) => {
+            note(&format!(
+                "cannot reach the ariadne daemon at {} — reading the log file instead",
+                client.endpoint()
+            ));
+            tail_log_file(home, follow)
+        }
+        other => other,
+    }
+}
+
+/// The daemon's buffer as it stands.
+///
+/// Through the pager, like every other log snapshot: two hundred lines is
+/// several screens, and there is an end to page to. A follow has none and
+/// writes straight out.
+async fn print_log(client: &Client) -> Result<()> {
+    let path = query_path(
+        "/v1/logs",
+        &LogsQuery {
+            tail: Some(LOG_TAIL),
+        },
+    )?;
+    let snapshot: LogSnapshotResponse = client.get_json(&path).await?;
+    let lines: Vec<String> = snapshot.lines.iter().map(log_line).collect();
+    pager::page(&format!("{}\n", lines.join("\n")))
+}
+
+/// The same, and then every line the daemon writes from here on.
+///
+/// The buffer arrives as the stream's own opening `snapshot`, so there is no
+/// window between what was printed and what is followed. Every connection
+/// opens with one, reconnects included, and what a reconnect's carries is
+/// mostly lines this tail has already shown — so it is printed from where
+/// [`Shown`] says the two stop overlapping.
+async fn follow_log(client: &Client) -> Result<()> {
+    let mut shown = Shown::default();
+    follow::frames_reconnecting(client, "/v1/logs/stream", move |frame| {
+        match frame.event.as_str() {
+            "snapshot" => {
+                let snapshot: LogSnapshotResponse = serde_json::from_str(&frame.data)?;
+                // The first connection wants the recent past rather than the
+                // whole buffer; a later one's unseen lines are the gap it
+                // opened, and all of them are wanted.
+                let from = match shown.is_empty() {
+                    true => snapshot.lines.len().saturating_sub(LOG_TAIL),
+                    false => shown.boundary(&snapshot.lines),
+                };
+                for line in &snapshot.lines[from..] {
+                    println!("{}", log_line(line));
+                    shown.note(line);
+                }
+            }
+            "delta" => {
+                let line: LogLineDto = serde_json::from_str(&frame.data)?;
+                println!("{}", log_line(&line));
+                shown.note(&line);
+            }
+            _ => {}
+        }
+        Ok(Next::Go)
+    })
+    .await
+}
+
+/// How many shown lines are kept to line a reconnect's snapshot up against.
+///
+/// Only ever read on a reconnect, and the longest run that lines up is what
+/// decides, so this is the length of the run that has to be ambiguous before
+/// the boundary can land on the wrong copy of a repeated line — far more of
+/// the daemon's own log than ever repeats.
+const OVERLAP: usize = 32;
+
+/// The tail of what a daemon-log follow has already shown, so that a
+/// reconnect's snapshot can be printed from where the last one left off.
+///
+/// The overlap is found by matching whole records rather than by comparing
+/// timestamps. A timestamp is not an identity: `tracing` stamps two events in
+/// the same microsecond often enough, and "newer than the last one shown"
+/// silently drops the second of them — a live `delta` sharing its stamp with
+/// the snapshot line before it included.
+#[derive(Default)]
+struct Shown(std::collections::VecDeque<LogLineDto>);
+
+impl Shown {
+    /// Where in `snapshot` the lines this tail has not shown begin.
+    ///
+    /// The longest run of what was shown that lines up inside the snapshot
+    /// wins, a longer match being a surer boundary. Nothing lining up at all
+    /// — a daemon that restarted, or a gap longer than its buffer — means the
+    /// two do not overlap, and every line of it is new.
+    fn boundary(&self, snapshot: &[LogLineDto]) -> usize {
+        let shown: Vec<&LogLineDto> = self.0.iter().collect();
+        for len in (1..=shown.len().min(snapshot.len())).rev() {
+            let tail = &shown[shown.len() - len..];
+            let lines_up = |run: &[LogLineDto]| run.iter().zip(tail).all(|(a, b)| same(a, b));
+            if let Some(at) = snapshot.windows(len).rposition(lines_up) {
+                return at + len;
+            }
+        }
+        0
+    }
+
+    /// Remember one line as shown, forgetting the oldest beyond [`OVERLAP`].
+    fn note(&mut self, line: &LogLineDto) {
+        if self.0.len() == OVERLAP {
+            self.0.pop_front();
+        }
+        self.0.push_back(line.clone());
+    }
+
+    /// Whether anything has been shown yet — which is what tells the first
+    /// connection from a reconnect.
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+/// Whether two captured lines are the same record. `LogLineDto` carries no id
+/// of its own, so all of it together is the closest thing to one.
+fn same(a: &LogLineDto, b: &LogLineDto) -> bool {
+    a.ts == b.ts && a.level == b.level && a.target == b.target && a.message == b.message
+}
+
+/// One captured line as a terminal reads it: when, how loud, from where, and
+/// what it said.
+fn log_line(line: &LogLineDto) -> String {
+    format!(
+        "{}  {:<5}  {}  {}",
+        local_time(&line.ts),
+        line.level,
+        line.target,
+        line.message
+    )
+}
+
+/// The fallback: the file every daemon of this home appends to, via tail.
+/// Only reachable when the daemon is not answering, so there is nothing left
+/// to keep this process around for — `tail` takes it over.
+fn tail_log_file(home: Option<PathBuf>, follow: bool) -> Result<()> {
     use std::os::unix::process::CommandExt;
     let log = log_file(&ariadne_home(home));
     if !log.is_file() {
-        bail!("no daemon log at {}", log.display());
+        bail!(
+            "no daemon log at {} either — a daemon started by launchd or systemd \
+             writes to the system log instead",
+            log.display()
+        );
     }
     let mut cmd = Command::new("tail");
-    cmd.arg("-n").arg("200");
+    cmd.arg("-n").arg(LOG_TAIL.to_string());
     if follow {
         cmd.arg("-f");
     }
@@ -430,6 +594,91 @@ mod tests {
 
     /// `daemon status` names the manager and what it calls the service, so the
     /// answer to "why did my daemon come back on its own" is in the status.
+    /// One captured daemon-log line, stamped and worded as the caller says.
+    fn log(ts: &str, message: &str) -> LogLineDto {
+        LogLineDto {
+            ts: ts.into(),
+            level: "INFO".into(),
+            target: "ariadned".into(),
+            message: message.into(),
+        }
+    }
+
+    /// What a tail has shown, in order.
+    fn shown(lines: &[LogLineDto]) -> Shown {
+        let mut shown = Shown::default();
+        for line in lines {
+            shown.note(line);
+        }
+        shown
+    }
+
+    /// The bug the overlap replaced: two records stamped in the same tick are
+    /// two records, and "newer than the last timestamp shown" dropped the
+    /// second of them for good — a live `delta` sharing the stamp of the
+    /// snapshot line before it included.
+    #[test]
+    fn two_records_stamped_in_the_same_tick_are_both_shown() {
+        let tick = "2026-08-29T02:00:00.000001Z";
+        let (first, second) = (log(tick, "listening"), log(tick, "spawning planner"));
+        let shown = shown(std::slice::from_ref(&first));
+        assert_eq!(
+            shown.boundary(&[first, second]),
+            1,
+            "only the record already shown is behind the boundary"
+        );
+    }
+
+    /// A reconnect's snapshot is mostly what has already been printed, and
+    /// what is past the overlap is the gap the disconnection opened.
+    #[test]
+    fn a_reconnect_shows_only_what_it_missed() {
+        let buffer: Vec<LogLineDto> = (0..6)
+            .map(|i| log(&format!("2026-08-29T02:00:0{i}Z"), &format!("line {i}")))
+            .collect();
+        let shown = shown(&buffer[..4]);
+        assert_eq!(shown.boundary(&buffer), 4);
+        assert_eq!(shown.boundary(&buffer[2..]), 2, "a buffer that has rolled");
+    }
+
+    /// Nothing lining up at all — a daemon that restarted, or a gap longer
+    /// than its buffer — is a snapshot that is new from end to end.
+    #[test]
+    fn a_snapshot_that_overlaps_nothing_is_all_new() {
+        let shown = shown(&[log("2026-08-29T02:00:00Z", "before the restart")]);
+        let fresh = [
+            log("2026-08-29T02:05:00Z", "starting ariadned 0.4.0"),
+            log("2026-08-29T02:05:01Z", "listening"),
+        ];
+        assert_eq!(shown.boundary(&fresh), 0);
+        assert_eq!(
+            Shown::default().boundary(&fresh),
+            0,
+            "and so is a first one"
+        );
+    }
+
+    /// The longest run that lines up decides, so a line the daemon repeats
+    /// does not put the boundary on the wrong copy of itself.
+    #[test]
+    fn the_longest_run_that_lines_up_decides_the_boundary() {
+        let (beat, work) = (
+            log("2026-08-29T02:00:00Z", "sweeping sessions"),
+            log("2026-08-29T02:00:01Z", "spawning planner"),
+        );
+        let buffer = [
+            beat.clone(),
+            work.clone(),
+            beat.clone(),
+            work.clone(),
+            log("2026-08-29T02:00:02Z", "task merged"),
+        ];
+        // The tail shown ends on the *second* pair, and matching the whole run
+        // of it is what says so — the last line alone appears twice.
+        assert_eq!(shown(&buffer[..4]).boundary(&buffer), 4);
+        assert_eq!(shown(&[beat, work]).boundary(&buffer), 4);
+    }
+
     #[test]
     fn status_says_which_service_manages_the_daemon() {
         assert_eq!(
