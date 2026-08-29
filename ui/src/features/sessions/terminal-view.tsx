@@ -24,6 +24,7 @@ import { useBaseUrl } from "@/stores/settings"
 import { type SessionLogStatus, SessionLogStream, sessionLogStreamUrl } from "./log-stream"
 import { isLiveStatus } from "./session-display"
 import { ConnectingScreen, StreamStatus } from "./terminal-chrome"
+import { TERMINAL_FRAME_ATTRIBUTE } from "./terminal-focus"
 import { writeDelta, writeResize, writeSnapshot } from "./terminal-sink"
 import { useTerminal } from "./use-terminal"
 
@@ -35,7 +36,6 @@ export function TerminalView({
   expanded,
   autoFocus,
   onExpandedChange,
-  onFocusChange,
 }: {
   sessionId: string
   status: SessionStatus
@@ -46,12 +46,11 @@ export function TerminalView({
   /** Hand the pane the keyboard on mount; see {@link SessionDetailView}. */
   autoFocus?: boolean
   onExpandedChange: (expanded: boolean) => void
-  onFocusChange: (focused: boolean) => void
 }) {
   const live = isLiveStatus(status)
   const baseUrl = useBaseUrl()
   const { containerRef, following, forgetRequestedSize, frameRef, refit, terminalRef } =
-    useTerminal({ sessionId, live, expanded, onFocusChange })
+    useTerminal({ sessionId, live, expanded })
   const streamRef = useRef<SessionLogStream | null>(null)
   const [streamStatus, setStreamStatus] = useState<SessionLogStatus>("connecting")
   /**
@@ -162,8 +161,15 @@ export function TerminalView({
       */}
       <div
         ref={frameRef}
+        // What a dismissal asks to find out whether Escape was the pane's; see
+        // `terminal-focus.ts`.
+        {...{ [TERMINAL_FRAME_ATTRIBUTE]: "" }}
         className={cn(
           "relative overflow-hidden rounded-lg border bg-card shadow-xs",
+          // Typing goes to whatever holds the keyboard, and the pane holding it
+          // is the difference between Escape reaching the agent and closing the
+          // panel — so the frame says when it is the one being typed into.
+          "focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50",
           // All that is left of the dialog, and the height the font is scaled
           // against there.
           expanded && "min-h-0 flex-1",

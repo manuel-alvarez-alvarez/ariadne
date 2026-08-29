@@ -20,7 +20,7 @@
  */
 
 import { Minimize2Icon } from "lucide-react"
-import { useCallback, useRef, useState } from "react"
+import { useCallback, useState } from "react"
 import { createPortal } from "react-dom"
 
 import type { SessionStatus } from "@/api"
@@ -28,6 +28,7 @@ import { EmptyState } from "@/components/empty-state"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 
+import { isTerminalEscape } from "./terminal-focus"
 import { TerminalView } from "./terminal-view"
 
 export function SessionTerminal({
@@ -50,12 +51,6 @@ export function SessionTerminal({
   autoFocus?: boolean
 }) {
   const [expanded, setExpanded] = useState(false)
-  /**
-   * Whether the emulator holds the keyboard. Read while handling Escape, and
-   * only then, so it is a ref: a re-render per focus change would buy nothing
-   * and cost the terminal a repaint.
-   */
-  const focused = useRef(false)
   /**
    * The element the terminal is rendered into, made once and kept for as long
    * as this component is on screen.
@@ -90,9 +85,6 @@ export function SessionTerminal({
       expanded={expanded}
       autoFocus={autoFocus}
       onExpandedChange={setExpanded}
-      onFocusChange={(next) => {
-        focused.current = next
-      }}
     />,
     host,
   )
@@ -128,8 +120,9 @@ export function SessionTerminal({
           // way to the pane — so a focused terminal keeps it and the dialog is
           // left to its own collapse control. The panel behind is a dialog of
           // its own, and Base UI already holds a nested Escape back from it, so
-          // nothing else closes on the same press either.
-          if (details.reason === "escape-key" && focused.current) {
+          // nothing else closes on the same press either. The sheets the
+          // terminal appears in make the same check (see `terminal-focus.ts`).
+          if (isTerminalEscape(details.reason)) {
             details.cancel()
             return
           }

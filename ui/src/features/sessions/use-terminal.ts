@@ -88,24 +88,15 @@ export function useTerminal({
   sessionId,
   live,
   expanded,
-  onFocusChange,
 }: {
   sessionId: string
   /** Whether the session can still be typed into and resized. */
   live: boolean
   /** Whether this is the expanded frame, which has its own room and ceiling. */
   expanded: boolean
-  onFocusChange: (focused: boolean) => void
 }): TerminalHandle {
   const { resolvedTheme } = useTheme()
   const [following, setFollowing] = useState(true)
-
-  // Held in a ref so the emulator's own listeners reach the current callback
-  // without the emulator being torn down and rebuilt for it.
-  const focusChangeRef = useRef(onFocusChange)
-  useEffect(() => {
-    focusChangeRef.current = onFocusChange
-  }, [onFocusChange])
 
   const frameRef = useRef<HTMLDivElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -327,7 +318,6 @@ export function useTerminal({
     const open = openTerminal(container, {
       onFollowingChange: setFollowing,
       onResize: () => refitRef.current(),
-      onFocusChange: (focused) => focusChangeRef.current(focused),
     })
     terminalRef.current = open.terminal
     fitRef.current = open.fit

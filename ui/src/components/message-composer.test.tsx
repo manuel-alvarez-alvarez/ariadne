@@ -10,6 +10,12 @@
  * The addressee picker is driven the same way, through the real Base UI select:
  * what matters about it is what ends up in the posted `to`, and that is only
  * true of the select the user actually clicks.
+ *
+ * The draft is the box's other half, and it is deliberately *not* the box's
+ * state: it is written to session storage as it is typed, so what a test
+ * unmounts and mounts again is what a user closing and reopening a panel gets.
+ * The storage is the real one the app uses (a shim from `@/test/setup`), and
+ * each test starts from an empty one.
  */
 
 import { QueryClient, QueryClientProvider, useMutation } from "@tanstack/react-query"
@@ -23,45 +29,59 @@ import { type Addressee, MessageComposer } from "./message-composer"
 
 // `globals` is off, so nothing unmounts a screen between tests but this.
 
-// jsdom does not lay out or scroll; the box scrolls its panel after a send,
-// and here the call only has to exist.
+// Storage outlives a test the way it outlives a panel, and a draft one test
+// left behind is the next one's compose box already full.
 beforeEach(() => {
-  Element.prototype.scrollTo = vi.fn()
+  sessionStorage.clear()
 })
 
 const SENT: MessageDto = aMessage({ body: "hello there" })
 
 type Send = (message: CreateMessageRequest) => Promise<MessageDto>
 
-function Harness({ send, addressees }: { send: Send; addressees?: Addressee[] }) {
+const THREAD = "task:01TASK" as const
+
+function Harness({
+  send,
+  addressees,
+  closedHint,
+}: {
+  send: Send
+  addressees?: Addressee[]
+  closedHint?: string
+}) {
   const post = useMutation<MessageDto, Error, CreateMessageRequest>({ mutationFn: send })
   return (
     <MessageComposer
       post={post}
+      draftKey={THREAD}
       label="Message the thread"
       placeholder="Say something"
       addressees={addressees}
+      closedHint={closedHint}
     />
   )
 }
 
-function mountComposer(send: Send, addressees?: Addressee[]) {
+function mountComposer(send: Send, addressees?: Addressee[], closedHint?: string) {
   const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } })
-  const view = render(
+  const wrap = (next?: Addressee[]) => (
     <QueryClientProvider client={client}>
-      <Harness send={send} addressees={addressees} />
-    </QueryClientProvider>,
+      <Harness send={send} addressees={next ?? addressees} closedHint={closedHint} />
+    </QueryClientProvider>
   )
+  const view = render(wrap())
   return {
-    box: screen.getByRole("textbox", { name: "Message the thread" }),
+    box: screen.getByRole("textbox", { name: "Message the thread" }) as HTMLTextAreaElement,
     button: screen.getByRole("button", { name: "Send" }) as HTMLButtonElement,
     /** Re-render with another set of addressees, as a task losing a reviewer does. */
-    setAddressees: (next: Addressee[]) =>
-      view.rerender(
-        <QueryClientProvider client={client}>
-          <Harness send={send} addressees={next} />
-        </QueryClientProvider>,
-      ),
+    setAddressees: (next: Addressee[]) => view.rerender(wrap(next)),
+    /** Close the panel and open it again, which is a fresh box on the same thread. */
+    reopen: () => {
+      view.unmount()
+      render(wrap())
+      return screen.getByRole("textbox", { name: "Message the thread" }) as HTMLTextAreaElement
+    },
   }
 }
 
@@ -185,4 +205,48 @@ it("drops an addressee that has left the thread", async () => {
   await user.click(button)
 
   expect(send).toHaveBeenCalledWith({ body: "still going out", to: undefined }, expect.anything())
+})
+
+it("keeps the draft where reopening the thread finds it again", async () => {
+  const { box, reopen } = mountComposer(() => Promise.resolve(SENT))
+  const user = userEvent.setup()
+
+  await user.type(box, "half a thought")
+  // The panel is dismissed — an outside press, Escape, a link out — and opened
+  // again on the same thread.
+  expect(reopen().value).toBe("half a thought")
+})
+
+it("takes the draft with the message it sent", async () => {
+  const send = vi.fn(({ body }: CreateMessageRequest) => Promise.resolve({ ...SENT, body }))
+  const { box, button, reopen } = mountComposer(send)
+  const user = userEvent.setup()
+
+  await user.type(box, "off it goes")
+  await user.click(button)
+  expect(send).toHaveBeenCalledWith({ body: "off it goes", to: undefined }, expect.anything())
+
+  // Sent is not unsent: the box that comes back is empty.
+  expect(reopen().value).toBe("")
+})
+
+it("keeps a draft the daemon refused, for the panel that reopens on it", async () => {
+  const { box, button, reopen } = mountComposer(() => Promise.reject(new Error("daemon said no")))
+  const user = userEvent.setup()
+
+  await user.type(box, "worth another try")
+  await user.click(button)
+
+  expect(reopen().value).toBe("worth another try")
+})
+
+it("closes the box on a thread nothing is working any more", () => {
+  const send = vi.fn(() => Promise.resolve(SENT))
+  const { box, button } = mountComposer(send, [ALICE], "Merged: no agent is left to read this.")
+
+  expect(box.disabled).toBe(true)
+  expect(button.disabled).toBe(true)
+  // The hint takes the place of the send chord, and there is nobody to address.
+  expect(screen.getByText("Merged: no agent is left to read this.")).toBeTruthy()
+  expect(screen.queryByRole("combobox", { name: "Addressee" })).toBeNull()
 })

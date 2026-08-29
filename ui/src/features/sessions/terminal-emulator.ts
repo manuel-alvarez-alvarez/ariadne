@@ -49,8 +49,6 @@ export function openTerminal(
     onFollowingChange: (following: boolean) => void
     /** The pane's grid changed, so the frame has to be fitted to it again. */
     onResize: () => void
-    /** Whether the keyboard is the pane's, which decides who gets Escape. */
-    onFocusChange: (focused: boolean) => void
   },
 ): OpenTerminal {
   const terminal = new Terminal({
@@ -131,14 +129,6 @@ export function openTerminal(
   const focusTerminal = () => terminal.focus()
   container.addEventListener("click", focusTerminal)
 
-  // Watched on the container rather than on xterm's textarea because that is
-  // the element this owns, and `focusin`/`focusout` bubble to it from wherever
-  // inside the emulator focus actually lands.
-  const focusIn = () => handlers.onFocusChange(true)
-  const focusOut = () => handlers.onFocusChange(false)
-  container.addEventListener("focusin", focusIn)
-  container.addEventListener("focusout", focusOut)
-
   return {
     terminal,
     fit,
@@ -146,9 +136,6 @@ export function openTerminal(
     dispose: () => {
       disposed = true
       container.removeEventListener("click", focusTerminal)
-      container.removeEventListener("focusin", focusIn)
-      container.removeEventListener("focusout", focusOut)
-      handlers.onFocusChange(false)
       scrolled.dispose()
       resized.dispose()
       // Before the terminal, which is what the addon draws for.

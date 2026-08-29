@@ -25,11 +25,13 @@
  * `queries.ts`'s story, and the tabs are `task-panel.tsx`'s own.
  */
 
-import { screen, within } from "@testing-library/react"
+import { act, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { expect, it } from "vitest"
+import { beforeEach, expect, it, vi } from "vitest"
 
-import { type ProfileDto, qk, type TaskDto } from "@/api"
+import { type MessageDto, type ProfileDto, qk, type TaskDto } from "@/api"
+import { markThreadSeen } from "@/components/thread-unread"
+import { aMessage } from "@/test/fixtures"
 import { renderScreen } from "@/test/harness"
 import { TaskPanel } from "./task-panel"
 
@@ -107,14 +109,56 @@ const TASK: TaskDto = {
   updated_at: "2026-01-01T00:00:00Z",
 }
 
-function mount(task: TaskDto = TASK) {
-  renderScreen(<TaskPanel taskId={task.id} onClose={() => {}} />, {
+// How far into a thread the reader has got outlives a test, as it outlives a
+// panel; each test below says where this one is starting from.
+beforeEach(() => {
+  localStorage.clear()
+  // The conversation tab puts a thread on screen, and a thread scrolls the
+  // panel it is in; jsdom has no scrolling of its own.
+  Element.prototype.scrollTo = vi.fn()
+})
+
+function mount(task: TaskDto = TASK, messages?: MessageDto[]) {
+  return renderScreen(<TaskPanel taskId={task.id} onClose={() => {}} />, {
     seed: (client) => {
       client.setQueryData(qk.tasks.detail(task.id), task)
       client.setQueryData(qk.profiles.list({}), PROFILES)
+      if (messages) client.setQueryData(qk.tasks.messages(task.id), messages)
     },
   })
 }
+
+/** One of the panel's tabs, by name. */
+function tab(name: RegExp | string): HTMLElement {
+  return screen.getByRole("tab", { name })
+}
+
+/**
+ * An agent says something on the task, the way `message_created` reaches the
+ * cache — with the turn react-query takes to tell the screen about it.
+ */
+async function arrives(
+  queryClient: ReturnType<typeof mount>["queryClient"],
+  messages: MessageDto[],
+  id: string,
+): Promise<MessageDto[]> {
+  const next = [
+    ...messages,
+    aMessage({ id, task_id: TASK.id, goal_id: TASK.goal_id, author_role: "engineer", body: id }),
+  ]
+  await act(async () => {
+    queryClient.setQueryData(qk.tasks.messages(TASK.id), next)
+    // react-query schedules the notification rather than making it on the
+    // write, so the turn it takes has to happen inside this act.
+    await new Promise((settled) => setTimeout(settled, 0))
+  })
+  return next
+}
+
+/** A thread of three, the last two of them said since the reader last looked. */
+const THREAD: MessageDto[] = ["01JMESG1", "01JMESG2", "01JMESG3"].map((id) =>
+  aMessage({ id, task_id: TASK.id, goal_id: TASK.goal_id, author_role: "engineer", body: id }),
+)
 
 /**
  * The value of a fact, by the label above it. The gap between a profile's name
@@ -241,4 +285,66 @@ it("keeps the sessions tab to the sessions, with no breakdown above them", async
   // The figure in the facts carries the total and its split; a card repeating
   // both above a table whose rows carry their own figures said it all twice.
   expect(screen.queryByRole("heading", { name: "Tokens" })).toBeNull()
+})
+
+/**
+ * The panel opens on the description, so a thread that has moved on since the
+ * reader last had it in front of them has to say so from the tab that leads to
+ * it — otherwise the strip looks exactly as it did.
+ */
+it("counts what the conversation has gained since it was last read", () => {
+  markThreadSeen(`task:${TASK.id}`, "01JMESG1")
+  mount(TASK, THREAD)
+
+  const trigger = screen.getByRole("tab", { name: /Conversation/ })
+  expect(within(trigger).getByLabelText("2 unread messages").textContent).toBe("2")
+})
+
+it("says nothing about a thread the reader is up to date with", () => {
+  markThreadSeen(`task:${TASK.id}`, "01JMESG3")
+  mount(TASK, THREAD)
+
+  const trigger = screen.getByRole("tab", { name: /Conversation/ })
+  expect(within(trigger).queryByLabelText(/unread/)).toBeNull()
+})
+
+it("holds a thread nobody has opened yet to be read", () => {
+  mount(TASK, THREAD)
+
+  // A task picked off the board would otherwise announce its whole history as
+  // new, which says nothing about what changed.
+  expect(within(tab(/Conversation/)).queryByLabelText(/unread/)).toBeNull()
+})
+
+/**
+ * The panel opens on its description, and can be closed again without the
+ * thread ever having been drawn. Nothing here may record that the reader has
+ * seen it — a mark written because a *panel* rendered would say they read
+ * messages that were never on screen, and the count that follows would be off
+ * by everything said before they first looked.
+ */
+it("records nothing about a thread the panel never showed", async () => {
+  const { queryClient } = mount(TASK, THREAD)
+
+  await arrives(queryClient, THREAD, "01JMESG4")
+
+  expect(within(tab(/Conversation/)).queryByLabelText(/unread/)).toBeNull()
+  // Not merely uncounted: nothing was written on the reader's behalf at all.
+  expect(localStorage.length).toBe(0)
+})
+
+it("counts from where the reader left the thread, once they have been in it", async () => {
+  const user = userEvent.setup()
+  const { queryClient } = mount(TASK, THREAD)
+
+  // Opening the thread is what says the reader has seen it.
+  await user.click(tab(/Conversation/))
+  await screen.findByText("01JMESG3")
+  await user.click(tab("Description"))
+
+  const said = await arrives(queryClient, THREAD, "01JMESG4")
+  expect(within(tab(/Conversation/)).getByLabelText("1 unread message").textContent).toBe("1")
+
+  await arrives(queryClient, said, "01JMESG5")
+  expect(within(tab(/Conversation/)).getByLabelText("2 unread messages").textContent).toBe("2")
 })

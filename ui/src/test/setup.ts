@@ -34,21 +34,15 @@ beforeEach(() => {
   daemonFetch.mockImplementation(() => new Promise(() => {}))
 })
 
-// jsdom lays nothing out, so it implements neither of these — and it gives no
-// `localStorage`, which `zustand/middleware` takes hold of the moment
-// `@/stores/settings` is imported.
+// jsdom lays nothing out, so it implements neither of these — and it gives
+// neither web storage: `localStorage`, which `zustand/middleware` takes hold of
+// the moment `@/stores/settings` is imported, and `sessionStorage`, where an
+// unsent draft is kept (`thread-drafts.ts`). A test that cares what is in one
+// of them clears it itself; both survive between the tests of a file, exactly
+// as they survive between screens in the app.
 if (typeof window !== "undefined") {
-  const entries = new Map<string, string>()
-  globalThis.localStorage = {
-    get length() {
-      return entries.size
-    },
-    key: (index: number) => [...entries.keys()][index] ?? null,
-    getItem: (key: string) => entries.get(key) ?? null,
-    setItem: (key: string, value: string) => void entries.set(key, value),
-    removeItem: (key: string) => void entries.delete(key),
-    clear: () => entries.clear(),
-  } as Storage
+  globalThis.localStorage = webStorage()
+  globalThis.sessionStorage = webStorage()
 
   // Assigned rather than stubbed: a test that calls `vi.unstubAllGlobals` in
   // its teardown would otherwise take this with it and leave the next one
@@ -66,3 +60,18 @@ afterEach(() => {
   daemonFetch.mockReset()
   vi.unstubAllGlobals()
 })
+
+/** As much of the `Storage` interface as anything in the app asks for. */
+function webStorage(): Storage {
+  const entries = new Map<string, string>()
+  return {
+    get length() {
+      return entries.size
+    },
+    key: (index: number) => [...entries.keys()][index] ?? null,
+    getItem: (key: string) => entries.get(key) ?? null,
+    setItem: (key: string, value: string) => void entries.set(key, value),
+    removeItem: (key: string) => void entries.delete(key),
+    clear: () => entries.clear(),
+  } as Storage
+}

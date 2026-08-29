@@ -2,8 +2,7 @@
  * The compose box under a conversation — `ariadne task msg` for the web, and
  * its goal-thread sibling. The daemon records the post as the user (no agent
  * session header, see `http/auth.rs`) and the message simply lands in the
- * thread for the agents to read when they next act — it accepts one whatever
- * state the goal or task is in, so the box never goes away.
+ * thread for the agents to read when they next act.
  *
  * A message may name one addressee, the web's half of `--to`: the picker next
  * to Send offers whoever the thread's own surface says may be addressed, and
@@ -17,12 +16,21 @@
  * answer is one keystroke away rather than two clicks. Both are read on the
  * way in only; the picker is the user's from then on.
  *
- * The box is sticky at the bottom of the panel's scroll, so a long thread can
- * be answered from wherever the user has scrolled to. Sending clears the
- * draft; a failure keeps it and shows the daemon's error right above the
- * button, cleared again on the next edit. ⌘/Ctrl+Enter sends, and as
- * everywhere else (see `@/lib/shortcuts`) either modifier fires — only the
- * printed hint picks a side.
+ * The box closes on a goal or task that is over. The daemon would still take
+ * the post — it checks only that the row exists — but there is no session left
+ * to read it and none will be started, so a box that took the message anyway
+ * would be a message written into nothing. It says which it is instead, and the
+ * thread stays readable.
+ *
+ * Nothing typed here is lost by leaving. The draft is kept per thread (see
+ * `thread-drafts.ts`) from the first keystroke, so a panel dismissed by an
+ * outside press — or Escape, or a link out — comes back with the sentence
+ * half-written, and only a message that actually posted clears it.
+ *
+ * Sending clears the draft; a failure keeps it and shows the daemon's error
+ * right above the button, cleared again on the next edit. ⌘/Ctrl+Enter sends,
+ * and as everywhere else (see `@/lib/shortcuts`) either modifier fires — only
+ * the printed hint picks a side.
  */
 
 import type { UseMutationResult } from "@tanstack/react-query"
@@ -31,6 +39,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 
 import type { CreateMessageRequest, MessageDto } from "@/api"
 import { ErrorState } from "@/components/error-state"
+import { readDraft, type ThreadKey, writeDraft } from "@/components/thread-drafts"
 import { Button } from "@/components/ui/button"
 import {
   Select,
@@ -40,7 +49,6 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { cn } from "@/lib/format"
 import { matchesShortcut, shortcutLabel } from "@/lib/shortcuts"
 
 const SEND: { key: string } = { key: "Enter" }
@@ -57,15 +65,19 @@ export interface Addressee {
 
 export function MessageComposer({
   post,
+  draftKey,
   label,
   placeholder,
   addressees,
   autoFocus,
   presetTo,
-  className,
+  closedHint,
+  onSent,
 }: {
   /** The thread's `usePost…Message` mutation; its error is drawn inline. */
   post: UseMutationResult<MessageDto, Error, CreateMessageRequest>
+  /** Which thread this box writes to, and whose draft it holds. */
+  draftKey: ThreadKey
   /** What the box is, for the accessibility tree. */
   label: string
   placeholder: string
@@ -78,16 +90,28 @@ export function MessageComposer({
    * `http/recipients.rs`). Empty or absent, the box has no picker at all.
    */
   addressees?: readonly Addressee[]
-  /** The surface's background — the box has to cover what scrolls under it. */
-  className?: string
+  /**
+   * Why nothing can be written here any more — a goal or task that is over.
+   * Set, the box is out of reach and this is shown in place of the send hint.
+   */
+  closedHint?: string
+  /** A message posted; the thread brings the reader to it. */
+  onSent?: () => void
 }) {
-  const [draft, setDraft] = useState("")
+  const [draft, setDraft] = useState(() => readDraft(draftKey))
   // The preset is an initial value and nothing more: once the box is on
   // screen, who the next message goes to is the user's to change and not the
   // link's to keep re-asserting.
   const [addressed, setAddressed] = useState<string | null>(presetTo ?? null)
-  const form = useRef<HTMLFormElement>(null)
   const field = useRef<HTMLTextAreaElement>(null)
+  // The panel can move to another thread without unmounting this box — the
+  // stacked task panel does exactly that — and the draft on screen has to be
+  // the one belonging to the thread now under it.
+  const thread = useRef(draftKey)
+  if (thread.current !== draftKey) {
+    thread.current = draftKey
+    setDraft(readDraft(draftKey))
+  }
 
   // Once, on arrival. `autoFocus` on the element itself is the same thing
   // written where it also steals the keyboard from anything that re-renders
@@ -106,8 +130,13 @@ export function MessageComposer({
     [addressees],
   )
 
+  function edit(next: string) {
+    setDraft(next)
+    writeDraft(draftKey, next)
+  }
+
   async function send() {
-    if (!body || post.isPending) return
+    if (!body || post.isPending || closedHint) return
     try {
       // `undefined`, not `null`: an unaddressed message posts the body alone,
       // exactly the request this box sent before there was anything to address.
@@ -116,27 +145,21 @@ export function MessageComposer({
       // Drawn inline below; the draft stays for another try.
       return
     }
-    // Clear exactly what was sent: typing that happened mid-flight survives.
+    // Clear exactly what was sent: typing that happened mid-flight survives,
+    // in the box and in what is kept of it.
+    setDraft((current) => {
+      const left = current.trim() === body ? "" : current
+      writeDraft(draftKey, left)
+      return left
+    })
     // The addressee stays — answering one agent takes more than one message,
     // and the picker says on its face who the next one goes to.
-    setDraft((current) => (current.trim() === body ? "" : current))
-    // The mutation has already appended the message to the cached thread;
-    // give React a frame to lay it out, then bring the thread's end — the
-    // sent message, with this box under it — into view. The scroll has to go
-    // to the panel, not this form: stuck, the form's own rect is always in
-    // view already, so `scrollIntoView` on it would move nothing.
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        const panel = scrollParent(form.current)
-        panel?.scrollTo({ top: panel.scrollHeight, behavior: "smooth" })
-      })
-    })
+    onSent?.()
   }
 
   return (
     <form
-      ref={form}
-      className={cn("sticky bottom-0 flex flex-col gap-2 bg-background py-1", className)}
+      className="flex flex-col gap-2 py-1"
       onSubmit={(event) => {
         event.preventDefault()
         void send()
@@ -147,8 +170,9 @@ export function MessageComposer({
         value={draft}
         aria-label={label}
         placeholder={placeholder}
+        disabled={Boolean(closedHint)}
         onChange={(event) => {
-          setDraft(event.target.value)
+          edit(event.target.value)
           // A failure from the last attempt is stale once the text changes.
           if (post.isError) post.reset()
         }}
@@ -161,9 +185,11 @@ export function MessageComposer({
       />
       {post.isError ? <ErrorState title="Could not send the message" error={post.error} /> : null}
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs text-muted-foreground">{shortcutLabel(SEND)} to send</span>
+        <span className="text-xs text-muted-foreground">
+          {closedHint ?? `${shortcutLabel(SEND)} to send`}
+        </span>
         <div className="flex items-center gap-2">
-          {addressees?.length ? (
+          {addressees?.length && !closedHint ? (
             <Select
               value={to}
               onValueChange={(value) => setAddressed(value as string | null)}
@@ -184,7 +210,12 @@ export function MessageComposer({
               </SelectContent>
             </Select>
           ) : null}
-          <Button type="submit" size="sm" disabled={!body} pending={post.isPending}>
+          <Button
+            type="submit"
+            size="sm"
+            disabled={!body || Boolean(closedHint)}
+            pending={post.isPending}
+          >
             <SendIcon />
             Send
           </Button>
@@ -192,17 +223,4 @@ export function MessageComposer({
       </div>
     </form>
   )
-}
-
-/**
- * The scroll container the box is stuck to — the side panel's popup, or
- * whatever holds the thread elsewhere. `document.scrollingElement` when
- * nothing on the way up scrolls and the page itself is the container.
- */
-function scrollParent(el: HTMLElement | null): Element | null {
-  for (let node = el?.parentElement; node; node = node.parentElement) {
-    const { overflowY } = getComputedStyle(node)
-    if (overflowY === "auto" || overflowY === "scroll") return node
-  }
-  return document.scrollingElement
 }

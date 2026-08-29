@@ -25,10 +25,12 @@ import { CopyableId, CopyableIdMenu } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { Markdown } from "@/components/markdown"
+import { PanelSheet } from "@/components/panel-sheet"
 import { StatusBadge } from "@/components/status-badge"
+import { UnreadBadge, useUnreadCount } from "@/components/thread-unread"
 import { goalUsageRows, TokenFigure } from "@/components/token-figure"
 import { Button } from "@/components/ui/button"
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { When } from "@/components/when"
@@ -42,7 +44,7 @@ import { GoalActions } from "./goal-actions"
 import { GoalSessions, GoalSessionView } from "./goal-sessions"
 import { GoalTasks } from "./goal-tasks"
 import { GoalThread } from "./goal-thread"
-import { goalQueryOptions } from "./queries"
+import { goalMessagesQueryOptions, goalQueryOptions } from "./queries"
 import { GOAL_STATUS_META, isStillPlanning, isTerminalGoalStatus } from "./status"
 
 // Description leads the strip — it is what the goal *is* — but the panel still
@@ -84,7 +86,7 @@ export function GoalPanel({
   // waiting for the goal it hangs off.
   if (sessionId) {
     return (
-      <GoalSheet onClose={onClose} stackedPanel={stackedPanel} panelRef={panel}>
+      <GoalSheet goalId={goalId} onClose={onClose} stackedPanel={stackedPanel} panelRef={panel}>
         <GoalSessionView
           goalId={goalId}
           goalTitle={goal.data?.title}
@@ -96,7 +98,7 @@ export function GoalPanel({
   }
 
   return (
-    <GoalSheet onClose={onClose} stackedPanel={stackedPanel} panelRef={panel}>
+    <GoalSheet goalId={goalId} onClose={onClose} stackedPanel={stackedPanel} panelRef={panel}>
       {error ? (
         <>
           <SheetTitle className="sr-only">Goal {goalId}</SheetTitle>
@@ -136,11 +138,14 @@ export function GoalPanel({
  * `data-nested-dialog-open`.
  */
 function GoalSheet({
+  goalId,
   onClose,
   stackedPanel,
   panelRef,
   children,
 }: {
+  /** Whose draft a dismissal has to ask about. */
+  goalId: string
   onClose: () => void
   stackedPanel?: ReactNode
   /** The popup itself, for the focus this panel has to hand back by hand. */
@@ -148,7 +153,10 @@ function GoalSheet({
   children: ReactNode
 }) {
   return (
-    <Sheet open onOpenChange={(open) => open || onClose()}>
+    // The draft the guard protects is the goal's own thread; a task stacked
+    // over this panel guards its own, and Base UI only ever asks the topmost
+    // sheet about a dismissal.
+    <PanelSheet onClose={onClose} draftKey={`goal:${goalId}`}>
       {/* As wide as the task panel: the sessions tab holds a table. The panel
           on top is narrower, so this one keeps a strip showing at its left —
           the stack is a thing the user can see, and click back onto. */}
@@ -161,7 +169,7 @@ function GoalSheet({
         {children}
       </SheetContent>
       {stackedPanel}
-    </Sheet>
+    </PanelSheet>
   )
 }
 
@@ -179,6 +187,11 @@ function GoalView({
   const [search, setSearch] = useSearchParams()
   const [newTaskOpen, setNewTaskOpen] = useState(false)
   const tab = TABS.find((value) => value === search.get("tab")) ?? "description"
+  // Read whichever tab is showing: the Thread trigger counts what has been
+  // said since the reader last had the thread itself open, which is a thing
+  // the panel has to know before they go back to it.
+  const messages = useQuery(goalMessagesQueryOptions(goal.id))
+  const unread = useUnreadCount(`goal:${goal.id}`, messages.data)
 
   function setTab(next: Tab) {
     const params = new URLSearchParams(search)
@@ -230,7 +243,10 @@ function GoalView({
         <TabsList>
           <TabsTrigger value="description">Description</TabsTrigger>
           <TabsTrigger value="tasks">Tasks</TabsTrigger>
-          <TabsTrigger value="thread">Thread</TabsTrigger>
+          <TabsTrigger value="thread">
+            Thread
+            <UnreadBadge count={unread} />
+          </TabsTrigger>
           <TabsTrigger value="sessions">Sessions</TabsTrigger>
         </TabsList>
         <TabsContent value="description" className="pt-3">

@@ -17,7 +17,8 @@ import { useQuery } from "@tanstack/react-query"
 import { useSearchParams } from "react-router-dom"
 
 import { ErrorState } from "@/components/error-state"
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { PanelSheet } from "@/components/panel-sheet"
+import { SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { shortId } from "@/lib/format"
 import { sessionPanelTo } from "@/routes/paths"
@@ -30,7 +31,9 @@ export function SessionPanel({ sessionId, onClose }: { sessionId: string; onClos
   const session = useQuery(sessionQueryOptions(sessionId))
 
   return (
-    <Sheet open onOpenChange={(open) => open || onClose()}>
+    // The panel is a terminal with a header on it, so Escape is the pane's
+    // whenever the pane has the keyboard; see `PanelSheet`.
+    <PanelSheet onClose={onClose}>
       {/* As wide as the other panels: the terminal is the point of this one. */}
       <SheetContent className="sm:max-w-3xl" aria-describedby={undefined}>
         <SheetHeader>
@@ -64,6 +67,6 @@ export function SessionPanel({ sessionId, onClose }: { sessionId: string; onClos
           />
         )}
       </SheetContent>
-    </Sheet>
+    </PanelSheet>
   )
 }

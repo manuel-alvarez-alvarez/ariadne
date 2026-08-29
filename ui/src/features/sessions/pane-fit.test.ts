@@ -1,6 +1,13 @@
 import { expect, it } from "vitest"
 
-import { paneFit, sameSize } from "./pane-fit"
+import {
+  BASE_FONT_SIZE,
+  MAX_FONT_SIZE,
+  MIN_FONT_SIZE,
+  nextFontSize,
+  paneFit,
+  sameSize,
+} from "./pane-fit"
 
 /** A frame that measures cleanly: 12px cells, 24 of them drawn, 480px to fill. */
 const MEASURED = { cols: 137, rows: 24, screenHeight: 24 * 20, heightBudget: 480 }
@@ -46,4 +53,45 @@ it("tells one grid from another, and neither from nothing", () => {
   expect(sameSize({ cols: 80, rows: 24 }, { cols: 80, rows: 25 })).toBe(false)
   expect(sameSize(null, null)).toBe(false)
   expect(sameSize({ cols: 80, rows: 24 }, null)).toBe(false)
+})
+
+/**
+ * The size a pane is drawn at until a frame says otherwise. It is a number
+ * somebody may raise to match the app's own text — it was 12 next to a 14px
+ * UI, and is 13 now — and the one thing that has to stay true of it through
+ * any such change is that the frame can still scale *from* it: at the ceiling
+ * it could only ever shrink, at the floor only grow.
+ */
+it("starts the scaling at a size a frame can move in either direction", () => {
+  expect(BASE_FONT_SIZE).toBeGreaterThan(MIN_FONT_SIZE)
+  expect(BASE_FONT_SIZE).toBeLessThan(MAX_FONT_SIZE)
+})
+
+it("grows the font into a frame with room to spare, up to the ceiling", () => {
+  // Twice the columns the grid needs, and twice the height: the frame could
+  // take a font twice the size, and the ceiling is what stops it.
+  const grown = nextFontSize({
+    current: BASE_FONT_SIZE,
+    proposedCols: 200,
+    gridCols: 100,
+    screenHeight: 200,
+    heightBudget: 400,
+    ceiling: MAX_FONT_SIZE,
+  })
+  expect(grown).toBe(MAX_FONT_SIZE)
+})
+
+it("shrinks the font to whichever of width and height runs out first", () => {
+  // Room for three quarters of the columns, and for all the height: 13 * 0.75
+  // is 9.75, and the half-pixel step below it is what fits.
+  const shrunk = nextFontSize({
+    current: BASE_FONT_SIZE,
+    proposedCols: 75,
+    gridCols: 100,
+    screenHeight: 200,
+    heightBudget: 400,
+    ceiling: MAX_FONT_SIZE,
+  })
+  expect(shrunk).toBe(9.5)
+  expect(shrunk).toBeLessThan(BASE_FONT_SIZE)
 })

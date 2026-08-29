@@ -174,14 +174,19 @@ export function compareByAttention(a: TaskDto, b: TaskDto): number {
   return rank !== 0 ? rank : Date.parse(b.updated_at) - Date.parse(a.updated_at)
 }
 
-/** Terminal statuses are frozen: nothing, and nobody, moves a task out of them. */
-function isTerminal(status: TaskStatus): boolean {
+/**
+ * Terminal statuses are frozen: nothing, and nobody, moves a task out of them.
+ *
+ * `failed` is not one of them — the user can retry it, and a task waiting for
+ * that decision is still a task somebody may say something to.
+ */
+export function isTerminalTaskStatus(status: TaskStatus): boolean {
   return status === "merged" || status === "cancelled"
 }
 
 /** The user may cancel anything that has not reached a terminal status. */
 export function canCancel(status: TaskStatus): boolean {
-  return !isTerminal(status)
+  return !isTerminalTaskStatus(status)
 }
 
 /** Retry is the one transition the user actor owns besides cancel: failed -> ready. */

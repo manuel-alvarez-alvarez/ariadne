@@ -24,6 +24,12 @@
  * addon that will not load, a context the driver takes back — has to leave the
  * terminal drawing through the DOM rather than not drawing at all.
  *
+ * The panel is the third frame, and the same question in it: the sheets a
+ * terminal appears in dismiss on Escape like every dialog in the app, and a
+ * pane being typed into is what makes that press the agent's instead. That is
+ * `PanelSheet`'s guard, driven here through a real emulator because what it
+ * asks about — who holds the keyboard — is a fact of the real one.
+ *
  * xterm needs a browser this environment only half is, so `matchMedia`,
  * `ResizeObserver` and the canvas are stubbed for it. Everything else is real:
  * a real emulator, keystrokes typed into it the way a user types them, and the
@@ -34,6 +40,9 @@ import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { useLayoutEffect } from "react"
 import { expect, it, vi } from "vitest"
+
+import { PanelSheet } from "@/components/panel-sheet"
+import { SheetContent, SheetTitle } from "@/components/ui/sheet"
 
 import {
   connections,
@@ -167,6 +176,48 @@ it("still closes on Escape from outside the terminal", async () => {
   await user.keyboard("{Escape}")
 
   expect(screen.queryByRole("dialog")).toBeNull()
+})
+
+/** The terminal as a panel shows it: a sheet, with the pane inside. */
+function inPanel(onClose: () => void) {
+  render(
+    <PanelSheet onClose={onClose}>
+      <SheetContent aria-describedby={undefined}>
+        <SheetTitle className="sr-only">Session</SheetTitle>
+        <SessionTerminal sessionId={SESSION} status="running" />
+      </SheetContent>
+    </PanelSheet>,
+  )
+}
+
+it("keeps the panel open when Escape was meant for the pane", async () => {
+  const user = userEvent.setup()
+  const closed = vi.fn()
+  inPanel(closed)
+
+  // The sheet takes the focus on the way in; the pane is clicked into after
+  // that, which is what puts the keyboard in it.
+  await settle()
+  keyboardOf(emulator()).focus()
+  await user.keyboard("{Escape}")
+
+  // The panel closing would take the pane away from under a keystroke aimed
+  // at the agent — and the agent would never get the keystroke either.
+  expect(closed).not.toHaveBeenCalled()
+  await user.keyboard("hi")
+  expect(keystrokes.join("")).toBe("hi")
+})
+
+it("still closes the panel on Escape from outside the pane", async () => {
+  const user = userEvent.setup()
+  const closed = vi.fn()
+  inPanel(closed)
+  await settle()
+
+  screen.getByRole("dialog").focus()
+  await user.keyboard("{Escape}")
+
+  expect(closed).toHaveBeenCalled()
 })
 
 it("draws through the GPU where there is one, and drops it with its context", async () => {

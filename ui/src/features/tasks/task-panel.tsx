@@ -24,8 +24,10 @@ import { CopyableIdMenu } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { Markdown } from "@/components/markdown"
+import { PanelSheet } from "@/components/panel-sheet"
 import { StatusBadge } from "@/components/status-badge"
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { UnreadBadge, useUnreadCount } from "@/components/thread-unread"
+import { SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { When, WhenDetail } from "@/components/when"
@@ -35,7 +37,7 @@ import { taskCopyEntries } from "@/lib/clipboard"
 import { cn, shortId } from "@/lib/format"
 import { paths, usePanelSessionNavigation } from "@/routes/paths"
 
-import { taskQueryOptions } from "./queries"
+import { taskMessagesQueryOptions, taskQueryOptions } from "./queries"
 import { StalledBadge } from "./stalled"
 import { primaryStatus, subStatus, TASK_STATUS_META } from "./status"
 import { TaskActions } from "./task-actions"
@@ -70,6 +72,11 @@ export function TaskPanel({
   // dialog cannot do for us — nothing closed. See `useFocusReturn`.
   const panel = useRef<HTMLDivElement>(null)
   useFocusReturn(session ?? null, panel)
+  // Read whichever tab is showing: the Conversation trigger counts what has
+  // been said since the reader last had the thread itself open, which is a
+  // thing the panel has to know before they go back to it.
+  const messages = useQuery(taskMessagesQueryOptions(taskId))
+  const unread = useUnreadCount(`task:${taskId}`, messages.data)
 
   function setTab(next: Tab) {
     const params = new URLSearchParams(search)
@@ -78,7 +85,7 @@ export function TaskPanel({
   }
 
   return (
-    <Sheet open onOpenChange={(open) => open || onClose()}>
+    <PanelSheet onClose={onClose} draftKey={`task:${taskId}`}>
       <SheetContent
         ref={panel}
         // Stacked, it leaves the goal's sheet showing at its left and takes
@@ -135,7 +142,10 @@ export function TaskPanel({
             <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
               <TabsList>
                 <TabsTrigger value="description">Description</TabsTrigger>
-                <TabsTrigger value="conversation">Conversation</TabsTrigger>
+                <TabsTrigger value="conversation">
+                  Conversation
+                  <UnreadBadge count={unread} />
+                </TabsTrigger>
                 <TabsTrigger value="reviews">Reviews</TabsTrigger>
                 <TabsTrigger value="history">History</TabsTrigger>
                 <TabsTrigger value="diff">Diff</TabsTrigger>
@@ -167,7 +177,7 @@ export function TaskPanel({
           </>
         )}
       </SheetContent>
-    </Sheet>
+    </PanelSheet>
   )
 }
 

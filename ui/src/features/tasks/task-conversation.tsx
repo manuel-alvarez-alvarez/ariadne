@@ -6,31 +6,29 @@
  * up without a refresh; a sent one is appended by its own mutation and does
  * not wait for the event.
  *
- * The compose box is there whatever the task's status: the daemon takes a
- * post on a terminal task too (`http/tasks.rs post_message` checks only that
- * the task exists), where it waits in the thread like any `task msg` would.
- *
  * The compose box may address anyone working the task — its engineer, its
- * reviewers and the planner that wrote it —
- * which is the set the daemon
+ * reviewers and the planner that wrote it — which is the set the daemon
  * resolves `to` against (`http/recipients.rs`), read off the task and its goal
- * so the picker offers nobody the daemon would refuse.
+ * so the picker offers nobody the daemon would refuse. On a task that is over
+ * nobody is working it any more, and the box says that instead of taking a
+ * message no session will be started to read.
  *
- * The card each message is drawn as is shared with the goal thread; what this
- * surface adds to it is the link to the session that posted the message.
+ * How the thread itself behaves — opening on its newest message, following it,
+ * counting what arrives while the reader is further up — is {@link ThreadView},
+ * which the goal thread draws too; what this surface adds is the link from a
+ * message to the session that posted it.
  */
 
 import { useQuery } from "@tanstack/react-query"
 
-import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
-import { MessageCard } from "@/components/message-card"
-import { MessageComposer } from "@/components/message-composer"
+import { ThreadView } from "@/components/thread-view"
 import { Skeleton } from "@/components/ui/skeleton"
 import { goalQueryOptions } from "@/features/goals/queries"
 import { useAddressees } from "@/features/profiles/addressees"
 import { useComposerRequest } from "@/routes/paths"
 import { taskMessagesQueryOptions, taskQueryOptions, usePostTaskMessage } from "./queries"
+import { isTerminalTaskStatus, TASK_STATUS_META } from "./status"
 import { SessionLink } from "./task-sessions"
 
 export function TaskConversation({ taskId }: { taskId: string }) {
@@ -54,6 +52,10 @@ export function TaskConversation({ taskId }: { taskId: string }) {
       : []),
     ...(goal.data ? [goal.data.planner_profile_id] : []),
   ])
+  const closed =
+    task.data && isTerminalTaskStatus(task.data.status)
+      ? `${TASK_STATUS_META[task.data.status].label}: no agent is left to read this.`
+      : undefined
 
   return (
     <div className="flex flex-col gap-3">
@@ -72,34 +74,20 @@ export function TaskConversation({ taskId }: { taskId: string }) {
         />
       ) : null}
 
-      {messages.data ? (
-        messages.data.length === 0 ? (
-          <EmptyState emphasis="quiet" title="Nothing has been said on this task yet" />
-        ) : (
-          <ol className="space-y-3">
-            {messages.data.map((message) => (
-              <li key={message.id}>
-                <MessageCard
-                  message={message}
-                  source={
-                    message.author_session_id ? (
-                      <SessionLink sessionId={message.author_session_id} />
-                    ) : null
-                  }
-                />
-              </li>
-            ))}
-          </ol>
-        )
-      ) : null}
-
-      <MessageComposer
+      <ThreadView
+        threadKey={`task:${taskId}`}
+        messages={messages.data}
         post={post}
         label="Message the task conversation"
         placeholder="Write to the agents on this task…"
         addressees={addressees}
         autoFocus={opened.focus}
         presetTo={opened.to}
+        emptyTitle="Nothing has been said on this task yet"
+        closedHint={closed}
+        source={(message) =>
+          message.author_session_id ? <SessionLink sessionId={message.author_session_id} /> : null
+        }
       />
     </div>
   )

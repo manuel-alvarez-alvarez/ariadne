@@ -88,7 +88,7 @@ function clamp(value: number, min: number, max: number): number {
  * stops being readable, so a pane too wide for the frame overflows it and
  * scrolls sideways instead of shrinking into illegibility.
  */
-const MIN_FONT_SIZE = 8
+export const MIN_FONT_SIZE = 8
 export const MAX_FONT_SIZE = 15
 /**
  * The ceiling in the expanded frame, where the pane is the whole screen and not
@@ -97,8 +97,16 @@ export const MAX_FONT_SIZE = 15
  * rather than the ceiling standing in for the panel's.
  */
 export const EXPANDED_MAX_FONT_SIZE = 24
-/** Where scaling starts, and what a pane is drawn at when it fits as it is. */
-export const BASE_FONT_SIZE = 12
+/**
+ * Where scaling starts, and what a pane is drawn at when it fits as it is.
+ *
+ * The app is set in 14px and the pane is text the user reads next to it, so it
+ * is sized like text and not like a thumbnail: a point under the surrounding
+ * UI, which is what a monospace face wants beside a proportional one, and no
+ * lower. Anything smaller is a scaled-down pane — which is what the frame does
+ * on its own when a wide grid will not fit, and only then.
+ */
+export const BASE_FONT_SIZE = 13
 export const LINE_HEIGHT = 1.2
 /** Tallest the grid may get, in the panel, before the font shrinks to fit (`28rem`). */
 export const MAX_SCREEN_HEIGHT = 448
