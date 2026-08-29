@@ -45,10 +45,10 @@ use tokio::sync::mpsc;
 
 use ariadne_core::TransitionError;
 
-/// The migrations this release ships. The chain starts at the squashed
-/// schema (`migrations/0001_init.sql`) — prompts are overrides, so nothing
-/// rewrites a default in SQL any more — and grows a file per change to it
-/// from there.
+/// The migrations this release ships: one, the squashed schema
+/// (`migrations/0001_init.sql`). Pre-1.0 a schema change is folded back into
+/// it rather than added beside it — a database written by an earlier build is
+/// recreated, not migrated — so the chain stays a single file.
 static MIGRATIONS: Migrator = sqlx::migrate!("./migrations");
 
 #[derive(Debug, thiserror::Error)]

@@ -2,10 +2,10 @@
 //! and a goal are read with.
 //!
 //! One row per `(session_id, source)`, holding that transcript's cumulative
-//! totals — see `migrations/0002_session_usage.sql` for what a source is and
-//! why a report replaces rather than adds. Everything above a session is a
-//! `SUM` over those rows, grouped by whatever the reader groups by, and a
-//! session nothing has reported for sums to zero rather than to nothing.
+//! totals — see `migrations/0001_init.sql` for what a source is and why a
+//! report replaces rather than adds. Everything above a session is a `SUM`
+//! over those rows, grouped by whatever the reader groups by, and a session
+//! nothing has reported for sums to zero rather than to nothing.
 
 use ariadne_core::{Role, TokenUsage};
 
