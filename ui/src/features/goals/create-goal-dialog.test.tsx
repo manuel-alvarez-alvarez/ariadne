@@ -17,12 +17,12 @@
  * closing between them, and each one can be taken back off from the chip it
  * left behind.
  *
- * What the planner runs on is the other field with a rule of its own, and it
- * is two: a model that names the agent CLI running it, and the effort that
- * model is run at — each on the wire when it was filled in and left out
- * entirely when it was not, which is what runs the planner on its profile's
- * own. A model naming no CLI never reaches the daemon: the field refuses it
- * first.
+ * What the planner runs on is the other field with a rule of its own, and one
+ * control makes the whole choice: a model that names the agent CLI running it,
+ * and the effort that model is run at — each on the wire when it was pinned
+ * and left out entirely when it was not, which is what runs the planner on its
+ * profile's own. A model naming no CLI never reaches the daemon: the field
+ * refuses it first.
  */
 
 import { screen, waitFor, within } from "@testing-library/react"
@@ -40,6 +40,9 @@ const PLANNER: ProfileDto = aProfile({
   id: "01JPROF00000000000000PLN",
   name: "Planner",
   role: "planner",
+  // Pinned, and to a model the catalog does not carry, so the picker has
+  // something of its own to name as what an unpinned planner would run on.
+  model: "codex:gpt-5.6-luna",
 })
 
 const ARIADNE: RepositoryDto = aRepository({
@@ -315,9 +318,9 @@ describe("dismissing the dialog", () => {
 })
 
 /**
- * The planner is pinned with one field, whose value carries the agent CLI: it
- * goes on the wire as typed or picked, and an empty box is left out rather
- * than sent empty.
+ * The planner is pinned with one control, whose value carries the agent CLI,
+ * the model of it and the effort it is run at: what was pinned goes on the
+ * wire, and nothing pinned is left out rather than sent empty.
  */
 describe("choosing what the planner runs on", () => {
   /** Fills the required fields, so the submit is about the pin alone. */
@@ -328,22 +331,53 @@ describe("choosing what the planner runs on", () => {
     await user.keyboard("{Escape}")
   }
 
-  /** The one field the choice is made in, catalog and all. */
-  async function modelBox(): Promise<HTMLInputElement> {
-    return (await screen.findByRole("combobox", { name: "Planner model" })) as HTMLInputElement
+  /** The one control the choice is made in, catalog and all. */
+  async function pinButton(): Promise<HTMLElement> {
+    return await screen.findByRole("button", { name: "Planner runs on" })
+  }
+
+  /** Opens the picker, and answers the catalog inside it. */
+  async function openPin(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
+    await user.click(await pinButton())
+    return await screen.findByRole("listbox", { name: "Models" })
+  }
+
+  /** Shuts the picker again, leaving the dialog behind it up. */
+  async function closePin(user: ReturnType<typeof userEvent.setup>) {
+    await user.keyboard("{Escape}")
+    await waitFor(() => {
+      expect(screen.queryByRole("listbox", { name: "Models" })).toBeNull()
+    })
+  }
+
+  /** Pins a model the catalog does not carry, which is typed rather than picked. */
+  async function typePin(user: ReturnType<typeof userEvent.setup>, id: string) {
+    await openPin(user)
+    await user.type(screen.getByRole("combobox", { name: "Planner runs on" }), id)
+    await user.click(screen.getByText(/^Other — run/))
+    await closePin(user)
   }
 
   it("offers the catalog whole, grouped by the agent CLI each model runs on", async () => {
     const user = userEvent.setup()
     renderDialog()
 
-    await user.click(await modelBox())
+    const models = await openPin(user)
 
-    const models = await screen.findByRole("listbox", { name: "Models" })
     expect(within(models).getByText("Codex")).toBeDefined()
     expect(within(models).getByText("codex:gpt-5.3-codex")).toBeDefined()
     expect(within(models).getByText("Claude Code")).toBeDefined()
     expect(within(models).getByText("claude_code:claude-opus-5")).toBeDefined()
+  })
+
+  it("says what an unpinned planner will run on, which is its profile's own", async () => {
+    renderDialog()
+
+    // The Planner profile's own pin, read off the profile rather than guessed:
+    // leaving the control alone is then an informed choice and not a blank.
+    await waitFor(async () =>
+      expect((await pinButton()).textContent).toContain(`Profile's own — ${PLANNER.model}`),
+    )
   })
 
   it("sends the picked id, which names the CLI and the model together", async () => {
@@ -353,9 +387,9 @@ describe("choosing what the planner runs on", () => {
     await fillRequired(user)
     // A codex model on the Planner profile: the pin is the slot's, not the
     // profile's.
-    await user.click(await modelBox())
-    const models = await screen.findByRole("listbox", { name: "Models" })
+    const models = await openPin(user)
     await user.click(within(models).getByText("codex:gpt-5.3-codex"))
+    await closePin(user)
 
     await user.click(screen.getByRole("button", { name: "Create goal" }))
 
@@ -370,7 +404,9 @@ describe("choosing what the planner runs on", () => {
     renderDialog()
 
     await fillRequired(user)
-    await user.type(await modelBox(), "codex")
+    // Typed rather than picked: the catalog does not carry a bare CLI here,
+    // and the daemon takes one all the same.
+    await typePin(user, "codex")
     await user.click(screen.getByRole("button", { name: "Create goal" }))
 
     await waitFor(() => {
@@ -397,14 +433,13 @@ describe("choosing what the planner runs on", () => {
     renderDialog()
 
     await fillRequired(user)
-    await user.click(await modelBox())
-    const models = await screen.findByRole("listbox", { name: "Models" })
+    const models = await openPin(user)
     await user.click(within(models).getByText("codex:gpt-5.3-codex"))
 
-    // The list is that model's own: `ultra` is a codex effort, and the claude
+    // The strip is that model's own: `ultra` is a codex effort, and the claude
     // entry beside it in the catalog takes none of it.
-    await user.click(await screen.findByRole("combobox", { name: "Planner effort" }))
-    await user.click(await screen.findByRole("option", { name: "ultra" }))
+    await user.click(await screen.findByRole("radio", { name: "ultra" }))
+    await closePin(user)
 
     await user.click(screen.getByRole("button", { name: "Create goal" }))
 
@@ -419,7 +454,7 @@ describe("choosing what the planner runs on", () => {
     renderDialog()
 
     await fillRequired(user)
-    await user.type(await modelBox(), "codex")
+    await typePin(user, "codex")
     await user.click(screen.getByRole("button", { name: "Create goal" }))
 
     await waitFor(() => {
@@ -433,7 +468,7 @@ describe("choosing what the planner runs on", () => {
     renderDialog()
 
     await fillRequired(user)
-    await user.type(await modelBox(), "claude-opus-5")
+    await typePin(user, "claude-opus-5")
     await user.click(screen.getByRole("button", { name: "Create goal" }))
 
     expect(await screen.findByText(/claude_code:claude-opus-5/)).toBeDefined()

@@ -16,11 +16,11 @@
  *
  * The pins are checked through the mounted form rather than only through
  * `task-form-values.test.ts`, because what they mean is a property of the
- * dialog: one model box per slot, holding the whole choice — the agent CLI and
- * the model of it — which pick lands in which slot when there are several of
- * them, and — on an edit — what an untouched box is measured against when the
- * profiles that decide how it was seeded only land after the user has started
- * typing.
+ * dialog: one control per slot, holding the whole choice — the agent CLI, the
+ * model of it and the effort it is run at — which pick lands in which slot when
+ * there are several of them, and — on an edit — what an untouched pin is
+ * measured against when the profiles that decide how it was seeded only land
+ * after the user has started typing.
  */
 
 import { screen, within } from "@testing-library/react"
@@ -45,6 +45,9 @@ const REVIEWER: ProfileDto = {
   id: "01JPROF000000000000000REV",
   name: "Reviewer",
   role: "reviewer",
+  // Pinned, so a row with nothing of its own has something to name as what it
+  // will actually run on.
+  model: "codex:gpt-5.6-luna",
 }
 
 /** A second one, for the edit that replaces the task's reviewer list. */
@@ -144,34 +147,63 @@ beforeEach(() => {
   stubDaemon()
 })
 
-/** Picks `model` out of the catalog hanging under the named box. */
+/** The named slot's pin control: one per slot, and the whole choice for it. */
+async function pinButton(slot: string): Promise<HTMLElement> {
+  return await screen.findByRole("button", { name: `${slot} runs on` })
+}
+
+/** What a slot's trigger reads, with the whitespace a screen collapses collapsed. */
+async function pinReads(slot: string): Promise<string> {
+  return ((await pinButton(slot)).textContent ?? "").replace(/\s+/g, " ").trim()
+}
+
+/** Opens a slot's picker, and answers the catalog inside it. */
+async function openPin(
+  user: ReturnType<typeof userEvent.setup>,
+  slot: string,
+): Promise<HTMLElement> {
+  await user.click(await pinButton(slot))
+  return await screen.findByRole("listbox", { name: "Models" })
+}
+
+/** Shuts whichever picker is open, leaving the dialog behind it up. */
+async function closePin(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await user.keyboard("{Escape}")
+  await vi.waitFor(() => expect(screen.queryByRole("listbox", { name: "Models" })).toBeNull())
+}
+
+/** Picks `model` out of the catalog in the named slot's picker. */
 async function pickModel(
   user: ReturnType<typeof userEvent.setup>,
-  field: string,
+  slot: string,
   model: string,
 ): Promise<void> {
-  await user.click(await screen.findByRole("combobox", { name: field }))
-  await user.click(within(await screen.findByRole("listbox", { name: "Models" })).getByText(model))
+  const models = await openPin(user, slot)
+  await user.click(within(models).getByText(model))
+  await closePin(user)
 }
 
-/** The named model box: one per slot, and the whole choice for it. */
-async function modelBox(field: string): Promise<HTMLInputElement> {
-  return (await screen.findByRole("combobox", { name: field })) as HTMLInputElement
+/** Pins a model the catalog does not carry, which is typed rather than picked. */
+async function typeModel(
+  user: ReturnType<typeof userEvent.setup>,
+  slot: string,
+  id: string,
+): Promise<void> {
+  await openPin(user, slot)
+  await user.type(screen.getByRole("combobox", { name: `${slot} runs on` }), id)
+  await user.click(screen.getByText(/^Other — run/))
+  await closePin(user)
 }
 
-/** The named effort select, once the catalog it is scoped by has landed. */
-async function effortField(field: string): Promise<HTMLElement> {
-  return await screen.findByRole("combobox", { name: field })
-}
-
-/** Picks `effort` out of the closed list under the named effort field. */
+/** Picks `effort` off the strip under the catalog, for whatever the slot is on. */
 async function pickEffort(
   user: ReturnType<typeof userEvent.setup>,
-  field: string,
+  slot: string,
   effort: string,
 ): Promise<void> {
-  await user.click(await effortField(field))
-  await user.click(await screen.findByRole("option", { name: effort }))
+  await openPin(user, slot)
+  await user.click(await screen.findByRole("radio", { name: effort }))
+  await closePin(user)
 }
 
 describe("dismissing the dialog", () => {
@@ -310,19 +342,16 @@ describe("editing a task that has not started", () => {
     })
     renderScreen(<EditTaskDialog task={PINNED_TASK as never} open onOpenChange={vi.fn()} />)
 
-    // Nothing to read the pin against yet, so the pin is what the box holds.
-    const box = (await screen.findByRole("combobox", {
-      name: "Engineer model",
-    })) as HTMLInputElement
-    expect(box.value).toBe(PINNED_ENGINEER.model)
+    // Nothing to read the pin against yet, so the pin is what the trigger says.
+    expect(await pinReads("Engineer")).toBe("Claude Code claude-opus-5")
 
     await user.type(screen.getByLabelText("Title"), "!")
     landProfiles()
 
     // A reviewer row shows its profile's name only once the profiles are in,
-    // so it is the signal — and the box is still what the user saw.
+    // so it is the signal — and the pin is still what the user saw.
     expect(await screen.findByText("Reviewer")).toBeDefined()
-    expect(box.value).toBe(PINNED_ENGINEER.model)
+    expect(await pinReads("Engineer")).toBe("Claude Code claude-opus-5")
 
     await user.click(screen.getByRole("button", { name: "Save changes" }))
 
@@ -335,14 +364,16 @@ describe("editing a task that has not started", () => {
 
     // The engineer profile runs on claude_code, so the pin is an override and
     // shows as itself — the CLI on its own, with no model after it.
-    expect((await modelBox("Engineer model")).value).toBe("codex")
+    expect(await pinReads("Engineer")).toBe("Codex default model")
   })
 
   it("sends the daemon's sentinel when a pin is emptied back to the profile's own", async () => {
     const user = userEvent.setup()
     renderEdit(CODEX_TASK)
 
-    await user.clear(await modelBox("Engineer model"))
+    const models = await openPin(user, "Engineer")
+    await user.click(within(models).getByText("Profile's own"))
+    await closePin(user)
     await user.click(screen.getByRole("button", { name: "Save changes" }))
 
     await vi.waitFor(() => expect(writes).toEqual([`PATCH /v1/tasks/${TASK.id}`]))
@@ -353,7 +384,7 @@ describe("editing a task that has not started", () => {
     const user = userEvent.setup()
     renderEdit(CODEX_TASK)
 
-    expect((await modelBox("Engineer model")).value).toBe("codex")
+    expect(await pinReads("Engineer")).toBe("Codex default model")
     await user.type(screen.getByLabelText("Title"), "!")
     await user.click(screen.getByRole("button", { name: "Save changes" }))
 
@@ -363,20 +394,32 @@ describe("editing a task that has not started", () => {
 })
 
 /**
- * One pin per slot, chosen on the form that assigns them: one id, naming the
- * agent CLI and then the model of it.
+ * One pin per slot, chosen on the form that assigns them: one control, holding
+ * the agent CLI, the model of it and the effort it is run at.
  */
 describe("what the task's agents run on", () => {
   it("offers every slot the catalog whole, grouped by agent CLI", async () => {
     const user = userEvent.setup()
     renderDialog(vi.fn())
 
-    await user.click(await modelBox("Reviewer 1 model"))
-
-    const models = await screen.findByRole("listbox", { name: "Models" })
+    const models = await openPin(user, "Reviewer 1")
     expect(within(models).getByText("codex:gpt-5.3-codex")).toBeDefined()
     expect(within(models).getByText("claude_code:claude-opus-5")).toBeDefined()
     expect(within(models).getByText("Codex")).toBeDefined()
+
+    await closePin(user)
+  })
+
+  it("is three controls on a reviewer row: the profile, what it runs on, and the remove", async () => {
+    renderDialog(vi.fn())
+
+    // The built-in Reviewer with nothing of its own pinned: the row says what
+    // it will actually run on rather than leaving the choice blank.
+    expect(await screen.findByLabelText("Reviewer 1")).toBeDefined()
+    await vi.waitFor(async () =>
+      expect(await pinReads("Reviewer 1")).toBe(`Profile's own — ${REVIEWER.model}`),
+    )
+    expect(screen.getByRole("button", { name: "Remove reviewer 1" })).toBeDefined()
   })
 
   it("sends the engineer's model, and each reviewer's, from its own box", async () => {
@@ -385,8 +428,8 @@ describe("what the task's agents run on", () => {
 
     await user.type(screen.getByLabelText("Title"), "Wire the strip")
     expect(await screen.findByText("Engineer")).toBeDefined()
-    await pickModel(user, "Engineer model", "codex:gpt-5.3-codex")
-    await pickModel(user, "Reviewer 1 model", "claude_code:claude-opus-5")
+    await pickModel(user, "Engineer", "codex:gpt-5.3-codex")
+    await pickModel(user, "Reviewer 1", "claude_code:claude-opus-5")
 
     await user.click(screen.getByRole("button", { name: "Create task" }))
 
@@ -403,7 +446,7 @@ describe("what the task's agents run on", () => {
 
     await user.type(screen.getByLabelText("Title"), "Wire the strip")
     expect(await screen.findByText("Engineer")).toBeDefined()
-    await user.type(await modelBox("Engineer model"), "codex")
+    await typeModel(user, "Engineer", "codex")
     await user.click(screen.getByRole("button", { name: "Create task" }))
 
     await vi.waitFor(() => expect(writes).toEqual([`POST /v1/goals/${GOAL.id}/tasks`]))
@@ -416,7 +459,7 @@ describe("what the task's agents run on", () => {
 
     await user.type(screen.getByLabelText("Title"), "Wire the strip")
     expect(await screen.findByText("Engineer")).toBeDefined()
-    await user.type(await modelBox("Engineer model"), "opencode:ollama/llama3:8b")
+    await typeModel(user, "Engineer", "opencode:ollama/llama3:8b")
     await user.click(screen.getByRole("button", { name: "Create task" }))
 
     await vi.waitFor(() => expect(writes).toEqual([`POST /v1/goals/${GOAL.id}/tasks`]))
@@ -429,7 +472,7 @@ describe("what the task's agents run on", () => {
 
     await user.type(screen.getByLabelText("Title"), "Wire the strip")
     expect(await screen.findByText("Engineer")).toBeDefined()
-    await user.type(await modelBox("Reviewer 1 model"), "claude-opus-5")
+    await typeModel(user, "Reviewer 1", "claude-opus-5")
     await user.click(screen.getByRole("button", { name: "Create task" }))
 
     expect(await screen.findByText(/claude_code:claude-opus-5/)).toBeDefined()
@@ -451,7 +494,7 @@ describe("what the task's agents run on", () => {
 })
 
 /**
- * The effort beside each model box: one per slot, offered from what that slot's
+ * The effort strip under each slot's catalog: offered from what that slot's
  * model can be run at, and cleared back to the CLI's own when the model moves
  * to one that does not take it — which is what the daemon does with it.
  */
@@ -462,10 +505,10 @@ describe("what each agent is run at", () => {
 
     await user.type(screen.getByLabelText("Title"), "Wire the strip")
     expect(await screen.findByText("Engineer")).toBeDefined()
-    await pickModel(user, "Engineer model", "codex:gpt-5.3-codex")
-    await pickEffort(user, "Engineer effort", "ultra")
-    await pickModel(user, "Reviewer 1 model", "claude_code:claude-opus-5")
-    await pickEffort(user, "Reviewer 1 effort", "max")
+    await pickModel(user, "Engineer", "codex:gpt-5.3-codex")
+    await pickEffort(user, "Engineer", "ultra")
+    await pickModel(user, "Reviewer 1", "claude_code:claude-opus-5")
+    await pickEffort(user, "Reviewer 1", "max")
 
     await user.click(screen.getByRole("button", { name: "Create task" }))
 
@@ -477,21 +520,44 @@ describe("what each agent is run at", () => {
     })
   })
 
+  /**
+   * An effort with no model beside it is a pin of its own: the daemon runs the
+   * model the slot would have run on anyway — the profile's — at that effort
+   * (`http/pins.rs`, `chosen`), which is what `pinFields` sends it as.
+   */
+  it("sends an effort with no model, which runs the slot's own model at it", async () => {
+    const user = userEvent.setup()
+    renderDialog(vi.fn())
+
+    await user.type(screen.getByLabelText("Title"), "Wire the strip")
+    expect(await screen.findByText("Engineer")).toBeDefined()
+    // Nothing pinned on the row: the strip is offered against what that
+    // reviewer's profile runs on, and the trigger says so.
+    await pickEffort(user, "Reviewer 1", "high")
+    expect(await pinReads("Reviewer 1")).toBe(`Profile's own — ${REVIEWER.model} · high`)
+
+    await user.click(screen.getByRole("button", { name: "Create task" }))
+
+    await vi.waitFor(() => expect(writes).toEqual([`POST /v1/goals/${GOAL.id}/tasks`]))
+    const row = (posted[0] as { reviewers: Record<string, unknown>[] }).reviewers[0]
+    expect(row).toEqual({ profile: REVIEWER.id, effort: "high" })
+  })
+
   it("offers only what the slot's own model takes", async () => {
     const user = userEvent.setup()
     renderDialog(vi.fn())
 
-    await pickModel(user, "Engineer model", "claude_code:claude-opus-5")
-    await user.click(await effortField("Engineer effort"))
+    const models = await openPin(user, "Engineer")
+    await user.click(within(models).getByText("claude_code:claude-opus-5"))
 
     // The claude entry's list, named with what that CLI runs it at — not the
     // codex one beside it in the catalog.
-    expect(await screen.findByRole("option", { name: "auto (high)" })).toBeDefined()
-    expect(screen.queryByRole("option", { name: "ultra" })).toBeNull()
+    expect(await screen.findByRole("radio", { name: "auto (high)" })).toBeDefined()
+    expect(screen.queryByRole("radio", { name: "ultra" })).toBeNull()
 
     // Closed again before the test ends: an open popup holds the pointer over
     // the whole document, which is not a state to hand to the next test.
-    await user.keyboard("{Escape}")
+    await closePin(user)
   })
 
   it("drops an effort back to auto when the model moves to one that takes none", async () => {
@@ -500,17 +566,17 @@ describe("what each agent is run at", () => {
 
     await user.type(screen.getByLabelText("Title"), "Wire the strip")
     expect(await screen.findByText("Engineer")).toBeDefined()
-    await pickModel(user, "Engineer model", "claude_code:claude-opus-5")
-    await pickEffort(user, "Engineer effort", "max")
+    const models = await openPin(user, "Engineer")
+    await user.click(within(models).getByText("claude_code:claude-opus-5"))
+    await user.click(await screen.findByRole("radio", { name: "max" }))
 
-    // Typed over rather than emptied: the model moves, and the effort it
+    // Picked over rather than handed back: the model moves, and the effort it
     // belonged to does not come with it.
-    await user.click(await modelBox("Engineer model"))
-    await user.keyboard("{Backspace>6/}haiku-4-5")
+    await user.click(within(models).getByText("claude_code:claude-haiku-4-5"))
 
-    const field = await effortField("Engineer effort")
-    await vi.waitFor(() => expect(field).toHaveProperty("disabled", true))
-    expect(field.getAttribute("title")).toContain("takes no effort")
+    await vi.waitFor(() => expect(screen.queryAllByRole("radio")).toHaveLength(0))
+    expect(screen.getByText(/takes no effort/)).toBeDefined()
+    await closePin(user)
 
     await user.click(screen.getByRole("button", { name: "Create task" }))
 
@@ -543,8 +609,8 @@ describe("what each agent is run at", () => {
 
     await user.type(screen.getByLabelText("Title"), "Wire the strip")
     expect(await screen.findByText("Engineer")).toBeDefined()
-    await pickModel(user, "Engineer model", "codex:gpt-5.3-codex")
-    await pickEffort(user, "Engineer effort", "ultra")
+    await pickModel(user, "Engineer", "codex:gpt-5.3-codex")
+    await pickEffort(user, "Engineer", "ultra")
     await user.click(screen.getByRole("button", { name: "Create task" }))
 
     expect(await screen.findByText(/is no effort of that model/)).toBeDefined()

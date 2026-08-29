@@ -7,10 +7,11 @@
  * them, not on every form that needs one. With none registered the field is an
  * empty state pointing there.
  *
- * What the planner runs on is a model, written `<agent_kind>[:<model>]` — the
- * agent CLI and, after a `:`, the model of it — and, beside it, the effort that
- * model is run at. An empty box carries a meaning of its own, the planner on
- * its profile's own, so it is left out of the request rather than sent empty.
+ * What the planner runs on is one choice made in one control: a model, written
+ * `<agent_kind>[:<model>]` — the agent CLI and, after a `:`, the model of it —
+ * and the effort that model is run at. Nothing pinned carries a meaning of its
+ * own, the planner on its profile's own, so it is left out of the request
+ * rather than sent empty.
  *
  * Everything else the daemon still validates: the client only catches what it
  * can know on its own (empty title, nothing picked) and shows the daemon's
@@ -41,9 +42,8 @@ import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
-import { EffortPicker } from "@/features/profiles/effort-picker"
-import { ModelPicker } from "@/features/profiles/model-picker"
-import { modelRefField, modelRefLabel } from "@/features/profiles/model-ref"
+import { modelRefField, pinLabel } from "@/features/profiles/model-ref"
+import { PinPicker } from "@/features/profiles/pin-picker"
 import { modelsQueryOptions } from "@/features/profiles/queries"
 import { NoRepositories as SharedNoRepositories } from "@/features/repositories/no-repositories"
 import { repositoriesQueryOptions } from "@/features/repositories/queries"
@@ -122,9 +122,9 @@ export function CreateGoalDialog({
   )
   const selectedPlanner = form.watch("planner_profile")
   const plannerProfile = plannerOptions?.find((profile) => profile.id === selectedPlanner)
-  // What the planner will actually run on, which is what its effort is offered
-  // against: the model chosen here, or the profile's own where none was.
-  const chosenModel = form.watch("model")
+  // The effort the planner is pinned at, which the picker holds beside the
+  // model: one control, two fields.
+  const chosenEffort = form.watch("effort")
   useEffect(() => {
     if (!open || !plannerOptions?.length || selectedPlanner) return
     const preferred =
@@ -281,54 +281,39 @@ export function CreateGoalDialog({
           </div>
 
           <Field data-invalid={errors.model ? "" : undefined}>
-            {/* No htmlFor: cmdk owns its input's id and names it itself. */}
-            <FieldLabel>Planner model</FieldLabel>
-            <div className="flex items-start gap-2">
-              <Controller
-                control={form.control}
-                name="model"
-                render={({ field }) => (
-                  <ModelPicker
-                    label="Planner model"
-                    value={field.value}
-                    onChange={(next) => {
-                      field.onChange(next)
-                      // The profile's model comes with the profile's effort.
-                      if (next.trim().length === 0) form.setValue("effort", "")
-                    }}
-                    models={models.data}
-                    invalid={errors.model ? true : undefined}
-                    placeholder={
-                      plannerProfile
-                        ? `The profile's own — ${modelRefLabel(plannerProfile.model)}`
-                        : "The profile's own"
-                    }
-                    className="flex-1"
-                  />
-                )}
-              />
-              <Controller
-                control={form.control}
-                name="effort"
-                render={({ field }) => (
-                  <EffortPicker
-                    label="Planner effort"
-                    value={field.value}
-                    onChange={field.onChange}
-                    model={chosenModel || plannerProfile?.model || ""}
-                    models={models.data}
-                    className="w-32 shrink-0"
-                  />
-                )}
-              />
-            </div>
+            <FieldLabel htmlFor="goal-pin">Planner runs on</FieldLabel>
+            <Controller
+              control={form.control}
+              name="model"
+              render={({ field }) => (
+                <PinPicker
+                  id="goal-pin"
+                  label="Planner runs on"
+                  model={field.value}
+                  effort={chosenEffort}
+                  onChange={(pin) => {
+                    field.onChange(pin.model)
+                    form.setValue("effort", pin.effort, { shouldDirty: true })
+                  }}
+                  models={models.data}
+                  fallback={
+                    plannerProfile
+                      ? {
+                          model: plannerProfile.model ?? null,
+                          effort: plannerProfile.effort ?? null,
+                        }
+                      : null
+                  }
+                  invalid={errors.model ? true : undefined}
+                />
+              )}
+            />
             {errors.model ? (
               <FieldError>{errors.model.message}</FieldError>
             ) : (
               <FieldDescription>
-                The agent CLI and, after a <code>:</code>, the model of it, with the effort it is
-                run at beside it. Empty runs the planner on its profile's own:{" "}
-                {modelRefLabel(plannerProfile?.model)}.
+                Nothing pinned runs the planner on its profile's own:{" "}
+                {pinLabel(plannerProfile?.model, plannerProfile?.effort)}.
               </FieldDescription>
             )}
           </Field>

@@ -3,13 +3,13 @@
 /**
  * The profile dialog against a stubbed daemon.
  *
- * The model picker is rendered rather than unit-tested because what matters is
- * the interplay: the catalog list is a convenience bolted onto a free-text
- * field, and every test here is one of the ways that must not curdle — a pick
- * must land in the field, typed text must survive to the request untouched,
- * a model naming no agent CLI must be refused before the request, clearing must
- * fall back to the daemon's `default` sentinel, and a dead catalog endpoint
- * must leave the field a plain input rather than a broken combobox.
+ * The pin picker is rendered rather than unit-tested because what matters is
+ * the interplay: one control holds the model and the effort it is run at, and
+ * every test here is one of the ways that must not curdle — a pick must land on
+ * the trigger, typed text must survive to the request untouched, a model naming
+ * no agent CLI must be refused before the request, clearing must fall back to
+ * the daemon's `default` sentinel, and a dead catalog endpoint must still leave
+ * a model typable.
  *
  * The prompt stack inside this dialog has its own file, next to the field it
  * is: `profile-prompts-field.test.tsx`.
@@ -170,9 +170,14 @@ function renderDialog(
   return renderScreen(<ProfileFormDialog open onOpenChange={onOpenChange} profile={profile} />)
 }
 
-/** The combobox input, once the dialog is up. */
-async function modelBox(): Promise<HTMLInputElement> {
-  return (await screen.findByRole("combobox", { name: "Model" })) as HTMLInputElement
+/** The one control the pin is made in, once the dialog is up. */
+async function pinButton(): Promise<HTMLElement> {
+  return await screen.findByRole("button", { name: "Runs on" })
+}
+
+/** What the trigger reads, with the whitespace a screen collapses collapsed. */
+async function pinReads(): Promise<string> {
+  return ((await pinButton()).textContent ?? "").replace(/\s+/g, " ").trim()
 }
 
 /** One prompt's textarea, which is only in the tree while its section is open. */
@@ -189,18 +194,28 @@ async function expandPrompt(
   return await promptBox(label)
 }
 
-/**
- * The effort select beside the model box, once the catalog is in: until it
- * lands there is no list to scope, and the field is free text like the model
- * box beside it.
- */
-async function effortField(): Promise<HTMLElement> {
-  return await screen.findByRole("combobox", { name: "Effort" })
-}
-
 /** The catalog popup, which lives in a portal outside the dialog. */
 async function listbox(): Promise<HTMLElement> {
   return await screen.findByRole("listbox", { name: "Models" })
+}
+
+/** Opens the picker, and answers the catalog inside it. */
+async function openPin(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
+  await user.click(await pinButton())
+  return await listbox()
+}
+
+/** Types into the picker's search box, which is also its free-text field. */
+async function searchPin(user: ReturnType<typeof userEvent.setup>, text: string) {
+  await user.type(screen.getByRole("combobox", { name: "Runs on" }), text)
+}
+
+/** Shuts the picker again, the way the dialog behind it must survive. */
+async function closePin(user: ReturnType<typeof userEvent.setup>) {
+  await user.keyboard("{Escape}")
+  await waitFor(() => {
+    expect(screen.queryByRole("listbox", { name: "Models" })).toBeNull()
+  })
 }
 
 beforeEach(() => {
@@ -208,14 +223,12 @@ beforeEach(() => {
   stubDaemon()
 })
 
-describe("the model picker", () => {
-  it("lists the catalog with descriptions on click, and a pick fills the field", async () => {
+describe("the pin picker", () => {
+  it("lists the catalog with descriptions, and a pick lands on the trigger", async () => {
     const user = userEvent.setup()
     renderDialog(null)
-    const box = await modelBox()
 
-    await user.click(box)
-    const options = await listbox()
+    const options = await openPin(user)
 
     // The catalog whole, grouped one heading per agent CLI.
     expect(within(options).getByText("Claude Code")).toBeDefined()
@@ -224,19 +237,18 @@ describe("the model picker", () => {
 
     await user.click(within(options).getByText("claude_code:claude-opus-5"))
 
-    expect(box.value).toBe("claude_code:claude-opus-5")
-    await waitFor(() => {
-      expect(screen.queryByRole("listbox", { name: "Models" })).toBeNull()
-    })
+    expect(await pinReads()).toBe("Claude Code claude-opus-5")
+    // Still open: the effort that model is run at is picked next, in the same
+    // popover rather than in a second box.
+    expect(await listbox()).toBeDefined()
   })
 
   it("filters on the description too, not just the model id", async () => {
     const user = userEvent.setup()
     renderDialog(null)
-    const box = await modelBox()
 
-    await user.type(box, "deep analysis")
-    const options = await listbox()
+    const options = await openPin(user)
+    await searchPin(user, "deep analysis")
 
     await waitFor(() => {
       expect(within(options).queryByText("claude_code:claude-fable-5")).toBeNull()
@@ -247,18 +259,18 @@ describe("the model picker", () => {
   it("filters while typing and picks with the keyboard", async () => {
     const user = userEvent.setup()
     renderDialog(null)
-    const box = await modelBox()
 
-    await user.type(box, "gpt-5.5")
-    const options = await listbox()
+    const options = await openPin(user)
+    await searchPin(user, "gpt-5.5")
     await waitFor(() => {
       expect(within(options).queryByText("claude_code:claude-fable-5")).toBeNull()
     })
-    expect(within(options).getByText("codex:gpt-5.5-codex")).toBeDefined()
 
+    // The row that hands the pin back is always the first, so the first arrow
+    // lands on the first match.
     await user.keyboard("{ArrowDown}{Enter}")
 
-    expect(box.value).toBe("codex:gpt-5.5-codex")
+    expect(await pinReads()).toBe("Codex gpt-5.5-codex")
   })
 
   it("sends typed free text as the model, matched by nothing in the catalog", async () => {
@@ -266,7 +278,10 @@ describe("the model picker", () => {
     renderDialog(null)
 
     await user.type(screen.getByLabelText("Name"), "custom")
-    await user.type(await modelBox(), "opencode:my-weird-model")
+    await openPin(user)
+    await searchPin(user, "opencode:my-weird-model")
+    await user.click(screen.getByText(/^Other — run/))
+    await closePin(user)
     await user.type(screen.getByLabelText("System prompt"), "Do things.")
     await user.click(screen.getByRole("button", { name: "Create profile" }))
 
@@ -281,7 +296,10 @@ describe("the model picker", () => {
     renderDialog(null)
 
     await user.type(screen.getByLabelText("Name"), "custom")
-    await user.type(await modelBox(), "claude-opus-5")
+    await openPin(user)
+    await searchPin(user, "claude-opus-5")
+    await user.click(screen.getByText(/^Other — run/))
+    await closePin(user)
     await user.click(screen.getByRole("button", { name: "Create profile" }))
 
     expect(await screen.findByText(/claude_code:claude-opus-5/)).toBeDefined()
@@ -291,27 +309,33 @@ describe("the model picker", () => {
   it("clears back to auto, which the update spells as its sentinel", async () => {
     const user = userEvent.setup()
     renderDialog(PROFILE)
-    const box = await modelBox()
-    expect(box.value).toBe("claude_code:claude-opus-5")
+    await waitFor(async () => expect(await pinReads()).toContain("claude-opus-5"))
 
-    await user.click(screen.getByRole("button", { name: "Use auto" }))
-    expect(box.value).toBe("")
+    await openPin(user)
+    await user.click(screen.getByText("auto — first installed CLI, on its own default model"))
+    await closePin(user)
+    expect(await pinReads()).toBe("auto — first installed CLI, on its own default model")
 
     await user.click(screen.getByRole("button", { name: "Save changes" }))
 
     await waitFor(() => {
       expect(lastRequest("PUT", `/v1/profiles/${PROFILE.id}`)).toBeDefined()
     })
-    expect(lastRequest("PUT", `/v1/profiles/${PROFILE.id}`)?.body?.model).toBe("default")
+    // The model comes back with its effort: an effort beside a model handed
+    // back is refused outright.
+    expect(lastRequest("PUT", `/v1/profiles/${PROFILE.id}`)?.body).toMatchObject({
+      model: "default",
+      effort: "default",
+    })
   })
 
   it("says nothing about a model nobody touched, so a rename cannot re-pin it", async () => {
     const user = userEvent.setup()
     renderDialog(PROFILE)
-    // The box holds the profile's pin, as it does on every open — and that is
-    // exactly what must not travel: `PUT` is a partial update, so re-sending it
-    // would overwrite a model moved from the CLI or another window meanwhile.
-    expect((await modelBox()).value).toBe("claude_code:claude-opus-5")
+    // The trigger reads the profile's pin, as it does on every open — and that
+    // is exactly what must not travel: `PUT` is a partial update, so re-sending
+    // it would overwrite a model moved from the CLI or another window meanwhile.
+    await waitFor(async () => expect(await pinReads()).toBe("Claude Code claude-opus-5 · high"))
 
     await user.type(screen.getByLabelText("Name"), "-renamed")
     await user.click(screen.getByRole("button", { name: "Save changes" }))
@@ -325,36 +349,30 @@ describe("the model picker", () => {
     expect(request.body).not.toHaveProperty("model")
   })
 
-  it("sends a model that was changed, beside the name it was changed with", async () => {
+  it("closes on Escape with the dialog behind it left up", async () => {
     const user = userEvent.setup()
-    renderDialog(PROFILE)
-    await waitFor(async () => expect((await modelBox()).value).toBe("claude_code:claude-opus-5"))
+    const onOpenChange = vi.fn()
+    renderDialog(null, onOpenChange)
 
-    await user.type(screen.getByLabelText("Name"), "-renamed")
-    await user.clear(await modelBox())
-    await user.type(await modelBox(), "codex:gpt-5.5-codex")
-    await user.click(screen.getByRole("button", { name: "Save changes" }))
+    await openPin(user)
+    await closePin(user)
 
-    await waitFor(() => {
-      expect(lastRequest("PUT", `/v1/profiles/${PROFILE.id}`)).toBeDefined()
-    })
-    expect(lastRequest("PUT", `/v1/profiles/${PROFILE.id}`)?.body).toMatchObject({
-      name: "Builder-renamed",
-      model: "codex:gpt-5.5-codex",
-    })
+    // Escape over an open popover answers the popover; the dialog is the next
+    // one to answer it, not this one.
+    expect(onOpenChange).not.toHaveBeenCalled()
   })
 
-  it("degrades to a plain free-text field when the catalog cannot be fetched", async () => {
+  it("still takes a typed model when the catalog cannot be fetched", async () => {
     const user = userEvent.setup()
     stubDaemon({ models: "error" })
     renderDialog(null)
-    const box = await modelBox()
 
-    // No catalog: clicking and typing open nothing, and saving still works.
-    await user.click(box)
-    await user.type(box, "codex:still-typable")
-    expect(screen.queryByRole("listbox", { name: "Models" })).toBeNull()
-    expect(box.value).toBe("codex:still-typable")
+    // No catalog to suggest anything, but the daemon takes whatever is typed,
+    // so the row that pins free text has to be there regardless.
+    await openPin(user)
+    await searchPin(user, "codex:still-typable")
+    await user.click(screen.getByText(/^Other — run/))
+    await closePin(user)
 
     await user.type(screen.getByLabelText("Name"), "offline")
     await user.type(screen.getByLabelText("System prompt"), "Do things.")
@@ -368,22 +386,22 @@ describe("the model picker", () => {
 })
 
 /**
- * The effort beside the model: a closed list, scoped by the box next to it, and
- * the same `default` sentinel to clear it with.
+ * The effort under the catalog in the same popover: a closed list, scoped by
+ * whatever the model half is, and the same `default` sentinel to clear it with.
  */
-describe("the effort picker", () => {
+describe("the effort strip", () => {
   it("offers what the chosen model takes, and sends the pick", async () => {
     const user = userEvent.setup()
     renderDialog(null)
 
     await user.type(screen.getByLabelText("Name"), "rust-engineer")
-    await user.click(await modelBox())
-    await user.click(within(await listbox()).getByText("codex:gpt-5.5-codex"))
+    const options = await openPin(user)
+    await user.click(within(options).getByText("codex:gpt-5.5-codex"))
 
-    await user.click(await effortField())
     // The codex entry's own list, not the claude one beside it in the catalog.
-    expect(screen.queryByRole("option", { name: "max" })).toBeNull()
-    await user.click(await screen.findByRole("option", { name: "xhigh" }))
+    expect(screen.queryByRole("radio", { name: "max" })).toBeNull()
+    await user.click(await screen.findByRole("radio", { name: "xhigh" }))
+    await closePin(user)
 
     await user.click(screen.getByRole("button", { name: "Create profile" }))
 
@@ -394,21 +412,24 @@ describe("the effort picker", () => {
     })
   })
 
-  it("is disabled while the profile is on auto, which has no model to run at", async () => {
+  it("has nothing to offer while the profile is on auto, which has no model to run at", async () => {
+    const user = userEvent.setup()
     renderDialog(null)
 
-    expect(await effortField()).toHaveProperty("disabled", true)
+    await openPin(user)
+
+    expect(screen.queryAllByRole("radio")).toHaveLength(0)
+    expect(screen.getByText(/An effort is run at a model/)).toBeDefined()
   })
 
   it("opens on the profile's effort and clears it with the daemon's sentinel", async () => {
     const user = userEvent.setup()
     renderDialog(PROFILE)
+    await waitFor(async () => expect(await pinReads()).toContain("· high"))
 
-    const field = await effortField()
-    await waitFor(() => expect(field.textContent).toContain("high"))
-
-    await user.click(field)
-    await user.click(await screen.findByRole("option", { name: "auto (high)" }))
+    await openPin(user)
+    await user.click(await screen.findByRole("radio", { name: "auto (high)" }))
+    await closePin(user)
     await user.click(screen.getByRole("button", { name: "Save changes" }))
 
     await waitFor(() => {
@@ -418,21 +439,21 @@ describe("the effort picker", () => {
   })
 
   /**
-   * The daemon drops the effort from a pin whose model moves, so the box has to
+   * The daemon drops the effort from a pin whose model moves, so it has to
    * travel with the model even where nobody touched it — otherwise the form
    * says `high` and the store says the CLI's own.
    */
   it("sends the effort beside a model that was changed", async () => {
     const user = userEvent.setup()
     renderDialog(PROFILE)
-    await waitFor(async () => expect((await modelBox()).value).toBe("claude_code:claude-opus-5"))
+    await waitFor(async () => expect(await pinReads()).toContain("claude-opus-5"))
 
-    // Backspaced down to a prefix and picked out of the catalog, never emptied:
-    // a box emptied is the profile back on auto, which takes the effort with
-    // it. This is a model moving under an effort that stays.
-    await user.click(await modelBox())
-    await user.keyboard("{Backspace>8/}")
-    await user.click(within(await listbox()).getByText("claude_code:claude-fable-5"))
+    // A model picked over another, never handed back: handing it back takes
+    // the effort with it. This is a model moving under an effort that stays,
+    // which it does because the model moved to takes it too.
+    const options = await openPin(user)
+    await user.click(within(options).getByText("claude_code:claude-fable-5"))
+    await closePin(user)
     await user.click(screen.getByRole("button", { name: "Save changes" }))
 
     await waitFor(() => {

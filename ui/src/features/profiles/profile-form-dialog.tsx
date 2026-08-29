@@ -36,12 +36,10 @@ import { toast } from "sonner"
 import { ApiError, type ProfileDto, type UpdateProfileRequest } from "@/api"
 import { FormDialog, FormDialogBody, FormDialogContent } from "@/components/form-dialog"
 import { FormSelect } from "@/components/form-select"
-import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { describeError, ROLE_LABELS } from "@/lib/format"
-import { EffortPicker } from "./effort-picker"
-import { ModelPicker } from "./model-picker"
+import { PinPicker } from "./pin-picker"
 import {
   changedPrompts,
   emptyProfileFormValues,
@@ -99,7 +97,7 @@ export function ProfileFormDialog({
   /** Whether the prompt editors have been filled from the profile's own. */
   const seededFrom = useRef<string | null>(null)
 
-  const model = watch("model")
+  const effort = watch("effort")
 
   // The catalog behind the model picker. Only asked for while the dialog is
   // up, and allowed to fail: an undefined catalog leaves the field free-text.
@@ -253,8 +251,8 @@ export function ProfileFormDialog({
             )}
           </Field>
 
-          {/* One row for what the profile runs as and what it runs on: the
-              model, and beside it the effort that model is run at. */}
+          {/* One row for what the profile is spawned as and what it runs on:
+              the model, and the effort it is run at, as one choice. */}
           <div className="flex flex-col gap-5 sm:flex-row sm:gap-4">
             <Field className="sm:w-40 sm:shrink-0">
               <FieldLabel htmlFor="profile-role">Role</FieldLabel>
@@ -273,69 +271,36 @@ export function ProfileFormDialog({
             </Field>
 
             <Field className="sm:flex-1" data-invalid={formState.errors.model ? true : undefined}>
-              {/* No htmlFor: cmdk owns its input's id and names it "Model"
-                  itself, through the hidden label its aria-labelledby points at. */}
-              <FieldLabel>Model</FieldLabel>
-              <div className="flex items-center gap-2">
-                <Controller
-                  control={control}
-                  name="model"
-                  render={({ field }) => (
-                    <ModelPicker
-                      value={field.value}
-                      onChange={(next) => {
-                        field.onChange(next)
-                        // A profile back on auto has no model for an effort to
-                        // be run at, which the daemon refuses to store.
-                        if (next.trim().length === 0) setValue("effort", "")
-                      }}
-                      models={models.data}
-                      invalid={formState.errors.model ? true : undefined}
-                      placeholder="auto — first installed CLI"
-                    />
-                  )}
-                />
-                {model.trim().length > 0 ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      setValue("model", "", { shouldDirty: true })
-                      setValue("effort", "", { shouldDirty: true })
+              <FieldLabel htmlFor="profile-pin">Runs on</FieldLabel>
+              <Controller
+                control={control}
+                name="model"
+                render={({ field }) => (
+                  <PinPicker
+                    id="profile-pin"
+                    label="Runs on"
+                    model={field.value}
+                    effort={effort}
+                    onChange={(pin) => {
+                      field.onChange(pin.model)
+                      setValue("effort", pin.effort, { shouldDirty: true })
                     }}
-                  >
-                    Use auto
-                  </Button>
-                ) : null}
-              </div>
+                    models={models.data}
+                    invalid={formState.errors.model ? true : undefined}
+                    // Nothing stands behind a profile the way a profile stands
+                    // behind a task's slots: its empty is auto and nothing else.
+                    unpinnedLabel="auto — first installed CLI, on its own default model"
+                  />
+                )}
+              />
               {formState.errors.model ? (
                 <FieldError errors={[formState.errors.model]} />
               ) : (
                 <FieldDescription>
-                  The agent CLI and, after a <code>:</code>, the model of it. Empty is auto: the
-                  first installed CLI, on its own default model.
+                  The agent CLI and, after a <code>:</code>, the model of it, with the effort that
+                  model is run at. Empty is auto: the first installed CLI, on its own default model.
                 </FieldDescription>
               )}
-            </Field>
-
-            <Field className="sm:w-40 sm:shrink-0">
-              {/* The list is the model's, not this field's: what a model can be
-                  run at is the catalog's answer for the box beside it. */}
-              <FieldLabel>Effort</FieldLabel>
-              <Controller
-                control={control}
-                name="effort"
-                render={({ field }) => (
-                  <EffortPicker
-                    value={field.value}
-                    onChange={field.onChange}
-                    model={model}
-                    models={models.data}
-                  />
-                )}
-              />
-              <FieldDescription>What that model is run at.</FieldDescription>
             </Field>
           </div>
 

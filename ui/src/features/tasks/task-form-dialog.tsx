@@ -18,12 +18,12 @@
  * /v1/tasks/{id}` carries neither — so edit mode leaves those fields out; the
  * task panel's facts card keeps showing what they are.
  *
- * What each agent runs on can be chosen in both modes, one pair of fields per
- * slot: the engineer's and every reviewer's. The model is one string — the
- * agent CLI and, after a `:`, the model of it — so each slot has a single model
- * box, offering the catalog whole; an empty one is the slot on its profile's
- * own model. Beside it stands the effort that model is run at, scoped by it:
- * a closed list where the catalog knows one, and empty for the CLI's own.
+ * What each agent runs on can be chosen in both modes, one control per slot:
+ * the engineer's and every reviewer's. The pin is a model — the agent CLI and,
+ * after a `:`, the model of it — and the effort that model is run at, and one
+ * picker holds both, so a reviewer row stays three controls wide: the profile,
+ * what it runs on, and the remove. Nothing pinned is the slot on its profile's
+ * own, which the picker is told so it can say what that is.
  */
 
 import { zodResolver } from "@hookform/resolvers/zod"
@@ -46,9 +46,8 @@ import { MarkdownField } from "@/components/markdown-field"
 import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { EffortPicker } from "@/features/profiles/effort-picker"
-import { ModelPicker } from "@/features/profiles/model-picker"
-import { modelRefLabel } from "@/features/profiles/model-ref"
+import { pinLabel } from "@/features/profiles/model-ref"
+import { PinPicker } from "@/features/profiles/pin-picker"
 import { modelsQueryOptions, profilesQueryOptions } from "@/features/profiles/queries"
 import { taskListQueryOptions, useCreateTask, useUpdateTask } from "./queries"
 import {
@@ -188,16 +187,13 @@ function TaskFormDialog({
     [engineerOptions, selectedEngineer],
   )
 
-  // What each slot will actually run on, which is what its effort is offered
-  // against: the model chosen for the slot, or — an empty box being the slot
-  // on its profile's own — that profile's model.
-  const engineerModel = form.watch("engineer_model")
+  // The effort each slot is pinned at, which its picker holds beside the model:
+  // one control, two fields.
+  const engineerEffort = form.watch("engineer_effort")
   const reviewerRowValues = form.watch("reviewers")
-  const reviewerModel = (index: number) => {
-    const row = reviewerRowValues?.[index]
-    const profile = reviewerOptions.find((option) => option.id === row?.profile)
-    return row?.model || profile?.model || ""
-  }
+  /** The profile a reviewer row falls back to, which is what its pin is read against. */
+  const reviewerProfile = (index: number) =>
+    reviewerOptions.find((option) => option.id === reviewerRowValues?.[index]?.profile)
 
   // The daemon ships built-in "Engineer" and "Reviewer" profiles; preselect
   // them (or the only choice there is) so the common case is one click, the
@@ -322,44 +318,26 @@ function TaskFormDialog({
           {/* Editable in both modes, unlike the profile beside it: the daemon
               takes a pin on `PATCH` too, for as long as the task waits. */}
           <Field data-invalid={form.formState.errors.engineer_model ? "" : undefined}>
-            {/* No htmlFor: cmdk owns its input's id and names it itself. */}
-            <FieldLabel>Engineer model</FieldLabel>
-            <div className="flex items-start gap-2">
-              <Controller
-                control={form.control}
-                name="engineer_model"
-                render={({ field }) => (
-                  <ModelPicker
-                    label="Engineer model"
-                    value={field.value}
-                    onChange={(next) => {
-                      field.onChange(next)
-                      // The profile's model comes with the profile's effort:
-                      // the daemon refuses an effort beside a model handed back.
-                      if (next.trim().length === 0) form.setValue("engineer_effort", "")
-                    }}
-                    models={models.data}
-                    invalid={form.formState.errors.engineer_model ? true : undefined}
-                    placeholder={pinPlaceholder(engineerProfile)}
-                    className="flex-1"
-                  />
-                )}
-              />
-              <Controller
-                control={form.control}
-                name="engineer_effort"
-                render={({ field }) => (
-                  <EffortPicker
-                    label="Engineer effort"
-                    value={field.value}
-                    onChange={field.onChange}
-                    model={engineerModel || engineerProfile?.model || ""}
-                    models={models.data}
-                    className="w-32 shrink-0"
-                  />
-                )}
-              />
-            </div>
+            <FieldLabel htmlFor="task-engineer-pin">Engineer runs on</FieldLabel>
+            <Controller
+              control={form.control}
+              name="engineer_model"
+              render={({ field }) => (
+                <PinPicker
+                  id="task-engineer-pin"
+                  label="Engineer runs on"
+                  model={field.value}
+                  effort={engineerEffort}
+                  onChange={(pin) => {
+                    field.onChange(pin.model)
+                    form.setValue("engineer_effort", pin.effort, { shouldDirty: true })
+                  }}
+                  models={models.data}
+                  fallback={pinFallback(engineerProfile)}
+                  invalid={form.formState.errors.engineer_model ? true : undefined}
+                />
+              )}
+            />
             {form.formState.errors.engineer_model ? (
               <FieldError>{form.formState.errors.engineer_model.message}</FieldError>
             ) : (
@@ -395,33 +373,20 @@ function TaskFormDialog({
                         control={form.control}
                         name={`reviewers.${index}.model`}
                         render={({ field }) => (
-                          <ModelPicker
-                            label={`Reviewer ${index + 1} model`}
-                            value={field.value}
-                            onChange={(next) => {
-                              field.onChange(next)
-                              if (next.trim().length === 0) {
-                                form.setValue(`reviewers.${index}.effort`, "")
-                              }
+                          <PinPicker
+                            label={`Reviewer ${index + 1} runs on`}
+                            model={field.value}
+                            effort={reviewerRowValues?.[index]?.effort ?? ""}
+                            onChange={(pin) => {
+                              field.onChange(pin.model)
+                              form.setValue(`reviewers.${index}.effort`, pin.effort, {
+                                shouldDirty: true,
+                              })
                             }}
                             models={models.data}
+                            fallback={pinFallback(reviewerProfile(index))}
                             invalid={modelError ? true : undefined}
-                            placeholder="The profile's own"
                             className="flex-1"
-                          />
-                        )}
-                      />
-                      <Controller
-                        control={form.control}
-                        name={`reviewers.${index}.effort`}
-                        render={({ field }) => (
-                          <EffortPicker
-                            label={`Reviewer ${index + 1} effort`}
-                            value={field.value}
-                            onChange={field.onChange}
-                            model={reviewerModel(index)}
-                            models={models.data}
-                            className="w-28 shrink-0"
                           />
                         )}
                       />
@@ -533,15 +498,16 @@ function TaskFormDialog({
 }
 
 /**
- * What an empty box means, in the box itself: the engineer profile's own
- * model, named where the profile is known so that leaving the field alone is
- * an informed choice rather than a blank.
+ * What nothing pinned resolves to, for the picker to say so on its own face:
+ * the slot's profile, where the form knows which one that is.
  */
-function pinPlaceholder(profile: ProfileDto | undefined): string {
-  return profile ? `The profile's own — ${modelRefLabel(profile.model)}` : "The profile's own"
+function pinFallback(
+  profile: ProfileDto | undefined,
+): { model: string | null; effort: string | null } | null {
+  return profile ? { model: profile.model ?? null, effort: profile.effort ?? null } : null
 }
 
-/** The line under the engineer's boxes, which spells the same choice out. */
+/** The line under the engineer's picker, which spells the same choice out. */
 function engineerPinHint(profile: ProfileDto | undefined): string {
-  return `The agent CLI and, after a ":", the model of it, with the effort it is run at beside it. Empty runs the engineer on its profile's own: ${modelRefLabel(profile?.model)}.`
+  return `Nothing pinned runs the engineer on its profile's own: ${pinLabel(profile?.model, profile?.effort)}.`
 }
