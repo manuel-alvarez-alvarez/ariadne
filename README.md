@@ -151,9 +151,12 @@ codex-hooks`.** `ariadne doctor` reads the verdicts back out of codex's config
 and names any declared event that has none. Which events are declared, and why
 each one, is in `crates/ariadne-core/src/codex_hooks.rs`.
 
-The daemon then runs as a user service with restart-on-failure (stop it with
-`launchctl bootout gui/$(id -u)/dev.ariadne.daemon` or `systemctl --user stop
-ariadned`). Completions are **dynamic**: on TAB the shell asks the daemon, so
+The daemon then runs as a user service with restart-on-failure, and
+`ariadne daemon start|stop|restart` drives that service rather than the bare
+process wherever `~/.ariadne/install.env` records one — `launchctl kickstart
+-k` / `launchctl bootout`, `systemctl --user` — saying which command it used;
+`ariadne daemon status` says which manager is holding the daemon up.
+Completions are **dynamic**: on TAB the shell asks the daemon, so
 task/goal/session ids and profile names complete with live values. Other
 shells: `source <(COMPLETE=fish ariadne)`, or `ariadne completions <shell>`
 for a static script.
@@ -186,6 +189,11 @@ ariadne task ls --goal <goal-id>
 ariadne task attach <task-id>          # engineer terminal (or --role reviewer)
 ariadne task msg <task-id> "hold on, use the middleware crate instead"
 ariadne attach <id>                    # session, task or goal id
+
+# without attaching to a terminal
+ariadne models ls --agent codex        # everything --model can be pinned to
+ariadne session ls --attention         # the agents waiting on a human
+ariadne session send <session-id> y    # type into a live agent, as the UI does
 ```
 
 `ariadne --help` lists every command and `ariadne <command> --help` every flag:
@@ -219,6 +227,11 @@ prevent_sleep = true               # hold a system sleep inhibition while any ag
                                    # session is live, so the box does not idle-sleep
                                    # out from under a working agent (default)
 ```
+
+`ariadned --check-config` reads that file and exits: a key the daemon would
+refuse is named where it stands, without starting anything or touching the
+daemon that is already running. `ariadned --help` lists every key above and
+the two environment variables (`ARIADNE_HOME`, `RUST_LOG`) with a line each.
 
 `db_path` has to be deleted before this version is started for the first time:
 the schema's 29 migrations are squashed into one, so a database written by an

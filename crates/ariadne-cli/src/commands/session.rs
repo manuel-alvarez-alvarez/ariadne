@@ -6,7 +6,7 @@ use anyhow::Result;
 use clap::Subcommand;
 
 use ariadne_api::goals::GoalDto;
-use ariadne_api::sessions::{SessionDto, SessionListQuery};
+use ariadne_api::sessions::{SessionDto, SessionInputRequest, SessionListQuery};
 use ariadne_api::tasks::TaskDto;
 use ariadne_client::Client;
 use ariadne_core::{AttentionReason, Role, SessionStatus};
@@ -64,6 +64,10 @@ pub enum SessionCommand {
         /// filter does. Composes with the rest: it never widens the list
         #[arg(long, value_enum)]
         role: Option<Role>,
+        /// Only sessions the daemon has flagged as needing a human: the
+        /// same filter the UI's Attention page is built on
+        #[arg(long)]
+        attention: bool,
         /// Include finished sessions (exited/failed), not just live ones;
         /// nothing to add once --status names one
         #[arg(short, long)]
@@ -77,6 +81,21 @@ pub enum SessionCommand {
         /// Session id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::session_ids))]
         id: String,
+    },
+    /// Type into a live session, as the UI's terminal panel does
+    ///
+    /// The text is typed into the agent's pane and submitted, which is what
+    /// answering a question or a permission prompt from the terminal looks
+    /// like. `--no-newline` leaves it in the prompt unsent.
+    Send {
+        /// Session id
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::session_ids))]
+        id: String,
+        /// What to type
+        text: String,
+        /// Type the text without submitting it
+        #[arg(long)]
+        no_newline: bool,
     },
     /// Show recent terminal output of a session
     Logs {
@@ -108,15 +127,19 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
             goal,
             status,
             role,
+            attention,
             all,
             no_trunc,
         } => {
-            let filtered = goal.is_some() || task.is_some() || status.is_some() || role.is_some();
+            let filtered =
+                goal.is_some() || task.is_some() || status.is_some() || role.is_some() || attention;
             let query = SessionListQuery {
                 goal,
                 task,
                 status,
-                attention: None,
+                // A flag that is not set is not a filter for sessions that
+                // want nobody: it is no filter at all.
+                attention: attention.then_some(true),
             };
             let sessions: Vec<SessionDto> = client
                 .get_json(&query_path("/v1/sessions", &query)?)
@@ -187,6 +210,25 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
                 ])
             })?;
         }
+        SessionCommand::Send {
+            id,
+            text,
+            no_newline,
+        } => {
+            let data = keystrokes(&text, no_newline);
+            client
+                .send_no_content(
+                    http::Method::POST,
+                    &format!("/v1/sessions/{id}/input"),
+                    Some(&SessionInputRequest { data }),
+                )
+                .await?;
+            print(
+                format,
+                &serde_json::json!({"sent": true, "session": id}),
+                || println!("typed into session {id}"),
+            )?;
+        }
         SessionCommand::Logs { id } => {
             let logs: ariadne_api::sessions::SessionLogsResponse =
                 client.get_json(&format!("/v1/sessions/{id}/logs")).await?;
@@ -226,6 +268,19 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
         }
     }
     Ok(())
+}
+
+/// What `session send` types into the pane: the text, and the Return that
+/// submits it unless the caller asked for the text alone.
+///
+/// A terminal's Return is a carriage return, which is what every agent TUI is
+/// listening for — `\n` would land in the prompt as a newline in half of them
+/// — and the endpoint types what it is given, byte for byte.
+fn keystrokes(text: &str, no_newline: bool) -> String {
+    match no_newline {
+        true => text.to_string(),
+        false => format!("{text}\r"),
+    }
 }
 
 fn session_path(id: &str) -> String {
@@ -402,6 +457,20 @@ mod tests {
         assert_eq!(
             ids(visible(listed(), false, None, Some(Role::Reviewer))),
             [] as [String; 0]
+        );
+    }
+
+    /// What `session send` types is the text and the Return that submits it:
+    /// a carriage return, which is what a TUI reads as Enter, and nothing at
+    /// all when the caller wants the text left in the prompt.
+    #[test]
+    fn what_is_typed_carries_its_own_return() {
+        assert_eq!(keystrokes("approve", false), "approve\r");
+        assert_eq!(keystrokes("approve", true), "approve");
+        assert_eq!(
+            keystrokes("", false),
+            "\r",
+            "a bare Return is a legitimate keystroke"
         );
     }
 

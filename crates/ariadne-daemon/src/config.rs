@@ -92,6 +92,25 @@ impl Config {
 
         Ok(config)
     }
+
+    /// `ariadned --check-config`: read `<home>/config.toml` the way [`load`]
+    /// reads it, and say what it found.
+    ///
+    /// Only the reading: no directory is created, no database is opened and no
+    /// socket is touched, so it is safe to run against the home of a daemon
+    /// that is up. A file this refuses is a file the next start would refuse,
+    /// in the same words — that is the whole point of it.
+    ///
+    /// [`load`]: Config::load
+    pub fn check(home_override: Option<PathBuf>) -> Result<String> {
+        let root = endpoint::home(home_override)
+            .context("cannot determine home directory; pass --home")?;
+        let path = endpoint::config_file(&root);
+        Ok(match endpoint::parse_config(&root)? {
+            Some(_) => format!("{}: ok", path.display()),
+            None => format!("{}: none — every default applies", path.display()),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -117,6 +136,32 @@ mod tests {
         assert!(config.delete_merged_worktrees);
         assert!(config.delete_merged_branches);
         assert!(config.prevent_sleep);
+    }
+
+    /// The check is the start's own reading, without the start: a file the
+    /// daemon would refuse is refused here by the key it could not read, and a
+    /// home with no file at all is not an error — it is every default.
+    #[test]
+    fn check_config_reads_the_file_the_next_start_would_read() {
+        let dir = home_with("prevent_sleep = false\n");
+        let verdict = Config::check(Some(dir.path().join("home"))).unwrap();
+        assert!(verdict.ends_with("config.toml: ok"), "{verdict}");
+
+        let empty = tempfile::tempdir().unwrap();
+        let verdict = Config::check(Some(empty.path().to_path_buf())).unwrap();
+        assert!(verdict.contains("none"), "{verdict}");
+        assert!(
+            !empty.path().join("worktrees").exists(),
+            "checking a config creates nothing"
+        );
+
+        let broken = home_with("prevent_slep = false\n");
+        let error = Config::check(Some(broken.path().join("home"))).unwrap_err();
+        assert!(error.to_string().contains("config.toml"), "{error}");
+        assert!(
+            format!("{:#}", error).contains("prevent_slep"),
+            "and says which key it could not read: {error:#}"
+        );
     }
 
     #[test]

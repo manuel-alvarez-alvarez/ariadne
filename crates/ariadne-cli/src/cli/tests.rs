@@ -7,6 +7,7 @@ use clap::FromArgMatches;
 
 use ariadne_core::{AgentKind, GoalStatus, MergeStrategy, Role, TaskStatus};
 
+use crate::commands::models::ModelsCommand;
 use crate::commands::profile::PromptAssignment;
 
 /// clap's own consistency check over the whole tree, shadowed `--format`
@@ -28,6 +29,7 @@ const LEAVES: &[(&str, bool)] = &[
     ("attention", true),
     ("completions", false),
     ("daemon logs", false),
+    ("daemon restart", true),
     ("daemon start", true),
     ("daemon status", true),
     ("daemon stop", true),
@@ -41,6 +43,7 @@ const LEAVES: &[(&str, bool)] = &[
     ("goal msg", true),
     ("goal rm", true),
     ("mcp serve", false),
+    ("models ls", true),
     ("profile create", true),
     ("profile inspect", true),
     ("profile ls", true),
@@ -60,6 +63,7 @@ const LEAVES: &[(&str, bool)] = &[
     ("session logs", true),
     ("session ls", true),
     ("session resume", true),
+    ("session send", true),
     ("setup codex-hooks", false),
     ("task attach", false),
     ("task cancel", true),
@@ -638,6 +642,149 @@ fn pairs(args: Vec<PromptAssignment>) -> Vec<String> {
     args.into_iter()
         .map(|a| format!("{}={}", a.kind.as_str(), a.value))
         .collect()
+}
+
+/// The daemon group is about one home, so `--home` is the group's: it reaches
+/// every subcommand under it, wherever on the line it is typed.
+#[test]
+fn the_daemon_group_takes_one_home_for_all_of_it() {
+    let home = |argv: &[&str]| {
+        let Command::Daemon { home, .. } = parse(argv).command else {
+            panic!("daemon");
+        };
+        home
+    };
+    let scratch = Some(PathBuf::from("/scratch"));
+    assert_eq!(
+        home(&["ariadne", "daemon", "--home", "/scratch", "stop"]),
+        scratch
+    );
+    assert_eq!(
+        home(&["ariadne", "daemon", "stop", "--home", "/scratch"]),
+        scratch
+    );
+    assert_eq!(
+        home(&["ariadne", "daemon", "--home", "/scratch", "start"]),
+        scratch
+    );
+    assert_eq!(
+        home(&["ariadne", "daemon", "restart", "--home", "/scratch"]),
+        scratch
+    );
+    assert_eq!(
+        home(&["ariadne", "daemon", "logs", "--home", "/scratch"]),
+        scratch
+    );
+    assert_eq!(home(&["ariadne", "daemon", "status"]), None);
+}
+
+/// Stopping is over when the daemon is gone, so both commands that wait carry
+/// the same bound on the wait — ten seconds unless the caller says otherwise.
+#[test]
+fn stopping_and_restarting_wait_for_a_bounded_time() {
+    let timeout = |argv: &[&str]| {
+        let Command::Daemon { command, .. } = parse(argv).command else {
+            panic!("daemon");
+        };
+        match command {
+            DaemonCommand::Stop { timeout } | DaemonCommand::Restart { timeout } => timeout,
+            _ => panic!("stop or restart"),
+        }
+    };
+    assert_eq!(timeout(&["ariadne", "daemon", "stop"]), STOP_TIMEOUT);
+    assert_eq!(timeout(&["ariadne", "daemon", "restart"]), STOP_TIMEOUT);
+    assert_eq!(
+        timeout(&["ariadne", "daemon", "stop", "--timeout", "30"]),
+        30
+    );
+    assert!(
+        try_parse(&["ariadne", "daemon", "stop", "--timeout", "soon"]).is_err(),
+        "a wait is a number of seconds"
+    );
+}
+
+/// `session send` is the CLI's half of the UI's terminal panel: an id, the
+/// text, and the one thing a caller may want differently — leaving it in the
+/// prompt instead of submitting it.
+#[test]
+fn session_send_takes_an_id_and_the_text_to_type() {
+    let Command::Session {
+        command:
+            SessionCommand::Send {
+                id,
+                text,
+                no_newline,
+            },
+    } = parse(&["ariadne", "session", "send", "01SESS", "make it green"]).command
+    else {
+        panic!("session send");
+    };
+    assert_eq!(
+        (id.as_str(), text.as_str(), no_newline),
+        ("01SESS", "make it green", false)
+    );
+
+    let Command::Session {
+        command: SessionCommand::Send { no_newline, .. },
+    } = parse(&["ariadne", "session", "send", "01SESS", "y", "--no-newline"]).command
+    else {
+        panic!("session send");
+    };
+    assert!(no_newline);
+    assert!(
+        try_parse(&["ariadne", "session", "send", "01SESS"]).is_err(),
+        "there is nothing to type"
+    );
+}
+
+/// The attention filter is the daemon's own, and a flag that is not given is
+/// no filter at all.
+#[test]
+fn session_ls_filters_on_attention() {
+    let attention = |argv: &[&str]| {
+        let Command::Session {
+            command: SessionCommand::Ls { attention, .. },
+        } = parse(argv).command
+        else {
+            panic!("session ls");
+        };
+        attention
+    };
+    assert!(attention(&["ariadne", "session", "ls", "--attention"]));
+    assert!(!attention(&["ariadne", "session", "ls"]));
+}
+
+/// `models ls` narrows to an agent CLI in the spelling the daemon reads, and
+/// the hyphenated one a shell tends to type names the same CLI.
+#[test]
+fn models_ls_takes_an_agent_to_narrow_the_catalogue() {
+    let agent = |argv: &[&str]| {
+        let Command::Models {
+            command: ModelsCommand::Ls { agent, .. },
+        } = parse(argv).command
+        else {
+            panic!("models ls");
+        };
+        agent
+    };
+    assert_eq!(agent(&["ariadne", "models", "ls"]), None);
+    assert_eq!(
+        agent(&["ariadne", "models", "ls", "--agent", "claude_code"]),
+        Some(AgentKind::ClaudeCode)
+    );
+    assert_eq!(
+        agent(&["ariadne", "models", "ls", "--agent", "claude-code"]),
+        Some(AgentKind::ClaudeCode)
+    );
+    let Err(err) = try_parse(&["ariadne", "models", "ls", "--agent", "gemini"]) else {
+        panic!("\"gemini\" is not an agent CLI");
+    };
+    let err = err.to_string();
+    assert!(err.contains("unknown agent kind: gemini"), "{err}");
+    assert!(
+        err.contains("opencode"),
+        "the refusal lists the real ones: {err}"
+    );
 }
 
 fn parse(argv: &[&str]) -> Cli {

@@ -18,21 +18,61 @@ use tracing_subscriber::util::SubscriberInitExt;
 use ariadne_daemon::config::Config;
 use ariadne_daemon::http::{self, AppState};
 
+/// Everything that configures the daemon outside its own two flags, one line
+/// each: `--help` is where an operator looks for it, and a key that is not
+/// written down here is one nobody knows to set.
+const ENVIRONMENT: &str = "\
+Environment:
+  ARIADNE_HOME  home directory: socket, database, worktrees, run dir and log
+                (default: ~/.ariadne; --home wins over it)
+  RUST_LOG      tracing filter for this run; wins over the log_filter below
+                (e.g. info,ariadne_daemon=debug)
+
+Configuration — <home>/config.toml, every key optional, read strictly (an
+unknown key stops the daemon rather than being ignored):
+  socket_path              unix socket to listen on (default: <home>/ariadne.sock)
+  db_path                  SQLite database (default: <home>/ariadne.db)
+  worktree_root            where task worktrees are created (default: <home>/worktrees)
+  run_dir                  per-session run files: spawn plans, console logs
+                           (default: <home>/run)
+  tcp_listen               extra TCP listener for web/desktop UIs, e.g.
+                           \"127.0.0.1:7676\" (default: unix socket only)
+  log_filter               tracing filter when RUST_LOG says nothing (default: info)
+  cli_bin                  the `ariadne` every session, hook and MCP server is
+                           launched with (default: the one beside this binary)
+  delete_merged_branches   delete a task branch once it has landed (default: true)
+  delete_merged_worktrees  delete a task worktree once it has landed (default: true)
+  prevent_sleep            hold off system sleep while a session is live (default: true)
+
+  ariadned --check-config reads that file and exits.\
+";
+
 #[derive(Parser)]
 #[command(
     name = "ariadned",
     version,
-    about = "Ariadne coding-agent orchestrator daemon"
+    about = "Ariadne coding-agent orchestrator daemon",
+    after_help = ENVIRONMENT
 )]
 struct Args {
     /// Ariadne home directory (default: $ARIADNE_HOME or ~/.ariadne)
     #[arg(long)]
     home: Option<PathBuf>,
+    /// Read <home>/config.toml, say what it resolves to, and exit
+    ///
+    /// Nothing is started, opened or created: it is the config the next start
+    /// would run on, checked while the daemon that is running keeps running.
+    #[arg(long)]
+    check_config: bool,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    if args.check_config {
+        println!("{}", Config::check(args.home)?);
+        return Ok(());
+    }
     let config = Config::load(args.home)?;
 
     // RUST_LOG wins over config so ad-hoc debugging stays easy.

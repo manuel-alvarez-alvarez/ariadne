@@ -6,7 +6,6 @@
 //! in the [`BinaryDto`] the daemon answers with, so one [`describe`] writes
 //! both halves.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -17,10 +16,7 @@ use ariadne_client::{Client, ClientError};
 use ariadne_core::{AgentKind, probe};
 
 use super::{Check, Status};
-
-/// launchd label and systemd unit `scripts/install.sh` registers.
-const LAUNCHD_LABEL: &str = "dev.ariadne.daemon";
-const SYSTEMD_UNIT: &str = "ariadned.service";
+use crate::commands::daemon::service::{Manager, manifest};
 
 /// Whose lookup a binary was missing from, as the report names it.
 pub const HERE: &str = "PATH";
@@ -239,80 +235,51 @@ pub async fn daemon(
                 .hint("installed by hand? scripts/install.sh writes one"),
         },
     );
-    checks.push(service(&home.map(read_manifest).unwrap_or_default()).await);
+    checks.push(service(home).await);
     checks
 }
 
 /// Whether the daemon is registered with the OS service manager, read-only:
 /// doctor reports what it finds and never registers, loads or repairs.
 ///
-/// launchd and systemd differ only in the words: which file registers the
-/// daemon, what "running" is called, and the command that starts it.
-async fn service(manifest: &BTreeMap<String, String>) -> Check {
-    let from_manifest = |key: &str, default: PathBuf| {
-        manifest.get(key).map(PathBuf::from).unwrap_or(default)
-    };
-    let (unit, file, name, up, command, start) = if cfg!(target_os = "macos") {
-        let plist = from_manifest("ARIADNE_PLIST", default_plist());
-        let start = format!(
-            "load it with: launchctl bootstrap gui/$(id -u) {}",
-            plist.display()
-        );
-        let name = format!("launchd {LAUNCHD_LABEL}");
-        let command = vec!["launchctl", "list", LAUNCHD_LABEL];
-        (plist, "launchd plist", name, "loaded", command, start)
-    } else if cfg!(target_os = "linux") {
-        (
-            from_manifest("ARIADNE_UNIT", default_unit()),
-            "systemd unit",
-            format!("systemd --user {SYSTEMD_UNIT}"),
-            "active",
-            vec!["systemctl", "--user", "is-active", SYSTEMD_UNIT],
-            format!("start it with: systemctl --user start {SYSTEMD_UNIT}"),
-        )
-    } else {
+/// launchd and systemd differ only in the words, which
+/// [`Manager`](crate::commands::daemon::service::Manager) holds: which file
+/// registers the daemon, what "up" is called there, and the command that
+/// starts it. What `ariadne daemon start` would drive is the same knowledge,
+/// asked for a different reason.
+async fn service(home: Option<&Path>) -> Check {
+    let Some(manager) = Manager::of_this_host() else {
         return Check::warn("service", "no service manager Ariadne knows on this OS")
             .hint("run ariadned yourself, or with whatever supervisor you use");
     };
-
+    let unit = manager.unit_file(&home.and_then(manifest).unwrap_or_default());
     if !unit.is_file() {
-        return Check::warn("service", format!("no {file} at {}", unit.display())).hint(
-            "the daemon will not come back after a reboot; scripts/install.sh registers it",
-        );
+        return Check::warn(
+            "service",
+            format!("no {} at {}", manager.unit_file_kind(), unit.display()),
+        )
+        .hint("the daemon will not come back after a reboot; scripts/install.sh registers it");
     }
-    match probe::probe_status(command[0], &command[1..]).await {
+
+    let name = format!("{} {}", manager.as_str(), manager.unit());
+    let up = manager.up_word();
+    match manager.up().await {
         true => Check::ok("service", format!("{name} {up}")),
-        false => Check::warn("service", format!("{name} installed but not {up}")).hint(start),
+        false => Check::warn("service", format!("{name} installed but not {up}"))
+            .hint(start_hint(manager, &unit)),
     }
 }
 
-fn default_plist() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_default()
-        .join("Library/LaunchAgents")
-        .join(format!("{LAUNCHD_LABEL}.plist"))
-}
-
-fn default_unit() -> PathBuf {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| dirs::home_dir().unwrap_or_default().join(".config"))
-        .join("systemd/user")
-        .join(SYSTEMD_UNIT)
-}
-
-/// `install.env` as `scripts/install.sh` writes it: `KEY="value"` lines and
-/// comments, read as data — nothing is executed.
-fn read_manifest(home: &Path) -> BTreeMap<String, String> {
-    let Ok(raw) = std::fs::read_to_string(home.join("install.env")) else {
-        return BTreeMap::new();
-    };
-    raw.lines()
-        .filter(|l| !l.trim_start().starts_with('#'))
-        .filter_map(|l| l.split_once('='))
-        .map(|(k, v)| (k.trim().to_string(), v.trim().trim_matches('"').to_string()))
-        .filter(|(_, v)| !v.is_empty())
-        .collect()
+/// How to bring a service the manager is not holding up back up, in that
+/// manager's own words.
+fn start_hint(manager: Manager, unit: &Path) -> String {
+    match manager {
+        Manager::Launchd => format!(
+            "load it with: launchctl bootstrap gui/$(id -u) {}",
+            unit.display()
+        ),
+        Manager::Systemd => format!("start it with: systemctl --user start {}", manager.unit()),
+    }
 }
 
 /// What this shell has of the two kinds of tool: tmux and git, without either
@@ -411,22 +378,6 @@ mod tests {
         let checks = tools(&[], &[binary("gh", None, true, Some(true))]);
         assert_eq!(checks[0].status, Status::Ok);
         assert!(checks[0].detail.contains("signed in"), "{:?}", checks[0]);
-    }
-
-    /// The manifest is data, not a script: `KEY="value"` lines, comments and
-    /// blank lines, and nothing is executed to read them.
-    #[test]
-    fn the_install_manifest_is_read_as_key_values() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(
-            dir.path().join("install.env"),
-            "# Written by scripts/install.sh\nARIADNE_PREFIX=\"/opt/bin\"\nARIADNE_APP=\"\"\n",
-        )
-        .unwrap();
-        let manifest = read_manifest(dir.path());
-        assert_eq!(manifest.get("ARIADNE_PREFIX").unwrap(), "/opt/bin");
-        // An empty value names nothing and would only produce a bad path.
-        assert!(!manifest.contains_key("ARIADNE_APP"));
     }
 
     /// A config the daemon would refuse to start on fails the check by the

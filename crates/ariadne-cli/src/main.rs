@@ -77,11 +77,20 @@ async fn run(cli: Cli) -> Result<ExitCode> {
             clap_complete::generate(shell, &mut command(), "ariadne", &mut std::io::stdout());
             Ok(())
         }
-        Command::Daemon { command } => match command {
-            DaemonCommand::Start { home } => commands::daemon_start(home, format).await,
-            DaemonCommand::Stop => commands::daemon_stop(format),
-            DaemonCommand::Status => commands::daemon_status(&client, format).await,
-            DaemonCommand::Logs { follow } => commands::daemon_logs(follow),
+        Command::Daemon { home, command } => match command {
+            DaemonCommand::Start => commands::daemon::start(home, format).await,
+            DaemonCommand::Stop { timeout } => commands::daemon::stop(home, timeout, format).await,
+            DaemonCommand::Restart { timeout } => {
+                commands::daemon::restart(home, timeout, format).await
+            }
+            // The endpoint still wins over the home here: `status` reads a
+            // daemon rather than driving one, and `--endpoint` is how a daemon
+            // that is not this host's home is read.
+            DaemonCommand::Status => {
+                let client = Client::resolve(cli.endpoint.as_deref(), home.clone());
+                commands::daemon::status(&client, home, format).await
+            }
+            DaemonCommand::Logs { follow } => commands::daemon::logs(home, follow),
         },
         Command::Attach { id, role } => commands::attach::attach_any(&client, &id, role).await,
         Command::Agent { command } => commands::agent::run(&client, command, format).await,
@@ -90,6 +99,7 @@ async fn run(cli: Cli) -> Result<ExitCode> {
         Command::Goal { command } => commands::goal::run(&client, command, format).await,
         Command::Task { command } => commands::task::run(&client, command, format).await,
         Command::Session { command } => commands::session::run(&client, command, format).await,
+        Command::Models { command } => commands::models::run(&client, command, format).await,
         Command::Attention { no_trunc } => commands::attention::run(&client, no_trunc, format).await,
         Command::Setup {
             command: SetupCommand::CodexHooks { cli_bin },

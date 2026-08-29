@@ -24,6 +24,9 @@ clap_complete = { workspace = true }
 dirs = { workspace = true }
 http = { workspace = true }
 rmcp = { version = "3", features = ["server", "transport-io", "macros"] }
+# For one question: the uid whose launchd domain the daemon's service lives in
+# (`gui/<uid>/dev.ariadne.daemon`), which std does not expose.
+rustix = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_urlencoded = { workspace = true }

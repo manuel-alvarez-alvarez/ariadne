@@ -6,6 +6,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 
 use crate::commands::agent::AgentCommand;
 use crate::commands::goal::GoalCommand;
+use crate::commands::models::ModelsCommand;
 use crate::commands::profile::ProfileCommand;
 use crate::commands::repo::RepoCommand;
 use crate::commands::session::SessionCommand;
@@ -43,7 +44,16 @@ pub enum Command {
     /// Generate shell completions (bash, zsh, fish, ...) to stdout
     Completions { shell: clap_complete::Shell },
     /// Manage the ariadned daemon
+    ///
+    /// Every one of these is about the daemon of one home — its process, its
+    /// pidfile and its socket all live in one — so `--home` is the group's and
+    /// applies to all of them. Where a service manager holds that home's
+    /// daemon (launchd, `systemd --user`), it is what start, stop and restart
+    /// drive, and each says which command it used.
     Daemon {
+        /// Ariadne home directory (default: $ARIADNE_HOME or ~/.ariadne)
+        #[arg(long, global = true)]
+        home: Option<PathBuf>,
         #[command(subcommand)]
         command: DaemonCommand,
     },
@@ -51,6 +61,11 @@ pub enum Command {
     Agent {
         #[command(subcommand)]
         command: AgentCommand,
+    },
+    /// List what agents can be pinned to
+    Models {
+        #[command(subcommand)]
+        command: ModelsCommand,
     },
     /// Manage agent profiles
     Profile {
@@ -150,14 +165,20 @@ pub enum McpCommand {
 #[derive(Subcommand)]
 pub enum DaemonCommand {
     /// Start ariadned in the background
-    Start {
-        /// Ariadne home directory (default: $ARIADNE_HOME or ~/.ariadne)
-        #[arg(long)]
-        home: Option<PathBuf>,
+    Start,
+    /// Stop a running ariadned and wait for it to be gone
+    Stop {
+        /// Seconds to wait for the daemon's socket to disappear
+        #[arg(long, default_value_t = STOP_TIMEOUT)]
+        timeout: u64,
     },
-    /// Stop a running ariadned
-    Stop,
-    /// Show daemon status
+    /// Stop a running ariadned and start it again
+    Restart {
+        /// Seconds to wait for the daemon's socket to disappear
+        #[arg(long, default_value_t = STOP_TIMEOUT)]
+        timeout: u64,
+    },
+    /// Show daemon status, and which service manages it
     Status,
     /// Show (or follow) the daemon log
     Logs {
@@ -166,6 +187,10 @@ pub enum DaemonCommand {
         follow: bool,
     },
 }
+
+/// How long `daemon stop` and `daemon restart` wait for the daemon to be
+/// gone before giving up on it, in seconds.
+pub const STOP_TIMEOUT: u64 = 10;
 
 /// Subcommand paths where `--format` has nothing to format: they hand the
 /// terminal to another program, print a shell script, or answer a machine on

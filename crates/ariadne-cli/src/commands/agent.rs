@@ -66,7 +66,7 @@ pub enum AgentCommand {
 ///
 /// Both spellings are accepted: `claude_code` is how the daemon writes it,
 /// `claude-code` is how a shell tends to.
-fn parse_kind(s: &str) -> Result<AgentKind, String> {
+pub fn parse_kind(s: &str) -> Result<AgentKind, String> {
     s.replace('-', "_").parse().map_err(|_| {
         let known = AgentKind::ALL
             .iter()
