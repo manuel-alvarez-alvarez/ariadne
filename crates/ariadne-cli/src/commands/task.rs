@@ -556,8 +556,8 @@ mod tests {
     fn a_task_that_has_spent_nothing_says_zero() {
         assert_eq!(ls_row(&dto())[6], "↑0 0% ↓0");
         let block = usage_lines(&dto());
-        assert_eq!(block.lines().next().unwrap(), "input   0");
-        assert!(block.contains("cached  0  0%"), "{block}");
+        assert_eq!(block.lines().next().unwrap(), "input   0  0%");
+        assert!(block.contains("output  0"), "{block}");
     }
 
     /// The block is the total and then who spent it: the engineer, and every
@@ -582,11 +582,10 @@ mod tests {
         assert_eq!(
             usage_lines(&t),
             [
-                "input   1,204,567",
-                "              cached  1,100,000  91%",
-                "              output     45,300",
-                "              engineer  ↑1,200,000 ↓45,000",
-                "              Reviewer  ↑4,567 ↓300",
+                "input   1.2M  91%",
+                "              output   45k",
+                "              engineer  ↑1.2M ↓45k",
+                "              Reviewer  ↑4.6k ↓300",
                 "              Security  ↑0 ↓0",
             ]
             .join("\n")

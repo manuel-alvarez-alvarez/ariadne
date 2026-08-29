@@ -146,18 +146,24 @@ pub fn at(rfc3339: Option<&str>) -> String {
 }
 
 /// A token count as a person reads it: the digits under a thousand, then
-/// three figures at most — `950`, `1.2k`, `45k`, `1.2M`, `12M`.
+/// three figures at most in the largest unit that fits — `950`, `1.2k`,
+/// `45k`, `1.2M`, `12M`, `1.2G`, `45G`, `1.5T`. `T` is where the units run
+/// out, so a count past it is as long as it needs to be: `1234T`, and
+/// `18446744T` for the largest a `u64` holds.
 ///
-/// Counts run from zero to tens of millions, and the digits past the first
-/// few are noise in a table: what a reader wants from them is the order of
-/// magnitude, side by side with the row above. The same rule as the web's
-/// `formatTokens`, character for character, so a count reads the same in a
-/// terminal and on a screen.
+/// This is how a count is written everywhere the CLI prints one, block as
+/// well as table: the digits past the first few are noise, and what a reader
+/// wants from a spend is its order of magnitude, side by side with the row
+/// above. The same rule as the web's `formatTokens`, character for character,
+/// so a count reads the same in a terminal and on a screen.
 ///
 /// The bands are cut where the rounding lands rather than where the unit
 /// does, so a count that rounds up out of its band is spelled by the band
 /// above it: 9_950 is `10k`, the way ten thousand itself is written, never
-/// `10.0k`, and 999_500 is `1M` rather than `1000k`.
+/// `10.0k`, and 999_500 is `1M` rather than `1000k`. The one place the three
+/// figures give way is above `T`, which has no band above it to carry into:
+/// there is no larger unit a reader would place, so the count keeps counting
+/// in whole `T` however many digits that takes.
 pub fn tokens(count: u64) -> String {
     if count < 1_000 {
         count.to_string()
@@ -167,8 +173,16 @@ pub fn tokens(count: u64) -> String {
         whole(count, 1_000, 'k')
     } else if count < 9_950_000 {
         tenths(count, 1_000_000, 'M')
-    } else {
+    } else if count < 999_500_000 {
         whole(count, 1_000_000, 'M')
+    } else if count < 9_950_000_000 {
+        tenths(count, 1_000_000_000, 'G')
+    } else if count < 999_500_000_000 {
+        whole(count, 1_000_000_000, 'G')
+    } else if count < 9_950_000_000_000 {
+        tenths(count, 1_000_000_000_000, 'T')
+    } else {
+        whole(count, 1_000_000_000_000, 'T')
     }
 }
 
@@ -209,16 +223,17 @@ pub fn usage_cell(usage: &TokenUsageDto) -> String {
     )
 }
 
-/// What one agent, task or goal spent, as an inspect block: the total to the
-/// digit, and then who spent it.
+/// What one agent, task or goal spent, as an inspect block: the total, and
+/// then who spent it.
 ///
-/// A cell rounds — two counts a hundred thousand apart both read as `1.2M` —
-/// and `inspect` is where the digits it rounded away are. The three parts of
-/// the total are labelled rather than spelled with arrows, since there is no
-/// column here to keep narrow, and their counts are right-aligned so they can
-/// be read against each other. `cached` is a part of the `input` above it
-/// rather than a third figure to add up, which is why it is the line that
-/// carries the share — the same share the table cell showed.
+/// The counts are the same compact figures a cell carries — nobody reads a
+/// spend to the digit, and seven of them in a column is a wall to count
+/// zeroes in. The two parts of the total are labelled rather than spelled
+/// with arrows, since there is no column here to keep narrow, and their
+/// counts are right-aligned so they can be read against each other. The
+/// cached share rides beside the `input` it is a share of, the way the table
+/// cell carries it, rather than on a line of its own that would read as a
+/// third figure to add up.
 ///
 /// `breakdown` is who spent it — a goal's roles, a task's agents — each named
 /// and carrying that same pair exactly; `session inspect` has nobody to break
@@ -231,16 +246,16 @@ pub fn usage_block(
     indent: &str,
 ) -> String {
     let counts = [
-        ("input", thousands(total.input_tokens), None),
         (
-            "cached",
-            thousands(total.cached_input_tokens),
+            "input",
+            tokens(total.input_tokens),
             Some(cached_share(total)),
         ),
-        ("output", thousands(total.output_tokens), None),
+        ("output", tokens(total.output_tokens), None),
     ];
     let label = counts.iter().map(|(name, ..)| name.len()).max().unwrap_or(0);
-    // A separated count is digits and commas, so bytes and characters agree.
+    // A compact count is digits, a dot and a unit, so bytes and characters
+    // agree.
     let digits = counts.iter().map(|(_, c, _)| c.len()).max().unwrap_or(0);
     let mut lines: Vec<String> = counts
         .iter()
@@ -258,29 +273,11 @@ pub fn usage_block(
     lines.extend(breakdown.iter().map(|(name, usage)| {
         format!(
             "{name:<width$}  ↑{} ↓{}",
-            thousands(usage.input_tokens),
-            thousands(usage.output_tokens)
+            tokens(usage.input_tokens),
+            tokens(usage.output_tokens)
         )
     }));
     lines.join(indent)
-}
-
-/// A count with its thousands separated: `1,234,567`.
-///
-/// Rust has no separator of its own, and this is the whole of what the CLI
-/// wants from one — no locale, no decimals, no sign — so it is written here
-/// rather than pulled in. The comma is English's, the language every figure
-/// this binary prints is spelled in, the way the web pins its own locale.
-fn thousands(count: u64) -> String {
-    let digits = count.to_string();
-    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
-    for (i, digit) in digits.char_indices() {
-        if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(digit);
-    }
-    out
 }
 
 /// `count` over `unit` to a tenth, with a trailing `.0` dropped: `1.2k`, `2k`.
@@ -417,9 +414,10 @@ mod tests {
         }
     }
 
-    /// Three figures at most, and the digits themselves while they still mean
-    /// something: a table is read down a column, and 12_345 next to
-    /// 1_234_567 says nothing that `12k` next to `1.2M` does not.
+    /// Three figures at most while a unit is left to carry into, and the
+    /// digits themselves while they still mean something: a table is read
+    /// down a column, and 12_345 next to 1_234_567 says nothing that `12k`
+    /// next to `1.2M` does not.
     ///
     /// The same table the web's `formatTokens` is held to, count for count:
     /// a figure that reads one way in a terminal and another on a screen is
@@ -443,6 +441,24 @@ mod tests {
         assert_eq!(tokens(9_949_999), "9.9M");
         assert_eq!(tokens(9_950_000), "10M");
         assert_eq!(tokens(12_345_678), "12M");
+        assert_eq!(tokens(999_499_999), "999M");
+        assert_eq!(tokens(999_500_000), "1G");
+        assert_eq!(tokens(1_234_000_000), "1.2G");
+        assert_eq!(tokens(9_949_999_999), "9.9G");
+        assert_eq!(tokens(9_950_000_000), "10G");
+        assert_eq!(tokens(45_000_000_000), "45G");
+        assert_eq!(tokens(999_499_999_999), "999G");
+        assert_eq!(tokens(999_500_000_000), "1T");
+        assert_eq!(tokens(1_500_000_000_000), "1.5T");
+        assert_eq!(tokens(9_950_000_000_000), "10T");
+        assert_eq!(tokens(1_234_000_000_000_000), "1234T");
+    }
+
+    /// `T` is the last band, so the largest count there is stays a figure
+    /// rather than an overflow: the rounding is done wide enough to hold it.
+    #[test]
+    fn the_largest_count_a_u64_holds_is_still_whole_teras() {
+        assert_eq!(tokens(u64::MAX), "18446744T");
     }
 
     fn usage(input: u64, cached: u64, output: u64) -> TokenUsageDto {
@@ -464,7 +480,7 @@ mod tests {
         assert_eq!(usage_cell(&TokenUsageDto::default()), "↑0 0% ↓0");
         assert_eq!(
             usage_block(&TokenUsageDto::default(), &[], "\n"),
-            ["input   0", "cached  0  0%", "output  0"].join("\n")
+            ["input   0  0%", "output  0"].join("\n")
         );
     }
 
@@ -482,9 +498,9 @@ mod tests {
         assert_eq!(cached_share(&usage(100, 1_000, 0)), "100%");
     }
 
-    /// The cell is the three figures a row is scanned by, rounded; the block
-    /// is the same spend to the digit, with the share on the line it is a
-    /// share of.
+    /// The cell is the three figures a row is scanned by; the block is the
+    /// same figures labelled and stacked, with the share beside the input it
+    /// is a share of.
     #[test]
     fn a_spend_reads_as_arrows_in_a_cell_and_as_labelled_counts_in_a_block() {
         let spent = usage(1_234_567, 1_100_000, 45_300);
@@ -499,26 +515,13 @@ mod tests {
                 "\n",
             ),
             [
-                "input   1,234,567",
-                "cached  1,100,000  89%",
-                "output     45,300",
-                "engineer  ↑1,234,567 ↓45,300",
-                "Reviewer  ↑4,600 ↓300",
+                "input   1.2M  89%",
+                "output   45k",
+                "engineer  ↑1.2M ↓45k",
+                "Reviewer  ↑4.6k ↓300",
             ]
             .join("\n")
         );
-    }
-
-    /// Eight digits are unreadable in a run; the same eight in threes are the
-    /// figure a cell rounded away, which is the whole point of the block.
-    #[test]
-    fn a_count_is_written_in_threes() {
-        assert_eq!(thousands(0), "0");
-        assert_eq!(thousands(999), "999");
-        assert_eq!(thousands(1_000), "1,000");
-        assert_eq!(thousands(45_300), "45,300");
-        assert_eq!(thousands(1_234_567), "1,234,567");
-        assert_eq!(thousands(12_345_678), "12,345,678");
     }
 
     /// The arrows are three bytes each, and a column padded by bytes would

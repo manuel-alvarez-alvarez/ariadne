@@ -433,12 +433,11 @@ mod tests {
         assert_eq!(
             usage_lines(&g),
             [
-                "input   12,345,000",
-                "             cached  11,000,000  89%",
-                "             output     456,000",
-                "             planner    ↑345,000 ↓6,000",
-                "             engineers  ↑10,000,000 ↓400,000",
-                "             reviewers  ↑2,000,000 ↓50,000",
+                "input    12M  89%",
+                "             output  456k",
+                "             planner    ↑345k ↓6k",
+                "             engineers  ↑10M ↓400k",
+                "             reviewers  ↑2M ↓50k",
             ]
             .join("\n")
         );
@@ -452,8 +451,7 @@ mod tests {
         assert_eq!(
             usage_lines(&g),
             [
-                "input   0",
-                "             cached  0  0%",
+                "input   0  0%",
                 "             output  0",
                 "             planner    ↑0 ↓0",
                 "             engineers  ↑0 ↓0",
