@@ -11,6 +11,12 @@
  * what most of them are. The user is never in that list: they are the one
  * writing here.
  *
+ * A thread opened *to answer* an agent that is waiting — from the attention
+ * list — arrives with {@link autoFocus} and {@link presetTo} set: the keyboard
+ * is already in the box and the picker already names whoever asked, so the
+ * answer is one keystroke away rather than two clicks. Both are read on the
+ * way in only; the picker is the user's from then on.
+ *
  * The box is sticky at the bottom of the panel's scroll, so a long thread can
  * be answered from wherever the user has scrolled to. Sending clears the
  * draft; a failure keeps it and shows the daemon's error right above the
@@ -21,7 +27,7 @@
 
 import type { UseMutationResult } from "@tanstack/react-query"
 import { SendIcon } from "lucide-react"
-import { useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 
 import type { CreateMessageRequest, MessageDto } from "@/api"
 import { ErrorState } from "@/components/error-state"
@@ -54,6 +60,8 @@ export function MessageComposer({
   label,
   placeholder,
   addressees,
+  autoFocus,
+  presetTo,
   className,
 }: {
   /** The thread's `usePost…Message` mutation; its error is drawn inline. */
@@ -61,6 +69,10 @@ export function MessageComposer({
   /** What the box is, for the accessibility tree. */
   label: string
   placeholder: string
+  /** Take the keyboard on arrival; see the note above. */
+  autoFocus?: boolean
+  /** Whom the picker starts on — an addressee id, read once on mount. */
+  presetTo?: string | null
   /**
    * Who this thread may address, in the daemon's own order (see
    * `http/recipients.rs`). Empty or absent, the box has no picker at all.
@@ -70,8 +82,20 @@ export function MessageComposer({
   className?: string
 }) {
   const [draft, setDraft] = useState("")
-  const [addressed, setAddressed] = useState<string | null>(null)
+  // The preset is an initial value and nothing more: once the box is on
+  // screen, who the next message goes to is the user's to change and not the
+  // link's to keep re-asserting.
+  const [addressed, setAddressed] = useState<string | null>(presetTo ?? null)
   const form = useRef<HTMLFormElement>(null)
+  const field = useRef<HTMLTextAreaElement>(null)
+
+  // Once, on arrival. `autoFocus` on the element itself is the same thing
+  // written where it also steals the keyboard from anything that re-renders
+  // the box.
+  useEffect(() => {
+    if (autoFocus) field.current?.focus()
+  }, [autoFocus])
+
   const body = draft.trim()
   // Derived rather than trusted: a task gains and loses reviewers while its
   // panel is open, and an addressee that left the thread would be refused.
@@ -119,6 +143,7 @@ export function MessageComposer({
       }}
     >
       <Textarea
+        ref={field}
         value={draft}
         aria-label={label}
         placeholder={placeholder}

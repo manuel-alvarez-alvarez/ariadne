@@ -10,6 +10,7 @@
  * which `src/components/detail-panels.tsx` reads.
  */
 
+import { useEffect, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 
 /**
@@ -18,6 +19,29 @@ import { useSearchParams } from "react-router-dom"
  * it is showing.
  */
 export const PROFILE_EXPAND_PARAM = "expand"
+
+/**
+ * What a link asks the screen it opens to hand the keyboard to, under
+ * `?focus=`: the compose box of a thread, or a session's terminal pane.
+ *
+ * The attention list is where these come from — a row that says an agent is
+ * waiting on you has to land on the box the answer is typed into, not merely
+ * on the screen that contains it. It is a request rather than a state: it is
+ * read once by whichever control it names and dropped from the URL there (see
+ * {@link useComposerRequest}), so a reload, a tab switch or a second panel
+ * opened later never takes the keyboard again.
+ */
+const FOCUS_PARAM = "focus"
+
+/**
+ * Whom a compose box opened by a link starts addressed to, under `?to=` — the
+ * profile of the agent that asked. Travels with {@link FOCUS_PARAM} and is
+ * dropped with it.
+ */
+const ADDRESSEE_PARAM = "to"
+
+/** The controls {@link FOCUS_PARAM} can name. */
+type FocusTarget = "composer" | "terminal"
 
 export const paths = {
   goals: () => "/goals",
@@ -62,7 +86,7 @@ export const paths = {
  * that is not its.
  */
 export function taskPanelTo(current: URLSearchParams, taskId: string): { search: string } {
-  const next = new URLSearchParams(current)
+  const next = withoutArrival(current)
   next.set("task", taskId)
   next.delete("tab")
   next.delete("session")
@@ -86,7 +110,7 @@ export function useTaskPanelTo(taskId: string): { search: string } {
  * three, and clearing them is what keeps that true wherever it is used.
  */
 export function sessionPanelTo(current: URLSearchParams, sessionId: string): { search: string } {
-  const next = new URLSearchParams(current)
+  const next = withoutArrival(current)
   next.set("session", sessionId)
   next.delete("goal")
   next.delete("task")
@@ -106,7 +130,7 @@ export function panelSessionTo(
   current: URLSearchParams,
   sessionId: string | null,
 ): { search: string } {
-  const next = new URLSearchParams(current)
+  const next = withoutArrival(current)
   next.set("tab", "sessions")
   if (sessionId === null) next.delete("session")
   else next.set("session", sessionId)
@@ -148,4 +172,122 @@ export function taskSessionPanelTo(
 ): { search: string } {
   const withTask = new URLSearchParams(taskPanelTo(current, taskId).search)
   return panelSessionTo(withTask, sessionId)
+}
+
+/**
+ * The same params with any unread arrival request dropped.
+ *
+ * Every panel link goes through this: a request belongs to the one link that
+ * made it, and one left behind — the panel it named failed to load, so nothing
+ * ever read it — must not be picked up by the next panel opened over it.
+ */
+function withoutArrival(current: URLSearchParams): URLSearchParams {
+  const next = new URLSearchParams(current)
+  next.delete(FOCUS_PARAM)
+  next.delete(ADDRESSEE_PARAM)
+  return next
+}
+
+/** A panel link that also asks for a control on the way in. */
+function arriving(
+  target: { search: string },
+  focus: FocusTarget,
+  addressee?: string | null,
+): { search: string } {
+  const next = new URLSearchParams(target.search)
+  next.set(FOCUS_PARAM, focus)
+  if (addressee) next.set(ADDRESSEE_PARAM, addressee)
+  return { search: `?${next.toString()}` }
+}
+
+/**
+ * Link target that opens the task's panel on its conversation, with the
+ * compose box focused and addressed to `addressee`.
+ *
+ * Where an agent waiting on the *user* is answered: what it asked is a message
+ * in this thread, and the answer is another one — so the row that says so
+ * lands on the box that writes it, already addressed to whoever asked.
+ */
+export function taskConversationTo(
+  current: URLSearchParams,
+  taskId: string,
+  addressee?: string | null,
+): { search: string } {
+  const next = new URLSearchParams(taskPanelTo(current, taskId).search)
+  next.set("tab", "conversation")
+  return arriving({ search: `?${next.toString()}` }, "composer", addressee)
+}
+
+/**
+ * {@link taskConversationTo} for a planner, whose thread is the goal's: it has
+ * no task to be answered in, and the goal panel only opens on the board — so
+ * this one carries a pathname of its own.
+ */
+export function goalThreadTo(
+  current: URLSearchParams,
+  goalId: string,
+  addressee?: string | null,
+): { pathname: string; search: string } {
+  const next = withoutArrival(current)
+  next.set("goal", goalId)
+  next.set("tab", "thread")
+  next.delete("task")
+  next.delete("session")
+  return {
+    pathname: paths.goals(),
+    ...arriving({ search: `?${next.toString()}` }, "composer", addressee),
+  }
+}
+
+/**
+ * Link target that opens a session's own panel on its terminal, with the pane
+ * focused — where an agent blocked on a prompt is answered, since what it is
+ * waiting for is a keystroke in that pane and nothing else.
+ */
+export function sessionTerminalTo(current: URLSearchParams, sessionId: string): { search: string } {
+  const next = new URLSearchParams(sessionPanelTo(current, sessionId).search)
+  next.set("tab", "terminal")
+  return arriving({ search: `?${next.toString()}` }, "terminal")
+}
+
+/**
+ * Whether the link that opened this screen asked for a control, read once.
+ *
+ * Frozen at mount and dropped from the URL in the same breath, which is what
+ * makes it a request and not a state: the control it names may not exist yet
+ * (a terminal has a snapshot to wait for), so the answer has to survive until
+ * it does — and once it has been given, a re-render, a tab switch or a reload
+ * must not give it again.
+ */
+function useArrival(target: FocusTarget): boolean {
+  const [search, setSearch] = useSearchParams()
+  const [asked] = useState(() => search.get(FOCUS_PARAM) === target)
+  // The effect below runs once, and the params it rewrites are whatever they
+  // are by then — not the ones this render closed over.
+  const latest = useRef({ search, setSearch })
+  latest.current = { search, setSearch }
+
+  useEffect(() => {
+    if (!asked) return
+    const { search, setSearch } = latest.current
+    setSearch(withoutArrival(search), { replace: true })
+  }, [asked])
+
+  return asked
+}
+
+/**
+ * What a link asked of the compose box below a thread: to take the keyboard,
+ * and to open addressed to the agent that asked.
+ */
+export function useComposerRequest(): { focus: boolean; to: string | null } {
+  const [search] = useSearchParams()
+  const focus = useArrival("composer")
+  const [to] = useState(() => search.get(ADDRESSEE_PARAM))
+  return { focus, to: focus ? to : null }
+}
+
+/** Whether a link asked this session's pane to take the keyboard. */
+export function useTerminalFocusRequest(): boolean {
+  return useArrival("terminal")
 }

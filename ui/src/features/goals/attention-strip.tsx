@@ -8,36 +8,94 @@
  * per goal: five goals with one stuck task each is five rows, not five
  * headings. Each row names its goal instead, since nothing above it does.
  *
- * The rows are links into the panel scheme the rest of the app uses — `?task=`
- * for a task, `?session=` for a session — so reading the list and acting on it
- * are the same gesture, and the board stays underneath.
+ * One row per thing gone wrong, too: a failed task under an agent that
+ * reported an error is one row with two badges rather than the same trouble
+ * twice (see `attention.ts`). Every row is a link to the control the answer is
+ * given through — the thread a question was asked in, the pane a prompt is
+ * waiting in — so reading the list and acting on it are the same gesture, and
+ * the board stays underneath.
+ *
+ * The list never clips: what does not fit is counted and expanded on a click,
+ * because a strip that says "8 items" and shows five with no scrollbar is a
+ * strip that hides exactly the row nobody knew to look for. Nor does it go
+ * quiet when it cannot answer — a failed `GET /v1/sessions` is an error row,
+ * not an empty board.
  *
  * Nothing here polls, and nothing here reads the board's status filter; see
- * `attention.ts`.
+ * `attention.ts`. The same count reaches the rest of the app through
+ * `attention-alerts.tsx`, for the screens this strip is not on.
  */
 
+import { TriangleAlertIcon } from "lucide-react"
+import { type ReactNode, useState } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 
 import type { GoalDto } from "@/api"
 import { StatusBadge } from "@/components/status-badge"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { When } from "@/components/when"
-import { SESSION_ATTENTION_META, SessionAttentionBadge } from "@/features/sessions/session-display"
-import { STALLED_META, StalledBadge, TASK_STATUS_META } from "@/features/tasks"
-import { describeError, plural, ROLE_LABELS, shortId } from "@/lib/format"
-import { sessionPanelTo, taskPanelTo } from "@/routes/paths"
+import { SessionAttentionBadge } from "@/features/sessions/session-display"
+import { StalledBadge, TASK_STATUS_META } from "@/features/tasks"
+import { describeError, plural, shortId } from "@/lib/format"
 
-import { type AttentionSessionItem, type AttentionTaskItem, useAttention } from "./attention"
+import {
+  type AttentionItem,
+  attentionDetail,
+  attentionSubject,
+  attentionTarget,
+  useAttention,
+} from "./attention"
+
+/**
+ * How many rows are shown before the rest are counted rather than listed.
+ *
+ * Enough that the usual morning is one glance and no click, small enough that
+ * a bad one does not push the board off the screen — and the rest are one
+ * click away rather than behind a scrollbar macOS does not draw.
+ */
+const VISIBLE_ROWS = 5
 
 export function AttentionStrip() {
   const attention = useAttention()
+  const [expanded, setExpanded] = useState(false)
 
-  // Nothing stuck is the normal state of a healthy board, and the board is
-  // what the screen is for: the strip is absent rather than reassuring.
-  if (attention.items.length === 0) return null
+  if (attention.items.length === 0) {
+    // Nothing loaded and nothing said why: the list is the one thing on this
+    // screen that must not read as "all clear" when it is really "unknown".
+    if (attention.error) {
+      return (
+        <Frame>
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 text-xs text-muted-foreground">
+            <TriangleAlertIcon className="size-3.5 shrink-0 text-status-warn" aria-hidden />
+            <span>Could not load what needs attention — {describeError(attention.error)}.</span>
+            <Retry onClick={attention.refetch} />
+          </p>
+        </Frame>
+      )
+    }
+    // A thin bar rather than the strip's own shape: until the three lists
+    // answer, how tall the list is going to be is not known, and a tall
+    // placeholder that collapses to nothing shifts the board under the cursor.
+    if (attention.isPending) {
+      return (
+        <Skeleton
+          role="status"
+          aria-label="Loading what needs attention"
+          className="h-9 shrink-0"
+        />
+      )
+    }
+    // Nothing stuck is the normal state of a healthy board, and the board is
+    // what the screen is for: the strip is absent rather than reassuring.
+    return null
+  }
+
+  const hidden = attention.items.length - VISIBLE_ROWS
+  const rows = expanded ? attention.items : attention.items.slice(0, VISIBLE_ROWS)
 
   return (
-    <section aria-label="Needs attention" className="shrink-0 rounded-lg border">
+    <Frame>
       <header className="flex items-baseline gap-2 border-b px-3 py-2">
         <h2 className="font-heading text-sm font-semibold">Needs attention</h2>
         <span className="text-xs text-muted-foreground">
@@ -45,18 +103,27 @@ export function AttentionStrip() {
         </span>
       </header>
 
-      {/* Tall enough to read a handful of rows at a glance, capped so a bad
-          morning does not push the board off the screen. Two lines a row now,
-          so the cap is a little taller than the handful it used to hold. */}
-      <ul className="max-h-64 divide-y overflow-y-auto">
-        {attention.items.map((item) =>
-          item.kind === "task" ? (
-            <TaskRow key={item.id} item={item} />
-          ) : (
-            <SessionRow key={item.id} item={item} />
-          ),
-        )}
+      {/* A container query rather than a viewport one: how much room a row has
+          is the strip's width — the sidebar and the panel padding are between
+          it and the window — so at 900px the meta used to take half of a row
+          the window still called wide. */}
+      <ul className="@container divide-y">
+        {rows.map((item) => (
+          <Row key={item.id} item={item} />
+        ))}
       </ul>
+
+      {hidden > 0 ? (
+        <div className="border-t px-3 py-1.5">
+          <button
+            type="button"
+            onClick={() => setExpanded(!expanded)}
+            className="text-xs text-muted-foreground underline-offset-3 hover:text-foreground hover:underline"
+          >
+            {expanded ? "Show fewer" : `${hidden} more…`}
+          </button>
+        </div>
+      ) : null}
 
       {/* One of the three queries can fail while the others answered, and what
           is above is a real list with holes in it — not a list that failed to
@@ -65,89 +132,72 @@ export function AttentionStrip() {
       {attention.partial ? (
         <p className="border-t px-3 py-2 text-xs text-muted-foreground">
           Some of this list could not be loaded — {describeError(attention.error)}.{" "}
-          <button
-            type="button"
-            onClick={attention.refetch}
-            className="underline underline-offset-3 hover:text-foreground"
-          >
-            Retry
-          </button>
+          <Retry onClick={attention.refetch} />
         </p>
       ) : null}
+    </Frame>
+  )
+}
+
+/** The bordered box, whichever of the three things is inside it. */
+function Frame({ children }: { children: ReactNode }) {
+  return (
+    <section aria-label="Needs attention" className="shrink-0 rounded-lg border">
+      {children}
     </section>
   )
 }
 
-/** The two row kinds sit under one another, so they carry the same tails. */
-const ROW_LINK =
-  "flex flex-wrap items-center gap-2 px-3 py-2 text-sm transition-colors hover:bg-muted/50"
-
-function TaskRow({ item: { task, reason, goalId, goal } }: { item: AttentionTaskItem }) {
-  const [search] = useSearchParams()
-  const meta = TASK_STATUS_META[task.status]
-
+function Retry({ onClick }: { onClick: () => void }) {
   return (
-    <li>
-      <Link to={taskPanelTo(search, task.id)} className={ROW_LINK}>
-        <StatusBadge box="badge" label={meta.label} tone={meta.badge} hint={meta.hint} />
-        {/* The status pill already names a failed task; a stall is a flag on
-            top of whatever status the task is sitting in. */}
-        {reason === "stalled" ? <StalledBadge /> : null}
-        <Subject
-          subject={task.title}
-          detail={`Task · ${reason === "stalled" ? STALLED_META.hint : meta.hint}`}
-        />
-        <GoalRef goalId={goalId} goal={goal} />
-        {/* One label for both row kinds: a task's row moves when the task is
-            updated, a session's when it started asking — "last moved" is the
-            one thing true of both, and the list is ordered by it. */}
-        <When at={task.updated_at} label="last moved" className="text-xs text-muted-foreground" />
-        <RowId id={task.id} />
-      </Link>
-    </li>
+    <button
+      type="button"
+      onClick={onClick}
+      className="underline underline-offset-3 hover:text-foreground"
+    >
+      Retry
+    </button>
   )
 }
 
-function SessionRow({
-  item: { session, reason, goalId, goal, task, at },
-}: {
-  item: AttentionSessionItem
-}) {
+/**
+ * One thing that wants a person: what it is, why, and the way to answer it.
+ *
+ * The badges are the reasons, task first — a task's status is what the row
+ * sits under, and the session's reason is the live thing on top of it. Where
+ * the row goes is the reason's to say (see {@link attentionTarget}), so a
+ * question opens the thread it was asked in and a prompt opens the pane it is
+ * waiting in.
+ */
+function Row({ item }: { item: AttentionItem }) {
   const [search] = useSearchParams()
+  const status = item.taskReason && item.task ? TASK_STATUS_META[item.task.status] : null
 
   return (
     <li>
-      {/* A session opens in a panel of its own, over the board — the same one
-          for a planner session, which belongs to no task. */}
-      <Link to={sessionPanelTo(search, session.id)} className={ROW_LINK}>
-        {/* The reason, not the status: a session blocked on a permission
-            prompt is still running, and "Running" is not why it is on this
-            list. `SessionStatusBadge` stays what the sessions feature shows,
-            where a badge has five statuses to tell apart. */}
-        <SessionAttentionBadge attention={reason} />
-        <Subject
-          // What the agent was working on, which is what decides whether this
-          // row is worth opening — the goal on the right is only where it
-          // sits. A session with no task is a planner's, and is named by the
-          // one thing it does have: its role and the goal it is planning.
-          subject={
-            session.task_id
-              ? (task?.title ?? `Task ${shortId(session.task_id)}`)
-              : `${ROLE_LABELS[session.role]} · ${goal?.title ?? `Goal ${shortId(goalId)}`}`
-          }
-          // Who is asking and what for, spelled out: the pill's label is four
-          // words, and which agent of the three raised it is the other half of
-          // knowing whether this row is yours to answer. A task-less session
-          // already says its role in the subject.
-          detail={
-            session.task_id
-              ? `${ROLE_LABELS[session.role]} · ${SESSION_ATTENTION_META[reason].hint}`
-              : SESSION_ATTENTION_META[reason].hint
-          }
-        />
-        <GoalRef goalId={goalId} goal={goal} />
-        <When at={at} label="last moved" className="text-xs text-muted-foreground" />
-        <RowId id={session.id} />
+      <Link
+        to={attentionTarget(item, search)}
+        className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 text-sm transition-colors hover:bg-muted/50"
+      >
+        {status ? (
+          <StatusBadge box="badge" label={status.label} tone={status.badge} hint={status.hint} />
+        ) : null}
+        {/* The status pill already names a failed task; a stall is a flag on
+            top of whatever status the task is sitting in. */}
+        {item.taskReason === "stalled" ? <StalledBadge /> : null}
+        {item.sessionReason ? <SessionAttentionBadge attention={item.sessionReason} /> : null}
+        <Subject subject={attentionSubject(item)} detail={attentionDetail(item)} />
+        {/* Its own line while the strip is narrow, where the goal, the stamp
+            and the id together took half the row and left the subject twenty
+            characters. */}
+        <div className="flex w-full items-center gap-2 @2xl:w-auto">
+          <GoalRef goalId={item.goalId} goal={item.goal} />
+          {/* One label for every row: a task's row moves when the task is
+              updated, a session's when it started asking — "last moved" is the
+              one thing true of both, and the list is ordered by it. */}
+          <When at={item.at} label="last moved" className="text-xs text-muted-foreground" />
+          <RowId id={item.id} />
+        </div>
       </Link>
     </li>
   )

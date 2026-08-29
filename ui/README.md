@@ -92,7 +92,8 @@ src/
     ui/            shadcn/ui primitives
   features/
     command-palette/ ⌘K: search over every entity, plus the actions
-    goals/         the goals board (swimlanes, attention strip) and the goal panel
+    goals/         the goals board (swimlanes, attention strip), the goal panel,
+                   and the attention count the shell shows everywhere else
     tasks/         the task panel: facts, diff, reviews, history, conversation
     sessions/      the sessions screen, the session panel and the terminal
     profiles/      profiles screen and the prompts a profile overrides

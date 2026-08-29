@@ -44,11 +44,12 @@ import { modelLabel } from "@/features/profiles/profile-labels"
 import { ProfileSummary } from "@/features/profiles/profile-summary"
 import { sessionCopyEntries } from "@/lib/clipboard"
 import { ROLE_LABELS } from "@/lib/format"
-import { paths, useTaskPanelTo } from "@/routes/paths"
+import { paths, useTaskPanelTo, useTerminalFocusRequest } from "@/routes/paths"
 
 import { goalQueryOptions, taskQueryOptions } from "./queries"
 import { SessionActions } from "./session-actions"
 import { SessionActivity } from "./session-activity"
+import { SessionBlockedBanner } from "./session-blocked-banner"
 import { SessionAttentionBadge, SessionStatusBadge } from "./session-display"
 import { SessionTerminal } from "./session-terminal"
 
@@ -78,6 +79,10 @@ export function SessionDetailView({
   const taskTo = useTaskPanelTo(session.task_id ?? "")
   const [search, setSearch] = useSearchParams()
   const tab = TABS.find((value) => value === search.get("tab")) ?? "terminal"
+  // Set when the panel was opened by a row that said this agent is blocked on
+  // a prompt: what it is waiting for is a keystroke, so the pane takes the
+  // keyboard rather than waiting to be clicked. Read once, on arrival.
+  const focusTerminal = useTerminalFocusRequest()
 
   // Replaces rather than pushes: which half of a session is on screen is not a
   // step of its own, and Back should leave the session, not walk its tabs.
@@ -110,6 +115,10 @@ export function SessionDetailView({
           <SessionActions session={session} onResumed={onResumed} />
         </div>
       </header>
+
+      {/* Under the header rather than beside the badge: what to do about a
+          blocked agent is a sentence, and the pane it is about is below. */}
+      <SessionBlockedBanner session={session} />
 
       <dl className="grid gap-x-6 gap-y-3 rounded-lg border bg-card p-3 sm:grid-cols-2 lg:grid-cols-3">
         {context === "goal" ? null : (
@@ -200,7 +209,11 @@ export function SessionDetailView({
           <TabsTrigger value="activity">Agent activity</TabsTrigger>
         </TabsList>
         <TabsContent value="terminal" className="pt-3">
-          <SessionTerminal sessionId={session.id} status={session.status} />
+          <SessionTerminal
+            sessionId={session.id}
+            status={session.status}
+            autoFocus={focusTerminal}
+          />
         </TabsContent>
         <TabsContent value="activity" className="pt-3">
           <SessionActivity sessionId={session.id} />

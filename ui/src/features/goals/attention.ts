@@ -1,7 +1,8 @@
 /**
  * What is stuck, in one query, for the strip above the board — and, from the
- * same query, for the badges on the board itself
- * ({@link useBoardAttention}).
+ * same query, for the badges on the board itself ({@link useBoardAttention})
+ * and for the count the shell carries onto every other screen (see
+ * `attention-alerts.tsx`).
  *
  * The orchestrator's first question — "which tasks are stalled or failed, which
  * agents died or are waiting on me?" — used to need every goal opened one by
@@ -19,8 +20,20 @@ import { useMemo } from "react"
 
 import type { GoalDto, SessionDto, TaskDto } from "@/api"
 import { sessionsQueryOptions } from "@/features/sessions/queries"
-import { type SessionAttention, sessionAttention } from "@/features/sessions/session-display"
-import { taskListQueryOptions } from "@/features/tasks"
+import {
+  SESSION_ATTENTION_META,
+  type SessionAttention,
+  sessionAttention,
+} from "@/features/sessions/session-display"
+import { STALLED_META, TASK_STATUS_META, taskListQueryOptions } from "@/features/tasks"
+import { ROLE_LABELS, shortId } from "@/lib/format"
+import {
+  goalThreadTo,
+  sessionPanelTo,
+  sessionTerminalTo,
+  taskConversationTo,
+  taskPanelTo,
+} from "@/routes/paths"
 
 import { goalsQueryOptions } from "./queries"
 
@@ -46,40 +59,47 @@ export function taskAttentionReason(task: TaskDto): AttentionReason | null {
   return task.stalled ? "stalled" : null
 }
 
-/** What every row carries, whichever kind it is. */
-interface AttentionRow {
-  /** The row's own id, which is also what its panel link opens. */
+/**
+ * One row of the list: everything that wants a person about one task, or about
+ * one session that belongs to no task.
+ *
+ * A task and the session running it can both be stuck at once — a `failed`
+ * task under an agent that reported an error, a stalled task under a stalled
+ * session — and they are one thing gone wrong, not two. So the row is the
+ * task, and the session it carries is a second badge on it rather than a
+ * second row saying the same thing a line apart. A planner's session, which
+ * belongs to no task, is a row in its own right.
+ */
+export interface AttentionItem {
+  /**
+   * What identifies the row: the task it is about, or the task-less session
+   * that is one. Its React key, and what the toast that announced it
+   * remembers.
+   */
   id: string
   goalId: string
   /** The goal itself, when the goals list has it — the row names it either way. */
   goal: GoalDto | undefined
   /** When this row last moved; the list is ordered by it, newest first. */
   at: string
-}
-
-export interface AttentionTaskItem extends AttentionRow {
-  kind: "task"
-  task: TaskDto
-  reason: AttentionReason
-}
-
-export interface AttentionSessionItem extends AttentionRow {
-  kind: "session"
-  session: SessionDto
-  /** Why the session is here — the `attention_reason` the daemon raised. */
-  reason: SessionAttention
   /**
-   * The task it was run for, when it has one and the task list carries it —
-   * the row's own subject, where the goal is only where it sits. A planner
-   * session has none.
+   * The task this row is about, when there is one — even when the task list
+   * did not carry it, which is why the id is kept apart from the row itself.
    */
+  taskId: string | null
   task: TaskDto | undefined
+  /** Why the task itself is here; null when only its session is. */
+  taskReason: AttentionReason | null
+  /**
+   * The flagged session folded onto this row, and why the daemon flagged it.
+   * The two are set together or not at all.
+   */
+  session: SessionDto | undefined
+  sessionReason: SessionAttention | null
 }
-
-type AttentionItem = AttentionTaskItem | AttentionSessionItem
 
 interface Attention {
-  /** Tasks and sessions in one list, most recently updated first. */
+  /** One row per stuck task or task-less session, most recently moved first. */
   items: AttentionItem[]
   isPending: boolean
   /** The first of the three queries that failed, if any. */
@@ -128,10 +148,17 @@ export function useAttention(): Attention {
 }
 
 /**
- * The two kinds interleaved into one list, newest first.
+ * The tasks and the sessions folded into one list of rows, newest first.
  *
  * Which sessions belong is {@link sessionAttention}'s call, not this list's,
  * so the strip and `ariadne attention` include and label the same ones.
+ *
+ * A flagged session lands on its task's row rather than on one of its own —
+ * the pair is one thing gone wrong (see {@link AttentionItem}) — and a task
+ * with several of them keeps the most recently raised, which is the one the
+ * user has not seen yet and the one the board's card shows. The row is dated
+ * by whichever of its two reasons moved last, since that is what the list is
+ * ordered by and what "last moved" claims on the row itself.
  *
  * A goal the goals list did not carry does not drop its rows: a task or a
  * session can outlive its goal falling out of a filtered list, and hiding it
@@ -145,38 +172,58 @@ export function collectAttention(
 ): AttentionItem[] {
   const goalsById = new Map((goals ?? []).map((goal) => [goal.id, goal]))
   const tasksById = new Map((tasks ?? []).map((task) => [task.id, task]))
-  const items: AttentionItem[] = []
+  /** Keyed by what identifies a row, which is what folds the two kinds. */
+  const rows = new Map<string, AttentionItem>()
+  /**
+   * When each row's folded session raised its reason, while the newest of them
+   * is still being picked — the row's own stamp is the later of that and the
+   * task's, so it cannot be compared against.
+   */
+  const flaggedAt = new Map<string, string>()
 
   for (const task of tasks ?? []) {
     const reason = taskAttentionReason(task)
     if (!reason) continue
-    items.push({
-      kind: "task",
+    rows.set(task.id, {
       id: task.id,
       goalId: task.goal_id,
       goal: goalsById.get(task.goal_id),
       at: task.updated_at,
+      taskId: task.id,
       task,
-      reason,
+      taskReason: reason,
+      session: undefined,
+      sessionReason: null,
     })
   }
 
   for (const session of sessions ?? []) {
     const reason = sessionAttention(session)
     if (!reason) continue
-    items.push({
-      kind: "session",
-      id: session.id,
+    const at = sessionAttentionAt(session)
+    const taskId = session.task_id ?? null
+    const key = taskId ?? session.id
+    const row = rows.get(key)
+    // Not the newest of this task's flagged sessions: the row already carries
+    // one raised more recently, which is the one the user has not seen yet.
+    const held = flaggedAt.get(key)
+    if (held && held.localeCompare(at) >= 0) continue
+    flaggedAt.set(key, at)
+    rows.set(key, {
+      id: key,
       goalId: session.goal_id,
       goal: goalsById.get(session.goal_id),
-      at: sessionAttentionAt(session),
+      // The row is as recent as its most recent reason, whichever raised it.
+      at: row && row.at.localeCompare(at) > 0 ? row.at : at,
+      taskId,
+      task: row?.task ?? (taskId ? tasksById.get(taskId) : undefined),
+      taskReason: row?.taskReason ?? null,
       session,
-      reason,
-      task: session.task_id ? tasksById.get(session.task_id) : undefined,
+      sessionReason: reason,
     })
   }
 
-  return items.sort((a, b) => b.at.localeCompare(a.at))
+  return [...rows.values()].sort((a, b) => b.at.localeCompare(a.at) || a.id.localeCompare(b.id))
 }
 
 /**
@@ -254,4 +301,75 @@ interface Flagged {
 
 function reasons(index: Map<string, Flagged>): Map<string, SessionAttention> {
   return new Map([...index].map(([key, flagged]) => [key, flagged.reason]))
+}
+
+/**
+ * Where a row sends the user: not at what is stuck, but at the control the
+ * answer is given through.
+ *
+ * The daemon's reason is what decides, because it is what says *how* the
+ * agent is stuck. A `waiting_user` agent asked its question in a thread and is
+ * answered by a message, so the row opens that thread with the box focused and
+ * addressed to it — the session's own panel would show a pane with nothing to
+ * type into. An agent blocked on a permission or an input prompt is the
+ * opposite: the answer is a keystroke in its pane, so the row opens the
+ * terminal with the keyboard already in it.
+ *
+ * Everything else lands where it always did — the task's panel for a row that
+ * is about a task, the session's for one that is only about a session — since
+ * a death or a stall is something to read rather than something to answer.
+ */
+export function attentionTarget(
+  item: AttentionItem,
+  current: URLSearchParams,
+): { pathname?: string; search: string } {
+  const { session, sessionReason, taskId } = item
+  if (session && sessionReason === "waiting_user") {
+    // A planner belongs to no task, so its question is in the goal's thread.
+    return taskId
+      ? taskConversationTo(current, taskId, session.profile_id)
+      : goalThreadTo(current, item.goalId, session.profile_id)
+  }
+  if (session && (sessionReason === "waiting_permission" || sessionReason === "waiting_input")) {
+    return sessionTerminalTo(current, session.id)
+  }
+  // A row the task itself put on the list is the task's, whatever session sits
+  // on it; one that is only a session's opens that session.
+  if (!item.taskReason && session) return sessionPanelTo(current, session.id)
+  return taskPanelTo(current, taskId ?? item.id)
+}
+
+/**
+ * What the row is about, in one line: the task the agent was working on, or —
+ * for a planner, which has none — its role and the goal it is planning.
+ *
+ * The task is named even when the task list did not carry it, by the short id
+ * every other mention of a task uses: a row with no subject at all is a row
+ * nobody can tell apart from the next one.
+ */
+export function attentionSubject(item: AttentionItem): string {
+  if (item.task) return item.task.title
+  if (item.taskId) return `Task ${shortId(item.taskId)}`
+  return item.session
+    ? `${ROLE_LABELS[item.session.role]} · ${item.goal?.title ?? `Goal ${shortId(item.goalId)}`}`
+    : `Goal ${shortId(item.goalId)}`
+}
+
+/**
+ * Why the row is on the list, spelled out under its subject: who is asking and
+ * what for.
+ *
+ * The session's reason leads where there is one — it is the live half of a
+ * folded row, and which of the three agents raised it is the other half of
+ * knowing whether the row is yours to answer. A row that is only a task's says
+ * so instead; the badge beside it already names the status.
+ */
+export function attentionDetail(item: AttentionItem): string {
+  if (item.session && item.sessionReason) {
+    const hint = SESSION_ATTENTION_META[item.sessionReason].hint
+    // A task-less session already says its role in the subject.
+    return item.taskId ? `${ROLE_LABELS[item.session.role]} · ${hint}` : hint
+  }
+  const reason = item.taskReason
+  return `Task · ${reason === "stalled" ? STALLED_META.hint : TASK_STATUS_META.failed.hint}`
 }

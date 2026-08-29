@@ -30,6 +30,7 @@ import { SettingsDialog } from "@/components/settings-dialog"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
 import { CommandPalette } from "@/features/command-palette/command-palette"
+import { AttentionAlerts } from "@/features/goals/attention-alerts"
 import { CreateGoalDialog } from "@/features/goals/create-goal-dialog"
 import { DaemonLogsDrawer } from "@/features/system/daemon-logs-drawer"
 import { PALETTE_SHORTCUT, useGlobalShortcuts } from "@/hooks/use-global-shortcuts"
@@ -126,6 +127,11 @@ export function AppShell() {
         <ConnectionStatus onOpenLogs={() => setLogsOpen(true)} />
       </footer>
 
+      {/* Draws nothing: the window's title, the sidebar's count and the toast
+          for an agent that got stuck while the user was on another screen. It
+          is mounted here for the same reason the dialogs are — it has to be
+          true of every screen, not of the board alone. */}
+      <AttentionAlerts />
       <DetailPanels />
       <CommandPalette
         open={paletteOpen}

@@ -35,6 +35,7 @@ export function SessionTerminal({
   status,
   className,
   screenClassName,
+  autoFocus,
 }: {
   sessionId: string
   /** Whether the session can still be typed into; see `isLiveStatus`. */
@@ -42,6 +43,11 @@ export function SessionTerminal({
   className?: string
   /** Classes for the frame the emulator draws in. Merged over the default. */
   screenClassName?: string
+  /**
+   * Hand the pane the keyboard as soon as it is on screen, for a panel opened
+   * by something that knows the agent is waiting on a keystroke.
+   */
+  autoFocus?: boolean
 }) {
   const [expanded, setExpanded] = useState(false)
   /**
@@ -82,6 +88,7 @@ export function SessionTerminal({
       className={className}
       screenClassName={screenClassName}
       expanded={expanded}
+      autoFocus={autoFocus}
       onExpandedChange={setExpanded}
       onFocusChange={(next) => {
         focused.current = next

@@ -29,6 +29,7 @@ import { MessageComposer } from "@/components/message-composer"
 import { Skeleton } from "@/components/ui/skeleton"
 import { goalQueryOptions } from "@/features/goals/queries"
 import { useAddressees } from "@/features/profiles/addressees"
+import { useComposerRequest } from "@/routes/paths"
 import { taskMessagesQueryOptions, taskQueryOptions, usePostTaskMessage } from "./queries"
 import { SessionLink } from "./task-sessions"
 
@@ -42,6 +43,9 @@ export function TaskConversation({ taskId }: { taskId: string }) {
     enabled: Boolean(task.data),
   })
   const post = usePostTaskMessage(taskId)
+  // Set when the panel was opened to answer an agent that is waiting on the
+  // user — from the attention list, which knows which one asked.
+  const opened = useComposerRequest()
   // The daemon's own list, in its order (`http/recipients.rs`): engineer,
   // reviewers, the planner that wrote it.
   const addressees = useAddressees([
@@ -94,6 +98,8 @@ export function TaskConversation({ taskId }: { taskId: string }) {
         label="Message the task conversation"
         placeholder="Write to the agents on this task…"
         addressees={addressees}
+        autoFocus={opened.focus}
+        presetTo={opened.to}
       />
     </div>
   )

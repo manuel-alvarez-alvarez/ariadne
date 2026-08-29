@@ -30,12 +30,16 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useAddressees } from "@/features/profiles/addressees"
 import { SessionLink } from "@/features/tasks/task-sessions"
+import { useComposerRequest } from "@/routes/paths"
 import { goalMessagesQueryOptions, goalQueryOptions, usePostGoalMessage } from "./queries"
 
 export function GoalThread({ goalId, className }: { goalId: string; className?: string }) {
   const messages = useQuery(goalMessagesQueryOptions(goalId))
   const goal = useQuery(goalQueryOptions(goalId))
   const post = usePostGoalMessage(goalId)
+  // Set when the panel was opened to answer the planner, which is what a
+  // `waiting_user` planner session's row on the attention list does.
+  const opened = useComposerRequest()
   const addressees = useAddressees(goal.data ? [goal.data.planner_profile_id] : [])
 
   return (
@@ -67,6 +71,8 @@ export function GoalThread({ goalId, className }: { goalId: string; className?: 
           label="Message the planner thread"
           placeholder="Write to the planner thread…"
           addressees={addressees}
+          autoFocus={opened.focus}
+          presetTo={opened.to}
           // The box lives inside the card, so it is the card it has to cover.
           className="bg-card"
         />

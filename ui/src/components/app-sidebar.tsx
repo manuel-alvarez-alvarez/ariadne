@@ -4,8 +4,10 @@
  * agents run as, how the agent CLIs themselves are launched, and the checkouts
  * they work in.
  *
- * What is *stuck* has no entry — it is a strip on the goals board, above the
- * lanes it is about (see `features/goals/attention-strip.tsx`). "Sessions" is
+ * What is *stuck* has no entry of its own — it is a strip on the goals board,
+ * above the lanes it is about (see `features/goals/attention-strip.tsx`), and a
+ * count on the Goals entry here, which is what says an agent is waiting while
+ * the user is on one of the other four screens. "Sessions" is
  * the agents that are running, across every goal; "Agents" is the CLIs and
  * their flags, not what is running on them. A single session still has no entry
  * of its own: it opens as a panel over whichever list picked it (see
@@ -17,24 +19,37 @@
  * entry and a route are not the same list: not every route belongs here.
  */
 
-import { BotIcon, CpuIcon, FolderGit2Icon, RadioTowerIcon, TargetIcon } from "lucide-react"
+import {
+  BotIcon,
+  CpuIcon,
+  FolderGit2Icon,
+  type LucideIcon,
+  RadioTowerIcon,
+  TargetIcon,
+} from "lucide-react"
 import { NavLink } from "react-router-dom"
 
+import { AttentionBadge } from "@/features/goals/attention-alerts"
 import { cn } from "@/lib/format"
 import { paths } from "@/routes/paths"
 
-const NAV_ITEMS = [
-  { to: paths.goals(), label: "Goals", icon: TargetIcon },
+/**
+ * `counts` is what needs attention, on the entry the strip that lists it lives
+ * under: a badge here is the only thing that says an agent is waiting on the
+ * user while they are on another screen (see `attention-alerts.tsx`).
+ */
+const NAV_ITEMS: { to: string; label: string; icon: LucideIcon; counts?: boolean }[] = [
+  { to: paths.goals(), label: "Goals", icon: TargetIcon, counts: true },
   { to: paths.sessions(), label: "Sessions", icon: RadioTowerIcon },
   { to: paths.profiles(), label: "Profiles", icon: CpuIcon },
   { to: paths.agents(), label: "Agents", icon: BotIcon },
   { to: paths.repositories(), label: "Repositories", icon: FolderGit2Icon },
-] as const
+]
 
 export function AppSidebar() {
   return (
     <nav aria-label="Main" className="flex flex-col gap-1 p-2">
-      {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
+      {NAV_ITEMS.map(({ to, label, icon: Icon, counts }) => (
         <NavLink
           key={to}
           to={to}
@@ -49,6 +64,7 @@ export function AppSidebar() {
         >
           <Icon className="size-4 shrink-0" />
           {label}
+          {counts ? <AttentionBadge /> : null}
         </NavLink>
       ))}
     </nav>

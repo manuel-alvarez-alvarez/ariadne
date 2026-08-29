@@ -33,6 +33,7 @@ export function TerminalView({
   className,
   screenClassName,
   expanded,
+  autoFocus,
   onExpandedChange,
   onFocusChange,
 }: {
@@ -42,6 +43,8 @@ export function TerminalView({
   screenClassName?: string
   /** Whether this is the expanded view rather than the panel's. */
   expanded: boolean
+  /** Hand the pane the keyboard on mount; see {@link SessionDetailView}. */
+  autoFocus?: boolean
   onExpandedChange: (expanded: boolean) => void
   onFocusChange: (focused: boolean) => void
 }) {
@@ -108,6 +111,14 @@ export function TerminalView({
       forgetRequestedSize()
     }
   }, [baseUrl, sessionId, terminalRef, forgetRequestedSize])
+
+  // The emulator is opened by `useTerminal` above, whose effect is registered
+  // — and so runs — before this one; a session with no pane left is not typed
+  // into and does not take the keyboard away from the rest of the panel.
+  useEffect(() => {
+    if (!autoFocus || !live) return
+    terminalRef.current?.focus()
+  }, [autoFocus, live, terminalRef])
 
   const expandLabel = expanded ? "Collapse the terminal back into the panel" : "Expand the terminal"
 
