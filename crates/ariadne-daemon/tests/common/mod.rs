@@ -32,6 +32,7 @@ use ariadne_api::SESSION_HEADER;
 use ariadne_api::error::ErrorBody;
 use ariadne_api::stream::DomainEvent;
 use ariadne_core::{Actor, AgentKind, AttentionReason, GoalStatus, Role, SessionStatus, TaskStatus};
+use ariadne_daemon::branch::BranchWatchers;
 use ariadne_daemon::bus::{BusEvent, EventBus};
 use ariadne_daemon::config::Config;
 use ariadne_daemon::gitwt::GitManager;
@@ -182,6 +183,7 @@ impl HarnessBuilder {
             store: store.clone(),
             tmux,
             git: GitManager,
+            branches: BranchWatchers::new(bus.clone()),
         });
         let sched = self
             .scheduler

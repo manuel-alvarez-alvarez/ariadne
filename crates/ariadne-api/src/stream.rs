@@ -30,6 +30,20 @@ pub struct TaskUpdatedDto {
     pub transition: Option<TaskTransitionDto>,
 }
 
+/// Payload of `task_branch_updated`: where a task's branch points now.
+///
+/// A commit in the engineer's worktree changes nothing in the store, so no
+/// other event says the task's diff is no longer the one a client fetched.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct TaskBranchDto {
+    pub task_id: String,
+    pub goal_id: String,
+    /// The task branch whose head moved.
+    pub branch: String,
+    /// Full sha of the commit the branch points at now.
+    pub head: String,
+}
+
 /// Payload of the deletion events: the id of the gone entity.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DeletedDto {
@@ -76,6 +90,9 @@ pub enum DomainEvent {
     TaskCreated(TaskDto),
     /// Covers status transitions, edits, stall flags and worktree changes.
     TaskUpdated(TaskUpdatedDto),
+    /// Covers commits made in the task's worktree: the branch head moved, so
+    /// the task's diff against its base is no longer the one a client holds.
+    TaskBranchUpdated(TaskBranchDto),
     MessageCreated(MessageDto),
     ReviewCreated(ReviewDto),
     SessionCreated(SessionDto),
@@ -100,6 +117,7 @@ impl DomainEvent {
             Self::GoalDeleted(_) => "goal_deleted",
             Self::TaskCreated(_) => "task_created",
             Self::TaskUpdated(_) => "task_updated",
+            Self::TaskBranchUpdated(_) => "task_branch_updated",
             Self::MessageCreated(_) => "message_created",
             Self::ReviewCreated(_) => "review_created",
             Self::SessionCreated(_) => "session_created",
@@ -125,6 +143,7 @@ impl DomainEvent {
             Self::GoalDeleted(d) => json(d),
             Self::TaskCreated(t) => json(t),
             Self::TaskUpdated(t) => json(t),
+            Self::TaskBranchUpdated(b) => json(b),
             Self::MessageCreated(m) => json(m),
             Self::ReviewCreated(r) => json(r),
             Self::SessionCreated(s) | Self::SessionUpdated(s) => json(s),

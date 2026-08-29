@@ -15,9 +15,12 @@ use ariadne_core::spawn_plan::SpawnPlanFile;
 use ariadne_core::{
     AgentKind, AttentionReason, PromptKind, Role, SessionStatus, TaskStatus, probe,
 };
-use ariadne_store::{AgentSession, NewSession, Profile, Repository, SessionFilter, Store, Task};
+use ariadne_store::{
+    AgentSession, NewSession, Profile, Repository, SessionFilter, Store, Task, TaskFilter,
+};
 
 use crate::agents::{SpawnCtx, SpawnPlan, adapter_for, detect_first_available, prompts};
+use crate::branch::BranchWatchers;
 use crate::config::Config;
 use crate::gitwt::GitManager;
 use crate::tmux::{TmuxManager, TmuxSpawn, session_name, tail};
@@ -27,6 +30,9 @@ pub struct Launcher {
     pub store: Store,
     pub tmux: TmuxManager,
     pub git: GitManager,
+    /// The task branches whose head the daemon is following, so that a commit
+    /// an engineer makes reaches the clients watching its diff.
+    pub branches: BranchWatchers,
 }
 
 impl Launcher {
@@ -608,6 +614,8 @@ impl Launcher {
         self.store
             .set_task_worktree(&task.id, Some(&worktree.display().to_string()))
             .await?;
+        // There is a tree to commit in now: follow what the branch does.
+        self.branches.watch(task, Path::new(&repo.path));
         Ok(worktree)
     }
 
@@ -872,6 +880,28 @@ impl Launcher {
         Ok(())
     }
 
+    /// Follow the branch of every task that already has a worktree.
+    ///
+    /// What the daemon does once at startup: the watches live only as long as
+    /// the process holding them, and the tasks in flight when the last one
+    /// stopped are still being committed to. A task whose repository cannot be
+    /// read is skipped rather than failing the sweep — the others are worth
+    /// following either way.
+    pub async fn watch_task_branches(&self) -> Result<()> {
+        for task in self.store.list_tasks(TaskFilter::default()).await? {
+            if !worth_following(&task) {
+                continue;
+            }
+            match self.store.get_repository(&task.repo_id).await {
+                Ok(repo) => self.branches.watch(&task, Path::new(&repo.path)),
+                Err(e) => {
+                    tracing::warn!(task = %task.id, error = %e, "cannot follow the task branch")
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Cleanup after a merged/cancelled task: kill sessions, remove worktrees,
     /// optionally delete the branch.
     /// Idempotent: safe to call repeatedly on the same task.
@@ -888,6 +918,9 @@ impl Launcher {
         let task = self.store.get_task(task_id).await?;
         let repo = self.store.get_repository(&task.repo_id).await?;
         let repo_path = PathBuf::from(&repo.path);
+        // The task is over: whatever happens to its branch from here is not
+        // something anybody is following it for.
+        self.branches.unwatch(task_id);
 
         for session in self
             .store
@@ -945,6 +978,18 @@ impl Launcher {
         }
         Ok(())
     }
+}
+
+/// Whether a task's branch is one to follow: there is a worktree to commit in,
+/// and a task still being worked on in it.
+///
+/// A failed task is not terminal — the user can retry it, and the spawn that
+/// revives it takes the watch up again — but until then nobody is committing
+/// on its branch, and nothing should be said about it.
+pub(crate) fn worth_following(task: &Task) -> bool {
+    task.worktree_path.is_some()
+        && !task.status().is_terminal()
+        && task.status() != TaskStatus::Failed
 }
 
 /// Raise a session for the user, from a spawned task that has nothing to

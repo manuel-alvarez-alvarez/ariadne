@@ -182,7 +182,7 @@
           "events"
         ],
         "summary": "Subscribe to the live domain-event stream.",
-        "description": "Every state change in the daemon — from HTTP calls, from the scheduler and\nfrom agent activity alike — is published here. Each message carries a fresh\nULID `id`, the event kind as its `event` name, and the full updated DTO as\n`data`, so clients patch their state without refetching.\n\nThere is **no replay or backfill**: the `id` is informational and\n`Last-Event-ID` is ignored. On (re)connect, refetch the REST state you care\nabout and then follow the stream.\n\nBesides the domain events there is a `heartbeat` event (a `HeartbeatDto`:\nthe daemon's `version` and its `started_at`), sent as the connection opens\nand every 15 s an idle connection goes without one. It is a named event\nrather than the SSE comment other streams keep alive with, because a\nbrowser's `EventSource` never surfaces a comment: a client watches it to\ntell a live daemon from a dead one, and a changed `started_at` to tell a\nrestarted daemon from the one it was talking to.\n\nA client that falls too far behind loses events. It is never left silently\nstale: the daemon sends a final `resync` event (`{\"missed\": n}`) and closes\nthe connection, so an `EventSource` reconnects and takes the refetch path\nabove.",
+        "description": "Every state change in the daemon — from HTTP calls, from the scheduler and\nfrom agent activity alike — is published here. Each message carries a fresh\nULID `id`, the event kind as its `event` name, and the full updated DTO as\n`data`, so clients patch their state without refetching.\n\nNot every event is a database write. `task_branch_updated` is published by\nthe daemon's watch on each live task's branch ref, so a commit an agent\nmakes in its worktree — which changes nothing in the store — still says\nthat the task's diff (`GET /v1/tasks/{id}/diff`) is no longer the one you\nhold. It carries the branch and the full sha of its new head.\n\nThere is **no replay or backfill**: the `id` is informational and\n`Last-Event-ID` is ignored. On (re)connect, refetch the REST state you care\nabout and then follow the stream.\n\nBesides the domain events there is a `heartbeat` event (a `HeartbeatDto`:\nthe daemon's `version` and its `started_at`), sent as the connection opens\nand every 15 s an idle connection goes without one. It is a named event\nrather than the SSE comment other streams keep alive with, because a\nbrowser's `EventSource` never surfaces a comment: a client watches it to\ntell a live daemon from a dead one, and a changed `started_at` to tell a\nrestarted daemon from the one it was talking to.\n\nA client that falls too far behind loses events. It is never left silently\nstale: the daemon sends a final `resync` event (`{\"missed\": n}`) and closes\nthe connection, so an `EventSource` reconnects and takes the refetch path\nabove.",
         "operationId": "stream",
         "parameters": [
           {
@@ -212,7 +212,7 @@
         ],
         "responses": {
           "200": {
-            "description": "SSE stream of domain events (text/event-stream). No replay on reconnect: refetch REST state first. A `heartbeat` event (HeartbeatDto) opens the connection and repeats every 15 idle seconds. A lagging client gets a final `resync` event (ResyncDto) and the connection is closed.",
+            "description": "SSE stream of domain events (text/event-stream). No replay on reconnect: refetch REST state first. A `heartbeat` event (HeartbeatDto) opens the connection and repeats every 15 idle seconds. A lagging client gets a final `resync` event (ResyncDto) and the connection is closed. `task_branch_updated` (TaskBranchDto) comes from the daemon's watch on the task branch rather than from a store write: it says a commit landed and the task's diff has moved.",
             "content": {
               "text/event-stream": {
                 "schema": {
@@ -2683,6 +2683,26 @@
           },
           {
             "type": "object",
+            "description": "Covers commits made in the task's worktree: the branch head moved, so\nthe task's diff against its base is no longer the one a client holds.",
+            "required": [
+              "data",
+              "event"
+            ],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/TaskBranchDto",
+                "description": "Covers commits made in the task's worktree: the branch head moved, so\nthe task's diff against its base is no longer the one a client holds."
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "task_branch_updated"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
             "required": [
               "data",
               "event"
@@ -3709,6 +3729,32 @@
           "exited",
           "failed"
         ]
+      },
+      "TaskBranchDto": {
+        "type": "object",
+        "description": "Payload of `task_branch_updated`: where a task's branch points now.\n\nA commit in the engineer's worktree changes nothing in the store, so no\nother event says the task's diff is no longer the one a client fetched.",
+        "required": [
+          "task_id",
+          "goal_id",
+          "branch",
+          "head"
+        ],
+        "properties": {
+          "branch": {
+            "type": "string",
+            "description": "The task branch whose head moved."
+          },
+          "goal_id": {
+            "type": "string"
+          },
+          "head": {
+            "type": "string",
+            "description": "Full sha of the commit the branch points at now."
+          },
+          "task_id": {
+            "type": "string"
+          }
+        }
       },
       "TaskDto": {
         "type": "object",

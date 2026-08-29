@@ -69,7 +69,13 @@ async fn main() -> Result<()> {
         store: store.clone(),
         tmux: ariadne_daemon::tmux::TmuxManager::default(),
         git: ariadne_daemon::gitwt::GitManager,
+        branches: ariadne_daemon::branch::BranchWatchers::new(events.clone()),
     });
+    // The watches are the process's own: whatever was in flight when the last
+    // daemon stopped is picked up again here.
+    if let Err(e) = launcher.watch_task_branches().await {
+        warn!(error = %e, "cannot follow the branches of the tasks already in flight");
+    }
 
     let sched_tx =
         ariadne_daemon::scheduler::start(store.clone(), launcher.clone(), config.prevent_sleep);

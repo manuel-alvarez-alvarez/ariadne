@@ -7,6 +7,7 @@ use ariadne_core::{Actor, AttentionReason, GoalStatus, PromptKind, ReviewVerdict
 use ariadne_store::{AgentSession, SessionFilter, Task, TaskFilter};
 
 use crate::agents::prompts;
+use crate::launcher;
 
 use super::SPAWN_RETRY_BUDGET;
 
@@ -16,6 +17,16 @@ impl super::Scheduler {
         let goal = self.store.get_goal(&task.goal_id).await?;
         if goal.status() != GoalStatus::Active {
             return Ok(());
+        }
+
+        // The branch is only followed while somebody is working on it. Merged
+        // and cancelled tasks are let go by the cleanup below, but a failed
+        // one keeps its worktree — a user can retry it — and until one does
+        // there is nobody committing on its branch to report. Here rather than
+        // in an arm of the match, so that every way a task can stop being
+        // worked on converges on the same pass.
+        if !launcher::worth_following(&task) {
+            self.launcher.branches.unwatch(&task.id);
         }
 
         // Reviewer sessions only belong to under_review: an agent whose part

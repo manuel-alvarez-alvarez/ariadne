@@ -19,6 +19,12 @@ use ariadne_api::stream::{DomainEvent, EventStreamQuery, ResyncDto};
 /// ULID `id`, the event kind as its `event` name, and the full updated DTO as
 /// `data`, so clients patch their state without refetching.
 ///
+/// Not every event is a database write. `task_branch_updated` is published by
+/// the daemon's watch on each live task's branch ref, so a commit an agent
+/// makes in its worktree — which changes nothing in the store — still says
+/// that the task's diff (`GET /v1/tasks/{id}/diff`) is no longer the one you
+/// hold. It carries the branch and the full sha of its new head.
+///
 /// There is **no replay or backfill**: the `id` is informational and
 /// `Last-Event-ID` is ignored. On (re)connect, refetch the REST state you care
 /// about and then follow the stream.
@@ -42,7 +48,9 @@ use ariadne_api::stream::{DomainEvent, EventStreamQuery, ResyncDto};
                        reconnect: refetch REST state first. A `heartbeat` event \
                        (HeartbeatDto) opens the connection and repeats every 15 idle \
                        seconds. A lagging client gets a final `resync` event (ResyncDto) \
-                       and the connection is closed.",
+                       and the connection is closed. `task_branch_updated` (TaskBranchDto) \
+                       comes from the daemon's watch on the task branch rather than from a \
+                       store write: it says a commit landed and the task's diff has moved.",
         content_type = "text/event-stream", body = DomainEvent)))]
 pub async fn stream(
     State(state): State<AppState>,

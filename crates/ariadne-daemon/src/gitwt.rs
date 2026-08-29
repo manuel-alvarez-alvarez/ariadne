@@ -4,7 +4,7 @@
 //! Shells out to `git` — worktree support in libgit2/gitoxide is weak and the
 //! CLI is the canonical implementation.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use tokio::process::Command;
@@ -86,18 +86,32 @@ impl GitManager {
     }
 
     pub async fn branch_exists(&self, repo: &Path, branch: &str) -> Result<bool> {
-        Ok(self
-            .git(
-                repo,
-                &[
-                    "rev-parse",
-                    "--verify",
-                    "--quiet",
-                    &format!("refs/heads/{branch}"),
-                ],
-            )
-            .await
-            .is_ok())
+        Ok(self.branch_tip(repo, branch).await.is_ok())
+    }
+
+    /// The commit `branch` points at, as a full sha.
+    pub async fn branch_tip(&self, repo: &Path, branch: &str) -> Result<String> {
+        self.git(
+            repo,
+            &[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("refs/heads/{branch}"),
+            ],
+        )
+        .await
+    }
+
+    /// Where the repository keeps the refs every one of its worktrees shares.
+    ///
+    /// `<repo>/.git` for an ordinary checkout, but a repository registered at
+    /// a linked worktree or a bare clone keeps them elsewhere, and only git
+    /// knows where — which matters to whoever watches a branch, since a task
+    /// branch is written there whichever tree commits to it.
+    pub async fn common_dir(&self, repo: &Path) -> Result<PathBuf> {
+        let args = ["rev-parse", "--path-format=absolute", "--git-common-dir"];
+        Ok(PathBuf::from(self.git(repo, &args).await?))
     }
 
     /// Ensure `path` is an existing git work tree.

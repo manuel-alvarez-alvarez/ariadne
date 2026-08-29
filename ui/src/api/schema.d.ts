@@ -94,6 +94,12 @@ export interface paths {
          *     ULID `id`, the event kind as its `event` name, and the full updated DTO as
          *     `data`, so clients patch their state without refetching.
          *
+         *     Not every event is a database write. `task_branch_updated` is published by
+         *     the daemon's watch on each live task's branch ref, so a commit an agent
+         *     makes in its worktree — which changes nothing in the store — still says
+         *     that the task's diff (`GET /v1/tasks/{id}/diff`) is no longer the one you
+         *     hold. It carries the branch and the full sha of its new head.
+         *
          *     There is **no replay or backfill**: the `id` is informational and
          *     `Last-Event-ID` is ignored. On (re)connect, refetch the REST state you care
          *     about and then follow the stream.
@@ -1092,6 +1098,14 @@ export interface components {
             /** @enum {string} */
             event: "task_updated";
         } | {
+            /**
+             * @description Covers commits made in the task's worktree: the branch head moved, so
+             *     the task's diff against its base is no longer the one a client holds.
+             */
+            data: components["schemas"]["TaskBranchDto"];
+            /** @enum {string} */
+            event: "task_branch_updated";
+        } | {
             data: components["schemas"]["MessageDto"];
             /** @enum {string} */
             event: "message_created";
@@ -1555,6 +1569,20 @@ export interface components {
          * @enum {string}
          */
         SessionStatus: "starting" | "running" | "idle" | "exited" | "failed";
+        /**
+         * @description Payload of `task_branch_updated`: where a task's branch points now.
+         *
+         *     A commit in the engineer's worktree changes nothing in the store, so no
+         *     other event says the task's diff is no longer the one a client fetched.
+         */
+        TaskBranchDto: {
+            /** @description The task branch whose head moved. */
+            branch: string;
+            goal_id: string;
+            /** @description Full sha of the commit the branch points at now. */
+            head: string;
+            task_id: string;
+        };
         TaskDto: {
             branch: string;
             created_at: string;
@@ -1875,7 +1903,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description SSE stream of domain events (text/event-stream). No replay on reconnect: refetch REST state first. A `heartbeat` event (HeartbeatDto) opens the connection and repeats every 15 idle seconds. A lagging client gets a final `resync` event (ResyncDto) and the connection is closed. */
+            /** @description SSE stream of domain events (text/event-stream). No replay on reconnect: refetch REST state first. A `heartbeat` event (HeartbeatDto) opens the connection and repeats every 15 idle seconds. A lagging client gets a final `resync` event (ResyncDto) and the connection is closed. `task_branch_updated` (TaskBranchDto) comes from the daemon's watch on the task branch rather than from a store write: it says a commit landed and the task's diff has moved. */
             200: {
                 headers: {
                     [name: string]: unknown;
