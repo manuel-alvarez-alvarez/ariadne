@@ -18,7 +18,7 @@
  */
 
 import type { GoalStatus } from "@/api"
-import { GOAL_STATUSES } from "./status"
+import { GOAL_STATUSES, isTerminalGoalStatus } from "./status"
 
 /**
  * The statuses the board is narrowed to, in `GOAL_STATUSES` order.
@@ -31,6 +31,25 @@ export type StatusFilter = readonly GoalStatus[]
 
 /** No filter: every goal, whatever its status. */
 export const NO_STATUS_FILTER: StatusFilter = []
+
+/** The goals still moving: what the board is about. */
+const LIVE_STATUSES: StatusFilter = GOAL_STATUSES.filter((status) => !isTerminalGoalStatus(status))
+
+/** The goals that are done with, which the "Show finished" toggle adds back. */
+const FINISHED_STATUSES: StatusFilter = GOAL_STATUSES.filter(isTerminalGoalStatus)
+
+/**
+ * What a board with nothing remembered opens on.
+ *
+ * Not "every status": a few weeks in, that is a wall of finished lanes with
+ * the one active goal somewhere below them. The finished half is one click
+ * away ({@link withFinished}), and a filter the user has set — including one
+ * they cleared — is remembered instead of this.
+ *
+ * Spelled the way `?status=` spells it, because that is what the settings
+ * store remembers and what `parseStatusFilter` reads back.
+ */
+export const DEFAULT_GOAL_STATUS_FILTER: string = LIVE_STATUSES.join(",")
 
 /** The param the filter round-trips through, alongside `?goal=` and `?task=`. */
 export const STATUS_PARAM = "status"
@@ -116,4 +135,30 @@ export function restoreStatusFilter(
   const filter = parseStatusFilter(remembered)
   if (filter.length === 0) return null
   return withStatusFilter(params, filter)
+}
+
+/**
+ * Whether the selection lets a finished goal through — which is what the
+ * "Show finished" toggle reads. No filter at all shows everything, finished
+ * goals included.
+ */
+export function showsFinished(filter: StatusFilter): boolean {
+  return filter.length === 0 || filter.some(isTerminalGoalStatus)
+}
+
+/**
+ * The selection with the finished statuses added or taken away, the rest of it
+ * untouched — the toggle beside the status menu.
+ *
+ * Turning them off where nothing was selected narrows "everything" to the live
+ * statuses rather than doing nothing, and turning them off where *only*
+ * finished statuses were selected lands on the live ones rather than on an
+ * empty board: a toggle that can empty the board is never what the click
+ * meant.
+ */
+export function withFinished(filter: StatusFilter, show: boolean): StatusFilter {
+  const selected = filter.length === 0 ? GOAL_STATUSES : filter
+  if (show) return normalizeStatusFilter([...selected, ...FINISHED_STATUSES])
+  const kept = selected.filter((status) => !isTerminalGoalStatus(status))
+  return normalizeStatusFilter(kept.length > 0 ? kept : LIVE_STATUSES)
 }

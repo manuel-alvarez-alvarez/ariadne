@@ -7,8 +7,8 @@
  *
  * Two vocabularies (see `@/lib/shortcuts`): ⌘ chords for the two things that
  * open over everything, and typed chords for the rest — `n` for a new goal,
- * `g` then a letter for the screens, the way keyboard-first apps spell
- * navigation. Typed chords are guarded twice over: never while the keystroke is
+ * `[` for the sidebar rail, `g` then a letter for the screens, the way
+ * keyboard-first apps spell navigation. Typed chords are guarded twice over: never while the keystroke is
  * text (a field, an editor, a session's pane), and never from inside a dialog
  * or a menu, where a bare letter belongs to whatever is on top.
  *
@@ -40,6 +40,15 @@ export const SETTINGS_SHORTCUT: Shortcut = { key: "," }
 export const NEW_GOAL_SHORTCUT: KeySequence = { key: "n" }
 
 /**
+ * `[` — fold the sidebar down to an icon rail, and back.
+ *
+ * The bracket because every editor spells "collapse the panel on that side"
+ * this way, and because it is not a letter: a screen the sidebar names has no
+ * claim on it.
+ */
+export const SIDEBAR_SHORTCUT: KeySequence = { key: "[" }
+
+/**
  * `G` then a letter — every screen the sidebar lists, in its order, keyed by
  * its initial (`g`oals, `s`essions, `p`rofiles, `a`gents, `r`epositories).
  *
@@ -62,6 +71,7 @@ export function screenShortcut(path: string): KeySequence | undefined {
 /** Every typed chord, which is what tells a lead key from an ordinary one. */
 const TYPED_SHORTCUTS: readonly KeySequence[] = [
   NEW_GOAL_SHORTCUT,
+  SIDEBAR_SHORTCUT,
   ...SCREEN_SHORTCUTS.map((screen) => screen.chord),
 ]
 
@@ -80,6 +90,7 @@ interface GlobalShortcutHandlers {
   onOpenSettings: () => void
   onNewGoal: () => void
   onNavigate: (path: string) => void
+  onToggleSidebar: () => void
 }
 
 export function useGlobalShortcuts({
@@ -87,6 +98,7 @@ export function useGlobalShortcuts({
   onOpenSettings,
   onNewGoal,
   onNavigate,
+  onToggleSidebar,
 }: GlobalShortcutHandlers): void {
   /** The lead key waiting for the rest of its sequence. */
   const pending = useRef<{ key: string; timer: number } | null>(null)
@@ -128,7 +140,9 @@ export function useGlobalShortcuts({
         ? () => onNavigate(screen.path)
         : matchesKeySequence(event, NEW_GOAL_SHORTCUT, lead)
           ? onNewGoal
-          : null
+          : matchesKeySequence(event, SIDEBAR_SHORTCUT, lead)
+            ? onToggleSidebar
+            : null
 
       if (handler) {
         clearPending()
@@ -157,5 +171,5 @@ export function useGlobalShortcuts({
       window.removeEventListener("keydown", onKeyDown)
       clearPending()
     }
-  }, [onOpenPalette, onOpenSettings, onNewGoal, onNavigate])
+  }, [onOpenPalette, onOpenSettings, onNewGoal, onNavigate, onToggleSidebar])
 }

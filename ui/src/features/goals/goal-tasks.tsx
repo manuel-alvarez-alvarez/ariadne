@@ -26,16 +26,9 @@ import { useBoardAttention } from "./attention"
 
 export function GoalTasks({
   goalId,
-  awaitingPlan = false,
   onNewTask,
 }: {
   goalId: string
-  /**
-   * Whether the planner is still writing the plan, which is what every card
-   * here is waiting for — the same thing the lanes say, said in the panel
-   * where the plan is read while it is being written.
-   */
-  awaitingPlan?: boolean
   /** Opens the create-task dialog; absent when the goal no longer takes one. */
   onNewTask?: () => void
 }) {
@@ -90,12 +83,7 @@ export function GoalTasks({
     <ul className="flex flex-col gap-2">
       {ordered.map((task) => (
         <li key={task.id}>
-          <TaskCard
-            task={task}
-            showStatus
-            attention={attention.byTask.get(task.id)}
-            awaitingPlan={awaitingPlan}
-          />
+          <TaskCard task={task} showStatus attention={attention.byTask.get(task.id)} />
         </li>
       ))}
     </ul>

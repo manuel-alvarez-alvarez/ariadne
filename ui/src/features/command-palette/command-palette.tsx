@@ -25,6 +25,7 @@ import {
   FolderGit2Icon,
   ListChecksIcon,
   MoonIcon,
+  PanelLeftIcon,
   PlusIcon,
   RadioTowerIcon,
   SettingsIcon,
@@ -49,7 +50,12 @@ import { goalsQueryOptions } from "@/features/goals/queries"
 import { profilesQueryOptions } from "@/features/profiles/queries"
 import { sessionsQueryOptions } from "@/features/sessions/queries"
 import { taskListQueryOptions } from "@/features/tasks"
-import { NEW_GOAL_SHORTCUT, SETTINGS_SHORTCUT, screenShortcut } from "@/hooks/use-global-shortcuts"
+import {
+  NEW_GOAL_SHORTCUT,
+  SETTINGS_SHORTCUT,
+  SIDEBAR_SHORTCUT,
+  screenShortcut,
+} from "@/hooks/use-global-shortcuts"
 import { keySequenceLabel, shortcutLabel } from "@/lib/shortcuts"
 import { paths } from "@/routes/paths"
 
@@ -70,6 +76,7 @@ export function CommandPalette({
   onOpenChange,
   onOpenSettings,
   onNewGoal,
+  onToggleSidebar,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -77,6 +84,8 @@ export function CommandPalette({
   onOpenSettings: () => void
   /** So is the create-goal dialog, which `N` opens from outside the palette too. */
   onNewGoal: () => void
+  /** The sidebar rail, which the shell owns and `[` toggles from outside here. */
+  onToggleSidebar: () => void
 }) {
   const navigate = useNavigate()
   const [search] = useSearchParams()
@@ -130,6 +139,15 @@ export function CommandPalette({
               <SettingsIcon />
               Open settings
               <CommandShortcut>{shortcutLabel(SETTINGS_SHORTCUT)}</CommandShortcut>
+            </CommandItem>
+            <CommandItem
+              value="Toggle sidebar"
+              keywords={["rail", "navigation", "collapse", "expand"]}
+              onSelect={() => run(onToggleSidebar)}
+            >
+              <PanelLeftIcon />
+              Toggle sidebar
+              <CommandShortcut>{keySequenceLabel(SIDEBAR_SHORTCUT)}</CommandShortcut>
             </CommandItem>
             <CommandItem
               value="Toggle theme"

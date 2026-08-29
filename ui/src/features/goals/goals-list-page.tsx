@@ -26,7 +26,13 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { AttentionStrip } from "./attention-strip"
 import { CreateGoalDialog } from "./create-goal-dialog"
-import { NO_STATUS_FILTER, type StatusFilter, toggleStatusFilter } from "./filters"
+import {
+  NO_STATUS_FILTER,
+  type StatusFilter,
+  showsFinished,
+  toggleStatusFilter,
+  withFinished,
+} from "./filters"
 import { BoardSkeleton, GoalSwimlanes } from "./goal-swimlanes"
 import { goalsQueryOptions } from "./queries"
 import { GOAL_STATUS_META, GOAL_STATUSES } from "./status"
@@ -66,6 +72,7 @@ export function GoalsListPage() {
 
   const goals = useQuery(goalsQueryOptions({ statuses }))
   const empty = emptyBoardCopy(statuses)
+  const finished = showsFinished(statuses)
 
   /** The goal just created opens its own panel — no hunting for it on the board. */
   function openGoal(goalId: string) {
@@ -86,6 +93,18 @@ export function GoalsListPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {/* The one narrowing anybody makes by hand, as one click rather than
+              two checkboxes: the board opens on the work that is still moving
+              (see `DEFAULT_GOAL_STATUS_FILTER`), and this is how the rest of
+              it comes back. The menu beside it still spells any selection. */}
+          <Button
+            variant={finished ? "secondary" : "outline"}
+            aria-pressed={finished}
+            className="font-normal"
+            onClick={() => filterBy(withFinished(statuses, !finished))}
+          >
+            Show finished
+          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger
               render={

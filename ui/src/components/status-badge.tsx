@@ -56,6 +56,7 @@ export function StatusBadge({
   size,
   box,
   hint,
+  hintTabIndex,
   className,
 }: VariantProps<typeof statusBadgeVariants> & {
   /** What the status is called, already capitalized. */
@@ -73,6 +74,13 @@ export function StatusBadge({
   pulse?: boolean
   /** What the status means; shown on hover and on focus. */
   hint?: string
+  /**
+   * The hint's tab stop. `-1` for a pill inside something that is already
+   * focusable — a board card's link — where the hint reaches a keyboard
+   * through that element's `aria-describedby` instead, and a stop of its own
+   * would only be an interactive node nested in an interactive one.
+   */
+  hintTabIndex?: number
   className?: string
 }) {
   const content = (
@@ -93,7 +101,9 @@ export function StatusBadge({
 
   return (
     <Tooltip>
-      <TooltipTrigger render={<span className={classes} />}>{content}</TooltipTrigger>
+      <TooltipTrigger tabIndex={hintTabIndex} render={<span className={classes} />}>
+        {content}
+      </TooltipTrigger>
       <TooltipContent>{hint}</TooltipContent>
     </Tooltip>
   )

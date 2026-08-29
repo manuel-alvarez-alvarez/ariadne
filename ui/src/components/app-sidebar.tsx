@@ -17,6 +17,12 @@
  * route's own `handle` (see `src/routes/router.tsx`) — they are written
  * twice on purpose rather than derived from the route table, because a sidebar
  * entry and a route are not the same list: not every route belongs here.
+ *
+ * Folded down to a rail ({@link AppSidebar.collapsed}) it is the same list with
+ * the labels taken off the screen but not out of the accessibility tree: each
+ * entry keeps its name as an `aria-label`, and a pointer gets it back as a
+ * tooltip on the icon. The tooltip is inside the link and takes no tab stop of
+ * its own — the link is already the stop, and its name already says this.
  */
 
 import {
@@ -29,6 +35,7 @@ import {
 } from "lucide-react"
 import { NavLink } from "react-router-dom"
 
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { AttentionBadge } from "@/features/goals/attention-alerts"
 import { cn } from "@/lib/format"
 import { paths } from "@/routes/paths"
@@ -46,25 +53,44 @@ const NAV_ITEMS: { to: string; label: string; icon: LucideIcon; counts?: boolean
   { to: paths.repositories(), label: "Repositories", icon: FolderGit2Icon },
 ]
 
-export function AppSidebar() {
+export function AppSidebar({ collapsed = false }: { collapsed?: boolean }) {
   return (
     <nav aria-label="Main" className="flex flex-col gap-1 p-2">
       {NAV_ITEMS.map(({ to, label, icon: Icon, counts }) => (
         <NavLink
           key={to}
           to={to}
+          aria-label={label}
           className={({ isActive }) =>
             cn(
-              "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium transition-colors",
+              "flex items-center gap-2 rounded-md py-1.5 text-sm font-medium transition-colors",
+              collapsed ? "justify-center px-0" : "px-2",
               isActive
                 ? "bg-sidebar-accent text-sidebar-accent-foreground"
                 : "text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
             )
           }
         >
-          <Icon className="size-4 shrink-0" />
-          {label}
-          {counts ? <AttentionBadge /> : null}
+          {collapsed ? (
+            // The count comes with the icon rather than after it: the row is
+            // centred and sized to its content here, so the badge's own
+            // `ml-auto` has no free space to push into and the two read as one
+            // mark. It stays inside the trigger so hovering either half names
+            // the screen.
+            <Tooltip>
+              <TooltipTrigger tabIndex={-1} render={<span className="flex items-center gap-1" />}>
+                <Icon className="size-4 shrink-0" />
+                {counts ? <AttentionBadge /> : null}
+              </TooltipTrigger>
+              <TooltipContent side="right">{label}</TooltipContent>
+            </Tooltip>
+          ) : (
+            <>
+              <Icon className="size-4 shrink-0" />
+              {label}
+              {counts ? <AttentionBadge /> : null}
+            </>
+          )}
         </NavLink>
       ))}
     </nav>

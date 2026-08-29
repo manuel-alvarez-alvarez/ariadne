@@ -14,7 +14,12 @@
  * The columns are here for the same reason: which cell a card lands in is a
  * property of the mounted grid, and `ready` folding into Pending is exactly
  * that — as is a goal the planner is still writing a plan for holding every
- * one of its tasks in the first column, whatever each task's own status says.
+ * one of its tasks in the first column, whatever each task's own status says,
+ * and a failed task sitting in that column as the retry candidate it is.
+ *
+ * And the reading order, which is the whole point of a board: what is asking
+ * for a person, then what is running, then what is done with — the last of
+ * those folded down to the one line its header says.
  *
  * The lane header carries what the whole goal has spent, which is the one
  * figure the board shows without opening anything — and it is a number on a
@@ -22,8 +27,9 @@
  * lane the daemon lost track of.
  */
 
-import { screen, within } from "@testing-library/react"
-import { expect, it } from "vitest"
+import { cleanup, screen, within } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
+import { beforeEach, expect, it } from "vitest"
 
 import type { GoalDto, SessionDto, TaskDto } from "@/api"
 import { aGoal, aSession, aTask } from "@/test/fixtures"
@@ -67,6 +73,10 @@ const PLANNER: SessionDto = {
   attention_reason: "waiting_input",
 }
 
+// The collapsed lanes live in `localStorage`, which the suite's stand-in keeps
+// for the whole file: one test folding a lane away must not reach the next.
+beforeEach(() => localStorage.clear())
+
 function stubDaemon({
   tasks = [] as TaskDto[],
   sessions = [] as SessionDto[],
@@ -83,14 +93,31 @@ function stubDaemon({
   })
 }
 
-function renderBoard(goal: GoalDto = GOAL) {
-  renderScreen(<GoalSwimlanes goals={[goal]} />, { route: "/goals" })
+function renderBoard(goals: GoalDto | GoalDto[] = GOAL) {
+  renderScreen(<GoalSwimlanes goals={Array.isArray(goals) ? goals : [goals]} />, {
+    route: "/goals",
+  })
 }
 
 /** The grid cell a card sits in, and its index among the lane's columns. */
 function cellOf(card: HTMLElement): { cell: HTMLElement; column: number } {
   const cell = card.closest("a")?.parentElement?.parentElement as HTMLElement
   return { cell, column: [...(cell?.parentElement?.children ?? [])].indexOf(cell) }
+}
+
+/** The goals the board is showing, top to bottom — its whole reading order. */
+function laneOrder(): string[] {
+  const board = screen.getByRole("region", { name: "Goals board" })
+  return [...board.querySelectorAll("section > header")].map(
+    (header) => header.querySelector("a")?.textContent ?? "",
+  )
+}
+
+/** The lane header naming `title`, which is where a folded lane says everything. */
+function laneHeader(title: string): HTMLElement {
+  const header = screen.getByText(title).closest("header")
+  if (!header) throw new Error(`no lane header for "${title}"`)
+  return header
 }
 
 it("badges the card of the task whose agent is waiting on a person", async () => {
@@ -176,6 +203,23 @@ it("puts the tasks their engineers are landing in the Approved column", async ()
   expect(cell?.textContent).toContain(published.title)
 })
 
+it("keeps a failed task in the Pending column, outlined and named", async () => {
+  const failed: TaskDto = { ...TASK, id: `${TASK.id}F`, title: "Died on the merge" }
+  failed.status = "failed"
+  stubDaemon({ tasks: [failed] })
+  renderBoard()
+
+  // Where a retry would put it back, not in a box under the lane: the one
+  // thing anybody does with a failure is start it again.
+  const { cell, column } = cellOf(await screen.findByText(failed.title))
+  expect(column).toBe(0)
+  // The outline is what catches the eye in a column of tasks that have simply
+  // not started; the badge is what names it.
+  expect(cell.querySelector(".border-status-danger\\/40")).not.toBeNull()
+  expect(within(cell).getByText("Failed")).not.toBeNull()
+  expect(screen.queryByText("Cancelled")).toBeNull()
+})
+
 it("holds every task of a plan still being written in the first column", async () => {
   const planning: GoalDto = { ...GOAL, status: "planning" }
   const pending: TaskDto = { ...TASK, id: `${TASK.id}P`, title: "Waiting on a dependency" }
@@ -189,16 +233,9 @@ it("holds every task of a plan still being written in the first column", async (
   expect(column).toBe(0)
   expect(cell.textContent).toContain(pending.title)
 
-  // And each card says what it is really waiting for, which is the planner.
-  expect(within(cell).getAllByText("Awaiting plan")).toHaveLength(2)
-})
-
-it("says nothing about the plan once the goal is active", async () => {
-  stubDaemon({ tasks: [{ ...TASK, status: "ready" }] })
-  renderBoard()
-
-  await screen.findByText(TASK.title)
-  expect(screen.queryByText("Awaiting plan")).toBeNull()
+  // What they are waiting for is the lane's own status badge, said once —
+  // never repeated on every card in the lane.
+  expect(laneHeader(planning.title).textContent).toContain("Planning")
 })
 
 it("carries the goal's own total in the lane header", async () => {
@@ -206,9 +243,9 @@ it("carries the goal's own total in the lane header", async () => {
   renderBoard()
 
   await screen.findByText(TASK.title)
-  // In the header, beside the task count and the goal's age — not on a card,
-  // which is one task's worth of a figure that is the whole goal's.
-  const meta = screen.getByText(/1 task · created/)
+  // In the header, beside where the lane is up to and the goal's age — not on
+  // a card, which is one task's worth of a figure that is the whole goal's.
+  const meta = screen.getByText(/0\/1 merged · created/)
   expect(meta.closest("header")).not.toBeNull()
   // Input first and output after it, each behind its own arrow; the word the
   // arrows stand for is there for a screen reader and nowhere else, since the
@@ -224,5 +261,135 @@ it("says zero for a goal whose agents have spent nothing", async () => {
   await screen.findByText(TASK.title)
   // Both halves, and a figure rather than a dash: an agent that has spent
   // nothing has spent nothing, which is a number the daemon knows.
-  expect(screen.getByText(/1 task · created/).textContent).toContain("0 in, 0% cached, 0 out")
+  expect(screen.getByText(/0\/1 merged · created/).textContent).toContain("0 in, 0% cached, 0 out")
 })
+
+// ── Where the lane is up to ───────────────────────────────────────────────
+
+it("counts how far through the pipeline the lane is, and what is stuck in it", async () => {
+  const tasks = [
+    ...statuses("merged", 3),
+    ...statuses("in_progress", 2),
+    ...statuses("failed", 1),
+    ...statuses("pending", 1),
+  ]
+  stubDaemon({ tasks })
+  renderBoard()
+
+  await screen.findByText("merged 1")
+  // "N tasks" was the one number about a goal that stops changing the moment
+  // the planner is done; this is the one that does not.
+  expect(laneHeader(GOAL.title).textContent).toContain("3/7 merged · 1 failed · 1 waiting")
+})
+
+it("says nothing about what a lane has none of", async () => {
+  stubDaemon({ tasks: statuses("in_progress", 2) })
+  renderBoard()
+
+  await screen.findByText("in_progress 1")
+  const header = laneHeader(GOAL.title).textContent ?? ""
+  expect(header).toContain("0/2 merged")
+  expect(header).not.toContain("failed")
+  expect(header).not.toContain("waiting")
+})
+
+// ── The reading order, and what a finished lane says ──────────────────────
+
+/** An old goal still being worked on: the lane the board is open for. */
+const ACTIVE: GoalDto = aGoal({
+  id: "01JGOAL0000000000000000001",
+  title: "The old active goal",
+  status: "active",
+  updated_at: "2026-01-01T00:00:00Z",
+})
+
+/** Finished after it, which is what used to put it on top. */
+const COMPLETED: GoalDto = aGoal({
+  id: "01JGOAL0000000000000000002",
+  title: "The newer finished goal",
+  status: "completed",
+  updated_at: "2026-03-01T00:00:00Z",
+})
+
+const PLANNING: GoalDto = aGoal({
+  id: "01JGOAL0000000000000000003",
+  title: "The goal being planned",
+  status: "planning",
+  updated_at: "2026-02-01T00:00:00Z",
+})
+
+/** The three, newest id first — the order the goals list arrives in. */
+const THREE = [PLANNING, COMPLETED, ACTIVE]
+
+it("puts the work that is still moving above the work that is done with", async () => {
+  stubDaemon({ tasks: [{ ...TASK, goal_id: ACTIVE.id }] })
+  renderBoard(THREE)
+
+  await screen.findByText(TASK.title)
+  // Newest-first by id put the finished goal on top of an active one older
+  // than it, which is the wrong way round on a board open to answer "what
+  // now". Within a band, whichever moved last leads.
+  expect(laneOrder()).toEqual([PLANNING.title, ACTIVE.title, COMPLETED.title])
+})
+
+it("puts a lane that is asking for a person above every other lane", async () => {
+  const failed: TaskDto = { ...TASK, id: `${TASK.id}F`, goal_id: ACTIVE.id, title: "It broke" }
+  failed.status = "failed"
+  stubDaemon({ tasks: [failed] })
+  renderBoard(THREE)
+
+  // Above the goal that moved more recently than it: a lane with something
+  // stuck in it is the reason the board is open.
+  await screen.findByText(failed.title)
+  expect(laneOrder()).toEqual([ACTIVE.title, PLANNING.title, COMPLETED.title])
+})
+
+it("opens a finished lane as the one line its header says", async () => {
+  const tasks = [
+    ...statuses("merged", 7).map((task) => ({ ...task, goal_id: COMPLETED.id })),
+    ...statuses("cancelled", 1).map((task) => ({ ...task, goal_id: COMPLETED.id })),
+  ]
+  stubDaemon({ tasks })
+  renderBoard(COMPLETED)
+
+  // Expanded, this is five columns with every card in the far-right one: a
+  // 270px box that is 85% empty, and on a 900px screen it reads as an empty
+  // lane because the cards are scrolled off it.
+  const header = await screen.findByText(/7 tasks merged · 1 cancelled/)
+  expect(header.closest("header")).not.toBeNull()
+  expect(screen.queryByText("merged 1")).toBeNull()
+})
+
+it("opens a lane that is still running, and remembers a finished one the user opened", async () => {
+  stubDaemon({
+    tasks: [
+      { ...TASK, goal_id: ACTIVE.id },
+      { ...TASK, id: `${TASK.id}M`, goal_id: COMPLETED.id, title: "Landed", status: "merged" },
+    ],
+  })
+  const user = userEvent.setup()
+  renderBoard([COMPLETED, ACTIVE])
+
+  // The lane that is running is open; the finished one is not.
+  expect(await screen.findByText(TASK.title)).not.toBeNull()
+  expect(screen.queryByText("Landed")).toBeNull()
+
+  await user.click(screen.getByRole("button", { name: `Expand ${COMPLETED.title}` }))
+  expect(screen.getByText("Landed")).not.toBeNull()
+
+  // And the answer is the user's from here on: it survives a remount, where
+  // the board's own default would fold the lane away again.
+  cleanup()
+  renderBoard([COMPLETED, ACTIVE])
+  expect(await screen.findByText("Landed")).not.toBeNull()
+})
+
+/** `count` tasks at one status, told apart by their titles and their ids. */
+function statuses(status: TaskDto["status"], count: number): TaskDto[] {
+  return Array.from({ length: count }, (_, index) => ({
+    ...TASK,
+    id: `${TASK.id}${status}${index}`,
+    title: `${status} ${index + 1}`,
+    status,
+  }))
+}

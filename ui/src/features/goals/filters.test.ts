@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  DEFAULT_GOAL_STATUS_FILTER,
   NO_STATUS_FILTER,
   normalizeStatusFilter,
   parseStatusFilter,
   readStatusFilter,
   restoreStatusFilter,
   serializeStatusFilter,
+  showsFinished,
   toggleStatusFilter,
+  withFinished,
   withStatusFilter,
 } from "./filters"
 import { GOAL_STATUSES } from "./status"
@@ -152,5 +155,63 @@ describe("restoreStatusFilter", () => {
 
   it("restores nothing from a value the daemon no longer defines", () => {
     expect(restoreStatusFilter(new URLSearchParams(""), "nonsense")).toBeNull()
+  })
+})
+
+describe("the default filter", () => {
+  it("opens the board on the work that is still moving", () => {
+    // Not "all statuses": a few weeks in, that is a wall of finished lanes.
+    expect(parseStatusFilter(DEFAULT_GOAL_STATUS_FILTER)).toEqual(["planning", "active"])
+  })
+
+  it("is spelled the way the param and the settings store spell one", () => {
+    expect(serializeStatusFilter(parseStatusFilter(DEFAULT_GOAL_STATUS_FILTER))).toBe(
+      DEFAULT_GOAL_STATUS_FILTER,
+    )
+  })
+
+  it("is put back on a bare entry, like any remembered filter", () => {
+    const next = restoreStatusFilter(new URLSearchParams(""), DEFAULT_GOAL_STATUS_FILTER)
+    expect(next?.get("status")).toBe("planning,active")
+  })
+})
+
+describe("the finished toggle", () => {
+  it("reads an unfiltered board as showing everything", () => {
+    expect(showsFinished(NO_STATUS_FILTER)).toBe(true)
+  })
+
+  it("reads the default filter as hiding what is finished", () => {
+    expect(showsFinished(parseStatusFilter(DEFAULT_GOAL_STATUS_FILTER))).toBe(false)
+  })
+
+  it("reads a selection that lets one finished status through as showing them", () => {
+    expect(showsFinished(["active", "cancelled"])).toBe(true)
+  })
+
+  it("turns them on from the default, which is every status", () => {
+    const shown = withFinished(parseStatusFilter(DEFAULT_GOAL_STATUS_FILTER), true)
+    expect(shown).toEqual(NO_STATUS_FILTER)
+    expect(showsFinished(shown)).toBe(true)
+  })
+
+  it("turns them off from an unfiltered board by narrowing it to the live ones", () => {
+    expect(withFinished(NO_STATUS_FILTER, false)).toEqual(["planning", "active"])
+  })
+
+  it("leaves the rest of a selection where it was", () => {
+    expect(withFinished(["active"], true)).toEqual(["active", "completed", "cancelled"])
+    expect(withFinished(["active", "completed"], false)).toEqual(["active"])
+  })
+
+  it("never empties the board", () => {
+    // Only finished statuses were selected: turning them off has to land
+    // somewhere, and the live ones are what the toggle meant.
+    expect(withFinished(["completed", "cancelled"], false)).toEqual(["planning", "active"])
+  })
+
+  it("round-trips: off, then on again, is every status", () => {
+    const off = withFinished(NO_STATUS_FILTER, false)
+    expect(withFinished(off, true)).toEqual(NO_STATUS_FILTER)
   })
 })

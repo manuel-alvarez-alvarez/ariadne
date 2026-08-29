@@ -156,10 +156,13 @@ export function SessionAttentionBadge({
   attention,
   /** `sm` for the dense rows of a board card; the default elsewhere. */
   size,
+  hintTabIndex,
   className,
 }: {
   attention: SessionAttention
   size?: "sm" | "md"
+  /** `-1` inside something already focusable; see `StatusBadge.hintTabIndex`. */
+  hintTabIndex?: number
   className?: string
 }) {
   const meta = SESSION_ATTENTION_META[attention]
@@ -170,6 +173,7 @@ export function SessionAttentionBadge({
       label={meta.label}
       tone={meta.badge}
       hint={meta.hint}
+      hintTabIndex={hintTabIndex}
       className={className}
     />
   )

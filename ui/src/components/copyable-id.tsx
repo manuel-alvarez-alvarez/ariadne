@@ -76,6 +76,14 @@ type ValueProps = {
    */
   to?: string
   /**
+   * The copy button's tab stop. `-1` where the value sits on something that is
+   * already *the* tab stop and is meant to stay one — a board card, which is
+   * one stop by design (see `features/tasks/task-card.tsx`). It stays a
+   * pointer target and keeps its name, and the keyboard route to the value is
+   * the same control in the panel the card opens.
+   */
+  tabIndex?: number
+  /**
    * The value wraps instead of being cut short, and takes a line of its own.
    * For the values that are read rather than recognised — a repository path in
    * a narrow column, where an ellipsis would hide the half that identifies it,
@@ -95,6 +103,7 @@ export function CopyableId({
   label = "id",
   wrap,
   to,
+  tabIndex,
   className,
 }: ValueProps) {
   return (
@@ -107,7 +116,7 @@ export function CopyableId({
       to={to}
       className={className}
     >
-      <CopyButton value={value} label={label} />
+      <CopyButton value={value} label={label} tabIndex={tabIndex} />
     </Value>
   )
 }
@@ -158,7 +167,7 @@ function Value({
   to,
   className,
   children,
-}: Omit<ValueProps, "label"> & { children: ReactNode }) {
+}: Omit<ValueProps, "label" | "tabIndex"> & { children: ReactNode }) {
   const shown = display ? display(value) : value
   const text =
     !wrap && truncate === "middle" ? (
@@ -213,7 +222,15 @@ function MiddleTruncated({ value, title }: { value: string; title: string }) {
   )
 }
 
-function CopyButton({ value, label }: { value: string; label: string }) {
+function CopyButton({
+  value,
+  label,
+  tabIndex,
+}: {
+  value: string
+  label: string
+  tabIndex?: number
+}) {
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle")
   // Held open by hand, because a click on a trigger closes its own tooltip —
   // which is exactly the moment the answer has to appear. Hovering away still
@@ -241,6 +258,7 @@ function CopyButton({ value, label }: { value: string; label: string }) {
   return (
     <Tooltip open={open} onOpenChange={setOpen}>
       <TooltipTrigger
+        tabIndex={tabIndex}
         render={
           <Button
             variant="ghost"

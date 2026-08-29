@@ -35,26 +35,34 @@ import {
   taskListQueryOptions,
 } from "@/features/tasks"
 import { useHorizontalOverflow } from "@/hooks/use-scroll-overflow"
-import { cn, plural } from "@/lib/format"
+import { cn } from "@/lib/format"
 import { paths } from "@/routes/paths"
-import { type BoardAttention, useBoardAttention } from "./attention"
+import { type BoardAttention, taskAttentionReason, useBoardAttention } from "./attention"
 import { useCollapsedLanes } from "./collapsed-lanes"
-import { GOAL_STATUS_META, isStillPlanning } from "./status"
+import { laneSummary, orderLanes } from "./lanes"
+import { GOAL_STATUS_META, isStillPlanning, isTerminalGoalStatus } from "./status"
 
 /**
  * One template for the header row and every lane, so the columns line up: one
  * per pipeline stage, and none of them narrower than a card is readable at.
+ *
+ * Two floors, because a 1280px laptop is the machine this is used on: 13rem is
+ * what a card wants, 11rem is what it still reads at, and below `xl` the
+ * second one is what keeps the fifth column on screen instead of past the
+ * right edge.
  */
-const COLUMNS_GRID = "grid grid-cols-[repeat(5,minmax(13rem,1fr))] gap-3"
+const COLUMNS_GRID =
+  "grid grid-cols-[repeat(5,minmax(11rem,1fr))] gap-3 xl:grid-cols-[repeat(5,minmax(13rem,1fr))]"
 
 /**
  * What the lanes are laid out at before the board gives up and scrolls: the
- * grid's own floor (five 13rem columns and four 0.75rem gaps) plus the padding
- * either side of a lane, rounded up. It sits on the block *inside* the
- * scrollport, which is what makes a narrow window scroll the board rather than
- * squeeze its columns past reading.
+ * grid's own floor (five columns and four 0.75rem gaps) plus the padding
+ * either side of a lane, rounded up — 60rem at the narrow floor, 72rem at the
+ * wide one. It sits on the block *inside* the scrollport, which is what makes
+ * a narrow window scroll the board rather than squeeze its columns past
+ * reading.
  */
-const BOARD_WIDTH = "min-w-[72rem]"
+const BOARD_WIDTH = "min-w-[60rem] xl:min-w-[72rem]"
 
 /**
  * The board's own scrollport: sticky only works against the box that scrolls.
@@ -84,8 +92,16 @@ export function GoalSwimlanes({ goals }: { goals: GoalDto[] }) {
   // where the work is, and a card that says nothing about its blocked agent is
   // what made the strip the only way to find one.
   const attention = useBoardAttention()
-  const { collapsed, toggle } = useCollapsedLanes()
+  const { isCollapsed, setCollapsed } = useCollapsedLanes()
   const board = useHorizontalOverflow<HTMLElement>()
+  // Active work first: what is asking for a person, then what is still
+  // running, then what is done with. An old active goal used to sit below
+  // every goal finished after it, which is the wrong way round on a board
+  // that is open to answer "what now".
+  const lanes = useMemo(
+    () => orderLanes(goals, (goal) => laneNeedsAttention(goal.id, byGoal.get(goal.id), attention)),
+    [goals, byGoal, attention],
+  )
 
   if (tasks.error) {
     return (
@@ -138,16 +154,24 @@ export function GoalSwimlanes({ goals }: { goals: GoalDto[] }) {
               )
             })}
           </div>
-          {goals.map((goal) => (
-            <Lane
-              key={goal.id}
-              goal={goal}
-              tasks={byGoal.get(goal.id)}
-              attention={attention}
-              collapsed={collapsed.has(goal.id)}
-              onToggle={() => toggle(goal.id)}
-            />
-          ))}
+          {lanes.map((goal) => {
+            // A finished goal opens folded: five columns of cards that all sit
+            // in Merged is a 270px box that is 85% empty, and on a 900px
+            // screen the cards are scrolled off it entirely — so it reads as
+            // an empty lane. Its header says what happened instead. The user's
+            // own answer, either way, wins over this.
+            const collapsed = isCollapsed(goal.id, isTerminalGoalStatus(goal.status))
+            return (
+              <Lane
+                key={goal.id}
+                goal={goal}
+                tasks={byGoal.get(goal.id)}
+                attention={attention}
+                collapsed={collapsed}
+                onToggle={() => setCollapsed(goal.id, !collapsed)}
+              />
+            )
+          })}
         </div>
       </section>
       <ScrollEdge side="start" show={board.overflow.start} />
@@ -177,11 +201,6 @@ function Lane({
   // ask for a person. It is shown collapsed too — a lane folded away is
   // exactly where a stuck planner would otherwise go unseen.
   const planner: SessionAttention | undefined = attention.byGoal.get(goal.id)
-  // Nothing under a plan the planner has not finalized has started, whatever
-  // each task's own status says, so every card of this lane says what it is
-  // really waiting for. It is the goal's fact, which is why the lane hands it
-  // down.
-  const awaitingPlan = isStillPlanning(goal.status)
 
   return (
     <section className="border-b last:border-b-0">
@@ -223,7 +242,11 @@ function Lane({
         />
         {planner ? <SessionAttentionBadge attention={planner} /> : null}
         <span className="flex items-baseline gap-1 whitespace-nowrap text-xs text-muted-foreground">
-          {plural(total, "task")} · created <When at={goal.created_at} label="created" /> ·{" "}
+          {/* Where the lane is up to, and the whole of what a folded lane
+              says: how far through the pipeline it is, and what is stuck or
+              waiting in it. "N tasks" was the one number about a goal that
+              stops changing the moment the planner is done. */}
+          {laneSummary(tasks?.all ?? [])} · created <When at={goal.created_at} label="created" /> ·{" "}
           {/* What the whole goal has cost — planner, engineers and reviewers —
               which is the one number the board can show without opening
               anything. The hint behind it names the halves and splits the
@@ -246,8 +269,10 @@ function Lane({
                 <TaskCard
                   key={task.id}
                   task={task}
+                  // A failure in the Pending column has to say so: the outline
+                  // is what catches the eye, the badge is what names it.
+                  showStatus={task.status === "failed"}
                   attention={attention.byTask.get(task.id)}
-                  awaitingPlan={awaitingPlan}
                 />
               ))}
             </div>
@@ -255,9 +280,12 @@ function Lane({
         </div>
       )}
 
+      {/* Only the cancelled are down here now. A failed task is a retry
+          candidate, so it stays in the Pending column where the retry would
+          put it back; a cancelled one is nobody's next move. */}
       {!collapsed && tasks && tasks.offBoard.length > 0 && (
         <div className="mx-3 mb-2.5 space-y-2 rounded-lg border border-dashed bg-muted/20 p-2">
-          <h3 className="text-xs font-medium text-muted-foreground">Off the pipeline</h3>
+          <h3 className="text-xs font-medium text-muted-foreground">Cancelled</h3>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {tasks.offBoard.map((task) => (
               <TaskCard
@@ -314,8 +342,28 @@ interface GoalTasks {
   all: TaskDto[]
   /** Board cells, keyed by primary status. */
   columns: Record<TaskStatus, TaskDto[]>
-  /** Cancelled and failed tasks: off the pipeline, but not out of sight. */
+  /** Cancelled tasks: off the pipeline, but not out of sight. */
   offBoard: TaskDto[]
+}
+
+/**
+ * Whether this lane is asking for a person, which is what puts it above every
+ * other lane on the board.
+ *
+ * Three ways it can: its planner is blocked (which has no card to show it on),
+ * one of its agents is (which does), or one of its tasks failed or stalled —
+ * the same rule the attention strip lists a task by, read here so a lane and
+ * the strip above it never disagree about what is stuck.
+ */
+function laneNeedsAttention(
+  goalId: string,
+  tasks: GoalTasks | undefined,
+  attention: BoardAttention,
+): boolean {
+  if (attention.byGoal.has(goalId)) return true
+  return (tasks?.all ?? []).some(
+    (task) => attention.byTask.has(task.id) || taskAttentionReason(task) !== null,
+  )
 }
 
 /**
@@ -326,6 +374,12 @@ interface GoalTasks {
  * engineer, so a card further down the pipeline would say a task is moving
  * when it is waiting on the planner. That is the goal's status talking, which
  * is why the goals are an argument here.
+ *
+ * A failed task lands in that first column too, whatever the goal is doing:
+ * the one thing anybody does with a failure is retry it, and a retry puts it
+ * back exactly there. Its card is outlined in danger and badged `Failed`, so
+ * the column holds "not started" and "started and did not survive it" without
+ * the two being mistaken for each other.
  */
 function groupByGoal(tasks: TaskDto[], goals: GoalDto[]): Map<string, GoalTasks> {
   const lanes = new Map<string, GoalTasks>()
@@ -345,7 +399,7 @@ function groupByGoal(tasks: TaskDto[], goals: GoalDto[]): Map<string, GoalTasks>
     lane.all.push(task)
     if ((OFF_BOARD_STATUSES as readonly TaskStatus[]).includes(task.status)) {
       lane.offBoard.push(task)
-    } else if (held.has(task.goal_id)) {
+    } else if (task.status === "failed" || held.has(task.goal_id)) {
       lane.columns[BOARD_STATUSES[0]].push(task)
     } else {
       lane.columns[primaryStatus(task.status)]?.push(task)

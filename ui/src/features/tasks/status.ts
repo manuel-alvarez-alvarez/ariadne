@@ -22,8 +22,15 @@ export const BOARD_STATUSES = [
   "merged",
 ] as const satisfies readonly TaskStatus[]
 
-/** Statuses that leave the pipeline; shown apart from the board. */
-export const OFF_BOARD_STATUSES = ["cancelled", "failed"] as const satisfies readonly TaskStatus[]
+/**
+ * Statuses that leave the pipeline; shown apart from the board.
+ *
+ * A failure is *not* one of them any more: it is a retry candidate, so it
+ * belongs where the retry would put it — the Pending column, outlined in
+ * danger (see {@link StatusMeta.border}). Only a cancelled task is genuinely
+ * off the pipeline: nobody is coming back to it.
+ */
+export const OFF_BOARD_STATUSES = ["cancelled"] as const satisfies readonly TaskStatus[]
 
 /**
  * The daemon statuses the UI folds into a primary one: `ready` is a phase of
@@ -70,6 +77,13 @@ interface StatusMeta {
   badge: string
   /** Solid dot classes, for the board column headers. */
   dot: string
+  /**
+   * Card border, for a status a card should be outlined by — the way
+   * `STALLED_META.border` outlines a stalled task. Only a failure has one: it
+   * sits in the Pending column beside tasks that have simply not started, and
+   * the outline is what tells the two apart at a glance.
+   */
+  border?: string
 }
 
 /**
@@ -137,6 +151,7 @@ export const TASK_STATUS_META: Record<TaskStatus, StatusMeta> = {
     hint: "Unrecoverable failure; the user can retry it.",
     badge: "bg-status-danger-soft text-status-danger-fg",
     dot: "bg-status-danger",
+    border: "border-status-danger/40",
   },
 }
 

@@ -11,6 +11,7 @@ import { create } from "zustand"
 import { persist } from "zustand/middleware"
 
 import { DEFAULT_BASE_URL, normalizeBaseUrl, setApiBaseUrl } from "@/api"
+import { DEFAULT_GOAL_STATUS_FILTER } from "@/features/goals/filters"
 
 const SETTINGS_STORAGE_KEY = "ariadne.settings"
 
@@ -26,7 +27,9 @@ interface SettingsState {
    * Kept as the param rather than as a parsed selection so the store stays out
    * of the goals feature: `readStatusFilter` is what makes sense of the value,
    * and one that has aged out of the daemon's statuses is dropped there like
-   * any other bad `?status=`.
+   * any other bad `?status=`. The one thing borrowed from that feature is what
+   * a board with nothing remembered opens on, which is the filter's own
+   * default and not this store's to invent.
    */
   goalStatusFilter: string
   setGoalStatusFilter: (value: string) => void
@@ -43,6 +46,15 @@ interface SettingsState {
   setSessionStatusFilter: (value: string) => void
   sessionRoleFilter: string
   setSessionRoleFilter: (value: string) => void
+  /**
+   * Whether the sidebar is folded down to an icon rail.
+   *
+   * Persisted rather than kept per window: it is how this user works, and a
+   * board that fits a 1280px laptop with the rail down should still fit it
+   * after a restart. See `components/app-shell.tsx` and the `[` chord.
+   */
+  sidebarCollapsed: boolean
+  toggleSidebar: () => void
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -51,12 +63,14 @@ export const useSettingsStore = create<SettingsState>()(
       baseUrl: DEFAULT_BASE_URL,
       setBaseUrl: (url) => set({ baseUrl: normalizeBaseUrl(url) }),
       resetBaseUrl: () => set({ baseUrl: DEFAULT_BASE_URL }),
-      goalStatusFilter: "",
+      goalStatusFilter: DEFAULT_GOAL_STATUS_FILTER,
       setGoalStatusFilter: (value) => set({ goalStatusFilter: value }),
       sessionStatusFilter: "",
       setSessionStatusFilter: (value) => set({ sessionStatusFilter: value }),
       sessionRoleFilter: "",
       setSessionRoleFilter: (value) => set({ sessionRoleFilter: value }),
+      sidebarCollapsed: false,
+      toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
     }),
     {
       name: SETTINGS_STORAGE_KEY,
@@ -65,6 +79,7 @@ export const useSettingsStore = create<SettingsState>()(
         goalStatusFilter: state.goalStatusFilter,
         sessionStatusFilter: state.sessionStatusFilter,
         sessionRoleFilter: state.sessionRoleFilter,
+        sidebarCollapsed: state.sidebarCollapsed,
       }),
       onRehydrateStorage: () => (state) => {
         if (state) setApiBaseUrl(state.baseUrl)

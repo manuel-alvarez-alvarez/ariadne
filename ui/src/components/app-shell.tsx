@@ -14,11 +14,16 @@
  * palette, the settings dialog and the create-goal dialog — because all three
  * have to work from every screen, over any panel.
  *
+ * The sidebar folds down to an icon rail, from the header's own button or the
+ * `[` chord. That is what makes the goals board fit a 1280px laptop without
+ * scrolling sideways: 14rem of navigation is 14rem the five pipeline columns
+ * do not get. Which way it is left is persisted, so it survives a restart.
+ *
  * Shared file — feature tasks should not need to touch it. Add navigation
  * entries in `app-sidebar.tsx`, routes in your own feature's `routes.tsx`.
  */
 
-import { SearchIcon, SettingsIcon } from "lucide-react"
+import { PanelLeftCloseIcon, PanelLeftOpenIcon, SearchIcon, SettingsIcon } from "lucide-react"
 import { useCallback, useState } from "react"
 import { Outlet, useMatches, useNavigate } from "react-router-dom"
 
@@ -34,8 +39,10 @@ import { AttentionAlerts } from "@/features/goals/attention-alerts"
 import { CreateGoalDialog } from "@/features/goals/create-goal-dialog"
 import { DaemonLogsDrawer } from "@/features/system/daemon-logs-drawer"
 import { PALETTE_SHORTCUT, useGlobalShortcuts } from "@/hooks/use-global-shortcuts"
+import { cn } from "@/lib/format"
 import { shortcutLabel } from "@/lib/shortcuts"
 import { paths } from "@/routes/paths"
+import { useSettingsStore } from "@/stores/settings"
 
 /** What a route declares so the header can name the screen it is framing. */
 export interface PageHandle {
@@ -63,6 +70,8 @@ export function AppShell() {
   const [logsOpen, setLogsOpen] = useState(false)
   const pageTitle = usePageTitle()
   const navigate = useNavigate()
+  const railed = useSettingsStore((state) => state.sidebarCollapsed)
+  const toggleSidebar = useSettingsStore((state) => state.toggleSidebar)
 
   const openPalette = useCallback(() => setPaletteOpen(true), [])
   const openSettings = useCallback(() => setSettingsOpen(true), [])
@@ -73,24 +82,49 @@ export function AppShell() {
     onOpenSettings: openSettings,
     onNewGoal: openCreateGoal,
     onNavigate: goToScreen,
+    onToggleSidebar: toggleSidebar,
   })
 
   return (
     <div className="flex h-svh w-full flex-col overflow-hidden bg-background text-foreground">
       <div className="flex min-h-0 flex-1">
-        <aside className="flex w-56 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground">
+        <aside
+          className={cn(
+            "flex shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground",
+            railed ? "w-14" : "w-56",
+          )}
+        >
           {/* `border-b` inside the same h-12 box as the header's, so the two
               lines meet at the sidebar edge instead of sitting 1px apart. */}
-          <div className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
+          <div
+            className={cn(
+              "flex h-12 shrink-0 items-center gap-2 border-b",
+              railed ? "justify-center px-0" : "px-4",
+            )}
+          >
+            {/* The rail keeps the mark and drops the words: the box is 3.5rem
+                wide, and a truncated product name says less than its initial. */}
             <span className="font-heading text-sm font-semibold tracking-tight">
-              Ariadne Desktop
+              {railed ? "A" : "Ariadne Desktop"}
             </span>
           </div>
-          <AppSidebar />
+          <AppSidebar collapsed={railed} />
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
           <header className="flex h-12 shrink-0 items-center gap-1 border-b px-3">
+            {/* Beside the edge it moves, and pressed while the rail is down —
+                a toggle, not a command, and the one control that says which
+                way the sidebar is. */}
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={railed ? "Expand sidebar" : "Collapse sidebar"}
+              aria-pressed={railed}
+              onClick={toggleSidebar}
+            >
+              {railed ? <PanelLeftOpenIcon /> : <PanelLeftCloseIcon />}
+            </Button>
             {/* The screen's own `h1` leads its content; this is where the user
              *is*, so it reads as chrome rather than as a second heading. */}
             <span className="truncate text-sm font-medium">{pageTitle}</span>
@@ -138,6 +172,7 @@ export function AppShell() {
         onOpenChange={setPaletteOpen}
         onOpenSettings={openSettings}
         onNewGoal={openCreateGoal}
+        onToggleSidebar={toggleSidebar}
       />
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
       <DaemonLogsDrawer open={logsOpen} onOpenChange={setLogsOpen} />

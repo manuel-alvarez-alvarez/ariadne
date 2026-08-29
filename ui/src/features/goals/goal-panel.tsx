@@ -45,7 +45,7 @@ import { GoalSessions, GoalSessionView } from "./goal-sessions"
 import { GoalTasks } from "./goal-tasks"
 import { GoalThread } from "./goal-thread"
 import { goalMessagesQueryOptions, goalQueryOptions } from "./queries"
-import { GOAL_STATUS_META, isStillPlanning, isTerminalGoalStatus } from "./status"
+import { GOAL_STATUS_META, isTerminalGoalStatus } from "./status"
 
 // Description leads the strip — it is what the goal *is* — but the panel still
 // opens on the tasks, which are what a goal comes down to.
@@ -259,7 +259,6 @@ function GoalView({
         <TabsContent value="tasks" className="pt-3">
           <GoalTasks
             goalId={goal.id}
-            awaitingPlan={isStillPlanning(goal.status)}
             onNewTask={canCreateTask ? () => setNewTaskOpen(true) : undefined}
           />
         </TabsContent>

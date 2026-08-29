@@ -41,10 +41,23 @@ type WhenProps = {
   label?: string
   /** Further lines for the hint — the sibling stamps a row has no room for. */
   detail?: ReactNode
+  /**
+   * The hint's tab stop. `-1` inside something that is already focusable — a
+   * board card's link — where the stamp reaches a keyboard through that
+   * element's `aria-describedby` instead.
+   */
+  hintTabIndex?: number
   className?: string
 }
 
-export function When({ at, format = "relative", label, detail, className }: WhenProps) {
+export function When({
+  at,
+  format = "relative",
+  label,
+  detail,
+  hintTabIndex,
+  className,
+}: WhenProps) {
   const now = useNow()
 
   // Nothing to point at, so nothing to hover or focus: an empty hint on a dash
@@ -53,18 +66,27 @@ export function When({ at, format = "relative", label, detail, className }: When
 
   return (
     <Tooltip>
-      <TooltipTrigger render={<time className={className} dateTime={at} />}>
+      <TooltipTrigger tabIndex={hintTabIndex} render={<time className={className} dateTime={at} />}>
         {format === "age" ? formatAge(at, now) : formatRelative(at, now)}
       </TooltipTrigger>
       <TooltipContent className={detail ? "flex-col items-start gap-0.5" : undefined}>
-        <span>
-          {label ? `${label} ` : ""}
-          {formatAbsolute(at)}
-        </span>
+        <span>{whenHint(at, label)}</span>
         {detail}
       </TooltipContent>
     </Tooltip>
   )
+}
+
+/**
+ * The hint's own words: "updated 16 Aug 2026, 14:03".
+ *
+ * Exported because a caller that takes the tab stop away
+ * ({@link WhenProps.hintTabIndex}) has to put the same words somewhere a
+ * keyboard can still reach — a board card hangs them off its link's
+ * `aria-describedby`. Spelled once here so the two never drift.
+ */
+export function whenHint(at: string, label?: string): string {
+  return `${label ? `${label} ` : ""}${formatAbsolute(at)}`
 }
 
 /** A further line of a {@link When} hint, in the hint's own muted face. */

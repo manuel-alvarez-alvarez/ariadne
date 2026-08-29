@@ -259,6 +259,7 @@ deep link has to resolve client-side.
 | `⌘K` / `Ctrl+K` | the command palette |
 | `⌘,` / `Ctrl+,` | settings |
 | `N` | new goal, from any screen |
+| `[` | fold the sidebar down to an icon rail, and back |
 | `G` then `G`/`S`/`P`/`A`/`R` | goals, sessions, profiles, agents, repositories |
 | `Escape` | closes the palette, then the topmost panel |
 

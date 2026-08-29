@@ -1,19 +1,32 @@
 // @vitest-environment jsdom
 
 /**
- * The card's hints, reached the way a keyboard reaches them.
+ * The card's hints, reached the way a keyboard reaches them, and the tab stops
+ * it costs to get there.
  *
- * The card says four things that are only explained in a tooltip — what the
- * sub-status means, what R2 counts, what it is waiting for, when it last moved
- * — and it says them in `<span>`s and a `<time>`, which take no focus of their
- * own. So the test is Tab and read: nothing here checks that a tooltip *exists*,
- * only that pressing Tab opens one, which is the whole point of the card not
- * using `title=` (see its docblock, and `components/ui/tooltip.tsx`).
+ * The card says several things that are only explained in a tooltip — what the
+ * sub-status means, what R2 counts, what it is waiting for, when exactly it
+ * last moved, what it is running on instead of its profile's model — and it
+ * says them in `<span>`s and a `<time>`. Those used to be focusable (the
+ * tooltip primitive makes every trigger so; see `components/ui/tooltip.tsx`),
+ * which reached the hints but cost some seven tab stops per card and nested
+ * interactive nodes inside the card's own link. So the test is now the other
+ * way round: the card is *one* stop, and every hint hangs off its link as
+ * `aria-describedby`.
  *
- * The fifth thing it sometimes says is what its engineer runs on, which is on
- * the card only where that is not what the profile behind it says — so both
- * halves of that condition are read here, against a profile seeded next to the
- * task.
+ * Both halves matter, and each is worthless without the other — a card with
+ * one stop and hints nobody can read is the same regression wearing different
+ * clothes. So the stop count is asserted on the busiest card there is (an
+ * engine override on top of everything else) and each hint is read back off
+ * the link.
+ *
+ * The card also says each thing once. A badge that repeats a label already on
+ * the card — the daemon's `stalled` reason beside the task's own `Stalled`
+ * flag — is dropped rather than drawn twice.
+ *
+ * And the pin is on the card only where the task runs on something other than
+ * what its profile says, so both halves of that condition are read here too,
+ * against a profile seeded next to the task.
  */
 
 import { act, cleanup, screen } from "@testing-library/react"
@@ -22,6 +35,7 @@ import { afterEach, expect, it, vi } from "vitest"
 
 import { type ProfileDto, qk, type TaskDto } from "@/api"
 import type { SessionAttention } from "@/features/sessions/session-display"
+import { formatAbsolute } from "@/lib/format"
 import { aProfile, aTask } from "@/test/fixtures"
 import { renderScreen } from "@/test/harness"
 import { TaskCard } from "./task-card"
@@ -61,13 +75,28 @@ const ENGINEER: ProfileDto = aProfile({
   model: "claude_code:claude-opus-5",
 })
 
-/** Tabs until a tooltip is showing `text`, or runs out of stops. */
-async function tabUntilHint(user: ReturnType<typeof userEvent.setup>, text: RegExp) {
-  for (let stop = 0; stop < 12; stop++) {
-    await user.tab()
-    if (screen.queryByText(text)) return true
-  }
-  return false
+/** The card's link, which is the whole of what a keyboard lands on. */
+function cardLink(): HTMLElement {
+  return screen.getByRole("link", { name: /Make the hints reachable/ })
+}
+
+/** The card's own box: the link's parent, and everything the card draws. */
+function card(): HTMLElement {
+  return cardLink().parentElement as HTMLElement
+}
+
+/**
+ * The busiest card there is: a sub-status, a review round, a dependency, a
+ * stall, a blocked agent *and* an engine override — so a stop count taken on
+ * it is a stop count for every card.
+ */
+const LOADED: TaskDto = { ...TASK, model: "codex:gpt-5.3-codex" }
+
+/** What the link says about itself past its own text: its `aria-describedby`. */
+function description(): string {
+  const id = cardLink().getAttribute("aria-describedby")
+  if (!id) throw new Error("the card's link describes itself with nothing")
+  return document.getElementById(id)?.textContent ?? ""
 }
 
 it.each([
@@ -75,10 +104,42 @@ it.each([
   ["the review round", /Review round 2/],
   ["the dependency count", /Waits for 1 task/],
   ["the stall", /idle without advancing/],
-  ["the timestamp", /updated /],
-])("opens %s hint on focus", async (_what, text) => {
-  const user = mountCard()
-  expect(await tabUntilHint(user, text)).toBe(true)
+  // The stamp behind "2 hours ago", which is the whole reason the relative
+  // form is safe to show: without this the exact time is nowhere at all.
+  ["the exact timestamp", new RegExp(formatAbsolute(TASK.updated_at))],
+])("carries %s hint on the link itself", (_what, text) => {
+  mountCard()
+  expect(description()).toMatch(text)
+})
+
+it("carries the engine override's hint too, though the pin sits outside the link", () => {
+  // The pill says what it runs on; only the tooltip says what that is instead
+  // *of*, and the link is the card's one stop, so this is where it has to land.
+  mountCard(undefined, LOADED)
+  expect(description()).toContain("codex:gpt-5.3-codex (overrides Engineer)")
+})
+
+it("is one tab stop for the whole card, hints and controls alike", async () => {
+  const user = mountCard(undefined, LOADED)
+  // Everything that could add a stop is on this card: the branch's copy
+  // button, the engine pin, and five hints inside the link.
+  expect(screen.getByText("codex:gpt-5.3-codex")).not.toBeNull()
+  expect(screen.getByRole("button", { name: "Copy branch" })).not.toBeNull()
+
+  await user.tab()
+  expect(document.activeElement).toBe(cardLink())
+
+  // And out the other side: the next Tab leaves the card altogether rather
+  // than walking its pills. Seven stops per card is what this replaced.
+  await user.tab()
+  expect(card().contains(document.activeElement)).toBe(false)
+})
+
+it("keeps the copy button a target and a name, only not a stop", () => {
+  mountCard(undefined, LOADED)
+  // What it gives up is the tab order; the click and the accessible name are
+  // untouched, and the same control is one Enter away in the task panel.
+  expect(screen.getByRole("button", { name: "Copy branch" }).getAttribute("tabindex")).toBe("-1")
 })
 
 /**
@@ -94,6 +155,21 @@ it("says which of the task's agents is waiting on a person", () => {
 it("says nothing when no agent of the task is waiting", () => {
   mountCard()
   expect(screen.queryByText("Waiting for permission")).toBeNull()
+})
+
+it("says a stall once, however many places report it", () => {
+  // The daemon raises `stalled` on the session and the task carries a flag of
+  // its own: two views of one fact, which the card drew as `Stalled` beside
+  // `⚠ Stalled`.
+  mountCard("stalled")
+  expect(screen.getAllByText("Stalled")).toHaveLength(1)
+  // Still outlined by it, though — the badge is what was dropped, not the fact.
+  expect(cardLink().parentElement?.className).toContain("border-status-warn/40")
+})
+
+it("keeps a reason the card does not otherwise say", () => {
+  mountCard("disconnected", { ...TASK, stalled: false })
+  expect(screen.getByText("Disconnected")).not.toBeNull()
 })
 
 /**
