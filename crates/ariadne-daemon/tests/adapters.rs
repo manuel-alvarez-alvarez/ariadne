@@ -32,7 +32,18 @@ fn ctx_with_flags(run_dir: PathBuf, extra_flags: Vec<String>) -> SpawnCtx {
         system_prompt: "SYSTEM PROMPT".into(),
         initial_prompt: "DO THE TASK".into(),
         model: Some("test-model".into()),
+        effort: None,
         extra_flags,
+    }
+}
+
+/// The context a session pinned to `model` at `effort` assembles: both are
+/// frozen on the session row, so every launch of it carries the same pair.
+fn ctx_with_pin(run_dir: PathBuf, model: Option<&str>, effort: Option<&str>) -> SpawnCtx {
+    SpawnCtx {
+        model: model.map(str::to_string),
+        effort: effort.map(str::to_string),
+        ..ctx_with_flags(run_dir, vec!["--extra".into()])
     }
 }
 
@@ -313,4 +324,138 @@ fn the_configured_flags_are_passed_once() {
         .filter(|a| *a == "--dangerously-skip-permissions")
         .count();
     assert_eq!(bypasses, 1, "{:?}", plan.argv);
+}
+
+/// Claude takes the effort on its argv, once, right after the model it
+/// qualifies — on the session it starts and on a resumed one alike.
+#[test]
+fn claude_passes_the_effort_after_the_model() {
+    let dir = tempfile::tempdir().unwrap();
+    let pinned = ctx_with_pin(dir.path().into(), Some("test-model"), Some("xhigh"));
+    let adapter = adapter_for(AgentKind::ClaudeCode);
+    for plan in [
+        adapter.plan_spawn(&pinned).unwrap(),
+        adapter
+            .plan_resume(&pinned, "abc-123", "apply feedback")
+            .unwrap(),
+    ] {
+        let at = plan
+            .argv
+            .iter()
+            .position(|a| a == "--effort")
+            .unwrap_or_else(|| panic!("no --effort in {:?}", plan.argv));
+        assert_eq!(
+            plan.argv.iter().filter(|a| *a == "--effort").count(),
+            1,
+            "{:?}",
+            plan.argv
+        );
+        assert_eq!(
+            &plan.argv[at - 2..=at + 1],
+            ["--model", "test-model", "--effort", "xhigh"]
+        );
+    }
+
+    // No effort pinned, no flag: the CLI runs the model at its own.
+    let bare = ctx_with_pin(dir.path().into(), Some("test-model"), None);
+    for plan in [
+        adapter.plan_spawn(&bare).unwrap(),
+        adapter
+            .plan_resume(&bare, "abc-123", "apply feedback")
+            .unwrap(),
+    ] {
+        assert!(
+            !plan.argv.contains(&"--effort".to_string()),
+            "{:?}",
+            plan.argv
+        );
+    }
+}
+
+/// Codex has no effort flag: it takes the config override, and — like every
+/// other config flag — it has to be re-passed on resume.
+#[test]
+fn codex_passes_the_effort_as_a_config_override() {
+    let dir = tempfile::tempdir().unwrap();
+    let pinned = ctx_with_pin(dir.path().into(), Some("test-model"), Some("xhigh"));
+    let adapter = adapter_for(AgentKind::Codex);
+    for plan in [
+        adapter.plan_spawn(&pinned).unwrap(),
+        adapter
+            .plan_resume(&pinned, "thread-1", "merge now")
+            .unwrap(),
+    ] {
+        assert!(
+            plan.argv
+                .windows(2)
+                .any(|w| w[0] == "-c" && w[1] == r#"model_reasoning_effort="xhigh""#),
+            "{:?}",
+            plan.argv
+        );
+    }
+
+    let bare = ctx_with_pin(dir.path().into(), Some("test-model"), None);
+    for plan in [
+        adapter.plan_spawn(&bare).unwrap(),
+        adapter.plan_resume(&bare, "thread-1", "merge now").unwrap(),
+    ] {
+        assert!(
+            !plan.argv.join(" ").contains("model_reasoning_effort"),
+            "{:?}",
+            plan.argv
+        );
+    }
+}
+
+/// OpenCode takes the effort as the agent's variant in the generated config,
+/// which is what a spawn and a resume both read. It only lands beside a model
+/// we write: OpenCode ignores a variant whose model comes from elsewhere.
+#[test]
+fn opencode_writes_the_effort_as_the_agents_variant() {
+    let dir = tempfile::tempdir().unwrap();
+    let adapter = adapter_for(AgentKind::Opencode);
+    let variant = |plan: &ariadne_daemon::agents::SpawnPlan| {
+        let path = plan
+            .env
+            .iter()
+            .find(|(k, _)| k == "OPENCODE_CONFIG")
+            .map(|(_, v)| v.clone())
+            .expect("OPENCODE_CONFIG set");
+        let config: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        config["agent"]["ariadne"]["variant"].clone()
+    };
+
+    let pinned = ctx_with_pin(
+        dir.path().into(),
+        Some("opencode/test-model"),
+        Some("xhigh"),
+    );
+    for plan in [
+        adapter.plan_spawn(&pinned).unwrap(),
+        adapter
+            .plan_resume(&pinned, "ses_1", "apply feedback")
+            .unwrap(),
+    ] {
+        assert_eq!(variant(&plan), "xhigh");
+    }
+
+    // No effort pinned: no variant key at all, rather than an empty one.
+    let bare = ctx_with_pin(dir.path().into(), Some("opencode/test-model"), None);
+    for plan in [
+        adapter.plan_spawn(&bare).unwrap(),
+        adapter
+            .plan_resume(&bare, "ses_1", "apply feedback")
+            .unwrap(),
+    ] {
+        assert_eq!(variant(&plan), serde_json::Value::Null);
+    }
+
+    // An effort with no model of the agent's own is dropped, not written: a
+    // variant beside a model OpenCode resolves elsewhere is ignored anyway.
+    for model in [Some("test-model"), None] {
+        let unpinned = ctx_with_pin(dir.path().into(), model, Some("xhigh"));
+        let plan = adapter.plan_spawn(&unpinned).unwrap();
+        assert_eq!(variant(&plan), serde_json::Value::Null, "{model:?}");
+    }
 }

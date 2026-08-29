@@ -3,6 +3,8 @@
 //! - Bypass: `--dangerously-skip-permissions`, from the agent config rather
 //!   than from here (`SpawnCtx::extra_flags`) so the user can drop it
 //! - Session id: chosen by us via `--session-id <uuid>` (deterministic capture)
+//! - Effort: `--effort <level>`, which the CLI applies to the session it
+//!   starts and to a `--resume`d one alike (verified on 2.1.251)
 //! - System prompt: `--append-system-prompt <content>` (inline; the installed
 //!   CLI has no `-file` variant — a copy is kept in the run dir for debugging)
 //! - MCP: `--mcp-config <run>/mcp.json`
@@ -74,6 +76,10 @@ impl ClaudeAdapter {
         if let Some(model) = &ctx.model {
             argv.push("--model".into());
             argv.push(model.clone());
+        }
+        if let Some(effort) = &ctx.effort {
+            argv.push("--effort".into());
+            argv.push(effort.clone());
         }
         argv.extend(ctx.extra_flags.iter().cloned());
     }

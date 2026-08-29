@@ -33,10 +33,13 @@ pub struct SpawnCtx {
     /// Task/goal briefing delivered as the first user prompt.
     pub initial_prompt: String,
     pub model: Option<String>,
+    /// The effort that model is run at, as the session pinned it. None = the
+    /// CLI's own default.
+    pub effort: Option<String>,
     /// The agent kind's configured flags (its permission bypass and whatever
     /// else the user added), read from the database on every launch. The
     /// structural flags — session ids, MCP and hook config, the system prompt,
-    /// the model — are the adapters' own and are not in here.
+    /// the model and its effort — are the adapters' own and are not in here.
     pub extra_flags: Vec<String>,
 }
 

@@ -10,6 +10,10 @@
 //!   disabled outright, which leaves nothing to fall back or cycle to.
 //! - Autonomy: the `--auto` flag comes from the agent config
 //!   ([`AgentKind::default_flags`]); the permission block here is structural.
+//! - Effort: `agent.ariadne.variant` in that config, which covers spawns and
+//!   resumes alike — the TUI entry point used for resumes has no `--variant`
+//!   flag of its own. It only takes effect beside the agent's own `model`
+//!   (see [`OpencodeAdapter::write_config`]).
 //! - Session id: captured by the plugin from `session.created` events.
 //! - Resume: TUI `opencode --session <id>` so the resumed session stays
 //!   interactively attachable. The instruction cannot ride the argv —
@@ -46,6 +50,24 @@ impl OpencodeAdapter {
             && model.contains('/')
         {
             agent["model"] = json!(model);
+            // The effort is the model's variant, and the schema's "applies
+            // only when using the agent's configured model" is literal:
+            // verified on 1.18.15, an `ariadne` agent carrying `variant` and
+            // `model` together starts a session recorded as
+            // `{"id":"hy3-free","providerID":"opencode","variant":"high"}`,
+            // while the same agent carrying the variant alone — its model
+            // left to the user's config — starts one recorded as
+            // `"variant":"default"`. So the variant goes in beside a model we
+            // write, and nowhere else.
+            if let Some(effort) = &ctx.effort {
+                agent["variant"] = json!(effort);
+            }
+        } else if ctx.effort.is_some() {
+            tracing::warn!(
+                session = %ctx.session_id,
+                model = ?ctx.model,
+                "opencode ignores an effort with no provider-prefixed model to hang it on; the session runs at the model's default variant"
+            );
         }
 
         let config = json!({

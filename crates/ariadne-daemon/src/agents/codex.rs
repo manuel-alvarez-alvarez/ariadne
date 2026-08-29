@@ -11,6 +11,8 @@
 //!   carries `session_id`, captured by the ingestion endpoint before the first
 //!   turn — notify only fired on agent-turn-complete, which a session killed
 //!   mid-turn never reaches.
+//! - Effort: `-c model_reasoning_effort=<level>`, a config override like the
+//!   rest — codex has no flag for it
 //! - System prompt: no append-safe flag — prepended to the initial prompt
 //! - Resume: `codex resume <thread-id>`; flags must be re-passed (they are
 //!   not inherited from the original session)
@@ -46,6 +48,16 @@ impl CodexAdapter {
         if let Some(model) = &ctx.model {
             flags.push("-m".into());
             flags.push(model.clone());
+        }
+        if let Some(effort) = &ctx.effort {
+            // No flag of its own: the config override is how codex takes an
+            // effort. Quoted, like every other string value here — a bare
+            // level works too (0.150.1 falls back to the raw string when the
+            // value does not parse as TOML), but a quoted one is TOML either
+            // way. Verified on 0.150.1: the session header reads "reasoning
+            // effort: xhigh" and the rollout's turn context records it.
+            flags.push("-c".into());
+            flags.push(format!("model_reasoning_effort=\"{effort}\""));
         }
         flags.extend(ctx.extra_flags.iter().cloned());
         flags

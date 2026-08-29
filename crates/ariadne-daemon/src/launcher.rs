@@ -241,10 +241,11 @@ impl Launcher {
     /// every spawn and every resume alike: an edit to the agent config is meant
     /// to reach the next launch, whichever path that launch comes down.
     ///
-    /// The model is the opposite: it is the one the session was created with,
-    /// off the pin its role carries, and no launch of that session ever moves
-    /// it. Editing a profile is meant to steer the work defined after it, not
-    /// to switch the model out from under a conversation already running.
+    /// The model and the effort it runs at are the opposite: they are the ones
+    /// the session was created with, off the pin its role carries, and no
+    /// launch of that session ever moves either. Editing a profile is meant to
+    /// steer the work defined after it, not to switch the model out from under
+    /// a conversation already running.
     async fn spawn_ctx(
         &self,
         session: &AgentSession,
@@ -265,6 +266,7 @@ impl Launcher {
             system_prompt,
             initial_prompt,
             model: session.model.clone(),
+            effort: session.effort.clone(),
             extra_flags: agent.extra_flags(),
         })
     }
