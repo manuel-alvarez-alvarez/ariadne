@@ -115,8 +115,8 @@ describe("buildPaletteEntries", () => {
     expect(entry?.keywords).toContain("codex:gpt-5")
     // The effort is searchable too: it is half of what that profile runs as.
     expect(entry?.keywords).toContain("high")
-    // The pick carries its subject: the screen expands that row.
-    expect(entry?.target).toEqual({ kind: "page", path: `/profiles?expand=${PROFILE.id}` })
+    // The pick carries its subject: the screen opens on that profile.
+    expect(entry?.target).toEqual({ kind: "page", path: `/profiles?profile=${PROFILE.id}` })
   })
 })
 

@@ -128,7 +128,7 @@ export function buildPaletteEntries({
       label: profile.name,
       detail: roleLabel(profile.role),
       keywords: [profile.id, profile.role, profile.model ?? "", profile.effort ?? ""],
-      // The one entity with no panel of its own: the screen expands its row,
+      // The one entity with no panel of its own: the screen opens on it,
       // so the pick is carried there rather than dropped at `/profiles`.
       target: { kind: "page", path: paths.profile(profile.id) },
     })),

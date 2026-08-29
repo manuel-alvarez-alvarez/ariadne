@@ -9,10 +9,13 @@ export function DeleteProfileDialog({
   open,
   onOpenChange,
   profile,
+  onDeleted,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   profile: ProfileDto | null
+  /** What the screen does once the row is gone and the dialog has closed. */
+  onDeleted?: () => void
 }) {
   const deleteProfile = useDeleteProfile()
 
@@ -32,6 +35,7 @@ export function DeleteProfileDialog({
         await deleteProfile.mutateAsync(profile.id)
         toast.success("Profile deleted", { description: profile.name })
       }}
+      onDeleted={onDeleted}
     />
   )
 }

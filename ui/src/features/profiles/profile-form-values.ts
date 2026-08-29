@@ -91,7 +91,7 @@ export function emptyProfileFormValues(role: Role = "engineer"): ProfileFormValu
 }
 
 /**
- * An existing profile as form values, for the edit dialog.
+ * An existing profile as form values, for the editor.
  *
  * Its briefings arrive from their own endpoint, later than the profile itself,
  * so they are a second argument rather than a field of the DTO.
@@ -151,7 +151,7 @@ export function toCreateRequest(values: ProfileFormValues): CreateProfileRequest
  * The update body as the form reads, whole — which is also the record the
  * dialog keeps of what it last stored. Which of these fields actually travel
  * is that dialog's to decide: a partial update leaves out what nobody touched
- * (see `withoutUnchangedFields` in `profile-form-dialog.tsx`).
+ * (see `withoutUnchangedFields` in `use-profile-save.ts`).
  */
 export function toUpdateRequest(values: ProfileFormValues): UpdateProfileRequest {
   const model = values.model.trim()

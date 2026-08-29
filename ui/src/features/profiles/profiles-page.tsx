@@ -1,300 +1,324 @@
 /**
- * The profiles screen: `ariadne profile ls | inspect | create | update | rm` as
- * one table.
+ * The profiles screen: `ariadne profile ls | inspect | create | update | rm`
+ * as a list beside an editor.
  *
- * Rows expand into the full profile instead of linking away, because the only
- * field that does not fit a table — the system prompt — is also the one worth
- * reading next to the others. A link to one profile is therefore a link to this
- * screen with `?expand=<id>` on it (`paths.profile`), which is what the command
- * palette takes a picked profile to.
+ * The list on the left is every profile under its role's heading — planner,
+ * engineer, reviewer, in the order the orchestration runs them — and the pane
+ * on the right is the selected one, edited in place (`profile-editor.tsx`).
+ * A profile is mostly its prompts, and those are long: a table that folded
+ * them into a row, and a dialog that stacked five of them, were both the wrong
+ * shape for text that is read and rewritten a screen at a time.
  *
- * Both of this screen's pieces of view state live in the URL — the expanded row
- * under that same `?expand=`, the role tab under `?role=` — the way every
- * sibling surface keeps its own (the sessions screen's filters, the panels'
- * tabs). A hash-router desktop app reloads often enough that component state
- * would silently drop them, and the expansion is the thing links point at.
- * The tab replaces, the way the sessions screen's filters do — a filter is not
- * a place — while an expansion pushes, so Back closes the row it opened.
+ * The selection lives in the URL, as `?profile=<id>` (`paths.profile`), the
+ * way every sibling surface keeps its own view state: a link to a profile is
+ * a link to this screen with the selection on it, which is where the command
+ * palette takes a picked profile and where a profile's name links from
+ * wherever it is mentioned. Selecting pushes, so Back returns to whatever was
+ * selected before. The filter box above the list is not in the URL — it
+ * narrows what is on screen and is not a place.
+ *
+ * Below `md` there is no room for both columns: the list is the screen, and a
+ * selection shows the editor in its place with a way back to the list.
  *
  * Nothing here polls: the list is a plain query and the SSE dispatcher
  * invalidates it, so a profile created from the CLI shows up on its own.
  */
 
 import { useQuery } from "@tanstack/react-query"
-import { ChevronRightIcon, PencilIcon, PlusIcon, Trash2Icon } from "lucide-react"
-import { Fragment, type ReactNode, useCallback, useEffect, useRef, useState } from "react"
-import { useSearchParams } from "react-router-dom"
+import { PlusIcon } from "lucide-react"
+import { useCallback, useEffect, useRef, useState } from "react"
+import { Link, useSearchParams } from "react-router-dom"
 
 import type { ProfileDto, Role } from "@/api"
-import { DataTable, RowAction } from "@/components/data-table"
 import { EmptyState } from "@/components/empty-state"
+import { ErrorState } from "@/components/error-state"
 import { PageHeader } from "@/components/page-header"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { TableCell, TableRow } from "@/components/ui/table"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { When } from "@/components/when"
-import { cn, plural, ROLE_LABELS } from "@/lib/format"
-import { PROFILE_EXPAND_PARAM } from "@/routes/paths"
+import { Input } from "@/components/ui/input"
+import { Skeleton } from "@/components/ui/skeleton"
+import { cn, ROLE_LABELS } from "@/lib/format"
+import { PROFILE_PARAM } from "@/routes/paths"
 
-import { DeleteProfileDialog } from "./delete-profile-dialog"
+import { CreateProfileDialog } from "./create-profile-dialog"
 import { pinLabel } from "./model-ref"
-import { ProfileDetails } from "./profile-details"
-import { ProfileFormDialog } from "./profile-form-dialog"
+import { ProfileEditor } from "./profile-editor"
 import { ROLES } from "./profile-labels"
 import { profilesQueryOptions } from "./queries"
 
-/** The role tabs, where "all" means the unfiltered request. */
-type RoleFilter = Role | "all"
-
-/** The param the role tab travels in, alongside `?expand=`. */
-const ROLE_PARAM = "role"
-
-/** No filter, on the tab strip: the value an absent `?role=` stands for. */
-const ALL = "all"
-
-const COLUMNS = [
-  { header: "Name" },
-  { header: "Role" },
-  { header: "Model" },
-  { header: "Updated" },
-  { className: "w-20 text-right" },
-]
-
 export function ProfilesPage() {
-  // The dialogs keep their subject after closing so the exit animation still
-  // has something to render; only `open` flips on close.
-  const [formOpen, setFormOpen] = useState(false)
-  const [editing, setEditing] = useState<ProfileDto | null>(null)
-  const [deleteOpen, setDeleteOpen] = useState(false)
-  const [deleting, setDeleting] = useState<ProfileDto | null>(null)
-
+  const [createOpen, setCreateOpen] = useState(false)
   const [search, setSearch] = useSearchParams()
-  const roleFilter: RoleFilter = ROLES.find((role) => role === search.get(ROLE_PARAM)) ?? ALL
-  const expandedId = search.get(PROFILE_EXPAND_PARAM)
+  const selectedId = search.get(PROFILE_PARAM)
 
-  const profiles = useQuery(profilesQueryOptions(roleFilter === ALL ? undefined : roleFilter))
-
-  /** The row a link asked for, until it has been scrolled to. */
-  const [scrollToId, setScrollToId] = useState<string | null>(null)
-  /** The last row expanded by a click here, which is already on screen. */
-  const clicked = useRef<string | null>(null)
+  const profiles = useQuery(profilesQueryOptions())
+  const selected = profiles.data?.find((profile) => profile.id === selectedId)
 
   /**
-   * Anything that expands a row *other* than a click on it — a link followed
-   * onto this screen (`paths.profile`, which is where the command palette
-   * takes a picked profile), a reload, a Back step — has to bring the row into
-   * view, since there is no reason for it to be where the user is looking.
+   * Selects a profile. It pushes: a selection is what a link points at, so
+   * Back has to return to the one before it and Forward to bring it back.
+   * Every other param is kept, so a panel open over the screen stays open.
    */
-  useEffect(() => {
-    if (!expandedId) {
-      clicked.current = null
-      return
-    }
-    if (expandedId !== clicked.current) setScrollToId(expandedId)
-  }, [expandedId])
-
-  /**
-   * Selects a role, keeping every other param. It replaces rather than pushes,
-   * the way the sessions screen's filters do: a filter is not a place, and
-   * Back should leave this screen rather than walk the tabs that got here.
-   *
-   * The expansion rides along, so widening the tab again shows the open row
-   * rather than having lost it. The rule the other way round — that a linked
-   * profile is never filtered out of the list it lands in — belongs to the URL
-   * now: `paths.profile` is a whole search string, with an id and no role on
-   * it, so following one drops whatever tab was up.
-   */
-  function filterByRole(value: string) {
+  function select(profileId: string) {
     const next = new URLSearchParams(search)
-    if (value === ALL) next.delete(ROLE_PARAM)
-    else next.set(ROLE_PARAM, value)
-    setSearch(next, { replace: true })
-  }
-
-  /**
-   * Opens a row, or closes the open one. Unlike the tab, this pushes: an
-   * expansion is what a link points at, so Back has to close the row it opened
-   * and Forward has to bring it back.
-   */
-  function toggleExpanded(profileId: string) {
-    const next = new URLSearchParams(search)
-    if (expandedId === profileId) {
-      clicked.current = null
-      next.delete(PROFILE_EXPAND_PARAM)
-    } else {
-      clicked.current = profileId
-      next.set(PROFILE_EXPAND_PARAM, profileId)
-    }
+    next.set(PROFILE_PARAM, profileId)
     setSearch(next)
   }
 
   /**
-   * Scrolls the asked-for row into view as it mounts — which is the first
-   * render for a link followed from another screen, and a later one when the
-   * list is still loading.
+   * Clears the selection in place. This is the way back to the list where the
+   * list is not beside the editor, and where the selected profile is gone; in
+   * neither case is the user going somewhere, so nothing is pushed.
    */
-  const scrollToRow = useCallback((row: HTMLTableRowElement | null) => {
-    if (!row) return
-    row.scrollIntoView({ block: "center", behavior: "smooth" })
-    setScrollToId(null)
-  }, [])
-
-  function openCreate() {
-    setEditing(null)
-    setFormOpen(true)
-  }
-
-  function openEdit(profile: ProfileDto) {
-    setEditing(profile)
-    setFormOpen(true)
-  }
-
-  function openDelete(profile: ProfileDto) {
-    setDeleting(profile)
-    setDeleteOpen(true)
+  function clearSelection() {
+    const next = new URLSearchParams(search)
+    next.delete(PROFILE_PARAM)
+    setSearch(next, { replace: true })
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    // A fixed-height column against the shell's `<main>`, the way the board
+    // is (see `goals-list-page.tsx`): the two columns below scroll on their
+    // own, so the screen must not grow with them.
+    <div className="flex h-full min-h-0 flex-col gap-4">
       <PageHeader
         title="Profiles"
-        description="What an agent runs as: a role in the orchestration, the model that names the CLI running it, and the system prompt it is spawned with."
+        description="What an agent runs as: a role in the orchestration, the model that names the CLI running it, and every prompt it is spawned with."
         actions={
-          <Button onClick={openCreate}>
+          <Button onClick={() => setCreateOpen(true)}>
             <PlusIcon />
             New profile
           </Button>
         }
       />
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Tabs value={roleFilter} onValueChange={filterByRole}>
-          <TabsList>
-            <TabsTrigger value={ALL}>All</TabsTrigger>
-            {ROLES.map((role) => (
-              <TabsTrigger key={role} value={role}>
-                {ROLE_LABELS[role]}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
-        {profiles.data ? (
-          <p className="text-sm text-muted-foreground">{plural(profiles.data.length, "profile")}</p>
-        ) : null}
-      </div>
-
-      <DataTable
-        query={profiles}
-        errorTitle="Could not load profiles"
-        columns={COLUMNS}
-        empty={<NoProfiles roleFilter={roleFilter} onCreate={openCreate} />}
-        rowKey={(profile) => profile.id}
-        renderRow={(profile) => (
-          <ProfileRow
-            profile={profile}
-            ref={profile.id === scrollToId ? scrollToRow : undefined}
-            expanded={expandedId === profile.id}
-            onToggle={() => toggleExpanded(profile.id)}
-            onEdit={() => openEdit(profile)}
-            onDelete={() => openDelete(profile)}
+      {profiles.isPending ? (
+        <LoadingProfiles />
+      ) : profiles.isError ? (
+        <ErrorState
+          title="Could not load profiles"
+          error={profiles.error}
+          onRetry={() => void profiles.refetch()}
+          showIcon
+        />
+      ) : profiles.data.length === 0 ? (
+        <NoProfiles onCreate={() => setCreateOpen(true)} />
+      ) : (
+        <div className="flex min-h-0 flex-1 gap-6">
+          <ProfileList
+            profiles={profiles.data}
+            selectedId={selectedId}
+            search={search}
+            className={cn(selectedId ? "hidden md:flex" : "flex")}
           />
-        )}
-      />
+          <section
+            aria-label="Selected profile"
+            className={cn(
+              "min-h-0 min-w-0 flex-1 flex-col",
+              selectedId ? "flex" : "hidden md:flex",
+            )}
+          >
+            {selected ? (
+              // Keyed by the profile: a selection is a fresh editor, never one
+              // profile's form refilled with another's.
+              <ProfileEditor
+                key={selected.id}
+                profile={selected}
+                onBack={clearSelection}
+                onDeleted={clearSelection}
+              />
+            ) : selectedId ? (
+              // A link to a profile that is gone — deleted since, or never
+              // this daemon's — lands here rather than on nothing at all.
+              <EmptyState
+                emphasis="quiet"
+                className="my-auto"
+                title="No profile by that id."
+                description="It may have been deleted since the link was made."
+                action={
+                  <Button variant="outline" size="sm" onClick={clearSelection}>
+                    Back to the list
+                  </Button>
+                }
+              />
+            ) : (
+              <EmptyState
+                emphasis="quiet"
+                className="my-auto"
+                title="Select a profile, or create one."
+              />
+            )}
+          </section>
+        </div>
+      )}
 
-      <ProfileFormDialog open={formOpen} onOpenChange={setFormOpen} profile={editing} />
-      <DeleteProfileDialog open={deleteOpen} onOpenChange={setDeleteOpen} profile={deleting} />
+      <CreateProfileDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        // The new profile is on its role's own prompts, and the editor is
+        // where those are rewritten: land there.
+        onCreated={(profile) => select(profile.id)}
+      />
     </div>
   )
 }
 
-function ProfileRow({
-  profile,
-  ref,
-  expanded,
-  onToggle,
-  onEdit,
-  onDelete,
+/**
+ * The list: every profile under its role, the selected one marked, and a box
+ * above them to narrow by name.
+ */
+function ProfileList({
+  profiles,
+  selectedId,
+  search,
+  className,
 }: {
-  profile: ProfileDto
-  /** Set on the row a link asked for, so the screen can scroll to it. */
-  ref?: (row: HTMLTableRowElement | null) => void
-  expanded: boolean
-  onToggle: () => void
-  onEdit: () => void
-  onDelete: () => void
+  profiles: ProfileDto[]
+  selectedId: string | null
+  /** The screen's params, kept on every selection link. */
+  search: URLSearchParams
+  className?: string
 }) {
-  const detailsId = `profile-details-${profile.id}`
+  const [filter, setFilter] = useState("")
+  const needle = filter.trim().toLowerCase()
+  const shown = needle
+    ? profiles.filter((profile) => profile.name.toLowerCase().includes(needle))
+    : profiles
+  const groups = ROLES.map((role) => ({
+    role,
+    profiles: shown.filter((profile) => profile.role === role),
+  })).filter((group) => group.profiles.length > 0)
+
+  /** The item a link asked for, until it has been scrolled to. */
+  const [scrollToId, setScrollToId] = useState<string | null>(null)
+  /** The last item selected by a click here, which is already on screen. */
+  const clicked = useRef<string | null>(null)
+
+  /**
+   * Anything that selects a profile *other* than a click on it — a link
+   * followed onto this screen (`paths.profile`, which is where the command
+   * palette takes a picked profile), a reload, a Back step — has to bring the
+   * item into view, since there is no reason for it to be where the user is
+   * looking.
+   */
+  useEffect(() => {
+    if (!selectedId) {
+      clicked.current = null
+      return
+    }
+    if (selectedId !== clicked.current) setScrollToId(selectedId)
+  }, [selectedId])
+
+  /**
+   * Scrolls the asked-for item into view as it mounts — which is the first
+   * render for a link followed from another screen, and a later one when the
+   * list is still loading.
+   */
+  const scrollToItem = useCallback((item: HTMLAnchorElement | null) => {
+    if (!item) return
+    item.scrollIntoView({ block: "center", behavior: "smooth" })
+    setScrollToId(null)
+  }, [])
+
+  /** The link that selects one profile, with every other param kept. */
+  function selectionOf(profileId: string): { search: string } {
+    const next = new URLSearchParams(search)
+    next.set(PROFILE_PARAM, profileId)
+    return { search: `?${next.toString()}` }
+  }
 
   return (
-    <Fragment>
-      <TableRow ref={ref} className={cn(expanded && "border-b-0")}>
-        <TableCell className="font-medium">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="-ml-1.5 font-medium"
-            aria-expanded={expanded}
-            aria-controls={detailsId}
-            onClick={onToggle}
-          >
-            <ChevronRightIcon
-              className={cn("transition-transform duration-150", expanded && "rotate-90")}
-            />
-            {profile.name}
-          </Button>
-        </TableCell>
-        <TableCell>
-          <Badge variant="secondary">{ROLE_LABELS[profile.role]}</Badge>
-        </TableCell>
-        {/* The agent CLI is the first half of this id, so it is not a column
-            of its own: `codex`, `claude_code:claude-opus-5` — and after an `@`
-            the effort it is run at, where one is pinned. */}
-        <TableCell className="font-mono text-xs">
-          <Unset when={!profile.model}>{pinLabel(profile.model, profile.effort)}</Unset>
-        </TableCell>
-        {/* The age is what a table is read for; the full stamp is the hint
-            behind it, the same way every other timestamp in the app shows it. */}
-        <TableCell className="text-muted-foreground">
-          <When at={profile.updated_at} label="updated" />
-        </TableCell>
-        <TableCell className="text-right">
-          <RowAction icon={<PencilIcon />} label={`Edit ${profile.name}`} onClick={onEdit} />
-          <RowAction icon={<Trash2Icon />} label={`Delete ${profile.name}`} onClick={onDelete} />
-        </TableCell>
-      </TableRow>
-      {expanded ? (
-        <TableRow className="hover:bg-transparent">
-          <TableCell
-            id={detailsId}
-            colSpan={COLUMNS.length}
-            className="whitespace-normal px-4 pt-0"
-          >
-            <ProfileDetails profile={profile} />
-          </TableCell>
-        </TableRow>
-      ) : null}
-    </Fragment>
+    <aside className={cn("w-full min-w-0 flex-col gap-3 md:w-64 md:shrink-0", className)}>
+      <Input
+        type="search"
+        aria-label="Filter profiles"
+        placeholder="Filter by name…"
+        autoComplete="off"
+        spellCheck={false}
+        value={filter}
+        onChange={(event) => setFilter(event.target.value)}
+      />
+      {/* The list's own scrollport; `contain-paint` for the same reason the
+          editor's has it — what it hides must not scroll the shell. */}
+      <nav
+        aria-label="Profiles"
+        className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto contain-paint"
+      >
+        {groups.length === 0 ? (
+          <p className="px-2 text-sm text-muted-foreground">No profile is named that.</p>
+        ) : (
+          groups.map((group) => (
+            <RoleGroup key={group.role} role={group.role}>
+              {group.profiles.map((profile) => {
+                const current = profile.id === selectedId
+                return (
+                  <li key={profile.id}>
+                    <Link
+                      to={selectionOf(profile.id)}
+                      ref={profile.id === scrollToId ? scrollToItem : undefined}
+                      aria-current={current ? "page" : undefined}
+                      onClick={() => {
+                        clicked.current = profile.id
+                      }}
+                      className={cn(
+                        "flex flex-col rounded-md px-2 py-1.5 text-sm outline-none transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50",
+                        current && "bg-muted font-medium",
+                      )}
+                    >
+                      <span className="truncate">{profile.name}</span>
+                      {/* What it runs on, after the name: the model, and
+                          after an `@` the effort where one is pinned. */}
+                      <span className="truncate font-mono text-xs font-normal text-muted-foreground">
+                        {pinLabel(profile.model, profile.effort)}
+                      </span>
+                    </Link>
+                  </li>
+                )
+              })}
+            </RoleGroup>
+          ))
+        )}
+      </nav>
+    </aside>
   )
 }
 
-/** A value the daemon does not hold, spelled out instead of left blank. */
-function Unset({ when, children }: { when: boolean; children: ReactNode }) {
-  return when ? <span className="text-muted-foreground italic">{children}</span> : children
+/** One role's profiles under its heading. */
+function RoleGroup({ role, children }: { role: Role; children: React.ReactNode }) {
+  const headingId = `profiles-${role}`
+  return (
+    <section aria-labelledby={headingId} className="flex flex-col gap-1">
+      <h3
+        id={headingId}
+        className="px-2 text-xs font-medium tracking-wide text-muted-foreground uppercase"
+      >
+        {ROLE_LABELS[role]}
+      </h3>
+      <ul className="flex flex-col gap-0.5">{children}</ul>
+    </section>
+  )
 }
 
-function NoProfiles({ roleFilter, onCreate }: { roleFilter: RoleFilter; onCreate: () => void }) {
-  const filtered = roleFilter !== ALL
+/** Both columns, before the list has arrived. */
+function LoadingProfiles() {
+  return (
+    <div className="flex min-h-0 flex-1 gap-6" aria-busy>
+      <div className="flex w-full flex-col gap-3 md:w-64">
+        <Skeleton className="h-8 w-full" />
+        <Skeleton className="h-4 w-20" />
+        <Skeleton className="h-10 w-full" />
+        <Skeleton className="h-10 w-full" />
+      </div>
+      <div className="hidden flex-1 md:block" />
+    </div>
+  )
+}
+
+function NoProfiles({ onCreate }: { onCreate: () => void }) {
   return (
     <EmptyState
-      // The table's own frame is the box here.
-      className="border-0 py-12"
-      title={filtered ? `No ${ROLE_LABELS[roleFilter].toLowerCase()} profiles` : "No profiles yet"}
-      description={
-        filtered
-          ? "Goals need a planner, and every task needs an engineer and at least one reviewer."
-          : "Profiles are what goals and tasks are assigned to. Create the first one here, or with ariadne profile create."
-      }
+      className="py-12"
+      title="No profiles yet"
+      description="Profiles are what goals and tasks are assigned to. Create the first one here, or with ariadne profile create."
       action={
         <Button variant="outline" size="sm" onClick={onCreate}>
           <PlusIcon />

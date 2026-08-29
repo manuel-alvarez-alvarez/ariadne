@@ -6,7 +6,7 @@
  * The name used to sit on a copy button, which put the ULID on the clipboard
  * and left the mention the one entity reference in the app that went nowhere.
  * What is worth pinning down is the two halves of the link: a known profile is
- * named and points at `?expand=<id>`, and one the list has never heard of —
+ * named and points at `?profile=<id>`, and one the list has never heard of —
  * deleted, or still loading — is still a link, wearing its id. The hover
  * carries both, name first: it answers a mention the column cut short.
  *
@@ -34,7 +34,7 @@ function mount(profileId: string) {
   })
 }
 
-it("shows the name, linking to the profile's row", async () => {
+it("shows the name, linking to the profile", async () => {
   mount(PROFILE.id)
 
   const link = screen.getByRole("link", { name: "Builder" })

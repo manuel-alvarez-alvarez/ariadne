@@ -5,7 +5,7 @@
  * ULIDs, which two reviewers of the same task are indistinguishable as. The
  * name is what a person recognises, so it is what every one of those surfaces
  * shows, and it links to the profile itself ({@link paths.profile}, which
- * expands its row on the profiles screen): a name is accepted anywhere an id
+ * opens it on the profiles screen): a name is accepted anywhere an id
  * is, so there was nothing to copy the ULID for, and this was the one entity
  * mention in the app that went nowhere.
  *
@@ -14,7 +14,7 @@
  * on screen, and whichever screen loads it first serves the others. A profile
  * that is not in the list — deleted since, or not loaded yet — falls back to
  * its id in the plain mono face, still inside the link: the click belongs to
- * the link either way, and the screen simply finds no row to expand.
+ * the link either way, and the screen simply says it has no such profile.
  */
 
 import { useQuery } from "@tanstack/react-query"

@@ -1,33 +1,20 @@
 /**
- * Standing in for prompts whose count is not known until they arrive.
+ * Standing in for the prompt tabs while the briefings are on their way.
  *
- * Both surfaces that show a profile's briefings — the details panel and the
- * form dialog — wait on the same request (`GET /v1/profiles/{id}/prompts`),
- * which is the one thing on either screen whose *number of rows* the client
- * cannot guess. They had a placeholder each, worded the same and shaped
- * differently by accident rather than by intent.
- *
- * The shape is the intent that is left: the form's sections arrive folded, so
- * what stands in for them is header rows; the panel's are open, so it is a
- * title over the block of text under it.
+ * `GET /v1/profiles/{id}/prompts` is the one request on the profiles screen
+ * whose *number of rows* the client cannot guess — a planner has one briefing,
+ * an engineer five — so what stands in for them is the shape of what arrives:
+ * a strip of tabs over the box the first of them is edited in.
  */
 
 import { Skeleton } from "@/components/ui/skeleton"
 
-export function LoadingPrompts({ folded = false }: { folded?: boolean }) {
-  if (folded) {
-    return (
-      <div className="flex flex-col gap-2">
-        <Skeleton className="h-9 w-full" />
-        <Skeleton className="h-9 w-full" />
-      </div>
-    )
-  }
-
+export function LoadingPrompts() {
   return (
-    <div className="flex flex-col gap-3">
-      <Skeleton className="h-4 w-40" />
-      <Skeleton className="h-24 w-full" />
+    <div className="flex flex-col gap-3" aria-busy>
+      <Skeleton className="h-8 w-72" />
+      <Skeleton className="h-8 w-full" />
+      <Skeleton className="h-96 w-full" />
     </div>
   )
 }

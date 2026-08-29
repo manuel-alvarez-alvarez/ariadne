@@ -1,30 +1,29 @@
 // @vitest-environment jsdom
 
 /**
- * The one thing on this screen that is not the daemon's: its view state, which
- * lives in the URL — `?expand=<id>`, the link the command palette follows when
- * a profile is picked, and `?role=`, the tab strip over the table.
+ * The profiles screen as a list beside an editor, against a stubbed daemon.
  *
- * Rendered rather than unit-tested because what is being checked is the round
- * trip: a navigation goes in, and what the table shows comes out. That covers
- * the two rules the params carry — a pick lands on an unfiltered list, since
- * a link has an id and no role; and an expansion is a history step, so Back
- * closes the row it opened — neither of which is visible from the params alone.
- *
- * jsdom is asked for by this file alone (the docblock above): every other test
- * in the app is pure and has no business paying for a DOM.
+ * What is checked is the screen's own state rather than the daemon's: the
+ * list is grouped by role, the selection lives in the URL as `?profile=` —
+ * the link the command palette follows when a profile is picked — and a
+ * selection is a history step, so Back returns to the one before it. Under a
+ * data router, because the editor guards unsaved edits with the router's own
+ * blocker, and switching profiles is the one guard this file owns: the editor
+ * itself is `profile-editor.test.tsx`'s.
  */
 
-import { screen, waitFor } from "@testing-library/react"
+import { screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { useLocation, useNavigate } from "react-router-dom"
+import { createMemoryRouter, RouterProvider, useLocation, useNavigate } from "react-router-dom"
 import { beforeEach, describe, expect, it } from "vitest"
 
-import type { ModelDto, ProfileDto } from "@/api"
-import { PROFILE_EXPAND_PARAM, paths } from "@/routes/paths"
+import type { ModelDto, ProfileDto, ProfilePromptDto } from "@/api"
+import { PROFILE_PARAM, paths } from "@/routes/paths"
 import { aProfile } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { ProfilesPage } from "./profiles-page"
+
+const STAMP = "2026-01-01T00:00:00Z"
 
 const ENGINEER: ProfileDto = aProfile({
   id: "01JPROF000000000000000ENG",
@@ -38,6 +37,13 @@ const REVIEWER: ProfileDto = {
   role: "reviewer",
 }
 
+const PLANNER: ProfileDto = {
+  ...ENGINEER,
+  id: "01JPROF000000000000000PLN",
+  name: "Mapper",
+  role: "planner",
+}
+
 /** A profile pinned to a model the catalog below knows about, at an effort. */
 const PINNED: ProfileDto = {
   ...ENGINEER,
@@ -47,15 +53,6 @@ const PINNED: ProfileDto = {
   effort: "xhigh",
 }
 
-/** The same model, run at whatever the agent CLI runs it at. */
-const AT_AUTO: ProfileDto = {
-  ...ENGINEER,
-  id: "01JPROF00000000000000AUT",
-  name: "Unhurried",
-  model: "claude_code:claude-opus-5",
-}
-
-/** The model catalog an expanded row asks for, to caption a known model with. */
 const CATALOG: ModelDto[] = [
   {
     id: "claude_code:claude-opus-5",
@@ -66,35 +63,91 @@ const CATALOG: ModelDto[] = [
   },
 ]
 
+/** One stored briefing of each kind a role owns, in the daemon's order. */
+function briefings(role: ProfileDto["role"]): ProfilePromptDto[] {
+  const kinds: Record<ProfileDto["role"], ProfilePromptDto["kind"][]> = {
+    planner: ["planner_briefing", "planner_resume"],
+    engineer: [
+      "engineer_briefing",
+      "engineer_resume",
+      "changes_requested",
+      "landing_direct",
+      "landing_pull_request",
+    ],
+    reviewer: ["reviewer_briefing", "reviewer_resume"],
+  }
+  return kinds[role].map((kind) => ({
+    kind,
+    content: `Stored ${kind}.`,
+    is_default: false,
+    updated_at: STAMP,
+  }))
+}
+
+interface Recorded {
+  method: string
+  path: string
+  body: Record<string, unknown> | null
+}
+
+let requests: Recorded[] = []
+
 /**
- * The daemon's `GET /v1/profiles`, narrowing by role the way it does — plus
- * the model catalog and the prompt list an expanded row asks for. The prompts
- * are not this screen's tests' business (`profile-prompts.test.tsx`), but they
- * have to answer something other than a profile.
+ * The daemon: the list, the catalog, each profile's briefings, and the writes
+ * the screen can make — a create that then shows up in the list, a delete
+ * that takes its row away, and the prompt write the dirty guard needs.
  */
-function stubDaemon(profiles: ProfileDto[]) {
-  daemonFetch.mockImplementation((input: Request | string | URL) => {
-    const url = new URL(
-      typeof input === "string" ? input : input instanceof URL ? input : input.url,
-    )
-    const role = url.searchParams.get("role")
-    const body =
-      url.pathname === "/v1/models"
-        ? CATALOG
-        : url.pathname.endsWith("/prompts")
-          ? []
-          : role
-            ? profiles.filter((profile) => profile.role === role)
-            : profiles
-    return Promise.resolve(jsonResponse(body))
+function stubDaemon(initial: ProfileDto[]) {
+  const profiles = [...initial]
+  daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
+    const request = input instanceof Request ? input : new Request(String(input), init)
+    const { pathname } = new URL(request.url)
+    const raw = await request.text()
+    const body = raw.length > 0 ? JSON.parse(raw) : null
+    requests.push({ method: request.method, path: pathname, body })
+
+    if (pathname === "/v1/models") return jsonResponse(CATALOG)
+    if (pathname === "/v1/profiles" && request.method === "GET") return jsonResponse(profiles)
+    if (pathname === "/v1/profiles" && request.method === "POST") {
+      const created: ProfileDto = { ...ENGINEER, ...body, id: "01JPROF00000000000000NEW" }
+      profiles.push(created)
+      return jsonResponse(created, 201)
+    }
+    const prompts = pathname.match(/^\/v1\/profiles\/([^/]+)\/prompts$/)
+    if (prompts) {
+      const profile = profiles.find((one) => one.id === prompts[1])
+      return profile ? jsonResponse(briefings(profile.role)) : jsonResponse({}, 404)
+    }
+    const promptWrite = pathname.match(/^\/v1\/profiles\/[^/]+\/prompts\/([a-z_]+)$/)
+    if (promptWrite && request.method === "PUT") {
+      return jsonResponse({
+        kind: promptWrite[1],
+        content: body?.content ?? "",
+        is_default: false,
+        updated_at: STAMP,
+      })
+    }
+    const one = pathname.match(/^\/v1\/profiles\/([^/]+)$/)
+    if (one && request.method === "DELETE") {
+      const index = profiles.findIndex((profile) => profile.id === one[1])
+      if (index >= 0) profiles.splice(index, 1)
+      return new Response(null, { status: 204 })
+    }
+    if (one && request.method === "PUT") {
+      const index = profiles.findIndex((profile) => profile.id === one[1])
+      const updated = { ...profiles[index], ...body } as ProfileDto
+      profiles[index] = updated
+      return jsonResponse(updated)
+    }
+    return new Response("not stubbed", { status: 404 })
   })
 }
 
 /**
- * The screen, with the two things around it a URL-driven screen needs to be
- * tested against: something that navigates the way the command palette does
- * (and back, the way the window's own Back button does), and the search string
- * the screen has left behind.
+ * The screen under a data router — the app's kind, and the kind the editor's
+ * leave guard needs — with something beside it that navigates the way the
+ * command palette does (and back, the way the window's Back button does), and
+ * the search string the screen has left behind.
  */
 function renderPage(entry: string = paths.profiles()) {
   function Harness() {
@@ -112,237 +165,295 @@ function renderPage(entry: string = paths.profiles()) {
       </>
     )
   }
-
-  return renderScreen(
-    <>
-      <Harness />
-      <ProfilesPage />
-    </>,
-    { route: entry },
+  const router = createMemoryRouter(
+    [
+      {
+        path: paths.profiles(),
+        element: (
+          <>
+            <Harness />
+            <ProfilesPage />
+          </>
+        ),
+      },
+    ],
+    { initialEntries: [entry] },
   )
-}
-
-/** The panel a row expands into, which the row names through `aria-controls`. */
-function expandedDetails(row: HTMLElement): HTMLElement {
-  const id = row.getAttribute("aria-controls")
-  const details = id ? document.getElementById(id) : null
-  if (!details) throw new Error("the row is not expanded")
-  return details
+  return renderScreen(<RouterProvider router={router} />, { route: null })
 }
 
 /** What the screen has put in the URL, as the harness above reports it. */
-function currentSearch(): string {
-  return screen.getByTestId("search").textContent ?? ""
+function selectedInUrl(): string | null {
+  return new URLSearchParams(screen.getByTestId("search").textContent ?? "").get(PROFILE_PARAM)
+}
+
+/** The list item of one profile, by the name it leads with. */
+function item(name: string): HTMLElement {
+  return screen.getByRole("link", { name: new RegExp(`^${name}`) })
+}
+
+/** The editor's heading, once the selected profile is up. */
+async function editorFor(name: string): Promise<HTMLElement> {
+  return await screen.findByRole("heading", { level: 2, name })
+}
+
+/** Opens one prompt's tab and answers its textarea. */
+async function openPrompt(
+  user: ReturnType<typeof userEvent.setup>,
+  label: string,
+): Promise<HTMLTextAreaElement> {
+  await user.click(await screen.findByRole("tab", { name: new RegExp(`^${label}`) }))
+  return (await screen.findByRole("textbox", { name: label })) as HTMLTextAreaElement
 }
 
 beforeEach(() => {
-  stubDaemon([ENGINEER, REVIEWER, PINNED, AT_AUTO])
+  requests = []
+  stubDaemon([ENGINEER, REVIEWER, PLANNER, PINNED])
 })
 
-// Testing Library only unmounts by itself under `globals: true`, which this
-// project does not use — without this every screen stays in the document.
+describe("the list", () => {
+  it("groups every profile under its role, in the order the orchestration runs them", async () => {
+    renderPage()
+    await screen.findByRole("link", { name: /^Builder/ })
 
-describe("ProfilesPage, on ?expand=", () => {
-  it("expands the profile that was asked for and scrolls to it", async () => {
+    const headings = screen
+      .getAllByRole("heading", { level: 3 })
+      .map((heading) => heading.textContent)
+    expect(headings).toEqual(["Planner", "Engineer", "Reviewer"])
+
+    const engineers = screen.getByRole("region", { name: "Engineer" })
+    expect(within(engineers).getByRole("link", { name: /^Builder/ })).toBeDefined()
+    expect(within(engineers).getByRole("link", { name: /^Pinned/ })).toBeDefined()
+    expect(within(engineers).queryByRole("link", { name: /^Critic/ })).toBeNull()
+  })
+
+  it("says what each profile runs on, after its name", async () => {
+    renderPage()
+    await screen.findByRole("link", { name: /^Builder/ })
+
+    expect(item("Pinned").textContent).toContain("claude_code:claude-opus-5 @ xhigh")
+    // Nothing pinned is a fact about the profile, not a blank.
+    expect(item("Builder").textContent).toContain("auto")
+  })
+
+  it("narrows by name from the filter box, and says so when nothing is left", async () => {
     const user = userEvent.setup()
     renderPage()
-    await screen.findByRole("button", { name: "Builder" })
+    await screen.findByRole("link", { name: /^Builder/ })
+
+    await user.type(screen.getByRole("searchbox", { name: "Filter profiles" }), "crit")
+
+    expect(screen.getByRole("link", { name: /^Critic/ })).toBeDefined()
+    expect(screen.queryByRole("link", { name: /^Builder/ })).toBeNull()
+    // A role with nothing left under it has no heading either.
+    expect(screen.queryByRole("heading", { level: 3, name: "Engineer" })).toBeNull()
+
+    await user.type(screen.getByRole("searchbox", { name: "Filter profiles" }), "ical")
+    expect(screen.getByText("No profile is named that.")).toBeDefined()
+  })
+
+  it("offers to create the first profile when there are none", async () => {
+    stubDaemon([])
+    renderPage()
+
+    expect(await screen.findByText("No profiles yet")).toBeDefined()
+    expect(screen.getAllByRole("button", { name: "New profile" }).length).toBeGreaterThan(1)
+  })
+})
+
+describe("the selection", () => {
+  it("is nothing until a profile is picked, and says so", async () => {
+    renderPage()
+    await screen.findByRole("link", { name: /^Builder/ })
+
+    expect(screen.getByText("Select a profile, or create one.")).toBeDefined()
+    expect(selectedInUrl()).toBeNull()
+  })
+
+  it("puts a picked profile in the URL and opens its editor on its prompts", async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByRole("link", { name: /^Builder/ })
+
+    await user.click(item("Builder"))
+
+    expect(await editorFor("Builder")).toBeDefined()
+    expect(selectedInUrl()).toBe(ENGINEER.id)
+    expect(item("Builder").getAttribute("aria-current")).toBe("page")
+    // The system prompt first, then every briefing the daemon lists for the
+    // role, in its order, named for the screen.
+    await screen.findByRole("tab", { name: "Engineer briefing" })
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "System prompt",
+      "Engineer briefing",
+      "Engineer resume",
+      "Changes requested",
+      "Landing (direct)",
+      "Landing (pull request)",
+    ])
+  })
+
+  it("selects and scrolls to the profile a link asked for", async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByRole("link", { name: /^Builder/ })
 
     await user.click(screen.getByRole("button", { name: "pick Builder" }))
 
-    const row = await screen.findByRole("button", { name: "Builder", expanded: true })
-    expect(row).toBeDefined()
+    expect(await editorFor("Builder")).toBeDefined()
+    expect(item("Builder").getAttribute("aria-current")).toBe("page")
     expect(Element.prototype.scrollIntoView).toHaveBeenCalled()
   })
 
-  it("widens the role tab, so a pick is not filtered out of the list it lands in", async () => {
-    const user = userEvent.setup()
-    renderPage()
-    await screen.findByRole("button", { name: "Builder" })
+  it("comes back up on the profile the URL names, on a reload", async () => {
+    renderPage(paths.profile(REVIEWER.id))
 
-    // The reproduction: a tab is up, and the picked profile is not under it.
-    await user.click(screen.getByRole("tab", { name: "Reviewer" }))
-    await waitFor(() => {
-      expect(screen.queryByRole("button", { name: "Builder" })).toBeNull()
-    })
-
-    await user.click(screen.getByRole("button", { name: "pick Builder" }))
-
-    expect(await screen.findByRole("button", { name: "Builder", expanded: true })).toBeDefined()
-    expect(screen.getByRole("tab", { name: "All", selected: true })).toBeDefined()
+    expect(await editorFor("Critic")).toBeDefined()
+    expect(await screen.findByRole("tab", { name: "Reviewer briefing" })).toBeDefined()
   })
 
-  it("takes the param off the URL when the row is closed, so it stays closed", async () => {
+  it("walks selections with Back, since each one is a history step", async () => {
     const user = userEvent.setup()
     renderPage()
-    await screen.findByRole("button", { name: "Builder" })
+    await screen.findByRole("link", { name: /^Builder/ })
 
-    await user.click(screen.getByRole("button", { name: "pick Builder" }))
-    const row = await screen.findByRole("button", { name: "Builder", expanded: true })
-
-    await user.click(row)
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Builder" }).getAttribute("aria-expanded")).toBe(
-        "false",
-      )
-    })
-    expect(currentSearch()).toBe("")
-  })
-
-  it("walks expansions with Back, since each one is a history step", async () => {
-    const user = userEvent.setup()
-    renderPage()
-    await screen.findByRole("button", { name: "Builder" })
-
-    await user.click(screen.getByRole("button", { name: "pick Builder" }))
-    await screen.findByRole("button", { name: "Builder", expanded: true })
-
-    // Expanding another row from there is a step of its own, so Back is the
-    // way from that one to the profile the link opened.
-    await user.click(screen.getByRole("button", { name: "Critic" }))
-    await screen.findByRole("button", { name: "Critic", expanded: true })
+    await user.click(item("Builder"))
+    await editorFor("Builder")
+    await user.click(item("Critic"))
+    await editorFor("Critic")
 
     await user.click(screen.getByRole("button", { name: "go back" }))
-    expect(await screen.findByRole("button", { name: "Builder", expanded: true })).toBeDefined()
+    expect(await editorFor("Builder")).toBeDefined()
+    expect(selectedInUrl()).toBe(ENGINEER.id)
+
+    // And from the first pick, Back is the list with nothing selected.
+    await user.click(screen.getByRole("button", { name: "go back" }))
+    expect(await screen.findByText("Select a profile, or create one.")).toBeDefined()
+    expect(selectedInUrl()).toBeNull()
+  })
+
+  it("clears from the editor's own way back, in place", async () => {
+    const user = userEvent.setup()
+    renderPage(paths.profile(ENGINEER.id))
+    await editorFor("Builder")
+
+    await user.click(screen.getByRole("button", { name: "Back to the list" }))
+
+    expect(await screen.findByText("Select a profile, or create one.")).toBeDefined()
+    expect(selectedInUrl()).toBeNull()
+  })
+
+  it("says so when the URL names a profile the daemon does not have", async () => {
+    renderPage(paths.profile("01JPROF000000000000000GON"))
+    await screen.findByRole("link", { name: /^Builder/ })
+
+    expect(screen.getByText("No profile by that id.")).toBeDefined()
+    expect(screen.queryByRole("heading", { level: 2 })).toBeNull()
   })
 })
 
-describe("ProfilesPage, on a reload", () => {
-  it("comes back up on the role tab and the row the URL names", async () => {
-    renderPage(`/profiles?role=reviewer&${PROFILE_EXPAND_PARAM}=${REVIEWER.id}`)
-
-    expect(await screen.findByRole("button", { name: "Critic", expanded: true })).toBeDefined()
-    expect(screen.getByRole("tab", { name: "Reviewer", selected: true })).toBeDefined()
-    // The tab is a real filter, not just a selected trigger: it is what the
-    // list was asked for.
-    expect(screen.queryByRole("button", { name: "Builder" })).toBeNull()
-  })
-
-  it("keeps the picked tab in the URL, and the expansion with it", async () => {
+describe("switching with unsaved edits", () => {
+  it("asks first, and Cancel stays put with the edits intact", async () => {
     const user = userEvent.setup()
-    renderPage()
-    await screen.findByRole("button", { name: "Critic" })
+    renderPage(paths.profile(ENGINEER.id))
+    await editorFor("Builder")
 
-    await user.click(screen.getByRole("button", { name: "Critic" }))
-    await screen.findByRole("button", { name: "Critic", expanded: true })
-    await user.click(screen.getByRole("tab", { name: "Reviewer" }))
+    const briefing = await openPrompt(user, "Engineer briefing")
+    await user.type(briefing, " More.")
+    await user.click(item("Critic"))
+
+    const dialog = await screen.findByRole("dialog", { name: "Discard changes?" })
+    await user.click(within(dialog).getByRole("button", { name: "Keep editing" }))
 
     await waitFor(() => {
-      expect(new URLSearchParams(currentSearch()).get("role")).toBe("reviewer")
+      expect(screen.queryByRole("dialog", { name: "Discard changes?" })).toBeNull()
     })
-    expect(new URLSearchParams(currentSearch()).get(PROFILE_EXPAND_PARAM)).toBe(REVIEWER.id)
-    expect(screen.getByRole("button", { name: "Critic", expanded: true })).toBeDefined()
+    expect(selectedInUrl()).toBe(ENGINEER.id)
+    expect(screen.getByRole("heading", { level: 2, name: "Builder" })).toBeDefined()
+    expect(
+      (screen.getByRole("textbox", { name: "Engineer briefing" }) as HTMLTextAreaElement).value,
+    ).toBe("Stored engineer_briefing. More.")
+    // Nothing was written by either answer.
+    expect(requests.filter((one) => one.method !== "GET")).toEqual([])
+  })
+
+  it("switches on Discard, dropping the edits", async () => {
+    const user = userEvent.setup()
+    renderPage(paths.profile(ENGINEER.id))
+    await editorFor("Builder")
+
+    await user.type(await openPrompt(user, "Engineer briefing"), " More.")
+    await user.click(item("Critic"))
+
+    const dialog = await screen.findByRole("dialog", { name: "Discard changes?" })
+    await user.click(within(dialog).getByRole("button", { name: "Discard" }))
+
+    expect(await editorFor("Critic")).toBeDefined()
+    expect(selectedInUrl()).toBe(REVIEWER.id)
+    expect(requests.filter((one) => one.method !== "GET")).toEqual([])
+  })
+
+  it("lets a clean editor go without a word", async () => {
+    const user = userEvent.setup()
+    renderPage(paths.profile(ENGINEER.id))
+    await editorFor("Builder")
+    await screen.findByRole("tab", { name: "Engineer briefing" })
+
+    await user.click(item("Critic"))
+
+    expect(await editorFor("Critic")).toBeDefined()
+    expect(screen.queryByRole("dialog", { name: "Discard changes?" })).toBeNull()
   })
 })
 
-describe("ProfilesPage, the model column", () => {
-  it("shows the qualified id, which is where the agent CLI is now named", async () => {
-    renderPage()
-
-    const row = (await screen.findByRole("button", { name: "Pinned" })).closest("tr")
-    expect(row?.textContent).toContain("claude_code:claude-opus-5")
-    // The CLI is the first half of that id, so it is no column of its own.
-    expect(screen.queryByRole("columnheader", { name: "Agent" })).toBeNull()
-    expect(screen.getByRole("columnheader", { name: "Model" })).toBeDefined()
-  })
-
-  it("says `auto` where a profile pins nothing, rather than leaving a blank", async () => {
-    renderPage()
-
-    const row = (await screen.findByRole("button", { name: "Builder" })).closest("tr")
-    expect(row?.textContent).toContain("auto")
-  })
-
-  it("puts the effort in the same cell, after an `@`", async () => {
-    renderPage()
-
-    const row = (await screen.findByRole("button", { name: "Pinned" })).closest("tr")
-    expect(row?.textContent).toContain("claude_code:claude-opus-5 @ xhigh")
-  })
-
-  it("adds nothing where no effort is pinned: that is the agent CLI's own", async () => {
-    renderPage()
-
-    const row = (await screen.findByRole("button", { name: "Unhurried" })).closest("tr")
-    expect(row?.textContent).toContain("claude_code:claude-opus-5")
-    expect(row?.textContent).not.toContain("@")
-  })
-})
-
-describe("ProfilesPage, expanded details", () => {
-  it("spells the pin out whole: the model, and the effort it is run at", async () => {
-    const user = userEvent.setup()
-    renderPage()
-
-    const row = await screen.findByRole("button", { name: "Pinned" })
-    await user.click(row)
-
-    expect(expandedDetails(row).textContent).toContain("claude_code:claude-opus-5 @ xhigh")
-  })
-
+describe("creating and deleting", () => {
   /**
-   * The details row is the one place an unpinned effort is a word rather than
-   * nothing: the row exists to say what this profile runs as, and `auto` — with
-   * what the CLI does instead beside it — is that answer, exactly as the model
-   * above it reads.
+   * The dialog's own fields are `create-profile-dialog.test.tsx`'s; what is
+   * the screen's is where the new profile lands.
    */
-  it("says `auto` for an unpinned effort, named with what the CLI runs it at", async () => {
+  it("creates a profile from the small dialog and lands on it", async () => {
     const user = userEvent.setup()
     renderPage()
+    await screen.findByRole("link", { name: /^Builder/ })
 
-    const row = await screen.findByRole("button", { name: "Unhurried" })
-    await user.click(row)
+    await user.click(screen.getByRole("button", { name: "New profile" }))
+    const dialog = await screen.findByRole("dialog", { name: "New profile" })
+    await user.type(within(dialog).getByLabelText("Name"), "rust-reviewer")
+    await user.click(within(dialog).getByLabelText("Role"))
+    await user.click(await screen.findByRole("option", { name: "Reviewer" }))
+    await user.click(within(dialog).getByRole("button", { name: "Create profile" }))
 
-    expect(expandedDetails(row).textContent).toContain("claude_code:claude-opus-5 @ auto (high)")
+    await waitFor(() => {
+      expect(requests.find((one) => one.method === "POST")?.body).toMatchObject({
+        name: "rust-reviewer",
+        role: "reviewer",
+      })
+    })
+    // The editor opens on the new profile: its prompts are edited there.
+    expect(await editorFor("rust-reviewer")).toBeDefined()
+    expect(selectedInUrl()).toBe("01JPROF00000000000000NEW")
+    expect(await screen.findByRole("tab", { name: "Reviewer briefing" })).toBeDefined()
+    expect(
+      within(screen.getByRole("region", { name: "Reviewer" })).getByRole("link", {
+        name: /^rust-reviewer/,
+      }),
+    ).toBeDefined()
   })
 
-  it("captions a catalog model with its capability blurb, and an unknown one with nothing", async () => {
+  it("deletes the selected profile from the editor's header and clears the selection", async () => {
     const user = userEvent.setup()
-    renderPage()
+    renderPage(paths.profile(REVIEWER.id))
+    await editorFor("Critic")
 
-    // A stored model the catalog lists gets its description under it — a line
-    // of its own, so the blurb is not cut short by the model's own truncation.
-    await user.click(await screen.findByRole("button", { name: "Pinned" }))
-    const blurb = await screen.findByText("Opus tier: deep analysis")
-    expect(blurb.closest("dd")?.textContent).toBe("Opus tier: deep analysis")
+    await user.click(screen.getByRole("button", { name: "Delete" }))
+    const dialog = await screen.findByRole("dialog", { name: "Delete “Critic”?" })
+    await user.click(within(dialog).getByRole("button", { name: "Delete profile" }))
 
-    // One the catalog does not — here, no model at all — shows only itself.
-    await user.click(screen.getByRole("button", { name: "Pinned" }))
-    await user.click(screen.getByRole("button", { name: "Builder" }))
-    await screen.findByRole("button", { name: "Builder", expanded: true })
-    expect(screen.queryByText("Opus tier: deep analysis")).toBeNull()
-  })
-
-  /**
-   * `truncate` is `overflow: hidden` plus `text-overflow: ellipsis`, and an
-   * inline box applies neither: the word and the sentence after it are one
-   * line, and on an inline span that line paints straight out of the fact's
-   * column instead of ending in an ellipsis. What is cut off is in the hint
-   * this fact already carries, so the cut is the point.
-   */
-  it("cuts the unpinned model at its column rather than painting past it", async () => {
-    const user = userEvent.setup()
-    renderPage()
-
-    await user.click(await screen.findByRole("button", { name: "Builder" }))
-    await screen.findByRole("button", { name: "Builder", expanded: true })
-
-    const said = await screen.findByText(/first installed CLI/)
-    const line = said.parentElement
-    expect(line?.textContent).toContain("auto")
-    expect(line?.className).toContain("truncate")
-    // The half that makes the ellipsis possible at all.
-    expect(line?.className).toContain("block")
-  })
-
-  it("shows no raw profile id: the name is what a profile is named by", async () => {
-    const user = userEvent.setup()
-    renderPage()
-
-    await user.click(await screen.findByRole("button", { name: "Pinned" }))
-    await screen.findByRole("button", { name: "Pinned", expanded: true })
-
-    expect(screen.queryByText(PINNED.id)).toBeNull()
-    expect(screen.queryByRole("button", { name: "Copy profile id" })).toBeNull()
+    await waitFor(() => {
+      expect(screen.queryByRole("link", { name: /^Critic/ })).toBeNull()
+    })
+    expect(requests.some((one) => one.method === "DELETE")).toBe(true)
+    expect(selectedInUrl()).toBeNull()
+    expect(screen.getByText("Select a profile, or create one.")).toBeDefined()
   })
 })

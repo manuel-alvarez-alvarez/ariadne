@@ -16,11 +16,11 @@ import { useEffect, useRef, useState } from "react"
 import { useLocation, useSearchParams } from "react-router-dom"
 
 /**
- * Which profile row is expanded, on the profiles screen: what
- * {@link paths.profile} points at, and where that screen keeps the expansion
- * it is showing.
+ * Which profile is selected, on the profiles screen: what {@link paths.profile}
+ * points at, and where that screen keeps the selection its detail pane is
+ * showing.
  */
-export const PROFILE_EXPAND_PARAM = "expand"
+export const PROFILE_PARAM = "profile"
 
 /**
  * What a link asks the screen it opens to hand the keyboard to, under
@@ -51,14 +51,12 @@ export const paths = {
   goal: (goalId: string) => `/goals?goal=${goalId}`,
   profiles: () => "/profiles",
   /**
-   * The profiles screen, opened on one profile: a row expands in place instead
-   * of having a page of its own, so the link asks the screen to expand it and
-   * scroll to it (see `features/profiles/profiles-page.tsx`).
-   *
-   * It carries no `?role=`, which is what keeps the row it names out of the
-   * role tab that happened to be up when the link was followed.
+   * The profiles screen, opened on one profile: the screen is a list beside
+   * the selected profile's editor rather than a page per profile, so the link
+   * asks it to select that one and scroll the list to it (see
+   * `features/profiles/profiles-page.tsx`).
    */
-  profile: (profileId: string) => `/profiles?${PROFILE_EXPAND_PARAM}=${profileId}`,
+  profile: (profileId: string) => `/profiles?${PROFILE_PARAM}=${profileId}`,
   /**
    * Every session there is, filtered on the screen itself. A session's own
    * details are a `?session=` panel over whatever screen picked it (see
