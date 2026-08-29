@@ -51,6 +51,19 @@ fn permission_prompt() -> serde_json::Value {
     })
 }
 
+/// A Claude tool-call hook payload: the pre/post pair of every call of a turn
+/// carries the tool it is about, which is where a question put to the user is
+/// told apart from the rest of the batch running around it.
+fn tool_call(tool_name: &str) -> serde_json::Value {
+    serde_json::json!({
+        "session_id": "01m14w406nt3nh03zynd7qg2sa",
+        "cwd": "/tmp/wt",
+        "hook_event_name": "PreToolUse",
+        "tool_name": tool_name,
+        "tool_input": {},
+    })
+}
+
 async fn notifications_recorded(h: &Harness, session_id: &str) -> usize {
     h.store
         .list_events(EventFilter {
@@ -776,6 +789,147 @@ async fn a_claude_notification_flags_the_session_as_blocked() {
     assert_eq!(untouched.attention_reason(), None);
     assert_eq!(untouched.status(), SessionStatus::Running);
     assert_eq!(notifications_recorded(&h, &session.id).await, 4);
+}
+
+/// A question Claude Code puts to the user with `AskUserQuestion` is a wait
+/// nothing announces on its own: the turn goes on running the other tool calls
+/// of the same batch around the blocked one, and the dialog surfaces — half a
+/// minute later — as the `permission_prompt` notification an ordinary approval
+/// fires. The replay below is a planner session of 2026-08-28 as the daemon
+/// recorded it, and every event after the ask used to take the flag back down.
+#[tokio::test]
+async fn a_pending_question_holds_the_strip_until_it_is_answered() {
+    let h = harness().await;
+    // A planner is asking, and its goal is still being planned: exactly the
+    // work the user is waiting on.
+    let cast = h.cast().await;
+    let session = h
+        .session(&cast.goal, None, Role::Planner, &cast.planner.id)
+        .await;
+
+    // The `pre_tool_use` of the call is the first and only word of the ask.
+    h.ingest(&session, "pre_tool_use", tool_call("AskUserQuestion"))
+        .await;
+    let asked = h.store.get_session(&session.id).await.unwrap();
+    assert_eq!(
+        asked.attention_reason(),
+        Some(AttentionReason::WaitingInput)
+    );
+    assert_eq!(
+        asked.status(),
+        SessionStatus::Running,
+        "the ask is still the agent reporting itself alive"
+    );
+
+    // Everything the same turn reports around it — the pre/post pair of
+    // another tool call, twice over, and the notification the dialog itself
+    // fires in between — leaves the question exactly where it is.
+    for (kind, payload) in [
+        ("pre_tool_use", tool_call("Bash")),
+        ("post_tool_use", tool_call("Bash")),
+        ("notification", permission_prompt()),
+        ("pre_tool_use", tool_call("Bash")),
+        ("post_tool_use", tool_call("Bash")),
+    ] {
+        h.ingest(&session, kind, payload).await;
+        assert_eq!(
+            h.attention(&session).await,
+            Some(AttentionReason::WaitingInput),
+            "{kind} took a pending question off the strip"
+        );
+    }
+
+    // The answer, and the pane has nothing to say to anybody again.
+    h.ingest(&session, "post_tool_use", tool_call("AskUserQuestion"))
+        .await;
+    let answered = h.store.get_session(&session.id).await.unwrap();
+    assert_eq!(answered.attention_reason(), None);
+    assert_eq!(answered.attention_since, None);
+    assert_eq!(answered.status(), SessionStatus::Running);
+
+    // And the hold is over: an ordinary permission dialog after it is a
+    // permission dialog again.
+    h.ingest(&session, "notification", permission_prompt())
+        .await;
+    assert_eq!(
+        h.attention(&session).await,
+        Some(AttentionReason::WaitingPermission)
+    );
+}
+
+/// The other two ways a question leaves the pane: Esc, which ends the turn and
+/// reaches the daemon as `stop`, and a prompt typed at it instead of an answer.
+/// Neither reports the tool call at all, so the flag has to come down on the
+/// event itself — a `stop` in particular clears no prompt of its own accord.
+#[tokio::test]
+async fn a_question_comes_down_when_the_turn_or_the_user_moves_on() {
+    let h = harness().await;
+    for (kind, payload) in [
+        ("stop", serde_json::json!({"hook_event_name": "Stop"})),
+        (
+            "user_prompt_submit",
+            serde_json::json!({"hook_event_name": "UserPromptSubmit", "prompt": "never mind"}),
+        ),
+    ] {
+        // One pane each, since the first of them ends the question for good.
+        let session = h.lone_session(&format!("question-{kind}")).await;
+        h.ingest(&session, "pre_tool_use", tool_call("AskUserQuestion"))
+            .await;
+        assert_eq!(
+            h.attention(&session).await,
+            Some(AttentionReason::WaitingInput),
+            "{kind}"
+        );
+
+        h.ingest(&session, kind, payload).await;
+        assert_eq!(h.attention(&session).await, None, "{kind}");
+
+        // What the turn ending does not touch is the dialog somebody still
+        // has to answer: that one is still on the screen while the agent
+        // sits idle.
+        h.raise(&session, AttentionReason::WaitingPermission).await;
+        h.ingest(&session, "stop", serde_json::json!({})).await;
+        assert_eq!(
+            h.attention(&session).await,
+            Some(AttentionReason::WaitingPermission),
+            "{kind}"
+        );
+    }
+}
+
+/// A question is a raise like any other, so it asks the same thing first:
+/// whether anybody is still waiting on this agent. A planner whose goal has
+/// left planning is asking about work that is already being done.
+#[tokio::test]
+async fn a_question_from_a_planner_past_planning_raises_nothing() {
+    let h = harness().await;
+    // `active_cast` finalizes the plan: the goal is already active.
+    let cast = h.active_cast().await;
+    let session = h
+        .session(&cast.goal, None, Role::Planner, &cast.planner.id)
+        .await;
+
+    h.ingest(&session, "pre_tool_use", tool_call("AskUserQuestion"))
+        .await;
+    let quiet = h.store.get_session(&session.id).await.unwrap();
+    assert_eq!(quiet.attention_reason(), None);
+    assert_eq!(
+        quiet.status(),
+        SessionStatus::Running,
+        "withholding the flag changes nothing else about the ingestion"
+    );
+
+    // Back in planning, the very same call is the user's to answer.
+    h.store
+        .set_goal_status(&cast.goal.id, GoalStatus::Planning)
+        .await
+        .unwrap();
+    h.ingest(&session, "pre_tool_use", tool_call("AskUserQuestion"))
+        .await;
+    assert_eq!(
+        h.attention(&session).await,
+        Some(AttentionReason::WaitingInput)
+    );
 }
 
 /// Attention says a human must act, so it is only raised on an agent somebody

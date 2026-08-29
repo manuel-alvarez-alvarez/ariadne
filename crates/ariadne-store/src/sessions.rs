@@ -17,8 +17,9 @@ const PROMPTS_ONLY: &str = " AND attention_reason IN (?, ?)";
 /// and the failed turn of [`Store::clear_attention_after_idle`].
 const SILENCE_AND_ERROR: &str = " AND attention_reason IN (?, ?)";
 
-/// The clause that keeps a clear to the one flag raised for the user.
-const USER_ONLY: &str = " AND attention_reason = ?";
+/// The clause that keeps a clear to one named reason — the flag raised for
+/// the user, or the one a question in the pane raised.
+const ONE_REASON: &str = " AND attention_reason = ?";
 
 /// The clause that leaves what a human is owed where it is: a raise an agent's
 /// own detectors made does not land on a row carrying
@@ -218,6 +219,23 @@ impl Store {
         self.announce_attention(id, cleared).await
     }
 
+    /// The clear an answered question makes: `waiting_input`, and nothing
+    /// else.
+    ///
+    /// The narrow one, because the event that ends a question is often an
+    /// event that proves nothing else. A turn ending on `stop` is how Esc on
+    /// the choices reads, and [`Store::clear_attention_after_idle`] rightly
+    /// leaves a prompt standing through an idle — the dialog an agent is
+    /// blocked on is still on the screen while it sits there. A question that
+    /// has just left the screen is not, and it is the only flag going idle
+    /// that way does answer.
+    pub async fn clear_question_attention(&self, id: &str) -> Result<()> {
+        let cleared = self
+            .clear_attention(id, ONE_REASON, &[AttentionReason::WaitingInput.as_str()])
+            .await?;
+        self.announce_attention(id, cleared).await
+    }
+
     /// Drop any attention flag from a session (the agent moved on).
     pub async fn clear_session_attention(&self, id: &str) -> Result<()> {
         let cleared = self.clear_attention(id, "", &[]).await?;
@@ -259,7 +277,7 @@ impl Store {
         // is watching and the task stall of each is brought into line.
         for id in waiting {
             let cleared = self
-                .clear_attention(&id, USER_ONLY, &[AttentionReason::WaitingUser.as_str()])
+                .clear_attention(&id, ONE_REASON, &[AttentionReason::WaitingUser.as_str()])
                 .await?;
             self.announce_attention(&id, cleared).await?;
         }

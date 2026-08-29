@@ -1361,6 +1361,86 @@ async fn an_idle_report_clears_only_the_silence_and_the_error() {
     );
 }
 
+/// Whether a tool that asks the user something is still waiting on them is
+/// read off the session's own log, and the last event about such a call is the
+/// whole of the answer: everything the turn reports in between belongs to its
+/// other tool calls. Answered, dismissed by a prompt or ended with the turn,
+/// the question is over — and the clear it takes with it is the narrow one.
+#[tokio::test]
+async fn a_pending_question_is_the_last_word_of_a_sessions_log() {
+    let w = World::new().await;
+    let store = &w.store;
+    let session = w.engineer_session().await;
+    let pending = async || {
+        store
+            .tool_call_is_pending(&session.id, "AskUserQuestion")
+            .await
+            .unwrap()
+    };
+
+    // A log with nothing in it has no question in it.
+    assert!(!pending().await);
+    for (kind, tool, expected) in [
+        ("pre_tool_use", Some("Bash"), false),
+        ("pre_tool_use", Some("AskUserQuestion"), true),
+        // The rest of the turn's batch, running around the blocked call.
+        ("pre_tool_use", Some("Bash"), true),
+        ("post_tool_use", Some("Bash"), true),
+        ("notification", None, true),
+        // Answered, asked again, ended with the turn, asked again, typed over.
+        ("post_tool_use", Some("AskUserQuestion"), false),
+        ("pre_tool_use", Some("AskUserQuestion"), true),
+        ("stop", None, false),
+        ("pre_tool_use", Some("AskUserQuestion"), true),
+        ("user_prompt_submit", None, false),
+    ] {
+        store
+            .create_event(NewAgentEvent {
+                session_id: Some(session.id.clone()),
+                task_id: None,
+                agent_kind: Some(AgentKind::ClaudeCode),
+                kind: kind.into(),
+                payload: match tool {
+                    Some(tool) => serde_json::json!({"tool_name": tool}),
+                    None => serde_json::json!({}),
+                },
+            })
+            .await
+            .unwrap();
+        assert_eq!(pending().await, expected, "{kind} {tool:?}");
+    }
+
+    // What an answered question takes down is its own flag and no other: the
+    // dialog and the message to the user are answered somewhere else.
+    for (raised, left) in [
+        (AttentionReason::WaitingInput, None),
+        (
+            AttentionReason::WaitingPermission,
+            Some(AttentionReason::WaitingPermission),
+        ),
+        (
+            AttentionReason::WaitingUser,
+            Some(AttentionReason::WaitingUser),
+        ),
+    ] {
+        store.clear_session_attention(&session.id).await.unwrap();
+        store
+            .set_session_attention(&session.id, raised)
+            .await
+            .unwrap();
+        store.clear_question_attention(&session.id).await.unwrap();
+        assert_eq!(
+            store
+                .get_session(&session.id)
+                .await
+                .unwrap()
+                .attention_reason(),
+            left,
+            "{raised:?}"
+        );
+    }
+}
+
 /// The user speaking in a thread is the answer to whatever was waiting for
 /// them there, and to nothing else: `waiting_user` comes down across the whole
 /// thread, every other reason stays exactly where it was, and the threads

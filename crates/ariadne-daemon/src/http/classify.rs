@@ -84,12 +84,64 @@ pub(super) fn attention_for_event(
         // Same shape for the `question` tool, which asks the user directly
         // instead of going through the approval layer.
         "question.asked" => Some(A::WaitingInput),
+        // Claude Code's own way of asking, and the one raise that rides on a
+        // running-mapped event: [`QUESTION_TOOL`] puts its choices in the pane
+        // and blocks the call until somebody picks one, and the `pre_tool_use`
+        // announcing that call is the first — and, for the daemon, the only
+        // trustworthy — word of it. What the dialog itself fires is a
+        // `permission_prompt` notification, indistinguishable from an approval
+        // and half a minute late; the tool name is what says a person, not a
+        // policy, is being asked. See [`question_for_event`] for what keeps
+        // the flag up afterwards.
+        "pre_tool_use" if is_a_question(payload) => Some(A::WaitingInput),
         // Claude Code's Notification hook: the only place a permission
         // prompt or a pending question surfaces (the session just looks
         // idle otherwise).
         "notification" => attention_for_notification(payload),
         _ => None,
     }
+}
+
+/// The Claude Code tool that puts a question to the user: it renders its
+/// choices in the pane and does not return until one is picked.
+pub(super) const QUESTION_TOOL: &str = "AskUserQuestion";
+
+/// What an event does to a question standing in the pane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Question {
+    /// The call was announced: from here on somebody has to answer.
+    Asked,
+    /// Nothing is waiting any more, however the question left the screen.
+    Answered,
+}
+
+/// What this event says about a [`QUESTION_TOOL`] call (None = nothing).
+///
+/// A question is not a moment but a stretch of time, and the events of it
+/// arrive interleaved with those of everything else the same turn is doing:
+/// Claude announces the whole batch of tool calls at once, so `pre_tool_use`
+/// and `post_tool_use` for the other calls keep coming while the choices sit
+/// on the screen unanswered. Which of them ends the question is therefore a
+/// question about the tool name and not about the kind, and the answer is
+/// what [`super::events::ingest`] holds the flag against.
+///
+/// Three things end it. Its own `post_tool_use` carries the answer that was
+/// picked. A `user_prompt_submit` is the user typing at the pane instead,
+/// which dismisses the dialog. And a `stop` is the turn ending — Esc on the
+/// choices does exactly that — after which there is nothing left on screen to
+/// answer.
+pub(super) fn question_for_event(kind: &str, payload: &serde_json::Value) -> Option<Question> {
+    match kind {
+        "pre_tool_use" if is_a_question(payload) => Some(Question::Asked),
+        "post_tool_use" if is_a_question(payload) => Some(Question::Answered),
+        "user_prompt_submit" | "stop" => Some(Question::Answered),
+        _ => None,
+    }
+}
+
+/// Whether a Claude Code tool event is about the question tool.
+fn is_a_question(payload: &serde_json::Value) -> bool {
+    payload.get("tool_name").and_then(|v| v.as_str()) == Some(QUESTION_TOOL)
 }
 
 /// The token usage an event reports, as `(source, totals)` — the transcript
@@ -171,7 +223,10 @@ fn attention_for_notification(
 
 #[cfg(test)]
 mod tests {
-    use super::{attention_for_event, extract_internal_id, status_for_event, usage_for_event};
+    use super::{
+        QUESTION_TOOL, Question, attention_for_event, extract_internal_id, question_for_event,
+        status_for_event, usage_for_event,
+    };
 
     use ariadne_core::{AgentKind, AttentionReason, SessionStatus, TokenUsage};
     use serde_json::json;
@@ -364,6 +419,69 @@ mod tests {
                 "{kind}"
             );
             assert_eq!(attention_for_event(kind, &payload), None, "{kind}");
+        }
+    }
+
+    /// Claude Code's question tool is the one wait that arrives on a
+    /// running-mapped event, and the tool name is the whole of the signal: the
+    /// same `pre_tool_use` for anything else is an agent at work.
+    #[test]
+    fn a_question_put_to_the_user_is_read_off_the_tool_it_calls() {
+        let call = |tool: &str| json!({"hook_event_name": "PreToolUse", "tool_name": tool});
+        assert_eq!(
+            attention_for_event("pre_tool_use", &call(QUESTION_TOOL)),
+            Some(AttentionReason::WaitingInput)
+        );
+        for payload in [call("Bash"), call("Task"), json!({})] {
+            assert_eq!(
+                attention_for_event("pre_tool_use", &payload),
+                None,
+                "{payload}"
+            );
+        }
+        // Its own `post_tool_use` carries the answer and raises nothing.
+        assert_eq!(
+            attention_for_event("post_tool_use", &call(QUESTION_TOOL)),
+            None
+        );
+    }
+
+    /// What opens a question and what closes it. The events of the other tool
+    /// calls of the same turn keep arriving throughout and settle nothing:
+    /// that is exactly what the pending question has to be held against.
+    #[test]
+    fn a_question_stands_from_its_call_until_something_answers_it() {
+        let call = |tool: &str| json!({"tool_name": tool});
+        for (kind, payload, expected) in [
+            ("pre_tool_use", call(QUESTION_TOOL), Some(Question::Asked)),
+            (
+                "post_tool_use",
+                call(QUESTION_TOOL),
+                Some(Question::Answered),
+            ),
+            // Typed at the pane instead of answered, and Esc on the choices,
+            // which ends the turn.
+            (
+                "user_prompt_submit",
+                json!({"prompt": "go on"}),
+                Some(Question::Answered),
+            ),
+            ("stop", json!({}), Some(Question::Answered)),
+            // The turn's other calls, which say nothing about the question.
+            ("pre_tool_use", call("Bash"), None),
+            ("post_tool_use", call("Bash"), None),
+            (
+                "notification",
+                json!({"notification_type": "permission_prompt"}),
+                None,
+            ),
+            ("session_start", json!({}), None),
+        ] {
+            assert_eq!(
+                question_for_event(kind, &payload),
+                expected,
+                "{kind} {payload}"
+            );
         }
     }
 

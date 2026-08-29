@@ -47,6 +47,36 @@ impl Store {
         Ok(event)
     }
 
+    /// Whether this session's log ends on a `tool` call nobody has answered.
+    ///
+    /// A tool that asks the user something is pending for as long as it takes
+    /// them to answer, and the log is where that stretch of time is recorded:
+    /// its `pre_tool_use` opens it, and the first of its own `post_tool_use`,
+    /// a `user_prompt_submit` or a `stop` closes it. So the last event that
+    /// does either is the whole answer — everything the turn reported in
+    /// between belongs to its other tool calls and says nothing about the
+    /// question.
+    ///
+    /// Which tool blocks on a person is the agent's vocabulary rather than
+    /// the store's, so the caller names it (`ariadne-daemon`'s
+    /// `classify::QUESTION_TOOL`).
+    pub async fn tool_call_is_pending(&self, session_id: &str, tool: &str) -> Result<bool> {
+        let last: Option<String> = sqlx::query_scalar(
+            "SELECT kind FROM agent_events
+              WHERE session_id = ?
+                AND (kind IN ('user_prompt_submit', 'stop')
+                     OR (kind IN ('pre_tool_use', 'post_tool_use')
+                         AND json_extract(payload, '$.tool_name') = ?))
+              ORDER BY id DESC
+              LIMIT 1",
+        )
+        .bind(session_id)
+        .bind(tool)
+        .fetch_optional(self.r())
+        .await?;
+        Ok(last.as_deref() == Some("pre_tool_use"))
+    }
+
     pub async fn list_events(&self, filter: EventFilter) -> Result<Vec<AgentEvent>> {
         let limit = match filter.limit {
             n if n <= 0 => 50,
