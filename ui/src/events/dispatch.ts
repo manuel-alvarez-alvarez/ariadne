@@ -56,7 +56,17 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       void queryClient.invalidateQueries({ queryKey: qk.tasks.lists() })
       if (transition) {
         void queryClient.invalidateQueries({ queryKey: qk.tasks.transitions(task.id) })
+        // Landing the task is a transition too, and the diff endpoint answers
+        // for the merge commit once there is one: what it returned before the
+        // status moved is no longer what it would return now.
+        void queryClient.invalidateQueries({ queryKey: qk.tasks.diff(task.id) })
       }
+      break
+    }
+    case "task_branch_updated": {
+      // A commit in the engineer's worktree. Nothing about the task row itself
+      // changed — only the diff it would answer with.
+      void queryClient.invalidateQueries({ queryKey: qk.tasks.diff(event.data.task_id) })
       break
     }
     case "message_created": {

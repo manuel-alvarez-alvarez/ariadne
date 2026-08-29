@@ -31,6 +31,7 @@ const DOMAIN_EVENT_KINDS_PRESENT: Record<DomainEventKind, true> = {
   goal_deleted: true,
   task_created: true,
   task_updated: true,
+  task_branch_updated: true,
   message_created: true,
   review_created: true,
   session_created: true,

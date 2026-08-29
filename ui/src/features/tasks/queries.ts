@@ -82,9 +82,10 @@ export function taskTransitionsQueryOptions(taskId: string) {
  * The branch diff, as `git diff base...branch` prints it.
  *
  * `text/plain`, so the client is told not to parse it as JSON; an empty diff
- * comes back with no body at all, hence the `?? ""`. No event invalidates this
- * — commits in the worktree are not daemon state — so the view offers a
- * refresh instead of pretending to be live.
+ * comes back with no body at all, hence the `?? ""`. It is refetched on
+ * `task_branch_updated`, the daemon's word that a commit landed on the branch,
+ * and on the transition that lands the task — so it follows the app's default
+ * staleness like every other read, with no refresh of its own.
  */
 export function taskDiffQueryOptions(taskId: string) {
   return queryOptions({
@@ -96,7 +97,6 @@ export function taskDiffQueryOptions(taskId: string) {
           parseAs: "text",
         }),
       )) ?? "",
-    staleTime: 0,
   })
 }
 

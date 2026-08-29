@@ -1,5 +1,5 @@
 /**
- * What the repository and goal-deletion events do to the query cache.
+ * What the repository, goal-deletion and task events do to the query cache.
  *
  * This is what keeps a second window live: nothing on these screens polls, and
  * nothing on them handles events itself, so a repository registered, edited or
@@ -13,6 +13,10 @@
  * and their sessions with it, and those are listed goal-first rather than
  * pruned entry by entry.
  *
+ * `task_branch_updated` is the odd one the other way round: it is the only
+ * event that says nothing about a row, so the assertions are as much about what
+ * it leaves alone as about the diff it refetches.
+ *
  * The recovery path is asserted against the client the app actually ships
  * ({@link createQueryClient}), because that is where it could go wrong: nothing
  * in it goes stale on its own any more, so a reconnect that only marked entries
@@ -22,8 +26,15 @@
 import { QueryClient, QueryObserver } from "@tanstack/react-query"
 import { describe, expect, it, vi } from "vitest"
 
-import { createQueryClient, type DomainEvent, type GoalDto, qk, type RepositoryDto } from "@/api"
-import { aGoal, aRepository } from "@/test/fixtures"
+import {
+  createQueryClient,
+  type DomainEvent,
+  type GoalDto,
+  qk,
+  type RepositoryDto,
+  type TaskDto,
+} from "@/api"
+import { aGoal, aRepository, aTask } from "@/test/fixtures"
 import { dispatchDomainEvent, invalidateEverything } from "./dispatch"
 
 const REPOSITORY: RepositoryDto = aRepository({
@@ -34,6 +45,8 @@ const REPOSITORY: RepositoryDto = aRepository({
 const GOAL: GoalDto = aGoal({
   status: "completed",
 })
+
+const TASK: TaskDto = aTask()
 
 /** A client with a list and a detail already in it, as an open screen has. */
 function seeded(): QueryClient {
@@ -115,6 +128,90 @@ describe("goal events", () => {
     // Its tasks and their sessions were deleted with it.
     expect(stale(queryClient, qk.tasks.list({ goal: GOAL.id }))).toBe(true)
     expect(stale(queryClient, qk.sessions.list({ goal: GOAL.id }))).toBe(true)
+  })
+})
+
+describe("task events", () => {
+  /** A client showing the diff tab of a task, next to everything else. */
+  function withDiff(): QueryClient {
+    const queryClient = seeded()
+    queryClient.setQueryData(qk.tasks.list(), [TASK])
+    queryClient.setQueryData(qk.tasks.detail(TASK.id), TASK)
+    queryClient.setQueryData(qk.tasks.diff(TASK.id), "diff --git a/one b/one\n")
+    queryClient.setQueryData(qk.sessions.list(), [])
+    return queryClient
+  }
+
+  it("refetches the diff when the task branch's head moves", () => {
+    const queryClient = withDiff()
+
+    dispatch(queryClient, {
+      event: "task_branch_updated",
+      data: {
+        task_id: TASK.id,
+        goal_id: TASK.goal_id,
+        branch: TASK.branch,
+        head: "1ea7fca11ab1e0000000000000000000000000de",
+      },
+    })
+
+    expect(stale(queryClient, qk.tasks.diff(TASK.id))).toBe(true)
+  })
+
+  it("leaves every row alone: a commit changes the diff and nothing else", () => {
+    const queryClient = withDiff()
+
+    dispatch(queryClient, {
+      event: "task_branch_updated",
+      data: {
+        task_id: TASK.id,
+        goal_id: TASK.goal_id,
+        branch: TASK.branch,
+        head: "1ea7fca11ab1e0000000000000000000000000de",
+      },
+    })
+
+    expect(queryClient.getQueryData(qk.tasks.detail(TASK.id))).toEqual(TASK)
+    expect(stale(queryClient, qk.tasks.list())).toBe(false)
+    expect(stale(queryClient, qk.goals.list())).toBe(false)
+    expect(stale(queryClient, qk.sessions.list())).toBe(false)
+    expect(stale(queryClient, qk.repositories.list())).toBe(false)
+    expect(stale(queryClient, qk.repositories.detail(REPOSITORY.id))).toBe(false)
+  })
+
+  it("refetches the diff when the task lands, because it then diffs the merge commit", () => {
+    const queryClient = withDiff()
+
+    dispatch(queryClient, {
+      event: "task_updated",
+      data: {
+        task: {
+          ...TASK,
+          status: "merged",
+          merge_commit: "abc1230000000000000000000000000000000000",
+        },
+        transition: {
+          id: "01JTRAN0000000000000000001",
+          actor: "daemon",
+          from_status: "approved",
+          to_status: "merged",
+          created_at: TASK.updated_at,
+        },
+      },
+    })
+
+    expect(stale(queryClient, qk.tasks.diff(TASK.id))).toBe(true)
+  })
+
+  it("holds on to the diff for an update that is not a transition", () => {
+    const queryClient = withDiff()
+
+    dispatch(queryClient, {
+      event: "task_updated",
+      data: { task: { ...TASK, title: "Renamed" }, transition: null },
+    })
+
+    expect(stale(queryClient, qk.tasks.diff(TASK.id))).toBe(false)
   })
 })
 

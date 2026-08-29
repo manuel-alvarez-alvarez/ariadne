@@ -22,7 +22,6 @@ import {
   FilePlusIcon,
   Maximize2Icon,
   Minimize2Icon,
-  RefreshCwIcon,
   WrapTextIcon,
 } from "lucide-react"
 import { useMemo, useState } from "react"
@@ -83,8 +82,6 @@ export function TaskDiff({ taskId }: { taskId: string }) {
       onWrap={() => setWrap(!wrap)}
       expanded={expanded}
       onExpanded={() => setExpanded((current) => !current)}
-      fetching={diff.isFetching}
-      onRefresh={() => void diff.refetch()}
     />
   )
 
@@ -157,8 +154,6 @@ function DiffToolbar({
   onWrap,
   expanded,
   onExpanded,
-  fetching,
-  onRefresh,
 }: {
   files: number
   additions: number
@@ -170,8 +165,6 @@ function DiffToolbar({
   onWrap: () => void
   expanded: boolean
   onExpanded: () => void
-  fetching: boolean
-  onRefresh: () => void
 }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -192,10 +185,6 @@ function DiffToolbar({
         </Button>
         <Button variant={raw ? "secondary" : "ghost"} size="sm" onClick={onRaw} disabled={empty}>
           Raw
-        </Button>
-        <Button variant="ghost" size="sm" onClick={onRefresh} disabled={fetching}>
-          <RefreshCwIcon className={cn(fetching && "animate-spin")} />
-          Refresh
         </Button>
         <Button
           variant="ghost"
