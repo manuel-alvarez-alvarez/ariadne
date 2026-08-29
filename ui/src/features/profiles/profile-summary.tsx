@@ -46,7 +46,7 @@ import { profilesQueryOptions } from "./queries"
  * another thing to run. Nothing to compare against — a mention that carries no
  * snapshot at all — is never an override.
  */
-export function isPinOverride(
+function isPinOverride(
   profile: { model?: string | null; effort?: string | null } | undefined,
   pinned: string | null | undefined,
   effort?: string | null,

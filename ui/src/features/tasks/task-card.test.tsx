@@ -22,21 +22,19 @@
  *
  * The card also says each thing once. A badge that repeats a label already on
  * the card — the daemon's `stalled` reason beside the task's own `Stalled`
- * flag — is dropped rather than drawn twice.
- *
- * And the pin is on the card only where the task runs on something other than
- * what its profile says, so both halves of that condition are read here too,
- * against a profile seeded next to the task.
+ * flag — is dropped rather than drawn twice. And what the task runs on is not
+ * one of the things it says at all: that is a fact about the task, and the
+ * task panel is where facts live.
  */
 
 import { act, cleanup, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, expect, it, vi } from "vitest"
 
-import { type ProfileDto, qk, type TaskDto } from "@/api"
+import type { TaskDto } from "@/api"
 import type { SessionAttention } from "@/features/sessions/session-display"
 import { formatAbsolute } from "@/lib/format"
-import { aProfile, aTask } from "@/test/fixtures"
+import { aTask } from "@/test/fixtures"
 import { renderScreen } from "@/test/harness"
 import { TaskCard } from "./task-card"
 
@@ -58,22 +56,13 @@ const TASK: TaskDto = aTask({
 })
 
 /**
- * The card under the providers the app gives it: a router for its link, a
- * tooltip provider with no hover delay, and a query client — the card asks the
- * profiles what its engineer's pin is measured against.
+ * The card under the providers the app gives it: a router for its link and a
+ * tooltip provider with no hover delay.
  */
 function mountCard(attention?: SessionAttention, task: TaskDto = TASK) {
-  renderScreen(<TaskCard task={task} attention={attention} />, {
-    seed: (client) => client.setQueryData(qk.profiles.list({}), [ENGINEER]),
-  })
+  renderScreen(<TaskCard task={task} attention={attention} />)
   return userEvent.setup()
 }
-
-/** The engineer behind the task, as it stands today. */
-const ENGINEER: ProfileDto = aProfile({
-  id: TASK.engineer_profile_id,
-  model: "claude_code:claude-opus-5",
-})
 
 /** The card's link, which is the whole of what a keyboard lands on. */
 function cardLink(): HTMLElement {
@@ -87,8 +76,8 @@ function card(): HTMLElement {
 
 /**
  * The busiest card there is: a sub-status, a review round, a dependency, a
- * stall, a blocked agent *and* an engine override — so a stop count taken on
- * it is a stop count for every card.
+ * stall and a blocked agent — so a stop count taken on it is a stop count for
+ * every card.
  */
 const LOADED: TaskDto = { ...TASK, model: "codex:gpt-5.3-codex" }
 
@@ -112,18 +101,10 @@ it.each([
   expect(description()).toMatch(text)
 })
 
-it("carries the engine override's hint too, though the pin sits outside the link", () => {
-  // The pill says what it runs on; only the tooltip says what that is instead
-  // *of*, and the link is the card's one stop, so this is where it has to land.
-  mountCard(undefined, LOADED)
-  expect(description()).toContain("codex:gpt-5.3-codex (overrides Engineer)")
-})
-
 it("is one tab stop for the whole card, hints and controls alike", async () => {
   const user = mountCard(undefined, LOADED)
-  // Everything that could add a stop is on this card: the branch's copy
-  // button, the engine pin, and five hints inside the link.
-  expect(screen.getByText("codex:gpt-5.3-codex")).not.toBeNull()
+  // Everything that could add a stop is on this card: the branch's copy button
+  // and five hints inside the link.
   expect(screen.getByRole("button", { name: "Copy branch" })).not.toBeNull()
 
   await user.tab()
@@ -188,27 +169,31 @@ it("keeps its timestamp true as the clock moves", () => {
   expect(screen.getByText("5 minutes ago")).not.toBeNull()
 })
 
-it("shows the engineer's model where it is not what the profile runs on", () => {
-  mountCard(undefined, { ...TASK, model: "codex:gpt-5.3-codex" })
+/**
+ * What a task runs on is not on the card. It is a fact about the task, spelled
+ * out in the panel one click away (`task-facts.tsx`), and on a card it was
+ * both the least useful line and the longest — a `profile:model @ effort` in a
+ * mono font, in a column that can be 11rem wide, which is how a board of
+ * narrow cards ended up with pills painted across their own borders.
+ */
+it("says nothing about what the task runs on, however it is pinned", () => {
+  mountCard(undefined, { ...TASK, model: "claude_code:claude-fable-5", effort: "high" })
 
-  expect(screen.getByText("codex:gpt-5.3-codex")).toBeDefined()
+  expect(screen.queryByText(/claude-fable-5/)).toBeNull()
+  expect(description()).not.toContain("overrides")
 })
 
-it("shows the effort beside the model it is run at", () => {
-  mountCard(undefined, { ...TASK, model: "codex:gpt-5.3-codex", effort: "xhigh" })
+/**
+ * And what is left under the link stays inside it: the branch is a ULID-tailed
+ * slug, and it is only middle-truncated because the pill it sits in is bounded
+ * by the card. jsdom lays nothing out, so the ceiling itself is what is read.
+ */
+it("keeps the branch pill inside the card", () => {
+  mountCard()
 
-  expect(screen.getByText("codex:gpt-5.3-codex @ xhigh")).toBeDefined()
-  expect(description()).toContain("codex:gpt-5.3-codex @ xhigh (overrides Engineer)")
-})
-
-it("counts the same model at another effort as an override, since it is one", () => {
-  mountCard(undefined, { ...TASK, model: ENGINEER.model, effort: "max" })
-
-  expect(screen.getByText(`${ENGINEER.model} @ max`)).toBeDefined()
-})
-
-it("says nothing where the task runs on exactly what its profile does", () => {
-  mountCard(undefined, { ...TASK, model: ENGINEER.model })
-
-  expect(screen.queryByText(ENGINEER.model as string)).toBeNull()
+  // The pill around the branch and its copy button, bounded by the card: the
+  // ellipsis is the pill's doing, so a pill that can outgrow the card is a
+  // branch that paints across it instead.
+  const pill = screen.getByTitle(TASK.branch).closest("span.max-w-full")
+  expect(pill?.contains(screen.getByRole("button", { name: "Copy branch" }))).toBe(true)
 })

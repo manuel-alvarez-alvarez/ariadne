@@ -31,8 +31,7 @@
  * same control in the task panel this card's link opens.
  */
 
-import { useQuery } from "@tanstack/react-query"
-import { CpuIcon, GitBranchIcon, LayersIcon, TriangleAlertIcon } from "lucide-react"
+import { GitBranchIcon, LayersIcon, TriangleAlertIcon } from "lucide-react"
 import { useId } from "react"
 import { Link } from "react-router-dom"
 
@@ -41,9 +40,6 @@ import { CopyableId } from "@/components/copyable-id"
 import { StatusBadge } from "@/components/status-badge"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { When, whenHint } from "@/components/when"
-import { pinLabel } from "@/features/profiles/model-ref"
-import { isPinOverride } from "@/features/profiles/profile-summary"
-import { profilesQueryOptions } from "@/features/profiles/queries"
 import {
   SESSION_ATTENTION_META,
   type SessionAttention,
@@ -87,9 +83,8 @@ export function TaskCard({
   // The reason is still what outlines the card even where the badge for it is
   // dropped: it is the same fact, said once.
   const flagged = attention && !repeatsCard(attention, task, showStatus) ? attention : null
-  const pin = useEnginePin(task)
   const hintsId = useId()
-  const hints = cardHints(task, { status: showStatus ? status.hint : null, flagged, pin })
+  const hints = cardHints(task, { status: showStatus ? status.hint : null, flagged })
 
   return (
     <div
@@ -188,30 +183,19 @@ export function TaskCard({
         </p>
       )}
 
-      {/* Stacked rather than wrapped: each pill is `w-fit max-w-full`, and as
-          flex items on one row they would squeeze each other's middle-truncated
-          text instead of taking the width they need. */}
-      <div className="flex flex-col items-start gap-1.5 px-2.5 pt-1.5 pb-2.5">
+      {/* The branch, and only the branch. What a card is read for is whether
+          the task wants something; what it runs on is a fact about the task,
+          and the task panel is where facts live. It also happened to be the
+          longest string on the card — a `profile:model @ effort` in a mono
+          font in an 11rem column — which is how a board of narrow cards ends
+          up with pills painted across their own borders. */}
+      <div className="px-2.5 pt-1.5 pb-2.5">
         <span className="flex w-fit max-w-full items-center gap-1 rounded-md bg-muted/60 px-1.5 py-0.5 text-xs text-muted-foreground">
           <GitBranchIcon className="size-3 shrink-0" />
           {/* Middle-truncated: the card is narrow, and what an engineer looks
               for is the slug at the end rather than the ULID it hangs off. */}
           <CopyableId value={task.branch} label="branch" truncate="middle" tabIndex={NOT_A_STOP} />
         </span>
-        {pin && (
-          <Tooltip>
-            <TooltipTrigger
-              tabIndex={NOT_A_STOP}
-              render={
-                <span className="flex w-fit min-w-0 items-center gap-1 rounded-md bg-muted/60 px-1.5 py-0.5 text-xs text-muted-foreground" />
-              }
-            >
-              <CpuIcon className="size-3 shrink-0" />
-              <span className="truncate font-mono">{pin.label}</span>
-            </TooltipTrigger>
-            <TooltipContent>{pin.hint}</TooltipContent>
-          </Tooltip>
-        )}
       </div>
     </div>
   )
@@ -255,20 +239,14 @@ function repeatsCard(attention: SessionAttention, task: TaskDto, showStatus: boo
  * Every hint on the card, in reading order — the whole of what the tooltips
  * say, since none of them can be focused.
  *
- * All of them, not only the ones inside the link: the pin under it is on the
- * card too, and the link is the card's only stop, so this is the one place a
- * keyboard is told what "overrides Engineer" or the exact stamp behind "2
- * hours ago" was going to say. Anything a tooltip is the *only* home for
- * belongs here; the branch and the pin's own label do not, because they are
- * written on the card in plain text.
+ * The link is the card's only stop, so this is the one place a keyboard is
+ * told what a sub-status means or what the exact stamp behind "2 hours ago"
+ * was going to say. Anything a tooltip is the *only* home for belongs here;
+ * the branch does not, because it is written on the card in plain text.
  */
 function cardHints(
   task: TaskDto,
-  {
-    status,
-    flagged,
-    pin,
-  }: { status: string | null; flagged: SessionAttention | null; pin: EnginePin | null },
+  { status, flagged }: { status: string | null; flagged: SessionAttention | null },
 ): string[] {
   const hints: string[] = []
   if (flagged) hints.push(SESSION_ATTENTION_META[flagged].hint)
@@ -279,7 +257,6 @@ function cardHints(
   if (task.depends_on.length > 0) hints.push(dependencyHint(task))
   if (task.stalled) hints.push(STALLED_META.hint)
   hints.push(whenHint(task.updated_at, "updated"))
-  if (pin) hints.push(pin.hint)
   return hints
 }
 
@@ -289,34 +266,4 @@ function reviewRoundHint(task: TaskDto): string {
 
 function dependencyHint(task: TaskDto): string {
   return `Waits for ${plural(task.depends_on.length, "task")} to merge`
-}
-
-/** What the pin says on the card, and what it says behind it. */
-interface EnginePin {
-  label: string
-  hint: string
-}
-
-/**
- * What the engineer of this task runs on, when that is not what its profile
- * says — a model or an effort chosen for the task, or a profile edited away
- * from the pin since. `null` when it is the profile's own, which is most
- * cards.
- *
- * Only then: the pin is on every task, and a board repeating the same profile
- * default on every card would say nothing while costing every card a line.
- * What the reader cannot know without being told is the card that runs on
- * something else, and the task panel's facts spell the pin out either way.
- *
- * A hook rather than the component it used to be, because the card has to put
- * the hint in its own description: a pill that cannot be focused cannot carry
- * its tooltip anywhere else.
- */
-function useEnginePin(task: TaskDto): EnginePin | null {
-  const profiles = useQuery(profilesQueryOptions())
-  const profile = profiles.data?.find((item) => item.id === task.engineer_profile_id)
-  if (!isPinOverride(profile, task.model, task.effort)) return null
-
-  const label = pinLabel(task.model, task.effort)
-  return { label, hint: `${label} (overrides ${profile?.name})` }
 }
