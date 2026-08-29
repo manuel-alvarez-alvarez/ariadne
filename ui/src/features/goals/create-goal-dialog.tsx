@@ -7,10 +7,10 @@
  * them, not on every form that needs one. With none registered the field is an
  * empty state pointing there.
  *
- * What the planner runs on is one field: a model, written
- * `<agent_kind>[:<model>]` — the agent CLI and, after a `:`, the model of it.
- * An empty box carries a meaning of its own, the planner on its profile's own
- * model, so it is left out of the request rather than sent empty.
+ * What the planner runs on is a model, written `<agent_kind>[:<model>]` — the
+ * agent CLI and, after a `:`, the model of it — and, beside it, the effort that
+ * model is run at. An empty box carries a meaning of its own, the planner on
+ * its profile's own, so it is left out of the request rather than sent empty.
  *
  * Everything else the daemon still validates: the client only catches what it
  * can know on its own (empty title, nothing picked) and shows the daemon's
@@ -41,6 +41,7 @@ import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
+import { EffortPicker } from "@/features/profiles/effort-picker"
 import { ModelPicker } from "@/features/profiles/model-picker"
 import { modelRefField, modelRefLabel } from "@/features/profiles/model-ref"
 import { modelsQueryOptions } from "@/features/profiles/queries"
@@ -68,6 +69,9 @@ const formSchema = z.object({
   // Free text: the catalog only suggests, and a model it does not carry is
   // handed to the CLI named before the `:` as typed.
   model: modelRefField(),
+  // The effort that model is run at, scoped by the box beside it; empty is
+  // whatever the agent CLI runs it at.
+  effort: z.string(),
   required_approvals: optionalCount("Approvals"),
   max_tasks: optionalCount("Max tasks"),
   repository_ids: z.array(z.string()).min(1, "Pick at least one repository."),
@@ -80,6 +84,7 @@ const DEFAULT_VALUES: CreateGoalForm = {
   description: "",
   planner_profile: "",
   model: "",
+  effort: "",
   required_approvals: "1",
   max_tasks: "",
   repository_ids: [],
@@ -117,6 +122,9 @@ export function CreateGoalDialog({
   )
   const selectedPlanner = form.watch("planner_profile")
   const plannerProfile = plannerOptions?.find((profile) => profile.id === selectedPlanner)
+  // What the planner will actually run on, which is what its effort is offered
+  // against: the model chosen here, or the profile's own where none was.
+  const chosenModel = form.watch("model")
   useEffect(() => {
     if (!open || !plannerOptions?.length || selectedPlanner) return
     const preferred =
@@ -126,13 +134,15 @@ export function CreateGoalDialog({
 
   async function onSubmit(values: CreateGoalForm) {
     const model = values.model.trim()
+    const effort = values.effort.trim()
     const body: CreateGoalRequest = {
       title: values.title.trim(),
       description: values.description,
       planner_profile: values.planner_profile,
-      // No field at all where the box was left empty: that is the planner on
-      // its profile's own model.
+      // No field at all where a box was left empty: that is the planner on its
+      // profile's own model, at its profile's own effort.
       ...(model.length > 0 ? { model } : {}),
+      ...(effort.length > 0 ? { effort } : {}),
       repository_ids: values.repository_ids,
       required_approvals: values.required_approvals ? Number(values.required_approvals) : null,
       max_tasks: values.max_tasks ? Number(values.max_tasks) : null,
@@ -273,30 +283,52 @@ export function CreateGoalDialog({
           <Field data-invalid={errors.model ? "" : undefined}>
             {/* No htmlFor: cmdk owns its input's id and names it itself. */}
             <FieldLabel>Planner model</FieldLabel>
-            <Controller
-              control={form.control}
-              name="model"
-              render={({ field }) => (
-                <ModelPicker
-                  label="Planner model"
-                  value={field.value}
-                  onChange={field.onChange}
-                  models={models.data}
-                  invalid={errors.model ? true : undefined}
-                  placeholder={
-                    plannerProfile
-                      ? `The profile's own — ${modelRefLabel(plannerProfile.model)}`
-                      : "The profile's own"
-                  }
-                />
-              )}
-            />
+            <div className="flex items-start gap-2">
+              <Controller
+                control={form.control}
+                name="model"
+                render={({ field }) => (
+                  <ModelPicker
+                    label="Planner model"
+                    value={field.value}
+                    onChange={(next) => {
+                      field.onChange(next)
+                      // The profile's model comes with the profile's effort.
+                      if (next.trim().length === 0) form.setValue("effort", "")
+                    }}
+                    models={models.data}
+                    invalid={errors.model ? true : undefined}
+                    placeholder={
+                      plannerProfile
+                        ? `The profile's own — ${modelRefLabel(plannerProfile.model)}`
+                        : "The profile's own"
+                    }
+                    className="flex-1"
+                  />
+                )}
+              />
+              <Controller
+                control={form.control}
+                name="effort"
+                render={({ field }) => (
+                  <EffortPicker
+                    label="Planner effort"
+                    value={field.value}
+                    onChange={field.onChange}
+                    model={chosenModel || plannerProfile?.model || ""}
+                    models={models.data}
+                    className="w-32 shrink-0"
+                  />
+                )}
+              />
+            </div>
             {errors.model ? (
               <FieldError>{errors.model.message}</FieldError>
             ) : (
               <FieldDescription>
-                The agent CLI and, after a <code>:</code>, the model of it. Empty runs the planner
-                on its profile's own: {modelRefLabel(plannerProfile?.model)}.
+                The agent CLI and, after a <code>:</code>, the model of it, with the effort it is
+                run at beside it. Empty runs the planner on its profile's own:{" "}
+                {modelRefLabel(plannerProfile?.model)}.
               </FieldDescription>
             )}
           </Field>

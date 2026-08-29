@@ -38,7 +38,7 @@ import { cn, plural, ROLE_LABELS } from "@/lib/format"
 import { PROFILE_EXPAND_PARAM } from "@/routes/paths"
 
 import { DeleteProfileDialog } from "./delete-profile-dialog"
-import { modelRefLabel } from "./model-ref"
+import { pinLabel } from "./model-ref"
 import { ProfileDetails } from "./profile-details"
 import { ProfileFormDialog } from "./profile-form-dialog"
 import { ROLES } from "./profile-labels"
@@ -248,9 +248,10 @@ function ProfileRow({
           <Badge variant="secondary">{ROLE_LABELS[profile.role]}</Badge>
         </TableCell>
         {/* The agent CLI is the first half of this id, so it is not a column
-            of its own: `codex`, `claude_code:claude-opus-5`. */}
+            of its own: `codex`, `claude_code:claude-opus-5` — and after an `@`
+            the effort it is run at, where one is pinned. */}
         <TableCell className="font-mono text-xs">
-          <Unset when={!profile.model}>{modelRefLabel(profile.model)}</Unset>
+          <Unset when={!profile.model}>{pinLabel(profile.model, profile.effort)}</Unset>
         </TableCell>
         {/* The age is what a table is read for; the full stamp is the hint
             behind it, the same way every other timestamp in the app shows it. */}

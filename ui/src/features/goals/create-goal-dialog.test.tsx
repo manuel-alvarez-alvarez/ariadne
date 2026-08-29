@@ -18,10 +18,11 @@
  * left behind.
  *
  * What the planner runs on is the other field with a rule of its own, and it
- * is one: a model that names the agent CLI running it, on the wire when it was
- * filled in and left out entirely when it was not — which is what runs the
- * planner on its profile's own. A model naming no CLI never reaches the
- * daemon: the field refuses it first.
+ * is two: a model that names the agent CLI running it, and the effort that
+ * model is run at — each on the wire when it was filled in and left out
+ * entirely when it was not, which is what runs the planner on its profile's
+ * own. A model naming no CLI never reaches the daemon: the field refuses it
+ * first.
  */
 
 import { screen, waitFor, within } from "@testing-library/react"
@@ -51,13 +52,15 @@ const CATALOG: ModelDto[] = [
     id: "claude_code:claude-opus-5",
     agent_kind: "claude_code",
     description: "Opus tier: deep analysis",
-    efforts: [],
+    efforts: ["low", "medium", "high", "xhigh", "max"],
+    default_effort: "high",
   },
   {
     id: "codex:gpt-5.3-codex",
     agent_kind: "codex",
     description: "Frontier reasoning: agentic loops",
-    efforts: [],
+    efforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+    default_effort: "medium",
   },
 ]
 
@@ -75,6 +78,7 @@ interface Recorded {
     repository_ids?: string[]
     title?: string
     model?: string
+    effort?: string
   } | null
 }
 
@@ -386,6 +390,42 @@ describe("choosing what the planner runs on", () => {
       expect(lastWrite()).toBeDefined()
     })
     expect(lastWrite()?.body).not.toHaveProperty("model")
+  })
+
+  it("sends the effort the chosen model is to be run at", async () => {
+    const user = userEvent.setup()
+    renderDialog()
+
+    await fillRequired(user)
+    await user.click(await modelBox())
+    const models = await screen.findByRole("listbox", { name: "Models" })
+    await user.click(within(models).getByText("codex:gpt-5.3-codex"))
+
+    // The list is that model's own: `ultra` is a codex effort, and the claude
+    // entry beside it in the catalog takes none of it.
+    await user.click(await screen.findByRole("combobox", { name: "Planner effort" }))
+    await user.click(await screen.findByRole("option", { name: "ultra" }))
+
+    await user.click(screen.getByRole("button", { name: "Create goal" }))
+
+    await waitFor(() => {
+      expect(lastWrite()).toBeDefined()
+    })
+    expect(lastWrite()?.body).toMatchObject({ model: "codex:gpt-5.3-codex", effort: "ultra" })
+  })
+
+  it("sends no effort where none was chosen: the CLI runs the model as it likes", async () => {
+    const user = userEvent.setup()
+    renderDialog()
+
+    await fillRequired(user)
+    await user.type(await modelBox(), "codex")
+    await user.click(screen.getByRole("button", { name: "Create goal" }))
+
+    await waitFor(() => {
+      expect(lastWrite()).toBeDefined()
+    })
+    expect(lastWrite()?.body).not.toHaveProperty("effort")
   })
 
   it("refuses a model that names no agent CLI, before the daemon is asked", async () => {

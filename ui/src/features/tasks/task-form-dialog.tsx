@@ -18,10 +18,12 @@
  * /v1/tasks/{id}` carries neither — so edit mode leaves those fields out; the
  * task panel's facts card keeps showing what they are.
  *
- * What each agent runs on can be chosen in both modes, one field per slot: the
- * engineer's and every reviewer's. It is one string — the agent CLI and, after
- * a `:`, the model of it — so each slot has a single model box, offering the
- * catalog whole; an empty one is the slot on its profile's own model.
+ * What each agent runs on can be chosen in both modes, one pair of fields per
+ * slot: the engineer's and every reviewer's. The model is one string — the
+ * agent CLI and, after a `:`, the model of it — so each slot has a single model
+ * box, offering the catalog whole; an empty one is the slot on its profile's
+ * own model. Beside it stands the effort that model is run at, scoped by it:
+ * a closed list where the catalog knows one, and empty for the CLI's own.
  */
 
 import { zodResolver } from "@hookform/resolvers/zod"
@@ -44,6 +46,7 @@ import { MarkdownField } from "@/components/markdown-field"
 import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { EffortPicker } from "@/features/profiles/effort-picker"
 import { ModelPicker } from "@/features/profiles/model-picker"
 import { modelRefLabel } from "@/features/profiles/model-ref"
 import { modelsQueryOptions, profilesQueryOptions } from "@/features/profiles/queries"
@@ -185,6 +188,17 @@ function TaskFormDialog({
     [engineerOptions, selectedEngineer],
   )
 
+  // What each slot will actually run on, which is what its effort is offered
+  // against: the model chosen for the slot, or — an empty box being the slot
+  // on its profile's own — that profile's model.
+  const engineerModel = form.watch("engineer_model")
+  const reviewerRowValues = form.watch("reviewers")
+  const reviewerModel = (index: number) => {
+    const row = reviewerRowValues?.[index]
+    const profile = reviewerOptions.find((option) => option.id === row?.profile)
+    return row?.model || profile?.model || ""
+  }
+
   // The daemon ships built-in "Engineer" and "Reviewer" profiles; preselect
   // them (or the only choice there is) so the common case is one click, the
   // same way the goal form preselects its planner. Create only: an edited task
@@ -216,7 +230,10 @@ function TaskFormDialog({
         // the re-seed effect above, and `toUpdateTaskRequest`).
         const seeded = form.formState.defaultValues
         const task = await updateTask.mutateAsync(
-          toUpdateTaskRequest(values, seeded?.engineer_model ?? ""),
+          toUpdateTaskRequest(values, {
+            model: seeded?.engineer_model ?? "",
+            effort: seeded?.engineer_effort ?? "",
+          }),
         )
         toast.success("Task updated", { description: task.title })
         onOpenChange(false)
@@ -307,20 +324,42 @@ function TaskFormDialog({
           <Field data-invalid={form.formState.errors.engineer_model ? "" : undefined}>
             {/* No htmlFor: cmdk owns its input's id and names it itself. */}
             <FieldLabel>Engineer model</FieldLabel>
-            <Controller
-              control={form.control}
-              name="engineer_model"
-              render={({ field }) => (
-                <ModelPicker
-                  label="Engineer model"
-                  value={field.value}
-                  onChange={field.onChange}
-                  models={models.data}
-                  invalid={form.formState.errors.engineer_model ? true : undefined}
-                  placeholder={pinPlaceholder(engineerProfile)}
-                />
-              )}
-            />
+            <div className="flex items-start gap-2">
+              <Controller
+                control={form.control}
+                name="engineer_model"
+                render={({ field }) => (
+                  <ModelPicker
+                    label="Engineer model"
+                    value={field.value}
+                    onChange={(next) => {
+                      field.onChange(next)
+                      // The profile's model comes with the profile's effort:
+                      // the daemon refuses an effort beside a model handed back.
+                      if (next.trim().length === 0) form.setValue("engineer_effort", "")
+                    }}
+                    models={models.data}
+                    invalid={form.formState.errors.engineer_model ? true : undefined}
+                    placeholder={pinPlaceholder(engineerProfile)}
+                    className="flex-1"
+                  />
+                )}
+              />
+              <Controller
+                control={form.control}
+                name="engineer_effort"
+                render={({ field }) => (
+                  <EffortPicker
+                    label="Engineer effort"
+                    value={field.value}
+                    onChange={field.onChange}
+                    model={engineerModel || engineerProfile?.model || ""}
+                    models={models.data}
+                    className="w-32 shrink-0"
+                  />
+                )}
+              />
+            </div>
             {form.formState.errors.engineer_model ? (
               <FieldError>{form.formState.errors.engineer_model.message}</FieldError>
             ) : (
@@ -359,11 +398,30 @@ function TaskFormDialog({
                           <ModelPicker
                             label={`Reviewer ${index + 1} model`}
                             value={field.value}
-                            onChange={field.onChange}
+                            onChange={(next) => {
+                              field.onChange(next)
+                              if (next.trim().length === 0) {
+                                form.setValue(`reviewers.${index}.effort`, "")
+                              }
+                            }}
                             models={models.data}
                             invalid={modelError ? true : undefined}
                             placeholder="The profile's own"
                             className="flex-1"
+                          />
+                        )}
+                      />
+                      <Controller
+                        control={form.control}
+                        name={`reviewers.${index}.effort`}
+                        render={({ field }) => (
+                          <EffortPicker
+                            label={`Reviewer ${index + 1} effort`}
+                            value={field.value}
+                            onChange={field.onChange}
+                            model={reviewerModel(index)}
+                            models={models.data}
+                            className="w-28 shrink-0"
                           />
                         )}
                       />
@@ -388,7 +446,7 @@ function TaskFormDialog({
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => reviewerRows.append({ profile: "", model: "" })}
+                onClick={() => reviewerRows.append({ profile: "", model: "", effort: "" })}
               >
                 <PlusIcon />
                 Add reviewer
@@ -483,7 +541,7 @@ function pinPlaceholder(profile: ProfileDto | undefined): string {
   return profile ? `The profile's own — ${modelRefLabel(profile.model)}` : "The profile's own"
 }
 
-/** The line under the engineer's box, which spells the same choice out. */
+/** The line under the engineer's boxes, which spells the same choice out. */
 function engineerPinHint(profile: ProfileDto | undefined): string {
-  return `The agent CLI and, after a ":", the model of it. Empty runs the engineer on its profile's own: ${modelRefLabel(profile?.model)}.`
+  return `The agent CLI and, after a ":", the model of it, with the effort it is run at beside it. Empty runs the engineer on its profile's own: ${modelRefLabel(profile?.model)}.`
 }

@@ -38,11 +38,20 @@ const REVIEWER: ProfileDto = {
   role: "reviewer",
 }
 
-/** A profile pinned to a model the catalog below knows about. */
+/** A profile pinned to a model the catalog below knows about, at an effort. */
 const PINNED: ProfileDto = {
   ...ENGINEER,
   id: "01JPROF000000000000000PIN",
   name: "Pinned",
+  model: "claude_code:claude-opus-5",
+  effort: "xhigh",
+}
+
+/** The same model, run at whatever the agent CLI runs it at. */
+const AT_AUTO: ProfileDto = {
+  ...ENGINEER,
+  id: "01JPROF00000000000000AUT",
+  name: "Unhurried",
   model: "claude_code:claude-opus-5",
 }
 
@@ -52,7 +61,8 @@ const CATALOG: ModelDto[] = [
     id: "claude_code:claude-opus-5",
     agent_kind: "claude_code",
     description: "Opus tier: deep analysis",
-    efforts: [],
+    efforts: ["low", "medium", "high", "xhigh", "max"],
+    default_effort: "high",
   },
 ]
 
@@ -112,13 +122,21 @@ function renderPage(entry: string = paths.profiles()) {
   )
 }
 
+/** The panel a row expands into, which the row names through `aria-controls`. */
+function expandedDetails(row: HTMLElement): HTMLElement {
+  const id = row.getAttribute("aria-controls")
+  const details = id ? document.getElementById(id) : null
+  if (!details) throw new Error("the row is not expanded")
+  return details
+}
+
 /** What the screen has put in the URL, as the harness above reports it. */
 function currentSearch(): string {
   return screen.getByTestId("search").textContent ?? ""
 }
 
 beforeEach(() => {
-  stubDaemon([ENGINEER, REVIEWER, PINNED])
+  stubDaemon([ENGINEER, REVIEWER, PINNED, AT_AUTO])
 })
 
 // Testing Library only unmounts by itself under `globals: true`, which this
@@ -234,9 +252,50 @@ describe("ProfilesPage, the model column", () => {
     const row = (await screen.findByRole("button", { name: "Builder" })).closest("tr")
     expect(row?.textContent).toContain("auto")
   })
+
+  it("puts the effort in the same cell, after an `@`", async () => {
+    renderPage()
+
+    const row = (await screen.findByRole("button", { name: "Pinned" })).closest("tr")
+    expect(row?.textContent).toContain("claude_code:claude-opus-5 @ xhigh")
+  })
+
+  it("adds nothing where no effort is pinned: that is the agent CLI's own", async () => {
+    renderPage()
+
+    const row = (await screen.findByRole("button", { name: "Unhurried" })).closest("tr")
+    expect(row?.textContent).toContain("claude_code:claude-opus-5")
+    expect(row?.textContent).not.toContain("@")
+  })
 })
 
 describe("ProfilesPage, expanded details", () => {
+  it("spells the pin out whole: the model, and the effort it is run at", async () => {
+    const user = userEvent.setup()
+    renderPage()
+
+    const row = await screen.findByRole("button", { name: "Pinned" })
+    await user.click(row)
+
+    expect(expandedDetails(row).textContent).toContain("claude_code:claude-opus-5 @ xhigh")
+  })
+
+  /**
+   * The details row is the one place an unpinned effort is a word rather than
+   * nothing: the row exists to say what this profile runs as, and `auto` — with
+   * what the CLI does instead beside it — is that answer, exactly as the model
+   * above it reads.
+   */
+  it("says `auto` for an unpinned effort, named with what the CLI runs it at", async () => {
+    const user = userEvent.setup()
+    renderPage()
+
+    const row = await screen.findByRole("button", { name: "Unhurried" })
+    await user.click(row)
+
+    expect(expandedDetails(row).textContent).toContain("claude_code:claude-opus-5 @ auto (high)")
+  })
+
   it("captions a catalog model with its capability blurb, and an unknown one with nothing", async () => {
     const user = userEvent.setup()
     renderPage()

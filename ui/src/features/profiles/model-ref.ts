@@ -88,3 +88,41 @@ export function modelRefField() {
 export function modelRefLabel(model: string | null | undefined): string {
   return model && model.length > 0 ? model : AUTO_MODEL_LABEL
 }
+
+/**
+ * The two halves of a reference, or null where the text is not one: the agent
+ * CLI it names, and the model of it after the `:` — null where it names the
+ * CLI alone, which is that CLI on its own default model.
+ *
+ * The split is {@link modelRefError}'s, said once: what an effort can be run
+ * at is a question about the model half, and the picker beside a model box has
+ * to ask it of whatever is typed there.
+ */
+export function parseModelRef(text: string): { agentKind: AgentKind; model: string | null } | null {
+  const trimmed = text.trim()
+  if (trimmed.length === 0 || modelRefError(trimmed) !== null) return null
+  const colon = trimmed.indexOf(":")
+  if (colon < 0) {
+    const kind = agentKind(trimmed)
+    return kind ? { agentKind: kind, model: null } : null
+  }
+  const kind = agentKind(trimmed.slice(0, colon))
+  return kind ? { agentKind: kind, model: trimmed.slice(colon + 1) } : null
+}
+
+/**
+ * A pin as a screen shows it: the model, and after an `@` the effort it is run
+ * at where one is pinned.
+ *
+ * An effort belongs to the model it runs at, so it is never a fact of its own
+ * on a read-only surface: no effort pinned adds nothing to the line — that is
+ * the agent CLI's own, which only the CLI knows — where no model pinned still
+ * says `auto`.
+ */
+export function pinLabel(
+  model: string | null | undefined,
+  effort: string | null | undefined,
+): string {
+  const shown = modelRefLabel(model)
+  return effort && effort.length > 0 ? `${shown} @ ${effort}` : shown
+}

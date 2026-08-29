@@ -1,5 +1,6 @@
 /**
- * A profile in one line: `name · model`.
+ * A profile in one line: `name · model`, and after an `@` the effort that
+ * model is run at where one is pinned.
  *
  * The surfaces that mention a profile — a session's summary, the sessions
  * table, the task panel's Engineer and Reviewers, the goal panel's Planner —
@@ -31,7 +32,7 @@ import { useQuery } from "@tanstack/react-query"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/format"
 
-import { modelRefLabel } from "./model-ref"
+import { pinLabel } from "./model-ref"
 import { ProfileName } from "./profile-name"
 import { profilesQueryOptions } from "./queries"
 
@@ -40,21 +41,25 @@ import { profilesQueryOptions } from "./queries"
  *
  * True of a pin chosen for the task, the slot or the goal itself, and of one
  * the profile has since been edited away from — the two are the same fact from
- * the reader's side: what runs is the pin, and the profile is not it. Nothing
- * to compare against — a mention that carries no snapshot at all — is never an
- * override.
+ * the reader's side: what runs is the pin, and the profile is not it. The
+ * effort counts as much as the model does: the same model at another effort is
+ * another thing to run. Nothing to compare against — a mention that carries no
+ * snapshot at all — is never an override.
  */
 export function isPinOverride(
-  profile: { model?: string | null } | undefined,
+  profile: { model?: string | null; effort?: string | null } | undefined,
   pinned: string | null | undefined,
+  effort?: string | null,
 ): boolean {
   if (!profile || pinned === undefined) return false
-  return (pinned ?? null) !== (profile.model ?? null)
+  if ((pinned ?? null) !== (profile.model ?? null)) return true
+  return (effort ?? null) !== (profile.effort ?? null)
 }
 
 export function ProfileSummary({
   profileId,
   model,
+  effort,
   className,
 }: {
   profileId: string
@@ -66,27 +71,36 @@ export function ProfileSummary({
    * says; undefined is a mention with no snapshot of its own, which does.
    */
   model?: string | null
+  /**
+   * The effort that model is run at, off the same snapshot: null is the agent
+   * CLI's own, which shows as nothing at all — an effort nobody pinned is not
+   * a fact about this mention. It follows the model, since the two are one
+   * pin: a mention with no snapshot falls back to the profile for both.
+   */
+  effort?: string | null
   className?: string
 }) {
   const profiles = useQuery(profilesQueryOptions())
   const profile = profiles.data?.find((item) => item.id === profileId)
   // Nothing to fall back on while the profiles are still loading: the fact
   // waits for the answer rather than claiming `auto` and flipping.
-  const pinned = model === undefined ? profile?.model : model
-  const known = model !== undefined || profile !== undefined
+  const snapshot = model !== undefined
+  const pinned = snapshot ? model : profile?.model
+  const pinnedEffort = snapshot ? (effort ?? null) : profile?.effort
+  const known = snapshot || profile !== undefined
 
   return (
     <span className={cn("flex min-w-0 items-baseline gap-1", className)}>
       <ProfileName profileId={profileId} className="shrink-0" />
       {known ? (
         <span className="flex min-w-0 items-baseline gap-1 text-muted-foreground">
-          <span className="truncate">· {modelRefLabel(pinned)}</span>
+          <span className="truncate">· {pinLabel(pinned, pinnedEffort)}</span>
           {/* Where the two disagree, what was just read is the pin and not the
               profile's own — the model chosen here, or a profile edited since.
               One word, because the line sits in table cells and panel columns
               and already carries two facts, and the word says which of the two
               won rather than that anything was overwritten. */}
-          {isPinOverride(profile, model) ? (
+          {isPinOverride(profile, model, effort) ? (
             <Tooltip>
               {/* Dotted, because the word only makes sense with what is behind
                   it: which model the profile itself would have used. */}
@@ -99,7 +113,7 @@ export function ProfileSummary({
               </TooltipTrigger>
               <TooltipContent>
                 Pinned here, so this is what runs; {profile?.name ?? "the profile"} itself says{" "}
-                {modelRefLabel(profile?.model)}.
+                {pinLabel(profile?.model, profile?.effort)}.
               </TooltipContent>
             </Tooltip>
           ) : null}

@@ -40,6 +40,7 @@ import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { describeError, ROLE_LABELS } from "@/lib/format"
+import { EffortPicker } from "./effort-picker"
 import { ModelPicker } from "./model-picker"
 import {
   changedPrompts,
@@ -252,8 +253,10 @@ export function ProfileFormDialog({
             )}
           </Field>
 
-          <div className="grid gap-5 sm:grid-cols-2">
-            <Field>
+          {/* One row for what the profile runs as and what it runs on: the
+              model, and beside it the effort that model is run at. */}
+          <div className="flex flex-col gap-5 sm:flex-row sm:gap-4">
+            <Field className="sm:w-40 sm:shrink-0">
               <FieldLabel htmlFor="profile-role">Role</FieldLabel>
               <FormSelect
                 control={control}
@@ -269,7 +272,7 @@ export function ProfileFormDialog({
               </FieldDescription>
             </Field>
 
-            <Field data-invalid={formState.errors.model ? true : undefined}>
+            <Field className="sm:flex-1" data-invalid={formState.errors.model ? true : undefined}>
               {/* No htmlFor: cmdk owns its input's id and names it "Model"
                   itself, through the hidden label its aria-labelledby points at. */}
               <FieldLabel>Model</FieldLabel>
@@ -280,7 +283,12 @@ export function ProfileFormDialog({
                   render={({ field }) => (
                     <ModelPicker
                       value={field.value}
-                      onChange={field.onChange}
+                      onChange={(next) => {
+                        field.onChange(next)
+                        // A profile back on auto has no model for an effort to
+                        // be run at, which the daemon refuses to store.
+                        if (next.trim().length === 0) setValue("effort", "")
+                      }}
                       models={models.data}
                       invalid={formState.errors.model ? true : undefined}
                       placeholder="auto — first installed CLI"
@@ -292,7 +300,10 @@ export function ProfileFormDialog({
                     type="button"
                     variant="ghost"
                     size="sm"
-                    onClick={() => setValue("model", "", { shouldDirty: true })}
+                    onClick={() => {
+                      setValue("model", "", { shouldDirty: true })
+                      setValue("effort", "", { shouldDirty: true })
+                    }}
                   >
                     Use auto
                   </Button>
@@ -306,6 +317,25 @@ export function ProfileFormDialog({
                   first installed CLI, on its own default model.
                 </FieldDescription>
               )}
+            </Field>
+
+            <Field className="sm:w-40 sm:shrink-0">
+              {/* The list is the model's, not this field's: what a model can be
+                  run at is the catalog's answer for the box beside it. */}
+              <FieldLabel>Effort</FieldLabel>
+              <Controller
+                control={control}
+                name="effort"
+                render={({ field }) => (
+                  <EffortPicker
+                    value={field.value}
+                    onChange={field.onChange}
+                    model={model}
+                    models={models.data}
+                  />
+                )}
+              />
+              <FieldDescription>What that model is run at.</FieldDescription>
             </Field>
           </div>
 
@@ -347,11 +377,11 @@ function sameProfileBody(saved: UpdateProfileRequest | null, next: UpdateProfile
  * boxes that always hold *something*: an untouched one would otherwise be
  * written back on every save.
  *
- * For the model that is a stale overwrite waiting to happen — the box holds a
- * qualified id, or the empty string this module turns into the "back on auto"
- * sentinel, so a name edited on its own would re-pin the profile to whatever
- * the box was seeded with and undo a model changed from the CLI or another
- * window meanwhile.
+ * For the model and the effort that is a stale overwrite waiting to happen —
+ * each box holds a value, or the empty string this module turns into the "back
+ * on auto" sentinel, so a name edited on its own would re-pin the profile to
+ * whatever the boxes were seeded with and undo a model changed from the CLI or
+ * another window meanwhile.
  *
  * For the system prompt it is sharper still: the box holds the prompt that
  * takes effect, and after a restore that is the role's default. Sending it back
@@ -363,9 +393,14 @@ function withoutUnchangedFields(
   saved: UpdateProfileRequest | null,
 ): UpdateProfileRequest {
   if (!saved) return body
+  const model = body.model === saved.model ? undefined : body.model
   return {
     ...body,
-    model: body.model === saved.model ? undefined : body.model,
+    model,
+    // An effort belongs to the model it is run at, and the daemon drops it from
+    // a pin whose model moves — so a model on the wire takes the effort box
+    // with it whether that box changed or not.
+    effort: model === undefined && body.effort === saved.effort ? undefined : body.effort,
     system_prompt: body.system_prompt === saved.system_prompt ? undefined : body.system_prompt,
   }
 }

@@ -56,6 +56,7 @@ const PROFILE: ProfileDto = aProfile({
 const SESSION: SessionDto = aSession({
   id: "01JSESS0000000000000000001",
   model: "claude-opus-5",
+  effort: "xhigh",
   usage: { input_tokens: 12_345, cached_input_tokens: 10_000, output_tokens: 950 },
   last_activity_at: "2026-01-01T00:10:00Z",
   goal_id: GOAL.id,
@@ -211,14 +212,14 @@ it("shows the model the session was launched with, once", async () => {
   // runs is the snapshot taken when it started, not the profile as edited
   // since — and the fact spells that snapshot's two fields as one id.
   await waitFor(() => expect(detail("Profile")).toContain("engineer-default"))
-  expect(detail("Profile")).toContain("claude_code:claude-opus-5")
+  expect(detail("Profile")).toContain("claude_code:claude-opus-5 @ xhigh")
   // And it says it once: a Model row under this one carried the same tail with
   // the agent CLI taken off it.
   expect(screen.queryByText("Model")).toBeNull()
 })
 
 it("names the agent CLI's own choice where no model was recorded", async () => {
-  renderView({ ...SESSION, model: null })
+  renderView({ ...SESSION, model: null, effort: null })
 
   // `claude_code` on its own is that CLI on its own default model, which is
   // what the session was launched with — not the profile's pin.

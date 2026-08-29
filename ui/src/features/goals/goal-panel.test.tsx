@@ -173,6 +173,12 @@ it("shows what the planner runs on: the goal's pin, and that it is a pin", () =>
   expect(planner).not.toContain("grok-4")
 })
 
+it("shows the effort that model is run at, beside it", () => {
+  mount(aGoal({ model: "codex:gpt-5.3-codex", effort: "high" }))
+
+  expect(detail("Planner").textContent).toContain("codex:gpt-5.3-codex @ high")
+})
+
 it("says `auto` for a goal that pinned nothing, rather than the profile's own", () => {
   mount(aGoal({ model: null }))
 

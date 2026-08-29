@@ -22,6 +22,9 @@ import { modelsQueryOptions } from "./queries"
 /** What the daemon resolves for a profile that pins nothing. */
 const UNPINNED_HINT = "first installed CLI, at spawn time, on its own default model"
 
+/** What no effort pinned is called: whatever the agent CLI runs that model at. */
+const AUTO_EFFORT_LABEL = "auto"
+
 export function ProfileDetails({ profile }: { profile: ProfileDto }) {
   // What the pinned model can do, when the catalog knows it. The id carries
   // the agent CLI, so it is the whole key; a model the catalog does not list —
@@ -42,10 +45,12 @@ export function ProfileDetails({ profile }: { profile: ProfileDto }) {
       <FactList framed={false}>
         <Fact label="Role">{roleLabel(profile.role)}</Fact>
         {/* One fact, since one string is the whole choice: the agent CLI and,
-            after a `:`, the model of it. What the daemon does instead of a pin
-            is in the hint, which is the only place a truncated row says
-            anything in full; the catalog's blurb is the opposite — prose rather
-            than an identifier — so it takes a wrapping line of its own. */}
+            after a `:`, the model of it — with the effort that model is run at
+            after an `@`, since an effort is run at a model rather than being a
+            pin of its own. What the daemon does instead of a pin is in the
+            hint, which is the only place a truncated row says anything in
+            full; the catalog's blurb is the opposite — prose rather than an
+            identifier — so it takes a wrapping line of its own. */}
         <Fact
           label="Model"
           hint={unpinned ? UNPINNED_HINT : undefined}
@@ -63,7 +68,20 @@ export function ProfileDetails({ profile }: { profile: ProfileDto }) {
               <span className="ml-1.5 text-xs">({UNPINNED_HINT})</span>
             </span>
           ) : (
-            <span className="block truncate font-mono">{modelRefLabel(profile.model)}</span>
+            <span className="block truncate font-mono">
+              {modelRefLabel(profile.model)}
+              <span className="text-muted-foreground"> @ </span>
+              {profile.effort ? (
+                profile.effort
+              ) : (
+                // The word, like the model row's: no effort pinned is the CLI's
+                // own, named where the catalog says what that is.
+                <span className="text-muted-foreground italic">
+                  {AUTO_EFFORT_LABEL}
+                  {catalogModel?.default_effort ? ` (${catalogModel.default_effort})` : ""}
+                </span>
+              )}
+            </span>
           )}
         </Fact>
         <Fact label="Created">

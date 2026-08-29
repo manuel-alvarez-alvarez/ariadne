@@ -154,6 +154,7 @@ export function SessionDetailView({
           <ProfileSummary
             profileId={session.profile_id}
             model={formatModelRef(session.agent_kind, session.model)}
+            effort={session.effort}
           />
         </Fact>
         <Fact label="tmux session">

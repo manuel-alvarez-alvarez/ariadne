@@ -2,10 +2,10 @@
  * Tests for the two things in this feature that are easy to get subtly wrong.
  *
  * The first is the daemon's clearing sentinel. `UpdateProfileRequest` puts a
- * profile back on auto with the string `"default"`, while
- * `CreateProfileRequest` takes a plain null for the same state. Getting that
- * backwards writes a profile pinned to a model literally named "default", which
- * nothing else in the stack would catch.
+ * profile back on auto with the string `"default"` — for the model and for the
+ * effort beside it — while `CreateProfileRequest` takes a plain null for the
+ * same state. Getting that backwards writes a profile pinned to a model
+ * literally named "default", which nothing else in the stack would catch.
  *
  * The second is the prompt diff. A briefing left at its default must not be
  * sent — on create because the daemon seeds it, on update because a write it
@@ -35,6 +35,7 @@ const PROFILE: ProfileDto = aProfile({
   id: "p1",
   name: "rust-engineer",
   model: "claude_code:claude-opus-5",
+  effort: "xhigh",
   system_prompt: "You are a Rust engineer.",
   created_at: "2026-08-16T09:00:00.000Z",
   updated_at: "2026-08-16T09:30:00.000Z",
@@ -46,6 +47,7 @@ describe("profileToFormValues", () => {
       name: "rust-engineer",
       role: "engineer",
       model: "claude_code:claude-opus-5",
+      effort: "xhigh",
       systemPrompt: "You are a Rust engineer.",
       prompts: [],
     })
@@ -60,6 +62,11 @@ describe("profileToFormValues", () => {
     const values = profileToFormValues({ ...PROFILE, model: null })
     expect(values.model).toBe("")
   })
+
+  it("shows an unpinned effort the same way: the empty box is the CLI's own", () => {
+    const values = profileToFormValues({ ...PROFILE, effort: null })
+    expect(values.effort).toBe("")
+  })
 })
 
 describe("toCreateRequest", () => {
@@ -68,6 +75,7 @@ describe("toCreateRequest", () => {
       name: "",
       role: "planner",
       model: null,
+      effort: null,
       // A blank box is no system prompt at all, which is the role's own.
       system_prompt: null,
     })
@@ -83,9 +91,10 @@ describe("toCreateRequest", () => {
     expect(toCreateRequest(values)).not.toHaveProperty("prompts")
   })
 
-  it("passes a pinned model — agent CLI and all — through", () => {
+  it("passes a pinned model — agent CLI and all — through, at its effort", () => {
     const request = toCreateRequest(profileToFormValues(PROFILE))
     expect(request.model).toBe("claude_code:claude-opus-5")
+    expect(request.effort).toBe("xhigh")
     expect(request.role).toBe("engineer")
   })
 })
@@ -100,8 +109,15 @@ describe("toUpdateRequest", () => {
     expect(toUpdateRequest(profileToFormValues(PROFILE))).not.toHaveProperty("role")
   })
 
-  it("keeps a pinned model", () => {
-    expect(toUpdateRequest(profileToFormValues(PROFILE)).model).toBe("claude_code:claude-opus-5")
+  it("keeps a pinned model, and the effort it is run at", () => {
+    const body = toUpdateRequest(profileToFormValues(PROFILE))
+    expect(body.model).toBe("claude_code:claude-opus-5")
+    expect(body.effort).toBe("xhigh")
+  })
+
+  it("clears an emptied effort with the same sentinel, which is the CLI's own", () => {
+    const values = profileToFormValues({ ...PROFILE, effort: null })
+    expect(toUpdateRequest(values).effort).toBe("default")
   })
 })
 

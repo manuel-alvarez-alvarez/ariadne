@@ -41,7 +41,7 @@ import { CopyableId } from "@/components/copyable-id"
 import { StatusBadge } from "@/components/status-badge"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { When, whenHint } from "@/components/when"
-import { modelRefLabel } from "@/features/profiles/model-ref"
+import { pinLabel } from "@/features/profiles/model-ref"
 import { isPinOverride } from "@/features/profiles/profile-summary"
 import { profilesQueryOptions } from "@/features/profiles/queries"
 import {
@@ -299,8 +299,9 @@ interface EnginePin {
 
 /**
  * What the engineer of this task runs on, when that is not what its profile
- * says — a model chosen for the task, or a profile edited away from the pin
- * since. `null` when it is the profile's own, which is most cards.
+ * says — a model or an effort chosen for the task, or a profile edited away
+ * from the pin since. `null` when it is the profile's own, which is most
+ * cards.
  *
  * Only then: the pin is on every task, and a board repeating the same profile
  * default on every card would say nothing while costing every card a line.
@@ -314,8 +315,8 @@ interface EnginePin {
 function useEnginePin(task: TaskDto): EnginePin | null {
   const profiles = useQuery(profilesQueryOptions())
   const profile = profiles.data?.find((item) => item.id === task.engineer_profile_id)
-  if (!isPinOverride(profile, task.model)) return null
+  if (!isPinOverride(profile, task.model, task.effort)) return null
 
-  const label = modelRefLabel(task.model)
+  const label = pinLabel(task.model, task.effort)
   return { label, hint: `${label} (overrides ${profile?.name})` }
 }

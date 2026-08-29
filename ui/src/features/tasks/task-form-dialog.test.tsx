@@ -29,7 +29,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { GoalDto, ModelDto, ProfileDto } from "@/api"
 import { aGoal, aProfile } from "@/test/fixtures"
-import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
+import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { CreateTaskDialog, EditTaskDialog } from "./task-form-dialog"
 
 const STAMP = "2026-01-01T00:00:00Z"
@@ -55,19 +55,29 @@ const STRICT_REVIEWER: ProfileDto = {
   role: "reviewer",
 }
 
-/** The catalog every model box offers, whole. */
+/** The catalog every model box offers, whole, with the efforts of each entry. */
 const CATALOG: ModelDto[] = [
   {
     id: "claude_code:claude-opus-5",
     agent_kind: "claude_code",
     description: "Opus tier: deep analysis",
+    efforts: ["low", "medium", "high", "xhigh", "max"],
+    default_effort: "high",
+  },
+  {
+    // The one that takes none at all, which is what disables the field.
+    id: "claude_code:claude-haiku-4-5",
+    agent_kind: "claude_code",
+    description: "Fast and cheap",
     efforts: [],
+    default_effort: null,
   },
   {
     id: "codex:gpt-5.3-codex",
     agent_kind: "codex",
     description: "Frontier reasoning: agentic loops",
-    efforts: [],
+    efforts: ["low", "medium", "high", "xhigh", "ultra"],
+    default_effort: "medium",
   },
 ]
 
@@ -147,6 +157,21 @@ async function pickModel(
 /** The named model box: one per slot, and the whole choice for it. */
 async function modelBox(field: string): Promise<HTMLInputElement> {
   return (await screen.findByRole("combobox", { name: field })) as HTMLInputElement
+}
+
+/** The named effort select, once the catalog it is scoped by has landed. */
+async function effortField(field: string): Promise<HTMLElement> {
+  return await screen.findByRole("combobox", { name: field })
+}
+
+/** Picks `effort` out of the closed list under the named effort field. */
+async function pickEffort(
+  user: ReturnType<typeof userEvent.setup>,
+  field: string,
+  effort: string,
+): Promise<void> {
+  await user.click(await effortField(field))
+  await user.click(await screen.findByRole("option", { name: effort }))
 }
 
 describe("dismissing the dialog", () => {
@@ -422,6 +447,108 @@ describe("what the task's agents run on", () => {
     await vi.waitFor(() => expect(writes).toEqual([`POST /v1/goals/${GOAL.id}/tasks`]))
     expect(posted[0]).not.toHaveProperty("model")
     expect(posted[0]).toMatchObject({ reviewers: [{ profile: REVIEWER.id }] })
+  })
+})
+
+/**
+ * The effort beside each model box: one per slot, offered from what that slot's
+ * model can be run at, and cleared back to the CLI's own when the model moves
+ * to one that does not take it — which is what the daemon does with it.
+ */
+describe("what each agent is run at", () => {
+  it("sends the engineer's effort, and each reviewer's, from its own box", async () => {
+    const user = userEvent.setup()
+    renderDialog(vi.fn())
+
+    await user.type(screen.getByLabelText("Title"), "Wire the strip")
+    expect(await screen.findByText("Engineer")).toBeDefined()
+    await pickModel(user, "Engineer model", "codex:gpt-5.3-codex")
+    await pickEffort(user, "Engineer effort", "ultra")
+    await pickModel(user, "Reviewer 1 model", "claude_code:claude-opus-5")
+    await pickEffort(user, "Reviewer 1 effort", "max")
+
+    await user.click(screen.getByRole("button", { name: "Create task" }))
+
+    await vi.waitFor(() => expect(writes).toEqual([`POST /v1/goals/${GOAL.id}/tasks`]))
+    expect(posted[0]).toMatchObject({
+      model: "codex:gpt-5.3-codex",
+      effort: "ultra",
+      reviewers: [{ profile: REVIEWER.id, model: "claude_code:claude-opus-5", effort: "max" }],
+    })
+  })
+
+  it("offers only what the slot's own model takes", async () => {
+    const user = userEvent.setup()
+    renderDialog(vi.fn())
+
+    await pickModel(user, "Engineer model", "claude_code:claude-opus-5")
+    await user.click(await effortField("Engineer effort"))
+
+    // The claude entry's list, named with what that CLI runs it at — not the
+    // codex one beside it in the catalog.
+    expect(await screen.findByRole("option", { name: "auto (high)" })).toBeDefined()
+    expect(screen.queryByRole("option", { name: "ultra" })).toBeNull()
+
+    // Closed again before the test ends: an open popup holds the pointer over
+    // the whole document, which is not a state to hand to the next test.
+    await user.keyboard("{Escape}")
+  })
+
+  it("drops an effort back to auto when the model moves to one that takes none", async () => {
+    const user = userEvent.setup()
+    renderDialog(vi.fn())
+
+    await user.type(screen.getByLabelText("Title"), "Wire the strip")
+    expect(await screen.findByText("Engineer")).toBeDefined()
+    await pickModel(user, "Engineer model", "claude_code:claude-opus-5")
+    await pickEffort(user, "Engineer effort", "max")
+
+    // Typed over rather than emptied: the model moves, and the effort it
+    // belonged to does not come with it.
+    await user.click(await modelBox("Engineer model"))
+    await user.keyboard("{Backspace>6/}haiku-4-5")
+
+    const field = await effortField("Engineer effort")
+    await vi.waitFor(() => expect(field).toHaveProperty("disabled", true))
+    expect(field.getAttribute("title")).toContain("takes no effort")
+
+    await user.click(screen.getByRole("button", { name: "Create task" }))
+
+    await vi.waitFor(() => expect(writes).toEqual([`POST /v1/goals/${GOAL.id}/tasks`]))
+    expect(posted[0]).toMatchObject({ model: "claude_code:claude-haiku-4-5" })
+    expect(posted[0]).not.toHaveProperty("effort")
+  })
+
+  it("shows the daemon's refusal of an effort, with the dialog still up", async () => {
+    const user = userEvent.setup()
+    daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(String(input), init)
+      const url = new URL(request.url)
+      if (request.method !== "GET") {
+        writes.push(`${request.method} ${url.pathname}`)
+        return errorResponse(
+          400,
+          "bad_request",
+          "`ultra` is no effort of that model — it takes low, medium, high, xhigh",
+        )
+      }
+      if (url.pathname === "/v1/profiles") {
+        return jsonResponse(url.searchParams.get("role") === "reviewer" ? [REVIEWER] : [ENGINEER])
+      }
+      if (url.pathname === "/v1/models") return jsonResponse(CATALOG)
+      if (url.pathname === "/v1/tasks") return jsonResponse([])
+      return new Response("not stubbed", { status: 404 })
+    })
+    renderDialog(vi.fn())
+
+    await user.type(screen.getByLabelText("Title"), "Wire the strip")
+    expect(await screen.findByText("Engineer")).toBeDefined()
+    await pickModel(user, "Engineer model", "codex:gpt-5.3-codex")
+    await pickEffort(user, "Engineer effort", "ultra")
+    await user.click(screen.getByRole("button", { name: "Create task" }))
+
+    expect(await screen.findByText(/is no effort of that model/)).toBeDefined()
+    expect(screen.getByRole("button", { name: "Create task" })).toBeDefined()
   })
 })
 

@@ -3,10 +3,11 @@
  * request bodies.
  *
  * The part worth being careful about is the update. `UpdateProfileRequest`
- * leaves absent fields unchanged and clears the optional one through a
+ * leaves absent fields unchanged and clears the optional ones through a
  * *sentinel string*: `model: "default"` (or empty) puts the profile back on
  * auto — the first installed CLI, resolved at spawn time, on its own default
- * model. The form never asks anyone to type that — an empty model box is what
+ * model — and `effort: "default"` puts it back on whatever the agent CLI runs
+ * its model at. The form never asks anyone to type that — an empty box is what
  * says it — so this module is the one place where that choice becomes the
  * sentinel.
  *
@@ -33,8 +34,11 @@ import type {
 import { modelRefField } from "./model-ref"
 import { PROMPT_KINDS, ROLES } from "./profile-labels"
 
-/** What the daemon reads as "put this profile back on auto". */
-const DEFAULT_MODEL_SENTINEL = "default"
+/**
+ * What the daemon reads as "not my choice": for the model, this profile back
+ * on auto; for the effort beside it, whatever the agent CLI runs that model at.
+ */
+const DEFAULT_SENTINEL = "default"
 
 /**
  * One briefing prompt while it is being edited: the daemon's kind and the text.
@@ -60,6 +64,11 @@ export const profileFormSchema = z.object({
   // Free text, but a reference: the catalog only suggests, and what is typed
   // still has to name the agent CLI that runs it.
   model: modelRefField(),
+  // The effort that model is run at: one of the ones the catalog lists for it,
+  // or empty for whatever the agent CLI runs it at. A profile on auto has no
+  // model for an effort to run at, which is why the field is a picker scoped
+  // by the box beside it rather than anything validated here.
+  effort: z.string(),
   // A prompt may legitimately be emptied — the daemon takes any text — and on
   // create an empty one means the role's default, so there is nothing to
   // validate.
@@ -75,6 +84,7 @@ export function emptyProfileFormValues(role: Role = "engineer"): ProfileFormValu
     name: "",
     role,
     model: "",
+    effort: "",
     systemPrompt: "",
     prompts: [],
   }
@@ -94,6 +104,7 @@ export function profileToFormValues(
     name: profile.name,
     role: profile.role,
     model: profile.model ?? "",
+    effort: profile.effort ?? "",
     systemPrompt: profile.system_prompt,
     prompts: prompts.map((prompt) => ({ kind: prompt.kind, content: prompt.content })),
   }
@@ -125,11 +136,13 @@ export function changedPrompts(
  */
 export function toCreateRequest(values: ProfileFormValues): CreateProfileRequest {
   const model = values.model.trim()
+  const effort = values.effort.trim()
   return {
     name: values.name.trim(),
     role: values.role,
     // Create takes the absent value itself rather than a sentinel.
     model: model.length > 0 ? model : null,
+    effort: effort.length > 0 ? effort : null,
     system_prompt: values.systemPrompt.trim().length > 0 ? values.systemPrompt : null,
   }
 }
@@ -142,10 +155,13 @@ export function toCreateRequest(values: ProfileFormValues): CreateProfileRequest
  */
 export function toUpdateRequest(values: ProfileFormValues): UpdateProfileRequest {
   const model = values.model.trim()
+  const effort = values.effort.trim()
   return {
     name: values.name.trim(),
     // An emptied box is the sentinel: the profile goes back on auto.
-    model: model.length > 0 ? model : DEFAULT_MODEL_SENTINEL,
+    model: model.length > 0 ? model : DEFAULT_SENTINEL,
+    // The same word beside it, where it means the agent CLI's own effort.
+    effort: effort.length > 0 ? effort : DEFAULT_SENTINEL,
     system_prompt: values.systemPrompt,
   }
 }

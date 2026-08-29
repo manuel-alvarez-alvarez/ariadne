@@ -30,6 +30,7 @@ const PROFILE: ProfileDto = aProfile({
   id: "01JPROF000000000000000ENG",
   name: "Builder",
   model: "claude_code:claude-opus-5",
+  effort: "high",
   system_prompt: "Stored system prompt.",
 })
 
@@ -65,19 +66,22 @@ const CATALOG: ModelDto[] = [
     id: "claude_code:claude-fable-5",
     agent_kind: "claude_code",
     description: "Frontier: highest capability",
-    efforts: [],
+    efforts: ["low", "medium", "high", "xhigh", "max"],
+    default_effort: "high",
   },
   {
     id: "claude_code:claude-opus-5",
     agent_kind: "claude_code",
     description: "Opus tier: deep analysis",
-    efforts: [],
+    efforts: ["low", "medium", "high", "xhigh", "max"],
+    default_effort: "high",
   },
   {
     id: "codex:gpt-5.5-codex",
     agent_kind: "codex",
     description: "Frontier reasoning: agentic loops",
-    efforts: [],
+    efforts: ["low", "medium", "high", "xhigh"],
+    default_effort: "medium",
   },
 ]
 
@@ -87,6 +91,7 @@ interface Recorded {
   body: {
     name?: string
     model?: string | null
+    effort?: string | null
     system_prompt?: string | null
     content?: string
     prompts?: { kind: string; content: string }[]
@@ -182,6 +187,15 @@ async function expandPrompt(
 ): Promise<HTMLTextAreaElement> {
   await user.click(await screen.findByRole("button", { name: `Expand ${label}` }))
   return await promptBox(label)
+}
+
+/**
+ * The effort select beside the model box, once the catalog is in: until it
+ * lands there is no list to scope, and the field is free text like the model
+ * box beside it.
+ */
+async function effortField(): Promise<HTMLElement> {
+  return await screen.findByRole("combobox", { name: "Effort" })
 }
 
 /** The catalog popup, which lives in a portal outside the dialog. */
@@ -350,6 +364,84 @@ describe("the model picker", () => {
       expect(lastRequest("POST", "/v1/profiles")).toBeDefined()
     })
     expect(lastRequest("POST", "/v1/profiles")?.body?.model).toBe("codex:still-typable")
+  })
+})
+
+/**
+ * The effort beside the model: a closed list, scoped by the box next to it, and
+ * the same `default` sentinel to clear it with.
+ */
+describe("the effort picker", () => {
+  it("offers what the chosen model takes, and sends the pick", async () => {
+    const user = userEvent.setup()
+    renderDialog(null)
+
+    await user.type(screen.getByLabelText("Name"), "rust-engineer")
+    await user.click(await modelBox())
+    await user.click(within(await listbox()).getByText("codex:gpt-5.5-codex"))
+
+    await user.click(await effortField())
+    // The codex entry's own list, not the claude one beside it in the catalog.
+    expect(screen.queryByRole("option", { name: "max" })).toBeNull()
+    await user.click(await screen.findByRole("option", { name: "xhigh" }))
+
+    await user.click(screen.getByRole("button", { name: "Create profile" }))
+
+    await waitFor(() => expect(lastRequest("POST", "/v1/profiles")).toBeDefined())
+    expect(lastRequest("POST", "/v1/profiles")?.body).toMatchObject({
+      model: "codex:gpt-5.5-codex",
+      effort: "xhigh",
+    })
+  })
+
+  it("is disabled while the profile is on auto, which has no model to run at", async () => {
+    renderDialog(null)
+
+    expect(await effortField()).toHaveProperty("disabled", true)
+  })
+
+  it("opens on the profile's effort and clears it with the daemon's sentinel", async () => {
+    const user = userEvent.setup()
+    renderDialog(PROFILE)
+
+    const field = await effortField()
+    await waitFor(() => expect(field.textContent).toContain("high"))
+
+    await user.click(field)
+    await user.click(await screen.findByRole("option", { name: "auto (high)" }))
+    await user.click(screen.getByRole("button", { name: "Save changes" }))
+
+    await waitFor(() => {
+      expect(lastRequest("PUT", `/v1/profiles/${PROFILE.id}`)).toBeDefined()
+    })
+    expect(lastRequest("PUT", `/v1/profiles/${PROFILE.id}`)?.body?.effort).toBe("default")
+  })
+
+  /**
+   * The daemon drops the effort from a pin whose model moves, so the box has to
+   * travel with the model even where nobody touched it — otherwise the form
+   * says `high` and the store says the CLI's own.
+   */
+  it("sends the effort beside a model that was changed", async () => {
+    const user = userEvent.setup()
+    renderDialog(PROFILE)
+    await waitFor(async () => expect((await modelBox()).value).toBe("claude_code:claude-opus-5"))
+
+    // Backspaced down to a prefix and picked out of the catalog, never emptied:
+    // a box emptied is the profile back on auto, which takes the effort with
+    // it. This is a model moving under an effort that stays.
+    await user.click(await modelBox())
+    await user.keyboard("{Backspace>8/}")
+    await user.click(within(await listbox()).getByText("claude_code:claude-fable-5"))
+    await user.click(screen.getByRole("button", { name: "Save changes" }))
+
+    await waitFor(() => {
+      expect(lastRequest("PUT", `/v1/profiles/${PROFILE.id}`)).toBeDefined()
+    })
+    expect(lastRequest("PUT", `/v1/profiles/${PROFILE.id}`)?.body).toMatchObject({
+      model: "claude_code:claude-fable-5",
+      effort: "high",
+    })
   })
 })
 

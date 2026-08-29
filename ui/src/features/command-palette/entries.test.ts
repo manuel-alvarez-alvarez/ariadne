@@ -41,6 +41,7 @@ const PROFILE: ProfileDto = aProfile({
   name: "Reviewer (strict)",
   role: "reviewer",
   model: "codex:gpt-5",
+  effort: "high",
 })
 
 const SOURCE = {
@@ -112,6 +113,8 @@ describe("buildPaletteEntries", () => {
     expect(entry?.detail).toBe("Reviewer")
     // One keyword now carries both halves, since one string is the choice.
     expect(entry?.keywords).toContain("codex:gpt-5")
+    // The effort is searchable too: it is half of what that profile runs as.
+    expect(entry?.keywords).toContain("high")
     // The pick carries its subject: the screen expands that row.
     expect(entry?.target).toEqual({ kind: "page", path: `/profiles?expand=${PROFILE.id}` })
   })

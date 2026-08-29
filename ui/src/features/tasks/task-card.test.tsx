@@ -194,6 +194,19 @@ it("shows the engineer's model where it is not what the profile runs on", () => 
   expect(screen.getByText("codex:gpt-5.3-codex")).toBeDefined()
 })
 
+it("shows the effort beside the model it is run at", () => {
+  mountCard(undefined, { ...TASK, model: "codex:gpt-5.3-codex", effort: "xhigh" })
+
+  expect(screen.getByText("codex:gpt-5.3-codex @ xhigh")).toBeDefined()
+  expect(description()).toContain("codex:gpt-5.3-codex @ xhigh (overrides Engineer)")
+})
+
+it("counts the same model at another effort as an override, since it is one", () => {
+  mountCard(undefined, { ...TASK, model: ENGINEER.model, effort: "max" })
+
+  expect(screen.getByText(`${ENGINEER.model} @ max`)).toBeDefined()
+})
+
 it("says nothing where the task runs on exactly what its profile does", () => {
   mountCard(undefined, { ...TASK, model: ENGINEER.model })
 

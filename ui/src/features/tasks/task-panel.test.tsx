@@ -97,8 +97,9 @@ const TASK: TaskDto = {
   depends_on: [],
   engineer_profile_id: ENGINEER,
   model: "codex:gpt-5",
+  effort: "xhigh",
   reviewers: [
-    { profile_id: STRICT, model: "claude_code:claude-sonnet-5" },
+    { profile_id: STRICT, model: "claude_code:claude-sonnet-5", effort: "high" },
     // Assigned with no model at all: the agent CLI is resolved at spawn time
     // and it takes that CLI's default. A pin like any other.
     { profile_id: AUTO, model: null },
@@ -252,15 +253,23 @@ it("shows the engineer's pin, not what its profile says today", () => {
   mount()
 
   expect(fact("Engineer")).toContain("Builder")
-  expect(fact("Engineer")).toContain("codex:gpt-5")
+  // The model and, after an `@`, the effort it is run at: one pin, one line.
+  expect(fact("Engineer")).toContain("codex:gpt-5 @ xhigh")
   expect(fact("Engineer")).not.toContain("grok-4")
+})
+
+it("leaves the effort off a pin that names none, which is the CLI's own", () => {
+  mount({ ...TASK, effort: null })
+
+  expect(fact("Engineer")).toContain("codex:gpt-5")
+  expect(fact("Engineer")).not.toContain("@")
 })
 
 it("shows each reviewer slot's own pin, in review order", () => {
   mount()
 
   const reviewers = fact("Reviewers")
-  expect(reviewers).toContain("Strict · claude_code:claude-sonnet-5")
+  expect(reviewers).toContain("Strict · claude_code:claude-sonnet-5 @ high")
   // Both reviewer profiles now say `opencode:grok-4`; the slots do not.
   expect(reviewers).toContain("Second · auto")
   expect(reviewers).not.toContain("grok-4")

@@ -49,6 +49,7 @@ export function TaskFacts({ task }: { task: TaskDto }) {
         <ProfileSummary
           profileId={task.engineer_profile_id}
           model={task.model}
+          effort={task.effort}
           className="text-xs"
         />
       </Fact>
@@ -64,6 +65,7 @@ export function TaskFacts({ task }: { task: TaskDto }) {
                 key={reviewer.profile_id}
                 profileId={reviewer.profile_id}
                 model={reviewer.model}
+                effort={reviewer.effort}
               />
             ))}
           </span>
