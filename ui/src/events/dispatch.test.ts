@@ -12,14 +12,19 @@
  * it until the goals are read again. `goal_deleted`: the goal takes its tasks
  * and their sessions with it, and those are listed goal-first rather than
  * pruned entry by entry.
+ *
+ * The recovery path is asserted against the client the app actually ships
+ * ({@link createQueryClient}), because that is where it could go wrong: nothing
+ * in it goes stale on its own any more, so a reconnect that only marked entries
+ * stale would leave the screen showing what the daemon said before the gap.
  */
 
-import { QueryClient } from "@tanstack/react-query"
-import { describe, expect, it } from "vitest"
+import { QueryClient, QueryObserver } from "@tanstack/react-query"
+import { describe, expect, it, vi } from "vitest"
 
-import { type DomainEvent, type GoalDto, qk, type RepositoryDto } from "@/api"
+import { createQueryClient, type DomainEvent, type GoalDto, qk, type RepositoryDto } from "@/api"
 import { aGoal, aRepository } from "@/test/fixtures"
-import { dispatchDomainEvent } from "./dispatch"
+import { dispatchDomainEvent, invalidateEverything } from "./dispatch"
 
 const REPOSITORY: RepositoryDto = aRepository({
   id: "01JREPO00000000000000ARI",
@@ -110,5 +115,32 @@ describe("goal events", () => {
     // Its tasks and their sessions were deleted with it.
     expect(stale(queryClient, qk.tasks.list({ goal: GOAL.id }))).toBe(true)
     expect(stale(queryClient, qk.sessions.list({ goal: GOAL.id }))).toBe(true)
+  })
+})
+
+describe("invalidateEverything", () => {
+  it("refetches what is on screen after a gap in the stream", async () => {
+    const queryClient = createQueryClient()
+    const list = vi.fn().mockResolvedValue([REPOSITORY])
+    const observer = new QueryObserver(queryClient, {
+      queryKey: qk.repositories.list(),
+      queryFn: list,
+    })
+    const unsubscribe = observer.subscribe(() => {})
+    await vi.waitFor(() => expect(queryClient.getQueryData(qk.repositories.list())).toBeDefined())
+
+    invalidateEverything(queryClient)
+
+    await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(2))
+    unsubscribe()
+  })
+
+  it("marks what is off screen stale, so it is read again when it is next shown", () => {
+    const queryClient = createQueryClient()
+    queryClient.setQueryData(qk.goals.list(), [GOAL])
+
+    invalidateEverything(queryClient)
+
+    expect(stale(queryClient, qk.goals.list())).toBe(true)
   })
 })

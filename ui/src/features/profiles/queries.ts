@@ -45,13 +45,13 @@ export function profilesQueryOptions(role?: Role) {
  * agent select changes, and the details panel looks a stored model up by its
  * agent kind, so one cache entry serves every consumer. The catalog is curated
  * (plus a live `opencode models` probe) and changes about as often as a CLI is
- * installed, hence the generous staleTime.
+ * installed, so it is read once and then left alone, like every other read: the
+ * client refetches when something invalidates it, never on a clock.
  */
 export function modelsQueryOptions() {
   return queryOptions({
     queryKey: qk.models.list(),
     queryFn: () => unwrap(api().GET("/v1/models")),
-    staleTime: 15 * 60 * 1000,
   })
 }
 

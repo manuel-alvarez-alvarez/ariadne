@@ -13,6 +13,10 @@
  * redundant with the stream: REST can be up while the stream is down (the amber
  * connection state), and an action that only showed up once the stream came
  * back would look broken.
+ *
+ * What is *not* here is anything that refetches on a clock. The stream is the
+ * only source of freshness this client has, and every gap in it already ends in
+ * `invalidateEverything` — see {@link createQueryClient}.
  */
 
 import type { QueryKey } from "@tanstack/react-query"
@@ -47,12 +51,12 @@ export function healthQueryOptions() {
   })
 }
 
+/** The daemon's version, which cannot change under a running daemon. */
 export function versionQueryOptions() {
   return queryOptions({
     queryKey: qk.system.version(),
     queryFn: () => unwrap(api().GET("/v1/version")),
     retry: false,
-    staleTime: Number.POSITIVE_INFINITY,
   })
 }
 
@@ -254,17 +258,26 @@ export function shouldRetryQuery(failureCount: number, error: unknown): boolean 
 }
 
 /**
- * Defaults tuned for a client that also has a live event stream: the SSE
- * dispatcher patches and invalidates as things change, so polling and eager
- * refetching would only duplicate work.
+ * Defaults for a client whose freshness comes from the event stream alone.
+ *
+ * The dispatcher in `src/events/dispatch.ts` patches details and invalidates
+ * lists as the daemon changes, and every gap in the stream — a reconnect, a
+ * `resync` — ends in its `invalidateEverything`, which refetches what is on
+ * screen and marks the rest stale. So a cached answer that nothing invalidated
+ * is the daemon's current one, and no amount of elapsed time makes that less
+ * true: refetching it because the window regained focus, or because thirty
+ * seconds passed, would ask a question the stream has already answered.
+ *
+ * Hence data that never goes stale by itself and no refetch on focus. The two
+ * reads with no event behind them — the health probe and a task's diff — say so
+ * at their own call sites rather than making everything else pay for it.
  */
 export function createQueryClient(): QueryClient {
   return new QueryClient({
     defaultOptions: {
       queries: {
-        // The stream is what keeps data fresh; time-based staleness is a
-        // backstop for the window where the stream was down.
-        staleTime: 30_000,
+        staleTime: Number.POSITIVE_INFINITY,
+        refetchOnWindowFocus: false,
         retry: shouldRetryQuery,
       },
       mutations: {
