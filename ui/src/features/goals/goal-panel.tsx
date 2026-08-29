@@ -351,7 +351,6 @@ function GoalMetadata({ goal }: { goal: GoalDto }) {
         <TokenFigure
           usage={goal.usage.total}
           rows={goalUsageRows(goal.usage)}
-          caption
           className="text-xs"
         />
       </Fact>

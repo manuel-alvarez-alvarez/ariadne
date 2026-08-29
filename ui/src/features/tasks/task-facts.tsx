@@ -77,7 +77,6 @@ export function TaskFacts({ task }: { task: TaskDto }) {
         <TokenFigure
           usage={task.usage.total}
           rows={taskUsageRows(task.usage)}
-          caption
           className="text-xs"
         />
       </Fact>

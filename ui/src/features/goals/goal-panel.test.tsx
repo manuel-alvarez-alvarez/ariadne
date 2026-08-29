@@ -94,15 +94,15 @@ async function hint(value: HTMLElement): Promise<HTMLElement> {
 it("shows the goal's total among its facts, as the pair it is", () => {
   mount()
 
-  // The pair, and under it the caption that says what the bare percentage
-  // inside it is a share of.
-  expect(detail("Tokens").textContent).toBe("1.2M in, 89% cached, 45k out89% cached")
+  // The pair on its own line: both halves, and the share the cache served of
+  // the input riding on the half it belongs to.
+  expect(detail("Tokens").textContent).toBe("1.2M in, 89% cached, 45k out")
 })
 
 it("says zero for a goal whose agents have reported nothing", () => {
   mount(aGoal())
 
-  expect(detail("Tokens").textContent).toBe("0 in, 0% cached, 0 out0% cached")
+  expect(detail("Tokens").textContent).toBe("0 in, 0% cached, 0 out")
 })
 
 it("breaks the total down by the role that spent it, behind the figure", async () => {
