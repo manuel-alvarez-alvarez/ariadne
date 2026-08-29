@@ -23,8 +23,8 @@
  *
  * The last two are about the panel fitting in 48rem: its header keeps the
  * actions on the title row whatever the status offers, and its sessions tab is
- * the folded four-column table rather than the screen's seven — the id under
- * the role it opens, and what the session spent behind its last activity.
+ * the folded four-column table rather than the screen's seven — the id on the
+ * role's own line, and what the session spent behind its last activity.
  *
  * Everything is seeded into the query cache: what the daemon returns is
  * `queries.ts`'s story, and the tabs are `task-panel.tsx`'s own.
@@ -406,8 +406,21 @@ it("folds the sessions table down to what a panel holds", async () => {
   // than taking one of its own, and the tokens have none at all.
   const cells = within(row).getAllByRole("cell")
   expect(cells).toHaveLength(4)
-  expect(cells[0]?.textContent).toContain("Engineer")
-  expect(cells[0]?.textContent).toContain(shortId(SESSION.id))
+  const session = cells[0]
+  if (!session) throw new Error("no session cell in the row")
+  expect(session.textContent).toContain("Engineer")
+  expect(session.textContent).toContain(shortId(SESSION.id))
+
+  // And it shares it on one line: a single flex row holds the role and the id
+  // both, with nothing block-level between them to push the id underneath.
+  const line = session.firstElementChild
+  const id = within(session).getByText(shortId(SESSION.id))
+  expect(line?.className).toContain("flex")
+  expect(line?.contains(open)).toBe(true)
+  expect(line?.contains(id)).toBe(true)
+  for (const wrapper of [open.parentElement, id.parentElement]) {
+    expect(wrapper?.className).not.toContain("block")
+  }
 
   // What it spent is behind the last activity, with the two stamps that were
   // already there — the figure is the plain pair, since a hint cannot hold a

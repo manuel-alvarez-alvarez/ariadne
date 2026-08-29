@@ -9,8 +9,9 @@
  * Four columns in a panel and seven on the screen, out of the same rows: a
  * 48rem panel does not hold what a window holds, and the panel's table was
  * cutting its last heading to "Las…" at every width. So in a panel the session
- * *is* one cell — the role it ran as, with its id under it — and what it spent
- * rides in the hint behind its last activity, beside the two stamps that were
+ * *is* one cell — the role it ran as, with its id after it on the same line,
+ * small and quiet enough to read as the aside it is — and what it spent rides
+ * in the hint behind its last activity, beside the two stamps that were
  * already there. What the agent runs on rides along with the profile and the
  * review round with the role, in either variant, and the end of the session
  * with its last activity: all three were worth a column only for the sessions
@@ -260,6 +261,16 @@ function SessionRow({
   selected: boolean
   onSelect: () => void
 }) {
+  const sessionId = (
+    <CopyableIdMenu
+      value={session.id}
+      display={shortId}
+      label="session id"
+      entries={sessionCopyEntries(session.id)}
+      className={cn("text-xs", !showContext && "text-muted-foreground")}
+    />
+  )
+
   return (
     <TableRow
       className="cursor-pointer"
@@ -282,17 +293,18 @@ function SessionRow({
       {/* These ids are read here on their way into a terminal, and the row is
           the only place the whole list of them is on screen at once, so the
           copy menu is worth the one thing on the row that is not a pick.
-          In a panel it shares its cell with the role above it; on the screen
-          it has one of its own, and gives it up below `lg`. */}
-      <TableCell className={cn(showContext ? FOLDS_AWAY : "align-top")}>
-        {showContext ? null : <SessionRole session={session} onSelect={onSelect} />}
-        <CopyableIdMenu
-          value={session.id}
-          display={shortId}
-          label="session id"
-          entries={sessionCopyEntries(session.id)}
-          className={cn("text-xs", !showContext && "text-muted-foreground")}
-        />
+          In a panel it follows the role on the same line, small and quiet
+          enough that the role is still what the cell reads as; on the screen
+          it has a cell of its own, and gives it up below `lg`. */}
+      <TableCell className={cn(showContext && FOLDS_AWAY)}>
+        {showContext ? (
+          sessionId
+        ) : (
+          <span className="flex items-center gap-2">
+            <SessionRole session={session} onSelect={onSelect} />
+            {sessionId}
+          </span>
+        )}
       </TableCell>
       {showContext ? <ContextCell session={session} goal={goal} task={task} /> : null}
       {showContext ? (
@@ -341,10 +353,7 @@ function SessionRow({
           in every variant rather than appearing and disappearing with a
           breakpoint: it is the plain pair, not a figure of its own, since a
           tooltip inside a tooltip is not a thing. */}
-      {/* Top-aligned against the two-line cell a panel's row leads with. */}
-      <TableCell
-        className={cn("text-right tabular-nums text-muted-foreground", !showContext && "align-top")}
-      >
+      <TableCell className="text-right tabular-nums text-muted-foreground">
         <When
           at={session.last_activity_at}
           format="age"
@@ -374,10 +383,14 @@ function SessionRow({
  * row: `position` on a `<tr>` is undefined per spec, and an overlay that
  * resolves against the table container instead swallows every other row's
  * clicks.
+ *
+ * The plain span around the pair is what keeps the round with the role: in a
+ * panel the two sit inside the cell's flex row, where a round of its own would
+ * be an item of its own and lose the space in front of it.
  */
 function SessionRole({ session, onSelect }: { session: SessionDto; onSelect: () => void }) {
   return (
-    <span className="block">
+    <span>
       <button
         type="button"
         onClick={onSelect}
