@@ -8,6 +8,13 @@
  * action's result should be on screen before the event that confirms it
  * arrives — and because the event never arrives at all when the stream is
  * down.
+ *
+ * Only the session calls are here. A session view also reads the goal, the
+ * task and the profiles behind the ids it carries, and those are asked for
+ * where they are owned (`goals/queries.ts`, `tasks/queries.ts`,
+ * `profiles/queries.ts`) rather than declared a second time here: the key is
+ * the same either way, so a second declaration bought nothing and was one
+ * `select` or one `staleTime` away from disagreeing with the original.
  */
 
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query"
@@ -63,32 +70,6 @@ export function sessionQueryOptions(id: string) {
   return queryOptions({
     queryKey: qk.sessions.detail(id),
     queryFn: () => unwrap(api().GET("/v1/sessions/{id}", { params: { path: { id } } })),
-  })
-}
-
-/**
- * Profiles, goals and tasks are read only to turn the ids on a session into
- * names. They are owned by other screens; these keys are the shared ones from
- * `qk`, so whichever screen loads them first serves the others.
- */
-export function profilesQueryOptions() {
-  return queryOptions({
-    queryKey: qk.profiles.list(),
-    queryFn: () => unwrap(api().GET("/v1/profiles")),
-  })
-}
-
-export function goalQueryOptions(id: string) {
-  return queryOptions({
-    queryKey: qk.goals.detail(id),
-    queryFn: () => unwrap(api().GET("/v1/goals/{id}", { params: { path: { id } } })),
-  })
-}
-
-export function taskQueryOptions(id: string) {
-  return queryOptions({
-    queryKey: qk.tasks.detail(id),
-    queryFn: () => unwrap(api().GET("/v1/tasks/{id}", { params: { path: { id } } })),
   })
 }
 

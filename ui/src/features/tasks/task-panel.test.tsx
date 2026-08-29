@@ -261,7 +261,8 @@ it("shows the task's total, as the daemon aggregated it", () => {
 
   // The share is read off the exact counts, not the rounded halves beside
   // it: 1,100,000 of 1,234,567 is 89%, where 1.1M of 1.2M would say 92%.
-  expect(fact("Tokens")).toBe("1.2M in, 89% cached, 45k out")
+  // The caption under the pair is what the bare percentage is a share of.
+  expect(fact("Tokens")).toBe("1.2M in, 89% cached, 45k out89% cached")
 })
 
 it("says zero for a task whose agents have reported nothing", () => {
@@ -276,7 +277,7 @@ it("says zero for a task whose agents have reported nothing", () => {
 
   // A share of zero rather than a gap: nothing was sent, so nothing was
   // cached, and that is an answer.
-  expect(fact("Tokens")).toBe("0 in, 0% cached, 0 out")
+  expect(fact("Tokens")).toBe("0 in, 0% cached, 0 out0% cached")
 })
 
 it("breaks the total down by the agent that spent it, reviewers named", async () => {

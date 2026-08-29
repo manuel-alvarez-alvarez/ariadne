@@ -16,6 +16,7 @@ import { useSearchParams } from "react-router-dom"
 
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
+import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -85,66 +86,65 @@ export function GoalsListPage() {
   // fixed-height column rather than a page that grows.
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h1 className="font-heading text-lg font-semibold">Goals</h1>
-          <p className="text-sm text-muted-foreground">
-            What Ariadne is working on, and what it has finished.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {/* The one narrowing anybody makes by hand, as one click rather than
-              two checkboxes: the board opens on the work that is still moving
-              (see `DEFAULT_GOAL_STATUS_FILTER`), and this is how the rest of
-              it comes back. The menu beside it still spells any selection. */}
-          <Button
-            variant={finished ? "secondary" : "outline"}
-            aria-pressed={finished}
-            className="font-normal"
-            onClick={() => filterBy(withFinished(statuses, !finished))}
-          >
-            Show finished
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <Button
-                  variant="outline"
-                  aria-label="Filter by status"
-                  className="w-40 justify-between font-normal"
-                />
-              }
+      <PageHeader
+        title="Goals"
+        description="What Ariadne is working on, and what it has finished."
+        actions={
+          <>
+            {/* The one narrowing anybody makes by hand, as one click rather
+                than two checkboxes: the board opens on the work that is still
+                moving (see `DEFAULT_GOAL_STATUS_FILTER`), and this is how the
+                rest of it comes back. The menu beside it still spells any
+                selection. */}
+            <Button
+              variant={finished ? "secondary" : "outline"}
+              aria-pressed={finished}
+              className="font-normal"
+              onClick={() => filterBy(withFinished(statuses, !finished))}
             >
-              {summarize(statuses)}
-              <ChevronDownIcon className="text-muted-foreground" />
-            </DropdownMenuTrigger>
-            {/* Checkbox items stay open on a click, which is what a filter
-                built out of several of them needs. */}
-            <DropdownMenuContent align="end" className="w-40">
-              <DropdownMenuCheckboxItem
-                checked={statuses.length === 0}
-                onCheckedChange={() => filterBy(NO_STATUS_FILTER)}
+              Show finished
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    variant="outline"
+                    aria-label="Filter by status"
+                    className="w-40 justify-between font-normal"
+                  />
+                }
               >
-                All statuses
-              </DropdownMenuCheckboxItem>
-              <DropdownMenuSeparator />
-              {GOAL_STATUSES.map((status) => (
+                {summarize(statuses)}
+                <ChevronDownIcon className="text-muted-foreground" />
+              </DropdownMenuTrigger>
+              {/* Checkbox items stay open on a click, which is what a filter
+                built out of several of them needs. */}
+              <DropdownMenuContent align="end" className="w-40">
                 <DropdownMenuCheckboxItem
-                  key={status}
-                  checked={statuses.includes(status)}
-                  onCheckedChange={() => filterBy(toggleStatusFilter(statuses, status))}
+                  checked={statuses.length === 0}
+                  onCheckedChange={() => filterBy(NO_STATUS_FILTER)}
                 >
-                  {GOAL_STATUS_META[status].label}
+                  All statuses
                 </DropdownMenuCheckboxItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <Button onClick={() => setCreateOpen(true)}>
-            <PlusIcon />
-            New goal
-          </Button>
-        </div>
-      </div>
+                <DropdownMenuSeparator />
+                {GOAL_STATUSES.map((status) => (
+                  <DropdownMenuCheckboxItem
+                    key={status}
+                    checked={statuses.includes(status)}
+                    onCheckedChange={() => filterBy(toggleStatusFilter(statuses, status))}
+                  >
+                    {GOAL_STATUS_META[status].label}
+                  </DropdownMenuCheckboxItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Button onClick={() => setCreateOpen(true)}>
+              <PlusIcon />
+              New goal
+            </Button>
+          </>
+        }
+      />
 
       {/* Above the lanes and outside the filter: what is stuck stays in sight
           whatever the board is narrowed to. */}

@@ -34,16 +34,19 @@ function mount(profileId: string) {
   })
 }
 
-it("shows the name, linking to the profile's row", () => {
+it("shows the name, linking to the profile's row", async () => {
   mount(PROFILE.id)
 
   const link = screen.getByRole("link", { name: "Builder" })
   expect(link.getAttribute("href")).toBe(paths.profile(PROFILE.id))
-  // The name leads the hover: a mention cut to `Buil…` in a table cell is
-  // hovered for the half that was cut off, not for a ULID. The id follows it,
-  // off the clipboard but not out of reach.
-  expect(link.getAttribute("title")).toBe(`Builder · ${PROFILE.id}`)
   expect(screen.queryByRole("button", { name: /copy/i })).toBeNull()
+
+  // The name leads the hint: a mention cut to `Buil…` in a table cell is
+  // hovered for the half that was cut off, not for a ULID. The id follows it,
+  // off the clipboard but not out of reach — and the hint opens on the link's
+  // own focus rather than on a hover alone.
+  link.focus()
+  expect(await screen.findByText(`Builder · ${PROFILE.id}`)).toBeDefined()
 })
 
 it("falls back to the id of a profile the list does not have", () => {

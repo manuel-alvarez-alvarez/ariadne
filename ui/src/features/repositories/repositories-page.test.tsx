@@ -126,7 +126,8 @@ describe("RepositoriesPage", () => {
     stubDaemon([])
     renderScreen(<RepositoriesPage />)
 
-    expect(await screen.findByText("No repositories yet")).toBeDefined()
+    // The same words the new-goal dialog uses for the same state.
+    expect(await screen.findByText("No repositories registered")).toBeDefined()
 
     // Two buttons say it — the header's and the empty state's own.
     await user.click(registerButton())

@@ -62,14 +62,25 @@ const FIGURE = "inline-flex items-center gap-2 tabular-nums"
 export function TokenFigure({
   usage,
   rows,
+  caption = false,
   className,
 }: {
   usage: TokenUsage
   /** The agents behind a total, listed under its named halves in the hint. */
   rows?: UsageRow[]
+  /**
+   * Says what the percentage is a percentage *of*, under the figure.
+   *
+   * For the facts cards, which have the line to spare and are where the figure
+   * is read rather than scanned: "61%" beside a count is a share of something,
+   * and which something is the one thing the figure cannot say in the room it
+   * has. Left off in a table cell, a lane header or a board card, where the
+   * line does not exist and the hint is a hover away.
+   */
+  caption?: boolean
   className?: string
 }) {
-  return (
+  const figure = (
     <Tooltip>
       <TooltipTrigger render={<span className={cn(FIGURE, className)} />}>
         <TokenHalves usage={usage} />
@@ -94,6 +105,20 @@ export function TokenFigure({
         ) : null}
       </TooltipContent>
     </Tooltip>
+  )
+
+  if (!caption) return figure
+
+  return (
+    <span className="flex flex-col items-start gap-0.5">
+      {figure}
+      {/* The share again, this time as what it is. It is not read out a second
+          time: the figure's own text already says "cached" for a screen
+          reader, and this is the sighted half of the same sentence. */}
+      <span className="text-xs text-muted-foreground" aria-hidden>
+        {cachedShare(usage)} cached
+      </span>
+    </span>
   )
 }
 

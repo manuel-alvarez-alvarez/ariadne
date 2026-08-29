@@ -21,10 +21,10 @@
 
 import { screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { expect, it } from "vitest"
+import { describe, expect, it } from "vitest"
 
-import { type GoalDto, type ProfileDto, qk } from "@/api"
-import { aGoal, aProfile } from "@/test/fixtures"
+import { type GoalDto, type ProfileDto, qk, type SessionDto, type TaskDto } from "@/api"
+import { aGoal, aProfile, aSession, aTask } from "@/test/fixtures"
 import { renderScreen } from "@/test/harness"
 import { GoalPanel } from "./goal-panel"
 
@@ -47,14 +47,29 @@ const PLANNER: ProfileDto = aProfile({
   model: "opencode:grok-4",
 })
 
-function mount(goal: GoalDto = GOAL) {
+/**
+ * The goal's tasks, and the sessions the daemon holds for it — which is every
+ * role's, because the daemon takes no role filter and the tab narrows the one
+ * list it answers with (see `sessions/queries.ts`).
+ */
+function mount(
+  goal: GoalDto = GOAL,
+  { tasks = [], sessions = [] }: { tasks?: TaskDto[]; sessions?: SessionDto[] } = {},
+) {
   renderScreen(<GoalPanel goalId={goal.id} onClose={() => {}} />, {
     route: `/goals?goal=${goal.id}`,
     seed: (client) => {
       client.setQueryData(qk.goals.detail(goal.id), goal)
       client.setQueryData(qk.profiles.list({}), [PLANNER])
+      client.setQueryData(qk.tasks.list({ goal: goal.id }), tasks)
+      client.setQueryData(qk.sessions.list({ goal: goal.id }), sessions)
     },
   })
+}
+
+/** A tab by its name, whatever count is sitting on it. */
+function tab(name: string): HTMLElement {
+  return screen.getByRole("tab", { name: new RegExp(`^${name}`) })
 }
 
 /** The value of a fact of the metadata card, by the label above it. */
@@ -79,13 +94,15 @@ async function hint(value: HTMLElement): Promise<HTMLElement> {
 it("shows the goal's total among its facts, as the pair it is", () => {
   mount()
 
-  expect(detail("Tokens").textContent).toBe("1.2M in, 89% cached, 45k out")
+  // The pair, and under it the caption that says what the bare percentage
+  // inside it is a share of.
+  expect(detail("Tokens").textContent).toBe("1.2M in, 89% cached, 45k out89% cached")
 })
 
 it("says zero for a goal whose agents have reported nothing", () => {
   mount(aGoal())
 
-  expect(detail("Tokens").textContent).toBe("0 in, 0% cached, 0 out")
+  expect(detail("Tokens").textContent).toBe("0 in, 0% cached, 0 out0% cached")
 })
 
 it("breaks the total down by the role that spent it, behind the figure", async () => {
@@ -120,7 +137,7 @@ it("breaks the total down by the role that spent it, behind the figure", async (
 
 it("keeps the sessions tab to the sessions, with no breakdown above them", async () => {
   mount()
-  await userEvent.setup().click(screen.getByRole("tab", { name: "Sessions" }))
+  await userEvent.setup().click(tab("Planner sessions"))
 
   // The figure in the facts carries the total and its split; a card repeating
   // both above a table whose rows carry their own figures said it all twice.
@@ -142,4 +159,68 @@ it("says `auto` for a goal that pinned nothing, rather than the profile's own", 
   mount(aGoal({ model: null }))
 
   expect(detail("Planner").textContent).toContain("auto")
+})
+
+describe("which tab the panel opens on", () => {
+  it("opens a planned goal on its thread, where the plan is being written", () => {
+    mount(aGoal({ status: "planning" }))
+
+    expect(tab("Thread")).toHaveProperty("ariaSelected", "true")
+  })
+
+  it("opens every other goal on its tasks, which is what a goal comes down to", () => {
+    mount(aGoal({ status: "active" }))
+
+    expect(tab("Tasks")).toHaveProperty("ariaSelected", "true")
+  })
+
+  it("still opens where the URL says, whatever the status", () => {
+    const goal = aGoal({ status: "planning", description: "The plan so far." })
+    renderScreen(<GoalPanel goalId={goal.id} onClose={() => {}} />, {
+      route: `/goals?goal=${goal.id}&tab=description`,
+      seed: (client) => client.setQueryData(qk.goals.detail(goal.id), goal),
+    })
+
+    expect(tab("Description")).toHaveProperty("ariaSelected", "true")
+  })
+})
+
+describe("what the tabs are called, and how much is behind them", () => {
+  it("counts the tasks and the planner sessions, and only the planner ones", () => {
+    mount(GOAL, {
+      tasks: [
+        aTask({ id: "01JTASK000000000000000000A" }),
+        aTask({ id: "01JTASK000000000000000000B" }),
+      ],
+      sessions: [
+        aSession({ id: "01JSESS000000000000000PLAN", role: "planner", task_id: null }),
+        aSession({ id: "01JSESS000000000000000ENG1", role: "engineer" }),
+        aSession({ id: "01JSESS000000000000000REV1", role: "reviewer" }),
+      ],
+    })
+
+    expect(tab("Tasks").textContent).toBe("Tasks2")
+    // The tab is the goal's own agent, so it says so — and a goal with four
+    // sessions under it has one planner session, not four.
+    expect(tab("Planner sessions").textContent).toBe("Planner sessions1")
+  })
+
+  it("says nothing about a count it does not have yet", () => {
+    const goal = aGoal()
+    renderScreen(<GoalPanel goalId={goal.id} onClose={() => {}} />, {
+      route: `/goals?goal=${goal.id}`,
+      seed: (client) => client.setQueryData(qk.goals.detail(goal.id), goal),
+    })
+
+    // A count that starts at zero and jumps says the goal is empty for as long
+    // as the request takes.
+    expect(tab("Tasks").textContent).toBe("Tasks")
+  })
+
+  it("names an empty planner tab for the role it lists, not for the goal", async () => {
+    mount(GOAL, { sessions: [aSession({ role: "engineer" })] })
+    await userEvent.setup().click(tab("Planner sessions"))
+
+    expect(screen.getByText("No planner session yet")).toBeDefined()
+  })
 })

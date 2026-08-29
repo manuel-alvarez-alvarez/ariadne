@@ -18,6 +18,7 @@ import { useEffect, useRef, useState } from "react"
 
 import type { SessionStatus } from "@/api"
 import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/format"
 import { useBaseUrl } from "@/stores/settings"
 
@@ -142,16 +143,22 @@ export function TerminalView({
               Click to type into the agent's terminal
             </span>
           ) : null}
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            onClick={() => onExpandedChange(!expanded)}
-            aria-pressed={expanded}
-            aria-label={expandLabel}
-            title={expandLabel}
-          >
-            {expanded ? <Minimize2Icon /> : <Maximize2Icon />}
-          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  onClick={() => onExpandedChange(!expanded)}
+                  aria-pressed={expanded}
+                  aria-label={expandLabel}
+                />
+              }
+            >
+              {expanded ? <Minimize2Icon /> : <Maximize2Icon />}
+            </TooltipTrigger>
+            <TooltipContent>{expandLabel}</TooltipContent>
+          </Tooltip>
         </div>
       </div>
       {/*

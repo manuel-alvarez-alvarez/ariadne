@@ -40,13 +40,17 @@ import { Fact, FactList } from "@/components/fact-list"
 import { TokenFigure } from "@/components/token-figure"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { When } from "@/components/when"
+// Both read at the module that owns them rather than through their feature's
+// barrel: `@/features/tasks` re-exports the task panel, whose sessions tab
+// leads back here, and the round trip is an import cycle.
+import { goalQueryOptions } from "@/features/goals/queries"
 import { formatModelRef } from "@/features/profiles/model-ref"
 import { ProfileSummary } from "@/features/profiles/profile-summary"
+import { taskQueryOptions } from "@/features/tasks/queries"
 import { sessionCopyEntries } from "@/lib/clipboard"
 import { ROLE_LABELS } from "@/lib/format"
 import { paths, useTaskPanelTo, useTerminalFocusRequest } from "@/routes/paths"
 
-import { goalQueryOptions, taskQueryOptions } from "./queries"
 import { SessionActions } from "./session-actions"
 import { SessionActivity } from "./session-activity"
 import { SessionBlockedBanner } from "./session-blocked-banner"

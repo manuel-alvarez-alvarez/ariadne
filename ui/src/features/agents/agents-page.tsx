@@ -30,7 +30,10 @@ import { agentConfigsQueryOptions } from "./queries"
 const COLUMNS = [
   { header: "Agent" },
   { header: "Extra flags" },
-  { header: "Defaults" },
+  // What the column says of each row is "Customized" or "Default", so it is
+  // headed by what those words are about — and they are the pair the prompt
+  // sections use for the same question, rather than a third wording.
+  { header: "Flags" },
   { className: "w-12 text-right" },
 ]
 
@@ -107,7 +110,7 @@ function AgentRow({ config, onEdit }: { config: AgentConfigDto; onEdit: () => vo
         {customized ? (
           <Badge variant="secondary">Customized</Badge>
         ) : (
-          <span className="text-muted-foreground">Unchanged</span>
+          <span className="text-muted-foreground">Default</span>
         )}
       </TableCell>
       <TableCell className="text-right">

@@ -26,8 +26,8 @@ import type { ProfileDto } from "@/api"
 import { ErrorState } from "@/components/error-state"
 import { Badge } from "@/components/ui/badge"
 import { FieldDescription, FieldTitle } from "@/components/ui/field"
-import { Skeleton } from "@/components/ui/skeleton"
 
+import { LoadingPrompts } from "./loading-prompts"
 import { PROMPT_KIND_HINTS, PROMPT_KIND_LABELS } from "./profile-labels"
 import { profilePromptsQueryOptions } from "./queries"
 
@@ -105,16 +105,6 @@ function ReadOnlyPrompt({
         </pre>
       </section>
       <FieldDescription className="text-xs">{hint}</FieldDescription>
-    </div>
-  )
-}
-
-/** Standing in for prompts whose count is not known until they arrive. */
-function LoadingPrompts() {
-  return (
-    <div className="flex flex-col gap-3">
-      <Skeleton className="h-4 w-40" />
-      <Skeleton className="h-24 w-full" />
     </div>
   )
 }

@@ -16,18 +16,20 @@ import { useQuery } from "@tanstack/react-query"
 import { PencilIcon, PlusIcon, Trash2Icon } from "lucide-react"
 import { useState } from "react"
 
-import type { MergeStrategy, RepositoryDto } from "@/api"
+import type { RepositoryDto } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
 import { DataTable, RowAction } from "@/components/data-table"
-import { EmptyState } from "@/components/empty-state"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { TableCell, TableRow } from "@/components/ui/table"
 import { plural } from "@/lib/format"
 
 import { DeleteRepositoryDialog } from "./delete-repository-dialog"
+import { NoRepositories as SharedNoRepositories } from "./no-repositories"
 import { repositoriesQueryOptions } from "./queries"
-import { RepositoryFormDialog } from "./repository-form-dialog"
+// The strategies are named once, by the form that sets them: a column
+// spelling the same stored value differently is how the two drifted apart.
+import { MERGE_STRATEGY_META, RepositoryFormDialog } from "./repository-form-dialog"
 
 const COLUMNS = [
   { header: "Path" },
@@ -38,12 +40,6 @@ const COLUMNS = [
   { header: "Description", className: "min-w-48" },
   { className: "w-20 text-right" },
 ]
-
-/** How an approved task reaches the base branch, in the column's own words. */
-const MERGE_STRATEGY_LABELS: Record<MergeStrategy, string> = {
-  direct: "Direct",
-  pull_request: "Pull request",
-}
 
 export function RepositoriesPage() {
   // The dialogs keep their subject after closing so the exit animation still
@@ -141,7 +137,7 @@ function RepositoryRow({
         <CopyableId value={repository.base_branch} label="base branch" truncate="middle" />
       </TableCell>
       <TableCell className="text-xs text-muted-foreground">
-        {MERGE_STRATEGY_LABELS[repository.merge_strategy]}
+        {MERGE_STRATEGY_META[repository.merge_strategy].label}
       </TableCell>
       <TableCell className="min-w-48 whitespace-normal text-muted-foreground">
         {repository.description ?? <span className="italic">no description</span>}
@@ -156,11 +152,10 @@ function RepositoryRow({
 
 function NoRepositories({ onCreate }: { onCreate: () => void }) {
   return (
-    <EmptyState
+    <SharedNoRepositories
       // The table's own frame is the box here.
       className="border-0 py-12"
-      title="No repositories yet"
-      description="A goal is created against registered repositories, so register the first one here, or with ariadne repo add."
+      // This is the screen that registers them, so the way out is the form.
       action={
         <Button variant="outline" size="sm" onClick={onCreate}>
           <PlusIcon />

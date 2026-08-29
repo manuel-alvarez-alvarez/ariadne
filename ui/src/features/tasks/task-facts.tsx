@@ -16,6 +16,7 @@ import type { TaskDto } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
 import { Fact, FactList } from "@/components/fact-list"
 import { TokenFigure, taskUsageRows } from "@/components/token-figure"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { ProfileSummary } from "@/features/profiles/profile-summary"
 import { cn, shortSha } from "@/lib/format"
 import { useTaskPanelTo } from "@/routes/paths"
@@ -76,6 +77,7 @@ export function TaskFacts({ task }: { task: TaskDto }) {
         <TokenFigure
           usage={task.usage.total}
           rows={taskUsageRows(task.usage)}
+          caption
           className="text-xs"
         />
       </Fact>
@@ -104,15 +106,23 @@ export function TaskFacts({ task }: { task: TaskDto }) {
         <Fact label="Pull request">
           <span className="flex min-w-0 items-center gap-1.5">
             <GitPullRequestIcon className="size-3.5 shrink-0 text-muted-foreground" />
-            <a
-              href={task.pr_url}
-              target="_blank"
-              rel="noreferrer"
-              className="min-w-0 truncate text-xs underline-offset-3 hover:underline"
-              title={task.pr_url}
-            >
-              {task.pr_url}
-            </a>
+            {/* Truncated to the card's width, so the whole URL is the hint —
+                a real one, reachable from the link's own focus. */}
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <a
+                    href={task.pr_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="min-w-0 truncate text-xs underline-offset-3 hover:underline"
+                  />
+                }
+              >
+                {task.pr_url}
+              </TooltipTrigger>
+              <TooltipContent>{task.pr_url}</TooltipContent>
+            </Tooltip>
           </span>
         </Fact>
       ) : null}
@@ -159,13 +169,17 @@ function Dependencies({ ids }: { ids: string[] }) {
 function DependencyLink({ id, title }: { id: string; title?: string }) {
   const to = useTaskPanelTo(id)
   return (
-    <Link
-      to={to}
-      replace
-      className="truncate text-xs underline-offset-3 hover:underline"
-      title={id}
-    >
-      {title ?? id}
-    </Link>
+    // The id behind the name, for the terminal the reader is about to type it
+    // into — as a hint the keyboard reaches, like every other one in the app.
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Link to={to} replace className="truncate text-xs underline-offset-3 hover:underline" />
+        }
+      >
+        {title ?? id}
+      </TooltipTrigger>
+      <TooltipContent className="font-mono">{id}</TooltipContent>
+    </Tooltip>
   )
 }

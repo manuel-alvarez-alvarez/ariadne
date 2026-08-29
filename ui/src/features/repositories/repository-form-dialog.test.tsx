@@ -100,7 +100,9 @@ describe("registering a repository", () => {
 
     await user.type(screen.getByLabelText("Path"), "/home/me/dev/new")
     await user.click(screen.getByLabelText("Merge strategy"))
-    await user.click(await screen.findByRole("option", { name: "Publish a pull or merge request" }))
+    // The option is named the way the repositories table names the same stored
+    // value; what it does is the line under it.
+    await user.click(await screen.findByRole("option", { name: /^Pull request/ }))
     await user.click(screen.getByRole("button", { name: "Register repository" }))
 
     await waitFor(() => {

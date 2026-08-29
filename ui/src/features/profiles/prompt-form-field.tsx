@@ -9,15 +9,20 @@
  * badge and the button read the *stored* state rather than what is in the box:
  * they are about what the daemon holds, which is what a restore acts on.
  *
+ * And it is why it asks first. Every other control in this dialog is undone by
+ * closing it; this one is not, so the question says the write happens now and
+ * that dismissing the form afterwards will not take it back.
+ *
  * A profile carries up to five prompts and every one of them is long, so they
  * are folded away by default. Collapsed sections are unmounted; their text
  * lives in the form's state, not in the textarea, so folding one shut keeps
  * whatever was typed into it.
  */
 
-import { ChevronDownIcon, ChevronRightIcon, RotateCcwIcon } from "lucide-react"
-import { type ReactNode, useId } from "react"
+import { ChevronDownIcon, ChevronRightIcon, Undo2Icon } from "lucide-react"
+import { type ReactNode, useId, useState } from "react"
 
+import { ConfirmDialog } from "@/components/confirm-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { FieldDescription, FieldError } from "@/components/ui/field"
@@ -60,6 +65,7 @@ export function PromptFormField({
   placeholder,
 }: PromptFormFieldProps) {
   const fieldId = useId()
+  const [confirming, setConfirming] = useState(false)
 
   return (
     <section
@@ -92,9 +98,9 @@ export function PromptFormField({
             aria-label={`Restore ${label} to default`}
             // Already on its default: there is nothing to drop.
             disabled={isDefault || resetting}
-            onClick={onReset}
+            onClick={() => setConfirming(true)}
           >
-            <RotateCcwIcon />
+            <Undo2Icon />
             Restore default
           </Button>
         ) : null}
@@ -119,6 +125,31 @@ export function PromptFormField({
           )}
         </div>
       ) : null}
+
+      {/* The one control in this form that acts before the form is submitted,
+          so it is the one that asks — and the question says exactly that. The
+          dialog goes on the confirming click: what the restore may fail with is
+          reported by the caller, in the alert the rest of this dialog's
+          failures already land in. */}
+      <ConfirmDialog
+        open={confirming}
+        onClose={() => setConfirming(false)}
+        title={`Restore ${label.toLowerCase()} to its default?`}
+        description={
+          <>
+            The text this profile has of its own is dropped and the{" "}
+            <span className="font-medium text-foreground">{label.toLowerCase()}</span> goes back to
+            the default of its role. It is written straight away: closing the form without saving
+            does not put it back.
+          </>
+        }
+        confirmLabel="Restore default"
+        destructive
+        onConfirm={() => {
+          setConfirming(false)
+          onReset?.()
+        }}
+      />
     </section>
   )
 }

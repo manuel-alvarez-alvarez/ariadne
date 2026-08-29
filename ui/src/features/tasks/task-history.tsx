@@ -17,7 +17,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { When } from "@/components/when"
 import { cn } from "@/lib/format"
 import { taskTransitionsQueryOptions } from "./queries"
-import { displayLabel, TASK_STATUS_META } from "./status"
+import { TASK_STATUS_META } from "./status"
 
 export function TaskHistory({ taskId }: { taskId: string }) {
   const transitions = useQuery(taskTransitionsQueryOptions(taskId))
@@ -86,8 +86,18 @@ function meta(status: string) {
   return TASK_STATUS_META[status as TaskStatus] as (typeof TASK_STATUS_META)[TaskStatus] | undefined
 }
 
+/**
+ * The status the daemon recorded, spelled as itself.
+ *
+ * Not the board's composition ("Pending · Ready"): the fold exists so `ready`
+ * and `changes_requested` have a column to be drawn in, and a log of
+ * transitions has no columns. Composed here it read as a mistake — a task went
+ * from "Pending" to "Pending · Ready", and from "In progress · Changes
+ * requested" back to "In progress" — where what actually happened is that it
+ * became ready, and that a round of review asked for changes.
+ */
 function label(status: string): string {
-  return meta(status) ? displayLabel(status as TaskStatus) : status
+  return meta(status)?.label ?? status
 }
 
 function dotFor(status: string): string {

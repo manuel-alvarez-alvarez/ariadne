@@ -16,7 +16,7 @@
  * on submit is half of what is under test.
  */
 
-import { screen, waitFor } from "@testing-library/react"
+import { screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it } from "vitest"
 
@@ -182,6 +182,19 @@ async function expandPrompt(
   return await promptBox(label)
 }
 
+/**
+ * Asks for one prompt's default back, and says yes to the question that comes:
+ * the restore is a write that outlives the form, so it is the one control here
+ * that confirms first.
+ */
+async function restore(user: ReturnType<typeof userEvent.setup>, label: string): Promise<void> {
+  await user.click(screen.getByRole("button", { name: `Restore ${label} to default` }))
+  const dialog = await screen.findByRole("dialog", {
+    name: `Restore ${label.toLowerCase()} to its default?`,
+  })
+  await user.click(within(dialog).getByRole("button", { name: "Restore default" }))
+}
+
 beforeEach(() => {
   requests = []
   stubDaemon()
@@ -284,7 +297,7 @@ describe("the prompt editors", () => {
     const briefing = await expandPrompt(user, "Engineer briefing")
     expect(briefing.value).toBe("Stored engineer briefing.")
 
-    await user.click(screen.getByRole("button", { name: "Restore Engineer briefing to default" }))
+    await restore(user, "Engineer briefing")
 
     // The default is the daemon's text, so restoring one is its own request —
     // and what comes back is what fills the box.
@@ -303,6 +316,27 @@ describe("the prompt editors", () => {
     expect(requestsTo("PUT", `/v1/profiles/${PROFILE.id}/prompts/engineer_briefing`)).toEqual([])
   })
 
+  it("writes nothing until the question about restoring is answered", async () => {
+    const user = userEvent.setup()
+    renderDialog(PROFILE)
+
+    const briefing = await expandPrompt(user, "Engineer briefing")
+    await user.click(screen.getByRole("button", { name: "Restore Engineer briefing to default" }))
+
+    // The question says what the button is about to do, and dismissing it has
+    // to leave the profile exactly as it was.
+    const dialog = await screen.findByRole("dialog", {
+      name: "Restore engineer briefing to its default?",
+    })
+    expect(dialog.textContent).toContain("written straight away")
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }))
+
+    expect(
+      requestsTo("POST", `/v1/profiles/${PROFILE.id}/prompts/engineer_briefing/reset`),
+    ).toEqual([])
+    expect(briefing.value).toBe("Stored engineer briefing.")
+  })
+
   it("restores the system prompt the same way, off the profile itself", async () => {
     const user = userEvent.setup()
     renderDialog(PROFILE)
@@ -310,7 +344,7 @@ describe("the prompt editors", () => {
     const system = await promptBox("System prompt")
     expect(system.value).toBe("Stored system prompt.")
 
-    await user.click(screen.getByRole("button", { name: "Restore System prompt to default" }))
+    await restore(user, "System prompt")
 
     await waitFor(() => {
       expect(system.value).toBe(DEFAULT_SYSTEM)
@@ -327,7 +361,7 @@ describe("the prompt editors", () => {
     const user = userEvent.setup()
     renderDialog(PROFILE)
 
-    await user.click(screen.getByRole("button", { name: "Restore System prompt to default" }))
+    await restore(user, "System prompt")
     await waitFor(() => {
       expect((screen.getByLabelText("System prompt") as HTMLTextAreaElement).value).toBe(
         DEFAULT_SYSTEM,

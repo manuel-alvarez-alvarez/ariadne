@@ -27,6 +27,7 @@ import { GoalsListPage } from "@/features/goals/goals-list-page"
 import { ProfilesPage } from "@/features/profiles/profiles-page"
 import { RepositoriesPage } from "@/features/repositories/repositories-page"
 import { SessionsPage } from "@/features/sessions/sessions-page"
+import { RouteErrorPage } from "@/routes/error-page"
 import { NotFoundPage } from "@/routes/not-found-page"
 import { paths } from "@/routes/paths"
 
@@ -54,5 +55,7 @@ const routes: RouteObject[] = [
 ]
 
 export const router = createHashRouter([
-  { path: "/", element: <AppShell />, errorElement: <NotFoundPage />, children: routes },
+  // A crash inside the shell is not a wrong address, and the two say different
+  // things and offer different ways on: see `error-page.tsx`.
+  { path: "/", element: <AppShell />, errorElement: <RouteErrorPage />, children: routes },
 ])

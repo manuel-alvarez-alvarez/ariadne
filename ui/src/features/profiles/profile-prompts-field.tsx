@@ -21,9 +21,9 @@ import type { UseFormReturn } from "react-hook-form"
 import type { ProfileDto, ProfilePromptDto, PromptKind, UpdateProfileRequest } from "@/api"
 import { ErrorState } from "@/components/error-state"
 import { Field, FieldDescription, FieldTitle } from "@/components/ui/field"
-import { Skeleton } from "@/components/ui/skeleton"
 import { describeError } from "@/lib/format"
 
+import { LoadingPrompts } from "./loading-prompts"
 import type { ProfileFormValues, PromptFormValue } from "./profile-form-values"
 import { PROMPT_KIND_HINTS, promptKindLabel, roleLabel } from "./profile-labels"
 import { PromptFormField } from "./prompt-form-field"
@@ -186,7 +186,7 @@ export function ProfilePromptsField({
           />
         ))}
 
-        {editing && stored.isPending ? <LoadingPrompts /> : null}
+        {editing && stored.isPending ? <LoadingPrompts folded /> : null}
 
         {editing && stored.isError ? (
           <ErrorState
@@ -197,15 +197,5 @@ export function ProfilePromptsField({
         ) : null}
       </div>
     </Field>
-  )
-}
-
-/** Standing in for prompts whose count is not known until they arrive. */
-function LoadingPrompts() {
-  return (
-    <div className="flex flex-col gap-2">
-      <Skeleton className="h-9 w-full" />
-      <Skeleton className="h-9 w-full" />
-    </div>
   )
 }

@@ -6,7 +6,6 @@ import {
   canCancel,
   canEdit,
   compareByAttention,
-  displayLabel,
   primaryStatus,
   subStatus,
 } from "./status"
@@ -106,7 +105,6 @@ describe("the ready fold", () => {
   it("puts a ready task in the pending column, still saying it is ready", () => {
     expect(primaryStatus("ready")).toBe("pending")
     expect(subStatus("ready")?.label).toBe("Ready")
-    expect(displayLabel("ready")).toBe("Pending · Ready")
   })
 
   it("leaves what the user may do to a ready task alone", () => {
@@ -133,7 +131,6 @@ describe("the landing column", () => {
     // request it published.
     expect(primaryStatus("approved")).toBe("approved")
     expect(subStatus("approved")).toBeUndefined()
-    expect(displayLabel("approved")).toBe("Approved")
   })
 
   it("ranks an approved task above everything the agents can finish alone", () => {

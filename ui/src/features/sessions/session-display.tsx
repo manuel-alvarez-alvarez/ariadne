@@ -29,17 +29,28 @@ export function isLiveStatus(status: SessionStatus): boolean {
 interface SessionStatusMeta {
   label: string
   /**
-   * Dot colour, from the status ramp in `index.css`; the live statuses are the
-   * saturated end of the scale. An idle session is the one waiting on you, so
-   * it takes the accent rather than a colour it would share with a warning.
+   * Dot colour, from the status ramp in `index.css` — the same ramp the task
+   * statuses take their steps from, so a step has to mean here what it means
+   * there.
+   *
+   * A running session is work in progress, which is the accent, exactly as it
+   * is on a task. An idle one is the one waiting on you, which is the warn
+   * step every attention reason already sits on. A starting one has not begun,
+   * which is the pending grey.
+   *
+   * What they used to be said the opposite: running took the green a task
+   * takes when it is *merged*, and idle took the accent that means work is
+   * happening — so the board's brightest green was an agent that had not
+   * finished anything, and the session actually waiting on a person looked
+   * busy.
    */
   dot: string
 }
 
 export const SESSION_STATUS_META: Record<SessionStatus, SessionStatusMeta> = {
-  starting: { label: "Starting", dot: "bg-status-ready" },
-  running: { label: "Running", dot: "bg-status-done" },
-  idle: { label: "Idle", dot: "bg-status-active" },
+  starting: { label: "Starting", dot: "bg-status-pending" },
+  running: { label: "Running", dot: "bg-status-active" },
+  idle: { label: "Idle", dot: "bg-status-warn" },
   exited: { label: "Exited", dot: "bg-muted-foreground/60" },
   failed: { label: "Failed", dot: "bg-status-danger" },
 }

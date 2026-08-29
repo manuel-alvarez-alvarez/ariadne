@@ -36,6 +36,8 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { When } from "@/components/when"
 import { ProfileSummary } from "@/features/profiles/profile-summary"
+import { sessionsQueryOptions } from "@/features/sessions/queries"
+import { taskListQueryOptions } from "@/features/tasks"
 import { CreateTaskDialog } from "@/features/tasks/task-form-dialog"
 import { useFocusReturn } from "@/hooks/use-focus-return"
 import { goalCopyEntries } from "@/lib/clipboard"
@@ -45,12 +47,28 @@ import { GoalSessions, GoalSessionView } from "./goal-sessions"
 import { GoalTasks } from "./goal-tasks"
 import { GoalThread } from "./goal-thread"
 import { goalMessagesQueryOptions, goalQueryOptions } from "./queries"
-import { GOAL_STATUS_META, isTerminalGoalStatus } from "./status"
+import { GOAL_STATUS_META, isStillPlanning, isTerminalGoalStatus } from "./status"
 
-// Description leads the strip — it is what the goal *is* — but the panel still
-// opens on the tasks, which are what a goal comes down to.
+// Description leads the strip — it is what the goal *is* — but the panel opens
+// on whichever tab the goal is actually happening in: see {@link defaultTab}.
+//
+// `sessions` keeps its param name while the tab is called "Planner sessions":
+// the tab is in the URL, and renaming the value would break every link already
+// pointing at one.
 const TABS = ["description", "tasks", "thread", "sessions"] as const
 type Tab = (typeof TABS)[number]
+
+/**
+ * Where the panel opens when the URL does not say.
+ *
+ * While the plan is being written the tasks are a list that is still growing
+ * and the thread is where that is happening — it is also where the planner
+ * asks its questions, which are addressed to whoever just opened the goal.
+ * Everything after that, the tasks are what the goal comes down to.
+ */
+function defaultTab(status: GoalDto["status"]): Tab {
+  return isStillPlanning(status) ? "thread" : "tasks"
+}
 
 export function GoalPanel({
   goalId,
@@ -186,12 +204,17 @@ function GoalView({
 }) {
   const [search, setSearch] = useSearchParams()
   const [newTaskOpen, setNewTaskOpen] = useState(false)
-  const tab = TABS.find((value) => value === search.get("tab")) ?? "description"
+  const tab = TABS.find((value) => value === search.get("tab")) ?? defaultTab(goal.status)
   // Read whichever tab is showing: the Thread trigger counts what has been
   // said since the reader last had the thread itself open, which is a thing
   // the panel has to know before they go back to it.
   const messages = useQuery(goalMessagesQueryOptions(goal.id))
   const unread = useUnreadCount(`goal:${goal.id}`, messages.data)
+  // The other two counted tabs, on the very keys their own tabs read, so the
+  // numbers cost nothing beyond the first tab that is opened — and stay live
+  // with it, since the dispatcher invalidates both lists.
+  const tasks = useQuery(taskListQueryOptions({ goal: goal.id }))
+  const plannerSessions = useQuery(sessionsQueryOptions({ goal: goal.id, role: "planner" }))
 
   function setTab(next: Tab) {
     const params = new URLSearchParams(search)
@@ -242,12 +265,22 @@ function GoalView({
       <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
         <TabsList>
           <TabsTrigger value="description">Description</TabsTrigger>
-          <TabsTrigger value="tasks">Tasks</TabsTrigger>
+          <TabsTrigger value="tasks">
+            Tasks
+            <TabCount count={tasks.data?.length} />
+          </TabsTrigger>
+          {/* The thread's number is not how much is in it but how much of it
+              is new, so it is the unread badge rather than a count. */}
           <TabsTrigger value="thread">
             Thread
             <UnreadBadge count={unread} />
           </TabsTrigger>
-          <TabsTrigger value="sessions">Sessions</TabsTrigger>
+          {/* Named for what it holds: the goal's own agent, and none of the
+              sessions its tasks have run — those are each task panel's. */}
+          <TabsTrigger value="sessions">
+            Planner sessions
+            <TabCount count={plannerSessions.data?.length} />
+          </TabsTrigger>
         </TabsList>
         <TabsContent value="description" className="pt-3">
           {goal.description.trim() ? (
@@ -318,6 +351,7 @@ function GoalMetadata({ goal }: { goal: GoalDto }) {
         <TokenFigure
           usage={goal.usage.total}
           rows={goalUsageRows(goal.usage)}
+          caption
           className="text-xs"
         />
       </Fact>
@@ -351,4 +385,16 @@ function GoalMetadata({ goal }: { goal: GoalDto }) {
       </Fact>
     </FactList>
   )
+}
+
+/**
+ * How many rows are behind a tab, once its list has arrived.
+ *
+ * Nothing while it has not: a count that starts at zero and jumps says the
+ * goal has no tasks for as long as the request takes. Zero itself is shown —
+ * "no tasks yet" is an answer, and it is the one the tab is opened to find.
+ */
+function TabCount({ count }: { count: number | undefined }) {
+  if (count === undefined) return null
+  return <span className="tabular-nums text-muted-foreground">{count}</span>
 }

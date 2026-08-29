@@ -1,8 +1,9 @@
 /**
- * The sessions of one goal, inside its panel: the goal's own agent — the
- * planner, once per resume or restart — as a list, and the one that was picked
- * from it, in full. The sessions of the goal's tasks are not listed here; each
- * task panel has its own sessions tab for those.
+ * The planner sessions of one goal, inside its panel: the goal's own agent —
+ * once per resume or restart — as a list, and the one that was picked from it,
+ * in full. The sessions of the goal's tasks are not listed here; each task
+ * panel has its own sessions tab for those, which is why the tab is called
+ * "Planner sessions" rather than "Sessions".
  *
  * Just the list: what the goal has spent is the figure in its facts, and the
  * split by the role that spent it is the hint behind that figure (see

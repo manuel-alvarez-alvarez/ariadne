@@ -46,22 +46,33 @@ const EMPTY_VALUES: RepositoryFormValues = {
 }
 
 /**
- * How an approved task reaches the base branch here, in the two words the
- * daemon knows and the sentence each of them means for the engineer that has
- * to act on it.
+ * How an approved task reaches the base branch: the name of each strategy, and
+ * what it means for the engineer that has to act on it.
+ *
+ * The name is the short one, and it is the *only* one — the repositories table
+ * shows the same word for the same stored value, which it could not do while
+ * this form called `direct` "Squash onto the base branch" and the table called
+ * it "Direct". The sentence is the option's description rather than its name,
+ * beside it in the list and under the field once one is picked.
  */
-const MERGE_STRATEGIES: { value: MergeStrategy; label: string; hint: string }[] = [
-  {
-    value: "direct",
-    label: "Squash onto the base branch",
-    hint: "The engineer rebases, squashes the task into one commit and fast-forwards the base branch itself.",
+export const MERGE_STRATEGY_META: Record<MergeStrategy, { label: string; description: string }> = {
+  direct: {
+    label: "Direct",
+    description:
+      "The engineer rebases, squashes the task into one commit and fast-forwards the base branch itself.",
   },
-  {
-    value: "pull_request",
-    label: "Publish a pull or merge request",
-    hint: "The engineer opens a request with `gh` or `glab`, answers what is written on it, and finishes the task once it is merged.",
+  pull_request: {
+    label: "Pull request",
+    description:
+      "The engineer opens a request with `gh` or `glab`, answers what is written on it, and finishes the task once it is merged.",
   },
-]
+}
+
+/** The strategies as a select's options, in the order they are offered. */
+const MERGE_STRATEGIES = (Object.keys(MERGE_STRATEGY_META) as MergeStrategy[]).map((value) => ({
+  value,
+  label: MERGE_STRATEGY_META[value].label,
+}))
 
 export function RepositoryFormDialog({
   open,
@@ -222,12 +233,23 @@ export function RepositoryFormDialog({
               control={form.control}
               name="merge_strategy"
               id="repository-merge-strategy"
-              options={MERGE_STRATEGIES.map(({ value, label }) => ({ label, value }))}
+              options={MERGE_STRATEGIES}
               empty="direct"
+              // The name is what is picked; what it does is beside it, so the
+              // choice is made in the list rather than after it.
+              // `whitespace-normal` because the list's items are nowrap by
+              // default and the sentence is a sentence: without it the popup,
+              // which is exactly as wide as the trigger, would cut it off.
+              renderOption={(option) => (
+                <span className="flex min-w-0 flex-col whitespace-normal">
+                  <span>{option.label}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {MERGE_STRATEGY_META[option.value as MergeStrategy].description}
+                  </span>
+                </span>
+              )}
             />
-            <FieldDescription>
-              {MERGE_STRATEGIES.find(({ value }) => value === selectedStrategy)?.hint}
-            </FieldDescription>
+            <FieldDescription>{MERGE_STRATEGY_META[selectedStrategy].description}</FieldDescription>
           </Field>
 
           <Field>

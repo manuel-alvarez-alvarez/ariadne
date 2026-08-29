@@ -26,7 +26,6 @@ import { toast } from "sonner"
 import { z } from "zod"
 
 import { ApiError, type CreateGoalRequest, type GoalDto } from "@/api"
-import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import {
   FormDialog,
@@ -45,6 +44,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { ModelPicker } from "@/features/profiles/model-picker"
 import { modelRefField, modelRefLabel } from "@/features/profiles/model-ref"
 import { modelsQueryOptions } from "@/features/profiles/queries"
+import { NoRepositories as SharedNoRepositories } from "@/features/repositories/no-repositories"
 import { repositoriesQueryOptions } from "@/features/repositories/queries"
 import { paths } from "@/routes/paths"
 
@@ -321,14 +321,14 @@ function LoadingRepositories() {
  *
  * Select-only on purpose: registering a checkout is its own screen's job —
  * the daemon opens it, resolves the branch and checks it has commits — so the
- * dialog links there rather than growing a second form inside itself.
+ * dialog links there rather than growing a second form inside itself. What the
+ * state is *called* is shared with that screen (`no-repositories.tsx`); only
+ * the way out is this dialog's own.
  */
 function NoRepositories({ onLeave }: { onLeave: () => void }) {
   return (
-    <EmptyState
+    <SharedNoRepositories
       emphasis="quiet"
-      title="No repositories registered"
-      description="A goal is created against registered checkouts. Register one first, then come back."
       action={
         <Button
           variant="outline"

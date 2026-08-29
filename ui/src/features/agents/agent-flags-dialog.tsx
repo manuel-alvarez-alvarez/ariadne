@@ -13,7 +13,7 @@
  */
 
 import { zodResolver } from "@hookform/resolvers/zod"
-import { PlusIcon, RotateCcwIcon, XIcon } from "lucide-react"
+import { PlusIcon, Undo2Icon, XIcon } from "lucide-react"
 import { useEffect } from "react"
 import { useFieldArray, useForm } from "react-hook-form"
 import { toast } from "sonner"
@@ -156,7 +156,7 @@ export function AgentFlagsDialog({
                     size="sm"
                     onClick={() => flags.replace(flagRows(defaults))}
                   >
-                    <RotateCcwIcon />
+                    <Undo2Icon />
                     Restore defaults
                   </Button>
                 )}

@@ -62,13 +62,6 @@ export function subStatus(status: TaskStatus): StatusMeta | undefined {
   return status in SUB_STATUS_OF ? TASK_STATUS_META[status] : undefined
 }
 
-/** "Pending · Ready" for a sub-status, the plain primary label otherwise. */
-export function displayLabel(status: TaskStatus): string {
-  const sub = subStatus(status)
-  const primary = TASK_STATUS_META[primaryStatus(status)].label
-  return sub ? `${primary} · ${sub.label}` : primary
-}
-
 interface StatusMeta {
   label: string
   /** What the status means, for tooltips and empty columns. */

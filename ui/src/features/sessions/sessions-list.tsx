@@ -92,9 +92,21 @@ function listScope(filters: SessionListFilters): "task" | "goal" | "unscoped" {
  */
 const FOLDS_AWAY = "hidden lg:table-cell"
 
-/** What an empty list is called where it is empty; never blames absent filters. */
+/**
+ * What an empty list is called where it is empty; never blames absent filters,
+ * and never claims more than the list is actually showing.
+ *
+ * A scoped list narrowed to one role is that role's list — the goal panel's
+ * tab is the planner's sessions alone — so an empty one says the role is
+ * missing rather than that the goal has no sessions, which is a thing it can
+ * say while four of them are running.
+ */
 function emptyTitle(filters: SessionListFilters): string {
-  switch (listScope(filters)) {
+  const scope = listScope(filters)
+  if (filters.role && scope !== "unscoped") {
+    return `No ${ROLE_LABELS[filters.role].toLowerCase()} session yet`
+  }
+  switch (scope) {
     case "task":
       return "No sessions yet for this task"
     case "goal":

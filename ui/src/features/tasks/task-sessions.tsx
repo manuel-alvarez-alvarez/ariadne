@@ -34,6 +34,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { sessionQueryOptions } from "@/features/sessions/queries"
 import { SessionDetailView } from "@/features/sessions/session-detail-view"
 import { SessionsList } from "@/features/sessions/sessions-list"
@@ -143,13 +144,21 @@ export function TaskSessionView({
 export function SessionLink({ sessionId }: { sessionId: string }) {
   const to = usePanelSessionTo(sessionId)
   return (
-    <Link
-      to={to}
-      replace
-      title={sessionId}
-      className="font-mono text-muted-foreground underline-offset-3 hover:text-foreground hover:underline"
-    >
-      session {shortId(sessionId)}
-    </Link>
+    // The short id is what fits in a sentence; the whole one is the hint, and
+    // a hint in this app is a tooltip rather than a mouse-only `title=`.
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Link
+            to={to}
+            replace
+            className="font-mono text-muted-foreground underline-offset-3 hover:text-foreground hover:underline"
+          />
+        }
+      >
+        session {shortId(sessionId)}
+      </TooltipTrigger>
+      <TooltipContent className="font-mono">{sessionId}</TooltipContent>
+    </Tooltip>
   )
 }

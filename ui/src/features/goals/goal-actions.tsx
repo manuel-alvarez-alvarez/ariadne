@@ -15,7 +15,7 @@
  * its dialog behind to finish, spinner, refusal and all.
  */
 
-import { CircleSlashIcon, Trash2Icon } from "lucide-react"
+import { BanIcon, Trash2Icon } from "lucide-react"
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
 
@@ -54,7 +54,8 @@ export function GoalActions({
       {canCancel ? (
         // Only opens the confirm; the solid red is on the click inside it.
         <Button variant="destructive-ghost" size="sm" onClick={() => setCancelOpen(true)}>
-          <CircleSlashIcon />
+          {/* The same icon the task's cancel wears: one verb, one glyph. */}
+          <BanIcon />
           Cancel goal
         </Button>
       ) : null}

@@ -33,6 +33,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn, plural } from "@/lib/format"
 import { DiffEditor, LARGE_FILE_LINES } from "./diff-editor"
 import { type DiffFile, type ParsedDiff, parseUnifiedDiff } from "./diff-parse"
@@ -166,6 +167,9 @@ function DiffToolbar({
   expanded: boolean
   onExpanded: () => void
 }) {
+  // Said once: the icon button is named by it and the hint behind it repeats it.
+  const expandLabel = expanded ? "Collapse the diff back into the panel" : "Expand the diff"
+
   return (
     <div className="flex flex-wrap items-center gap-2">
       <span className="text-sm text-muted-foreground">
@@ -173,30 +177,42 @@ function DiffToolbar({
       </span>
       {!empty && <DiffStat additions={additions} deletions={deletions} />}
       <div className="ml-auto flex items-center gap-1">
-        <Button
-          variant={wrap ? "secondary" : "ghost"}
-          size="sm"
-          onClick={onWrap}
-          aria-pressed={wrap}
-          title={wrap ? "Stop wrapping long lines" : "Wrap long lines"}
-        >
-          <WrapTextIcon />
-          Wrap
-        </Button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant={wrap ? "secondary" : "ghost"}
+                size="sm"
+                onClick={onWrap}
+                aria-pressed={wrap}
+              />
+            }
+          >
+            <WrapTextIcon />
+            Wrap
+          </TooltipTrigger>
+          <TooltipContent>{wrap ? "Stop wrapping long lines" : "Wrap long lines"}</TooltipContent>
+        </Tooltip>
         <Button variant={raw ? "secondary" : "ghost"} size="sm" onClick={onRaw} disabled={empty}>
           Raw
         </Button>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={onExpanded}
-          disabled={empty}
-          aria-pressed={expanded}
-          aria-label={expanded ? "Collapse the diff back into the panel" : "Expand the diff"}
-          title={expanded ? "Collapse the diff back into the panel" : "Expand the diff"}
-        >
-          {expanded ? <Minimize2Icon /> : <Maximize2Icon />}
-        </Button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={onExpanded}
+                disabled={empty}
+                aria-pressed={expanded}
+                aria-label={expandLabel}
+              />
+            }
+          >
+            {expanded ? <Minimize2Icon /> : <Maximize2Icon />}
+          </TooltipTrigger>
+          <TooltipContent>{expandLabel}</TooltipContent>
+        </Tooltip>
       </div>
     </div>
   )
@@ -266,9 +282,14 @@ function DiffFileSection({
           {open ? <ChevronDownIcon /> : <ChevronRightIcon />}
         </Button>
         <Icon className="size-3.5 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 truncate font-mono text-xs" title={file.path}>
-          {file.path}
-        </span>
+        {/* Truncated to the header's width, so the whole path is the hint —
+            and a hint here is a tooltip a keyboard can open, never a `title=`. */}
+        <Tooltip>
+          <TooltipTrigger render={<span className="min-w-0 truncate font-mono text-xs" />}>
+            {file.path}
+          </TooltipTrigger>
+          <TooltipContent className="font-mono">{file.path}</TooltipContent>
+        </Tooltip>
         <Badge variant="outline" className="shrink-0">
           {label}
         </Badge>

@@ -6,8 +6,7 @@
  * There used to be two conventions — the board's `text-lg` full-bleed heading
  * and the profiles screen's `text-xl` inside `max-w-5xl` — and this is the
  * board's, because the board cannot adopt anything else: its swimlanes need
- * every pixel of the width. `goals-list-page.tsx` still writes the same markup
- * by hand (it is owned by another task); everything else uses this.
+ * every pixel of the width. Every screen uses this, the board included.
  */
 
 import type { ReactNode } from "react"

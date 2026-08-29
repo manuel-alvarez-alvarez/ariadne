@@ -114,7 +114,8 @@ describe("AgentsPage", () => {
     // Claude Code has a flag added, OpenCode has the default dropped; only
     // Codex is still exactly what Ariadne ships.
     expect(await screen.findAllByText("Customized")).toHaveLength(2)
-    expect(screen.getAllByText("Unchanged")).toHaveLength(1)
+    // The same word the prompt sections use for a text nobody has moved.
+    expect(screen.getAllByText("Default")).toHaveLength(1)
     expect(screen.getByText(/none — Ariadne's own arguments only/)).toBeDefined()
   })
 

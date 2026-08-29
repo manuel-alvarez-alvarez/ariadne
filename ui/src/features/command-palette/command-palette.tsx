@@ -46,6 +46,7 @@ import {
   CommandList,
   CommandShortcut,
 } from "@/components/ui/command"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { goalsQueryOptions } from "@/features/goals/queries"
 import { profilesQueryOptions } from "@/features/profiles/queries"
 import { sessionsQueryOptions } from "@/features/sessions/queries"
@@ -324,13 +325,23 @@ function EntryGroup({
 function EntryDetail({ text }: { text: string }) {
   const { head, tail } = splitDetail(text)
   return (
-    <span
-      title={text}
-      className="flex max-w-[33%] min-w-0 justify-end pl-2 font-mono text-xs text-muted-foreground"
-    >
-      <span className="truncate">{head}</span>
-      {tail ? <span className="shrink-0">{tail}</span> : null}
-    </span>
+    // A tooltip, like every other hint in the app — but the one that takes no
+    // focus: the palette keeps the caret in its input and every row is reached
+    // with the arrow keys, so a tab stop per row would be a way *out* of the
+    // search. Nothing is lost by it, since the whole detail is in the row's own
+    // text either way and only the middle of it is truncated away visually.
+    <Tooltip>
+      <TooltipTrigger
+        tabIndex={-1}
+        render={
+          <span className="flex max-w-[33%] min-w-0 justify-end pl-2 font-mono text-xs text-muted-foreground" />
+        }
+      >
+        <span className="truncate">{head}</span>
+        {tail ? <span className="shrink-0">{tail}</span> : null}
+      </TooltipTrigger>
+      <TooltipContent className="font-mono">{text}</TooltipContent>
+    </Tooltip>
   )
 }
 

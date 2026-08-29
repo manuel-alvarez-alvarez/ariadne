@@ -27,10 +27,19 @@ import { toast } from "sonner"
 import type { TaskDto } from "@/api"
 import { ConfirmDialog, isSettling } from "@/components/confirm-dialog"
 import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { describeError } from "@/lib/format"
 import { useCancelTask, useRetryTask } from "./queries"
-import { canCancel, canEdit, canRetry, TASK_STATUS_META } from "./status"
+import { canCancel, canEdit, canRetry } from "./status"
 import { EditTaskDialog } from "./task-form-dialog"
+
+/**
+ * What retrying does, in the one sentence it takes to say it — on the button
+ * before the click and in the toast after it, because they are the only two
+ * places it is ever said. The dialog that used to say it is gone: retry keeps
+ * everything, so there is nothing to confirm.
+ */
+const RETRY_HINT = "Back to ready, same branch and worktree, fresh engineer"
 
 export function TaskActions({ task }: { task: TaskDto }) {
   const cancel = useCancelTask(task.id)
@@ -66,30 +75,30 @@ export function TaskActions({ task }: { task: TaskDto }) {
         </Button>
       )}
       {showRetry && (
-        <Button
-          variant="outline"
-          size="sm"
-          pending={retry.isPending}
-          // The reassuring half of what the confirm used to say; the rest of
-          // it — "back to ready, fresh engineer session" — is the toast.
-          title="The task goes back to ready and the daemon schedules a fresh engineer session for it. Its branch and worktree are kept."
-          onClick={() => {
-            retry.mutate(undefined, {
-              onSuccess: (updated) => {
-                toast.success("Task retried", {
-                  // The raw status, not the column it is drawn in: a retried
-                  // task lands in `ready`, which the board folds into Pending.
-                  description: `Now ${TASK_STATUS_META[updated.status].label.toLowerCase()}.`,
-                })
-              },
-              onError: (error) =>
-                toast.error("Could not retry", { description: describeError(error) }),
-            })
-          }}
-        >
-          <RotateCcwIcon />
-          Retry task
-        </Button>
+        // A real tooltip rather than a `title=`: this is the only explanation
+        // retry has anywhere, and a title attribute never reaches a keyboard.
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="outline"
+                size="sm"
+                pending={retry.isPending}
+                onClick={() => {
+                  retry.mutate(undefined, {
+                    onSuccess: () => toast.success("Task retried", { description: RETRY_HINT }),
+                    onError: (error) =>
+                      toast.error("Could not retry", { description: describeError(error) }),
+                  })
+                }}
+              />
+            }
+          >
+            <RotateCcwIcon />
+            Retry task
+          </TooltipTrigger>
+          <TooltipContent>{RETRY_HINT}</TooltipContent>
+        </Tooltip>
       )}
       {showCancel && (
         // Only opens the confirm; the solid red is on the click inside it.
