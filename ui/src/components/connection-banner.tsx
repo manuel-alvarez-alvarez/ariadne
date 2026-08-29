@@ -10,44 +10,34 @@
  * the only thing the UI has configured, and a wrong one looks exactly like a
  * dead daemon.
  *
- * Two states, because they are genuinely different: the REST probe losing the
- * daemon means nothing loads at all, while the event stream alone dropping
- * means the screens still load but stop updating themselves.
+ * One state, because there is one link: the event stream is both how a screen
+ * loads live and how the daemon is known to be there at all. Losing it means
+ * nothing on screen is being kept up to date and nothing new will load.
  */
 
 import { PlugZapIcon, RefreshCwIcon, SettingsIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { useConnection } from "@/hooks/use-connection"
-import { cn } from "@/lib/format"
 
 export function ConnectionBanner({ onOpenSettings }: { onOpenSettings: () => void }) {
-  const { status, streamStatus, baseUrl, refetch } = useConnection()
+  const { status, baseUrl, retry } = useConnection()
 
-  // `connecting` is the first probe of a cold start and says nothing yet;
-  // `idle`/`connecting` on the stream are its own first attempt.
-  const unreachable = status === "disconnected"
-  const streamDown = streamStatus === "reconnecting"
-  if (!unreachable && !streamDown) return null
+  // `connecting` is the first attempt of a cold start and says nothing yet: the
+  // banner appears once an attempt has actually failed.
+  if (status !== "disconnected") return null
 
   return (
     <div
       role="status"
       aria-live="polite"
-      className={cn(
-        "flex h-9 shrink-0 items-center gap-2 border-b px-3 text-sm",
-        unreachable
-          ? "bg-status-danger-soft text-status-danger-fg"
-          : "bg-status-warn-soft text-status-warn-fg",
-      )}
+      className="flex h-9 shrink-0 items-center gap-2 border-b bg-status-danger-soft px-3 text-sm text-status-danger-fg"
     >
       <PlugZapIcon className="size-4 shrink-0" aria-hidden />
-      <span className="truncate font-medium">
-        {unreachable ? "Daemon unreachable — check settings" : "Live updates lost — reconnecting"}
-      </span>
+      <span className="truncate font-medium">Daemon unreachable — check settings</span>
       <span className="hidden truncate font-mono text-xs opacity-70 sm:inline">{baseUrl}</span>
       <div className="ml-auto flex shrink-0 items-center gap-1">
-        <Button variant="ghost" size="sm" className="h-7 px-2" onClick={refetch}>
+        <Button variant="ghost" size="sm" className="h-7 px-2" onClick={retry}>
           <RefreshCwIcon />
           Retry
         </Button>

@@ -39,11 +39,30 @@ interface StreamOptions<S extends string> {
   onOpen?: (info: { reconnected: boolean }) => void
   /** What a dropped connection is called in the status it reports. */
   dropped: string
+  /**
+   * Longest silence the stream tolerates before it treats the connection as
+   * dead, for a server that promises a cadence — and only for one: a stream
+   * that is legitimately quiet would be torn down over and over.
+   */
+  idle?: {
+    timeoutMs: number
+    /** Reported as the reason of the reconnect the silence forces. */
+    reason: string
+  }
 }
 
 export abstract class ReconnectingEventStream<S extends string> {
   #source: EventSource | null = null
   #retryTimer: ReturnType<typeof setTimeout> | null = null
+  /**
+   * The one timer this layer keeps, and the reason it has to: a socket can sit
+   * in `OPEN` on a daemon that is gone, with no `error` ever firing, and the
+   * screen would go quietly stale. Nothing but the server can tell us — so a
+   * server that promises to speak every so often (the daemon's `heartbeat`)
+   * makes a longer silence than {@link StreamOptions.idle} proof it is gone.
+   * Re-armed by every frame, whatever it carried.
+   */
+  #idleTimer: ReturnType<typeof setTimeout> | null = null
   #backoff = INITIAL_BACKOFF_MS
   #stopped = true
   /** Set by {@link halt}: there is nothing left to reconnect to. */
@@ -106,11 +125,11 @@ export abstract class ReconnectingEventStream<S extends string> {
   }
 
   /**
-   * Drop the current connection and reconnect straight away.
+   * Drop the current connection and reconnect straight away, without waiting
+   * out the backoff.
    *
-   * For when something outside the stream knows it is dead — the health probe
-   * losing the daemon — because a socket can sit in `OPEN` indefinitely without
-   * `error` ever firing.
+   * For when the connection is known to be dead however healthy the socket
+   * looks — the idle budget running out, or a user who pressed Retry saying so.
    */
   forceReconnect(reason: string): void {
     if (this.#stopped) return
@@ -123,13 +142,12 @@ export abstract class ReconnectingEventStream<S extends string> {
   }
 
   /**
-   * Retry now instead of waiting out the backoff — but only when nothing is in
-   * flight, so this never interrupts a connection that is still being made.
+   * A frame arrived, of any kind: the connection is alive, so the idle budget
+   * starts again. Subclasses that were given one call this from every listener
+   * they register — a heartbeat is no better evidence than a real event.
    */
-  reconnectIfClosed(reason: string): void {
-    if (this.#stopped) return
-    if (this.#source !== null && this.#source.readyState !== EventSource.CLOSED) return
-    this.forceReconnect(reason)
+  protected noteFrame(): void {
+    this.#armIdle()
   }
 
   /**
@@ -164,6 +182,9 @@ export abstract class ReconnectingEventStream<S extends string> {
       this.#everOpened = true
       this.#interrupted = false
       if (states.live !== undefined) onStatus(states.live, null)
+      // An open is the first thing the connection has to show for itself; the
+      // server owes us a frame within the budget from here.
+      this.#armIdle()
       onOpen?.({ reconnected })
     }
 
@@ -198,7 +219,26 @@ export abstract class ReconnectingEventStream<S extends string> {
     this.#retryTimer = null
   }
 
+  #armIdle(): void {
+    const idle = this.#options.idle
+    if (idle === undefined || this.#stopped) return
+    this.#clearIdle()
+    this.#idleTimer = setTimeout(() => {
+      this.#idleTimer = null
+      this.forceReconnect(idle.reason)
+    }, idle.timeoutMs)
+  }
+
+  #clearIdle(): void {
+    if (this.#idleTimer === null) return
+    clearTimeout(this.#idleTimer)
+    this.#idleTimer = null
+  }
+
   #closeSource(): void {
+    // Nothing is coming on a closed socket, so the budget starts over with the
+    // connection that replaces it, not before.
+    this.#clearIdle()
     if (this.#source === null) return
     this.#source.onopen = null
     this.#source.onerror = null

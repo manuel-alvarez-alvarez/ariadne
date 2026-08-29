@@ -61,6 +61,18 @@ export class FakeEventSource {
       handler({ data: JSON.stringify(data) })
     }
   }
+
+  /**
+   * The daemon's `heartbeat`, which it sends on open and every 15 idle seconds.
+   * A default daemon identity, because most tests care that a beat arrived at
+   * all and not who sent it.
+   */
+  beat(daemon: { version?: string; started_at?: string } = {}): void {
+    this.emit("heartbeat", {
+      version: daemon.version ?? "0.4.0",
+      started_at: daemon.started_at ?? "2026-01-01T00:00:00Z",
+    })
+  }
 }
 
 /** Installs the stand-in and forgets the connections of the last test. */

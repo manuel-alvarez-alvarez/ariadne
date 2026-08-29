@@ -43,12 +43,6 @@ interface AgentEventFilters extends PageFilters {
 }
 
 export const qk = {
-  /** Daemon liveness and metadata; drives the connection indicator. */
-  system: {
-    all: () => ["system"] as const,
-    health: () => ["system", "health"] as const,
-    version: () => ["system", "version"] as const,
-  },
   goals: {
     all: () => ["goals"] as const,
     lists: () => ["goals", "list"] as const,

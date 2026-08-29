@@ -25,8 +25,7 @@ vi.mock("@/hooks/use-connection", () => ({
     version: "0.3.1",
     uptimeSecs: 60,
     error: null,
-    streamStatus: "open",
-    refetch: () => {},
+    retry: () => {},
   }),
 }))
 

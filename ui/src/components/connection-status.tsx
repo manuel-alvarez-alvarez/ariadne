@@ -2,10 +2,10 @@
  * Global "is this window looking at a live daemon?" indicator, lived in by the
  * shell's footer.
  *
- * Two independent links are folded into one readout: the REST probe
- * (`/v1/health` + `/v1/version`) and the domain-event stream. REST up but
- * stream down means the screens still load yet stop updating themselves, which
- * is worth saying out loud.
+ * There is one link and one readout: the domain-event stream, which is both how
+ * the screens stay live and how the daemon says who it is. Green means the
+ * stream is open and the daemon is beating; red means it is not, and then
+ * nothing on screen is being kept up to date either.
  *
  * It renders as a real button because the daemon-logs drawer hangs off the
  * click — `onOpenLogs`, wired by the shell to the drawer it mounts.
@@ -24,20 +24,16 @@ export function ConnectionStatus({
   /** What the click opens: the shell's daemon-logs drawer. */
   onOpenLogs?: () => void
 }) {
-  const { status, streamStatus, baseUrl, version, uptimeSecs, error } = useConnection()
+  const { status, baseUrl, version, uptimeSecs, error } = useConnection()
 
-  const live = status === "connected" && streamStatus === "open"
-  // Straight off the status ramp: green while both links are up, the warn step
-  // for a half-connected or still-connecting daemon, the danger step when it
-  // is gone.
-  const tone =
-    status === "connected"
-      ? live
-        ? "bg-status-done"
-        : "bg-status-warn"
-      : status === "connecting"
-        ? "bg-status-warn"
-        : "bg-status-danger"
+  const live = status === "connected"
+  // Straight off the status ramp: green while the stream is up, the warn step
+  // while it is still being opened, the danger step once it is gone.
+  const tone = live
+    ? "bg-status-done"
+    : status === "connecting"
+      ? "bg-status-warn"
+      : "bg-status-danger"
 
   const label =
     status === "connected"
@@ -70,11 +66,10 @@ export function ConnectionStatus({
         <div className="space-y-1">
           <p className="font-mono text-xs">{baseUrl}</p>
           <p>
-            API: {status}
+            Daemon: {status}
             {uptimeSecs !== null ? ` · up ${formatDuration(uptimeSecs)}` : ""}
           </p>
-          <p>Events: {streamStatus}</p>
-          {error ? <p className="text-destructive">{error.message}</p> : null}
+          {error ? <p className="text-destructive">{error}</p> : null}
         </div>
       </TooltipContent>
     </Tooltip>

@@ -8,7 +8,7 @@
 
 import { create } from "zustand"
 
-import type { DomainEventKind } from "@/api"
+import type { DomainEventKind, HeartbeatDto } from "@/api"
 
 export type StreamStatus =
   /** No stream requested yet. */
@@ -20,8 +20,20 @@ export type StreamStatus =
   /** Dropped; a reconnect is scheduled. */
   | "reconnecting"
 
+/** Which daemon is on the other end, as its last heartbeat said. */
+interface DaemonInfo {
+  version: string
+  /** RFC 3339, as the daemon reported it; a new one means it restarted. */
+  startedAt: string
+}
+
 interface StreamState {
   status: StreamStatus
+  /**
+   * The daemon behind the current connection, from its heartbeat. Null until
+   * the first one arrives — the connection is the only place this is known.
+   */
+  daemon: DaemonInfo | null
   /** Consecutive failed attempts; reset to 0 once the stream opens. */
   attempts: number
   /** `Date.now()` of the last successful open. */
@@ -44,12 +56,14 @@ interface StreamActions {
   setStatus: (status: StreamStatus, error?: string | null) => void
   markOpen: () => void
   markEvent: (kind: DomainEventKind) => void
+  markHeartbeat: (beat: HeartbeatDto) => void
   markResync: () => void
   reset: () => void
 }
 
 const initialState: StreamState = {
   status: "idle",
+  daemon: null,
   attempts: 0,
   openedAt: null,
   lastEventAt: null,
@@ -74,6 +88,7 @@ export const useStreamStore = create<StreamState & StreamActions>()((set) => ({
       lastEventKind: kind,
       eventCount: state.eventCount + 1,
     })),
+  markHeartbeat: ({ version, started_at }) => set({ daemon: { version, startedAt: started_at } }),
   markResync: () => set((state) => ({ resyncCount: state.resyncCount + 1 })),
   reset: () => set(initialState),
 }))

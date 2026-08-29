@@ -10,9 +10,9 @@
  * endpoint, which body, and what else a write invalidates.
  *
  * Everything below writes the same keys the SSE dispatcher does. That is not
- * redundant with the stream: REST can be up while the stream is down (the amber
- * connection state), and an action that only showed up once the stream came
- * back would look broken.
+ * redundant with the stream: a write's own result has to be on screen before
+ * the event confirming it arrives, and an action that only showed up once a
+ * reconnecting stream came back would look broken.
  *
  * What is *not* here is anything that refetches on a clock. The stream is the
  * only source of freshness this client has, and every gap in it already ends in
@@ -20,45 +20,10 @@
  */
 
 import type { QueryKey } from "@tanstack/react-query"
-import { QueryClient, queryOptions, useMutation, useQueryClient } from "@tanstack/react-query"
+import { QueryClient, useMutation, useQueryClient } from "@tanstack/react-query"
 
-import { api, unwrap } from "./client"
 import { ApiError } from "./errors"
-import { qk } from "./query-keys"
 import type { CreateMessageRequest, MessageDto } from "./types"
-
-/** How often the health probe runs while the window is focused. */
-const HEALTH_POLL_MS = 10_000
-
-/**
- * The health probe has more than one observer — the connection indicator shows
- * it, the event stream uses it as a liveness watchdog — so its options live
- * here rather than being restated at each call site, which would give them
- * different polling and retry behaviour for the same key.
- */
-export function healthQueryOptions() {
-  return queryOptions({
-    queryKey: qk.system.health(),
-    queryFn: () => unwrap(api().GET("/v1/health")),
-    refetchInterval: HEALTH_POLL_MS,
-    // Keep probing while the daemon is down, but do not let a retry backoff
-    // stretch out how long "disconnected" takes to show up.
-    refetchIntervalInBackground: true,
-    retry: false,
-    // A stale "connected" badge is worse than a brief "connecting" one.
-    gcTime: 0,
-    staleTime: 0,
-  })
-}
-
-/** The daemon's version, which cannot change under a running daemon. */
-export function versionQueryOptions() {
-  return queryOptions({
-    queryKey: qk.system.version(),
-    queryFn: () => unwrap(api().GET("/v1/version")),
-    retry: false,
-  })
-}
 
 // ── The cache, per entity ─────────────────────────────────────────────────
 
@@ -244,7 +209,7 @@ export function usePostMessage(
  *
  * - a 4xx will not fix itself;
  * - a network failure means the request never reached a daemon, which the
- *   health probe is already polling for and the connection banner is already
+ *   event stream has already noticed and the connection banner is already
  *   saying — retrying it only delays the same answer.
  *
  * Everything else — a 5xx, a dropped response mid-flight — is transient and
@@ -268,9 +233,9 @@ export function shouldRetryQuery(failureCount: number, error: unknown): boolean 
  * true: refetching it because the window regained focus, or because thirty
  * seconds passed, would ask a question the stream has already answered.
  *
- * Hence data that never goes stale by itself and no refetch on focus. The two
- * reads with no event behind them — the health probe and a task's diff — say so
- * at their own call sites rather than making everything else pay for it.
+ * Hence data that never goes stale by itself and no refetch on focus. A read
+ * with no event behind it — a task's diff — says so at its own call site rather
+ * than making everything else pay for it.
  */
 export function createQueryClient(): QueryClient {
   return new QueryClient({

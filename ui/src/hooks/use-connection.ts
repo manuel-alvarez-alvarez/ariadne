@@ -1,16 +1,17 @@
 /**
- * Is the daemon reachable, and which version is it?
+ * Is the daemon reachable, and which daemon is it?
  *
- * `/v1/health` is polled (it is the cheapest endpoint the daemon has) and
- * `/v1/version` is fetched alongside it, so the shell can show both the state
- * of the link and what it is talking to.
+ * There is one link to answer that with — the domain event stream — and it
+ * answers all of it: the stream being open *is* the connection, and the daemon
+ * names itself in the `heartbeat` it sends on that stream. Nothing here asks
+ * the daemon anything, so an idle window makes no requests at all; the uptime
+ * ticks off the shared clock rather than off a probe.
  */
 
-import { useQuery } from "@tanstack/react-query"
-
-import { type ApiError, healthQueryOptions, versionQueryOptions } from "@/api"
+import { retryDomainStream } from "@/events/handle"
+import { useNow } from "@/hooks/use-now"
 import { useBaseUrl } from "@/stores/settings"
-import { type StreamStatus, useStreamStore } from "@/stores/stream"
+import { useStreamStore } from "@/stores/stream"
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected"
 
@@ -18,40 +19,42 @@ export interface Connection {
   status: ConnectionStatus
   /** Daemon base URL currently configured. */
   baseUrl: string
-  /** e.g. `"0.1.0"`, once `/v1/version` answered. */
+  /** e.g. `"0.1.0"`, from the last heartbeat. */
   version: string | null
-  /** Daemon uptime in seconds, from the last successful health probe. */
+  /** Daemon uptime in seconds, counted from the `started_at` it reported. */
   uptimeSecs: number | null
-  /** Why the last probe failed, when it did. */
-  error: ApiError | null
-  /** State of the domain-event stream, which is reported separately. */
-  streamStatus: StreamStatus
-  refetch: () => void
+  /** Why the connection dropped, when the browser said. */
+  error: string | null
+  /** Reconnect now instead of waiting out the backoff. */
+  retry: () => void
 }
 
 export function useConnection(): Connection {
   const baseUrl = useBaseUrl()
-  const streamStatus = useStreamStore((state) => state.status)
+  const status = useStreamStore((state) => state.status)
+  const daemon = useStreamStore((state) => state.daemon)
+  const lastError = useStreamStore((state) => state.lastError)
+  const now = useNow()
 
-  const health = useQuery(healthQueryOptions())
-  const version = useQuery({ ...versionQueryOptions(), enabled: health.isSuccess })
-
-  const status: ConnectionStatus = health.isSuccess
-    ? "connected"
-    : health.isError
-      ? "disconnected"
-      : "connecting"
+  const connected = status === "open"
 
   return {
-    status,
+    // `idle` is the tick before the provider's effect runs, and it is a
+    // connection about to be attempted, not one that failed.
+    status: connected ? "connected" : status === "reconnecting" ? "disconnected" : "connecting",
     baseUrl,
-    version: version.data?.version ?? null,
-    uptimeSecs: health.data?.uptime_secs ?? null,
-    error: (health.error as ApiError | null) ?? null,
-    streamStatus,
-    refetch: () => {
-      void health.refetch()
-      void version.refetch()
-    },
+    version: daemon?.version ?? null,
+    // Only while connected: a counter still running for a daemon we have lost
+    // would be claiming an uptime nobody can vouch for.
+    uptimeSecs: connected && daemon ? uptimeSecs(daemon.startedAt, now) : null,
+    error: connected ? null : lastError,
+    retry: () => retryDomainStream("retry requested"),
   }
+}
+
+/** Seconds since `startedAt`, or null if the daemon sent a date we cannot read. */
+function uptimeSecs(startedAt: string, now: number): number | null {
+  const started = Date.parse(startedAt)
+  if (Number.isNaN(started)) return null
+  return Math.max(0, Math.round((now - started) / 1000))
 }

@@ -32,11 +32,13 @@ settings dialog (the gear in the header, or `⌘,`). It is persisted to
 `localStorage` under `ariadne.settings`; the theme lives under `ariadne.theme`.
 Changing the URL clears the query cache and reconnects the event stream.
 
-The sticky footer at the bottom of the window carries the connection state:
-green when both `/v1/health` and the event stream are live, amber when REST
-works but the stream is down (screens load but stop updating themselves) or the
-daemon is still being reached, red when it is unreachable. Hover it for the URL,
-daemon version and uptime; clicking it opens the daemon-logs drawer.
+The sticky footer at the bottom of the window carries the connection state, and
+it has exactly one source: the event stream. Green while it is open and the
+daemon is beating, amber while the first connection is being made, red once it
+is gone — which is the same thing as the screens no longer being live. Hover it
+for the URL, the daemon version and its uptime, both of which come from the
+`heartbeat` the stream carries; clicking it opens the daemon-logs drawer.
+Nothing polls: an idle window makes no requests at all.
 
 ### Scripts
 
@@ -141,7 +143,7 @@ write a key literal. Every key is `[entity, "list" | "detail", ...]`:
 ["profiles",     "list", filters]   ["profiles", "detail", id]
 ["repositories", "list", filters]   ["repositories", "detail", id]
 ["agents",       "list", {}]        ["models",   "list", {}]
-["agent-events", "list", filters]   ["system",   "health" | "version"]
+["agent-events", "list", filters]
 ```
 
 Sub-resources hang off their detail key: `["tasks", "detail", id, "messages"]`,
@@ -208,10 +210,17 @@ socket can stay in `OPEN` with no `error` ever firing, and the UI would go
 quietly stale. With `ariadned` that is the normal case, not an edge case — its
 graceful shutdown waits for in-flight requests and an SSE stream never
 finishes, so the connection outlives the daemon that is stopping (the daemon
-only exits once the last stream client disconnects). The REST health probe is
-therefore also the stream's watchdog: losing it calls `forceReconnect`, getting
-it back calls `reconnectIfClosed` instead of waiting out the backoff. That is
-why `healthQueryOptions` is shared rather than restated per call site.
+only exits once the last stream client disconnects). The daemon therefore says
+so itself: a `heartbeat` control event (`{version, started_at}`) on open and
+every 15 idle seconds. That cadence arms the stream's **idle budget** — 2.5
+beats, re-armed by every frame whatever it carried — and a longer silence
+calls `forceReconnect`. It is the one timer the client keeps, and the only
+thing standing between a dead daemon and a screen that looks fine; the Retry
+button in the connection banner is the same call, made by hand.
+
+The heartbeat is also who the UI is talking to: `useStreamStore` keeps what the
+last one said, and that is where the footer's daemon version and uptime come
+from — a changed `started_at` is a daemon that restarted.
 
 `src/events/stream.ts` declares the event kinds as a total record over the
 generated `DomainEventKind`, and `dispatchDomainEvent` ends in a `never`
