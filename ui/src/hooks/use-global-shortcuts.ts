@@ -7,8 +7,9 @@
  *
  * Two vocabularies (see `@/lib/shortcuts`): ⌘ chords for the two things that
  * open over everything, and typed chords for the rest — `n` for a new goal,
- * `[` for the sidebar rail, `g` then a letter for the screens, the way
- * keyboard-first apps spell navigation. Typed chords are guarded twice over: never while the keystroke is
+ * `[` for the sidebar rail, `?` for the sheet that lists all of this, `g` then
+ * a letter for the screens, the way keyboard-first apps spell navigation.
+ * Typed chords are guarded twice over: never while the keystroke is
  * text (a field, an editor, a session's pane), and never from inside a dialog
  * or a menu, where a bare letter belongs to whatever is on top.
  *
@@ -22,10 +23,13 @@ import { useEffect, useRef } from "react"
 import {
   isTypingTarget,
   type KeySequence,
+  keySequenceLabel,
+  matchesHelpKey,
   matchesKeySequence,
   matchesShortcut,
   type Shortcut,
   sequenceLead,
+  shortcutLabel,
   type TypingTarget,
 } from "@/lib/shortcuts"
 import { paths } from "@/routes/paths"
@@ -38,6 +42,9 @@ export const SETTINGS_SHORTCUT: Shortcut = { key: "," }
 
 /** `N` — the create-goal dialog, from any screen. */
 export const NEW_GOAL_SHORTCUT: KeySequence = { key: "n" }
+
+/** `?` — the cheat sheet, which is where the rest of these are written down. */
+export const HELP_SHORTCUT: KeySequence = { key: "?" }
 
 /**
  * `[` — fold the sidebar down to an icon rail, and back.
@@ -55,12 +62,12 @@ export const SIDEBAR_SHORTCUT: KeySequence = { key: "[" }
  * Keyed by path so the palette can label its "Go to …" rows from the same list
  * the shell binds, rather than spelling the chords twice.
  */
-const SCREEN_SHORTCUTS: readonly { path: string; chord: KeySequence }[] = [
-  { path: paths.goals(), chord: { lead: "g", key: "g" } },
-  { path: paths.sessions(), chord: { lead: "g", key: "s" } },
-  { path: paths.profiles(), chord: { lead: "g", key: "p" } },
-  { path: paths.agents(), chord: { lead: "g", key: "a" } },
-  { path: paths.repositories(), chord: { lead: "g", key: "r" } },
+const SCREEN_SHORTCUTS: readonly { path: string; label: string; chord: KeySequence }[] = [
+  { path: paths.goals(), label: "Goals", chord: { lead: "g", key: "g" } },
+  { path: paths.sessions(), label: "Sessions", chord: { lead: "g", key: "s" } },
+  { path: paths.profiles(), label: "Profiles", chord: { lead: "g", key: "p" } },
+  { path: paths.agents(), label: "Agents", chord: { lead: "g", key: "a" } },
+  { path: paths.repositories(), label: "Repositories", chord: { lead: "g", key: "r" } },
 ]
 
 /** The chord of a screen the palette lists, if it has one. */
@@ -73,6 +80,37 @@ const TYPED_SHORTCUTS: readonly KeySequence[] = [
   NEW_GOAL_SHORTCUT,
   SIDEBAR_SHORTCUT,
   ...SCREEN_SHORTCUTS.map((screen) => screen.chord),
+]
+
+/** One line of the cheat sheet: the chord as it is typed, and what it does. */
+interface ShortcutHelp {
+  keys: string
+  what: string
+}
+
+/**
+ * Every chord there is, in the order the cheat sheet lists them.
+ *
+ * Spelled from the declarations above rather than written out a second time,
+ * so a chord that moves cannot leave the sheet — and `ui/README.md`'s keyboard
+ * table is the same list in the same order.
+ *
+ * `Escape` is on it and is bound by nothing: it belongs to whatever is on top,
+ * and Base UI's dialogs already close the topmost one (see the note above).
+ * The sheet still has to say so — a key that works is a key worth writing
+ * down, whoever implements it.
+ */
+export const SHORTCUT_HELP: readonly ShortcutHelp[] = [
+  { keys: shortcutLabel(PALETTE_SHORTCUT), what: "Open the command palette" },
+  { keys: shortcutLabel(SETTINGS_SHORTCUT), what: "Open settings" },
+  { keys: keySequenceLabel(NEW_GOAL_SHORTCUT), what: "New goal, from any screen" },
+  { keys: keySequenceLabel(SIDEBAR_SHORTCUT), what: "Fold the sidebar to a rail, and back" },
+  ...SCREEN_SHORTCUTS.map((screen) => ({
+    keys: keySequenceLabel(screen.chord),
+    what: `Go to ${screen.label}`,
+  })),
+  { keys: keySequenceLabel(HELP_SHORTCUT), what: "Show this list" },
+  { keys: "Esc", what: "Close the palette, then the topmost panel" },
 ]
 
 /**
@@ -89,6 +127,7 @@ interface GlobalShortcutHandlers {
   onOpenPalette: () => void
   onOpenSettings: () => void
   onNewGoal: () => void
+  onOpenShortcuts: () => void
   onNavigate: (path: string) => void
   onToggleSidebar: () => void
 }
@@ -97,6 +136,7 @@ export function useGlobalShortcuts({
   onOpenPalette,
   onOpenSettings,
   onNewGoal,
+  onOpenShortcuts,
   onNavigate,
   onToggleSidebar,
 }: GlobalShortcutHandlers): void {
@@ -142,7 +182,10 @@ export function useGlobalShortcuts({
           ? onNewGoal
           : matchesKeySequence(event, SIDEBAR_SHORTCUT, lead)
             ? onToggleSidebar
-            : null
+            : // Typed, but not bare: `?` carries the Shift it takes to type it.
+              matchesHelpKey(event)
+              ? onOpenShortcuts
+              : null
 
       if (handler) {
         clearPending()
@@ -171,5 +214,5 @@ export function useGlobalShortcuts({
       window.removeEventListener("keydown", onKeyDown)
       clearPending()
     }
-  }, [onOpenPalette, onOpenSettings, onNewGoal, onNavigate, onToggleSidebar])
+  }, [onOpenPalette, onOpenSettings, onNewGoal, onOpenShortcuts, onNavigate, onToggleSidebar])
 }

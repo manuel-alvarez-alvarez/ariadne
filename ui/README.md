@@ -244,8 +244,26 @@ a task's panel), which `src/components/detail-panels.tsx` reads. The old
 `#/goals/:goalId` and `#/tasks/:taskId` deep links survive as redirects onto the
 board with the panel open.
 
-Link with the helpers in `src/routes/paths.ts` (`paths.goal`, `taskPanelTo`,
-`sessionPanelTo`, `panelSessionTo`, …) rather than hand-written paths, so a
+**The sessions screen is the one exception**, and the only place a param means
+two things: there `?goal=` and `?task=` are what the *list* is narrowed to — the
+daemon's own filters on `GET /v1/sessions`, shown as a chip above the table —
+so `#/sessions?goal=<id>` is every agent that has run for one goal rather than
+a redirect to that goal's panel. Nothing but the session panel opens over that
+screen, and the Context column links to those filters instead of to a panel;
+the work itself is one step further on, from the session panel's own Goal and
+Task links. See `src/features/sessions/filters.ts`.
+
+That exception is why the helpers that open a panel take the screen they are
+opened **from**: `taskPanelFrom(pathname, …)` lands on the board from the
+sessions screen, where `?task=` would otherwise narrow the list instead of
+opening what was picked, and `sessionPanelFrom` leaves that screen's `?goal=`
+and `?task=` alone where every other screen has them cleared away. Everything
+built on them — `taskConversationFrom`, `sessionTerminalFrom`,
+`taskSessionPanelFrom`, and `attentionTarget` above all — inherits the rule, so
+the attention list answers correctly from every screen it is carried onto.
+
+Link with the helpers in `src/routes/paths.ts` (`paths.goal`, `taskPanelFrom`,
+`sessionPanelFrom`, `panelSessionTo`, …) rather than hand-written paths, so a
 panel opened from a list keeps the screen and the filters behind it.
 
 A **hash router** is used on purpose: in a packaged build the frontend is served
@@ -261,6 +279,7 @@ deep link has to resolve client-side.
 | `N` | new goal, from any screen |
 | `[` | fold the sidebar down to an icon rail, and back |
 | `G` then `G`/`S`/`P`/`A`/`R` | goals, sessions, profiles, agents, repositories |
+| `?` | the cheat sheet: this table, in the app |
 | `Escape` | closes the palette, then the topmost panel |
 
 The two ⌘ chords answer to **either** modifier, on every platform: the app runs
@@ -277,11 +296,25 @@ bare letter belongs to whatever is on top. `Escape` is deliberately *not* bound:
 it belongs to whatever is on top, and Base UI's dialogs already close the
 topmost one, so a global handler would take two layers down at once.
 
-The palette (`src/features/command-palette/`) searches the goal, task, session
-and profile lists that are **already in the query cache** — the same keys their
-own screens read, fetched only while it is open — and its rows navigate through
-`src/routes/paths.ts`, so a task stacks its panel on whatever screen it was
-opened over. Two notes on the matching, both in `score.ts`:
+`?` is the one typed chord `isBareKey` cannot guard, since Shift is how the
+character is typed on most layouts: `matchesHelpKey` matches the character the
+keyboard produced instead. It opens `src/components/keyboard-shortcuts-dialog.tsx`,
+whose rows are `SHORTCUT_HELP` — built from the chords the shell binds, in this
+table's order, so the sheet cannot fall behind them. "Keyboard shortcuts" in the
+palette opens the same sheet.
+
+The palette (`src/features/command-palette/`) leads with **Needs attention** —
+the attention list's own rows (`features/goals/attention.ts`), which decide
+where a pick lands through the same `attentionTarget` the strip and the alerts
+ask, so a question opens the thread it was asked in and a prompt opens the pane
+it is waiting in — and then the actions, including the ones that only
+exist for what the screen underneath has open: a new task in the goal whose
+panel is up, `ariadne attach <id>` for the task or session that is. It searches
+the goal, task, session and profile lists that are **already in the query
+cache** — the same keys their own screens read, fetched only while it is open —
+and its rows navigate through `src/routes/paths.ts`, so a task stacks its panel
+on whatever screen it was opened over. Two notes on the matching, both in
+`score.ts`:
 
 - ulids live in an entry's `keywords`, matched literally, never fuzzily: 26
   characters of random letters answer to almost any subsequence query, so

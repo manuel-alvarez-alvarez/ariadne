@@ -28,7 +28,7 @@
 
 import { TriangleAlertIcon } from "lucide-react"
 import { type ReactNode, useState } from "react"
-import { Link, useSearchParams } from "react-router-dom"
+import { Link, useLocation, useSearchParams } from "react-router-dom"
 
 import type { GoalDto } from "@/api"
 import { StatusBadge } from "@/components/status-badge"
@@ -171,12 +171,16 @@ function Retry({ onClick }: { onClick: () => void }) {
  */
 function Row({ item }: { item: AttentionItem }) {
   const [search] = useSearchParams()
+  // Where a row lands depends on the screen as well as its params: the strip is
+  // the board's, but the same targets are used from the alerts, which are
+  // everywhere (see {@link attentionTarget}).
+  const { pathname } = useLocation()
   const status = item.taskReason && item.task ? TASK_STATUS_META[item.task.status] : null
 
   return (
     <li>
       <Link
-        to={attentionTarget(item, search)}
+        to={attentionTarget(item, search, pathname)}
         className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 text-sm transition-colors hover:bg-muted/50"
       >
         {status ? (

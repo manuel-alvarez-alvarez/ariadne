@@ -5,13 +5,15 @@
  *
  * Goals, tasks and sessions have no pages of their own: their details open in
  * side panels driven by search params (`?goal=` on the goals board, `?task=`
- * on any screen, `?session=` on its own for a session's own panel, and
- * `?tab=sessions&session=` for a session *inside* a goal's or a task's panel),
- * which `src/components/detail-panels.tsx` reads.
+ * on any screen but the sessions one, `?session=` on its own for a session's
+ * own panel, and `?tab=sessions&session=` for a session *inside* a goal's or a
+ * task's panel), which `src/components/detail-panels.tsx` reads. The sessions
+ * screen is the exception because it claims `?goal=` and `?task=` as the
+ * filters they are for the daemon's own list endpoint.
  */
 
 import { useEffect, useRef, useState } from "react"
-import { useSearchParams } from "react-router-dom"
+import { useLocation, useSearchParams } from "react-router-dom"
 
 /**
  * Which profile row is expanded, on the profiles screen: what
@@ -60,7 +62,7 @@ export const paths = {
   /**
    * Every session there is, filtered on the screen itself. A session's own
    * details are a `?session=` panel over whatever screen picked it (see
-   * {@link sessionPanelTo}), this being the one that lists them all.
+   * {@link sessionPanelFrom}), this being the one that lists them all.
    */
   sessions: () => "/sessions",
   agents: () => "/agents",
@@ -81,6 +83,10 @@ export const paths = {
  * pathname, `?task=` added, every other filter or panel param kept — so a
  * task opened from a goal's lane stacks on that goal's panel.
  *
+ * Only for callers that can only ever be on a screen where `?task=` *is* a
+ * panel — the board. Everything else goes through {@link taskPanelFrom}, which
+ * knows the one screen where it is not.
+ *
  * The panel's own params go: `tab` and `session` belong to whichever panel
  * put them there, and would otherwise open the new one on a tab or a session
  * that is not its.
@@ -93,28 +99,68 @@ export function taskPanelTo(current: URLSearchParams, taskId: string): { search:
   return { search: `?${next.toString()}` }
 }
 
-/** `taskPanelTo` against the current location, for links outside a list. */
-export function useTaskPanelTo(taskId: string): { search: string } {
-  const [search] = useSearchParams()
-  return taskPanelTo(search, taskId)
+/** Where a panel opens: the same screen unless a `pathname` says otherwise. */
+interface PanelTarget {
+  pathname?: string
+  search: string
 }
 
 /**
- * Link target that opens a session's own panel over the current screen: same
- * pathname, `?session=` added, every filter the screen owns kept — so the list
- * it was picked from stays behind it, with the picked row still marked.
+ * Where a task's panel opens from the screen at `pathname` — over that screen,
+ * with the one exception the app has.
+ *
+ * On the sessions screen `?task=` is that screen's own filter rather than a
+ * panel (`features/sessions/filters.ts`), so the panel opens on the board
+ * instead: something that says "task" has to show the task, not quietly narrow
+ * the list underneath.
+ *
+ * The rule lives here because every way into a task panel has to obey it — the
+ * palette's rows, the task a create dialog has just made, the links inside a
+ * panel floating over that screen — and one caller left on {@link taskPanelTo}
+ * is a link that means something else on one screen.
+ */
+export function taskPanelFrom(
+  pathname: string,
+  current: URLSearchParams,
+  taskId: string,
+): PanelTarget {
+  return pathname === paths.sessions()
+    ? { pathname: paths.goals(), search: `?task=${taskId}` }
+    : taskPanelTo(current, taskId)
+}
+
+/** `taskPanelFrom` against the current location, for links outside a list. */
+export function useTaskPanelTo(taskId: string): PanelTarget {
+  const [search] = useSearchParams()
+  const { pathname } = useLocation()
+  return taskPanelFrom(pathname, search, taskId)
+}
+
+/**
+ * Link target that opens a session's own panel over the screen at `pathname`:
+ * same screen, `?session=` added, every filter that screen owns kept — so the
+ * list it was picked from stays behind it, with the picked row still marked.
  *
  * Unlike {@link panelSessionTo}, the session here is not inside anything: a
  * `?session=` with no `?goal=` and no `?task=` around it *is* the panel (see
- * `detail-panels.tsx`). The screens this is used from carry none of those
- * three, and clearing them is what keeps that true wherever it is used.
+ * `detail-panels.tsx`), which is why those two give way. The sessions screen is
+ * where they are not panels at all but the list's own filters
+ * (`features/sessions/filters.ts`), and there they stay: a session picked out
+ * of a narrowed list has to leave that list exactly as it was.
  */
-export function sessionPanelTo(current: URLSearchParams, sessionId: string): { search: string } {
+export function sessionPanelFrom(
+  pathname: string,
+  current: URLSearchParams,
+  sessionId: string,
+): { search: string } {
   const next = withoutArrival(current)
   next.set("session", sessionId)
-  next.delete("goal")
-  next.delete("task")
+  // The panel's own tab belongs to whichever session was open before this one.
   next.delete("tab")
+  if (pathname !== paths.sessions()) {
+    next.delete("goal")
+    next.delete("task")
+  }
   return { search: `?${next.toString()}` }
 }
 
@@ -162,16 +208,19 @@ export function usePanelSessionNavigation(): (sessionId: string | null) => void 
  * `?tab=sessions&session=`.
  *
  * The screen underneath keeps its filters, and stays on screen behind the
- * panel. Where the session is the thing being opened rather than the task it
- * ran, {@link sessionPanelTo} gives it a panel of its own instead.
+ * panel — which is {@link taskPanelFrom}'s call, so this lands on the board
+ * from the one screen where the task panel does not open. Where the session is
+ * the thing being opened rather than the task it ran, {@link sessionPanelFrom}
+ * gives it a panel of its own instead.
  */
-export function taskSessionPanelTo(
+export function taskSessionPanelFrom(
+  pathname: string,
   current: URLSearchParams,
   taskId: string,
   sessionId: string,
-): { search: string } {
-  const withTask = new URLSearchParams(taskPanelTo(current, taskId).search)
-  return panelSessionTo(withTask, sessionId)
+): PanelTarget {
+  const task = taskPanelFrom(pathname, current, taskId)
+  return { ...task, search: panelSessionTo(new URLSearchParams(task.search), sessionId).search }
 }
 
 /**
@@ -208,18 +257,20 @@ function arriving(
  * in this thread, and the answer is another one — so the row that says so
  * lands on the box that writes it, already addressed to whoever asked.
  */
-export function taskConversationTo(
+export function taskConversationFrom(
+  pathname: string,
   current: URLSearchParams,
   taskId: string,
   addressee?: string | null,
-): { search: string } {
-  const next = new URLSearchParams(taskPanelTo(current, taskId).search)
+): PanelTarget {
+  const panel = taskPanelFrom(pathname, current, taskId)
+  const next = new URLSearchParams(panel.search)
   next.set("tab", "conversation")
-  return arriving({ search: `?${next.toString()}` }, "composer", addressee)
+  return { ...panel, ...arriving({ search: `?${next.toString()}` }, "composer", addressee) }
 }
 
 /**
- * {@link taskConversationTo} for a planner, whose thread is the goal's: it has
+ * {@link taskConversationFrom} for a planner, whose thread is the goal's: it has
  * no task to be answered in, and the goal panel only opens on the board — so
  * this one carries a pathname of its own.
  */
@@ -244,8 +295,12 @@ export function goalThreadTo(
  * focused — where an agent blocked on a prompt is answered, since what it is
  * waiting for is a keystroke in that pane and nothing else.
  */
-export function sessionTerminalTo(current: URLSearchParams, sessionId: string): { search: string } {
-  const next = new URLSearchParams(sessionPanelTo(current, sessionId).search)
+export function sessionTerminalFrom(
+  pathname: string,
+  current: URLSearchParams,
+  sessionId: string,
+): { search: string } {
+  const next = new URLSearchParams(sessionPanelFrom(pathname, current, sessionId).search)
   next.set("tab", "terminal")
   return arriving({ search: `?${next.toString()}` }, "terminal")
 }

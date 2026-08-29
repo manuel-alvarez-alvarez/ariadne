@@ -66,17 +66,27 @@ export type CopyEntry = {
   text: string
 }
 
+/**
+ * `ariadne attach <id>` — the one command that takes a goal, a task or a
+ * session id, which is why it is spelled once here rather than in each of the
+ * three lists below. The command palette offers it for whatever is open, from
+ * this same spelling.
+ */
+export function attachCommand(id: string): string {
+  return `ariadne attach ${id}`
+}
+
 export function goalCopyEntries(goalId: string): CopyEntry[] {
   return [
     { label: "Copy goal ID", text: goalId },
-    { label: "Copy attach command", text: `ariadne attach ${goalId}` },
+    { label: "Copy attach command", text: attachCommand(goalId) },
   ]
 }
 
 export function taskCopyEntries(taskId: string): CopyEntry[] {
   return [
     { label: "Copy task ID", text: taskId },
-    { label: "Copy attach command", text: `ariadne attach ${taskId}` },
+    { label: "Copy attach command", text: attachCommand(taskId) },
     { label: "Copy logs command", text: `ariadne task logs ${taskId}` },
     { label: "Copy diff command", text: `ariadne task diff ${taskId}` },
   ]
@@ -85,7 +95,7 @@ export function taskCopyEntries(taskId: string): CopyEntry[] {
 export function sessionCopyEntries(sessionId: string): CopyEntry[] {
   return [
     { label: "Copy session ID", text: sessionId },
-    { label: "Copy attach command", text: `ariadne attach ${sessionId}` },
+    { label: "Copy attach command", text: attachCommand(sessionId) },
     { label: "Copy logs command", text: `ariadne session logs ${sessionId}` },
   ]
 }

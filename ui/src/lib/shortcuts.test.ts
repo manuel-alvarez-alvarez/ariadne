@@ -4,6 +4,7 @@ import {
   isBareKey,
   isTypingTarget,
   keySequenceLabel,
+  matchesHelpKey,
   matchesKeySequence,
   matchesShortcut,
   type ShortcutEvent,
@@ -78,6 +79,21 @@ describe("matchesKeySequence", () => {
   it("spells a typed chord as it is typed", () => {
     expect(keySequenceLabel(NEW_GOAL)).toBe("N")
     expect(keySequenceLabel(SESSIONS)).toBe("G S")
+  })
+})
+
+describe("matchesHelpKey", () => {
+  it("takes the character, not the keys pressed to type it", () => {
+    // Shift is how `?` is typed on most layouts, so it cannot disqualify it.
+    expect(matchesHelpKey(event({ key: "?", shiftKey: true }))).toBe(true)
+    expect(matchesHelpKey(event({ key: "?" }))).toBe(true)
+  })
+
+  it("is not a chord anything is held for", () => {
+    expect(matchesHelpKey(event({ key: "?", metaKey: true }))).toBe(false)
+    expect(matchesHelpKey(event({ key: "?", ctrlKey: true }))).toBe(false)
+    expect(matchesHelpKey(event({ key: "?", altKey: true }))).toBe(false)
+    expect(matchesHelpKey(event({ key: "/" }))).toBe(false)
   })
 })
 

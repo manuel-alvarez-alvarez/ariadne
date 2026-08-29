@@ -304,8 +304,13 @@ function CopyMenu({ label, entries }: { label: string; entries: CopyEntry[] }) {
   )
 }
 
-/** The toast quotes the text: it is the only thing left that can say what landed. */
-async function copyEntry(entry: CopyEntry) {
+/**
+ * The toast quotes the text: it is the only thing left that can say what
+ * landed. Exported for the command palette, whose copy actions are the same
+ * gesture with the menu left out — what was copied is named nowhere else there
+ * either.
+ */
+export async function copyEntry(entry: CopyEntry) {
   const ok = await copyText(entry.text)
   if (ok) toast.success("Copied", { description: entry.text })
   else toast.error("Could not copy", { description: entry.text })

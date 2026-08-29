@@ -8,7 +8,8 @@
  * syntax highlighting of the code — the alternative, colouring the raw `+`/`-`
  * text, cannot be highlighted at all — at the cost of the line numbers, which
  * the stitched document no longer implies and which are therefore carried
- * alongside it and fed to the gutter.
+ * alongside it and fed to the gutters — two of them, the old file's numbers and
+ * the new file's, so a line can be found in a checkout of either side.
  *
  * Everything is styled off the app's CSS variables so the viewer follows the
  * theme — the add/remove tints included, which is why nothing here spells a
@@ -20,14 +21,16 @@ import { json } from "@codemirror/lang-json"
 import { markdown } from "@codemirror/lang-markdown"
 import { rust } from "@codemirror/lang-rust"
 import { defaultHighlightStyle, syntaxHighlighting } from "@codemirror/language"
-import { unifiedMergeView } from "@codemirror/merge"
+import { getChunks, getOriginalDoc, unifiedMergeView } from "@codemirror/merge"
 import { EditorState, type Extension, RangeSetBuilder } from "@codemirror/state"
 import { oneDarkHighlightStyle } from "@codemirror/theme-one-dark"
 import {
+  type BlockInfo,
   Decoration,
   type DecorationSet,
   EditorView,
-  lineNumbers,
+  GutterMarker,
+  gutter,
   WidgetType,
 } from "@codemirror/view"
 import { useTheme } from "next-themes"
@@ -136,6 +139,125 @@ function addedLineDecorations(docs: DiffDocuments): DecorationSet {
   return builder.finish()
 }
 
+/** One number in a line-number column; empty where the line has none. */
+class NumberMarker extends GutterMarker {
+  readonly text: string
+
+  constructor(text: string) {
+    super()
+    this.text = text
+  }
+
+  override eq(other: NumberMarker): boolean {
+    return other.text === this.text
+  }
+
+  override toDOM(): Text {
+    return document.createTextNode(this.text)
+  }
+}
+
+/**
+ * The old numbers of one deleted chunk, stacked beside the widget the merge
+ * view draws it in.
+ *
+ * A gutter can only put *one* marker next to a block widget, and the widget is
+ * a whole chunk of deleted lines, so the marker is the column: one line per
+ * deleted line, in the same size and line height as the widget's own. That
+ * holds line for line as long as the lines are not wrapped, which is what the
+ * viewer's default is; with wrapping on, a deleted line long enough to fold
+ * carries the numbers under it down with the text they belong to.
+ */
+class DeletedNumbersMarker extends GutterMarker {
+  readonly numbers: readonly number[]
+
+  constructor(numbers: readonly number[]) {
+    super()
+    this.numbers = numbers
+  }
+
+  override eq(other: DeletedNumbersMarker): boolean {
+    return (
+      other.numbers.length === this.numbers.length &&
+      other.numbers.every((number, index) => number === this.numbers[index])
+    )
+  }
+
+  override toDOM(): HTMLElement {
+    const element = document.createElement("div")
+    element.className = "cm-deletedLineNumbers"
+    for (const number of this.numbers) {
+      const line = element.appendChild(document.createElement("div"))
+      line.textContent = String(number)
+    }
+    return element
+  }
+}
+
+/**
+ * The old numbers a deletion widget stands for, or `null` for any other block
+ * widget — the hunk headers above, and the empty deletion the merge view draws
+ * for a chunk that deleted nothing.
+ *
+ * The widget itself carries no chunk, so the chunk is the one that starts where
+ * the widget sits; the lines it deleted are that chunk's range of the *old*
+ * document, and `originalLineNumbers` is what turns those into the numbers the
+ * old file has.
+ */
+function deletedNumbers(
+  docs: DiffDocuments,
+  view: EditorView,
+  widget: WidgetType,
+  block: BlockInfo,
+): GutterMarker | null {
+  if (widget instanceof HunkHeaderWidget) return null
+  const chunk = getChunks(view.state)?.chunks.find((one) => one.fromB === block.from)
+  if (!chunk || chunk.fromA >= chunk.toA) return null
+
+  const original = getOriginalDoc(view.state)
+  const from = original.lineAt(chunk.fromA).number
+  const to = original.lineAt(chunk.endA).number
+  const numbers = docs.originalLineNumbers.slice(from - 1, to)
+  return numbers.length > 0 ? new DeletedNumbersMarker(numbers) : null
+}
+
+/**
+ * The two line-number columns, old before new, in the order a unified diff is
+ * read.
+ *
+ * Both are hand-rolled rather than `lineNumbers()`, which numbers the document
+ * it is in: this document is the *new* side of the stitched hunks, so neither
+ * column can be inferred from it and both are looked up in the arrays
+ * `buildDiffDocuments` carries alongside. The widest number of each column is
+ * its spacer, so a column keeps its width while the view is scrolled instead of
+ * resizing under whatever happens to be on screen.
+ */
+function numberGutters(docs: DiffDocuments): Extension {
+  const numberAt = (numbers: readonly (number | null)[], view: EditorView, line: BlockInfo) =>
+    new NumberMarker(String(numbers[view.state.doc.lineAt(line.from).number - 1] ?? ""))
+  // Folded rather than spread into `Math.max`: the array is one entry per line
+  // of a file, and an argument list that long is a stack overflow rather than a
+  // number.
+  const spacer = (numbers: readonly (number | null)[]) =>
+    new NumberMarker(
+      String(numbers.reduce<number>((widest, number) => Math.max(widest, number ?? 0), 0)),
+    )
+
+  return [
+    gutter({
+      class: "cm-lineNumbers cm-oldLineNumbers",
+      lineMarker: (view, line) => numberAt(docs.oldLineNumbers, view, line),
+      widgetMarker: (view, widget, block) => deletedNumbers(docs, view, widget, block),
+      initialSpacer: () => spacer(docs.originalLineNumbers),
+    }),
+    gutter({
+      class: "cm-lineNumbers cm-newLineNumbers",
+      lineMarker: (view, line) => numberAt(docs.lineNumbers, view, line),
+      initialSpacer: () => spacer(docs.lineNumbers),
+    }),
+  ]
+}
+
 /**
  * The whole viewer's styling. Both themes share it: every colour is a token
  * that already resolves to the right value for the mode the app is in, so the
@@ -161,7 +283,18 @@ const baseTheme = EditorView.theme({
     color: "color-mix(in oklab, var(--muted-foreground) 80%, transparent)",
     userSelect: "none",
   },
-  ".cm-lineNumbers .cm-gutterElement": { padding: "0 0.5rem 0 0.75rem", minWidth: "3ch" },
+  // Two columns of numbers, so each one is tighter than a lone gutter would
+  // be: the pair still has to fit a panel 48rem wide.
+  ".cm-lineNumbers .cm-gutterElement": {
+    padding: "0 0.375rem",
+    minWidth: "2ch",
+    textAlign: "right",
+  },
+  ".cm-oldLineNumbers .cm-gutterElement": { paddingLeft: "0.75rem" },
+  ".cm-newLineNumbers .cm-gutterElement": { paddingRight: "0.5rem" },
+  // The stack of old numbers beside a deleted chunk: the widget's lines are
+  // the content's own, so the column only has to match their tint.
+  ".cm-oldLineNumbers .cm-deletedLineNumbers": { backgroundColor: "var(--diff-remove-soft)" },
   ".cm-cursor, .cm-dropCursor": { display: "none" },
   ".cm-hunkHeader": {
     display: "flex",
@@ -210,7 +343,7 @@ export function DiffEditor({ file, wrap }: { file: DiffFile; wrap: boolean }) {
           // Unwrapped, a long line scrolls the editor sideways instead of
           // folding — which is the point of the toggle on a wide diff.
           ...(wrap ? [EditorView.lineWrapping] : []),
-          lineNumbers({ formatNumber: (line) => String(docs.lineNumbers[line - 1] ?? "") }),
+          numberGutters(docs),
           EditorView.decorations.of(hunkHeaderDecorations(docs)),
           baseTheme,
           EditorView.darkTheme.of(dark),

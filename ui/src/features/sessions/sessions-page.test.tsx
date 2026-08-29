@@ -8,10 +8,12 @@
  * of it shows without rendering the screen: the Context column saying which
  * work each row belongs to (a task's title, a planner session's goal), a pick
  * turning into `?session=` over the screen rather than a navigation away from
- * it, and the two filters — one of which the daemon answers (`?status=failed`)
- * and one of which it cannot (`live` is three statuses, so it is narrowed
- * here) — including what a second visit to the screen opens on, which is the
- * one thing about them that no single render shows.
+ * it, the order the rows come in, and the filters — one of which the daemon
+ * answers (`?status=failed`), two of which it cannot (`live` is three statuses
+ * and `attention` is a cut across all of them, so both are narrowed here) and
+ * two of which are this screen's claim on params that open panels everywhere
+ * else (`?goal=`, `?task=`) — including what a second visit to the screen opens
+ * on, which is the one thing about them that no single render shows.
  *
  * The tokens column is here because it is the row's own figure and the table
  * is where sessions are compared: a compact `in/out`, and a `0/0` — never a
@@ -40,9 +42,14 @@ const TASK: TaskDto = aTask({
 
 const PROFILE: ProfileDto = aProfile()
 
-/** An engineer at work, and the planner that has no task of its own. */
+/**
+ * An engineer at work, and the planner that has no task of its own. The
+ * planner moved last and is the one asking for a person, so one list orders
+ * and narrows differently from the other.
+ */
 const ENGINEER = aSession({
   id: "01JSESS0000000000000000ENG",
+  last_activity_at: "2026-01-01T00:00:00Z",
   usage: { input_tokens: 1_234_567, cached_input_tokens: 1_100_000, output_tokens: 45_300 },
 })
 const PLANNER = aSession({
@@ -50,6 +57,18 @@ const PLANNER = aSession({
   task_id: null,
   role: "planner",
   status: "failed",
+  attention_reason: "disconnected",
+  attention_since: "2026-01-02T00:00:00Z",
+  last_activity_at: "2026-01-02T00:00:00Z",
+})
+
+/** A session of another goal entirely, for the scope chip to exclude. */
+const ELSEWHERE = aSession({
+  id: "01JSESS0000000000000000OTH",
+  goal_id: "01JGOAL0000000000000OTHER1",
+  task_id: null,
+  role: "planner",
+  last_activity_at: "2026-01-03T00:00:00Z",
 })
 
 /** The daemon, answering the four lists the screen reads. */
@@ -57,9 +76,16 @@ function stubDaemon(sessions: SessionDto[] = [ENGINEER, PLANNER]) {
   daemonFetch.mockImplementation((input: Request | string | URL) => {
     const url = new URL(typeof input === "string" ? input : (input as Request).url)
     const status = url.searchParams.get("status")
+    const goal = url.searchParams.get("goal")
+    const task = url.searchParams.get("task")
     const body =
       url.pathname === "/v1/sessions"
-        ? sessions.filter((one) => !status || one.status === status)
+        ? sessions.filter(
+            (one) =>
+              (!status || one.status === status) &&
+              (!goal || one.goal_id === goal) &&
+              (!task || one.task_id === task),
+          )
         : url.pathname === "/v1/goals"
           ? [GOAL]
           : url.pathname === "/v1/tasks"
@@ -73,10 +99,19 @@ function stubDaemon(sessions: SessionDto[] = [ENGINEER, PLANNER]) {
 
 /** What `GET /v1/sessions` was asked to filter by, oldest request first. */
 function sessionRequests(): (string | null)[] {
+  return sessionParams("status")
+}
+
+/** The same, for the goal the list was asked to narrow to. */
+function sessionGoals(): (string | null)[] {
+  return sessionParams("goal")
+}
+
+function sessionParams(param: string): (string | null)[] {
   return daemonFetch.mock.calls
     .map(([input]) => new URL(typeof input === "string" ? input : (input as Request).url))
     .filter((url) => url.pathname === "/v1/sessions")
-    .map((url) => url.searchParams.get("status"))
+    .map((url) => url.searchParams.get(param))
 }
 
 function renderPage(entry = "/sessions") {
@@ -102,17 +137,23 @@ function tokens(row: HTMLElement): HTMLElement {
 beforeEach(() => {
   stubDaemon()
   localStorage.clear()
-  useSettingsStore.setState({ sessionStatusFilter: "", sessionRoleFilter: "" })
+  useSettingsStore.setState({
+    sessionStatusFilter: "",
+    sessionRoleFilter: "",
+    sessionGoalFilter: "",
+    sessionTaskFilter: "",
+  })
 })
 
-it("says which work each session belongs to, and links to it", async () => {
+it("says which work each session belongs to, and narrows the list to it", async () => {
   renderPage()
 
   // A session on a task is named by the task; the planner, which has none, by
-  // its goal — and the goal panel only opens on the board. Awaited, because
-  // the names arrive after the rows do: the sessions come from one request and
-  // the two lists this column reads them against from two more, so a row is on
-  // screen wearing an id for as long as those are in flight.
+  // its goal. Both links are this screen's own scope params — "and what else
+  // has run for this?" — which come back as the chip above the table. Awaited,
+  // because the names arrive after the rows do: the sessions come from one
+  // request and the two lists this column reads them against from two more, so
+  // a row is on screen wearing an id for as long as those are in flight.
   const engineer = await within(await row("Open Engineer session")).findByRole("link", {
     name: TASK.title,
   })
@@ -121,7 +162,7 @@ it("says which work each session belongs to, and links to it", async () => {
   const planner = await within(await row("Open Planner session")).findByRole("link", {
     name: GOAL.title,
   })
-  expect(planner.getAttribute("href")).toBe(`/goals?goal=${GOAL.id}`)
+  expect(planner.getAttribute("href")).toBe(`/sessions?goal=${GOAL.id}`)
 })
 
 it("opens the picked session as a panel over the screen", async () => {
@@ -399,4 +440,85 @@ it("carries the tokens figure in the row's hint, folded column or not", async ()
     return hint
   })
   expect(popup.textContent).toContain("1.2M in, 89% cached, 45k out")
+})
+
+it("shows only the sessions the daemon has raised a reason on", async () => {
+  const user = userEvent.setup()
+  const seen = renderPage()
+  await waitFor(() => expect(sessionRequests().length).toBeGreaterThan(0))
+
+  await user.click(screen.getByRole("button", { name: "Filter by status" }))
+  await user.click(await screen.findByRole("menuitemradio", { name: "Needs attention" }))
+
+  await waitFor(() => expect(seen.url).toBe("/sessions?status=attention"))
+  expect(await screen.findByRole("button", { name: "Open Planner session" })).toBeTruthy()
+  // The engineer is running fine, which is not a state this filter is about —
+  // and, like `live`, it cost no request of its own.
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Open Engineer session" })).toBeNull(),
+  )
+  expect(sessionRequests().every((status) => status === null)).toBe(true)
+})
+
+it("reads down from whatever moved last", async () => {
+  stubDaemon([ENGINEER, PLANNER, ELSEWHERE])
+  renderPage()
+  await screen.findByRole("button", { name: "Open Engineer session" })
+
+  // The daemon lists them oldest first; the table is read for what is
+  // happening, so it turns them round.
+  const ids = screen
+    .getAllByRole("button", { name: /^Open .* session$/ })
+    .map((button) => button.closest("tr"))
+    // The session's own id leads the row; the Context column shows a short id
+    // too where the app has no title for the work.
+    .map((row) => row && within(row).getAllByRole("cell")[0]?.textContent)
+  expect(ids).toEqual([shortId(ELSEWHERE.id), shortId(PLANNER.id), shortId(ENGINEER.id)])
+})
+
+it("narrows to one goal, and says which one", async () => {
+  stubDaemon([ENGINEER, PLANNER, ELSEWHERE])
+  const seen = renderPage(`/sessions?goal=${GOAL.id}`)
+
+  // The chip names the goal, and the session of the other goal is gone.
+  expect(await screen.findByText(GOAL.title)).toBeTruthy()
+  expect(await screen.findByRole("button", { name: "Open Engineer session" })).toBeTruthy()
+  await waitFor(() => expect(sessionGoals()).toContain(GOAL.id))
+  expect(seen.url).toBe(`/sessions?goal=${GOAL.id}`)
+
+  // The panel scheme does not claim the param here: the screen is on screen,
+  // rather than the goals board it would have redirected to.
+  expect(screen.queryByRole("dialog")).toBeNull()
+})
+
+it("clears the scope from the chip", async () => {
+  const user = userEvent.setup()
+  const seen = renderPage(`/sessions?goal=${GOAL.id}`)
+  await screen.findByRole("button", { name: "Open Engineer session" })
+
+  await user.click(screen.getByRole("button", { name: "Show sessions for every goal" }))
+
+  await waitFor(() => expect(seen.url).toBe("/sessions"))
+  await waitFor(() => expect(sessionGoals()).toContain(null))
+})
+
+it("names the scope by its id while the app has no title for it", async () => {
+  const gone = "01JTASK0000000000000GONE01"
+  renderPage(`/sessions?task=${gone}`)
+
+  expect(await screen.findByText(shortId(gone))).toBeTruthy()
+  expect(await screen.findByText("No sessions match these filters")).toBeTruthy()
+})
+
+it("comes back to the scope the screen was left with", async () => {
+  const user = userEvent.setup()
+  renderPage(`/sessions?goal=${GOAL.id}`)
+  await screen.findByRole("button", { name: "Open Engineer session" })
+  // Picking a session must not drop the scope it was picked out of.
+  await user.click(screen.getByRole("button", { name: "Open Engineer session" }))
+
+  const seen = leaveAndComeBack()
+
+  await waitFor(() => expect(seen.url).toBe(`/sessions?goal=${GOAL.id}`))
+  expect(await screen.findByText(GOAL.title)).toBeTruthy()
 })

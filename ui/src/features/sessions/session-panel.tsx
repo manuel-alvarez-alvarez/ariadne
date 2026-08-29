@@ -14,20 +14,23 @@
  */
 
 import { useQuery } from "@tanstack/react-query"
-import { useSearchParams } from "react-router-dom"
+import { useLocation, useSearchParams } from "react-router-dom"
 
 import { ErrorState } from "@/components/error-state"
 import { PanelSheet } from "@/components/panel-sheet"
 import { SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { shortId } from "@/lib/format"
-import { sessionPanelTo } from "@/routes/paths"
+import { sessionPanelFrom } from "@/routes/paths"
 
 import { sessionQueryOptions } from "./queries"
 import { SessionDetailView } from "./session-detail-view"
 
 export function SessionPanel({ sessionId, onClose }: { sessionId: string; onClose: () => void }) {
   const [search, setSearch] = useSearchParams()
+  // The panel floats over whichever screen opened it, and the sessions screen
+  // owns two of the params a session panel would otherwise clear.
+  const { pathname } = useLocation()
   const session = useQuery(sessionQueryOptions(sessionId))
 
   return (
@@ -62,7 +65,7 @@ export function SessionPanel({ sessionId, onClose }: { sessionId: string; onClos
             // this one panel, and Back should close it, not walk the sessions
             // it has been pointed at.
             onResumed={(revived) =>
-              setSearch(sessionPanelTo(search, revived.id).search, { replace: true })
+              setSearch(sessionPanelFrom(pathname, search, revived.id).search, { replace: true })
             }
           />
         )}

@@ -82,6 +82,19 @@ export function matchesKeySequence(
 }
 
 /**
+ * Whether the event is the bare `?` that opens the cheat sheet.
+ *
+ * The one typed chord {@link isBareKey} cannot guard: `?` is Shift and a digit
+ * or a slash on most layouts, so the modifier is part of *typing the
+ * character* rather than part of the chord. What is matched is therefore the
+ * character the keyboard produced, which is also what makes it work on a
+ * layout where `?` needs no shift at all.
+ */
+export function matchesHelpKey(event: ShortcutEvent): boolean {
+  return !event.metaKey && !event.ctrlKey && !event.altKey && event.key === "?"
+}
+
+/**
  * The lead this event opens — the `g` of `g s` — or `null` when it opens none
  * of these sequences. What the shell holds until the next keystroke.
  */

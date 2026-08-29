@@ -33,7 +33,7 @@ import {
 } from "@/api"
 
 import type { PaneSize } from "./log-stream"
-import { isLiveStatus } from "./session-display"
+import { isLiveStatus, sessionAttention } from "./session-display"
 
 /** What the sessions list can be narrowed by. */
 export interface SessionListFilters {
@@ -54,15 +54,26 @@ export interface SessionListFilters {
    * further, so the two are never used together.
    */
   live?: boolean
+  /**
+   * Only the sessions the daemon has raised a reason on. Client-side again,
+   * and by {@link sessionAttention} rather than by a rule of its own: the
+   * sessions screen, the attention strip and `ariadne attention` all have to
+   * agree on which agents are asking for a person. The request is the same one
+   * an unfiltered list makes, so this costs no round trip of its own.
+   */
+  attention?: boolean
 }
 
-export function sessionsQueryOptions({ role, live, ...query }: SessionListFilters = {}) {
+export function sessionsQueryOptions({ role, live, attention, ...query }: SessionListFilters = {}) {
   const narrowed = (session: SessionDto) =>
-    (!role || session.role === role) && (!live || isLiveStatus(session.status))
+    (!role || session.role === role) &&
+    (!live || isLiveStatus(session.status)) &&
+    (!attention || sessionAttention(session) !== null)
   return queryOptions({
     queryKey: qk.sessions.list(query),
     queryFn: () => unwrap(api().GET("/v1/sessions", { params: { query } })),
-    select: role || live ? (sessions: SessionDto[]) => sessions.filter(narrowed) : undefined,
+    select:
+      role || live || attention ? (sessions: SessionDto[]) => sessions.filter(narrowed) : undefined,
   })
 }
 

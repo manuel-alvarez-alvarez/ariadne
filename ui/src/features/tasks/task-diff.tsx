@@ -20,6 +20,7 @@ import {
   FileIcon,
   FileMinusIcon,
   FilePlusIcon,
+  FileTextIcon,
   Maximize2Icon,
   Minimize2Icon,
   WrapTextIcon,
@@ -193,9 +194,28 @@ function DiffToolbar({
           </TooltipTrigger>
           <TooltipContent>{wrap ? "Stop wrapping long lines" : "Wrap long lines"}</TooltipContent>
         </Tooltip>
-        <Button variant={raw ? "secondary" : "ghost"} size="sm" onClick={onRaw} disabled={empty}>
-          Raw
-        </Button>
+        {/* The toggle beside it, and shaped like it: what `Raw` does is as
+            worth saying as what `Wrap` does, and it was bare text next to a
+            button. */}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant={raw ? "secondary" : "ghost"}
+                size="sm"
+                onClick={onRaw}
+                disabled={empty}
+                aria-pressed={raw}
+              />
+            }
+          >
+            <FileTextIcon />
+            Raw
+          </TooltipTrigger>
+          <TooltipContent>
+            {raw ? "Back to the rendered diff" : "Show the diff exactly as the daemon sent it"}
+          </TooltipContent>
+        </Tooltip>
         <Tooltip>
           <TooltipTrigger
             render={

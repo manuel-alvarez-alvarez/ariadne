@@ -11,8 +11,8 @@
  * exist.
  *
  * It also binds the app's global chords and mounts what they open — the command
- * palette, the settings dialog and the create-goal dialog — because all three
- * have to work from every screen, over any panel.
+ * palette, the settings dialog, the create-goal dialog and the keyboard cheat
+ * sheet — because all of them have to work from every screen, over any panel.
  *
  * The sidebar folds down to an icon rail, from the header's own button or the
  * `[` chord. That is what makes the goals board fit a 1280px laptop without
@@ -31,6 +31,7 @@ import { AppSidebar } from "@/components/app-sidebar"
 import { ConnectionBanner } from "@/components/connection-banner"
 import { ConnectionStatus } from "@/components/connection-status"
 import { DetailPanels } from "@/components/detail-panels"
+import { KeyboardShortcutsDialog } from "@/components/keyboard-shortcuts-dialog"
 import { SettingsDialog } from "@/components/settings-dialog"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
@@ -68,6 +69,7 @@ export function AppShell() {
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [createGoalOpen, setCreateGoalOpen] = useState(false)
   const [logsOpen, setLogsOpen] = useState(false)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const pageTitle = usePageTitle()
   const navigate = useNavigate()
   const railed = useSettingsStore((state) => state.sidebarCollapsed)
@@ -76,11 +78,14 @@ export function AppShell() {
   const openPalette = useCallback(() => setPaletteOpen(true), [])
   const openSettings = useCallback(() => setSettingsOpen(true), [])
   const openCreateGoal = useCallback(() => setCreateGoalOpen(true), [])
+  const openLogs = useCallback(() => setLogsOpen(true), [])
+  const openShortcuts = useCallback(() => setShortcutsOpen(true), [])
   const goToScreen = useCallback((path: string) => void navigate(path), [navigate])
   useGlobalShortcuts({
     onOpenPalette: openPalette,
     onOpenSettings: openSettings,
     onNewGoal: openCreateGoal,
+    onOpenShortcuts: openShortcuts,
     onNavigate: goToScreen,
     onToggleSidebar: toggleSidebar,
   })
@@ -158,7 +163,7 @@ export function AppShell() {
 
       {/* Below the sidebar row, so the status bar runs the full window width. */}
       <footer className="flex h-7 shrink-0 items-center border-t bg-muted/40 px-1">
-        <ConnectionStatus onOpenLogs={() => setLogsOpen(true)} />
+        <ConnectionStatus onOpenLogs={openLogs} />
       </footer>
 
       {/* Draws nothing: the window's title, the sidebar's count and the toast
@@ -172,10 +177,15 @@ export function AppShell() {
         onOpenChange={setPaletteOpen}
         onOpenSettings={openSettings}
         onNewGoal={openCreateGoal}
+        onOpenLogs={openLogs}
+        onOpenShortcuts={openShortcuts}
         onToggleSidebar={toggleSidebar}
       />
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
       <DaemonLogsDrawer open={logsOpen} onOpenChange={setLogsOpen} />
+      {/* `?` from anywhere, and a palette row for the people who reach for the
+          palette first; the sheet is where every other chord is written down. */}
+      <KeyboardShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
       {/* The shell's, like settings: "New goal" has to work from the palette,
           from `N`, and on screens with no create button of their own. */}
       <CreateGoalDialog

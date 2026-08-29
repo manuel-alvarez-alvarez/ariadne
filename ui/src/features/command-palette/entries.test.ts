@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest"
 
 import type { GoalDto, ProfileDto, SessionDto, TaskDto } from "@/api"
+import { attentionTarget, collectAttention } from "@/features/goals/attention"
 import { aGoal, aProfile, aSession, aTask } from "@/test/fixtures"
-import { buildPaletteEntries, paletteTargetTo } from "./entries"
+import { attentionEntries, buildPaletteEntries, paletteTargetTo } from "./entries"
 
 const GOAL: GoalDto = aGoal({
   id: "01JGOAL00000000000000000A",
@@ -116,9 +117,82 @@ describe("buildPaletteEntries", () => {
   })
 })
 
+/**
+ * The rows are built from what the strip is showing, so they are asserted the
+ * same way — through `collectAttention`, rather than against items written out
+ * by hand that could stop being what the strip collects. What a row *is* is
+ * `attention.ts`'s business (a task and the session stuck on it are one row);
+ * what this pins is the shape a palette row takes around it, and that a pick
+ * lands where the strip's own row would.
+ */
+describe("attentionEntries", () => {
+  const FAILED = aTask({ ...TASK, id: "01JTASK0000000000000FAILED", status: "failed" })
+  const WAITING: SessionDto = {
+    ...SESSION,
+    attention_reason: "waiting_user",
+    attention_since: "2026-01-02T00:00:00Z",
+  }
+
+  it("names a stuck task by its title, with the reason it is on the list", () => {
+    const [entry] = attentionEntries(collectAttention([GOAL], [FAILED], []))
+
+    expect(entry?.label).toBe(FAILED.title)
+    expect(entry?.detail).toBe("Failed")
+    expect(entry?.keywords).toContain(FAILED.id)
+  })
+
+  it("leads with the session's reason on a row that carries one", () => {
+    const [entry] = attentionEntries(collectAttention([GOAL], [TASK], [WAITING]))
+
+    // The row is the task's — a task and the agent stuck on it are one thing
+    // gone wrong — and what it is asking for is the session's reason.
+    expect(entry?.label).toBe(TASK.title)
+    expect(entry?.detail).toBe("Waiting for you")
+    expect(entry?.keywords).toContain(WAITING.id)
+  })
+
+  it("names a planner's row by its role and goal, having no task", () => {
+    const planner: SessionDto = { ...PLANNER_SESSION, attention_reason: "disconnected" }
+    const [entry] = attentionEntries(collectAttention([GOAL], [], [planner]))
+
+    expect(entry?.label).toBe(`Planner · ${GOAL.title}`)
+    expect(entry?.detail).toBe("Disconnected")
+  })
+
+  it("tells two rows apart when they read the same", () => {
+    // Two tasks of the same name, failed the same way: the rows are word for
+    // word identical, and cmdk shows one row per *value*.
+    const twin = aTask({ ...FAILED, id: "01JTASK00000000000000TWIN1" })
+    const entries = attentionEntries(collectAttention([GOAL], [FAILED, twin], []))
+
+    expect(entries).toHaveLength(2)
+    expect(new Set(entries.map((entry) => entry.value)).size).toBe(2)
+  })
+
+  it("sends a pick exactly where the strip's own row goes", () => {
+    const [item] = collectAttention([GOAL], [TASK], [WAITING])
+    const [entry] = attentionEntries(collectAttention([GOAL], [TASK], [WAITING]))
+    const search = new URLSearchParams("status=failed")
+    if (!item || !entry) throw new Error("nothing was collected")
+
+    // Same function, same answer: a question is answered in the thread it was
+    // asked in, wherever the palette was opened.
+    expect(paletteTargetTo(entry.target, search, "/goals")).toEqual(
+      attentionTarget(item, search, "/goals"),
+    )
+  })
+
+  it("has nothing to list when nothing is stuck", () => {
+    expect(attentionEntries(collectAttention([GOAL], [TASK], [SESSION]))).toEqual([])
+  })
+})
+
 describe("paletteTargetTo", () => {
+  /** Any screen but the sessions one, where a task panel opens over the screen. */
+  const OVER = "/goals"
+
   it("takes a goal to the board, where its panel lives", () => {
-    expect(paletteTargetTo({ kind: "goal", goalId: "g1" }, new URLSearchParams())).toBe(
+    expect(paletteTargetTo({ kind: "goal", goalId: "g1" }, new URLSearchParams(), OVER)).toBe(
       "/goals?goal=g1",
     )
   })
@@ -127,6 +201,7 @@ describe("paletteTargetTo", () => {
     const target = paletteTargetTo(
       { kind: "task", taskId: "t1" },
       new URLSearchParams("goal=g1&status=active"),
+      OVER,
     )
     expect(target).toEqual({ search: "?goal=g1&status=active&task=t1" })
   })
@@ -135,6 +210,7 @@ describe("paletteTargetTo", () => {
     const target = paletteTargetTo(
       { kind: "task", taskId: "t2" },
       new URLSearchParams("task=t1&tab=sessions&session=s1"),
+      OVER,
     )
     expect(target).toEqual({ search: "?task=t2" })
   })
@@ -143,6 +219,7 @@ describe("paletteTargetTo", () => {
     const target = paletteTargetTo(
       { kind: "session", sessionId: "s1", goalId: "g1", taskId: "t1" },
       new URLSearchParams(),
+      OVER,
     )
     expect(target).toEqual({ search: "?task=t1&tab=sessions&session=s1" })
   })
@@ -151,12 +228,21 @@ describe("paletteTargetTo", () => {
     const target = paletteTargetTo(
       { kind: "session", sessionId: "s2", goalId: "g1", taskId: null },
       new URLSearchParams("task=t1"),
+      OVER,
     )
     expect(target).toBe("/goals?goal=g1&tab=sessions&session=s2")
   })
 
+  it("opens a task on the board from the screen whose `?task=` is a filter", () => {
+    // On the sessions screen that param narrows the list; a pick has to open
+    // what its row names, so it lands on the board instead.
+    expect(
+      paletteTargetTo({ kind: "task", taskId: "t1" }, new URLSearchParams("goal=g1"), "/sessions"),
+    ).toEqual({ pathname: "/goals", search: "?task=t1" })
+  })
+
   it("passes a page straight through", () => {
-    expect(paletteTargetTo({ kind: "page", path: "/sessions" }, new URLSearchParams())).toBe(
+    expect(paletteTargetTo({ kind: "page", path: "/sessions" }, new URLSearchParams(), OVER)).toBe(
       "/sessions",
     )
   })

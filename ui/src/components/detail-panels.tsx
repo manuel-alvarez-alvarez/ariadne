@@ -1,7 +1,8 @@
 /**
  * The URL-driven side panels: `?goal=` (on the goals board) opens the goal
- * panel, `?task=` (on any screen) opens the task panel on top of it, and a
- * `?session=` with neither of those around it opens that session's own panel.
+ * panel, `?task=` (on any screen but the sessions one) opens the task panel on
+ * top of it, and a `?session=` with neither of those around it opens that
+ * session's own panel.
  * Mounted once by the shell, so a task or a session can be opened from the
  * board, a list or another panel without leaving the screen it was on.
  *
@@ -40,6 +41,17 @@ export function DetailPanels() {
     const step = closePanel(panel, search, window.history.state)
     if (step.kind === "back") navigate(-1)
     else setSearch(step.search, { replace: true })
+  }
+
+  // The sessions screen is the one screen that owns `?goal=` and `?task=`
+  // itself: there they are what the list is narrowed to, with a chip above the
+  // table saying so (`features/sessions/filters.ts`). So nothing is opened over
+  // it except the session panel — which is what a row there opens, filters and
+  // all still behind it.
+  if (location.pathname === paths.sessions()) {
+    return sessionId ? (
+      <SessionPanel sessionId={sessionId} onClose={() => close("session")} />
+    ) : null
   }
 
   // The goal panel belongs to the board, so a `?goal=` link followed from

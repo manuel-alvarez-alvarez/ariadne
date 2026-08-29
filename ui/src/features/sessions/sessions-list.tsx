@@ -34,15 +34,19 @@
  * request. What the list is *scoped* to is what decides the context column and
  * what an empty list is called: inside a goal's or a task's panel the subject
  * is the panel's own heading, and repeating it on every row (or blaming an
- * empty tab on filters that tab does not have) says nothing. See
- * {@link listScope}.
+ * empty tab on filters that tab does not have) says nothing. The sessions
+ * screen narrows itself by the same two filters from outside, which is what
+ * `inside` is for. See {@link listScope}.
  *
  * The list stays live on its own: `session_created` and `session_updated`
  * invalidate `sessions.lists()` in the event dispatcher, so a session starting,
- * going idle or being killed shows up here without a refresh.
+ * going idle or being killed shows up here without a refresh. It is ordered by
+ * what moved last (see {@link byLastActivity}), which is what keeps the row
+ * that just changed at the top rather than wherever the daemon listed it.
  */
 
 import { useQuery } from "@tanstack/react-query"
+import { useMemo } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 
 import type { GoalDto, SessionDto, TaskDto } from "@/api"
@@ -64,8 +68,8 @@ import { ProfileSummary } from "@/features/profiles/profile-summary"
 import { taskListQueryOptions } from "@/features/tasks/queries"
 import { sessionCopyEntries } from "@/lib/clipboard"
 import { cn, ROLE_LABELS, shortId } from "@/lib/format"
-import { paths, taskPanelTo } from "@/routes/paths"
 
+import { GOAL_PARAM, TASK_PARAM, withFilter } from "./filters"
 import { byId, type SessionListFilters, sessionsQueryOptions } from "./queries"
 import { SessionAttentionBadge, SessionStatusBadge } from "./session-display"
 
@@ -77,7 +81,8 @@ import { SessionAttentionBadge, SessionStatusBadge } from "./session-display"
  * same status and still be about different work — which is what the context
  * column is for.
  */
-function listScope(filters: SessionListFilters): "task" | "goal" | "unscoped" {
+function listScope(filters: SessionListFilters, inside: boolean): "task" | "goal" | "unscoped" {
+  if (!inside) return "unscoped"
   if (filters.task) return "task"
   if (filters.goal) return "goal"
   return "unscoped"
@@ -93,6 +98,20 @@ function listScope(filters: SessionListFilters): "task" | "goal" | "unscoped" {
 const FOLDS_AWAY = "hidden lg:table-cell"
 
 /**
+ * The rows in the order the table shows them: whatever moved last, first.
+ *
+ * The daemon lists sessions oldest-first, which puts the agent that is working
+ * right now at the bottom of a long screen — and this table is read for what is
+ * happening, not for what a goal's history was. `created_at` stands in for a
+ * session that has never reported activity, so the order is total and a session
+ * with nothing to say still sits where it belongs.
+ */
+function byLastActivity(sessions: SessionDto[]): SessionDto[] {
+  const movedAt = (session: SessionDto) => session.last_activity_at ?? session.created_at
+  return [...sessions].sort((a, b) => movedAt(b).localeCompare(movedAt(a)))
+}
+
+/**
  * What an empty list is called where it is empty; never blames absent filters,
  * and never claims more than the list is actually showing.
  *
@@ -101,8 +120,8 @@ const FOLDS_AWAY = "hidden lg:table-cell"
  * missing rather than that the goal has no sessions, which is a thing it can
  * say while four of them are running.
  */
-function emptyTitle(filters: SessionListFilters): string {
-  const scope = listScope(filters)
+function emptyTitle(filters: SessionListFilters, inside: boolean): string {
+  const scope = listScope(filters, inside)
   if (filters.role && scope !== "unscoped") {
     return `No ${ROLE_LABELS[filters.role].toLowerCase()} session yet`
   }
@@ -112,7 +131,12 @@ function emptyTitle(filters: SessionListFilters): string {
     case "goal":
       return "No sessions yet for this goal"
     default:
-      return filters.status || filters.role || filters.live
+      return filters.status ||
+        filters.role ||
+        filters.live ||
+        filters.attention ||
+        filters.goal ||
+        filters.task
         ? "No sessions match these filters"
         : "No sessions yet"
   }
@@ -121,6 +145,7 @@ function emptyTitle(filters: SessionListFilters): string {
 export function SessionsList({
   filters,
   selectedId,
+  inside = true,
   onSelect,
 }: {
   filters: SessionListFilters
@@ -131,17 +156,29 @@ export function SessionsList({
    * without being told which one that was.
    */
   selectedId?: string
+  /**
+   * Whether the table is *inside* the thing it is scoped to — a goal's or a
+   * task's panel, whose heading already names it, which is the default and
+   * what every panel is.
+   *
+   * The sessions screen narrows itself by the same filters but from a chip
+   * above the table, so it says `false`: the goal is named once up there, which
+   * leaves the Context column worth having (which task each row ran) and makes
+   * an empty list the filters' doing rather than the subject's.
+   */
+  inside?: boolean
   /** Called with the whole session, so callers do not have to look it up again. */
   onSelect: (session: SessionDto) => void
 }) {
   const [search] = useSearchParams()
   const selected = selectedId ?? search.get("session") ?? undefined
   const sessions = useQuery(sessionsQueryOptions(filters))
+  const rows = useMemo(() => byLastActivity(sessions.data ?? []), [sessions.data])
 
   // Both are shared keys the rest of the app already holds (the goals board's
   // attention strip mounts them), so the context column usually costs no
   // request at all — and none whatsoever in a panel, which does not draw it.
-  const showContext = listScope(filters) === "unscoped"
+  const showContext = listScope(filters, inside) === "unscoped"
   const goals = useQuery({ ...goalsQueryOptions(), enabled: showContext })
   const tasks = useQuery({ ...taskListQueryOptions(), enabled: showContext })
   const goalsById = byId(goals.data)
@@ -181,11 +218,15 @@ export function SessionsList({
             <TableRow>
               <TableCell colSpan={columnCount} className="p-0">
                 {/* Inside the table's own frame, so the empty state drops its box. */}
-                <EmptyState emphasis="quiet" title={emptyTitle(filters)} className="border-0" />
+                <EmptyState
+                  emphasis="quiet"
+                  title={emptyTitle(filters, inside)}
+                  className="border-0"
+                />
               </TableCell>
             </TableRow>
           ) : null}
-          {sessions.data?.map((session) => (
+          {rows.map((session) => (
             <SessionRow
               key={session.id}
               session={session}
@@ -366,11 +407,14 @@ function SessionRole({ session, onSelect }: { session: SessionDto; onSelect: () 
  * What this session was run for: its task, or — for a planner session, which
  * has none — its goal.
  *
- * It is a link rather than plain text because the row itself opens the
- * *session*, and the question this column answers ("which piece of work is
- * this?") is usually followed by wanting that piece of work. Both targets are
- * the panel scheme the rest of the app uses; the row lets anchors through for
- * exactly this (see the row's `onClick`).
+ * It is a link rather than plain text, and what it links to is *this list,
+ * narrowed to that piece of work* — `?task=` or `?goal=`, the screen's own
+ * scope params, which come back as a chip above the table
+ * (`sessions-page.tsx`). The column is only ever drawn where nothing scopes the
+ * list already, so following it is the natural next question: "and what else
+ * has run for this?" The work itself is one step further on, through the panel
+ * a row opens, which names its goal and its task as links of their own. The row
+ * lets anchors through for exactly this (see the row's `onClick`).
  */
 function ContextCell({
   session,
@@ -385,8 +429,16 @@ function ContextCell({
   // The row's Role column already says which of the two this is, so both read
   // the same; the tooltip carries the pair in full.
   const subject = session.task_id
-    ? { label: task?.title ?? shortId(session.task_id), to: taskPanelTo(search, session.task_id) }
-    : { label: goal?.title ?? shortId(session.goal_id), to: paths.goal(session.goal_id) }
+    ? {
+        what: "task",
+        label: task?.title ?? shortId(session.task_id),
+        to: { search: `?${withFilter(search, TASK_PARAM, session.task_id)}` },
+      }
+    : {
+        what: "goal",
+        label: goal?.title ?? shortId(session.goal_id),
+        to: { search: `?${withFilter(search, GOAL_PARAM, session.goal_id)}` },
+      }
 
   return (
     // `max-w-*` on the cell with a truncating block inside it is what keeps a
@@ -413,6 +465,9 @@ function ContextCell({
           <span>
             Task: {session.task_id ? (task?.title ?? session.task_id) : "— (planner session)"}
           </span>
+          {/* What the link does, since the name alone cannot say it — and the
+              name is what the link has to keep being called. */}
+          <span className="text-background/70">Opens only this {subject.what}'s sessions</span>
         </TooltipContent>
       </Tooltip>
     </TableCell>

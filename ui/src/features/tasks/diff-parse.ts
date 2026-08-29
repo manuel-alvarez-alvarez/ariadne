@@ -270,6 +270,21 @@ export interface DiffDocuments {
   original: string
   /** For each line of `doc`, its line number in the new file. */
   lineNumbers: number[]
+  /**
+   * For each line of `doc`, its line number in the *old* file — `null` for a
+   * line that was added, which had none. The other half of the two-column
+   * gutter: a reader comparing this diff against a checkout of the base needs
+   * the old numbers as much as the new ones.
+   */
+  oldLineNumbers: (number | null)[]
+  /**
+   * For each line of `original`, its line number in the old file.
+   *
+   * The deleted lines are not in `doc` at all — the merge view draws them as
+   * widgets over the old side — so the gutter numbers them from here, by the
+   * `original` range the chunk it is drawing covers.
+   */
+  originalLineNumbers: number[]
   /** Where each hunk's header goes: the `doc` line index it sits above. */
   hunkStarts: { line: number; header: string; heading: string }[]
   /** Total lines of `doc`, so callers can bail out on very large files. */
@@ -280,18 +295,28 @@ export function buildDiffDocuments(file: DiffFile): DiffDocuments {
   const newLines: string[] = []
   const oldLines: string[] = []
   const lineNumbers: number[] = []
+  const oldLineNumbers: (number | null)[] = []
+  const originalLineNumbers: number[] = []
   const hunkStarts: DiffDocuments["hunkStarts"] = []
 
   for (const hunk of file.hunks) {
     hunkStarts.push({ line: newLines.length, header: hunk.header, heading: hunk.heading })
     let newLine = hunk.newStart
+    let oldLine = hunk.oldStart
     for (const line of hunk.lines) {
-      if (line.kind !== "add") oldLines.push(line.text)
+      if (line.kind !== "add") {
+        oldLines.push(line.text)
+        originalLineNumbers.push(oldLine)
+      }
       if (line.kind !== "del") {
         newLines.push(line.text)
         lineNumbers.push(newLine)
-        newLine += 1
+        // A context line is the same line on both sides; an added one is on
+        // neither, so its old column stays empty.
+        oldLineNumbers.push(line.kind === "context" ? oldLine : null)
       }
+      if (line.kind !== "add") oldLine += 1
+      if (line.kind !== "del") newLine += 1
     }
   }
 
@@ -299,6 +324,8 @@ export function buildDiffDocuments(file: DiffFile): DiffDocuments {
     doc: newLines.join("\n"),
     original: oldLines.join("\n"),
     lineNumbers,
+    oldLineNumbers,
+    originalLineNumbers,
     hunkStarts,
     lineCount: newLines.length,
   }

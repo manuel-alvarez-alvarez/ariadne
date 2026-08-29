@@ -106,6 +106,9 @@ function useAttentionToasts(
 ) {
   const navigate = useNavigate()
   const [search] = useSearchParams()
+  // These fire on whichever screen the user is on, and where a row opens
+  // depends on that screen: see {@link attentionTarget}.
+  const { pathname } = useLocation()
   /** What has been on the list already; `null` until the first full answer. */
   const announced = useRef<Set<string> | null>(null)
 
@@ -119,7 +122,7 @@ function useAttentionToasts(
 
     for (const [key, item] of current) {
       if (seen.has(key) || quiet) continue
-      const target = attentionTarget(item, search)
+      const target = attentionTarget(item, search, pathname)
       toast.warning(headline(item), {
         // One toast per item: a reason raised twice in a row — a stream that
         // dropped and re-delivered, a re-render — replaces its own toast
@@ -129,7 +132,7 @@ function useAttentionToasts(
         action: { label: "Open", onClick: () => void navigate(target) },
       })
     }
-  }, [items, ready, quiet, navigate, search])
+  }, [items, ready, quiet, navigate, search, pathname])
 }
 
 /** What has changed about this row, as far as the list is concerned. */

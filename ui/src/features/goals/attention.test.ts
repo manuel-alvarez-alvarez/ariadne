@@ -17,9 +17,11 @@ import { describe, expect, it } from "vitest"
 import type { GoalDto, SessionDto, TaskDto } from "@/api"
 
 import { sessionAttention } from "@/features/sessions/session-display"
+import { paths } from "@/routes/paths"
 import { daemonFetch, jsonResponse } from "@/test/harness"
 
 import {
+  attentionTarget,
   collectAttention,
   collectBoardAttention,
   taskAttentionReason,
@@ -362,6 +364,50 @@ describe("collectAttention", () => {
     expect(items[0]?.goal).toBeUndefined()
   })
 })
+/**
+ * Where a row lands is `attention-strip.test.tsx`'s subject for the board it
+ * was written on. What is left for here is the screen the answer is given
+ * *from*: the list is carried onto every one of them (`attention-alerts.tsx`),
+ * and the sessions screen reads `?goal=` and `?task=` as its own filters rather
+ * than as panels — so a row answered there has to leave for the board rather
+ * than quietly narrowing the list under the alert.
+ */
+describe("attentionTarget, from the screen it is answered on", () => {
+  const FAILED = task({ id: "t9", status: "failed" })
+
+  it("opens a task on the board from the screen whose `?task=` is a filter", () => {
+    const [item] = collectAttention([], [FAILED], [])
+    if (!item) throw new Error("nothing was collected")
+
+    expect(attentionTarget(item, new URLSearchParams("goal=g1"), paths.sessions())).toEqual({
+      pathname: paths.goals(),
+      search: "?task=t9",
+    })
+  })
+
+  it("stacks it on the screen it was answered from anywhere else", () => {
+    const [item] = collectAttention([], [FAILED], [])
+    if (!item) throw new Error("nothing was collected")
+
+    const target = attentionTarget(item, new URLSearchParams("status=active"), paths.goals())
+    expect(target.pathname).toBeUndefined()
+    expect(new URLSearchParams(target.search).get("task")).toBe("t9")
+  })
+
+  it("leaves the sessions screen's filters under a session it opens there", () => {
+    const flagged = session({ id: "s9", task_id: null, attention_reason: "disconnected" })
+    const [item] = collectAttention([], [], [flagged])
+    if (!item) throw new Error("nothing was collected")
+
+    const params = new URLSearchParams(
+      attentionTarget(item, new URLSearchParams("goal=g1&task=t1"), paths.sessions()).search,
+    )
+    expect(params.get("session")).toBe("s9")
+    expect(params.get("goal")).toBe("g1")
+    expect(params.get("task")).toBe("t1")
+  })
+})
+
 describe("collectBoardAttention", () => {
   it("indexes a flagged session by the task whose card should show it", () => {
     const board = collectBoardAttention([

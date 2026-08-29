@@ -29,10 +29,10 @@ import { STALLED_META, TASK_STATUS_META, taskListQueryOptions } from "@/features
 import { ROLE_LABELS, shortId } from "@/lib/format"
 import {
   goalThreadTo,
-  sessionPanelTo,
-  sessionTerminalTo,
-  taskConversationTo,
-  taskPanelTo,
+  sessionPanelFrom,
+  sessionTerminalFrom,
+  taskConversationFrom,
+  taskPanelFrom,
 } from "@/routes/paths"
 
 import { goalsQueryOptions } from "./queries"
@@ -318,25 +318,31 @@ function reasons(index: Map<string, Flagged>): Map<string, SessionAttention> {
  * Everything else lands where it always did — the task's panel for a row that
  * is about a task, the session's for one that is only about a session — since
  * a death or a stall is something to read rather than something to answer.
+ *
+ * The screen it is answered *from* matters as well as its params: the list
+ * carries onto every screen (`attention-alerts.tsx`), and the sessions one
+ * reads `?goal=`/`?task=` as its own filters rather than as panels. The
+ * `…From` helpers are where that is settled.
  */
 export function attentionTarget(
   item: AttentionItem,
   current: URLSearchParams,
+  pathname: string,
 ): { pathname?: string; search: string } {
   const { session, sessionReason, taskId } = item
   if (session && sessionReason === "waiting_user") {
     // A planner belongs to no task, so its question is in the goal's thread.
     return taskId
-      ? taskConversationTo(current, taskId, session.profile_id)
+      ? taskConversationFrom(pathname, current, taskId, session.profile_id)
       : goalThreadTo(current, item.goalId, session.profile_id)
   }
   if (session && (sessionReason === "waiting_permission" || sessionReason === "waiting_input")) {
-    return sessionTerminalTo(current, session.id)
+    return sessionTerminalFrom(pathname, current, session.id)
   }
   // A row the task itself put on the list is the task's, whatever session sits
   // on it; one that is only a session's opens that session.
-  if (!item.taskReason && session) return sessionPanelTo(current, session.id)
-  return taskPanelTo(current, taskId ?? item.id)
+  if (!item.taskReason && session) return sessionPanelFrom(pathname, current, session.id)
+  return taskPanelFrom(pathname, current, taskId ?? item.id)
 }
 
 /**

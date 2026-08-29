@@ -165,6 +165,25 @@ describe("buildDiffDocuments", () => {
     expect(docs.lineCount).toBe(6)
   })
 
+  it("carries the old-file numbers too, blank where the line was added", () => {
+    const docs = buildDiffDocuments(fileAt(parseUnifiedDiff(MULTI_FILE), 0))
+
+    // The gutter's left column: a context line is the same line on both sides,
+    // and the two added ones are on neither of the old file's.
+    expect(docs.oldLineNumbers).toEqual([1, null, null, 3, 20, null])
+    // The deleted lines are not in `doc` at all, so their numbers are counted
+    // down the old document instead — which is what the deleted chunks the
+    // merge view draws are numbered from.
+    expect(docs.originalLineNumbers).toEqual([1, 2, 3, 20, 21])
+  })
+
+  it("numbers a file that only deletes, whose new side is empty", () => {
+    const docs = buildDiffDocuments(fileAt(parseUnifiedDiff(MULTI_FILE), 2))
+
+    expect(docs.doc).toBe("")
+    expect(docs.originalLineNumbers).toEqual([1, 2])
+  })
+
   it("leaves the new document empty for a deleted file", () => {
     const docs = buildDiffDocuments(fileAt(parseUnifiedDiff(MULTI_FILE), 2))
 
