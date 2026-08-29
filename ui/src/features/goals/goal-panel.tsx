@@ -1,7 +1,7 @@
 /**
  * One goal in a side panel over the goals board: what it is, what it is
  * allowed to do, its tasks, its planner thread and the sessions it has run.
- * `ariadne goal inspect` plus `goal messages`.
+ * `ariadne goal inspect` plus `goal thread`.
  *
  * Everything reads the query cache, which the SSE dispatcher patches, so a
  * status change made from the CLI or by the daemon lands here on its own.

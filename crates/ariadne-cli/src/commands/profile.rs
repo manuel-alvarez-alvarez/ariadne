@@ -14,6 +14,7 @@ use ariadne_client::Client;
 use ariadne_core::Role;
 
 use super::{confirm, parse_model, parse_model_or_default, path_segment};
+use crate::cli::values::Spelling;
 use crate::output::{Column, Format, UNCAPPED, local_time, note, print, print_kv, print_list};
 
 pub use flags::{PromptAssignment, read_prompts};
@@ -36,9 +37,9 @@ pub enum ProfileCommand {
     /// command line, `--prompt-file <kind>=<path>` to read one from a file.
     /// Both are repeatable and take each kind once. `<kind>` is `system` for
     /// the profile's own system prompt, or one of the briefings its role owns
-    /// (planner: planner_briefing; engineer: engineer_briefing,
-    /// changes_requested, landing_direct, landing_pull_request; reviewer:
-    /// reviewer_briefing, reviewer_resume). Whatever is not given starts as the role default.
+    /// (planner: planner-briefing; engineer: engineer-briefing,
+    /// changes-requested, landing-direct, landing-pull-request; reviewer:
+    /// reviewer-briefing, reviewer-resume). Whatever is not given starts as the role default.
     ///
     /// A briefing may use only the `{placeholder}` tokens its kind fills in;
     /// one that names another is refused, with the allowed ones listed.
@@ -50,7 +51,7 @@ pub enum ProfileCommand {
         #[arg(long)]
         name: String,
         /// What this profile is spawned as
-        #[arg(long, value_enum)]
+        #[arg(long, value_parser = Spelling::<Role>::new())]
         role: Role,
         /// What this profile runs on: AGENT[:MODEL] — an agent CLI
         /// (claude_code | codex | opencode) on its own default model, or one
@@ -68,7 +69,7 @@ pub enum ProfileCommand {
     /// List profiles
     Ls {
         /// Filter by role
-        #[arg(long, value_enum)]
+        #[arg(long, value_parser = Spelling::<Role>::new())]
         role: Option<Role>,
         /// Print cells in full instead of cutting them to the column width
         #[arg(long)]
@@ -85,9 +86,9 @@ pub enum ProfileCommand {
     /// Prompts are replaced by kind, with the same `--prompt <kind>=<text>`
     /// and `--prompt-file <kind>=<path>` flags `profile create` takes:
     /// `system` for the profile's own system prompt, or one of the briefings
-    /// its role owns (planner: planner_briefing; engineer: engineer_briefing,
-    /// changes_requested, landing_direct, landing_pull_request; reviewer:
-    /// reviewer_briefing, reviewer_resume). Both are repeatable and take each kind once; a prompt
+    /// its role owns (planner: planner-briefing; engineer: engineer-briefing,
+    /// changes-requested, landing-direct, landing-pull-request; reviewer:
+    /// reviewer-briefing, reviewer-resume). Both are repeatable and take each kind once; a prompt
     /// nobody names is left exactly as it is.
     ///
     /// A briefing may use only the `{placeholder}` tokens its kind fills in;
@@ -142,9 +143,9 @@ pub enum ProfileCommand {
 }
 
 /// The kind is one of the prompts the profile's role owns (planner:
-/// `planner_briefing`; engineer: `engineer_briefing`, `changes_requested`,
-/// `landing_direct`, `landing_pull_request`; reviewer: `reviewer_briefing`,
-/// `reviewer_resume`), or `system` for the profile's own system prompt.
+/// `planner-briefing`; engineer: `engineer-briefing`, `changes-requested`,
+/// `landing-direct`, `landing-pull-request`; reviewer: `reviewer-briefing`,
+/// `reviewer-resume`), or `system` for the profile's own system prompt.
 #[derive(Subcommand)]
 pub enum PromptCommand {
     /// Print a prompt's content raw, ready to be piped to a file

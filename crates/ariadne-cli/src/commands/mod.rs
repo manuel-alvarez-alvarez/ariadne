@@ -95,7 +95,19 @@ pub fn recipient_label(recipient: &MessageRecipientDto) -> String {
     }
 }
 
-/// One conversation message as `goal messages` and `task messages` print it:
+/// The one status `GET /v1/tasks` and `GET /v1/sessions` filter by, when the
+/// caller named exactly one: those two endpoints take a single status, so
+/// several are narrowed on the answer instead — as `session ls --role`
+/// already is. Asking for the one there is keeps the common filter where it
+/// belongs, at the daemon.
+pub fn one_of<T: Copy>(statuses: &[T]) -> Option<T> {
+    match statuses {
+        [only] => Some(*only),
+        _ => None,
+    }
+}
+
+/// One conversation message as `goal thread` and `task thread` print it:
 /// `[time] role: body`, with the addressee after the author when there is one.
 pub fn message_line(message: &MessageDto) -> String {
     let author = match &message.recipient {
@@ -113,7 +125,7 @@ pub fn message_line(message: &MessageDto) -> String {
     )
 }
 
-/// A conversation as `goal messages` and `task messages` print it: the
+/// A conversation as `goal thread` and `task thread` print it: the
 /// daemon's own list for a script, one line per message for a person.
 pub fn print_messages(messages: &[MessageDto], format: Format) -> Result<()> {
     print(format, &messages, || {

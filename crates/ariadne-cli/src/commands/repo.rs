@@ -9,6 +9,7 @@ use ariadne_core::MergeStrategy;
 use serde_json::json;
 
 use super::confirm;
+use crate::cli::values::Spelling;
 use crate::output::{Column, Format, UNCAPPED, local_time, print, print_kv, print_list};
 
 /// Columns of `repo ls`.
@@ -34,7 +35,7 @@ pub enum RepoCommand {
         description: Option<String>,
         /// How an approved task lands on the base branch: squashed straight
         /// onto it, or published as a pull/merge request for a human to merge
-        #[arg(long, value_enum, default_value_t = MergeStrategy::Direct)]
+        #[arg(long, value_parser = Spelling::<MergeStrategy>::new(), default_value = "direct")]
         merge_strategy: MergeStrategy,
     },
     /// List repositories
@@ -50,7 +51,7 @@ pub enum RepoCommand {
         id: String,
     },
     /// Update a repository
-    Edit {
+    Update {
         /// Repository id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::repo_ids))]
         id: String,
@@ -64,7 +65,7 @@ pub enum RepoCommand {
         #[arg(long)]
         description: Option<String>,
         /// How an approved task lands on the base branch
-        #[arg(long, value_enum)]
+        #[arg(long, value_parser = Spelling::<MergeStrategy>::new())]
         merge_strategy: Option<MergeStrategy>,
     },
     /// Delete a repository
@@ -135,7 +136,7 @@ pub async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Result<()
                 ])
             })?;
         }
-        RepoCommand::Edit {
+        RepoCommand::Update {
             id,
             path,
             branch,

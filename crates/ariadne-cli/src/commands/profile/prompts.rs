@@ -4,7 +4,7 @@
 //! Two halves of the API read as one list here — the briefings live in
 //! `profile_prompts`, the system prompt on the profile row — but from the
 //! terminal they are the prompts one profile runs on, spelled `system` and
-//! `engineer_briefing` alike. Which of them a profile has depends on its role,
+//! `engineer-briefing` alike. Which of them a profile has depends on its role,
 //! and that is the one check a command line cannot make: clap has no role to
 //! hand, so [`parse_prompt_arg`] asks only whether the kind exists and
 //! [`Owner::owns`] asks whose it is, once the profile can be named.
@@ -45,11 +45,20 @@ pub enum PromptArg {
 }
 
 impl PromptArg {
+    /// The wire spelling: what the daemon stores, `profile prompts` prints
+    /// and `--format json` answers with.
     pub(crate) fn as_str(&self) -> &'static str {
         match self {
             PromptArg::System => SYSTEM,
             PromptArg::Briefing(kind) => kind.as_str(),
         }
+    }
+
+    /// How a command line spells it: kebab-case, the way the help lists it
+    /// and the completions offer it. Both spellings are read back by
+    /// [`parse_prompt_arg`], and this is the one a message quotes.
+    pub(super) fn spelling(&self) -> String {
+        self.as_str().replace('_', "-")
     }
 }
 
@@ -67,7 +76,10 @@ pub(super) fn owned(role: Option<Role>) -> Vec<PromptArg> {
 
 /// Prompt kinds as a command line spells them, comma-separated.
 pub(super) fn spelled(args: &[PromptArg]) -> String {
-    args.iter().map(|a| a.as_str()).collect::<Vec<_>>().join(", ")
+    args.iter()
+        .map(PromptArg::spelling)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// A `<kind>` argument, without knowing yet which profile it is for.
@@ -75,12 +87,19 @@ pub(super) fn parse_prompt_arg(s: &str) -> Result<PromptArg, String> {
     if s == SYSTEM {
         return Ok(PromptArg::System);
     }
-    s.parse().map(PromptArg::Briefing).map_err(|_| {
-        format!(
-            "unknown prompt kind: {s} (expected one of {})",
-            spelled(&owned(None))
-        )
-    })
+    // Both spellings name the same prompt: the kebab-case one the help lists
+    // and the completions offer, and the snake_case one the daemon stores and
+    // `profile prompts` prints back — so a kind read off that table can be
+    // typed straight back in.
+    s.replace('-', "_")
+        .parse()
+        .map(PromptArg::Briefing)
+        .map_err(|_| {
+            format!(
+                "unknown prompt kind: {s} (expected one of {})",
+                spelled(&owned(None))
+            )
+        })
 }
 
 /// Whose prompts a `<kind>` is about: a profile that exists, or the role of
@@ -100,7 +119,7 @@ impl Owner<'_> {
 
     /// `arg` if these prompts include it, otherwise an error naming the ones
     /// they do: prompt kinds belong to exactly one role, and a reviewer
-    /// profile asked for `engineer_briefing` has nothing to show.
+    /// profile asked for `engineer-briefing` has nothing to show.
     pub(super) fn owns(&self, arg: PromptArg) -> Result<PromptArg> {
         let PromptArg::Briefing(kind) = arg else {
             // Whatever the role, it runs on a system prompt.
@@ -114,7 +133,7 @@ impl Owner<'_> {
         // every kind there is: each briefs a role through its own lifecycle.
         let owner = kind.roles().iter().map(|r| r.as_str()).collect::<Vec<_>>();
         let owner = owner.join("/");
-        let (kind, prompts) = (kind.as_str(), spelled(&owned(Some(self.role()))));
+        let (kind, prompts) = (arg.spelling(), spelled(&owned(Some(self.role()))));
         match self {
             Owner::Role(role) => bail!(
                 "{} profiles have no {kind} prompt ({owner} owns it) — their prompts are: {prompts}",
@@ -229,7 +248,7 @@ pub async fn run(client: &Client, cmd: PromptCommand, format: Format) -> Result<
             let profile = get_profile(client, &id).await?;
             let kind = Owner::Profile(&profile).owns(kind)?;
             let prompt = write(client, &profile, kind, Some(read_content(file)?)).await?;
-            let what = format!("{} of {} ({})", kind.as_str(), profile.name, profile.id);
+            let what = format!("{} of {} ({})", kind.spelling(), profile.name, profile.id);
             print(format, &prompt.json(), || println!("updated {what}"))?;
         }
         PromptCommand::Reset { id, kind, all, yes } => {
@@ -253,7 +272,7 @@ pub async fn run(client: &Client, cmd: PromptCommand, format: Format) -> Result<
             let (name, role) = (&profile.name, profile.role.as_str());
             print(format, &payload, || {
                 for p in &done {
-                    let kind = p.kind.as_str();
+                    let kind = p.kind.spelling();
                     println!(
                         "reset {kind} of {name} ({}) to the {role} default",
                         profile.id
@@ -277,7 +296,7 @@ async fn fetch(client: &Client, profile: &ProfileDto, kind: PromptArg) -> Result
                 "{} ({}) answered with no {} prompt",
                 profile.name,
                 profile.id,
-                kind.as_str()
+                kind.spelling()
             )
         })
 }
@@ -312,7 +331,7 @@ async fn write(
 /// replace.
 fn reset_question(profile: &ProfileDto, kinds: &[PromptArg], all: bool) -> String {
     let (what, defaults) = match (all, kinds) {
-        (false, [one]) => (format!("the {} prompt", one.as_str()), "default"),
+        (false, [one]) => (format!("the {} prompt", one.spelling()), "default"),
         _ => (format!("all {} prompts", kinds.len()), "defaults"),
     };
     format!(
@@ -372,30 +391,48 @@ mod tests {
         let kinds = |role| spelled(&owned(Some(role)));
         assert_eq!(
             kinds(Role::Planner),
-            "system, planner_briefing, planner_resume"
+            "system, planner-briefing, planner-resume"
         );
         assert_eq!(
             kinds(Role::Engineer),
-            "system, engineer_briefing, engineer_resume, changes_requested, \
-             landing_direct, landing_pull_request"
+            "system, engineer-briefing, engineer-resume, changes-requested, \
+             landing-direct, landing-pull-request"
         );
     }
 
-    /// A kind is spelled as the daemon spells it, plus `system`; a typo must
-    /// not send the caller to `--help` to find out which.
+    /// A kind is typed either way round — the kebab-case spelling the help
+    /// lists and the completions offer, and the snake_case one the daemon
+    /// stores and `profile prompts` prints back — plus `system`, which is one
+    /// word either way.
     #[test]
-    fn a_kind_is_the_daemons_spelling_and_an_unknown_one_lists_them_all() {
+    fn a_kind_is_spelled_in_kebab_or_in_snake() {
         assert_eq!(parse_prompt_arg(SYSTEM), Ok(PromptArg::System));
+        for spelling in ["engineer-briefing", "engineer_briefing"] {
+            assert_eq!(
+                parse_prompt_arg(spelling),
+                Ok(PromptArg::Briefing(PromptKind::EngineerBriefing)),
+                "{spelling}"
+            );
+        }
         assert_eq!(
             parse_prompt_arg("changes_requested"),
             Ok(PromptArg::Briefing(PromptKind::ChangesRequested))
         );
-        let err = parse_prompt_arg("engineer-briefing").expect_err("unknown");
-        assert!(
-            err.starts_with("unknown prompt kind: engineer-briefing"),
-            "{err}"
+        assert_eq!(
+            parse_prompt_arg("landing-pull-request"),
+            Ok(PromptArg::Briefing(PromptKind::LandingPullRequest)),
+            "every underscore of a kind gives way, not just the first"
         );
-        for expected in [SYSTEM, "engineer_briefing", "reviewer_resume"] {
+    }
+
+    /// A typo must not send the caller to `--help` to find the spelling: the
+    /// refusal quotes what was typed and lists the kinds there are, in the
+    /// spelling the help lists them in.
+    #[test]
+    fn an_unknown_kind_lists_them_all() {
+        let err = parse_prompt_arg("briefing").expect_err("unknown");
+        assert!(err.starts_with("unknown prompt kind: briefing"), "{err}");
+        for expected in [SYSTEM, "engineer-briefing", "reviewer-resume"] {
             assert!(err.contains(expected), "{err}");
         }
     }
@@ -422,9 +459,9 @@ mod tests {
         .expect_err("wrong role")
         .to_string();
         assert!(err.contains("is a reviewer profile"), "{err}");
-        assert!(err.contains("engineer_briefing"), "{err}");
+        assert!(err.contains("engineer-briefing"), "{err}");
         assert!(
-            err.contains("its prompts are: system, reviewer_briefing, reviewer_resume"),
+            err.contains("its prompts are: system, reviewer-briefing, reviewer-resume"),
             "{err}"
         );
     }
@@ -437,7 +474,7 @@ mod tests {
         let one = [PromptArg::Briefing(PromptKind::ChangesRequested)];
         assert_eq!(
             reset_question(&p, &one, false),
-            "Reset the changes_requested prompt of Engineer (01Engineer) to the engineer default?"
+            "Reset the changes-requested prompt of Engineer (01Engineer) to the engineer default?"
         );
         assert_eq!(
             reset_question(&p, &owned(Some(p.role)), true),

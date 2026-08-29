@@ -289,13 +289,13 @@ mod tests {
         .expect_err("wrong role")
         .to_string();
         assert!(
-            err.starts_with("engineer profiles have no planner_briefing prompt"),
+            err.starts_with("engineer profiles have no planner-briefing prompt"),
             "{err}"
         );
         assert!(err.contains("(planner owns it)"), "{err}");
         assert!(
             err.contains(
-                "their prompts are: system, engineer_briefing, engineer_resume, changes_requested"
+                "their prompts are: system, engineer-briefing, engineer-resume, changes-requested"
             ),
             "{err}"
         );

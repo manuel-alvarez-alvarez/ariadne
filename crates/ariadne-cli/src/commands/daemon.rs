@@ -55,7 +55,7 @@ impl Done {
 /// `ariadne daemon start` — bring up the daemon of `home` and wait for it.
 ///
 /// The client is built for `home` rather than taken from the caller:
-/// `--endpoint` / `ARIADNE_SOCKET` — never passed to ariadned — would send
+/// `--endpoint` / `ARIADNE_ENDPOINT` — never passed to ariadned — would send
 /// both the already-running check and the readiness poll at a different daemon.
 pub async fn start(home: Option<PathBuf>, format: Format) -> Result<()> {
     let client = Client::for_home(home.clone());

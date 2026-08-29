@@ -5,10 +5,10 @@ use super::*;
 
 use clap::FromArgMatches;
 
-use ariadne_core::{AgentKind, GoalStatus, MergeStrategy, Role, TaskStatus};
+use ariadne_core::{AgentKind, GoalStatus, MergeStrategy, Role, SessionStatus, TaskStatus};
 
 use crate::commands::models::ModelsCommand;
-use crate::commands::profile::PromptAssignment;
+use crate::commands::profile::{PromptAssignment, PromptCommand};
 
 /// clap's own consistency check over the whole tree, shadowed `--format`
 /// arguments included.
@@ -17,12 +17,71 @@ fn the_command_tree_is_well_formed() {
     command().debug_assert();
 }
 
+/// The command groups: every one of them is a screen someone lands on from
+/// `ariadne --help`, so every one of them has to read the same way.
+const GROUPS: &[&str] = &[
+    "agent", "daemon", "goal", "profile", "repo", "session", "task",
+];
+
+/// The root and every group say what they are for, list the two global flags
+/// under a heading of their own, and end in examples. A screen missing one of
+/// those is a screen someone has to guess the rest of.
+#[test]
+fn the_root_and_every_group_are_one_help_screen_shape() {
+    let mut screens = vec![vec![]];
+    screens.extend(GROUPS.iter().map(|group| vec![*group]));
+    for path in screens {
+        let name = path.join(" ");
+        let help = long_help(&path);
+        assert!(help.contains("Global options:"), "{name}: {help}");
+        assert!(help.contains("\nExamples:\n"), "{name}: no examples");
+        assert!(
+            help.contains("--endpoint <ENDPOINT>") && help.contains("--format <FORMAT>"),
+            "{name}: {help}"
+        );
+        assert!(
+            subcommand(&path).get_long_about().is_some(),
+            "{name}: nothing says what it is for"
+        );
+    }
+}
+
+/// `--endpoint` reads the environment where the endpoint is resolved rather
+/// than through clap, so no help screen carries the value this shell happens
+/// to have and no usage line reads as though the flag were required — which
+/// is exactly what an `env =` on it used to do wherever `ARIADNE_SOCKET` was
+/// set.
+#[test]
+fn no_help_screen_leaks_the_endpoint_of_the_shell_it_runs_in() {
+    for path in [vec![], vec!["goal"], vec!["repo"], vec!["task", "create"]] {
+        let name = path.join(" ");
+        let help = long_help(&path);
+        assert!(!help.contains("[env:"), "{name}: {help}");
+        let usage = help
+            .lines()
+            .find(|line| line.starts_with("Usage:"))
+            .unwrap_or_else(|| panic!("{name}: no usage line"));
+        assert!(!usage.contains("--endpoint"), "{name}: {usage}");
+    }
+}
+
+/// A description nobody gave is empty, which is what the daemon is sent; the
+/// help has no business printing `[default: ""]` at a reader.
+#[test]
+fn an_empty_description_is_not_advertised_as_a_default() {
+    for path in [["goal", "create"], ["task", "create"]] {
+        let help = long_help(&path);
+        assert!(help.contains("-d, --description"), "{help}");
+        assert!(!help.contains("[default: \"\"]"), "{help}");
+    }
+}
+
 /// Every command a user can actually run, and whether `--format` shapes
 /// what it prints. Hidden internal commands are in here too: `--format`
 /// is global, so it reaches them whether or not anyone meant it to.
 const LEAVES: &[(&str, bool)] = &[
     ("_spawn", false),
-    ("agent list", true),
+    ("agent ls", true),
     ("agent update", true),
     ("agent-event", false),
     ("attach", false),
@@ -39,9 +98,9 @@ const LEAVES: &[(&str, bool)] = &[
     ("goal create", true),
     ("goal inspect", true),
     ("goal ls", true),
-    ("goal messages", true),
     ("goal msg", true),
     ("goal rm", true),
+    ("goal thread", true),
     ("mcp serve", false),
     ("models ls", true),
     ("profile create", true),
@@ -54,10 +113,10 @@ const LEAVES: &[(&str, bool)] = &[
     ("profile rm", true),
     ("profile update", true),
     ("repo add", true),
-    ("repo edit", true),
     ("repo inspect", true),
     ("repo ls", true),
     ("repo rm", true),
+    ("repo update", true),
     ("session inspect", true),
     ("session kill", true),
     ("session logs", true),
@@ -73,10 +132,10 @@ const LEAVES: &[(&str, bool)] = &[
     ("task inspect", true),
     ("task logs", true),
     ("task ls", true),
-    ("task messages", true),
     ("task msg", true),
     ("task retry", true),
     ("task reviews", true),
+    ("task thread", true),
     ("task update", true),
     ("version", true),
 ];
@@ -187,16 +246,114 @@ fn a_filter_takes_only_the_values_the_daemon_knows() {
     );
 
     let Command::Task {
-        command: TaskCommand::Ls { status, .. },
+        command: TaskCommand::Ls { statuses, .. },
     } = parse(&["ariadne", "task", "ls", "--status", "approved"]).command
     else {
         panic!("task ls");
     };
-    assert_eq!(status, Some(TaskStatus::Approved));
+    assert_eq!(statuses, [TaskStatus::Approved]);
     assert!(
         try_parse(&["ariadne", "task", "ls", "--status", "integrating"]).is_err(),
         "and the status a task was landed from by a fourth role is gone"
     );
+}
+
+/// A status is typed either way round: the kebab-case spelling the help
+/// prints and the completions offer, and the snake_case one the daemon, the
+/// API and `--format json` answer with — so a status read off a listing is a
+/// status that can be typed straight back in.
+#[test]
+fn a_status_is_spelled_in_kebab_or_in_snake() {
+    assert_eq!(task_statuses(&["in-progress"]), [TaskStatus::InProgress]);
+    assert_eq!(task_statuses(&["in_progress"]), [TaskStatus::InProgress]);
+    let Command::Repo {
+        command: RepoCommand::Add { merge_strategy, .. },
+    } = parse(&[
+        "ariadne",
+        "repo",
+        "add",
+        "/r",
+        "--merge-strategy",
+        "pull-request",
+    ])
+    .command
+    else {
+        panic!("repo add");
+    };
+    assert_eq!(
+        merge_strategy,
+        MergeStrategy::PullRequest,
+        "and so is every other enum a flag takes"
+    );
+}
+
+/// Several statuses ride on one `ls`, comma-separated or on a flag each, and
+/// every `ls` takes them the same way.
+#[test]
+fn several_statuses_ride_on_one_flag() {
+    let both = [TaskStatus::InProgress, TaskStatus::UnderReview];
+    assert_eq!(task_statuses(&["in-progress,under_review"]), both);
+    assert_eq!(task_statuses(&["in-progress", "under-review"]), both);
+
+    let Command::Session {
+        command: SessionCommand::Ls { statuses, .. },
+    } = parse(&["ariadne", "session", "ls", "--status", "idle,exited"]).command
+    else {
+        panic!("session ls");
+    };
+    assert_eq!(statuses, [SessionStatus::Idle, SessionStatus::Exited]);
+}
+
+/// Prompt kinds go the same way, on the argument as on the flag: they are
+/// parsed by hand rather than by clap, and the hand-written parser has to
+/// take the two spellings too.
+#[test]
+fn a_prompt_kind_is_spelled_in_kebab_or_in_snake() {
+    let got = |spelling: &str| {
+        let Command::Profile {
+            command:
+                ProfileCommand::Prompt {
+                    command: PromptCommand::Get { kind, .. },
+                },
+        } = parse(&["ariadne", "profile", "prompt", "get", "Engineer", spelling]).command
+        else {
+            panic!("profile prompt get");
+        };
+        kind
+    };
+    assert_eq!(got("engineer-briefing"), got("engineer_briefing"));
+    assert_eq!(got("engineer-briefing").as_str(), "engineer_briefing");
+    assert_eq!(got("system").as_str(), "system");
+
+    let (texts, _) = create_flags(&["--prompt", "changes-requested=Fix it"]);
+    assert_eq!(pairs(texts), ["changes_requested=Fix it"]);
+}
+
+/// A value that is neither spelling is refused where it was typed, quoted as
+/// it was typed, with the spellings the help prints listed back.
+#[test]
+fn a_status_that_is_no_spelling_of_one_lists_the_real_ones() {
+    let err = try_parse(&["ariadne", "task", "ls", "--status", "in progress"])
+        .map(|_| ())
+        .expect_err("no such status")
+        .to_string();
+    assert!(err.contains("invalid value 'in progress'"), "{err}");
+    assert!(err.contains("in-progress"), "{err}");
+}
+
+/// The statuses one `task ls` line asked for.
+fn task_statuses(values: &[&str]) -> Vec<TaskStatus> {
+    let mut argv = vec!["ariadne", "task", "ls"];
+    for value in values {
+        argv.extend_from_slice(&["--status", value]);
+    }
+    let Command::Task {
+        command: TaskCommand::Ls { statuses, .. },
+    } = parse(&argv).command
+    else {
+        panic!("task ls");
+    };
+    statuses
 }
 
 /// `--to` is what addresses a message, on either thread, and leaving it out is
@@ -436,18 +593,18 @@ fn a_repository_can_be_registered_with_a_merge_strategy() {
     );
 
     let Command::Repo {
-        command: RepoCommand::Edit { merge_strategy, .. },
+        command: RepoCommand::Update { merge_strategy, .. },
     } = parse(&[
         "ariadne",
         "repo",
-        "edit",
+        "update",
         "01REPO",
         "--merge-strategy",
         "direct",
     ])
     .command
     else {
-        panic!("repo edit");
+        panic!("repo update");
     };
     assert_eq!(merge_strategy, Some(MergeStrategy::Direct));
 }
@@ -601,7 +758,7 @@ fn a_prompt_without_a_kind_is_a_usage_error() {
         .to_string();
     assert!(err.contains("missing <kind>="), "{err}");
     assert!(err.contains("write system=<text>"), "{err}");
-    assert!(err.contains("engineer_briefing"), "{err}");
+    assert!(err.contains("engineer-briefing"), "{err}");
     let err = try_create(&["--prompt-file", "/tmp/b.md"])
         .expect_err("no kind")
         .to_string();
@@ -818,6 +975,28 @@ fn leaf_paths() -> Vec<String> {
     walk(&cmd, "", &mut out);
     out.sort();
     out
+}
+
+/// One help screen as `--help` renders it (`[]` = `ariadne --help`).
+fn long_help(path: &[&str]) -> String {
+    let mut cmd = command();
+    cmd.build();
+    let mut screen = &mut cmd;
+    for name in path {
+        screen = screen.find_subcommand_mut(name).expect("subcommand");
+    }
+    screen.render_long_help().to_string()
+}
+
+/// The built command at `path` (`[]` = `ariadne` itself).
+fn subcommand(path: &[&str]) -> clap::Command {
+    let mut cmd = command();
+    cmd.build();
+    let mut found = &cmd;
+    for name in path {
+        found = found.find_subcommand(name).expect("subcommand");
+    }
+    found.clone()
 }
 
 /// Whether `--format` shows up in that subcommand's help.

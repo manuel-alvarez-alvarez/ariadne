@@ -12,11 +12,12 @@ use ariadne_api::tasks::{TaskDto, TaskListQuery};
 use ariadne_client::Client;
 use ariadne_core::GoalStatus;
 
+use super::query_path;
 use super::{ProfileNames, confirm, parse_model, print_messages};
+use crate::cli::values::Spelling;
 use crate::output::{
     Column, Format, UNCAPPED, local_time, print, print_kv, print_list, usage_block, usage_cell,
 };
-use super::query_path;
 
 /// Columns of `goal ls`. `tokens` is what every agent of the goal spent
 /// between them, in over an up arrow and out over a down one, with the share
@@ -36,15 +37,37 @@ const LS: &[Column] = &[
 /// that spills over several lines lines them all up under the first.
 const INDENT: &str = "\n             ";
 
+/// What `goal create --help` ends with: a first goal, then the two things
+/// most often said on the same line.
+const CREATE_EXAMPLES: &str = "\
+Examples:
+  # a goal in one registered repository, planned on the Planner profile's own model
+  ariadne goal create --title \"Add rate limiting\" --repo ~/projects/api
+
+  # a planner of your own, on one model of one agent CLI
+  ariadne goal create --title \"Add rate limiting\" --repo ~/projects/api \\
+      --planner Architect --model codex:gpt-5.3-codex
+
+  # two repositories, and two reviewer approvals before a task may merge
+  ariadne goal create --title \"Split the API\" --repo ~/projects/api \\
+      --repo ~/projects/ui --approvals 2
+";
+
 #[derive(Subcommand)]
 pub enum GoalCommand {
     /// Create a goal
+    ///
+    /// Names what is to be achieved and the registered repositories it is to
+    /// be achieved in, and spawns the planner that breaks it into tasks.
+    /// Nothing runs until you confirm the plan in the goal's conversation.
+    /// Prints the new goal id.
+    #[command(after_help = CREATE_EXAMPLES)]
     Create {
         /// Short goal title (what the whole effort is called)
         #[arg(long)]
         title: String,
         /// Goal description (what should be achieved)
-        #[arg(short = 'd', long, default_value = "")]
+        #[arg(short = 'd', long, default_value = "", hide_default_value = true)]
         description: String,
         /// Registered repository, by id or by the path it was added with
         /// (`ariadne repo add`); repeatable
@@ -68,9 +91,9 @@ pub enum GoalCommand {
     },
     /// List goals
     Ls {
-        /// Filter by status, at the daemon; repeatable, and a goal in any of
-        /// the named statuses is listed
-        #[arg(long = "status", value_enum)]
+        /// Filter by status, at the daemon; repeatable and comma-separated,
+        /// and a goal in any of the named statuses is listed
+        #[arg(long = "status", value_parser = Spelling::<GoalStatus>::new(), value_delimiter = ',')]
         statuses: Vec<GoalStatus>,
         /// Print cells in full instead of cutting them to the column width
         #[arg(long)]
@@ -105,7 +128,7 @@ pub enum GoalCommand {
         yes: bool,
     },
     /// Show the goal-level conversation
-    Messages {
+    Thread {
         /// Goal id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
         id: String,
@@ -249,7 +272,7 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
         GoalCommand::Attach { id } => {
             crate::commands::attach::attach(client, &id, None).await?;
         }
-        GoalCommand::Messages { id } => {
+        GoalCommand::Thread { id } => {
             let msgs: Vec<MessageDto> = client
                 .get_json(&format!("/v1/goals/{id}/messages?limit=200"))
                 .await?;

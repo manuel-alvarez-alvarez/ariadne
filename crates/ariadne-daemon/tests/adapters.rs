@@ -90,7 +90,10 @@ fn claude_spawn_plan() {
         let cmd = settings["hooks"][event][0]["hooks"][0]["command"]
             .as_str()
             .unwrap();
-        assert!(cmd.contains("agent-event --kind claude"), "{event}: {cmd}");
+        assert!(
+            cmd.contains("agent-event --kind claude_code"),
+            "{event}: {cmd}"
+        );
     }
 
     // Resume keeps the internal id and passes --resume.

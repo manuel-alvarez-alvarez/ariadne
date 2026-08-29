@@ -1,5 +1,5 @@
 /**
- * The task thread — the `task messages` equivalent: what the planner, engineer
+ * The task thread — the `task thread` equivalent: what the planner, engineer
  * and reviewers said while working the task, with a compose box under it, the
  * `task msg` half. New messages arrive through the event stream:
  * `message_created` invalidates this query, so a message an agent posts shows

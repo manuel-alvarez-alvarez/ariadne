@@ -7,7 +7,7 @@
 //!   CLI has no `-file` variant — a copy is kept in the run dir for debugging)
 //! - MCP: `--mcp-config <run>/mcp.json`
 //! - Hooks: `--settings <run>/settings.json` (command hooks piping JSON into
-//!   `ariadne agent-event --kind claude`)
+//!   `ariadne agent-event --kind claude_code`)
 
 use anyhow::{Context, Result};
 use serde_json::json;
@@ -41,7 +41,7 @@ impl ClaudeAdapter {
         std::fs::write(&mcp_file, serde_json::to_string_pretty(&mcp)?)?;
 
         let settings_file = ctx.run_dir.join("settings.json");
-        let hook_cmd = format!("{} agent-event --kind claude", ctx.cli_bin);
+        let hook_cmd = format!("{} agent-event --kind claude_code", ctx.cli_bin);
         let hook =
             |_event: &str| json!([{ "hooks": [{ "type": "command", "command": hook_cmd }] }]);
         let settings = json!({

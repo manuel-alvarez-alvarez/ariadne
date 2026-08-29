@@ -12,7 +12,8 @@ use ariadne_client::Client;
 use ariadne_core::{AttentionReason, Role, SessionStatus};
 
 use super::attention::reason_label;
-use super::{ProfileNames, confirm, query_path};
+use super::{ProfileNames, confirm, one_of, query_path};
+use crate::cli::values::Spelling;
 use crate::output::{
     Column, Format, UNCAPPED, at, dash, local_time, print, print_kv, print_list, usage_block,
     usage_cell,
@@ -44,9 +45,19 @@ const LS: &[Column] = &[
 /// a block that spills over several lines lines them all up under the first.
 const INDENT: &str = "\n                 ";
 
+/// What `session ls --help` ends with.
+const LS_EXAMPLES: &str = "\
+Examples:
+  ariadne session ls                            # every live session
+  ariadne session ls --all --task <task-id>     # that task's, history included
+  ariadne session ls --status idle,exited       # named statuses, live or not
+  ariadne session ls --goal <goal-id> --role reviewer
+";
+
 #[derive(Subcommand)]
 pub enum SessionCommand {
     /// List live agent sessions (docker-style; --all includes history)
+    #[command(after_help = LS_EXAMPLES)]
     Ls {
         /// Filter by task id
         #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
@@ -54,15 +65,16 @@ pub enum SessionCommand {
         /// Filter by goal id
         #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
         goal: Option<String>,
-        /// Filter by status, at the daemon: names one status instead of the
+        /// Filter by status: names the statuses to list instead of the
         /// live/finished split --all makes, and so replaces it — a status is
-        /// listed whether or not it is a live one
-        #[arg(long, value_enum)]
-        status: Option<SessionStatus>,
+        /// listed whether or not it is a live one. Repeatable and
+        /// comma-separated
+        #[arg(long = "status", value_parser = Spelling::<SessionStatus>::new(), value_delimiter = ',')]
+        statuses: Vec<SessionStatus>,
         /// Filter by role, once the rows are here: `GET /v1/sessions` takes
         /// no role, so this narrows what it answered — as the UI's own role
         /// filter does. Composes with the rest: it never widens the list
-        #[arg(long, value_enum)]
+        #[arg(long, value_parser = Spelling::<Role>::new())]
         role: Option<Role>,
         /// Only sessions the daemon has flagged as needing a human: the
         /// same filter the UI's Attention page is built on
@@ -125,18 +137,21 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
         SessionCommand::Ls {
             task,
             goal,
-            status,
+            statuses,
             role,
             attention,
             all,
             no_trunc,
         } => {
-            let filtered =
-                goal.is_some() || task.is_some() || status.is_some() || role.is_some() || attention;
+            let filtered = goal.is_some()
+                || task.is_some()
+                || !statuses.is_empty()
+                || role.is_some()
+                || attention;
             let query = SessionListQuery {
                 goal,
                 task,
-                status,
+                status: one_of(&statuses),
                 // A flag that is not set is not a filter for sessions that
                 // want nobody: it is no filter at all.
                 attention: attention.then_some(true),
@@ -144,7 +159,7 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
             let sessions: Vec<SessionDto> = client
                 .get_json(&query_path("/v1/sessions", &query)?)
                 .await?;
-            let sessions = visible(sessions, all, status, role);
+            let sessions = visible(sessions, all, &statuses, role);
             let context = match format {
                 Format::Table => SessionContext::fetch_for(client, &sessions).await,
                 Format::Json => SessionContext::default(),
@@ -169,7 +184,7 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
                 },
                 // A named status already says which sessions were asked for,
                 // so --all has nothing left to offer.
-                match (filtered, all || status.is_some()) {
+                match (filtered, all || !statuses.is_empty()) {
                     (true, true) => "no sessions match that filter",
                     (true, false) => {
                         "no live sessions match that filter — finished ones are behind --all"
@@ -289,20 +304,22 @@ fn session_path(id: &str) -> String {
 
 /// Which of the sessions the daemon answered with `session ls` shows.
 ///
-/// The default is docker's: live sessions, history behind --all. A named
-/// status is that same choice made precisely, so it takes over — `--status
-/// exited` that then dropped every row for not being live would answer
-/// nothing. The role narrows whatever those settled on: `GET /v1/sessions`
-/// takes none, so it is applied to the answer rather than asked for.
+/// The default is docker's: live sessions, history behind --all. Named
+/// statuses are that same choice made precisely, so they take over —
+/// `--status exited` that then dropped every row for not being live would
+/// answer nothing. The role narrows whatever those settled on: `GET
+/// /v1/sessions` takes none, so it is applied to the answer rather than asked
+/// for, and so is a second status, since it takes only one.
 fn visible(
     sessions: Vec<SessionDto>,
     all: bool,
-    status: Option<SessionStatus>,
+    statuses: &[SessionStatus],
     role: Option<Role>,
 ) -> Vec<SessionDto> {
     sessions
         .into_iter()
-        .filter(|s| all || status.is_some() || s.status.is_live())
+        .filter(|s| all || !statuses.is_empty() || s.status.is_live())
+        .filter(|s| statuses.is_empty() || statuses.contains(&s.status))
         .filter(|s| role.is_none_or(|r| s.role == r))
         .collect()
 }
@@ -424,15 +441,27 @@ mod tests {
     /// --all or a named --status asks for it.
     #[test]
     fn the_default_view_is_the_live_one() {
-        assert_eq!(ids(visible(listed(), false, None, None)), ["01PLAN"]);
+        assert_eq!(ids(visible(listed(), false, &[], None)), ["01PLAN"]);
+        assert_eq!(ids(visible(listed(), true, &[], None)), ["01PLAN", "01ENG"]);
         assert_eq!(
-            ids(visible(listed(), true, None, None)),
-            ["01PLAN", "01ENG"]
+            ids(visible(listed(), false, &[SessionStatus::Exited], None)),
+            ["01ENG"],
+            "a named status takes over from the live/finished split"
         );
+    }
+
+    /// Several statuses list a session in any of them: `GET /v1/sessions`
+    /// takes one, so this is the narrowing the CLI does itself.
+    #[test]
+    fn several_statuses_list_a_session_in_any_of_them() {
         assert_eq!(
-            ids(visible(listed(), false, Some(SessionStatus::Exited), None)),
-            ["01PLAN", "01ENG"],
-            "a named status is the daemon's to answer, not ours to second-guess"
+            ids(visible(
+                listed(),
+                false,
+                &[SessionStatus::Running, SessionStatus::Exited],
+                None
+            )),
+            ["01PLAN", "01ENG"]
         );
     }
 
@@ -442,20 +471,20 @@ mod tests {
     #[test]
     fn a_role_narrows_the_view_it_is_used_with() {
         assert_eq!(
-            ids(visible(listed(), false, None, Some(Role::Planner))),
+            ids(visible(listed(), false, &[], Some(Role::Planner))),
             ["01PLAN"]
         );
         assert_eq!(
-            ids(visible(listed(), false, None, Some(Role::Engineer))),
+            ids(visible(listed(), false, &[], Some(Role::Engineer))),
             [] as [String; 0],
             "the only engineer here has exited"
         );
         assert_eq!(
-            ids(visible(listed(), true, None, Some(Role::Engineer))),
+            ids(visible(listed(), true, &[], Some(Role::Engineer))),
             ["01ENG"]
         );
         assert_eq!(
-            ids(visible(listed(), false, None, Some(Role::Reviewer))),
+            ids(visible(listed(), false, &[], Some(Role::Reviewer))),
             [] as [String; 0]
         );
     }

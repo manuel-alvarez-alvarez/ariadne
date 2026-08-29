@@ -14,7 +14,7 @@ use crate::wire_enum;
 #[cfg_attr(
     feature = "clap",
     derive(clap::ValueEnum),
-    value(rename_all = "snake_case")
+    value(rename_all = "kebab-case")
 )]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {

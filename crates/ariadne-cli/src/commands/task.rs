@@ -15,14 +15,15 @@ use ariadne_api::usage::TokenUsageDto;
 use ariadne_client::Client;
 use ariadne_core::TaskStatus;
 
-use edit::{parse_reviewer, resolve_repo, update_request};
 use super::{
-    ProfileNames, confirm, parse_model, parse_model_or_default, print_messages, query_path,
+    ProfileNames, confirm, one_of, parse_model, parse_model_or_default, print_messages, query_path,
 };
+use crate::cli::values::Spelling;
 use crate::output::{
     Column, Format, UNCAPPED, dash, local_time, note, print, print_kv, print_list, usage_block,
     usage_cell, yes_no,
 };
+use edit::{parse_reviewer, resolve_repo, update_request};
 
 /// Columns of `task ls`. Titles and branches are the long ones: a task whose
 /// title runs to a paragraph would otherwise push status and round off-screen.
@@ -55,6 +56,28 @@ const REVIEWS: &[Column] = &[
     ("body", 60),
 ];
 
+/// What `task create --help` ends with.
+const CREATE_EXAMPLES: &str = "\
+Examples:
+  ariadne task create <goal-id> --title \"Add the rate limiter middleware\"
+
+  # after another task, on a model and a reviewer of your own
+  ariadne task create <goal-id> --title \"Wire it up\" --depends-on <task-id> \\
+      --model codex:gpt-5.3-codex --reviewer Reviewer=claude_code
+
+  # in one of the goal's repositories, when it has several
+  ariadne task create <goal-id> --title \"Document it\" --repo ~/projects/ui
+";
+
+/// What `task update --help` ends with.
+const UPDATE_EXAMPLES: &str = "\
+Examples:
+  ariadne task update <task-id> --title \"Add the rate limiter middleware\"
+  ariadne task update <task-id> --model claude_code --reviewer Reviewer=codex:o3
+  ariadne task update <task-id> --model default        # back to the profile's own
+  ariadne task update <task-id> --clear-depends-on     # free it to start now
+";
+
 #[derive(Subcommand)]
 pub enum TaskCommand {
     /// Create a task in a goal
@@ -62,6 +85,7 @@ pub enum TaskCommand {
     /// What the planner does through its MCP tools, from the terminal: the
     /// task starts out `pending` and is picked up once the goal is active and
     /// the tasks it depends on have merged. Prints the new task id.
+    #[command(after_help = CREATE_EXAMPLES)]
     Create {
         /// Goal id the task belongs to
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
@@ -70,7 +94,7 @@ pub enum TaskCommand {
         #[arg(long)]
         title: String,
         /// Task description: the brief the engineer works from
-        #[arg(short = 'd', long, default_value = "")]
+        #[arg(short = 'd', long, default_value = "", hide_default_value = true)]
         description: String,
         /// Engineer profile id or name that owns the task
         #[arg(long, default_value = "Engineer", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::engineer_profiles))]
@@ -101,6 +125,7 @@ pub enum TaskCommand {
     /// engineer is on it the daemon refuses the edit. Every flag left out
     /// keeps what the task already has; `--reviewer` and `--depends-on`
     /// replace the whole list they name.
+    #[command(after_help = UPDATE_EXAMPLES)]
     Update {
         /// Task id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
@@ -135,9 +160,10 @@ pub enum TaskCommand {
         /// Filter by goal id
         #[arg(long, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
         goal: Option<String>,
-        /// Filter by status
-        #[arg(long, value_enum)]
-        status: Option<TaskStatus>,
+        /// Filter by status; repeatable and comma-separated, and a task in
+        /// any of the named statuses is listed
+        #[arg(long = "status", value_parser = Spelling::<TaskStatus>::new(), value_delimiter = ',')]
+        statuses: Vec<TaskStatus>,
         /// Print cells in full instead of cutting them to the column width
         #[arg(long)]
         no_trunc: bool,
@@ -149,7 +175,7 @@ pub enum TaskCommand {
         id: String,
     },
     /// Show a task's conversation
-    Messages {
+    Thread {
         /// Task id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
         id: String,
@@ -209,7 +235,7 @@ pub enum TaskCommand {
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
         id: String,
         /// engineer (default) or reviewer
-        #[arg(long, value_enum)]
+        #[arg(long, value_parser = Spelling::<ariadne_core::Role>::new())]
         role: Option<ariadne_core::Role>,
     },
     /// Show recent terminal output of the task's agent
@@ -218,7 +244,7 @@ pub enum TaskCommand {
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
         id: String,
         /// engineer (default) or reviewer
-        #[arg(long, value_enum)]
+        #[arg(long, value_parser = Spelling::<ariadne_core::Role>::new())]
         role: Option<ariadne_core::Role>,
     },
 }
@@ -277,12 +303,14 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
         }
         TaskCommand::Ls {
             goal,
-            status,
+            statuses,
             no_trunc,
         } => {
-            let filtered = goal.is_some() || status.is_some();
+            let filtered = goal.is_some() || !statuses.is_empty();
+            let status = one_of(&statuses);
             let path = query_path("/v1/tasks", &TaskListQuery { goal, status })?;
-            let tasks: Vec<TaskDto> = client.get_json(&path).await?;
+            let mut tasks: Vec<TaskDto> = client.get_json(&path).await?;
+            tasks.retain(|t| statuses.is_empty() || statuses.contains(&t.status));
             print_list(
                 format,
                 &tasks,
@@ -344,7 +372,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                 ])
             })?;
         }
-        TaskCommand::Messages { id } => {
+        TaskCommand::Thread { id } => {
             let msgs: Vec<MessageDto> = client
                 .get_json(&format!("/v1/tasks/{id}/messages?limit=200"))
                 .await?;

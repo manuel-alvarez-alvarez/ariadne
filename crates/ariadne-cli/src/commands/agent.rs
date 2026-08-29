@@ -9,7 +9,7 @@ use ariadne_core::AgentKind;
 
 use crate::output::{Column, Format, UNCAPPED, note, print, print_list};
 
-/// Columns of `agent list`.
+/// Columns of `agent ls`.
 const LS: &[Column] = &[("agent", UNCAPPED), ("flags", 44), ("defaults", 44)];
 
 /// What an empty flag list looks like in a table: a cell nobody can mistake
@@ -25,8 +25,7 @@ const EMPTY: &str = "-";
 #[derive(Subcommand)]
 pub enum AgentCommand {
     /// List the agent CLIs, their flags and the defaults they came from
-    #[command(alias = "ls")]
-    List {
+    Ls {
         /// Print cells in full instead of cutting them to the column width
         #[arg(long)]
         no_trunc: bool,
@@ -100,7 +99,7 @@ async fn default_flags(client: &Client, kind: AgentKind) -> Result<Vec<String>> 
 
 pub async fn run(client: &Client, cmd: AgentCommand, format: Format) -> Result<()> {
     match cmd {
-        AgentCommand::List { no_trunc } => {
+        AgentCommand::Ls { no_trunc } => {
             let configs: Vec<AgentConfigDto> = client.list_agent_configs().await?;
             print_list(
                 format,

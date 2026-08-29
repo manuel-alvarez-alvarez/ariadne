@@ -16,34 +16,28 @@ use ariadne_core::AgentKind;
 
 const SESSION_ENV: &str = "ARIADNE_SESSION_ID";
 
-pub async fn run(kind: String, json: Option<String>) {
+pub async fn run(kind: AgentKind, json: Option<String>) {
     // Never propagate failures to the calling hook.
     let _ = tokio::time::timeout(Duration::from_secs(2), forward(kind, json)).await;
 }
 
-async fn forward(kind: String, json: Option<String>) {
+async fn forward(agent_kind: AgentKind, json: Option<String>) {
     let Ok(session_id) = std::env::var(SESSION_ENV) else {
         return; // not spawned by ariadne
     };
 
-    let (agent_kind, event_kind, mut payload) = match kind.as_str() {
+    let (event_kind, mut payload) = match agent_kind {
         // Claude Code and Codex share the hook protocol: the payload arrives
         // as JSON on stdin and `hook_event_name` names the event.
-        "claude" | "codex" => {
-            let agent_kind = if kind == "codex" {
-                AgentKind::Codex
-            } else {
-                AgentKind::ClaudeCode
-            };
+        AgentKind::ClaudeCode | AgentKind::Codex => {
             let mut raw = String::new();
             if std::io::stdin().read_to_string(&mut raw).is_err() {
                 return;
             }
-            let (event, payload) = parse_hook_event(&raw);
-            (agent_kind, event, payload)
+            parse_hook_event(&raw)
         }
         // OpenCode: the plugin passes {"kind": ..., "payload": ...} as --json.
-        "opencode" => {
+        AgentKind::Opencode => {
             let value: serde_json::Value =
                 serde_json::from_str(json.as_deref().unwrap_or("{}")).unwrap_or_default();
             let event = value
@@ -52,9 +46,8 @@ async fn forward(kind: String, json: Option<String>) {
                 .unwrap_or("unknown")
                 .to_string();
             let payload = value.get("payload").cloned().unwrap_or_default();
-            (AgentKind::Opencode, event, payload)
+            (event, payload)
         }
-        _ => return,
     };
 
     attach_usage(agent_kind, &event_kind, &mut payload, &session_id);

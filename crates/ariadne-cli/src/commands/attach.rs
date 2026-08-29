@@ -128,7 +128,7 @@ async fn ensure_task_not_finished(client: &Client, id: &str) -> Result<()> {
              Inspect what happened instead:\n\
              \x20 ariadne task history {id}\n\
              \x20 ariadne task reviews {id}\n\
-             \x20 ariadne task messages {id}\n\
+             \x20 ariadne task thread {id}\n\
              \x20 ariadne session ls --all --task {id}   (then: ariadne session logs <session-id>)",
             status = task.status.as_str()
         );

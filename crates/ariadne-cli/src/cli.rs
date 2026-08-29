@@ -4,6 +4,8 @@ use std::path::PathBuf;
 
 use clap::{CommandFactory, Parser, Subcommand};
 
+pub mod values;
+
 use crate::commands::agent::AgentCommand;
 use crate::commands::goal::GoalCommand;
 use crate::commands::models::ModelsCommand;
@@ -13,19 +15,137 @@ use crate::commands::session::SessionCommand;
 use crate::commands::task::TaskCommand;
 use crate::output::Format;
 
+/// Where the two flags every command takes are listed. They belong to no
+/// command in particular, so they are not filed under any command's options.
+pub const GLOBAL: &str = "Global options";
+
+/// What `ariadne --help` ends with: the first goal, start to finish, as the
+/// README's quick start runs it.
+const EXAMPLES: &str = "\
+Examples:
+  ariadne daemon start                     # the daemon everything else talks to
+  ariadne repo add ~/projects/api          # register a checkout to work in
+  ariadne goal create --title \"Add rate limiting\" --repo ~/projects/api
+  ariadne goal attach <goal-id>            # agree the plan with the planner
+  ariadne attention                        # what is waiting for you, every goal
+  ariadne task ls --goal <goal-id>         # the tasks it was broken into
+  ariadne attach <id>                      # a session, task or goal id
+";
+
+/// What each group's help ends with: what that group is most often asked to
+/// do, in the spelling it takes today.
+const DAEMON_EXAMPLES: &str = "\
+Examples:
+  ariadne daemon start                     # or --home <dir> for another home
+  ariadne daemon status                    # and which service manages it
+  ariadne daemon logs --follow
+  ariadne daemon restart
+  ariadne daemon stop
+";
+
+const AGENT_EXAMPLES: &str = "\
+Examples:
+  ariadne agent ls                         # the flags every CLI is launched with
+  ariadne agent update codex --flag --dangerously-bypass-approvals-and-sandbox
+  ariadne agent update claude_code --reset # back to what Ariadne ships
+";
+
+const PROFILE_EXAMPLES: &str = "\
+Examples:
+  ariadne profile ls --role reviewer
+  ariadne profile create --name Architect --role planner --model codex:gpt-5.3-codex
+  ariadne profile update Reviewer --model default
+  ariadne profile prompt get Engineer engineer_briefing > briefing.md
+";
+
+const REPO_EXAMPLES: &str = "\
+Examples:
+  ariadne repo add ~/projects/api --description \"the public API\"
+  ariadne repo add ~/projects/ui --branch next --merge-strategy pull-request
+  ariadne repo ls
+  ariadne repo update <repo-id> --branch main
+";
+
+const GOAL_EXAMPLES: &str = "\
+Examples:
+  ariadne goal create --title \"Add rate limiting\" --repo ~/projects/api
+  ariadne goal ls --status planning,active
+  ariadne goal attach <goal-id>            # the planner's terminal
+  ariadne goal msg <goal-id> \"the middleware crate, not a new one\"
+  ariadne goal thread <goal-id>            # the whole conversation
+";
+
+const TASK_EXAMPLES: &str = "\
+Examples:
+  ariadne task ls --goal <goal-id>
+  ariadne task ls --status in-progress,under-review
+  ariadne task inspect <task-id>           # and: diff, reviews, history, thread
+  ariadne task msg <task-id> \"hold on, use the middleware crate instead\"
+  ariadne task attach <task-id>            # the engineer's terminal
+";
+
+const SESSION_EXAMPLES: &str = "\
+Examples:
+  ariadne session ls                       # every live session
+  ariadne session ls --all --goal <goal-id>
+  ariadne session logs <session-id>        # what its pane last printed
+  ariadne session resume <session-id>      # new tmux, same conversation
+  ariadne session kill <session-id>
+";
+
+/// What `ariadne attach --help` ends with.
+const ATTACH_EXAMPLES: &str = "\
+Examples:
+  ariadne attach <goal-id>                 # the goal's planner
+  ariadne attach <task-id>                 # the task's engineer
+  ariadne attach <task-id> --role reviewer # its reviewer instead
+  ariadne attach <session-id>              # that one session
+";
+
 #[derive(Parser)]
-#[command(name = "ariadne", version, about = "Coding-agent orchestrator CLI")]
+#[command(
+    name = "ariadne",
+    version,
+    about = "Coding-agent orchestrator CLI",
+    long_about = "Coding-agent orchestrator CLI.\n\n\
+        Every command here asks the ariadned daemon for something. It plans a \
+        goal with a planner agent, hands each task to an engineer that owns it \
+        from its first commit to the merge that lands it, and gates that merge \
+        behind reviewer agents. Each of them works in a tmux session `ariadne \
+        attach` drops you into, and `ariadne attention` is what says which of \
+        them is waiting for you.",
+    after_help = EXAMPLES
+)]
 pub struct Cli {
     /// Daemon endpoint: unix socket path or http://host:port
-    /// (default: $ARIADNE_SOCKET, else the socket of the ariadne home —
-    /// $ARIADNE_HOME or ~/.ariadne — as its config.toml names it)
     // `--host` was the old name and never meant a host; it stays as an
     // undocumented alias so existing scripts keep working.
-    #[arg(long, alias = "host", global = true, env = ariadne_client::ENDPOINT_ENV)]
+    //
+    // No `env =`: the environment is read where the endpoint is resolved
+    // (`Client::resolve`), so no help screen carries the value this shell
+    // happens to have, and no usage line reads as though the flag were
+    // required.
+    #[arg(
+        long,
+        alias = "host",
+        global = true,
+        help_heading = GLOBAL,
+        long_help = "Daemon endpoint: a unix socket path, or an http://host:port URL where \
+            the daemon has a TCP listener.\n\n\
+            Resolved in this order: this flag, $ARIADNE_ENDPOINT, $ARIADNE_SOCKET \
+            (the older name for it), then the socket of the ariadne home — \
+            $ARIADNE_HOME or ~/.ariadne — as that home's config.toml names it."
+    )]
     pub endpoint: Option<String>,
 
     /// Output format
-    #[arg(long, global = true, value_enum, default_value = "table")]
+    #[arg(
+        long,
+        global = true,
+        value_enum,
+        default_value = "table",
+        help_heading = GLOBAL
+    )]
     pub format: Format,
 
     #[command(subcommand)]
@@ -50,6 +170,7 @@ pub enum Command {
     /// applies to all of them. Where a service manager holds that home's
     /// daemon (launchd, `systemd --user`), it is what start, stop and restart
     /// drive, and each says which command it used.
+    #[command(after_help = DAEMON_EXAMPLES)]
     Daemon {
         /// Ariadne home directory (default: $ARIADNE_HOME or ~/.ariadne)
         #[arg(long, global = true)]
@@ -58,6 +179,12 @@ pub enum Command {
         command: DaemonCommand,
     },
     /// Manage the agent CLIs: the flags each one is launched with
+    ///
+    /// One entry per coding-agent CLI Ariadne can run — claude_code, codex,
+    /// opencode — holding the flags every session of that CLI is launched and
+    /// resumed with. `ariadne profile` is the other half: the persona, this
+    /// is the program it runs in.
+    #[command(after_help = AGENT_EXAMPLES)]
     Agent {
         #[command(subcommand)]
         command: AgentCommand,
@@ -68,26 +195,56 @@ pub enum Command {
         command: ModelsCommand,
     },
     /// Manage agent profiles
+    ///
+    /// A profile is one agent as it is spawned: the role it plays, what it
+    /// runs on, and the prompts it is briefed and resumed with. Goals and
+    /// tasks are assigned to profiles by name, and a change here reaches
+    /// every session started after it.
+    #[command(after_help = PROFILE_EXAMPLES)]
     Profile {
         #[command(subcommand)]
         command: ProfileCommand,
     },
     /// Manage repositories
+    ///
+    /// The checkouts goals may work in. A repository is registered once —
+    /// with the base branch its tasks branch off and how an approved task
+    /// lands on it — and named by every goal after that; the same checkout
+    /// can be registered once per base branch.
+    #[command(after_help = REPO_EXAMPLES)]
     Repo {
         #[command(subcommand)]
         command: RepoCommand,
     },
     /// Manage goals
+    ///
+    /// A goal is a whole effort. A planner agent breaks it into tasks and
+    /// discusses the breakdown with you in the goal's conversation — `goal
+    /// thread` reads it, `goal msg` writes to it — and nothing runs until you
+    /// confirm the plan there.
+    #[command(after_help = GOAL_EXAMPLES)]
     Goal {
         #[command(subcommand)]
         command: GoalCommand,
     },
     /// Manage tasks
+    ///
+    /// A task is one unit of a goal, owned by an engineer agent in a worktree
+    /// of its own from its first commit to the merge that lands it, with
+    /// reviewer agents gating that merge. Its diff, its reviews, its history
+    /// and its conversation are all here.
+    #[command(after_help = TASK_EXAMPLES)]
     Task {
         #[command(subcommand)]
         command: TaskCommand,
     },
-    /// Inspect agent sessions
+    /// Manage agent sessions
+    ///
+    /// A session is one agent in one tmux window: the terminal a planner, an
+    /// engineer or a reviewer is actually working in. They are listed
+    /// docker-style — live ones by default, finished ones behind --all — and
+    /// one that has ended can be revived with the same conversation.
+    #[command(after_help = SESSION_EXAMPLES)]
     Session {
         #[command(subcommand)]
         command: SessionCommand,
@@ -103,13 +260,18 @@ pub enum Command {
         no_trunc: bool,
     },
     /// Attach to the tmux session of a session, task or goal id
+    ///
+    /// The terminal of whichever agent that id names, revived first when its
+    /// tmux is gone. Leaving it is tmux's own detach (Ctrl-b d): the agent
+    /// keeps working.
+    #[command(after_help = ATTACH_EXAMPLES)]
     Attach {
         /// Session, task or goal id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::attach_ids))]
         id: String,
         /// Which agent of that id to attach to (default: engineer for tasks,
         /// planner for goals; not valid with a session id)
-        #[arg(long, value_enum)]
+        #[arg(long, value_parser = values::Spelling::<ariadne_core::Role>::new())]
         role: Option<ariadne_core::Role>,
     },
     /// One-time host setup for the coding agents
@@ -136,9 +298,10 @@ pub enum Command {
     /// Report an agent hook event to the daemon (called by hooks, fail-safe)
     #[command(hide = true, name = "agent-event")]
     AgentEvent {
-        /// claude | codex | opencode
-        #[arg(long, default_value = "claude")]
-        kind: String,
+        /// Which agent's hook is reporting, as everything else spells it:
+        /// claude_code | codex | opencode
+        #[arg(long, default_value = "claude_code", value_parser = crate::commands::agent::parse_kind)]
+        kind: ariadne_core::AgentKind,
         /// OpenCode plugin payload
         #[arg(long)]
         json: Option<String>,

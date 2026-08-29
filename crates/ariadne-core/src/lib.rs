@@ -56,7 +56,7 @@ pub(crate) use wire_enum;
 #[cfg_attr(
     feature = "clap",
     derive(clap::ValueEnum),
-    value(rename_all = "snake_case")
+    value(rename_all = "kebab-case")
 )]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
@@ -83,7 +83,7 @@ wire_enum! { Role, "role", [
 #[cfg_attr(
     feature = "clap",
     derive(clap::ValueEnum),
-    value(rename_all = "snake_case")
+    value(rename_all = "kebab-case")
 )]
 #[serde(rename_all = "snake_case")]
 pub enum MergeStrategy {
@@ -107,7 +107,7 @@ wire_enum! { MergeStrategy, "merge strategy", [
 #[cfg_attr(
     feature = "clap",
     derive(clap::ValueEnum),
-    value(rename_all = "snake_case")
+    value(rename_all = "kebab-case")
 )]
 #[serde(rename_all = "snake_case")]
 pub enum PromptKind {
@@ -401,7 +401,7 @@ impl AgentKind {
 #[cfg_attr(
     feature = "clap",
     derive(clap::ValueEnum),
-    value(rename_all = "snake_case")
+    value(rename_all = "kebab-case")
 )]
 #[serde(rename_all = "snake_case")]
 pub enum GoalStatus {
@@ -436,7 +436,7 @@ impl GoalStatus {
 #[cfg_attr(
     feature = "clap",
     derive(clap::ValueEnum),
-    value(rename_all = "snake_case")
+    value(rename_all = "kebab-case")
 )]
 #[serde(rename_all = "snake_case")]
 pub enum SessionStatus {

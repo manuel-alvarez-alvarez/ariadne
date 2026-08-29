@@ -85,7 +85,7 @@ recorded in an audit table.
 
 Agents run with permissions bypassed — `--dangerously-skip-permissions` for
 Claude Code, `--dangerously-bypass-approvals-and-sandbox` for Codex, `--auto`
-plus an allow-everything permission block for OpenCode (`ariadne agent list`
+plus an allow-everything permission block for OpenCode (`ariadne agent ls`
 prints the current flags). Hooks installed at spawn time report every
 session/tool event back to the daemon, and each agent's internal session id is
 tracked so sessions can be resumed and attached.
@@ -250,8 +250,11 @@ minutes, the flag at fifteen, a relaunch at forty-five) and takes neither key.
 `ARIADNE_HOME` moves the whole home directory: daemon and CLI alike resolve
 the socket from it (`--home` > `ARIADNE_HOME` > `~/.ariadne`, then that home's
 `socket_path` > `<home>/ariadne.sock`), so every command addresses the daemon
-of the home it runs in. `ARIADNE_SOCKET` (or `--endpoint`, whose old spelling
-`--host` still works) overrides that with a socket path or `http://host:port`.
+of the home it runs in. `--endpoint` (whose old spelling `--host` still works)
+overrides that with a socket path or `http://host:port`, and so does
+`ARIADNE_ENDPOINT` — read after the flag and before the home, with the older
+`ARIADNE_SOCKET`, which every agent session is still spawned with, honoured
+after it.
 
 ## Workspace layout
 

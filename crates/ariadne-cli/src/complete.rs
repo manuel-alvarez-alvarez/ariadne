@@ -216,7 +216,12 @@ pub fn prompt_kinds() -> Vec<CompletionCandidate> {
             .map(|role| role.as_str())
             .collect::<Vec<_>>()
             .join("/");
-        candidate(kind.as_str(), format!("{owners} profiles"))
+        // Offered in the spelling the help lists, which `parse_prompt_arg`
+        // reads back alongside the daemon's own.
+        candidate(
+            &kind.as_str().replace('_', "-"),
+            format!("{owners} profiles"),
+        )
     }));
     out
 }

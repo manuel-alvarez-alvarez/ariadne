@@ -27,9 +27,28 @@ pub mod endpoint;
 
 /// Environment variable pointing at the daemon endpoint. Either a filesystem
 /// path (unix socket) or an `http://host:port` URL (TCP).
-pub const ENDPOINT_ENV: &str = "ARIADNE_SOCKET";
+pub const ENDPOINT_ENV: &str = "ARIADNE_ENDPOINT";
+
+/// What [`ENDPOINT_ENV`] used to be called, still honoured after it: the name
+/// says socket, but an `http://` endpoint was always allowed in it, and it is
+/// what every agent session is spawned with.
+pub const LEGACY_ENDPOINT_ENV: &str = "ARIADNE_SOCKET";
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// The endpoint a caller named, ahead of any home: the flag, then
+/// [`ENDPOINT_ENV`], then the older [`LEGACY_ENDPOINT_ENV`]. Set-to-empty
+/// means unset at every step, so an empty variable falls through to the next
+/// name rather than shadowing it.
+///
+/// `env` is how a name is looked up, which is what makes the order testable
+/// without a process environment to mutate underneath other tests.
+fn explicit_endpoint(flag: Option<&str>, env: impl Fn(&str) -> Option<String>) -> Option<String> {
+    flag.map(str::to_owned)
+        .or_else(|| env(ENDPOINT_ENV))
+        .or_else(|| env(LEGACY_ENDPOINT_ENV))
+        .filter(|v| !v.is_empty())
+}
 
 /// Everything that can go wrong talking to the daemon.
 ///
@@ -164,19 +183,18 @@ impl Client {
     }
 
     /// Resolve the daemon endpoint: an explicit endpoint (`--endpoint`, else
-    /// `ARIADNE_SOCKET`) wins, otherwise the socket of the resolved home
-    /// (`--home` > `ARIADNE_HOME` > `~/.ariadne`, honouring that home's
-    /// `config.toml`).
+    /// `ARIADNE_ENDPOINT`, else the older `ARIADNE_SOCKET`) wins, otherwise
+    /// the socket of the resolved home (`--home` > `ARIADNE_HOME` >
+    /// `~/.ariadne`, honouring that home's `config.toml`).
     pub fn resolve(endpoint_override: Option<&str>, home_override: Option<PathBuf>) -> Self {
-        let explicit = endpoint_override
-            .map(str::to_owned)
-            .or_else(|| std::env::var(ENDPOINT_ENV).ok())
-            .filter(|v| !v.is_empty());
+        let explicit = explicit_endpoint(endpoint_override, |name| {
+            std::env::var(name).ok().filter(|v| !v.is_empty())
+        });
         Self::from_parts(explicit, || Self::socket_path(home_override))
     }
 
-    /// Build a client from the ambient environment (`ARIADNE_SOCKET`,
-    /// `ARIADNE_HOME`), with no command-line overrides.
+    /// Build a client from the ambient environment (`ARIADNE_ENDPOINT` or
+    /// `ARIADNE_SOCKET`, `ARIADNE_HOME`), with no command-line overrides.
     pub fn from_env() -> Self {
         Self::resolve(None, None)
     }
@@ -500,9 +518,10 @@ mod tests {
         );
     }
 
-    /// `ariadne daemon start` used to poll whatever `--endpoint` / `ARIADNE_SOCKET`
-    /// named while spawning a daemon on the home's socket — reporting "already
-    /// running" for a stranger's daemon, or timing out on its own.
+    /// `ariadne daemon start` used to poll whatever `--endpoint` /
+    /// `ARIADNE_ENDPOINT` named while spawning a daemon on the home's socket —
+    /// reporting "already running" for a stranger's daemon, or timing out on
+    /// its own.
     #[test]
     fn starting_a_daemon_is_deaf_to_endpoint_overrides() {
         let dir = tempfile::tempdir().unwrap();
@@ -519,6 +538,42 @@ mod tests {
         // ...but the daemon being started only ever hears about its home.
         let started = Client::for_home(home);
         assert_eq!(started.endpoint(), "/scratch/custom.sock");
+    }
+
+    /// `ARIADNE_ENDPOINT` is the documented name; `ARIADNE_SOCKET` is what
+    /// every agent session is still spawned with, so it is read after it and
+    /// never instead of it. The flag beats both.
+    #[test]
+    fn the_endpoint_is_the_flag_then_the_new_name_then_the_old_one() {
+        /// One environment, as a lookup over the pairs it holds.
+        fn look_up(set: &[(&str, &str)], name: &str) -> Option<String> {
+            set.iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| (*value).to_string())
+        }
+        let endpoint = |flag: Option<&str>, set: &[(&str, &str)]| {
+            explicit_endpoint(flag, |name| look_up(set, name))
+        };
+        let both = [
+            (ENDPOINT_ENV, "/tmp/new.sock"),
+            (LEGACY_ENDPOINT_ENV, "/tmp/old.sock"),
+        ];
+        assert_eq!(
+            endpoint(Some("/tmp/flag.sock"), &both).as_deref(),
+            Some("/tmp/flag.sock")
+        );
+        assert_eq!(endpoint(None, &both).as_deref(), Some("/tmp/new.sock"));
+        assert_eq!(
+            endpoint(None, &[(LEGACY_ENDPOINT_ENV, "/tmp/old.sock")]).as_deref(),
+            Some("/tmp/old.sock"),
+            "an environment that only has the old name is still honoured"
+        );
+        assert_eq!(endpoint(None, &[]), None);
+        assert_eq!(
+            endpoint(None, &[(ENDPOINT_ENV, "")]),
+            None,
+            "and set-to-empty names no endpoint at all"
+        );
     }
 
     /// The transport source is a dead end for a user ("client error
