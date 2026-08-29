@@ -347,20 +347,24 @@ impl ProfileNames {
         }
     }
 
-    /// `Name (id) · model`: the mention, plus the one string that says what
-    /// the agent behind it runs on.
+    /// `Name (id) · model @ effort`: the mention, plus the two strings that
+    /// say what the agent behind it runs on and how deeply it reasons there.
     ///
     /// A profile is editable and a pin is not, so the two drift: what a task's
     /// engineer, a task's reviewer or a goal's planner runs on is the snapshot
     /// taken when it was assigned, not what the profile says today — and where
     /// nothing was pinned, whatever the profile says at spawn time, which is
     /// what "the profile's own" stands for.
-    pub fn pinned_label(&self, id: &str, model: Option<&str>) -> String {
-        format!(
-            "{} · {}",
-            self.label(id),
-            model.unwrap_or("the profile's own")
-        )
+    ///
+    /// An effort that was never pinned says nothing at all rather than a word
+    /// for it: the model is then run at whatever its agent CLI runs it at, and
+    /// a `@` with a guess after it would read as a choice somebody made.
+    pub fn pinned_label(&self, id: &str, model: Option<&str>, effort: Option<&str>) -> String {
+        let pin = model.unwrap_or("the profile's own");
+        match effort {
+            Some(effort) => format!("{} · {pin} @ {effort}", self.label(id)),
+            None => format!("{} · {pin}", self.label(id)),
+        }
     }
 }
 
@@ -425,6 +429,34 @@ pub fn parse_model_or_default(s: &str) -> Result<String, String> {
         return Ok(DEFAULT.to_string());
     }
     parse_model(s).map_err(|e| format!("{e}; or \"{DEFAULT}\" to pin nothing at all"))
+}
+
+/// One `--effort <EFFORT>` off the command line: the reasoning effort the
+/// pinned model is run at.
+///
+/// Which efforts a model takes is the model's own business — `ariadne models
+/// ls` lists them, and they differ between agent CLIs and between models of
+/// one CLI — so the only thing settled here is that an effort was written at
+/// all. The daemon knows the model this effort will run at, and refuses one
+/// that does not belong to it in words this side could not have written.
+pub fn parse_effort(s: &str) -> Result<String, String> {
+    match s.trim().is_empty() {
+        true => Err(
+            "no effort was named — write one of the efforts `ariadne models ls` \
+             lists for the model"
+                .to_string(),
+        ),
+        false => Ok(s.to_string()),
+    }
+}
+
+/// The same, plus the one word an update takes beside an effort: [`DEFAULT`],
+/// which runs the model at whatever its agent CLI runs it at.
+pub fn parse_effort_or_default(s: &str) -> Result<String, String> {
+    if s == DEFAULT {
+        return Ok(DEFAULT.to_string());
+    }
+    parse_effort(s).map_err(|e| format!("{e}; or \"{DEFAULT}\" to pin no effort at all"))
 }
 
 /// What a pin says, taken apart: the agent CLI, and the model of it where one
@@ -604,6 +636,65 @@ mod tests {
             )
             .unwrap(),
             "/v1/sessions?status=failed"
+        );
+    }
+
+    /// What a model may be run at is the model's own business — the daemon
+    /// holds the catalogue and refuses what does not belong — so this side
+    /// only insists that an effort was written at all.
+    #[test]
+    fn an_effort_is_only_checked_for_being_one() {
+        assert_eq!(parse_effort("high").as_deref(), Ok("high"));
+        assert_eq!(
+            parse_effort("ultra").as_deref(),
+            Ok("ultra"),
+            "an effort no claude model takes still travels: the daemon knows \
+             which model it is about to run at"
+        );
+        assert_eq!(
+            parse_effort("gpt-5-codex-high").as_deref(),
+            Ok("gpt-5-codex-high"),
+            "an opencode variant is an effort like any other"
+        );
+        let err = parse_effort("   ").expect_err("no effort at all");
+        assert!(err.contains("no effort was named"), "{err}");
+        assert!(err.contains("ariadne models ls"), "{err}");
+    }
+
+    /// The one word an update writes beside an effort, and it is the same word
+    /// `--model` takes: the pin goes back to whatever the agent CLI runs the
+    /// model at.
+    #[test]
+    fn an_update_takes_default_beside_an_effort() {
+        assert_eq!(parse_effort_or_default("default").as_deref(), Ok("default"));
+        assert_eq!(parse_effort_or_default("xhigh").as_deref(), Ok("xhigh"));
+        let err = parse_effort_or_default("").expect_err("no effort at all");
+        assert!(err.contains("no effort was named"), "{err}");
+        assert!(err.contains("\"default\""), "{err}");
+    }
+
+    /// A pin reads as the two things it says: what the agent runs on, and —
+    /// only where one was pinned — how deeply it reasons there.
+    #[test]
+    fn a_pinned_label_says_the_model_and_the_effort_beside_it() {
+        let profiles = ProfileNames::from_pairs([("01PROF".to_string(), "Reviewer".to_string())]);
+        assert_eq!(
+            profiles.pinned_label("01PROF", Some("codex:gpt-5.6-luna"), Some("high")),
+            "Reviewer (01PROF) · codex:gpt-5.6-luna @ high"
+        );
+        assert_eq!(
+            profiles.pinned_label("01PROF", Some("codex:gpt-5.6-luna"), None),
+            "Reviewer (01PROF) · codex:gpt-5.6-luna",
+            "no effort pinned is the CLI's own, which is not a choice to print"
+        );
+        assert_eq!(
+            profiles.pinned_label("01PROF", None, Some("max")),
+            "Reviewer (01PROF) · the profile's own @ max",
+            "an effort stands on its own: the profile's model, run deeper"
+        );
+        assert_eq!(
+            profiles.pinned_label("01PROF", None, None),
+            "Reviewer (01PROF) · the profile's own"
         );
     }
 

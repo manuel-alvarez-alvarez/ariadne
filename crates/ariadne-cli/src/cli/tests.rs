@@ -636,6 +636,153 @@ fn a_model_can_be_chosen_for_every_agent_on_the_line() {
     assert_eq!(edited(&["--title", "Do it better"]), None);
 }
 
+/// The other half of a pin, on every line a model is chosen on: `--effort`
+/// beside `--model`, `@EFFORT` on a reviewer slot, and the word an update
+/// writes to run the model at whatever its CLI reasons it at.
+#[test]
+fn an_effort_can_be_chosen_beside_every_model() {
+    let Command::Goal {
+        command: GoalCommand::Create { model, effort, .. },
+    } = parse(&[
+        "ariadne",
+        "goal",
+        "create",
+        "--title",
+        "Ship it",
+        "--repo",
+        "01REPO",
+        "--model",
+        "codex:gpt-5.6-sol",
+        "--effort",
+        "xhigh",
+    ])
+    .command
+    else {
+        panic!("goal create")
+    };
+    assert_eq!(model.as_deref(), Some("codex:gpt-5.6-sol"));
+    assert_eq!(effort.as_deref(), Some("xhigh"));
+
+    let Command::Profile {
+        command: ProfileCommand::Create { effort, .. },
+    } = parse(&[
+        "ariadne",
+        "profile",
+        "create",
+        "--name",
+        "eng",
+        "--role",
+        "engineer",
+        "--model",
+        "claude_code:claude-opus-5",
+        "--effort",
+        "max",
+    ])
+    .command
+    else {
+        panic!("profile create")
+    };
+    assert_eq!(effort.as_deref(), Some("max"));
+
+    let Command::Profile {
+        command: ProfileCommand::Update { effort, .. },
+    } = parse(&[
+        "ariadne", "profile", "update", "Reviewer", "--effort", "default",
+    ])
+    .command
+    else {
+        panic!("profile update")
+    };
+    assert_eq!(
+        effort.as_deref(),
+        Some("default"),
+        "\"default\" runs the model at whatever its agent CLI runs it at"
+    );
+
+    let Command::Task {
+        command: TaskCommand::Create {
+            effort, reviewers, ..
+        },
+    } = parse(&[
+        "ariadne",
+        "task",
+        "create",
+        "01GOAL",
+        "--title",
+        "Do it",
+        "--effort",
+        "xhigh",
+        "--reviewer",
+        "Reviewer=codex:gpt-5.6-sol@xhigh",
+        "--reviewer",
+        "rev-strict@high",
+        "--reviewer",
+        "Security=codex",
+    ])
+    .command
+    else {
+        panic!("task create")
+    };
+    assert_eq!(effort.as_deref(), Some("xhigh"));
+    assert_eq!(
+        reviewers
+            .iter()
+            .map(|r| (r.profile.as_str(), r.model.as_deref(), r.effort.as_deref()))
+            .collect::<Vec<_>>(),
+        [
+            ("Reviewer", Some("codex:gpt-5.6-sol"), Some("xhigh")),
+            ("rev-strict", None, Some("high")),
+            ("Security", Some("codex"), None),
+        ],
+        "a slot says a model, an effort, or both — and neither is guessed from \
+         the other"
+    );
+
+    let edited = |args: &[&str]| {
+        let mut argv = vec!["ariadne", "task", "update", "01TASK"];
+        argv.extend_from_slice(args);
+        let Command::Task {
+            command: TaskCommand::Update { effort, .. },
+        } = parse(&argv).command
+        else {
+            panic!("task update")
+        };
+        effort
+    };
+    assert_eq!(edited(&["--effort", "ultra"]).as_deref(), Some("ultra"));
+    assert_eq!(edited(&["--effort", "default"]).as_deref(), Some("default"));
+    assert_eq!(edited(&["--model", "codex"]), None);
+}
+
+/// An effort is the model's to accept, and the daemon holds the catalogue —
+/// so the only thing the line itself refuses is a flag with no effort in it.
+#[test]
+fn an_effort_that_says_nothing_is_a_usage_error() {
+    let err = try_parse(&["ariadne", "task", "update", "01TASK", "--effort", " "])
+        .map(|_| ())
+        .expect_err("no effort at all")
+        .to_string();
+    assert!(err.contains("no effort was named"), "{err}");
+    assert!(err.contains("ariadne models ls"), "{err}");
+    assert!(err.contains("default"), "{err}");
+
+    // Which efforts a model takes is the daemon's answer, not this one's: an
+    // effort no claude model runs at is still sent, and refused there.
+    assert!(
+        try_parse(&[
+            "ariadne",
+            "task",
+            "update",
+            "01TASK",
+            "--model",
+            "claude_code:claude-opus-5",
+            "--effort",
+            "ultra",
+        ])
+        .is_ok()
+    );
+}
+
 /// A model does not say which CLI runs it, so one that names no agent CLI is
 /// refused on the line it was typed on — with the spelling that would have
 /// named one, never a request the daemon has to turn down.
@@ -734,6 +881,10 @@ fn a_reviewer_that_names_no_real_agent_is_a_usage_error() {
     assert!(err.contains("claude_code, codex, opencode"), "{err}");
     assert!(refused("Reviewer=").contains("no model after the ="));
     assert!(refused("Reviewer=codex:").contains("no model after the `:`"));
+    // And the half after the `@`, which the forms in the refusal spell out.
+    let err = refused("Reviewer@");
+    assert!(err.contains("no effort was named"), "{err}");
+    assert!(refused("Reviewer=@high").contains("PROFILE=MODEL@EFFORT"));
 }
 
 /// How a repository takes a change is the user's to set, on the way in

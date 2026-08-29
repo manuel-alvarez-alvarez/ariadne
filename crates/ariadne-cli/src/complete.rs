@@ -504,6 +504,101 @@ pub fn models_or_default() -> Vec<CompletionCandidate> {
     out
 }
 
+/// Effort candidates for `--effort`: every effort the catalog knows, once
+/// each, cheapest first.
+///
+/// Which of them a given model takes is the model's own business, and clap
+/// cannot see the `--model` sitting on the same line — so the union is what
+/// there is to offer, and the daemon refuses one that does not belong to the
+/// model it is written beside.
+///
+/// Each entry lists its own efforts cheapest → deepest, and the lists agree
+/// wherever they overlap, so they are merged rather than concatenated: what
+/// comes out reads from cheapest to deepest across every agent CLI.
+pub fn efforts() -> Vec<CompletionCandidate> {
+    let known = match model_catalog() {
+        Some(catalog) => catalog.iter().map(catalog_efforts).collect(),
+        None => curated_efforts(),
+    };
+    merged(known)
+        .into_iter()
+        .map(CompletionCandidate::new)
+        .collect()
+}
+
+/// The same, plus the word an update writes to run the model at whatever its
+/// agent CLI runs it at: `task update --effort` and `profile update --effort`.
+pub fn efforts_or_default() -> Vec<CompletionCandidate> {
+    let mut out = efforts();
+    out.push(
+        CompletionCandidate::new(crate::commands::DEFAULT).help(Some(
+            "pin no effort: whatever the agent CLI reasons it at".into(),
+        )),
+    );
+    out
+}
+
+/// The efforts one catalog entry lists, in the order it lists them.
+fn catalog_efforts(m: &Value) -> Vec<String> {
+    m.get("efforts")
+        .and_then(Value::as_array)
+        .map(|efforts| {
+            efforts
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// What a machine that has never reached a daemon offers: every effort each
+/// agent CLI accepts, which is as much as this side knows on its own.
+fn curated_efforts() -> Vec<Vec<String>> {
+    AgentKind::ALL
+        .into_iter()
+        .map(|kind| {
+            ariadne_core::models::known_efforts(kind)
+                .iter()
+                .map(|effort| (*effort).to_string())
+                .collect()
+        })
+        .collect()
+}
+
+/// Several cheapest-first lists as one, each effort once and in an order that
+/// keeps every list's own.
+///
+/// An effort nothing has offered yet is held back until the next one that has
+/// been, and goes in just before it — which is what puts codex's `minimal` at
+/// the head of a list that already starts at `low`. A run with nothing after
+/// it is deeper than everything so far, and goes at the end; so does a list
+/// that shares no effort at all with what is there, since nothing says where
+/// else it would sit.
+fn merged(lists: Vec<Vec<String>>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for list in lists {
+        // The run of efforts read since the last one already offered, waiting
+        // for the one that says where they belong.
+        let mut pending: Vec<String> = Vec::new();
+        // Where this list has read up to, in `out`'s own positions.
+        let mut at = 0;
+        for effort in list {
+            match out.iter().position(|known| *known == effort) {
+                Some(seen) if seen >= at => {
+                    at = seen + pending.len() + 1;
+                    out.splice(seen..seen, pending.drain(..));
+                }
+                Some(_) => {}
+                None if pending.contains(&effort) => {}
+                None => pending.push(effort),
+            }
+        }
+        out.extend(pending);
+    }
+    out
+}
+
 /// The catalog: from disk while what is there is recent, then from the
 /// daemon, then from disk at any age — telling "no daemon" from "a daemon
 /// with no models" so only the former reaches back for a stale answer.
@@ -688,6 +783,64 @@ mod tests {
             ["01STARTING", "01RUNNING", "01IDLE"]
         );
         assert_eq!(kept(&rows, session_has_ended), ["01EXITED", "01FAILED"]);
+    }
+
+    /// Every model lists its efforts cheapest → deepest and the lists agree
+    /// wherever they overlap, so the union reads the same way: an effort one
+    /// list has and another has not lands where its own list puts it, never
+    /// appended after the rest.
+    #[test]
+    fn the_efforts_of_the_catalog_merge_into_one_cheapest_first_list() {
+        assert_eq!(
+            merged(vec![
+                words(&["low", "medium", "high", "xhigh", "max"]),
+                words(&["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]),
+                words(&["low", "medium", "high", "max"]),
+                Vec::new(),
+            ]),
+            words(&["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]),
+            "each effort once, and `minimal` before the `low` it is cheaper than"
+        );
+        // A model with no effort control contributes nothing, and one whose
+        // efforts are its own variant names contributes those.
+        assert_eq!(
+            merged(vec![
+                Vec::new(),
+                words(&["low", "high"]),
+                words(&["gpt-5-codex-low", "gpt-5-codex-high"]),
+            ]),
+            words(&["low", "high", "gpt-5-codex-low", "gpt-5-codex-high"])
+        );
+        assert_eq!(merged(Vec::new()), Vec::<String>::new());
+    }
+
+    /// What a machine that has never reached a daemon offers: the union of
+    /// what each agent CLI accepts, in the same cheapest-first order.
+    #[test]
+    fn the_curated_efforts_are_what_every_cli_accepts() {
+        assert_eq!(
+            merged(curated_efforts()),
+            words(&["minimal", "low", "medium", "high", "xhigh", "max", "ultra"])
+        );
+    }
+
+    /// The catalog's own answer is read as it comes, and an entry that lists
+    /// no efforts — a model with no effort control, or a daemon too old to
+    /// say — contributes nothing rather than breaking the list.
+    #[test]
+    fn an_entry_offers_the_efforts_it_lists_and_no_others() {
+        assert_eq!(
+            catalog_efforts(&json!({"id": "codex:gpt-5.6-sol", "efforts": ["low", "high"]})),
+            words(&["low", "high"])
+        );
+        assert_eq!(
+            catalog_efforts(&json!({"id": "claude_code:claude-haiku-4-5", "efforts": []})),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            catalog_efforts(&json!({"id": "claude_code"})),
+            Vec::<String>::new()
+        );
     }
 
     /// Ids are ULIDs, so the daemon's oldest-first list read backwards is

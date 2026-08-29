@@ -222,6 +222,13 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
                     // Recorded at launch, so it is what this session runs on
                     // even if the profile has moved on since.
                     ("model", s.model.clone().unwrap_or_else(|| "default".into())),
+                    // How deeply it reasons there, recorded with the model it
+                    // belongs to; `default` is whatever the agent CLI runs
+                    // that model at.
+                    (
+                        "effort",
+                        s.effort.clone().unwrap_or_else(|| "default".into()),
+                    ),
                     ("status", s.status.as_str().into()),
                     ("attention", attention_label(s.attention_reason)),
                     ("attention since", at(s.attention_since.as_deref())),

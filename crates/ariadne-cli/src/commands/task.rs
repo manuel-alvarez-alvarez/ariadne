@@ -19,8 +19,8 @@ use ariadne_core::TaskStatus;
 use super::follow;
 use super::resolve::{self, Kind};
 use super::{
-    ProfileNames, Subject, confirm, one_of, parse_model, parse_model_or_default, print_thread,
-    query_path, recipient,
+    ProfileNames, Subject, confirm, one_of, parse_effort, parse_effort_or_default, parse_model,
+    parse_model_or_default, print_thread, query_path, recipient,
 };
 use crate::cli::values::Spelling;
 use crate::output::{
@@ -72,7 +72,7 @@ Examples:
 
   # after another task, on a model and a reviewer of your own
   ariadne task create <goal-id> --title \"Wire it up\" --depends-on <task-id> \\
-      --model codex:gpt-5.3-codex --reviewer Reviewer=claude_code
+      --model codex:gpt-5.6-sol --effort xhigh --reviewer Reviewer=claude_code@high
 
   # in one of the goal's repositories, when it has several
   ariadne task create <goal-id> --title \"Document it\" --repo ~/projects/ui
@@ -82,8 +82,10 @@ Examples:
 const UPDATE_EXAMPLES: &str = "\
 Examples:
   ariadne task update <task-id> --title \"Add the rate limiter middleware\"
-  ariadne task update <task-id> --model claude_code --reviewer Reviewer=codex:o3
+  ariadne task update <task-id> --model claude_code:claude-opus-5 --effort xhigh
+  ariadne task update <task-id> --reviewer Reviewer=codex:gpt-5.6-luna@high
   ariadne task update <task-id> --model default        # back to the profile's own
+  ariadne task update <task-id> --effort default       # at whatever the CLI reasons it at
   ariadne task update <task-id> --clear-depends-on     # free it to start now
 ";
 
@@ -114,10 +116,16 @@ pub enum TaskCommand {
         /// engineer profile's own
         #[arg(long, value_name = "MODEL", value_parser = parse_model, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
         model: Option<String>,
+        /// The reasoning effort that model is run at: one of the efforts
+        /// `ariadne models ls` lists for it. Default: whatever the agent CLI
+        /// runs it at
+        #[arg(long, value_name = "EFFORT", value_parser = parse_effort, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::efforts))]
+        effort: Option<String>,
         /// Reviewer profile id or name, in review order; repeatable. Add
         /// `=MODEL` to run that reviewer on something other than its profile's
-        /// own (`--reviewer Reviewer=codex:gpt-5.3-codex`)
-        #[arg(long = "reviewer", value_name = "PROFILE[=MODEL]", default_value = "Reviewer", value_parser = parse_reviewer, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::reviewer_profiles))]
+        /// own and `@EFFORT` to say how deeply it reasons there
+        /// (`--reviewer Reviewer=codex:gpt-5.6-sol@xhigh`)
+        #[arg(long = "reviewer", value_name = "PROFILE[=MODEL][@EFFORT]", default_value = "Reviewer", value_parser = parse_reviewer, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::reviewer_profiles))]
         reviewers: Vec<ReviewerAssignment>,
         /// Id of a task that must merge before this one starts; repeatable
         #[arg(long = "depends-on", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
@@ -151,10 +159,15 @@ pub enum TaskCommand {
         /// it back to the engineer profile's own
         #[arg(long, value_name = "MODEL|default", value_parser = parse_model_or_default, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models_or_default))]
         model: Option<String>,
-        /// Reviewer profile id or name, optionally `=MODEL`, in review order;
-        /// repeatable, and replaces the task's reviewers rather than adding to
-        /// them
-        #[arg(long = "reviewer", value_name = "PROFILE[=MODEL]", value_parser = parse_reviewer, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::reviewer_profiles))]
+        /// The reasoning effort that model is run at: one of the efforts
+        /// `ariadne models ls` lists for it; "default" runs it at whatever
+        /// the agent CLI runs it at
+        #[arg(long, value_name = "EFFORT|default", value_parser = parse_effort_or_default, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::efforts_or_default))]
+        effort: Option<String>,
+        /// Reviewer profile id or name, optionally `=MODEL` and `@EFFORT`, in
+        /// review order; repeatable, and replaces the task's reviewers rather
+        /// than adding to them
+        #[arg(long = "reviewer", value_name = "PROFILE[=MODEL][@EFFORT]", value_parser = parse_reviewer, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::reviewer_profiles))]
         reviewers: Vec<ReviewerAssignment>,
         /// Id of a task that must merge first; repeatable, and replaces the
         /// task's dependencies rather than adding to them
@@ -278,6 +291,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             description,
             engineer,
             model,
+            effort,
             reviewers,
             depends_on,
             repo,
@@ -300,7 +314,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                         repo_id,
                         engineer_profile: engineer,
                         model,
-                        effort: None,
+                        effort,
                         reviewers,
                         depends_on,
                     },
@@ -313,6 +327,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             title,
             description,
             model,
+            effort,
             reviewers,
             depends_on,
             clear_depends_on,
@@ -325,6 +340,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                 title,
                 description,
                 model,
+                effort,
                 reviewers,
                 depends_on,
                 clear_depends_on,
@@ -350,7 +366,11 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                     ("status", t.status.as_str().into()),
                     (
                         "engineer",
-                        profiles.pinned_label(&t.engineer_profile_id, t.model.as_deref()),
+                        profiles.pinned_label(
+                            &t.engineer_profile_id,
+                            t.model.as_deref(),
+                            t.effort.as_deref(),
+                        ),
                     ),
                     (
                         "reviewers",
@@ -359,7 +379,13 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                         // column reads down.
                         t.reviewers
                             .iter()
-                            .map(|r| profiles.pinned_label(&r.profile_id, r.model.as_deref()))
+                            .map(|r| {
+                                profiles.pinned_label(
+                                    &r.profile_id,
+                                    r.model.as_deref(),
+                                    r.effort.as_deref(),
+                                )
+                            })
                             .collect::<Vec<_>>()
                             .join(INDENT),
                     ),

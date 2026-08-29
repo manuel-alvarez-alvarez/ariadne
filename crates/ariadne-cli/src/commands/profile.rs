@@ -14,7 +14,10 @@ use ariadne_client::{Client, ClientError};
 use ariadne_core::Role;
 
 use super::resolve::{self, Kind};
-use super::{Subject, confirm, parse_model, parse_model_or_default, path_segment};
+use super::{
+    Subject, confirm, parse_effort, parse_effort_or_default, parse_model, parse_model_or_default,
+    path_segment,
+};
 use crate::cli::values::Spelling;
 use crate::output::{
     Column, Format, UNCAPPED, age, col, moment, note, print, print_kv, print_list,
@@ -25,12 +28,15 @@ use flags::{owned_prompts, split_system, write_briefings};
 use prompts::{Owner, PromptArg, parse_prompt_arg};
 
 /// Columns of `profile ls`. A profile is its name and its role; how old it is
-/// is the least of what one asks a profile.
+/// is the least of what one asks a profile, and the effort goes before the
+/// model it belongs to — on a narrow terminal, what an agent runs on is the
+/// half worth keeping.
 const LS: &[Column] = &[
     col("id", UNCAPPED).id(),
     col("name", 32).title(),
-    col("role", UNCAPPED).rank(3),
-    col("model", 32).rank(2),
+    col("role", UNCAPPED).rank(4),
+    col("model", 32).rank(3),
+    col("effort", UNCAPPED).rank(2),
     col("age", UNCAPPED).rank(1),
 ];
 
@@ -64,6 +70,11 @@ pub enum ProfileCommand {
         /// the first installed CLI, resolved at spawn time
         #[arg(long, value_name = "MODEL", value_parser = parse_model, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
         model: Option<String>,
+        /// The reasoning effort that model is run at: one of the efforts
+        /// `ariadne models ls` lists for it. Omit to run it at whatever the
+        /// agent CLI runs it at
+        #[arg(long, value_name = "EFFORT", value_parser = parse_effort, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::efforts))]
+        effort: Option<String>,
         /// Set one prompt from the command line: <kind>=<text>, repeatable
         #[arg(long = "prompt", value_name = "KIND=TEXT", value_parser = flags::parse_prompt_text, add = clap_complete::engine::ArgValueCompleter::new(crate::complete::prompt_assignment))]
         prompts: Vec<PromptAssignment>,
@@ -111,6 +122,11 @@ pub enum ProfileCommand {
         /// it back on auto, the first installed CLI at spawn time
         #[arg(long, value_name = "MODEL|default", value_parser = parse_model_or_default, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models_or_default))]
         model: Option<String>,
+        /// The reasoning effort that model is run at: one of the efforts
+        /// `ariadne models ls` lists for it; "default" runs it at whatever
+        /// the agent CLI runs it at
+        #[arg(long, value_name = "EFFORT|default", value_parser = parse_effort_or_default, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::efforts_or_default))]
+        effort: Option<String>,
         /// Replace one prompt with this text: <kind>=<text>, repeatable
         #[arg(long = "prompt", value_name = "KIND=TEXT", value_parser = flags::parse_prompt_text, add = clap_complete::engine::ArgValueCompleter::new(crate::complete::prompt_assignment))]
         prompts: Vec<PromptAssignment>,
@@ -191,6 +207,7 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
             name,
             role,
             model,
+            effort,
             prompts,
             prompt_files,
         } => {
@@ -206,7 +223,7 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
                         name,
                         role,
                         model,
-                        effort: None,
+                        effort,
                         system_prompt,
                     },
                 )
@@ -231,6 +248,7 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
                         p.name.clone(),
                         p.role.as_str().into(),
                         model_label(p.model.as_deref()),
+                        effort_label(p.effort.as_deref()),
                         age(&p.created_at, now),
                     ]
                 },
@@ -245,6 +263,7 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
                     ("name", p.name.clone()),
                     ("role", p.role.as_str().into()),
                     ("model", model_label(p.model.as_deref())),
+                    ("effort", effort_label(p.effort.as_deref())),
                     ("created", moment(&p.created_at)),
                     ("prompt", format!("\n---\n{}", p.system_prompt)),
                 ])
@@ -254,6 +273,7 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
             id,
             name,
             model,
+            effort,
             prompts,
             prompt_files,
         } => {
@@ -276,7 +296,7 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
                     &UpdateProfileRequest {
                         name,
                         model,
-                        effort: None,
+                        effort,
                         system_prompt,
                     },
                 )
@@ -338,6 +358,14 @@ fn model_label(model: Option<&str>) -> String {
     model.unwrap_or("auto").to_string()
 }
 
+/// The effort that model is reasoned at, for the cell beside it: one of the
+/// efforts `ariadne models ls` lists for the model, which is what `--effort`
+/// takes back. Nothing pinned is `auto` — whatever the agent CLI runs the
+/// model at when nothing is passed.
+fn effort_label(effort: Option<&str>) -> String {
+    effort.unwrap_or("auto").to_string()
+}
+
 /// What `profile create` and `profile update` answer with: the profile, and —
 /// for a person — the prompts written along with it.
 fn print_written(p: &ProfileDto, written: &[&str], format: Format) -> Result<()> {
@@ -391,6 +419,7 @@ mod tests {
             id: "Engineer".into(),
             name: None,
             model: None,
+            effort: None,
             prompts,
             prompt_files: files,
         }
@@ -450,5 +479,9 @@ mod tests {
         assert_eq!(model_label(p.model.as_deref()), "auto");
         assert_eq!(model_label(Some("codex")), "codex", "codex's own default");
         assert_eq!(model_label(Some("codex:o3")), "codex:o3");
+        // And the effort beside it reads the same way: `auto` is whatever the
+        // agent CLI reasons that model at when nothing was pinned.
+        assert_eq!(effort_label(p.effort.as_deref()), "auto");
+        assert_eq!(effort_label(Some("xhigh")), "xhigh");
     }
 }

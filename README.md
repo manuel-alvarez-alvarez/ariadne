@@ -29,9 +29,12 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    profile is on, and it is the whole choice: a model is spelled
    `<agent>[:<model>]` — the agent CLI that runs it (`claude_code`, `codex`,
    `opencode`) and, after a colon, one model of that CLI (`--model
-   codex:gpt-5.3-codex`). The agent CLI on its own (`--model codex`) runs it on
+   codex:gpt-5.6-sol`). The agent CLI on its own (`--model codex`) runs it on
    that CLI's own default model, and a model naming no CLI is a usage error,
-   since nothing says which CLI would run it.
+   since nothing says which CLI would run it. `--effort` goes beside it and
+   says how deeply that model reasons — one of the efforts `ariadne models ls`
+   lists for it (`--effort xhigh`); left out, the model runs at whatever its
+   agent CLI runs it at.
 2. The planner discusses the breakdown with you, creates tasks through the
    Ariadne MCP tools (assigning an engineer profile and reviewer profiles per
    task, with optional `depends_on` ordering). Nothing runs while the goal is
@@ -40,15 +43,18 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    conversation that the plan is right it calls `finalize_plan`, which starts
    the work. What each agent runs on is yours to pick, not the planner's: its
    tasks run on whatever their profiles are on until you say otherwise with
-   `ariadne task update <task-id> --model claude_code --reviewer
-   Reviewer=codex:o3`, which a task takes while it is still pending or ready
-   (`--model default` hands it back to the profile's). A reviewer slot is
-   spelled `<profile>` or `<profile>=<model>`, and `ariadne task create` takes
-   the same flags. A pin also carries the **effort** its model is reasoned at,
-   one of the ones `ariadne models ls` lists for that model, and it belongs to
-   the model it runs at: a pin that names a model and no effort runs at the
-   CLI's own default, and only a pin left on the profile's own model keeps the
-   profile's effort.
+   `ariadne task update <task-id> --model claude_code:claude-opus-5 --effort
+   xhigh --reviewer Reviewer=codex:gpt-5.6-luna@high`, which a task takes while
+   it is still pending or ready (`--model default` hands it back to the
+   profile's, `--effort default` back to the CLI's own). A reviewer slot is
+   spelled `<profile>[=<model>][@<effort>]` — `Reviewer` on its profile's own,
+   `Reviewer=codex` on codex's default model, `Reviewer@high` on its profile's
+   model reasoned harder — and `ariadne task create` takes the same flags. A
+   pin also carries the **effort** its model is reasoned at, one of the ones
+   `ariadne models ls` lists for that model, and it belongs to the model it
+   runs at: a pin that names a model and no effort runs at the CLI's own
+   default, and only a pin left on the profile's own model keeps the profile's
+   effort.
 3. The scheduler takes over: when a task's dependencies are merged it becomes
    `ready` and an **engineer** is spawned in a dedicated git worktree, on a
    branch named after the task — its title slugged plus a short tail of its
@@ -188,8 +194,8 @@ ariadne completions fish > ~/.config/fish/completions/ariadne.fish
 
 `ariadne completions <shell>` prints that registration, so `source <(ariadne
 completions zsh)` works in a shell you have open now. A daemon that is down or
-slow leaves TAB with nothing rather than an error, and `--model` completes
-from a catalog cached under the ariadne home. For somewhere a completion has
+slow leaves TAB with nothing rather than an error, and `--model` and
+`--effort` complete from a catalog cached under the ariadne home. For somewhere a completion has
 to be a file on disk, `ariadne completions <shell> --static` prints the old
 snapshot script, which has the command tree but none of the live candidates.
 
@@ -209,11 +215,14 @@ ariadne repo add ~/projects/api --description "the public API"
 ariadne goal create --title "Add rate limiting" --repo ~/projects/api
 ariadne goal attach <goal-id>
 
-# an agent CLI of your own, and a model of it where you want one
+# an agent CLI of your own, a model of it where you want one, and how deeply
+# it reasons there
 ariadne goal create --title "Add rate limiting" --repo ~/projects/api \
-    --model codex:gpt-5.3-codex
-ariadne task update <task-id> --model claude_code --reviewer Reviewer=codex:o3
+    --model codex:gpt-5.6-sol --effort xhigh
+ariadne task update <task-id> --model claude_code:claude-opus-5 --effort xhigh \
+    --reviewer Reviewer=codex:gpt-5.6-luna@high
 ariadne task update <task-id> --model default   # back to the profile's own
+ariadne task update <task-id> --effort default  # at whatever the CLI reasons it at
 
 # watch it run
 ariadne attention                      # what is waiting for you, across every goal
@@ -223,7 +232,7 @@ ariadne task msg <task-id> "hold on, use the middleware crate instead"
 ariadne attach <id>                    # session, task or goal id
 
 # without attaching to a terminal
-ariadne models ls --agent codex        # everything --model can be pinned to
+ariadne models ls --agent codex        # what --model pins, and the efforts each takes
 ariadne session ls --attention         # the agents waiting on a human
 ariadne session send <session-id> y    # type into a live agent, as the UI does
 

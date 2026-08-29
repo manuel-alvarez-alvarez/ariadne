@@ -14,7 +14,7 @@ use ariadne_core::GoalStatus;
 
 use super::query_path;
 use super::resolve::{self, Kind};
-use super::{ProfileNames, Subject, confirm, parse_model, print_thread, recipient};
+use super::{ProfileNames, Subject, confirm, parse_effort, parse_model, print_thread, recipient};
 use crate::cli::values::Spelling;
 use crate::output::{
     Column, Format, UNCAPPED, age, col, moment, print, print_kv, print_list, usage_block,
@@ -50,9 +50,9 @@ Examples:
   # a goal in one registered repository, planned on the Planner profile's own model
   ariadne goal create --title \"Add rate limiting\" --repo ~/projects/api
 
-  # a planner of your own, on one model of one agent CLI
+  # a planner of your own, on one model of one agent CLI, reasoned deeply
   ariadne goal create --title \"Add rate limiting\" --repo ~/projects/api \\
-      --planner Architect --model codex:gpt-5.3-codex
+      --planner Architect --model codex:gpt-5.6-sol --effort xhigh
 
   # two repositories, and two reviewer approvals before a task may merge
   ariadne goal create --title \"Split the API\" --repo ~/projects/api \\
@@ -88,6 +88,11 @@ pub enum GoalCommand {
         /// planner profile's own
         #[arg(long, value_name = "MODEL", value_parser = parse_model, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
         model: Option<String>,
+        /// The reasoning effort that model is run at: one of the efforts
+        /// `ariadne models ls` lists for it. Default: whatever the agent CLI
+        /// runs it at
+        #[arg(long, value_name = "EFFORT", value_parser = parse_effort, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::efforts))]
+        effort: Option<String>,
         /// Reviewer approvals required to merge a task
         #[arg(long)]
         approvals: Option<i64>,
@@ -178,6 +183,7 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
             repos,
             planner,
             model,
+            effort,
             approvals,
             max_tasks,
         } => {
@@ -193,9 +199,7 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                         max_tasks,
                         required_approvals: approvals,
                         model,
-                        // The CLI has no flag for it yet: the pin an
-                        // `ariadne goal add` writes carries no effort.
-                        effort: None,
+                        effort,
                     },
                 )
                 .await?;
@@ -245,7 +249,11 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                     ("status", g.status.as_str().into()),
                     (
                         "planner",
-                        profiles.pinned_label(&g.planner_profile_id, g.model.as_deref()),
+                        profiles.pinned_label(
+                            &g.planner_profile_id,
+                            g.model.as_deref(),
+                            g.effort.as_deref(),
+                        ),
                     ),
                     ("approvals", g.required_approvals.to_string()),
                     (
