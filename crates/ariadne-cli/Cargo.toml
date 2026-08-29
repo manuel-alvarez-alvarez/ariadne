@@ -33,6 +33,11 @@ rustix = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_urlencoded = { workspace = true }
+# One call: putting SIGPIPE back to its default disposition so a closed pipe
+# (`ariadne task ls | head`) ends the process instead of panicking a printing
+# macro. The workspace forbids `unsafe_code`, so the `signal(2)` call has to
+# live in a dependency.
+sigpipe = "0.1.3"
 tokio = { workspace = true }
 toml = { workspace = true }
 

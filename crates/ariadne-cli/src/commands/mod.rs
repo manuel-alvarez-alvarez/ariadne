@@ -4,6 +4,7 @@ pub mod agent;
 pub mod agent_event;
 pub mod attach;
 pub mod attention;
+pub mod completions;
 pub mod daemon;
 pub mod doctor;
 #[cfg(test)]

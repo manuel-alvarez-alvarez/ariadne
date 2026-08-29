@@ -222,7 +222,7 @@ pub enum TaskCommand {
     /// Cancel a task
     Cancel {
         /// Task id
-        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::cancellable_task_ids))]
         id: String,
         /// Do not ask for confirmation
         #[arg(short, long)]
@@ -231,7 +231,7 @@ pub enum TaskCommand {
     /// Retry a failed task
     Retry {
         /// Task id
-        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::retryable_task_ids))]
         id: String,
     },
     /// Show the diff of the task branch against its base

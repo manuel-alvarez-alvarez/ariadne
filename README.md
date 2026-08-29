@@ -156,10 +156,38 @@ The daemon then runs as a user service with restart-on-failure, and
 process wherever `~/.ariadne/install.env` records one — `launchctl kickstart
 -k` / `launchctl bootout`, `systemctl --user` — saying which command it used;
 `ariadne daemon status` says which manager is holding the daemon up.
-Completions are **dynamic**: on TAB the shell asks the daemon, so
-task/goal/session ids and profile names complete with live values. Other
-shells: `source <(COMPLETE=fish ariadne)`, or `ariadne completions <shell>`
-for a static script.
+
+## Shell completion
+
+Completions are **dynamic**: what the shell sources is a few lines that call
+`ariadne` back on every TAB, so the candidates are the ones the daemon has
+right now — task, goal and session ids with their status and title beside
+them, profile names with their role and model, and the models an agent can be
+pinned to. They are verb-aware, too: `task retry` offers the failed tasks,
+`session kill` the live sessions, `session resume` the ended ones, `goal rm`
+the goals it will actually delete.
+
+`scripts/install.sh` wires this up for bash and zsh. To do it yourself, or for
+a shell it skipped:
+
+```sh
+ariadne completions install                 # $SHELL, or --shell bash|zsh|fish
+```
+
+or write the line by hand — it is the same one:
+
+```sh
+echo 'source <(COMPLETE=bash ariadne)' >> ~/.bashrc
+echo 'source <(COMPLETE=zsh ariadne)' >> ~/.zshrc
+ariadne completions fish > ~/.config/fish/completions/ariadne.fish
+```
+
+`ariadne completions <shell>` prints that registration, so `source <(ariadne
+completions zsh)` works in a shell you have open now. A daemon that is down or
+slow leaves TAB with nothing rather than an error, and `--model` completes
+from a catalog cached under the ariadne home. For somewhere a completion has
+to be a file on disk, `ariadne completions <shell> --static` prints the old
+snapshot script, which has the command tree but none of the live candidates.
 
 ## Quick start
 

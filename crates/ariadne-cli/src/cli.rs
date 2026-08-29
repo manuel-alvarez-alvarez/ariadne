@@ -7,6 +7,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 pub mod values;
 
 use crate::commands::agent::AgentCommand;
+use crate::commands::completions::CompletionsCommand;
 use crate::commands::goal::GoalCommand;
 use crate::commands::models::ModelsCommand;
 use crate::commands::profile::ProfileCommand;
@@ -221,8 +222,35 @@ pub enum Command {
     /// Reports what this shell sees and what the daemon sees — they differ
     /// more often than one would like — and exits 1 when anything failed.
     Doctor,
-    /// Generate shell completions (bash, zsh, fish, ...) to stdout
-    Completions { shell: clap_complete::Shell },
+    /// Print shell completions, or install them into your shell
+    ///
+    /// What is printed is the dynamic registration: a few lines the shell
+    /// evaluates, which call `ariadne` back on every TAB — so task, goal and
+    /// session ids, profile names and models are the ones the daemon has now,
+    /// with their status and title beside them.
+    ///
+    /// Wire it up once, by hand:
+    ///
+    ///   bash   echo 'source <(COMPLETE=bash ariadne)' >> ~/.bashrc
+    ///
+    ///   zsh    echo 'source <(COMPLETE=zsh ariadne)' >> ~/.zshrc
+    ///
+    ///   fish   ariadne completions fish > ~/.config/fish/completions/ariadne.fish
+    ///
+    /// or let `ariadne completions install` write the same thing for you.
+    #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
+    Completions {
+        /// Shell to print the registration for
+        #[arg(value_name = "SHELL", required = true)]
+        shell: Option<clap_complete::Shell>,
+        /// Print the old static script instead: one snapshot of the command
+        /// tree, with no live candidates in it, for somewhere a completion
+        /// has to be a file
+        #[arg(long = "static")]
+        static_script: bool,
+        #[command(subcommand)]
+        command: Option<CompletionsCommand>,
+    },
     /// Manage the ariadned daemon
     ///
     /// Every one of these is about the daemon of one home — its process, its
@@ -490,12 +518,15 @@ fn hide_unless(cmd: clap::Command, path: &str, shown: &[&str], arg: clap::Arg) -
         .get_subcommands()
         .map(|s| s.get_name().to_string())
         .collect();
-    if subcommands.is_empty() {
-        return match shown.contains(&path) {
-            true => cmd,
-            false => cmd.arg(arg),
-        };
-    }
+    // A command with subcommands is a grouping and honours nothing itself —
+    // unless it takes an argument of its own too, as `completions <SHELL>`
+    // does next to `completions install`. That one is run as itself, so the
+    // flags it does not honour have to be hidden on it as well as below it.
+    let runs_itself = subcommands.is_empty() || cmd.get_positionals().next().is_some();
+    let cmd = match runs_itself && !shown.contains(&path) {
+        true => cmd.arg(arg.clone()),
+        false => cmd,
+    };
     subcommands.into_iter().fold(cmd, |cmd, name| {
         let arg = arg.clone();
         cmd.mut_subcommand(name.clone(), |sub| {

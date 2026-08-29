@@ -21,10 +21,17 @@ use crate::output::View;
 /// `Error: ...` + `Caused by:` block: one line, and exit code 1. Usage errors
 /// never reach here — clap prints and exits 2 itself.
 fn main() -> ExitCode {
+    // Rust starts every process with SIGPIPE ignored, which turns a reader
+    // that walked away (`ariadne task ls | head`) into a write error and a
+    // panic inside a printing macro. The default disposition — end quietly on
+    // a closed pipe — is what a command-line tool wants.
+    sigpipe::reset();
+
     // Dynamic shell completion: when invoked by the completion shim
     // (COMPLETE=<shell> in the environment) this answers the request and
     // exits before anything else runs. Candidate functions query the daemon
-    // with their own tiny runtime, so this must happen before tokio starts.
+    // on a small runtime of their own, so this must happen before tokio
+    // starts.
     clap_complete::CompleteEnv::with_factory(command).complete();
 
     let cli = match Cli::from_arg_matches(&command().get_matches()) {
@@ -85,10 +92,11 @@ async fn run(cli: Cli) -> Result<ExitCode> {
 
     let outcome = match cli.command {
         Command::Version => commands::version(&client, format).await,
-        Command::Completions { shell } => {
-            clap_complete::generate(shell, &mut command(), "ariadne", &mut std::io::stdout());
-            Ok(())
-        }
+        Command::Completions {
+            shell,
+            static_script,
+            command,
+        } => commands::completions::run(shell, static_script, command),
         Command::Daemon { home, command } => match command {
             DaemonCommand::Start => commands::daemon::start(home, format).await,
             DaemonCommand::Stop { timeout } => commands::daemon::stop(home, timeout, format).await,

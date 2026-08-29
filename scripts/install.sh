@@ -418,28 +418,18 @@ if [ "$WITH_COMPLETIONS" = 1 ]; then
     # installs so they cannot shadow the dynamic registration.
     rm -f "$ARIADNE_BASH_COMPLETION" "$ARIADNE_ZSH_COMPLETION"
 
+    # The block itself is written by the binary being installed
+    # (`ariadne completions install`), so the rc lines have one author and a
+    # user can add or repair them the same way later. Only the shells that
+    # already have a startup file here are registered, as before.
     if [ -f "$ARIADNE_BASHRC" ]; then
-        ui_strip_block "$ARIADNE_BASHRC"
-        cat >> "$ARIADNE_BASHRC" <<EOF
-# >>> ariadne >>>
-[ -x "$PREFIX/ariadne" ] && source <(COMPLETE=bash "$PREFIX/ariadne")
-# <<< ariadne <<<
-EOF
-        COMPLETION_SHELLS="bash"
+        run_logged "$PREFIX/ariadne" completions install --shell bash \
+            && COMPLETION_SHELLS="bash"
     fi
 
     if [ -f "$ARIADNE_ZSHRC" ]; then
-        ui_strip_block "$ARIADNE_ZSHRC"
-        # compdef only exists after compinit; the guard keeps shells without
-        # compsys working.
-        cat >> "$ARIADNE_ZSHRC" <<EOF
-# >>> ariadne >>>
-if [ -x "$PREFIX/ariadne" ] && (( \$+functions[compdef] )); then
-    source <(COMPLETE=zsh "$PREFIX/ariadne")
-fi
-# <<< ariadne <<<
-EOF
-        COMPLETION_SHELLS="${COMPLETION_SHELLS:+$COMPLETION_SHELLS, }zsh"
+        run_logged "$PREFIX/ariadne" completions install --shell zsh \
+            && COMPLETION_SHELLS="${COMPLETION_SHELLS:+$COMPLETION_SHELLS, }zsh"
     fi
 
     if [ -n "$COMPLETION_SHELLS" ]; then

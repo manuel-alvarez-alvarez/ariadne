@@ -116,7 +116,7 @@ pub enum GoalCommand {
     /// Cancel a goal and every task under it
     Cancel {
         /// Goal id
-        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::cancellable_goal_ids))]
         id: String,
         /// Do not ask for confirmation
         #[arg(short, long)]
@@ -129,7 +129,7 @@ pub enum GoalCommand {
     /// down. What goes takes its tasks and messages with it, for good.
     Rm {
         /// Goal id
-        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::deletable_goal_ids))]
         id: String,
         /// Do not ask for confirmation
         #[arg(short, long)]

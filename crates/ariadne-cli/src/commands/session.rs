@@ -118,13 +118,13 @@ pub enum SessionCommand {
     /// Revive an ended session: new tmux, same agent conversation
     Resume {
         /// Session id
-        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::session_ids))]
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::ended_session_ids))]
         id: String,
     },
     /// Kill a session's tmux process
     Kill {
         /// Session id
-        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::session_ids))]
+        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::live_session_ids))]
         id: String,
         /// Do not ask for confirmation
         #[arg(short, long)]

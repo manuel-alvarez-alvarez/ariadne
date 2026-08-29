@@ -88,6 +88,7 @@ const LEAVES: &[(&str, bool)] = &[
     ("attach", false),
     ("attention", true),
     ("completions", false),
+    ("completions install", false),
     ("daemon logs", false),
     ("daemon restart", true),
     ("daemon start", true),
@@ -1133,7 +1134,11 @@ fn leaf_paths() -> Vec<String> {
             };
             walk(sub, &path, out);
         }
-        if leaf && !prefix.is_empty() {
+        // A command with subcommands is a grouping and not run on its own —
+        // unless it takes an argument of its own too, as `completions
+        // <SHELL>` does next to `completions install`.
+        let runs_itself = leaf || cmd.get_positionals().next().is_some();
+        if runs_itself && !prefix.is_empty() {
             out.push(prefix.to_string());
         }
     }
