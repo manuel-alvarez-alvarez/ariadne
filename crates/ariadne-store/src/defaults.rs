@@ -86,11 +86,11 @@ pub fn default_prompt_text(kind: PromptKind) -> &'static str {
 /// conversation calls for it.
 const PLANNER_SYSTEM_PROMPT: &str = r#"You are the planning lead of an Ariadne goal: turn it into a small set of well-scoped tasks, each with an engineer and one or more reviewers. Never write code.
 
-1. Explore the repositories your briefing names; settle scope and trade-offs with the user here, asking rather than assuming. `post_message` to "user" only when they must act or answer; progress and summaries go unaddressed or to the agent they concern.
+1. Explore the repositories your briefing names; settle scope and trade-offs with the user here, asking rather than assuming. Every question for them is asked where they are notified — `post_message` to "user", or your CLI's question tool where it has one (Claude Code's `AskUserQuestion`), one at a time — never as plain text you end a turn on; progress and summaries go unaddressed or to the agent they concern.
 2. Break the goal into small, independently mergeable tasks, one repository each, written like a strong ticket: context, what to do, what not to touch, and acceptance criteria saying how to verify each.
 3. `create_task` with an engineer and at least one reviewer out of `list_profiles`. `depends_on` is for a task that truly needs another first: unordered tasks run concurrently in separate worktrees and must not touch the same code.
 4. `update_task` corrects a task until it starts.
-5. `finalize_plan` starts every task of the plan at once and ends planning: call it only once the user has read the plan and confirmed here that it is complete, never with a question open, never unasked. Until they confirm, rework whatever they ask for."#;
+5. After the last `create_task`, post the plan to "user" and ask whether it is complete. `finalize_plan` starts every task of the plan at once and ends planning: call it only on an explicit yes here, never on your own judgement or on answers to earlier questions. Until then, rework whatever they ask for."#;
 
 /// Engineer persona and playbook: what it may touch, what it writes, and the
 /// one place `request_review` is explained. Landing is its own too, but the
@@ -131,7 +131,7 @@ const PLANNER_BRIEFING: &str = r#"# Goal: {goal_title}
 /// What a planner that has gone quiet is picked up with. The goal is still in
 /// planning, so there is one thing left to do with it and two calls that end
 /// it; the goal itself the session has read already.
-const PLANNER_RESUME: &str = r#"Keep planning "{goal_title}": `create_task` for what it still needs, `finalize_plan` once the user has confirmed here that it is complete, `post_message` to "user" only where you are waiting on them."#;
+const PLANNER_RESUME: &str = r#"Keep planning "{goal_title}": `create_task` for what it still needs, then post the plan to "user" and ask whether it is complete; `finalize_plan` only on their explicit yes here. Ask through `post_message` to "user" or your CLI's question tool, one question at a time, never as plain text you end a turn on."#;
 
 /// Initial briefing of an engineer session: the task, and the values its
 /// commands act on.
@@ -270,19 +270,24 @@ mod tests {
     /// 1050 to 1200, when all three roles had to be told whom a message is
     /// for: an agent that addresses the user for a progress report puts
     /// "waiting for you" on its session, and one sentence per prompt is what
-    /// the daemon cannot infer on their behalf. Moving one is a decision to
-    /// argue for, never a way round a failing assertion.
+    /// the daemon cannot infer on their behalf. Then from 1200 to 1400, and
+    /// the planner's resume alone from 250 to 350, when *how* to ask had to
+    /// be written down beside whom to ask: a planner asking in plain text
+    /// ends its turn on a question nobody is notified of, and one reading the
+    /// answers to its scoping questions as consent finalizes a plan the user
+    /// never saw. Both leave the user waiting on a session that is waiting on
+    /// them, and neither is anything the daemon can infer. Moving one is a
+    /// decision to argue for, never a way round a failing assertion.
     #[test]
     fn size_caps_hold() {
         const KIND_TOTAL: usize = 6000;
-        const GRAND_TOTAL: usize = 7200;
-        const SYSTEM_PROMPT: usize = 1200;
+        const GRAND_TOTAL: usize = 7500;
+        const SYSTEM_PROMPT: usize = 1400;
 
         let cap = |kind: PromptKind| match kind {
             PromptKind::LandingDirect | PromptKind::LandingPullRequest => 2000,
-            PromptKind::PlannerResume | PromptKind::EngineerResume | PromptKind::ReviewerResume => {
-                250
-            }
+            PromptKind::PlannerResume => 350,
+            PromptKind::EngineerResume | PromptKind::ReviewerResume => 250,
             _ => 400,
         };
 
