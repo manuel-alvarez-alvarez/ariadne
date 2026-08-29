@@ -161,6 +161,20 @@ it("opens the daemon logs and the cheat sheet, which the shell owns", async () =
   expect(handlers.onOpenShortcuts).toHaveBeenCalled()
 })
 
+it("leaves the popup's own height to what is inside it", async () => {
+  renderPalette()
+  await screen.findByText("Actions")
+
+  // The popup is `height: fit-content` and out of flow, so a percentage height
+  // on the box it hugs is a cycle — and WebKit resolves that one to zero, which
+  // is how the whole palette came to be clipped away in the Tauri window while
+  // its scrim showed. jsdom lays nothing out, so the class is what can be
+  // pinned here; the geometry was measured in the WebView. See
+  // `@/components/ui/command`.
+  const command = document.querySelector('[data-slot="command"]')
+  expect(command?.className).not.toMatch(/(^|\s)(h-full|size-full)(\s|$)/)
+})
+
 it("asks the daemon nothing until it is opened", async () => {
   renderScreen(<CommandPalette open={false} {...handlers} />, { route: "/goals" })
 

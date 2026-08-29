@@ -26,6 +26,17 @@ import { cn } from "@/lib/format"
  * The palette also sits a quarter of the way down instead of dead center. It
  * gets there with a top margin, not a `top`/`translate` pair, so the popup
  * keeps the transform-free positioning `DialogContent` centers with.
+ *
+ * `Command` sizes itself in one axis only — `w-full`, never `size-full`. The
+ * popup around it is `height: fit-content` and out of flow (`fixed inset-0`),
+ * so a `height: 100%` on the child it hugs is a cycle: the child asks the
+ * popup how tall it is, and the popup is as tall as its child. Chromium breaks
+ * the tie by treating the percentage as `auto` and measuring the content;
+ * WebKit resolves it against a height that is not settled yet and lands on
+ * zero, so in the Tauri window the popup came out `height: 0` and its
+ * `overflow-hidden` clipped the whole palette away — the scrim was all that
+ * was left of it. Left to its content the box has no cycle to resolve in
+ * either engine, and the list still caps itself at `max-h-80` and scrolls.
  */
 
 function Command({ className, ...props }: React.ComponentProps<typeof CommandPrimitive>) {
@@ -33,7 +44,7 @@ function Command({ className, ...props }: React.ComponentProps<typeof CommandPri
     <CommandPrimitive
       data-slot="command"
       className={cn(
-        "flex size-full flex-col overflow-hidden rounded-xl bg-popover text-popover-foreground",
+        "flex w-full flex-col overflow-hidden rounded-xl bg-popover text-popover-foreground",
         className,
       )}
       {...props}
