@@ -28,6 +28,7 @@ import { Fact, FactList } from "@/components/fact-list"
 import { Markdown } from "@/components/markdown"
 import { PanelSheet } from "@/components/panel-sheet"
 import { StatusBadge } from "@/components/status-badge"
+import { TabCount } from "@/components/tab-count"
 import { UnreadBadge, useUnreadCount } from "@/components/thread-unread"
 import { goalUsageRows, TokenFigure } from "@/components/token-figure"
 import { Button } from "@/components/ui/button"
@@ -205,9 +206,9 @@ function GoalView({
   const [search, setSearch] = useSearchParams()
   const [newTaskOpen, setNewTaskOpen] = useState(false)
   const tab = TABS.find((value) => value === search.get("tab")) ?? defaultTab(goal.status)
-  // Read whichever tab is showing: the Thread trigger counts what has been
-  // said since the reader last had the thread itself open, which is a thing
-  // the panel has to know before they go back to it.
+  // Read whichever tab is showing: the Thread trigger carries how long the
+  // thread is, and how much of it has been said since the reader last had it
+  // open — which is a thing the panel has to know before they go back to it.
   const messages = useQuery(goalMessagesQueryOptions(goal.id))
   const unread = useUnreadCount(`goal:${goal.id}`, messages.data)
   // The other two counted tabs, on the very keys their own tabs read, so the
@@ -267,19 +268,22 @@ function GoalView({
           <TabsTrigger value="description">Description</TabsTrigger>
           <TabsTrigger value="tasks">
             Tasks
-            <TabCount count={tasks.data?.length} />
+            <TabCount count={tasks.data?.length} noun="task" />
           </TabsTrigger>
-          {/* The thread's number is not how much is in it but how much of it
-              is new, so it is the unread badge rather than a count. */}
+          {/* Two numbers, and they answer different questions: how much has
+              been said, then — only while there is any — how much of it the
+              reader has not seen. The muted one leads, as it does on every
+              other tab; the filled one is what they are being pointed at. */}
           <TabsTrigger value="thread">
             Thread
+            <TabCount count={messages.data?.length} noun="message" />
             <UnreadBadge count={unread} />
           </TabsTrigger>
           {/* Named for what it holds: the goal's own agent, and none of the
               sessions its tasks have run — those are each task panel's. */}
           <TabsTrigger value="sessions">
             Planner sessions
-            <TabCount count={plannerSessions.data?.length} />
+            <TabCount count={plannerSessions.data?.length} noun="session" />
           </TabsTrigger>
         </TabsList>
         <TabsContent value="description" className="pt-3">
@@ -384,16 +388,4 @@ function GoalMetadata({ goal }: { goal: GoalDto }) {
       </Fact>
     </FactList>
   )
-}
-
-/**
- * How many rows are behind a tab, once its list has arrived.
- *
- * Nothing while it has not: a count that starts at zero and jumps says the
- * goal has no tasks for as long as the request takes. Zero itself is shown —
- * "no tasks yet" is an answer, and it is the one the tab is opened to find.
- */
-function TabCount({ count }: { count: number | undefined }) {
-  if (count === undefined) return null
-  return <span className="tabular-nums text-muted-foreground">{count}</span>
 }

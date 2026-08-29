@@ -26,18 +26,22 @@ import { ErrorState } from "@/components/error-state"
 import { Markdown } from "@/components/markdown"
 import { PanelSheet } from "@/components/panel-sheet"
 import { StatusBadge } from "@/components/status-badge"
+import { TabCount } from "@/components/tab-count"
 import { UnreadBadge, useUnreadCount } from "@/components/thread-unread"
 import { SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { When, WhenDetail } from "@/components/when"
 import { goalQueryOptions } from "@/features/goals/queries"
+// Not the barrel: `@/features/sessions` re-exports the sessions table, which
+// imports this feature back (see `sessions-list.tsx`).
+import { sessionsQueryOptions } from "@/features/sessions/queries"
 import { useFocusReturn } from "@/hooks/use-focus-return"
 import { taskCopyEntries } from "@/lib/clipboard"
 import { cn, shortId } from "@/lib/format"
 import { paths, usePanelSessionNavigation } from "@/routes/paths"
 
-import { taskMessagesQueryOptions, taskQueryOptions } from "./queries"
+import { taskMessagesQueryOptions, taskQueryOptions, taskReviewsQueryOptions } from "./queries"
 import { StalledBadge } from "./stalled"
 import { primaryStatus, subStatus, TASK_STATUS_META } from "./status"
 import { TaskActions } from "./task-actions"
@@ -72,11 +76,18 @@ export function TaskPanel({
   // dialog cannot do for us — nothing closed. See `useFocusReturn`.
   const panel = useRef<HTMLDivElement>(null)
   useFocusReturn(session ?? null, panel)
-  // Read whichever tab is showing: the Conversation trigger counts what has
-  // been said since the reader last had the thread itself open, which is a
-  // thing the panel has to know before they go back to it.
+  // Read whichever tab is showing: the Conversation trigger carries how long
+  // the thread is, and how much of it has been said since the reader last had
+  // it open — which is a thing the panel has to know before they go back to it.
   const messages = useQuery(taskMessagesQueryOptions(taskId))
   const unread = useUnreadCount(`task:${taskId}`, messages.data)
+  // The two counted tabs, on the very keys their own tabs read, so the numbers
+  // cost nothing beyond the first tab that is opened — and stay live with it,
+  // since the dispatcher invalidates both lists. The sessions filter is the
+  // one `TaskSessions` itself passes, or the tab's count and the tab's list
+  // would be two cache entries and two requests.
+  const sessions = useQuery(sessionsQueryOptions({ task: taskId }))
+  const reviews = useQuery(taskReviewsQueryOptions(taskId))
 
   function setTab(next: Tab) {
     const params = new URLSearchParams(search)
@@ -142,14 +153,29 @@ export function TaskPanel({
             <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
               <TabsList>
                 <TabsTrigger value="description">Description</TabsTrigger>
+                {/* Two numbers, and they answer different questions: how
+                    much has been said, then — only while there is any — how
+                    much of it the reader has not seen. The muted one leads, as
+                    it does on the other tabs; the filled one is what they are
+                    being pointed at. */}
                 <TabsTrigger value="conversation">
                   Conversation
+                  <TabCount count={messages.data?.length} noun="message" />
                   <UnreadBadge count={unread} />
                 </TabsTrigger>
-                <TabsTrigger value="reviews">Reviews</TabsTrigger>
+                {/* The verdicts, not the rounds they are grouped into: a
+                    round is how the tab is laid out, and a task around for the
+                    third time has said more than three things about itself. */}
+                <TabsTrigger value="reviews">
+                  Reviews
+                  <TabCount count={reviews.data?.length} noun="review" />
+                </TabsTrigger>
                 <TabsTrigger value="history">History</TabsTrigger>
                 <TabsTrigger value="diff">Diff</TabsTrigger>
-                <TabsTrigger value="sessions">Sessions</TabsTrigger>
+                <TabsTrigger value="sessions">
+                  Sessions
+                  <TabCount count={sessions.data?.length} noun="session" />
+                </TabsTrigger>
               </TabsList>
               <TabsContent value="description" className="pt-3">
                 {task.data.description.trim() ? (

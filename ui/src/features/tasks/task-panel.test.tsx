@@ -34,7 +34,14 @@ import { act, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, expect, it, vi } from "vitest"
 
-import { type MessageDto, type ProfileDto, qk, type SessionDto, type TaskDto } from "@/api"
+import {
+  type MessageDto,
+  type ProfileDto,
+  qk,
+  type ReviewDto,
+  type SessionDto,
+  type TaskDto,
+} from "@/api"
 import { markThreadSeen } from "@/components/thread-unread"
 import { shortId } from "@/lib/format"
 import { aMessage, aSession } from "@/test/fixtures"
@@ -175,6 +182,16 @@ const THREAD: MessageDto[] = ["01JMESG1", "01JMESG2", "01JMESG3"].map((id) =>
   aMessage({ id, task_id: TASK.id, goal_id: TASK.goal_id, author_role: "engineer", body: id }),
 )
 
+/** Two verdicts in one round: what the Reviews tab lists, and so what it counts. */
+const REVIEWS: ReviewDto[] = [STRICT, AUTO].map((reviewer, index) => ({
+  id: `01JREVW00000000000000000${index}`,
+  task_id: TASK.id,
+  reviewer_profile_id: reviewer,
+  round: 0,
+  verdict: "approve",
+  created_at: "2026-01-01T00:00:00Z",
+}))
+
 /**
  * The task's sessions, answered by the daemon rather than seeded: the tab is
  * only mounted once it is clicked, and a seeded entry nothing observes is
@@ -186,6 +203,22 @@ function stubSessions() {
   daemonFetch.mockImplementation((input: Request | string | URL) => {
     const url = new URL(typeof input === "string" ? input : (input as Request).url)
     if (url.pathname === "/v1/sessions") return Promise.resolve(jsonResponse([SESSION]))
+    return new Promise(() => {})
+  })
+}
+
+/**
+ * Both lists the tab strip counts, on the keys the tabs' own views read: the
+ * counts are the daemon's answers to the requests those tabs already make, so
+ * they arrive the same way — after a turn, rather than seeded.
+ */
+function stubTabLists(sessions: SessionDto[] = [SESSION], reviews: ReviewDto[] = REVIEWS) {
+  daemonFetch.mockImplementation((input: Request | string | URL) => {
+    const url = new URL(typeof input === "string" ? input : (input as Request).url)
+    if (url.pathname === "/v1/sessions") return Promise.resolve(jsonResponse(sessions))
+    if (url.pathname === `/v1/tasks/${TASK.id}/reviews`) {
+      return Promise.resolve(jsonResponse(reviews))
+    }
     return new Promise(() => {})
   })
 }
@@ -396,7 +429,7 @@ it("keeps the actions on the title row whatever the status offers", () => {
 it("folds the sessions table down to what a panel holds", async () => {
   stubSessions()
   mount()
-  await userEvent.setup().click(screen.getByRole("tab", { name: "Sessions" }))
+  await userEvent.setup().click(screen.getByRole("tab", { name: /^Sessions/ }))
 
   const open = await screen.findByRole("button", { name: "Open Engineer session" })
   const row = open.closest("tr")
@@ -447,10 +480,58 @@ it("keeps the way back from a session to one line", async () => {
   stubSessions()
   mount()
   const user = userEvent.setup()
-  await user.click(screen.getByRole("tab", { name: "Sessions" }))
+  await user.click(screen.getByRole("tab", { name: /^Sessions/ }))
   await user.click(await screen.findByRole("button", { name: "Open Engineer session" }))
 
   const back = await screen.findByRole("button", { name: `Back to ${TASK.title}` })
   expect(back.className).toContain("max-w-full")
   expect(back.querySelector("span")?.className).toContain("truncate")
+})
+
+/**
+ * How much is behind each tab, on the tab itself: a task lands on its
+ * description, and finding out whether anything has reviewed it or run it
+ * meant opening the two tabs to see. The numbers come off the very cache
+ * entries those tabs read, so a count costs no request the panel was not
+ * already making.
+ */
+it("says how many sessions, reviews and messages are behind the tabs", async () => {
+  stubTabLists()
+  markThreadSeen(`task:${TASK.id}`, "01JMESG1")
+  mount(TASK, THREAD)
+
+  // Named for what they count, so a screen reader hears "Sessions, 1 session"
+  // rather than "Sessions 1".
+  expect((await within(tab(/^Sessions/)).findByLabelText("1 session")).textContent).toBe("1")
+  expect((await within(tab(/^Reviews/)).findByLabelText("2 reviews")).textContent).toBe("2")
+
+  // The conversation carries two numbers, and they answer different questions:
+  // the muted total of what has been said, then the filled count of what the
+  // reader has not seen.
+  const conversation = within(tab(/^Conversation/))
+  expect(conversation.getByLabelText("3 messages").textContent).toBe("3")
+  expect(conversation.getByLabelText("2 unread messages").textContent).toBe("2")
+  expect(tab(/^Conversation/).textContent).toBe("Conversation32")
+
+  // The other three have no number to carry: a description is one thing, and
+  // a diff and a transition log are not lists the reader is counting.
+  expect(tab("Description").textContent).toBe("Description")
+  expect(tab("History").textContent).toBe("History")
+  expect(tab("Diff").textContent).toBe("Diff")
+})
+
+it("waits for a list before putting a number on its tab, then says zero", async () => {
+  stubTabLists([], [])
+  mount()
+
+  // The first render is the request going out, so neither tab has an answer
+  // yet: a count that starts at zero and jumps would say the task has never
+  // run for as long as the request takes.
+  expect(tab("Sessions").textContent).toBe("Sessions")
+  expect(tab("Reviews").textContent).toBe("Reviews")
+
+  // Zero itself is shown — it is an answer, and the one the tab would have
+  // been opened to find.
+  await waitFor(() => expect(tab(/^Sessions/).textContent).toBe("Sessions0"))
+  expect(within(tab(/^Reviews/)).getByLabelText("0 reviews").textContent).toBe("0")
 })
