@@ -74,6 +74,8 @@ pub mod models {
     use std::time::Duration;
 
     use axum::Json;
+    use serde::Deserialize;
+    use serde::de::{Deserializer, IgnoredAny, MapAccess, Visitor};
 
     use ariadne_api::models::ModelDto;
     use ariadne_core::AgentKind;
@@ -82,10 +84,12 @@ pub mod models {
     /// Everything an agent can be pinned to, `<agent_kind>[:<model>]` apiece:
     /// each agent CLI on its own — that CLI on its own default model — and
     /// then the models of it, curated for claude_code and codex, discovered
-    /// live (`opencode models`) for opencode.
+    /// live (`opencode models --verbose`) for opencode.
     ///
     /// The union always, and grouped by agent CLI: a model is chosen by one
     /// string that carries its CLI, so nothing scopes this catalog any more.
+    /// Each entry carries the reasoning efforts it can be run at, cheapest
+    /// first, and what its CLI runs it at when none is passed.
     #[utoipa::path(get, path = "/v1/models", tag = "models",
         responses((status = 200, body = [ModelDto])))]
     pub async fn list() -> Json<Vec<ModelDto>> {
@@ -95,6 +99,10 @@ pub mod models {
                 id: ModelRef::of(kind).to_string(),
                 agent_kind: kind,
                 description: Some(format!("{} on its own default model", kind.as_str())),
+                // Which model that is, is the CLI's own business, so what it
+                // is run at is not this catalog's to say.
+                efforts: Vec::new(),
+                default_effort: None,
             });
             match kind {
                 AgentKind::Opencode => out.extend(opencode_models().await),
@@ -102,19 +110,22 @@ pub mod models {
                     id: qualified(kind, m.id),
                     agent_kind: kind,
                     description: Some(m.description.to_string()),
+                    efforts: m.efforts.iter().map(|e| e.to_string()).collect(),
+                    default_effort: m.default_effort.map(str::to_string),
                 })),
             }
         }
         Json(out)
     }
 
-    /// OpenCode lists its models natively (`opencode models`, provider/model).
+    /// OpenCode lists its models natively, and `--verbose` lists what each one
+    /// can be run at: a `provider/model` line, then that model's JSON.
     /// Fail-soft: a missing or hung binary yields no models, never an error.
     async fn opencode_models() -> Vec<ModelDto> {
         let output = tokio::time::timeout(
             Duration::from_secs(3),
             tokio::process::Command::new("opencode")
-                .arg("models")
+                .args(["models", "--verbose"])
                 .kill_on_drop(true)
                 .output(),
         )
@@ -122,16 +133,90 @@ pub mod models {
         let Ok(Ok(output)) = output else {
             return Vec::new();
         };
-        String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty() && l.contains('/'))
-            .map(|m| ModelDto {
-                id: qualified(AgentKind::Opencode, m),
-                agent_kind: AgentKind::Opencode,
-                description: None,
-            })
-            .collect()
+        discovered(&String::from_utf8_lossy(&output.stdout))
+    }
+
+    /// The models `opencode models --verbose` printed, each with the efforts
+    /// its `variants` are named by, in the order it printed them.
+    ///
+    /// Fail-soft to the line: a block whose JSON does not parse still yields
+    /// the model it belongs to, with no efforts — a model that cannot be run
+    /// at a named variant is worth more than a catalog that is missing it.
+    fn discovered(stdout: &str) -> Vec<ModelDto> {
+        let mut out: Vec<ModelDto> = Vec::new();
+        let mut block = String::new();
+        for line in stdout.lines() {
+            // A model's own line is unindented and carries the `/` that
+            // separates its provider; everything else is its pretty-printed
+            // JSON, which ends on the `}` in the first column.
+            if !line.starts_with([' ', '\t', '{', '}']) && line.contains('/') {
+                out.push(ModelDto {
+                    id: qualified(AgentKind::Opencode, line.trim()),
+                    agent_kind: AgentKind::Opencode,
+                    description: None,
+                    efforts: Vec::new(),
+                    default_effort: None,
+                });
+                block.clear();
+                continue;
+            }
+            let Some(model) = out.last_mut() else {
+                continue;
+            };
+            block.push_str(line);
+            block.push('\n');
+            if line == "}" {
+                model.efforts = variants(&block);
+                block.clear();
+            }
+        }
+        out
+    }
+
+    /// The variant names in one model's JSON, in the order it lists them, and
+    /// none where it lists none or where the block is not JSON at all.
+    fn variants(block: &str) -> Vec<String> {
+        serde_json::from_str::<VerboseModel>(block)
+            .map(|m| m.variants.0)
+            .unwrap_or_default()
+    }
+
+    /// As much of one `--verbose` block as this catalog reads.
+    #[derive(Deserialize)]
+    struct VerboseModel {
+        #[serde(default)]
+        variants: VariantNames,
+    }
+
+    /// The keys of the `variants` map, kept in the order they were printed:
+    /// opencode lists a model's variants cheapest first, which is the order
+    /// they are offered in, and sorting them would lose it.
+    #[derive(Default)]
+    struct VariantNames(Vec<String>);
+
+    impl<'de> Deserialize<'de> for VariantNames {
+        fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct Keys;
+
+            impl<'de> Visitor<'de> for Keys {
+                type Value = VariantNames;
+
+                fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    f.write_str("a map of variants")
+                }
+
+                fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<Self::Value, M::Error> {
+                    let mut names = Vec::new();
+                    while let Some(name) = map.next_key::<String>()? {
+                        map.next_value::<IgnoredAny>()?;
+                        names.push(name);
+                    }
+                    Ok(VariantNames(names))
+                }
+            }
+
+            deserializer.deserialize_map(Keys)
+        }
     }
 
     /// One catalog entry's id: the model as its agent CLI runs it, which is
@@ -142,5 +227,66 @@ pub mod models {
             model: Some(model.to_string()),
         }
         .to_string()
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        /// What `opencode models --verbose` prints, cut to what is read: a
+        /// model with variants, one with none, and one whose block is not
+        /// JSON at all.
+        const VERBOSE: &str = r#"opencode/big-pickle
+{
+  "id": "big-pickle",
+  "variants": {}
+}
+openai/gpt-5.6-terra
+{
+  "id": "gpt-5.6-terra",
+  "variants": {
+    "low": {
+      "reasoningEffort": "low"
+    },
+    "high": {
+      "reasoningEffort": "high"
+    }
+  }
+}
+ollama/qwen3.6-code
+{
+  "id": "qwen3.6-code",
+  truncated by a
+}
+"#;
+
+        /// Every model printed is offered, each under the id it is pinned by,
+        /// with the variants it was printed with in the order they came.
+        #[test]
+        fn discovery_reads_each_model_and_the_variants_it_runs_at() {
+            let got = discovered(VERBOSE);
+            let ids: Vec<_> = got.iter().map(|m| m.id.as_str()).collect();
+            assert_eq!(
+                ids,
+                [
+                    "opencode:opencode/big-pickle",
+                    "opencode:openai/gpt-5.6-terra",
+                    "opencode:ollama/qwen3.6-code",
+                ]
+            );
+            assert_eq!(got[0].efforts, [] as [String; 0], "no variants at all");
+            assert_eq!(got[1].efforts, ["low", "high"], "as they were printed");
+            assert_eq!(got[2].efforts, [] as [String; 0], "unreadable block");
+            assert!(got.iter().all(|m| m.default_effort.is_none()));
+            assert!(got.iter().all(|m| m.description.is_none()));
+        }
+
+        /// Nothing at all — no binary, or a version that prints nothing — is
+        /// no models rather than a half-read one.
+        #[test]
+        fn discovery_of_nothing_is_no_models() {
+            assert!(discovered("").is_empty());
+            assert!(discovered("\n\n").is_empty());
+        }
     }
 }

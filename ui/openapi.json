@@ -684,8 +684,8 @@
         "tags": [
           "models"
         ],
-        "summary": "Everything an agent can be pinned to, `<agent_kind>[:<model>]` apiece:\neach agent CLI on its own — that CLI on its own default model — and\nthen the models of it, curated for claude_code and codex, discovered\nlive (`opencode models`) for opencode.",
-        "description": "The union always, and grouped by agent CLI: a model is chosen by one\nstring that carries its CLI, so nothing scopes this catalog any more.",
+        "summary": "Everything an agent can be pinned to, `<agent_kind>[:<model>]` apiece:\neach agent CLI on its own — that CLI on its own default model — and\nthen the models of it, curated for claude_code and codex, discovered\nlive (`opencode models --verbose`) for opencode.",
+        "description": "The union always, and grouped by agent CLI: a model is chosen by one\nstring that carries its CLI, so nothing scopes this catalog any more.\nEach entry carries the reasoning efforts it can be run at, cheapest\nfirst, and what its CLI runs it at when none is passed.",
         "operationId": "list",
         "responses": {
           "200": {
@@ -3201,12 +3201,21 @@
         "description": "One thing an agent can be pinned to, as served by `GET /v1/models`: an\nagent CLI on a model of it (`claude_code:claude-fable-5`), or an agent CLI\non its own, which is that CLI on its own default model.\n\nThe id is what a request writes as its `model`, whole. `agent_kind` is the\nsame fact taken apart, so a picker can group the catalog by CLI without\nparsing anything.",
         "required": [
           "id",
-          "agent_kind"
+          "agent_kind",
+          "efforts"
         ],
         "properties": {
           "agent_kind": {
             "$ref": "#/components/schemas/AgentKind",
             "description": "The agent CLI this entry runs on."
+          },
+          "default_effort": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the agent CLI runs this model at when no effort is passed.",
+            "example": "high"
           },
           "description": {
             "type": [
@@ -3214,6 +3223,13 @@
               "null"
             ],
             "description": "One-line capability summary (absent for discovered opencode models)."
+          },
+          "efforts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The reasoning efforts this entry can be run at, cheapest first; empty\nwhere the model takes none, or where nothing knows what it takes."
           },
           "id": {
             "type": "string",

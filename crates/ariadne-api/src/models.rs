@@ -19,4 +19,10 @@ pub struct ModelDto {
     pub agent_kind: AgentKind,
     /// One-line capability summary (absent for discovered opencode models).
     pub description: Option<String>,
+    /// The reasoning efforts this entry can be run at, cheapest first; empty
+    /// where the model takes none, or where nothing knows what it takes.
+    pub efforts: Vec<String>,
+    /// What the agent CLI runs this model at when no effort is passed.
+    #[schema(example = "high")]
+    pub default_effort: Option<String>,
 }

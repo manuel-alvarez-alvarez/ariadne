@@ -12,13 +12,15 @@ use crate::output::{Column, Format, UNCAPPED, col, print_list};
 /// Columns of `models ls`. `model` is the whole id — `claude_code:o3`, not
 /// `o3` — because that is the string `--model` takes, and a column somebody
 /// copies out of has to be copyable. `agent` repeats the half of it that
-/// groups the table, which is what the eye scans by.
+/// groups the table, which is what the eye scans by. `efforts` is what that
+/// model can be run at, cheapest first, and `-` where it takes none.
 /// The description is the one cell a narrow terminal can do without: the
 /// model id is what a reader came for, and what they will paste into
-/// `--model`.
+/// `--model`, and the efforts are the other half of the same choice.
 const LS: &[Column] = &[
     col("agent", UNCAPPED),
     col("model", UNCAPPED).title(),
+    col("efforts", 36).rank(1),
     col("description", 60).rank(0),
 ];
 
@@ -47,6 +49,10 @@ pub async fn run(client: &Client, cmd: ModelsCommand, format: Format) -> Result<
             vec![
                 m.agent_kind.as_str().to_string(),
                 m.id.clone(),
+                match m.efforts.is_empty() {
+                    true => "-".into(),
+                    false => m.efforts.join(", "),
+                },
                 m.description.clone().unwrap_or_else(|| "-".into()),
             ]
         },
@@ -79,6 +85,8 @@ mod tests {
             id: id.to_string(),
             agent_kind,
             description: None,
+            efforts: Vec::new(),
+            default_effort: None,
         }
     }
 
@@ -86,7 +94,7 @@ mod tests {
         vec![
             model("claude_code", AgentKind::ClaudeCode),
             model("claude_code:claude-fable-5", AgentKind::ClaudeCode),
-            model("codex:gpt-5.3-codex", AgentKind::Codex),
+            model("codex:gpt-5.6-luna", AgentKind::Codex),
         ]
     }
 

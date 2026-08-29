@@ -31,20 +31,33 @@ const CATALOG: ModelDto[] = [
     id: "codex:gpt-5.3-codex",
     agent_kind: "codex",
     description: "Frontier reasoning: agentic loops",
+    efforts: [],
   },
-  { id: "codex", agent_kind: "codex", description: "codex on its own default model" },
+  { id: "codex", agent_kind: "codex", description: "codex on its own default model", efforts: [] },
   {
     id: "claude_code",
     agent_kind: "claude_code",
     description: "claude_code on its own default model",
+    efforts: [],
   },
   {
     id: "claude_code:claude-opus-5",
     agent_kind: "claude_code",
     description: "Opus tier: deep analysis",
+    efforts: [],
   },
-  { id: "opencode", agent_kind: "opencode", description: "opencode on its own default model" },
-  { id: "opencode:zai-coding-plan/glm-4.6", agent_kind: "opencode", description: null },
+  {
+    id: "opencode",
+    agent_kind: "opencode",
+    description: "opencode on its own default model",
+    efforts: [],
+  },
+  {
+    id: "opencode:zai-coding-plan/glm-4.6",
+    agent_kind: "opencode",
+    description: null,
+    efforts: [],
+  },
 ]
 
 /**

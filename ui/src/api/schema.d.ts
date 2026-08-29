@@ -311,9 +311,11 @@ export interface paths {
          * Everything an agent can be pinned to, `<agent_kind>[:<model>]` apiece:
          *     each agent CLI on its own — that CLI on its own default model — and
          *     then the models of it, curated for claude_code and codex, discovered
-         *     live (`opencode models`) for opencode.
+         *     live (`opencode models --verbose`) for opencode.
          * @description The union always, and grouped by agent CLI: a model is chosen by one
          *     string that carries its CLI, so nothing scopes this catalog any more.
+         *     Each entry carries the reasoning efforts it can be run at, cheapest
+         *     first, and what its CLI runs it at when none is passed.
          */
         get: operations["models_list"];
         put?: never;
@@ -1310,8 +1312,18 @@ export interface components {
         ModelDto: {
             /** @description The agent CLI this entry runs on. */
             agent_kind: components["schemas"]["AgentKind"];
+            /**
+             * @description What the agent CLI runs this model at when no effort is passed.
+             * @example high
+             */
+            default_effort?: string | null;
             /** @description One-line capability summary (absent for discovered opencode models). */
             description?: string | null;
+            /**
+             * @description The reasoning efforts this entry can be run at, cheapest first; empty
+             *     where the model takes none, or where nothing knows what it takes.
+             */
+            efforts: string[];
             /** @example claude_code:claude-fable-5 */
             id: string;
         };

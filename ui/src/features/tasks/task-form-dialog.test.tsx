@@ -61,11 +61,13 @@ const CATALOG: ModelDto[] = [
     id: "claude_code:claude-opus-5",
     agent_kind: "claude_code",
     description: "Opus tier: deep analysis",
+    efforts: [],
   },
   {
     id: "codex:gpt-5.3-codex",
     agent_kind: "codex",
     description: "Frontier reasoning: agentic loops",
+    efforts: [],
   },
 ]
 
