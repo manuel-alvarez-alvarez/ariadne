@@ -33,15 +33,17 @@ import { toast } from "sonner"
 import { ApiError, type GoalDto, type ProfileDto, type TaskDto } from "@/api"
 import {
   FormDialog,
+  FormDialogBody,
   FormDialogContent,
+  submitOnChord,
   useClearErrorOnEdit,
   useResetOnOpen,
 } from "@/components/form-dialog"
 import { FormSelect, profilePlaceholder } from "@/components/form-select"
+import { MarkdownField } from "@/components/markdown-field"
 import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
 import { ModelPicker } from "@/features/profiles/model-picker"
 import { modelRefLabel } from "@/features/profiles/model-ref"
 import { modelsQueryOptions, profilesQueryOptions } from "@/features/profiles/queries"
@@ -234,7 +236,7 @@ function TaskFormDialog({
   return (
     <FormDialog open={open} onOpenChange={onOpenChange} dirty={form.formState.isDirty}>
       <FormDialogContent
-        className="max-h-[85vh] overflow-y-auto sm:max-w-2xl"
+        className="sm:max-w-2xl"
         title={editing ? "Edit task" : "New task"}
         description={
           editing
@@ -253,209 +255,220 @@ function TaskFormDialog({
         }
         submitLabel={editing ? "Save changes" : "Create task"}
         pending={submit.isPending}
+        onKeyDown={submitOnChord}
       >
-        <Field data-invalid={form.formState.errors.title ? "" : undefined}>
-          <FieldLabel htmlFor="task-title">Title</FieldLabel>
-          <Input
-            id="task-title"
-            autoComplete="off"
-            aria-invalid={form.formState.errors.title ? true : undefined}
-            {...form.register("title")}
-          />
-          <FieldError>{form.formState.errors.title?.message}</FieldError>
-        </Field>
-
-        <Field>
-          <FieldLabel htmlFor="task-description">Description</FieldLabel>
-          <Textarea
-            id="task-description"
-            placeholder="What should be built, and anything the engineer needs to know."
-            {...form.register("description")}
-          />
-          <FieldDescription>Markdown. This is the engineer's brief.</FieldDescription>
-        </Field>
-
-        {!editing ? (
-          <Field data-invalid={form.formState.errors.engineer_profile ? "" : undefined}>
-            <FieldLabel htmlFor="task-engineer">Engineer profile</FieldLabel>
-            <FormSelect
-              control={form.control}
-              name="engineer_profile"
-              id="task-engineer"
-              options={engineerItems}
-              disabled={!engineerOptions.length}
-              placeholder={profilePlaceholder(engineers, "engineer")}
+        <FormDialogBody>
+          <Field data-invalid={form.formState.errors.title ? "" : undefined}>
+            <FieldLabel htmlFor="task-title">Title</FieldLabel>
+            <Input
+              id="task-title"
+              autoComplete="off"
+              aria-invalid={form.formState.errors.title ? true : undefined}
+              {...form.register("title")}
             />
-            <FieldError>{form.formState.errors.engineer_profile?.message}</FieldError>
+            <FieldError>{form.formState.errors.title?.message}</FieldError>
           </Field>
-        ) : null}
 
-        {/* Editable in both modes, unlike the profile beside it: the daemon
-            takes a pin on `PATCH` too, for as long as the task waits. */}
-        <Field data-invalid={form.formState.errors.engineer_model ? "" : undefined}>
-          {/* No htmlFor: cmdk owns its input's id and names it itself. */}
-          <FieldLabel>Engineer model</FieldLabel>
           <Controller
             control={form.control}
-            name="engineer_model"
+            name="description"
             render={({ field }) => (
-              <ModelPicker
-                label="Engineer model"
+              <MarkdownField
+                id="task-description"
+                label="Description"
+                description="Markdown. This is the engineer's brief."
+                placeholder="What should be built, and anything the engineer needs to know."
                 value={field.value}
                 onChange={field.onChange}
-                models={models.data}
-                invalid={form.formState.errors.engineer_model ? true : undefined}
-                placeholder={pinPlaceholder(engineerProfile)}
+                onBlur={field.onBlur}
+                name={field.name}
+                ref={field.ref}
               />
             )}
           />
-          {form.formState.errors.engineer_model ? (
-            <FieldError>{form.formState.errors.engineer_model.message}</FieldError>
-          ) : (
-            <FieldDescription>{engineerPinHint(engineerProfile)}</FieldDescription>
-          )}
-        </Field>
 
-        <Field>
-          {/* A row is a reviewer now, not only a profile: the slot carries the
-              model that reviewer runs on. */}
-          <FieldLabel>Reviewers</FieldLabel>
-          <div className="flex flex-col gap-2">
-            {reviewerRows.fields.map((row, index) => {
-              const error = form.formState.errors.reviewers?.[index]?.profile
-              const modelError = form.formState.errors.reviewers?.[index]?.model
-              return (
-                <div key={row.id} className="flex flex-col gap-1">
-                  {/* The profile and what it runs on, side by side: one row is
-                      one reviewer, and the model belongs to the slot rather
-                      than to the profile it names. */}
-                  <div className="flex items-start gap-2">
-                    <FormSelect
-                      control={form.control}
-                      name={`reviewers.${index}.profile`}
-                      ariaLabel={`Reviewer ${index + 1}`}
-                      invalid={error ? true : undefined}
-                      className="flex-1"
-                      options={reviewerItems}
-                      disabled={!reviewerOptions.length}
-                      placeholder={profilePlaceholder(reviewers, "reviewer")}
-                    />
-                    <Controller
-                      control={form.control}
-                      name={`reviewers.${index}.model`}
-                      render={({ field }) => (
-                        <ModelPicker
-                          label={`Reviewer ${index + 1} model`}
-                          value={field.value}
-                          onChange={field.onChange}
-                          models={models.data}
-                          invalid={modelError ? true : undefined}
-                          placeholder="The profile's own"
-                          className="flex-1"
-                        />
-                      )}
-                    />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      aria-label={`Remove reviewer ${index + 1}`}
-                      disabled={reviewerRows.fields.length === 1}
-                      onClick={() => reviewerRows.remove(index)}
-                    >
-                      <XIcon />
-                    </Button>
-                  </div>
-                  <FieldError>{error?.message ?? modelError?.message}</FieldError>
-                </div>
-              )
-            })}
-          </div>
-          <div>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => reviewerRows.append({ profile: "", model: "" })}
-            >
-              <PlusIcon />
-              Add reviewer
-            </Button>
-          </div>
-          <FieldDescription>
-            The task is reviewed by each of these, top to bottom, every round.
-          </FieldDescription>
-          <FieldError>{form.formState.errors.reviewers?.root?.message}</FieldError>
-        </Field>
+          {!editing ? (
+            <Field data-invalid={form.formState.errors.engineer_profile ? "" : undefined}>
+              <FieldLabel htmlFor="task-engineer">Engineer profile</FieldLabel>
+              <FormSelect
+                control={form.control}
+                name="engineer_profile"
+                id="task-engineer"
+                options={engineerItems}
+                disabled={!engineerOptions.length}
+                placeholder={profilePlaceholder(engineers, "engineer")}
+              />
+              <FieldError>{form.formState.errors.engineer_profile?.message}</FieldError>
+            </Field>
+          ) : null}
 
-        {multiRepo ? (
-          <Field data-invalid={form.formState.errors.repo_id ? "" : undefined}>
-            <FieldLabel htmlFor="task-repo">Repository</FieldLabel>
-            <FormSelect
+          {/* Editable in both modes, unlike the profile beside it: the daemon
+              takes a pin on `PATCH` too, for as long as the task waits. */}
+          <Field data-invalid={form.formState.errors.engineer_model ? "" : undefined}>
+            {/* No htmlFor: cmdk owns its input's id and names it itself. */}
+            <FieldLabel>Engineer model</FieldLabel>
+            <Controller
               control={form.control}
-              name="repo_id"
-              id="task-repo"
-              options={repoItems}
-              placeholder="Select a repository"
-              renderOption={(repo) => <span className="font-mono text-xs">{repo.label}</span>}
+              name="engineer_model"
+              render={({ field }) => (
+                <ModelPicker
+                  label="Engineer model"
+                  value={field.value}
+                  onChange={field.onChange}
+                  models={models.data}
+                  invalid={form.formState.errors.engineer_model ? true : undefined}
+                  placeholder={pinPlaceholder(engineerProfile)}
+                />
+              )}
             />
-            <FieldDescription>The repo the task's branch and worktree live in.</FieldDescription>
-            <FieldError>{form.formState.errors.repo_id?.message}</FieldError>
+            {form.formState.errors.engineer_model ? (
+              <FieldError>{form.formState.errors.engineer_model.message}</FieldError>
+            ) : (
+              <FieldDescription>{engineerPinHint(engineerProfile)}</FieldDescription>
+            )}
           </Field>
-        ) : null}
 
-        {taskItems.length > 0 ? (
           <Field>
-            <FieldLabel>Depends on</FieldLabel>
-            {dependsRows.fields.length > 0 ? (
-              <div className="flex flex-col gap-2">
-                {dependsRows.fields.map((row, index) => (
-                  <div key={row.id} className="flex items-start gap-2">
-                    <FormSelect
-                      control={form.control}
-                      name={`depends_on.${index}.task`}
-                      ariaLabel={`Dependency ${index + 1}`}
-                      className="flex-1"
-                      options={taskItems}
-                      placeholder="Select a task"
-                      renderOption={(task) => (
-                        <span className="flex min-w-0 items-baseline gap-2">
-                          <span className="truncate">{task.label}</span>
-                          <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                            {task.value}
-                          </span>
-                        </span>
-                      )}
-                    />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      aria-label={`Remove dependency ${index + 1}`}
-                      onClick={() => dependsRows.remove(index)}
-                    >
-                      <XIcon />
-                    </Button>
+            {/* A row is a reviewer now, not only a profile: the slot carries the
+                model that reviewer runs on. */}
+            <FieldLabel>Reviewers</FieldLabel>
+            <div className="flex flex-col gap-2">
+              {reviewerRows.fields.map((row, index) => {
+                const error = form.formState.errors.reviewers?.[index]?.profile
+                const modelError = form.formState.errors.reviewers?.[index]?.model
+                return (
+                  <div key={row.id} className="flex flex-col gap-1">
+                    {/* The profile and what it runs on, side by side: one row is
+                        one reviewer, and the model belongs to the slot rather
+                        than to the profile it names. */}
+                    <div className="flex items-start gap-2">
+                      <FormSelect
+                        control={form.control}
+                        name={`reviewers.${index}.profile`}
+                        ariaLabel={`Reviewer ${index + 1}`}
+                        invalid={error ? true : undefined}
+                        className="flex-1"
+                        options={reviewerItems}
+                        disabled={!reviewerOptions.length}
+                        placeholder={profilePlaceholder(reviewers, "reviewer")}
+                      />
+                      <Controller
+                        control={form.control}
+                        name={`reviewers.${index}.model`}
+                        render={({ field }) => (
+                          <ModelPicker
+                            label={`Reviewer ${index + 1} model`}
+                            value={field.value}
+                            onChange={field.onChange}
+                            models={models.data}
+                            invalid={modelError ? true : undefined}
+                            placeholder="The profile's own"
+                            className="flex-1"
+                          />
+                        )}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`Remove reviewer ${index + 1}`}
+                        disabled={reviewerRows.fields.length === 1}
+                        onClick={() => reviewerRows.remove(index)}
+                      >
+                        <XIcon />
+                      </Button>
+                    </div>
+                    <FieldError>{error?.message ?? modelError?.message}</FieldError>
                   </div>
-                ))}
-              </div>
-            ) : null}
+                )
+              })}
+            </div>
             <div>
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => dependsRows.append({ task: "" })}
+                onClick={() => reviewerRows.append({ profile: "", model: "" })}
               >
                 <PlusIcon />
-                Add dependency
+                Add reviewer
               </Button>
             </div>
             <FieldDescription>
-              Tasks that must merge before this one starts. Blank rows are dropped.
+              The task is reviewed by each of these, top to bottom, every round.
             </FieldDescription>
+            <FieldError>{form.formState.errors.reviewers?.root?.message}</FieldError>
           </Field>
-        ) : null}
+
+          {multiRepo ? (
+            <Field data-invalid={form.formState.errors.repo_id ? "" : undefined}>
+              <FieldLabel htmlFor="task-repo">Repository</FieldLabel>
+              <FormSelect
+                control={form.control}
+                name="repo_id"
+                id="task-repo"
+                options={repoItems}
+                placeholder="Select a repository"
+                renderOption={(repo) => <span className="font-mono text-xs">{repo.label}</span>}
+              />
+              <FieldDescription>The repo the task's branch and worktree live in.</FieldDescription>
+              <FieldError>{form.formState.errors.repo_id?.message}</FieldError>
+            </Field>
+          ) : null}
+
+          {taskItems.length > 0 ? (
+            <Field>
+              <FieldLabel>Depends on</FieldLabel>
+              {dependsRows.fields.length > 0 ? (
+                <div className="flex flex-col gap-2">
+                  {dependsRows.fields.map((row, index) => (
+                    <div key={row.id} className="flex items-start gap-2">
+                      <FormSelect
+                        control={form.control}
+                        name={`depends_on.${index}.task`}
+                        ariaLabel={`Dependency ${index + 1}`}
+                        className="flex-1"
+                        options={taskItems}
+                        placeholder="Select a task"
+                        renderOption={(task) => (
+                          <span className="flex min-w-0 items-baseline gap-2">
+                            <span className="truncate">{task.label}</span>
+                            <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                              {task.value}
+                            </span>
+                          </span>
+                        )}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`Remove dependency ${index + 1}`}
+                        onClick={() => dependsRows.remove(index)}
+                      >
+                        <XIcon />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              <div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => dependsRows.append({ task: "" })}
+                >
+                  <PlusIcon />
+                  Add dependency
+                </Button>
+              </div>
+              <FieldDescription>
+                Tasks that must merge before this one starts. Blank rows are dropped.
+              </FieldDescription>
+            </Field>
+          ) : null}
+        </FormDialogBody>
       </FormDialogContent>
     </FormDialog>
   )

@@ -79,7 +79,17 @@ interface Recorded {
 let requests: Recorded[] = []
 
 function lastWrite(): Recorded | undefined {
-  return requests.filter((one) => one.method !== "GET").at(-1)
+  return writes().at(-1)
+}
+
+/** The form's submit, which goes out of reach while a create is in flight. */
+function submitButton(): HTMLButtonElement {
+  return screen.getByRole("button", { name: "Create goal" }) as HTMLButtonElement
+}
+
+/** Everything the dialog sent that was not a read. */
+function writes(): Recorded[] {
+  return requests.filter((one) => one.method !== "GET")
 }
 
 function stubDaemon(repositories: RepositoryDto[]) {
@@ -386,5 +396,124 @@ describe("choosing what the planner runs on", () => {
 
     expect(await screen.findByText(/claude_code:claude-opus-5/)).toBeDefined()
     expect(lastWrite()).toBeUndefined()
+  })
+})
+
+/**
+ * The brief is the longest thing anyone types into this app, and the planner
+ * reads it as Markdown — so the box is written in and read back in place, and
+ * the form can be finished without reaching for the mouse.
+ */
+describe("writing the goal's brief", () => {
+  /** Everything the daemon needs besides the brief, so a submit can land. */
+  async function fillRequired(user: ReturnType<typeof userEvent.setup>) {
+    await user.type(screen.getByLabelText("Title"), "Keyboard")
+    const list = await openList(user)
+    await user.click(row(list, ARIADNE))
+    await user.keyboard("{Escape}")
+  }
+
+  it("keeps a plain Enter in the brief a newline, and the form open", async () => {
+    const user = userEvent.setup()
+    renderDialog()
+
+    const brief = screen.getByLabelText("Description") as HTMLTextAreaElement
+    await user.type(brief, "Ship it{Enter}then say so")
+
+    expect(brief.value).toBe("Ship it\nthen say so")
+    expect(lastWrite()).toBeUndefined()
+  })
+
+  it("creates the goal on the chord, typed from inside the brief", async () => {
+    const user = userEvent.setup()
+    renderDialog()
+
+    await fillRequired(user)
+    await user.type(screen.getByLabelText("Description"), "Ship it")
+    await user.keyboard("{Meta>}{Enter}{/Meta}")
+
+    await waitFor(() => {
+      expect(lastWrite()).toBeDefined()
+    })
+    expect(lastWrite()).toMatchObject({ method: "POST", path: "/v1/goals" })
+    expect(lastWrite()?.body).toMatchObject({ title: "Keyboard" })
+  })
+
+  it("creates the goal on Ctrl+Enter too, from a field that is not the brief", async () => {
+    const user = userEvent.setup()
+    renderDialog()
+
+    await fillRequired(user)
+    await user.click(screen.getByLabelText("Title"))
+    await user.keyboard("{Control>}{Enter}{/Control}")
+
+    await waitFor(() => {
+      expect(lastWrite()).toBeDefined()
+    })
+    expect(lastWrite()).toMatchObject({ method: "POST", path: "/v1/goals" })
+  })
+
+  it("will not start a second create while the first is still in flight", async () => {
+    const user = userEvent.setup()
+    let land = () => {}
+    const held = new Promise<void>((resolve) => {
+      land = resolve
+    })
+    daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(String(input), init)
+      const { pathname } = new URL(request.url)
+      const raw = await request.text()
+      requests.push({ method: request.method, path: pathname, body: raw ? JSON.parse(raw) : null })
+      if (pathname === "/v1/repositories") return jsonResponse([ARIADNE])
+      if (pathname === "/v1/models") return jsonResponse(CATALOG)
+      if (pathname === "/v1/profiles") return jsonResponse([PLANNER])
+      if (pathname === "/v1/goals" && request.method === "POST") {
+        await held
+        return jsonResponse({ id: "01JGOAL0000000000000NEW", repos: [ARIADNE] }, 201)
+      }
+      return new Response("not stubbed", { status: 404 })
+    })
+    renderDialog()
+
+    await fillRequired(user)
+    await user.click(screen.getByLabelText("Description"))
+    await user.keyboard("{Meta>}{Enter}{/Meta}")
+    await waitFor(() => {
+      expect(writes()).toHaveLength(1)
+    })
+
+    // The submit button is out of reach while it spins; the chord has to be
+    // too, or it would post the goal a second time.
+    await user.keyboard("{Meta>}{Enter}{/Meta}")
+    land()
+
+    // Settled: the button is back within reach, so nothing is still in flight.
+    await waitFor(() => {
+      expect(submitButton().disabled).toBe(false)
+    })
+    expect(writes()).toHaveLength(1)
+  })
+
+  it("renders the brief as Markdown in Preview, and hands the text back on Write", async () => {
+    const user = userEvent.setup()
+    renderDialog()
+
+    await user.type(
+      screen.getByLabelText("Description"),
+      "# Ship it{Enter}{Enter}- one{Enter}- two",
+    )
+    await user.click(screen.getByRole("tab", { name: "Preview" }))
+
+    const preview = screen.getByRole("tabpanel")
+    expect(within(preview).getByRole("heading", { name: "Ship it" })).toBeDefined()
+    expect(within(preview).getAllByRole("listitem")).toHaveLength(2)
+    // The box is a view of the value, not a copy: it is gone while previewing.
+    expect(screen.queryByLabelText("Description")).toBeNull()
+
+    await user.click(screen.getByRole("tab", { name: "Write" }))
+
+    expect((screen.getByLabelText("Description") as HTMLTextAreaElement).value).toBe(
+      "# Ship it\n\n- one\n- two",
+    )
   })
 })

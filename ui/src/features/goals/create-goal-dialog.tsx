@@ -30,16 +30,18 @@ import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import {
   FormDialog,
+  FormDialogBody,
   FormDialogContent,
+  submitOnChord,
   useClearErrorOnEdit,
   useResetOnOpen,
 } from "@/components/form-dialog"
 import { FormSelect, profilePlaceholder } from "@/components/form-select"
+import { MarkdownField } from "@/components/markdown-field"
 import { Button } from "@/components/ui/button"
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Textarea } from "@/components/ui/textarea"
 import { ModelPicker } from "@/features/profiles/model-picker"
 import { modelRefField, modelRefLabel } from "@/features/profiles/model-ref"
 import { modelsQueryOptions } from "@/features/profiles/queries"
@@ -148,7 +150,7 @@ export function CreateGoalDialog({
   return (
     <FormDialog open={open} onOpenChange={onOpenChange} dirty={form.formState.isDirty}>
       <FormDialogContent
-        className="max-h-[85vh] overflow-y-auto sm:max-w-2xl"
+        className="sm:max-w-2xl"
         title="New goal"
         description="The planner reads the description, then proposes the tasks in the goal thread."
         onSubmit={form.handleSubmit(onSubmit)}
@@ -159,135 +161,146 @@ export function CreateGoalDialog({
         }
         submitLabel="Create goal"
         pending={createGoal.isPending}
+        onKeyDown={submitOnChord}
       >
-        <Field data-invalid={errors.title ? "" : undefined}>
-          <FieldLabel htmlFor="goal-title">Title</FieldLabel>
-          <Input
-            id="goal-title"
-            autoComplete="off"
-            aria-invalid={errors.title ? true : undefined}
-            {...form.register("title")}
-          />
-          <FieldError>{errors.title?.message}</FieldError>
-        </Field>
-
-        <Field>
-          <FieldLabel htmlFor="goal-description">Description</FieldLabel>
-          <Textarea
-            id="goal-description"
-            placeholder="What should be achieved, and anything the planner needs to know."
-            {...form.register("description")}
-          />
-          <FieldDescription>Markdown. This is the planner's brief.</FieldDescription>
-        </Field>
-
-        <Controller
-          control={form.control}
-          name="repository_ids"
-          render={({ field }) => (
-            <Field data-invalid={errors.repository_ids ? "" : undefined}>
-              {/* One control to point a `for` at, now that the row of
-                  checkboxes is a single combobox: the label names the
-                  trigger, and the picked set is spelled out in it. */}
-              <FieldLabel htmlFor="goal-repositories">Repositories</FieldLabel>
-              {repositories.isPending ? (
-                <LoadingRepositories />
-              ) : repositories.isError ? (
-                <ErrorState
-                  title="Could not load repositories"
-                  error={repositories.error}
-                  onRetry={() => void repositories.refetch()}
-                />
-              ) : repositories.data.length === 0 ? (
-                <NoRepositories onLeave={() => onOpenChange(false)} />
-              ) : (
-                <RepositoryCombobox
-                  id="goal-repositories"
-                  repositories={repositories.data}
-                  value={field.value}
-                  onChange={field.onChange}
-                  invalid={errors.repository_ids ? true : undefined}
-                />
-              )}
-              <FieldDescription>
-                The checkouts the planner splits this goal across. Task worktrees are branched off
-                each one's base branch.
-              </FieldDescription>
-              <FieldError>{errors.repository_ids?.message}</FieldError>
-            </Field>
-          )}
-        />
-
-        <div className="grid gap-4 sm:grid-cols-3">
-          <Field data-invalid={errors.planner_profile ? "" : undefined}>
-            <FieldLabel htmlFor="goal-planner">Planner profile</FieldLabel>
-            <FormSelect
-              control={form.control}
-              name="planner_profile"
-              id="goal-planner"
-              options={plannerItems}
-              disabled={!plannerOptions?.length}
-              placeholder={profilePlaceholder(planners, "planner")}
-            />
-            <FieldError>{errors.planner_profile?.message}</FieldError>
-          </Field>
-
-          <Field data-invalid={errors.required_approvals ? "" : undefined}>
-            <FieldLabel htmlFor="goal-approvals">Approvals</FieldLabel>
+        <FormDialogBody>
+          <Field data-invalid={errors.title ? "" : undefined}>
+            <FieldLabel htmlFor="goal-title">Title</FieldLabel>
             <Input
-              id="goal-approvals"
-              inputMode="numeric"
+              id="goal-title"
               autoComplete="off"
-              aria-invalid={errors.required_approvals ? true : undefined}
-              {...form.register("required_approvals")}
+              aria-invalid={errors.title ? true : undefined}
+              {...form.register("title")}
             />
-            <FieldError>{errors.required_approvals?.message}</FieldError>
+            <FieldError>{errors.title?.message}</FieldError>
           </Field>
 
-          <Field data-invalid={errors.max_tasks ? "" : undefined}>
-            <FieldLabel htmlFor="goal-max-tasks">Max tasks</FieldLabel>
-            <Input
-              id="goal-max-tasks"
-              inputMode="numeric"
-              placeholder="unbounded"
-              autoComplete="off"
-              aria-invalid={errors.max_tasks ? true : undefined}
-              {...form.register("max_tasks")}
-            />
-            <FieldError>{errors.max_tasks?.message}</FieldError>
-          </Field>
-        </div>
-
-        <Field data-invalid={errors.model ? "" : undefined}>
-          {/* No htmlFor: cmdk owns its input's id and names it itself. */}
-          <FieldLabel>Planner model</FieldLabel>
           <Controller
             control={form.control}
-            name="model"
+            name="description"
             render={({ field }) => (
-              <ModelPicker
-                label="Planner model"
+              <MarkdownField
+                id="goal-description"
+                label="Description"
+                description="Markdown. This is the planner's brief."
+                placeholder="What should be achieved, and anything the planner needs to know."
                 value={field.value}
                 onChange={field.onChange}
-                models={models.data}
-                invalid={errors.model ? true : undefined}
-                placeholder={
-                  plannerProfile
-                    ? `The profile's own — ${modelRefLabel(plannerProfile.model)}`
-                    : "The profile's own"
-                }
+                onBlur={field.onBlur}
+                name={field.name}
+                ref={field.ref}
               />
             )}
           />
-          {errors.model ? (
-            <FieldError>{errors.model.message}</FieldError>
-          ) : (
-            <FieldDescription>
-              The agent CLI and, after a <code>:</code>, the model of it. Empty runs the planner on
-              its profile's own: {modelRefLabel(plannerProfile?.model)}.
-            </FieldDescription>
-          )}
-        </Field>
+
+          <Controller
+            control={form.control}
+            name="repository_ids"
+            render={({ field }) => (
+              <Field data-invalid={errors.repository_ids ? "" : undefined}>
+                {/* One control to point a `for` at, now that the row of
+                    checkboxes is a single combobox: the label names the
+                    trigger, and the picked set is spelled out in it. */}
+                <FieldLabel htmlFor="goal-repositories">Repositories</FieldLabel>
+                {repositories.isPending ? (
+                  <LoadingRepositories />
+                ) : repositories.isError ? (
+                  <ErrorState
+                    title="Could not load repositories"
+                    error={repositories.error}
+                    onRetry={() => void repositories.refetch()}
+                  />
+                ) : repositories.data.length === 0 ? (
+                  <NoRepositories onLeave={() => onOpenChange(false)} />
+                ) : (
+                  <RepositoryCombobox
+                    id="goal-repositories"
+                    repositories={repositories.data}
+                    value={field.value}
+                    onChange={field.onChange}
+                    invalid={errors.repository_ids ? true : undefined}
+                  />
+                )}
+                <FieldDescription>
+                  The checkouts the planner splits this goal across. Task worktrees are branched off
+                  each one's base branch.
+                </FieldDescription>
+                <FieldError>{errors.repository_ids?.message}</FieldError>
+              </Field>
+            )}
+          />
+
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Field data-invalid={errors.planner_profile ? "" : undefined}>
+              <FieldLabel htmlFor="goal-planner">Planner profile</FieldLabel>
+              <FormSelect
+                control={form.control}
+                name="planner_profile"
+                id="goal-planner"
+                options={plannerItems}
+                disabled={!plannerOptions?.length}
+                placeholder={profilePlaceholder(planners, "planner")}
+              />
+              <FieldError>{errors.planner_profile?.message}</FieldError>
+            </Field>
+
+            <Field data-invalid={errors.required_approvals ? "" : undefined}>
+              <FieldLabel htmlFor="goal-approvals">Approvals</FieldLabel>
+              <Input
+                id="goal-approvals"
+                inputMode="numeric"
+                autoComplete="off"
+                aria-invalid={errors.required_approvals ? true : undefined}
+                {...form.register("required_approvals")}
+              />
+              <FieldError>{errors.required_approvals?.message}</FieldError>
+            </Field>
+
+            <Field data-invalid={errors.max_tasks ? "" : undefined}>
+              <FieldLabel htmlFor="goal-max-tasks">Max tasks</FieldLabel>
+              <Input
+                id="goal-max-tasks"
+                inputMode="numeric"
+                placeholder="unbounded"
+                autoComplete="off"
+                aria-invalid={errors.max_tasks ? true : undefined}
+                {...form.register("max_tasks")}
+              />
+              <FieldError>{errors.max_tasks?.message}</FieldError>
+            </Field>
+          </div>
+
+          <Field data-invalid={errors.model ? "" : undefined}>
+            {/* No htmlFor: cmdk owns its input's id and names it itself. */}
+            <FieldLabel>Planner model</FieldLabel>
+            <Controller
+              control={form.control}
+              name="model"
+              render={({ field }) => (
+                <ModelPicker
+                  label="Planner model"
+                  value={field.value}
+                  onChange={field.onChange}
+                  models={models.data}
+                  invalid={errors.model ? true : undefined}
+                  placeholder={
+                    plannerProfile
+                      ? `The profile's own — ${modelRefLabel(plannerProfile.model)}`
+                      : "The profile's own"
+                  }
+                />
+              )}
+            />
+            {errors.model ? (
+              <FieldError>{errors.model.message}</FieldError>
+            ) : (
+              <FieldDescription>
+                The agent CLI and, after a <code>:</code>, the model of it. Empty runs the planner
+                on its profile's own: {modelRefLabel(plannerProfile?.model)}.
+              </FieldDescription>
+            )}
+          </Field>
+        </FormDialogBody>
       </FormDialogContent>
     </FormDialog>
   )

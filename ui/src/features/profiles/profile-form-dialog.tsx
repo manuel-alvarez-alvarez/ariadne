@@ -34,10 +34,10 @@ import { Controller, useForm } from "react-hook-form"
 import { toast } from "sonner"
 
 import { ApiError, type ProfileDto, type UpdateProfileRequest } from "@/api"
-import { FormDialog, FormDialogContent } from "@/components/form-dialog"
+import { FormDialog, FormDialogBody, FormDialogContent } from "@/components/form-dialog"
 import { FormSelect } from "@/components/form-select"
 import { Button } from "@/components/ui/button"
-import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
+import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { describeError, ROLE_LABELS } from "@/lib/format"
 import { ModelPicker } from "./model-picker"
@@ -232,7 +232,7 @@ export function ProfileFormDialog({
         submitLabel={editing ? "Save changes" : "Create profile"}
         pending={saving}
       >
-        <FieldGroup className="max-h-[60svh] overflow-y-auto px-px py-px">
+        <FormDialogBody>
           <Field data-invalid={formState.errors.name ? true : undefined}>
             <FieldLabel htmlFor="profile-name">Name</FieldLabel>
             <Input
@@ -323,7 +323,7 @@ export function ProfileFormDialog({
               }
             }}
           />
-        </FieldGroup>
+        </FormDialogBody>
       </FormDialogContent>
     </FormDialog>
   )

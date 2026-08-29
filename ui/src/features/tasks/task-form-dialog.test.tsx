@@ -422,3 +422,70 @@ describe("what the task's agents run on", () => {
     expect(posted[0]).toMatchObject({ reviewers: [{ profile: REVIEWER.id }] })
   })
 })
+
+/**
+ * The brief is what the engineer builds from and it is read as Markdown, so
+ * the box writes it and reads it back in place — and the form, whose longest
+ * field is that box, can be finished without reaching for the mouse.
+ */
+describe("writing the task's brief", () => {
+  it("keeps a plain Enter in the brief a newline, and the form open", async () => {
+    const user = userEvent.setup()
+    renderDialog(vi.fn())
+
+    const brief = screen.getByLabelText("Description") as HTMLTextAreaElement
+    await user.type(brief, "Wire the strip{Enter}then test it")
+
+    expect(brief.value).toBe("Wire the strip\nthen test it")
+    expect(writes).toEqual([])
+  })
+
+  it("creates the task on the chord, typed from inside the brief", async () => {
+    const user = userEvent.setup()
+    renderDialog(vi.fn())
+
+    await user.type(screen.getByLabelText("Title"), "Wire the strip")
+    expect(await screen.findByText("Engineer")).toBeDefined()
+    expect(await screen.findByText("Reviewer")).toBeDefined()
+
+    await user.type(screen.getByLabelText("Description"), "Wire the strip")
+    await user.keyboard("{Meta>}{Enter}{/Meta}")
+
+    await vi.waitFor(() => expect(writes).toEqual([`POST /v1/goals/${GOAL.id}/tasks`]))
+    expect(posted[0]).toMatchObject({ title: "Wire the strip", description: "Wire the strip" })
+  })
+
+  it("saves an edited task on Ctrl+Enter too", async () => {
+    const user = userEvent.setup()
+    const task = { ...CREATED, reviewers: [{ profile_id: REVIEWER.id, model: null }] }
+    renderScreen(<EditTaskDialog task={task as never} open onOpenChange={vi.fn()} />)
+
+    await user.type(await screen.findByLabelText("Description"), "One more thing")
+    await user.keyboard("{Control>}{Enter}{/Control}")
+
+    await vi.waitFor(() => expect(writes).toEqual([`PATCH /v1/tasks/${task.id}`]))
+  })
+
+  it("renders the brief as Markdown in Preview, and hands the text back on Write", async () => {
+    const user = userEvent.setup()
+    renderDialog(vi.fn())
+
+    await user.type(
+      screen.getByLabelText("Description"),
+      "# Wire it{Enter}{Enter}- one{Enter}- two",
+    )
+    await user.click(screen.getByRole("tab", { name: "Preview" }))
+
+    const preview = screen.getByRole("tabpanel")
+    expect(within(preview).getByRole("heading", { name: "Wire it" })).toBeDefined()
+    expect(within(preview).getAllByRole("listitem")).toHaveLength(2)
+    // The box is a view of the value, not a copy: it is gone while previewing.
+    expect(screen.queryByLabelText("Description")).toBeNull()
+
+    await user.click(screen.getByRole("tab", { name: "Write" }))
+
+    expect((screen.getByLabelText("Description") as HTMLTextAreaElement).value).toBe(
+      "# Wire it\n\n- one\n- two",
+    )
+  })
+})

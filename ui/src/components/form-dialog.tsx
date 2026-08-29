@@ -25,7 +25,14 @@
  * Escape over the confirmation answers it rather than the form behind it.
  */
 
-import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react"
+import {
+  type FormEvent,
+  type KeyboardEvent,
+  type ReactNode,
+  useEffect,
+  useRef,
+  useState,
+} from "react"
 import type { FieldValues, UseFormReturn } from "react-hook-form"
 
 import { ConfirmDialog } from "@/components/confirm-dialog"
@@ -40,6 +47,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { FieldGroup } from "@/components/ui/field"
+import { cn } from "@/lib/format"
+import { matchesShortcut, type Shortcut } from "@/lib/shortcuts"
 
 export function FormDialog({
   open,
@@ -121,6 +131,7 @@ export function FormDialogContent({
   submitLabel,
   pending,
   className,
+  onKeyDown,
   children,
 }: {
   title: ReactNode
@@ -133,11 +144,18 @@ export function FormDialogContent({
   pending: boolean
   /** Sizing for the dialog box; forms differ in how much they have to hold. */
   className?: string
+  /**
+   * Keys the whole form answers to; {@link submitOnChord} is the one so far.
+   * Ignored while `pending`, which is what keeps a chord from starting a
+   * second save on top of the one in flight: `requestSubmit` does not consult
+   * the disabled submit button the way a click does.
+   */
+  onKeyDown?: (event: KeyboardEvent<HTMLFormElement>) => void
   children: ReactNode
 }) {
   return (
     <DialogContent className={className}>
-      <form onSubmit={onSubmit} className="grid gap-4">
+      <form onSubmit={onSubmit} onKeyDown={pending ? undefined : onKeyDown} className="grid gap-4">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
@@ -162,6 +180,52 @@ export function FormDialogContent({
       </form>
     </DialogContent>
   )
+}
+
+/**
+ * The fields of a form dialog, and the only part of one that scrolls.
+ *
+ * A dialog that caps and scrolls *itself* takes its footer down with it: the
+ * buttons are the last thing in the box, so a form longer than the window had
+ * its Save and Cancel simply off the bottom of the screen, with nothing on
+ * screen to say that scrolling the dialog would reach them. The cap belongs on
+ * the fields instead — the title says what the form is and the buttons finish
+ * it, both always in view, and only the middle moves.
+ *
+ * The padding of a pixel is what keeps the focus ring of the first and last
+ * field from being shaved off by the scroll container's own edge.
+ */
+export function FormDialogBody({
+  className,
+  children,
+}: {
+  className?: string
+  children: ReactNode
+}) {
+  return (
+    <FieldGroup className={cn("max-h-[60svh] overflow-y-auto px-px py-px", className)}>
+      {children}
+    </FieldGroup>
+  )
+}
+
+/** The chord, as `@/lib/shortcuts` spells one: either modifier, plus Enter. */
+const SUBMIT: Shortcut = { key: "Enter" }
+
+/**
+ * ⌘/Ctrl+Enter submits the form the event is on, from any field inside it —
+ * hand it to a {@link FormDialogContent} as its `onKeyDown`.
+ *
+ * A form whose longest field is a textarea cannot be finished from the
+ * keyboard otherwise: a plain Enter there is a newline and has to stay one. So
+ * these forms answer to the chord the message composer already teaches, and
+ * for the same reason either modifier fires — only the printed hints pick a
+ * side.
+ */
+export function submitOnChord(event: KeyboardEvent<HTMLFormElement>): void {
+  if (!matchesShortcut(event, SUBMIT)) return
+  event.preventDefault()
+  event.currentTarget.requestSubmit()
 }
 
 /**
