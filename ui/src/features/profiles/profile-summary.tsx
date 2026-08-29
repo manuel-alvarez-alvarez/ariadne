@@ -10,8 +10,12 @@
  * it (`claude_code:claude-opus-5`), that is one fact and not two.
  *
  * The name links to the profile ({@link ProfileName}); the model after it is
- * quiet secondary text, and the whole line truncates, since it sits in table
- * cells and 48rem panels.
+ * quiet secondary text. The line sits in table cells and 48rem panels, so one
+ * half of it has to give when there is no room for both — and it is the model
+ * that gives: a name is short, and it is what the reader recognises, where
+ * `claude_code:claude-opus-5` is still that agent CLI once it reads
+ * `claude_code:claude…`. The other way round, which is what this used to do,
+ * cut "planner" to `plan…` to keep a model string whole.
  *
  * A profile is editable and what runs is not: a session records what it was
  * launched with, and a task, a reviewer slot and a goal each record what they
@@ -24,6 +28,7 @@
 
 import { useQuery } from "@tanstack/react-query"
 
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/format"
 
 import { modelRefLabel } from "./model-ref"
@@ -72,15 +77,32 @@ export function ProfileSummary({
 
   return (
     <span className={cn("flex min-w-0 items-baseline gap-1", className)}>
-      <ProfileName profileId={profileId} className="min-w-0" />
+      <ProfileName profileId={profileId} className="shrink-0" />
       {known ? (
-        <span className="truncate text-muted-foreground">
-          · {modelRefLabel(pinned)}
+        <span className="flex min-w-0 items-baseline gap-1 text-muted-foreground">
+          <span className="truncate">· {modelRefLabel(pinned)}</span>
           {/* Where the two disagree, what was just read is the pin and not the
               profile's own — the model chosen here, or a profile edited since.
               One word, because the line sits in table cells and panel columns
-              and already carries two facts. */}
-          {isPinOverride(profile, model) ? " (overrides)" : null}
+              and already carries two facts, and the word says which of the two
+              won rather than that anything was overwritten. */}
+          {isPinOverride(profile, model) ? (
+            <Tooltip>
+              {/* Dotted, because the word only makes sense with what is behind
+                  it: which model the profile itself would have used. */}
+              <TooltipTrigger
+                render={
+                  <span className="shrink-0 underline decoration-dotted underline-offset-3" />
+                }
+              >
+                pinned
+              </TooltipTrigger>
+              <TooltipContent>
+                Pinned here, so this is what runs; {profile?.name ?? "the profile"} itself says{" "}
+                {modelRefLabel(profile?.model)}.
+              </TooltipContent>
+            </Tooltip>
+          ) : null}
         </span>
       ) : null}
     </span>

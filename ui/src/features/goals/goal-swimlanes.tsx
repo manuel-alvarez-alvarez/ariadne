@@ -18,6 +18,7 @@ import { Link } from "react-router-dom"
 
 import type { GoalDto, TaskDto, TaskStatus } from "@/api"
 import { ErrorState } from "@/components/error-state"
+import { ScrollEdge } from "@/components/scroll-edge"
 import { StatusBadge } from "@/components/status-badge"
 import { goalUsageRows, TokenFigure } from "@/components/token-figure"
 import { Button } from "@/components/ui/button"
@@ -151,50 +152,6 @@ export function GoalSwimlanes({ goals }: { goals: GoalDto[] }) {
       </section>
       <ScrollEdge side="start" show={board.overflow.start} />
       <ScrollEdge side="end" show={board.overflow.end} />
-    </div>
-  )
-}
-
-/**
- * The board's one hint that it goes on past the window: content fading out
- * under the edge it is cut at, on whichever side has more of it. Nothing else
- * says so — the columns end mid-card and macOS keeps its scrollbar hidden
- * until something moves.
- *
- * Two layers, because a fade alone says nothing where there is nothing to fade:
- * the wash, which is what makes a clipped card or a clipped column label trail
- * off, and a shade right at the edge, which is visible over an empty cell too.
- * It is drawn above both sticky headers (`z-20` for the column row, `z-10` for
- * the lane names, in the same stacking context as this), so the header a title
- * is cut in half by is exactly where it shows.
- */
-function ScrollEdge({ side, show }: { side: "start" | "end"; show: boolean }) {
-  const start = side === "start"
-  return (
-    <div
-      aria-hidden
-      className={cn(
-        // Inset by the border it sits inside, and pointer-transparent: this is
-        // a picture of a state, never a target.
-        "pointer-events-none absolute inset-y-px z-30 w-10 transition-opacity duration-150",
-        start ? "left-px rounded-l-lg" : "right-px rounded-r-lg",
-        show ? "opacity-100" : "opacity-0",
-      )}
-    >
-      <div
-        className={cn(
-          "absolute inset-0 from-background to-transparent",
-          start ? "bg-linear-to-r" : "bg-linear-to-l",
-        )}
-      />
-      <div
-        className={cn(
-          // From the foreground colour rather than a fixed black, so it shows
-          // against the page in either theme.
-          "absolute inset-y-0 w-2.5 from-foreground/12 to-transparent",
-          start ? "left-0 bg-linear-to-r" : "right-0 bg-linear-to-l",
-        )}
-      />
     </div>
   )
 }

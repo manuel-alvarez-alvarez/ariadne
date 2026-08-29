@@ -7,7 +7,8 @@
  * and left the mention the one entity reference in the app that went nowhere.
  * What is worth pinning down is the two halves of the link: a known profile is
  * named and points at `?expand=<id>`, and one the list has never heard of —
- * deleted, or still loading — is still a link, wearing its id.
+ * deleted, or still loading — is still a link, wearing its id. The hover
+ * carries both, name first: it answers a mention the column cut short.
  *
  * The names are seeded straight into the query cache: what this renders from
  * is `profilesQueryOptions`, and the daemon behind it is `queries.ts`'s story.
@@ -38,8 +39,10 @@ it("shows the name, linking to the profile's row", () => {
 
   const link = screen.getByRole("link", { name: "Builder" })
   expect(link.getAttribute("href")).toBe(paths.profile(PROFILE.id))
-  // The id is off the clipboard, but not out of reach.
-  expect(link.getAttribute("title")).toBe(PROFILE.id)
+  // The name leads the hover: a mention cut to `Buil…` in a table cell is
+  // hovered for the half that was cut off, not for a ULID. The id follows it,
+  // off the clipboard but not out of reach.
+  expect(link.getAttribute("title")).toBe(`Builder · ${PROFILE.id}`)
   expect(screen.queryByRole("button", { name: /copy/i })).toBeNull()
 })
 

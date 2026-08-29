@@ -24,6 +24,7 @@ import { ApiError, type GoalDto } from "@/api"
 import { CopyableId, CopyableIdMenu } from "@/components/copyable-id"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
+import { Fact, FactList } from "@/components/fact-list"
 import { Markdown } from "@/components/markdown"
 import { PanelSheet } from "@/components/panel-sheet"
 import { StatusBadge } from "@/components/status-badge"
@@ -38,7 +39,6 @@ import { ProfileSummary } from "@/features/profiles/profile-summary"
 import { CreateTaskDialog } from "@/features/tasks/task-form-dialog"
 import { useFocusReturn } from "@/hooks/use-focus-return"
 import { goalCopyEntries } from "@/lib/clipboard"
-import { cn } from "@/lib/format"
 import { paths, taskPanelTo, usePanelSessionNavigation } from "@/routes/paths"
 import { GoalActions } from "./goal-actions"
 import { GoalSessions, GoalSessionView } from "./goal-sessions"
@@ -287,34 +287,33 @@ function GoalView({
 /**
  * What the goal is allowed to do and what it has cost, always on show.
  *
- * Three columns where there is room, like the session panel's Details card,
- * and six short facts to fill them: two whole rows at three columns and three
- * whole rows at two, which the five facts it started with did not manage — one
- * of them left a hole in the middle of the card. The repositories are the
- * seventh and take a row of their own at the end, wrapping across it, which is
- * what {@link CopyableId.wrap} is for.
+ * Three columns where there is room, like the session panel's facts, and six
+ * short facts to fill them: two whole rows at three columns and three whole
+ * rows at two, which the five facts it started with did not manage — one of
+ * them left a hole in the middle of the card. The repositories are the seventh
+ * and take a row of their own at the end.
  */
 function GoalMetadata({ goal }: { goal: GoalDto }) {
   return (
-    <dl className="grid gap-x-6 gap-y-3 rounded-lg border bg-card p-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
-      <Detail label="Planner">
+    <FactList>
+      <Fact label="Planner">
         {/* The goal's pin: what the planner runs on, which a later edit to its
             profile leaves alone. */}
         <ProfileSummary profileId={goal.planner_profile_id} model={goal.model} />
-      </Detail>
-      <Detail label="Approvals">
+      </Fact>
+      <Fact label="Approvals">
         <span className="tabular-nums">{goal.required_approvals}</span>
-      </Detail>
-      <Detail label="Max tasks">
+      </Fact>
+      <Fact label="Max tasks">
         <span className="tabular-nums">{goal.max_tasks ?? "unbounded"}</span>
-      </Detail>
-      <Detail label="Created">
+      </Fact>
+      <Fact label="Created">
         <When at={goal.created_at} label="created" />
-      </Detail>
-      <Detail label="Updated">
+      </Fact>
+      <Fact label="Updated">
         <When at={goal.updated_at} label="updated" />
-      </Detail>
-      <Detail label="Tokens">
+      </Fact>
+      <Fact label="Tokens">
         {/* Every session of the goal, its planner's included, with the hint
             breaking the same total down by the role that spent it. */}
         <TokenFigure
@@ -322,53 +321,35 @@ function GoalMetadata({ goal }: { goal: GoalDto }) {
           rows={goalUsageRows(goal.usage)}
           className="text-xs"
         />
-      </Detail>
-      <Detail label="Repositories" className="sm:col-span-2 lg:col-span-3">
+      </Fact>
+      <Fact label="Repositories" className="sm:col-span-2 lg:col-span-3">
+        {/* One line per repository, whatever each one carries: the base branch
+            used to drop to a line of its own under the path and the
+            description to a third, so a goal on two repositories read as an
+            uneven list of three, four or five lines with no shape to it. The
+            path is cut short before the branch beside it is, since it is the
+            branch that says what the task worktrees are cut from. */}
         <ul className="flex flex-col gap-1">
           {goal.repos.map((repo) => (
-            <li key={repo.id} className="min-w-0">
+            <li key={repo.id} className="flex min-w-0 items-baseline gap-1.5">
               {/* The path is the repository's name, so it is also the way to
-                  its registration — where the base branch and the description
-                  below it are edited (the rows there do not expand, so the
+                  its registration — where the base branch beside it and its
+                  description are edited (the rows there do not expand, so the
                   screen itself is as far as a link can point). */}
               <CopyableId
                 value={repo.path}
                 label="repository path"
-                wrap
+                truncate="middle"
                 to={paths.repositories()}
                 className="text-xs"
               />
-              <span className="font-mono text-xs text-muted-foreground">
-                base: {repo.base_branch}
+              <span className="shrink-0 text-xs text-muted-foreground">
+                · base <span className="font-mono">{repo.base_branch}</span>
               </span>
-              {/* What the repo is for, when whoever registered it said so.
-                  The goal reads these live, so it is the registration's own
-                  description rather than a copy taken at creation. */}
-              {repo.description ? (
-                <span className="block text-xs text-muted-foreground">{repo.description}</span>
-              ) : null}
             </li>
           ))}
         </ul>
-      </Detail>
-    </dl>
-  )
-}
-
-function Detail({
-  label,
-  className,
-  children,
-}: {
-  label: string
-  /** How many of the grid's columns this fact takes; one, unless it says so. */
-  className?: string
-  children: ReactNode
-}) {
-  return (
-    <div className={cn("min-w-0 space-y-0.5", className)}>
-      <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="min-w-0">{children}</dd>
-    </div>
+      </Fact>
+    </FactList>
   )
 }

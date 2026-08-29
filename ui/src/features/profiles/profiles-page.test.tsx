@@ -253,6 +253,28 @@ describe("ProfilesPage, expanded details", () => {
     expect(screen.queryByText("Opus tier: deep analysis")).toBeNull()
   })
 
+  /**
+   * `truncate` is `overflow: hidden` plus `text-overflow: ellipsis`, and an
+   * inline box applies neither: the word and the sentence after it are one
+   * line, and on an inline span that line paints straight out of the fact's
+   * column instead of ending in an ellipsis. What is cut off is in the hint
+   * this fact already carries, so the cut is the point.
+   */
+  it("cuts the unpinned model at its column rather than painting past it", async () => {
+    const user = userEvent.setup()
+    renderPage()
+
+    await user.click(await screen.findByRole("button", { name: "Builder" }))
+    await screen.findByRole("button", { name: "Builder", expanded: true })
+
+    const said = await screen.findByText(/first installed CLI/)
+    const line = said.parentElement
+    expect(line?.textContent).toContain("auto")
+    expect(line?.className).toContain("truncate")
+    // The half that makes the ellipsis possible at all.
+    expect(line?.className).toContain("block")
+  })
+
   it("shows no raw profile id: the name is what a profile is named by", async () => {
     const user = userEvent.setup()
     renderPage()

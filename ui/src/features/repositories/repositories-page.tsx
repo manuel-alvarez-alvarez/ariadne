@@ -33,7 +33,9 @@ const COLUMNS = [
   { header: "Path" },
   { header: "Base branch" },
   { header: "Merge strategy" },
-  { header: "Description" },
+  // Wide enough to be a sentence rather than a word per line: what made the
+  // rows of this table 130px tall was a description with nothing to wrap in.
+  { header: "Description", className: "min-w-48" },
   { className: "w-20 text-right" },
 ]
 
@@ -129,17 +131,19 @@ function RepositoryRow({
           own name is the last segment, which cutting the end would take.
           `max-w-*` on the cell is what makes the ellipsis possible at all: the
           cell's own `whitespace-nowrap` would otherwise widen the column to
-          the longest path there is. */}
-      <TableCell className="max-w-96 text-xs font-medium">
+          the longest path there is. It is a hard cap below `lg`, where the
+          full width the path would take is the width the description needs to
+          be prose. */}
+      <TableCell className="max-w-36 text-xs font-medium lg:max-w-96">
         <CopyableId value={repository.path} label="repository path" truncate="middle" />
       </TableCell>
-      <TableCell className="max-w-56 text-xs">
+      <TableCell className="max-w-24 text-xs lg:max-w-56">
         <CopyableId value={repository.base_branch} label="base branch" truncate="middle" />
       </TableCell>
       <TableCell className="text-xs text-muted-foreground">
         {MERGE_STRATEGY_LABELS[repository.merge_strategy]}
       </TableCell>
-      <TableCell className="whitespace-normal text-muted-foreground">
+      <TableCell className="min-w-48 whitespace-normal text-muted-foreground">
         {repository.description ?? <span className="italic">no description</span>}
       </TableCell>
       <TableCell className="text-right">

@@ -208,7 +208,10 @@ function PanelBreadcrumb({
       <button
         type="button"
         onClick={onOpenGoal}
-        className="min-w-0 truncate underline-offset-3 hover:text-foreground hover:underline"
+        // The ring every other control in the app wears: this one is the first
+        // thing focused when a deep link opens the panel, and it was showing
+        // the browser's own outline there.
+        className="min-w-0 truncate rounded-xs underline-offset-3 outline-none hover:text-foreground hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
       >
         {goal.data?.title ?? "Goal"}
       </button>
@@ -235,9 +238,14 @@ function TaskHeader({ task, showGoalLink }: { task: TaskDto; showGoalLink: boole
           ← Open the goal
         </Link>
       ) : null}
-      <div className="flex flex-wrap items-start gap-3">
-        <SheetTitle>{task.title}</SheetTitle>
-        <div className="ml-auto shrink-0">
+      {/* The actions stay on the title row whatever the task's status, which
+          is what the title shrinking rather than wrapping the row buys: a
+          `Cancel task` on its own line under the title read as a second row of
+          header, and which line it landed on came down to how long the title
+          was and how many buttons the status offers. */}
+      <div className="flex items-start gap-3">
+        <SheetTitle className="min-w-0 flex-1">{task.title}</SheetTitle>
+        <div className="shrink-0">
           <TaskActions task={task} />
         </div>
       </div>

@@ -6,7 +6,8 @@
  * The table is three columns straight off the DTO, and the one thing about it
  * worth asserting is that the path leaves with the user: it is shown cut short
  * to fit its column, and it is the *whole* path that has to reach the
- * clipboard. The rest of what is asserted here is the two places the daemon
+ * clipboard. How short is the other half of that, and it is a layout the rows
+ * of this table were 130px tall without. The rest of what is asserted here is the two places the daemon
  * can say no and the screen has to keep the user somewhere useful: an empty
  * list, which is the normal state of a fresh install, and the 409 that says a
  * goal or a task still holds the repository being removed. That refusal has to
@@ -86,6 +87,21 @@ describe("RepositoriesPage", () => {
     // each repository in turn.
     expect(screen.getByText("Direct")).toBeDefined()
     expect(screen.getByText("Pull request")).toBeDefined()
+  })
+
+  it("caps the path so the description has room to be a sentence", async () => {
+    renderScreen(<RepositoriesPage />)
+
+    // The path is the widest value in the row and the one that refuses to
+    // shrink on its own — its last segment is what the middle ellipsis keeps —
+    // so below `lg` it is capped outright. Uncapped, it took the width the
+    // description needed and left it wrapping a word to a line.
+    const path = (await screen.findByTitle(ARIADNE.path)).closest("td")
+    expect(path?.className).toContain("max-w-36")
+    expect(path?.className).toContain("lg:max-w-96")
+
+    const description = screen.getByText("The orchestrator itself.").closest("td")
+    expect(description?.className).toContain("min-w-48")
   })
 
   it("copies the whole path, which is longer than what the column shows", async () => {

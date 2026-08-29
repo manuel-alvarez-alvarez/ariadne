@@ -47,7 +47,7 @@ interface UsageRow {
  *
  * The gap between the halves is wider than the one inside them, which is what
  * makes the share read as part of the input rather than as a figure of its
- * own — see {@link Halves}.
+ * own — see {@link TokenHalves}.
  */
 const FIGURE = "inline-flex items-center gap-2 tabular-nums"
 
@@ -72,7 +72,7 @@ export function TokenFigure({
   return (
     <Tooltip>
       <TooltipTrigger render={<span className={cn(FIGURE, className)} />}>
-        <Halves usage={usage} />
+        <TokenHalves usage={usage} />
       </TooltipTrigger>
       <TooltipContent className="flex-col items-start gap-2">
         <NamedHalves usage={usage} />
@@ -86,7 +86,7 @@ export function TokenFigure({
               <div key={row.key} className="flex items-center gap-3">
                 <dt className="truncate">{row.label}</dt>
                 <dd className={cn(FIGURE, "ml-auto")}>
-                  <Halves usage={row.usage} />
+                  <TokenHalves usage={row.usage} />
                 </dd>
               </div>
             ))}
@@ -99,7 +99,9 @@ export function TokenFigure({
 
 /**
  * The pair itself, without a hint of its own: it is also what the rows of a
- * hint are made of, and a tooltip inside a tooltip is not a thing.
+ * hint are made of — and what the sessions table puts inside one, where a panel
+ * has no room for a figure of its own — and a tooltip inside a tooltip is not a
+ * thing.
  *
  * The arrows are decoration — the words they stand for are there for a screen
  * reader, so the element reads as "1.2M in, 89% cached, 45k out" and its text
@@ -110,7 +112,7 @@ export function TokenFigure({
  * spacing is the whole reading: loosen it and the figure becomes three numbers
  * in a row, one of which happens to be a percentage of another.
  */
-function Halves({ usage }: { usage: TokenUsage }) {
+export function TokenHalves({ usage }: { usage: TokenUsage }) {
   return (
     <>
       <span className="inline-flex items-center gap-0.5">

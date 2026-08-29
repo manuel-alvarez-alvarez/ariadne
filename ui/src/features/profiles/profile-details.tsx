@@ -9,16 +9,18 @@
  */
 
 import { useQuery } from "@tanstack/react-query"
-import type { ReactNode } from "react"
 
 import type { ProfileDto } from "@/api"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { Fact, FactList } from "@/components/fact-list"
 import { When } from "@/components/when"
 
 import { modelRefLabel } from "./model-ref"
 import { roleLabel } from "./profile-labels"
 import { ProfilePrompts } from "./profile-prompts"
 import { modelsQueryOptions } from "./queries"
+
+/** What the daemon resolves for a profile that pins nothing. */
+const UNPINNED_HINT = "first installed CLI, at spawn time, on its own default model"
 
 export function ProfileDetails({ profile }: { profile: ProfileDto }) {
   // What the pinned model can do, when the catalog knows it. The id carries
@@ -29,75 +31,50 @@ export function ProfileDetails({ profile }: { profile: ProfileDto }) {
   const catalogModel = profile.model
     ? models.data?.find((model) => model.id === profile.model)
     : undefined
+  // No pin is a fact about the profile rather than a missing value, so it
+  // reads as the word `auto` with what the daemon does instead beside it.
+  const unpinned = !profile.model
 
   return (
     <div className="flex flex-col gap-5 py-2">
-      <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3">
-        <Detail label="Role">{roleLabel(profile.role)}</Detail>
-        {/* One row, since one string is the whole choice: the agent CLI and,
-            after a `:`, the model of it. */}
-        <Detail
+      {/* Unframed: this block already sits inside the expanded row's own box,
+          where every other panel's facts sit on the screen behind them. */}
+      <FactList framed={false}>
+        <Fact label="Role">{roleLabel(profile.role)}</Fact>
+        {/* One fact, since one string is the whole choice: the agent CLI and,
+            after a `:`, the model of it. What the daemon does instead of a pin
+            is in the hint, which is the only place a truncated row says
+            anything in full; the catalog's blurb is the opposite — prose rather
+            than an identifier — so it takes a wrapping line of its own. */}
+        <Fact
           label="Model"
-          unset={!profile.model}
-          hint="first installed CLI, at spawn time, on its own default model"
+          hint={unpinned ? UNPINNED_HINT : undefined}
           caption={catalogModel?.description}
         >
-          <span className="font-mono">{modelRefLabel(profile.model)}</span>
-        </Detail>
-        <Detail label="Created">
+          {/* Block, both of them: `truncate` is `overflow` plus `text-overflow`,
+              and neither applies to an inline box — an inline span wearing it
+              paints its whole line straight out of the column instead of
+              ending in an ellipsis. The word and the long hint after it are
+              one line together, so the cut has to fall wherever the column
+              ends and the hint above carries the rest. */}
+          {unpinned ? (
+            <span className="block truncate text-muted-foreground italic">
+              {modelRefLabel(profile.model)}
+              <span className="ml-1.5 text-xs">({UNPINNED_HINT})</span>
+            </span>
+          ) : (
+            <span className="block truncate font-mono">{modelRefLabel(profile.model)}</span>
+          )}
+        </Fact>
+        <Fact label="Created">
           <When at={profile.created_at} label="created" />
-        </Detail>
-        <Detail label="Updated">
+        </Fact>
+        <Fact label="Updated">
           <When at={profile.updated_at} label="updated" />
-        </Detail>
-      </dl>
+        </Fact>
+      </FactList>
 
       <ProfilePrompts profile={profile} />
-    </div>
-  )
-}
-
-function Detail({
-  label,
-  children,
-  unset = false,
-  hint,
-  caption,
-}: {
-  label: string
-  children: ReactNode
-  /** True when the daemon holds no value and `children` is the standing-in word. */
-  unset?: boolean
-  /** What the daemon does instead, shown next to that word. */
-  hint?: string
-  /** A blurb about the value, on its own wrapping line under it. */
-  caption?: string | null
-}) {
-  // The value is truncated, so what the row says in full is only ever readable
-  // in the hint — a `Tooltip` on a focusable `<dd>` rather than a `title=`,
-  // which a keyboard never opens. A `caption` is the opposite: prose rather
-  // than an identifier, so it gets its own line and wraps there in full.
-  const value = (
-    <>
-      {unset ? <span className="text-muted-foreground italic">{children}</span> : children}
-      {unset && hint ? (
-        <span className="ml-1.5 text-xs text-muted-foreground">({hint})</span>
-      ) : null}
-    </>
-  )
-
-  return (
-    <div className="flex min-w-0 flex-col gap-0.5">
-      <dt className="text-xs font-medium tracking-wide text-muted-foreground uppercase">{label}</dt>
-      {unset && hint ? (
-        <Tooltip>
-          <TooltipTrigger render={<dd className="truncate text-sm" />}>{value}</TooltipTrigger>
-          <TooltipContent>{hint}</TooltipContent>
-        </Tooltip>
-      ) : (
-        <dd className="truncate text-sm">{value}</dd>
-      )}
-      {caption ? <dd className="text-xs leading-snug text-muted-foreground">{caption}</dd> : null}
     </div>
   )
 }

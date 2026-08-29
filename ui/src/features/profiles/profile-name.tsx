@@ -30,9 +30,12 @@ export function ProfileName({ profileId, className }: { profileId: string; class
   return (
     <Link
       to={paths.profile(profileId)}
-      // The id keeps the hover, as it did on the copy button: it is what the
-      // terminal wants, and reading it off the mention beats opening the page.
-      title={profileId}
+      // The name leads the hover and the id follows it: a mention cut to
+      // `plan…` in a table cell was hoverable only to be answered with a ULID,
+      // which is not the half that was cut off. The id stays because it is
+      // what a terminal wants, and reading it off the mention beats opening
+      // the page.
+      title={name ? `${name} · ${profileId}` : profileId}
       className={cn(
         "inline-block max-w-full truncate underline-offset-3 hover:underline",
         !name && "font-mono",

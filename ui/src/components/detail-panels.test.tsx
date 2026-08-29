@@ -14,6 +14,11 @@
  * second sheet on top — and the goal panel's `?session=` goes away in the same
  * navigation, which is *not* the user coming back out of that session. Focus
  * belongs to the sheet on top; see `hooks/use-focus-return.ts`.
+ *
+ * Where that focus *lands* is the second thing here: a stacked task panel opens
+ * on its breadcrumb, which is therefore the one control in the app a deep link
+ * puts a focus ring on before anything is clicked. It wears the app's own ring
+ * rather than the browser's outline.
  */
 
 import { act, screen, waitFor } from "@testing-library/react"
@@ -72,4 +77,20 @@ it("leaves focus in the task sheet stacked over a goal's session", async () => {
   const taskSheet = sheetTitled("Loading task")
   expect(taskSheet).not.toBe(goalSheet)
   await waitFor(() => expect(taskSheet.contains(document.activeElement)).toBe(true))
+})
+
+it("gives the stacked panel's breadcrumb the app's own focus ring", async () => {
+  mountPanels(`${paths.goals()}?goal=g1&task=t1`)
+
+  // The goal is still loading, so the button wears the word rather than the
+  // title — it is the first focusable thing in the sheet either way.
+  // Queried by selector: Base UI marks the sheet under the stack inert, and
+  // role queries do not reach into a stacked panel (the same reason the app's
+  // own tests drive those controls by CSS).
+  const nav = await screen.findByLabelText("Breadcrumb")
+  const breadcrumb = nav.querySelector("button")
+  if (!breadcrumb) throw new Error("no way back to the goal in the breadcrumb")
+  await waitFor(() => expect(document.activeElement).toBe(breadcrumb))
+  expect(breadcrumb.className).toContain("focus-visible:ring-3")
+  expect(breadcrumb.className).toContain("outline-none")
 })

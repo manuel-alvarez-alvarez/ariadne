@@ -36,11 +36,11 @@ import { Link, useSearchParams } from "react-router-dom"
 
 import type { SessionDto } from "@/api"
 import { CopyableId, CopyableIdMenu } from "@/components/copyable-id"
+import { Fact, FactList } from "@/components/fact-list"
 import { TokenFigure } from "@/components/token-figure"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { When } from "@/components/when"
 import { formatModelRef } from "@/features/profiles/model-ref"
-import { modelLabel } from "@/features/profiles/profile-labels"
 import { ProfileSummary } from "@/features/profiles/profile-summary"
 import { sessionCopyEntries } from "@/lib/clipboard"
 import { ROLE_LABELS } from "@/lib/format"
@@ -120,55 +120,49 @@ export function SessionDetailView({
           blocked agent is a sentence, and the pane it is about is below. */}
       <SessionBlockedBanner session={session} />
 
-      <dl className="grid gap-x-6 gap-y-3 rounded-lg border bg-card p-3 sm:grid-cols-2 lg:grid-cols-3">
+      <FactList>
         {context === "goal" ? null : (
-          <Detail label="Goal">
-            <Link to={paths.goal(session.goal_id)} className="hover:underline">
+          <Fact label="Goal">
+            <Link to={paths.goal(session.goal_id)} className="block truncate hover:underline">
               {goal.data?.title ?? <Mono>{session.goal_id}</Mono>}
             </Link>
-          </Detail>
+          </Fact>
         )}
         {context === "task" ? null : (
-          <Detail label="Task">
+          <Fact label="Task">
             {session.task_id ? (
-              <Link to={taskTo} className="hover:underline">
+              <Link to={taskTo} className="block truncate hover:underline">
                 {task.data?.title ?? <Mono>{session.task_id}</Mono>}
               </Link>
             ) : (
               <span className="text-muted-foreground">— (planner session)</span>
             )}
-          </Detail>
+          </Fact>
         )}
-        <Detail label="Profile">
-          {/* The session's own snapshot, not the profile's current fields: the
-              profile may have been edited since this agent was launched. A
-              session keeps the CLI and the model apart, so the id every other
-              mention carries is composed here. */}
+        {/* One fact, not two: what the agent runs on is the tail of this line
+            (`claude_code:claude-opus-5`), and a Model row under it repeated
+            that tail with the CLI half taken off. The session's own snapshot,
+            not the profile's current fields — the profile may have been edited
+            since this agent was launched — and a session keeps the CLI and the
+            model apart, so the id every other mention carries is composed
+            here. */}
+        <Fact label="Profile">
           <ProfileSummary
             profileId={session.profile_id}
             model={formatModelRef(session.agent_kind, session.model)}
-            className="text-sm"
           />
-        </Detail>
-        <Detail label="Model">
-          {/* Null on the wire means the agent CLI picked, which is a fact
-              about the session and not a missing value — hence a word rather
-              than a dash. */}
-          <span className={session.model ? "font-mono text-xs" : "text-muted-foreground"}>
-            {modelLabel(session.model)}
-          </span>
-        </Detail>
-        <Detail label="tmux session">
+        </Fact>
+        <Fact label="tmux session">
           <CopyableId value={session.tmux_session} label="tmux session" className="text-xs" />
-        </Detail>
-        <Detail label="Worktree">
+        </Fact>
+        <Fact label="Worktree">
           {session.worktree_path ? (
             <CopyableId value={session.worktree_path} label="worktree path" className="text-xs" />
           ) : (
             <Dash />
           )}
-        </Detail>
-        <Detail label="Agent session id">
+        </Fact>
+        <Fact label="Agent session id">
           {session.internal_session_id ? (
             <CopyableId
               value={session.internal_session_id}
@@ -178,30 +172,30 @@ export function SessionDetailView({
           ) : (
             <Dash />
           )}
-        </Detail>
-        <Detail label="Review round">{session.review_round ?? <Dash />}</Detail>
+        </Fact>
+        <Fact label="Review round">{session.review_round ?? <Dash />}</Fact>
         {/* Every transcript this agent reported under, summed — so a session
             resumed into the same agent conversation reads as one figure. Zeros
             until it reports anything, which is a number and not a blank: an
             agent that has spent nothing is what a session just spawned is. */}
-        <Detail label="Tokens">
+        <Fact label="Tokens">
           <TokenFigure usage={session.usage} />
-        </Detail>
+        </Fact>
         {session.attention_reason ? (
-          <Detail label="Needs attention since">
+          <Fact label="Needs attention since">
             <When at={session.attention_since} label="since" />
-          </Detail>
+          </Fact>
         ) : null}
-        <Detail label="Started">
+        <Fact label="Started">
           <When at={session.created_at} label="started" />
-        </Detail>
-        <Detail label={session.ended_at ? "Ended" : "Last activity"}>
+        </Fact>
+        <Fact label={session.ended_at ? "Ended" : "Last activity"}>
           <When
             at={session.ended_at ?? session.last_activity_at}
             label={session.ended_at ? "ended" : "last activity"}
           />
-        </Detail>
-      </dl>
+        </Fact>
+      </FactList>
 
       <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
         <TabsList>
@@ -219,15 +213,6 @@ export function SessionDetailView({
           <SessionActivity sessionId={session.id} />
         </TabsContent>
       </Tabs>
-    </div>
-  )
-}
-
-function Detail({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="min-w-0 space-y-0.5">
-      <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="truncate text-sm">{children}</dd>
     </div>
   )
 }

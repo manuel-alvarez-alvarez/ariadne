@@ -16,10 +16,12 @@
  * this view is drilled into, which is why a value that is not one of these two
  * has to read as the terminal rather than as nothing.
  *
- * And two things a session says about itself that are neither: the model, null
- * on the wire for a session launched without one, which means the agent CLI
- * chose — a fact about the session, not a blank — and what it has spent, which
- * is zero rather than blank for an agent that has reported nothing yet.
+ * And two things a session says about itself that are neither: what it runs
+ * on, which is the tail of the Profile fact and no longer a Model row saying
+ * the same thing again — including the `auto` a session launched without one
+ * reads as, which means the agent CLI chose and is a fact rather than a blank —
+ * and what it has spent, which is zero rather than blank for an agent that has
+ * reported nothing yet.
  *
  * xterm needs a browser this environment only half is, so `matchMedia` and
  * `ResizeObserver` are stubbed for it, as in `session-terminal.test.tsx`.
@@ -202,21 +204,26 @@ it("falls back to the terminal for a tab that is not one of its own", () => {
   expect(screen.getByRole("tab", { name: "Terminal" }).getAttribute("data-active")).not.toBeNull()
 })
 
-it("shows the model the session was launched with", async () => {
+it("shows the model the session was launched with, once", async () => {
   renderView()
 
-  expect(detail("Model")).toBe("claude-opus-5")
   // The profile has `claude_code:claude-sonnet-5` pinned today; what this agent
   // runs is the snapshot taken when it started, not the profile as edited
-  // since — and the badge spells that snapshot's two fields as one id.
+  // since — and the fact spells that snapshot's two fields as one id.
   await waitFor(() => expect(detail("Profile")).toContain("engineer-default"))
   expect(detail("Profile")).toContain("claude_code:claude-opus-5")
+  // And it says it once: a Model row under this one carried the same tail with
+  // the agent CLI taken off it.
+  expect(screen.queryByText("Model")).toBeNull()
 })
 
-it("names the agent CLI's own choice where no model was recorded", () => {
+it("names the agent CLI's own choice where no model was recorded", async () => {
   renderView({ ...SESSION, model: null })
 
-  expect(detail("Model")).toBe("default")
+  // `claude_code` on its own is that CLI on its own default model, which is
+  // what the session was launched with — not the profile's pin.
+  await waitFor(() => expect(detail("Profile")).toContain("claude_code"))
+  expect(detail("Profile")).not.toContain("claude-sonnet-5")
 })
 
 it("shows what the session's agent has spent, as the pair it is", () => {

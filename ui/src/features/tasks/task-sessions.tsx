@@ -82,9 +82,19 @@ export function TaskSessionView({
   return (
     <>
       <SheetHeader>
-        <Button variant="ghost" size="sm" className="-ml-2 w-fit" onClick={() => onSelect(null)}>
+        {/* `max-w-full` and the truncating label are what keep a long task
+            title out from under the sheet's close button: a button is
+            `whitespace-nowrap` and `w-fit`, so without them it grows straight
+            through the header's own right padding (the goal panel's way back
+            is the same one). */}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="-ml-2 w-fit max-w-full"
+          onClick={() => onSelect(null)}
+        >
           <ArrowLeftIcon />
-          Back to {taskTitle ?? `task ${shortId(taskId)}`}
+          <span className="truncate">Back to {taskTitle ?? `task ${shortId(taskId)}`}</span>
         </Button>
         {/* The panel is a dialog and needs a name of its own; the view below
             carries the visible heading. */}

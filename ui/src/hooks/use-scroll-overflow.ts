@@ -7,8 +7,14 @@
  * measurement — so it is taken here and turned into whatever the caller draws
  * with it (see the board's edge fades in `goal-swimlanes.tsx`).
  *
- * Measured on scroll and on every resize of the port itself, which is what a
- * window narrowing and a scrollbar appearing both come down to.
+ * Measured on scroll, on every resize of the port itself — which is what a
+ * window narrowing and a scrollbar appearing both come down to — and on every
+ * resize of what the port *holds*, which is the half a port cannot see. A
+ * scrollport is as wide as its parent lets it be, so nothing about it changes
+ * when the table inside it grows: a list that mounts three loading rows and
+ * then answers with eight columns of data widens its content and leaves its
+ * container exactly as it was. Observing only the port left that table with no
+ * fade at the one moment it was cut short.
  */
 
 import { useEffect, useState } from "react"
@@ -54,6 +60,11 @@ export function useHorizontalOverflow<T extends HTMLElement>(): {
     node.addEventListener("scroll", measure, { passive: true })
     const observer = new ResizeObserver(measure)
     observer.observe(node)
+    // The content as well as the port: both callers put a single element in
+    // theirs — the `<table>`, the board's grid — and it is that element that
+    // grows when rows or columns arrive, since a scrollport's own box is the
+    // width its parent gives it and says nothing about what it is holding.
+    if (node.firstElementChild) observer.observe(node.firstElementChild)
     return () => {
       node.removeEventListener("scroll", measure)
       observer.disconnect()

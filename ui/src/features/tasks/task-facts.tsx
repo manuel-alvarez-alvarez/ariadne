@@ -14,6 +14,7 @@ import { Link } from "react-router-dom"
 
 import type { TaskDto } from "@/api"
 import { CopyableId } from "@/components/copyable-id"
+import { Fact, FactList } from "@/components/fact-list"
 import { TokenFigure, taskUsageRows } from "@/components/token-figure"
 import { ProfileSummary } from "@/features/profiles/profile-summary"
 import { cn, shortSha } from "@/lib/format"
@@ -24,7 +25,10 @@ import { primaryStatus, TASK_STATUS_META } from "./status"
 
 export function TaskFacts({ task }: { task: TaskDto }) {
   return (
-    <dl className="grid gap-x-6 gap-y-3 rounded-lg border bg-card p-3 text-sm sm:grid-cols-2">
+    // Two columns rather than the three a goal's facts take: a branch and a
+    // worktree path are the long values in the app, and a third column only
+    // cuts them shorter.
+    <FactList columns={2}>
       <Fact label="Branch">
         <span className="flex items-center gap-1.5">
           <GitBranchIcon className="size-3.5 shrink-0 text-muted-foreground" />
@@ -112,16 +116,7 @@ export function TaskFacts({ task }: { task: TaskDto }) {
           </span>
         </Fact>
       ) : null}
-    </dl>
-  )
-}
-
-function Fact({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="min-w-0">
-      <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="mt-0.5 min-w-0">{children}</dd>
-    </div>
+    </FactList>
   )
 }
 

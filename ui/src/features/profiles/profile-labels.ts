@@ -27,19 +27,12 @@ export const AGENT_KINDS = [
 
 /** Shown where a profile has no agent kind pinned. */
 const AUTO_AGENT_LABEL = "auto"
-/** Shown where a profile has no model pinned. */
-const DEFAULT_MODEL_LABEL = "default"
-
 export function roleLabel(role: Role): string {
   return ROLE_LABELS[role]
 }
 
 export function agentKindLabel(kind: AgentKind | null | undefined): string {
   return kind ? AGENT_KIND_LABELS[kind] : AUTO_AGENT_LABEL
-}
-
-export function modelLabel(model: string | null | undefined): string {
-  return model ? model : DEFAULT_MODEL_LABEL
 }
 
 /**

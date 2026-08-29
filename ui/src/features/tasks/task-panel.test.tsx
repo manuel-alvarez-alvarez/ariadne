@@ -21,18 +21,24 @@
  * spent it in the hint behind that total — and both have to be the figures the
  * daemon sent rather than anything added up here.
  *
+ * The last two are about the panel fitting in 48rem: its header keeps the
+ * actions on the title row whatever the status offers, and its sessions tab is
+ * the folded four-column table rather than the screen's seven — the id under
+ * the role it opens, and what the session spent behind its last activity.
+ *
  * Everything is seeded into the query cache: what the daemon returns is
  * `queries.ts`'s story, and the tabs are `task-panel.tsx`'s own.
  */
 
-import { act, screen, within } from "@testing-library/react"
+import { act, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, expect, it, vi } from "vitest"
 
-import { type MessageDto, type ProfileDto, qk, type TaskDto } from "@/api"
+import { type MessageDto, type ProfileDto, qk, type SessionDto, type TaskDto } from "@/api"
 import { markThreadSeen } from "@/components/thread-unread"
-import { aMessage } from "@/test/fixtures"
-import { renderScreen } from "@/test/harness"
+import { shortId } from "@/lib/format"
+import { aMessage, aSession } from "@/test/fixtures"
+import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { TaskPanel } from "./task-panel"
 
 const ENGINEER = "01JPROF0000000000000000ENG"
@@ -109,6 +115,15 @@ const TASK: TaskDto = {
   updated_at: "2026-01-01T00:00:00Z",
 }
 
+/** The one session of the task, for the panel's sessions tab. */
+const SESSION: SessionDto = aSession({
+  id: "01JSESS0000000000000000ENG",
+  task_id: TASK.id,
+  goal_id: TASK.goal_id,
+  profile_id: ENGINEER,
+  usage: { input_tokens: 1_000_000, cached_input_tokens: 900_000, output_tokens: 40_000 },
+})
+
 // How far into a thread the reader has got outlives a test, as it outlives a
 // panel; each test below says where this one is starting from.
 beforeEach(() => {
@@ -159,6 +174,21 @@ async function arrives(
 const THREAD: MessageDto[] = ["01JMESG1", "01JMESG2", "01JMESG3"].map((id) =>
   aMessage({ id, task_id: TASK.id, goal_id: TASK.goal_id, author_role: "engineer", body: id }),
 )
+
+/**
+ * The task's sessions, answered by the daemon rather than seeded: the tab is
+ * only mounted once it is clicked, and a seeded entry nothing observes is
+ * collected before then. Everything else — the session behind a picked row
+ * included — keeps the never-settling default, which is what leaves the panel
+ * on its skeleton instead of mounting a terminal in a DOM that has no canvas.
+ */
+function stubSessions() {
+  daemonFetch.mockImplementation((input: Request | string | URL) => {
+    const url = new URL(typeof input === "string" ? input : (input as Request).url)
+    if (url.pathname === "/v1/sessions") return Promise.resolve(jsonResponse([SESSION]))
+    return new Promise(() => {})
+  })
+}
 
 /**
  * The value of a fact, by the label above it. The gap between a profile's name
@@ -347,4 +377,67 @@ it("counts from where the reader left the thread, once they have been in it", as
 
   await arrives(queryClient, said, "01JMESG5")
   expect(within(tab(/Conversation/)).getByLabelText("2 unread messages").textContent).toBe("2")
+})
+
+/**
+ * A `Cancel task` alone on a line under the title read as a second row of
+ * header, and which line it landed on came down to how long the title was and
+ * how many buttons the status offers — an in-progress task offers one, a
+ * pending one two. The title gives way instead, in both.
+ */
+it("keeps the actions on the title row whatever the status offers", () => {
+  mount()
+
+  const cancel = screen.getByRole("button", { name: "Cancel task" })
+  const title = screen.getByRole("heading", { name: TASK.title })
+  expect(title.parentElement?.contains(cancel)).toBe(true)
+})
+
+it("folds the sessions table down to what a panel holds", async () => {
+  stubSessions()
+  mount()
+  await userEvent.setup().click(screen.getByRole("tab", { name: "Sessions" }))
+
+  const open = await screen.findByRole("button", { name: "Open Engineer session" })
+  const row = open.closest("tr")
+  if (!row) throw new Error("no row around the session")
+
+  // Four cells, not the screen's seven: the id shares the role's cell rather
+  // than taking one of its own, and the tokens have none at all.
+  const cells = within(row).getAllByRole("cell")
+  expect(cells).toHaveLength(4)
+  expect(cells[0]?.textContent).toContain("Engineer")
+  expect(cells[0]?.textContent).toContain(shortId(SESSION.id))
+
+  // What it spent is behind the last activity, with the two stamps that were
+  // already there — the figure is the plain pair, since a hint cannot hold a
+  // hint of its own.
+  const age = cells[3]?.querySelector<HTMLElement>("[data-slot='tooltip-trigger']")
+  if (!age) throw new Error("no last-activity hint in the row")
+  age.focus()
+  const popup = await waitFor(() => {
+    const hint = document.querySelector<HTMLElement>("[data-slot='tooltip-content']")
+    if (!hint) throw new Error("no hint behind the last activity")
+    return hint
+  })
+  expect(popup.textContent).toContain("started")
+  expect(popup.textContent).toContain("1M in, 90% cached, 40k out")
+})
+
+/**
+ * The way back out of a session picked inside the panel. A button is
+ * `whitespace-nowrap`, so a title long enough runs it straight under the
+ * sheet's close button; the label truncates instead, and the link stays one
+ * line at every width.
+ */
+it("keeps the way back from a session to one line", async () => {
+  stubSessions()
+  mount()
+  const user = userEvent.setup()
+  await user.click(screen.getByRole("tab", { name: "Sessions" }))
+  await user.click(await screen.findByRole("button", { name: "Open Engineer session" }))
+
+  const back = await screen.findByRole("button", { name: `Back to ${TASK.title}` })
+  expect(back.className).toContain("max-w-full")
+  expect(back.querySelector("span")?.className).toContain("truncate")
 })

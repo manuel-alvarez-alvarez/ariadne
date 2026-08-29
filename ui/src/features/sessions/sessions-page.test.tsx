@@ -16,6 +16,9 @@
  * The tokens column is here because it is the row's own figure and the table
  * is where sessions are compared: a compact `in/out`, and a `0/0` — never a
  * blank — on a session whose agent has reported nothing.
+ *
+ * And the shape of the row, which is the screen's and not the panels': seven
+ * columns, one of which folds away on a window too narrow for them.
  */
 
 import { cleanup, screen, waitFor, within } from "@testing-library/react"
@@ -23,7 +26,7 @@ import userEvent from "@testing-library/user-event"
 import { beforeEach, expect, it } from "vitest"
 
 import type { GoalDto, ProfileDto, SessionDto, TaskDto } from "@/api"
-import { formatAbsolute } from "@/lib/format"
+import { formatAbsolute, shortId } from "@/lib/format"
 import { useSettingsStore } from "@/stores/settings"
 import { aGoal, aProfile, aSession, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
@@ -106,13 +109,18 @@ it("says which work each session belongs to, and links to it", async () => {
   renderPage()
 
   // A session on a task is named by the task; the planner, which has none, by
-  // its goal — and the goal panel only opens on the board.
-  const engineer = within(await row("Open Engineer session")).getByRole("link", {
+  // its goal — and the goal panel only opens on the board. Awaited, because
+  // the names arrive after the rows do: the sessions come from one request and
+  // the two lists this column reads them against from two more, so a row is on
+  // screen wearing an id for as long as those are in flight.
+  const engineer = await within(await row("Open Engineer session")).findByRole("link", {
     name: TASK.title,
   })
   expect(engineer.getAttribute("href")).toBe(`/sessions?task=${TASK.id}`)
 
-  const planner = within(await row("Open Planner session")).getByRole("link", { name: GOAL.title })
+  const planner = await within(await row("Open Planner session")).findByRole("link", {
+    name: GOAL.title,
+  })
   expect(planner.getAttribute("href")).toBe(`/goals?goal=${GOAL.id}`)
 })
 
@@ -354,4 +362,41 @@ it("names the two halves behind the tokens column in reach of a keyboard", async
   expect(total.getByText("Output").nextElementSibling?.textContent).toBe("45k")
   // The counts are the figure's own rounded form, to the digit nowhere.
   expect(popup.textContent).not.toMatch(/\d,\d/)
+})
+
+it("keeps a column each, and folds the two a narrow window can spare", async () => {
+  renderPage()
+  const engineer = await row("Open Engineer session")
+  const cells = within(engineer).getAllByRole("cell")
+
+  // Seven, where a panel folds the same row down to four: this screen has a
+  // window's width and needs the context column a panel does not.
+  expect(cells).toHaveLength(7)
+  expect(cells[0]?.textContent).toContain(shortId(ENGINEER.id))
+
+  // Two of them go below `lg`, so that what is left — the work, the role, the
+  // profile, the status and the age — fits rather than being cut off the right
+  // edge. The id says nothing about the work a row is about (the panel it
+  // opens carries it in full), and the figure is in the hint either way.
+  const folded = "hidden lg:table-cell"
+  expect(cells[0]?.className).toContain(folded)
+  expect(tokens(engineer).closest("td")?.className).toContain(folded)
+})
+
+it("carries the tokens figure in the row's hint, folded column or not", async () => {
+  renderPage()
+  const engineer = await row("Open Engineer session")
+  const age = within(engineer).getAllByRole("cell").at(-1)
+  const trigger = age?.querySelector<HTMLElement>("[data-slot='tooltip-trigger']")
+  if (!trigger) throw new Error("no last-activity hint in the row")
+
+  // Below `lg` the column is gone, so the hint behind the age is where the
+  // figure is read — as the plain pair, since a hint cannot hold a hint.
+  trigger.focus()
+  const popup = await waitFor(() => {
+    const hint = document.querySelector<HTMLElement>("[data-slot='tooltip-content']")
+    if (!hint) throw new Error("no hint behind the last activity")
+    return hint
+  })
+  expect(popup.textContent).toContain("1.2M in, 89% cached, 45k out")
 })

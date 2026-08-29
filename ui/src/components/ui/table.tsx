@@ -4,9 +4,16 @@ import type * as React from "react"
 
 import { cn } from "@/lib/format"
 
-function Table({ className, ...props }: React.ComponentProps<"table">) {
+function Table({
+  className,
+  containerRef,
+  ...props
+}: React.ComponentProps<"table"> & {
+  /** The scrollport, for a caller measuring how much of the table is off its edge. */
+  containerRef?: React.Ref<HTMLDivElement>
+}) {
   return (
-    <div data-slot="table-container" className="relative w-full overflow-x-auto">
+    <div ref={containerRef} data-slot="table-container" className="relative w-full overflow-x-auto">
       <table
         data-slot="table"
         className={cn("w-full caption-bottom text-sm", className)}

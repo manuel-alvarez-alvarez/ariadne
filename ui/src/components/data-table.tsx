@@ -21,16 +21,10 @@ import { Fragment, type ReactNode } from "react"
 
 import { ApiError } from "@/api"
 import { ErrorState } from "@/components/error-state"
+import { ScrollableTable } from "@/components/scroll-edge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 
 /** Rows drawn while the list loads. Enough to read as a table, not as a page. */
 const PLACEHOLDER_ROWS = [0, 1, 2]
@@ -85,47 +79,48 @@ export function DataTable<T>({
   }
 
   return (
-    <div className="overflow-hidden rounded-xl border">
-      <Table>
-        <TableHeader>
-          <TableRow className="hover:bg-transparent">
-            {columns.map((column, index) => (
-              <TableHead
-                // Columns are a fixed list per screen; a heading may repeat.
-                // biome-ignore lint/suspicious/noArrayIndexKey: the position is the identity
-                key={index}
-                className={column.className}
-              >
-                {column.header ?? <span className="sr-only">Actions</span>}
-              </TableHead>
-            ))}
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {query.isPending ? (
-            PLACEHOLDER_ROWS.map((row) => (
-              <TableRow key={row} className="hover:bg-transparent">
-                {columns.map((_column, index) => (
-                  // biome-ignore lint/suspicious/noArrayIndexKey: placeholder cells have no identity
-                  <TableCell key={index}>
-                    <Skeleton className="h-4 w-full" />
-                  </TableCell>
-                ))}
-              </TableRow>
-            ))
-          ) : query.data?.length ? (
-            query.data.map((row) => <Fragment key={rowKey(row)}>{renderRow(row)}</Fragment>)
-          ) : (
-            <TableRow className="hover:bg-transparent">
-              {/* The table's own frame is the box around the empty state. */}
-              <TableCell colSpan={columns.length} className="p-0">
-                {empty}
-              </TableCell>
+    // A screen this narrow for its columns scrolls sideways, and says so:
+    // macOS draws no scrollbar until something moves, so the fade at the edge
+    // is the only sign that a column is cut short.
+    <ScrollableTable className="rounded-xl border">
+      <TableHeader>
+        <TableRow className="hover:bg-transparent">
+          {columns.map((column, index) => (
+            <TableHead
+              // Columns are a fixed list per screen; a heading may repeat.
+              // biome-ignore lint/suspicious/noArrayIndexKey: the position is the identity
+              key={index}
+              className={column.className}
+            >
+              {column.header ?? <span className="sr-only">Actions</span>}
+            </TableHead>
+          ))}
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {query.isPending ? (
+          PLACEHOLDER_ROWS.map((row) => (
+            <TableRow key={row} className="hover:bg-transparent">
+              {columns.map((_column, index) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: placeholder cells have no identity
+                <TableCell key={index}>
+                  <Skeleton className="h-4 w-full" />
+                </TableCell>
+              ))}
             </TableRow>
-          )}
-        </TableBody>
-      </Table>
-    </div>
+          ))
+        ) : query.data?.length ? (
+          query.data.map((row) => <Fragment key={rowKey(row)}>{renderRow(row)}</Fragment>)
+        ) : (
+          <TableRow className="hover:bg-transparent">
+            {/* The table's own frame is the box around the empty state. */}
+            <TableCell colSpan={columns.length} className="p-0">
+              {empty}
+            </TableCell>
+          </TableRow>
+        )}
+      </TableBody>
+    </ScrollableTable>
   )
 }
 

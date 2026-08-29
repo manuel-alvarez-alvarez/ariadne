@@ -127,12 +127,14 @@ it("keeps the sessions tab to the sessions, with no breakdown above them", async
   expect(screen.queryByRole("heading", { name: "Tokens" })).toBeNull()
 })
 
-it("shows what the planner runs on: the goal's pin, and that it overrides", () => {
+it("shows what the planner runs on: the goal's pin, and that it is a pin", () => {
   mount(aGoal({ model: "codex:gpt-5.3-codex" }))
 
   const planner = detail("Planner").textContent ?? ""
   expect(planner).toContain("codex:gpt-5.3-codex")
-  expect(planner).toContain("(overrides)")
+  // One word for "this is not what the profile says", where "(overrides)" left
+  // the reader to work out which of the two won.
+  expect(planner).toContain("pinned")
   expect(planner).not.toContain("grok-4")
 })
 
