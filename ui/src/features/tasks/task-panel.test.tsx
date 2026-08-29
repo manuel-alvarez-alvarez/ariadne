@@ -219,16 +219,19 @@ it("breaks the total down by the agent that spent it, reviewers named", async ()
   const figures = [...popup.querySelectorAll("dd")].map((figure) => figure.textContent)
   expect(figures).toEqual(["1M in, 90% cached, 40k out", "235k in, 85% cached, 5.3k out"])
 
-  // The exact counts lead the hint, labelled and each on its own line, and
-  // they are the task's own total rather than the lines under it added up.
-  const exact = within(popup)
-  expect(exact.getByText("Input").nextElementSibling?.textContent).toBe("1,234,567")
-  // The cached line is under Input and part of it, carrying the same share
-  // the figure itself shows rather than a total of its own.
-  const cached = exact.getByText("cached")
-  expect(cached.nextElementSibling?.textContent).toBe("1,100,000")
-  expect(cached.nextElementSibling?.nextElementSibling?.textContent).toBe("89%")
-  expect(exact.getByText("Output").nextElementSibling?.textContent).toBe("45,300")
+  // The two halves lead the hint, named and each on its own line, in the same
+  // rounded form the figure shows and carrying the task's own total rather
+  // than the lines under it added up.
+  const total = within(popup)
+  const input = total.getByText("Input")
+  expect(input.nextElementSibling?.textContent).toBe("1.2M")
+  // The share rides beside the input count, part of it rather than a count of
+  // its own — the same share the figure itself shows.
+  expect(input.nextElementSibling?.nextElementSibling?.textContent).toBe("89%")
+  expect(total.getByText("Output").nextElementSibling?.textContent).toBe("45k")
+  // Nothing in the hint is spelled to the digit any more: not the halves, not
+  // the rows under them.
+  expect(popup.textContent).not.toMatch(/\d,\d/)
 })
 
 it("keeps the sessions tab to the sessions, with no breakdown above them", async () => {

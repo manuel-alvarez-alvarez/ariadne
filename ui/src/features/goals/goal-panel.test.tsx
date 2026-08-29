@@ -103,17 +103,19 @@ it("breaks the total down by the role that spent it, behind the figure", async (
     "0 in, 0% cached, 0 out",
   ])
 
-  // The exact counts lead the hint, labelled and each on its own line, and
-  // they are the goal's own total: the planner and the two roles under it,
-  // none of it added up here.
-  const exact = within(popup)
-  expect(exact.getByText("Input").nextElementSibling?.textContent).toBe("1,234,567")
-  // The cached line is under Input and part of it, carrying the same share
-  // the figure itself shows rather than a total of its own.
-  const cached = exact.getByText("cached")
-  expect(cached.nextElementSibling?.textContent).toBe("1,100,000")
-  expect(cached.nextElementSibling?.nextElementSibling?.textContent).toBe("89%")
-  expect(exact.getByText("Output").nextElementSibling?.textContent).toBe("45,300")
+  // The two halves lead the hint, named and each on its own line, and they are
+  // the goal's own total: the planner and the two roles under it, none of it
+  // added up here.
+  const total = within(popup)
+  const input = total.getByText("Input")
+  expect(input.nextElementSibling?.textContent).toBe("1.2M")
+  // The share rides beside the input count, part of it rather than a count of
+  // its own — the same share the figure itself shows.
+  expect(input.nextElementSibling?.nextElementSibling?.textContent).toBe("89%")
+  expect(total.getByText("Output").nextElementSibling?.textContent).toBe("45k")
+  // Nothing in the hint is spelled to the digit any more: not the halves, not
+  // the rows under them.
+  expect(popup.textContent).not.toMatch(/\d,\d/)
 })
 
 it("keeps the sessions tab to the sessions, with no breakdown above them", async () => {

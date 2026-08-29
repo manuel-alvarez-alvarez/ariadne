@@ -335,22 +335,23 @@ it("carries each session's tokens, and zero for one that has reported none", asy
   expect(tokens(await row("Open Planner session")).textContent).toBe("0 in, 0% cached, 0 out")
 })
 
-it("puts the exact counts behind the tokens column in reach of a keyboard", async () => {
+it("names the two halves behind the tokens column in reach of a keyboard", async () => {
   renderPage()
 
-  // Every digit of the counts is what the column has no room for; the hint
-  // opens on focus, like the table's other two.
+  // Which half is which is what the arrows in the column leave unsaid; the
+  // hint opens on focus, like the table's other two.
   tokens(await row("Open Engineer session")).focus()
   const label = await screen.findByText("Input")
   const popup = label.closest<HTMLElement>("[data-slot='tooltip-content']")
-  if (!popup) throw new Error("no hint around the exact counts")
+  if (!popup) throw new Error("no hint around the named halves")
 
-  const exact = within(popup)
-  expect(exact.getByText("Input").nextElementSibling?.textContent).toBe("1,234,567")
-  // The cached line is under Input and part of it, carrying the same share
-  // the figure itself shows rather than a total of its own.
-  const cached = exact.getByText("cached")
-  expect(cached.nextElementSibling?.textContent).toBe("1,100,000")
-  expect(cached.nextElementSibling?.nextElementSibling?.textContent).toBe("89%")
-  expect(exact.getByText("Output").nextElementSibling?.textContent).toBe("45,300")
+  const total = within(popup)
+  const input = total.getByText("Input")
+  expect(input.nextElementSibling?.textContent).toBe("1.2M")
+  // The share rides beside the input count, part of it rather than a count of
+  // its own — the same share the figure itself shows.
+  expect(input.nextElementSibling?.nextElementSibling?.textContent).toBe("89%")
+  expect(total.getByText("Output").nextElementSibling?.textContent).toBe("45k")
+  // The counts are the figure's own rounded form, to the digit nowhere.
+  expect(popup.textContent).not.toMatch(/\d,\d/)
 })

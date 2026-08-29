@@ -11,14 +11,15 @@
  * The percent rides on the input half because it is a property of it: what
  * share of everything sent the cache served. Around nineteen of every twenty
  * input tokens are cache reads, so it is the number that says whether a figure
- * that looks expensive actually was — and reading it off the exact counts
+ * that looks expensive actually was — and reading it off the raw counts
  * means dividing one eight-digit number by another.
  *
- * Everything the compact form drops is in the hint behind it — the exact
- * counts, and, where the figure is a whole goal's or a whole task's, one line
- * per agent that spent part of it. That breakdown used to be a card above the
- * sessions list; it is a hover now, because it answers a question that is
- * asked once and read past forever.
+ * What the arrows leave unsaid is in the hint behind it — the two halves
+ * named, Input and Output, in the same rounded form the figure shows — and,
+ * where the figure is a whole goal's or a whole task's, one line per agent
+ * that spent part of it. That breakdown used to be a card above the sessions
+ * list; it is a hover now, because it answers a question that is asked once
+ * and read past forever.
  *
  * The figures are the daemon's own: the task and goal DTOs carry the split
  * already aggregated, and nothing here adds anything up. A total that
@@ -30,7 +31,7 @@ import { ArrowDownIcon, ArrowUpIcon } from "lucide-react"
 
 import type { GoalUsage, TaskUsage, TokenUsage } from "@/api"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { cachedShare, cn, exactTokens, formatTokens, shortId } from "@/lib/format"
+import { cachedShare, cn, formatTokens, shortId } from "@/lib/format"
 
 /** One line of a total's breakdown: who spent it, and how much. */
 interface UsageRow {
@@ -64,7 +65,7 @@ export function TokenFigure({
   className,
 }: {
   usage: TokenUsage
-  /** The agents behind a total, listed under the exact counts in the hint. */
+  /** The agents behind a total, listed under its named halves in the hint. */
   rows?: UsageRow[]
   className?: string
 }) {
@@ -74,12 +75,12 @@ export function TokenFigure({
         <Halves usage={usage} />
       </TooltipTrigger>
       <TooltipContent className="flex-col items-start gap-2">
-        <ExactCounts usage={usage} />
+        <NamedHalves usage={usage} />
         {rows ? (
-          // Full width against the grid above, which is always the widest
-          // block of the hint, so the figures line up down it whatever the
-          // names beside them are. The gap over them is what keeps them read
-          // as a breakdown of the total rather than more lines of it.
+          // Full width whatever the block above it measures, so the figures
+          // hang off the same right edge down the list however long the names
+          // beside them are. The gap over them is what keeps them read as a
+          // breakdown of the total rather than more lines of it.
           <dl className="w-full text-background/70">
             {rows.map((row) => (
               <div key={row.key} className="flex items-center gap-3">
@@ -129,29 +130,25 @@ function Halves({ usage }: { usage: TokenUsage }) {
 }
 
 /**
- * The exact counts the figure rounds, as a labelled block rather than a
- * sentence: three labels down the left, the digits right-aligned against each
- * other so a reader compares them by length as well as by value.
+ * The total again, with the words the arrows stand in for: two labels down the
+ * left, the counts right-aligned against each other. Same figures as the
+ * trigger, so the hint never shows a number the thing it hangs off disagrees
+ * with — it spells out which half is which, and what the rows below it add up
+ * towards.
  *
- * Cached is a line under Input rather than a third total — it is part of the
- * number above it, never added to it — so it is indented under that label and
- * dimmed against it, and it is the one line carrying a percentage, the same
- * one the figure itself shows.
+ * The share stays where it is on the figure, beside the input count and dimmed
+ * against it. It is a property of that half rather than a count of its own, so
+ * it is never given a label and never given a line.
  */
-function ExactCounts({ usage }: { usage: TokenUsage }) {
+function NamedHalves({ usage }: { usage: TokenUsage }) {
   return (
     <div className="grid grid-cols-[auto_1fr_auto] gap-x-4 tabular-nums">
       <span>Input</span>
-      <span className="text-right">{exactTokens(usage.input_tokens)}</span>
-      {/* The share's column, empty on the two lines that are totals. */}
-      <span />
-      <span className="pl-3 text-background/70">cached</span>
-      <span className="text-right text-background/70">
-        {exactTokens(usage.cached_input_tokens)}
-      </span>
+      <span className="text-right">{formatTokens(usage.input_tokens)}</span>
       <span className="text-background/70">{cachedShare(usage)}</span>
       <span>Output</span>
-      <span className="text-right">{exactTokens(usage.output_tokens)}</span>
+      <span className="text-right">{formatTokens(usage.output_tokens)}</span>
+      {/* The share's column, empty on the half that has none. */}
       <span />
     </div>
   )

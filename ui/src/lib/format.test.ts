@@ -4,7 +4,6 @@ import { ApiError } from "@/api"
 import {
   cachedShare,
   describeError,
-  exactTokens,
   formatAbsolute,
   formatAge,
   formatDuration,
@@ -51,6 +50,18 @@ describe("formatTokens", () => {
     [9_949_999, "9.9M"],
     [9_950_000, "10M"],
     [12_345_678, "12M"],
+    [999_499_999, "999M"],
+    [999_500_000, "1G"],
+    [1_234_000_000, "1.2G"],
+    [9_949_999_999, "9.9G"],
+    [9_950_000_000, "10G"],
+    [45_000_000_000, "45G"],
+    [999_499_999_999, "999G"],
+    [999_500_000_000, "1T"],
+    [1_500_000_000_000, "1.5T"],
+    // Past the top band the figure grows a digit rather than a unit: there is
+    // no letter above `T`, and nothing counts high enough to need one.
+    [1_234_000_000_000_000, "1234T"],
   ]
 
   it.for(TABLE)("spells %i as %s", ([count, spelled]) => {
@@ -59,17 +70,6 @@ describe("formatTokens", () => {
 
   it("has nothing below zero to show", () => {
     expect(formatTokens(-5)).toBe("0")
-  })
-})
-
-describe("exactTokens", () => {
-  it("groups every digit, since it is what a rounded figure hides", () => {
-    expect(exactTokens(1_234_567)).toBe("1,234,567")
-    expect(exactTokens(45_300)).toBe("45,300")
-  })
-
-  it("says zero for an agent that has reported nothing, rather than going blank", () => {
-    expect(exactTokens(0)).toBe("0")
   })
 })
 

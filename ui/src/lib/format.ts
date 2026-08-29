@@ -27,7 +27,7 @@ import {
 /**
  * The language every formatted value is spelled in, pinned rather than taken
  * from the system: these strings sit in the middle of English sentences
- * ("updated 3 minutes ago", "Input 1,234,567"), and a machine set to another
+ * ("updated 3 minutes ago", "16 Aug 2026, 14:03"), and a machine set to another
  * language would produce half-translated lines.
  */
 const LOCALE = "en"
@@ -53,11 +53,11 @@ export function plural(count: number, noun: string, many = `${noun}s`): string {
 // ── Tokens ────────────────────────────────────────────────────────────────
 
 /**
- * Token counts run to eight digits, and every surface that shows one is a
- * table cell, a lane header or a 48rem panel column: `1234567` is both
- * unreadable and wider than the space it has. A figure keeps at most three
- * digits of the count — `1.2k`, `45k`, `1.2M` — which is as much as a reader
- * compares by, and the exact number is one hover away wherever this is shown.
+ * Token counts run to eight digits and beyond, and every surface that shows
+ * one is a table cell, a lane header or a 48rem panel column: `1234567` is
+ * both unreadable and wider than the space it has. A figure keeps three
+ * digits of the count — `1.2k`, `45k`, `1.2M`, `1.2G`, `1.5T` — which is as
+ * much as a reader compares by.
  *
  * The decimal only appears while it says something. It separates `1.2k` from
  * `9.9k`, where a tenth is a tenth of the whole figure; above ten of a unit it
@@ -66,7 +66,12 @@ export function plural(count: number, noun: string, many = `${noun}s`): string {
  *
  * Rounding is half away from zero at whatever precision is being shown, and it
  * carries into the next band as it reaches it: 9,950 is `10k` and not the
- * `10.0k` the band below would spell, 999,500 is `1M` and not `1000k`.
+ * `10.0k` the band below would spell, 999,500 is `1M` and not `1000k`,
+ * 999,500,000 is `1G`.
+ *
+ * `T` is the last band, and a count that outgrows it grows a digit instead:
+ * there is no unit above it to carry into, so 1,234 trillion is `1234T` — the
+ * one figure wider than three digits, and one nothing here will ever reach.
  *
  * Character for character what the CLI's own `tokens` prints (see
  * `crates/ariadne-cli/src/output.rs`): the same count has to read the same in
@@ -76,34 +81,39 @@ export function plural(count: number, noun: string, many = `${noun}s`): string {
 export function formatTokens(count: number): string {
   const total = Math.max(0, Math.round(count))
   if (total < 1_000) return String(total)
-  // Each band is rounded at its own precision *before* it is accepted, so a
-  // count that rounds out of one is spelled by the next: 9,950 rounds to ten
-  // thousand and falls through to the whole-k band, 999,500 to the M one.
-  const tenthsOfK = Math.round(total / 100) / 10
-  if (tenthsOfK < 10) return `${decimal(tenthsOfK)}k`
-  const wholeK = Math.round(total / 1_000)
-  if (wholeK < 1_000) return `${wholeK}k`
-  const tenthsOfM = Math.round(total / 100_000) / 10
-  if (tenthsOfM < 10) return `${decimal(tenthsOfM)}M`
-  return `${Math.round(total / 1_000_000)}M`
+  for (const [unit, suffix] of BANDS) {
+    // Each band is rounded at its own precision *before* it is accepted, so a
+    // count that rounds out of one is spelled by the next: 9,950 rounds to ten
+    // thousand and falls through to the whole-k band, 999,500 to the M one.
+    const tenths = Math.round(total / (unit / 10)) / 10
+    if (tenths < 10) return `${decimal(tenths)}${suffix}`
+    const whole = Math.round(total / unit)
+    if (whole < 1_000) return `${whole}${suffix}`
+  }
+  // Nothing is counted in more than trillions, so the top band has no ceiling:
+  // a figure past `999T` grows a digit rather than reaching for a unit that
+  // does not exist.
+  return `${Math.round(total / TRILLION)}T`
 }
+
+const TRILLION = 1_000_000_000_000
+
+/**
+ * The bands a count is spelled in, smallest first: how much of it a unit is
+ * worth, and the letter that says so. Four of them because an agent fleet's
+ * lifetime total passes a billion tokens, and a figure that stopped at `M`
+ * would spell it as five digits of `M` in a column sized for three.
+ */
+const BANDS: [number, string][] = [
+  [1_000, "k"],
+  [1_000_000, "M"],
+  [1_000_000_000, "G"],
+  [TRILLION, "T"],
+]
 
 /** One decimal place, and none at all where it is a zero: `1.2`, `2`. */
 function decimal(value: number): string {
   return value.toFixed(1).replace(/\.0$/, "")
-}
-
-const EXACT = new Intl.NumberFormat(LOCALE)
-
-/**
- * A count to the digit, grouped: `1,234,567`.
- *
- * The exact form of a number {@link formatTokens} rounds — two counts a
- * hundred thousand apart both read as `1.2M`, so the pair has to be reachable
- * somewhere, and that somewhere is the hint behind every compact figure.
- */
-export function exactTokens(count: number): string {
-  return EXACT.format(count)
 }
 
 /**
