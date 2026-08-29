@@ -144,6 +144,32 @@ fn is_a_question(payload: &serde_json::Value) -> bool {
     payload.get("tool_name").and_then(|v| v.as_str()) == Some(QUESTION_TOOL)
 }
 
+/// The event kinds that begin a turn, in the two hook vocabularies that
+/// carry [`last_assistant_message`].
+///
+/// What bounds "this turn" when the daemon asks whether the words a turn
+/// ended on had already been posted during it: a message written after the
+/// last of these was written in the turn that is ending now, and one written
+/// before it belongs to an earlier turn the user has already had. Claude Code
+/// and Codex spell both events the same way; the opencode plugin is not here
+/// because its idle event carries no text to relay.
+pub(super) const TURN_STARTS: [&str; 2] = ["user_prompt_submit", "session_start"];
+
+/// The text an agent's turn ended on, where the event carries it.
+///
+/// Claude Code's `Stop` hook payload and Codex's both put the turn's final
+/// assistant message in `last_assistant_message` — nullable in codex 0.150's
+/// schema, since a turn can end without one — so an idle-mapped event of
+/// either kind may be carrying words nobody has read. The opencode plugin
+/// sends nothing of the sort with its `session.idle`, and nothing is invented
+/// for it.
+///
+/// What is answered here is only what the payload says. Whether the text is
+/// anybody's to hear is [`crate::notify::planner_ended_its_turn`]'s question.
+pub(super) fn last_assistant_message(payload: &serde_json::Value) -> Option<&str> {
+    payload.get("last_assistant_message")?.as_str()
+}
+
 /// The token usage an event reports, as `(source, totals)` — the transcript
 /// the figures were read from, and its cumulative totals.
 ///
@@ -224,8 +250,8 @@ fn attention_for_notification(
 #[cfg(test)]
 mod tests {
     use super::{
-        QUESTION_TOOL, Question, attention_for_event, extract_internal_id, question_for_event,
-        status_for_event, usage_for_event,
+        QUESTION_TOOL, Question, attention_for_event, extract_internal_id, last_assistant_message,
+        question_for_event, status_for_event, usage_for_event,
     };
 
     use ariadne_core::{AgentKind, AttentionReason, SessionStatus, TokenUsage};
@@ -546,6 +572,42 @@ mod tests {
                 attention_for_event("notification", &payload),
                 Some(expected),
                 "{message}"
+            );
+        }
+    }
+
+    /// The words a turn ended on, as the two hook protocols that carry them
+    /// spell it. Read verbatim: what a blank or an absent one is worth is
+    /// `notify::planner_ended_its_turn`'s to say, not this table's.
+    #[test]
+    fn a_turn_boundary_carries_the_text_the_turn_ended_on() {
+        // A Claude Code 2.1.235 `Stop`, and a codex 0.150 one, both trimmed
+        // to what is read here.
+        for payload in [
+            json!({"hook_event_name": "Stop", "stop_hook_active": false,
+                   "session_id": "5cf3f43d-6d22-42eb-8e44-8213bee346cd",
+                   "last_assistant_message": "Which of the two do you want?"}),
+            json!({"hook_event_name": "Stop", "model": "gpt-5.6-sol",
+                   "session_id": "01a01a24-e62e-71c1-ba23-96c62f6acee1",
+                   "last_assistant_message": "Which of the two do you want?"}),
+        ] {
+            assert_eq!(
+                last_assistant_message(&payload),
+                Some("Which of the two do you want?"),
+                "{payload}"
+            );
+        }
+        // A turn that ended on nothing anybody said, a codex payload whose
+        // nullable field is null, and an opencode `session.idle`, which
+        // carries no such field at all.
+        for payload in [
+            json!({"hook_event_name": "Stop", "last_assistant_message": ""}),
+            json!({"hook_event_name": "Stop", "last_assistant_message": null}),
+            json!({"sessionID": "ses_x"}),
+        ] {
+            assert!(
+                last_assistant_message(&payload).is_none_or(str::is_empty),
+                "{payload}"
             );
         }
     }

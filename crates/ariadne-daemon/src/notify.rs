@@ -12,9 +12,15 @@
 //! Everything up to then has an agent behind it that the user can watch; an
 //! ending has none — the sessions are killed with it — and until this a task
 //! that exhausted its spawn budget died in a log line.
+//!
+//! And one thing that is not the daemon's own: the words a planner ended its
+//! turn on ([`planner_ended_its_turn`]). Composed by nobody here — the daemon
+//! only relays what the agent already said, into the thread the planner would
+//! have posted it to itself — but written on the user's behalf all the same,
+//! and travelling the same way once it is written.
 
-use ariadne_core::{AuthorRole, TaskStatus};
-use ariadne_store::{Goal, Message, NewMessage, Recipient, Result, Store, Task};
+use ariadne_core::{AuthorRole, GoalStatus, Role, TaskStatus};
+use ariadne_store::{AgentSession, Goal, Message, NewMessage, Recipient, Result, Store, Task};
 
 /// A transition's reason as a sentence quotes it, or the stand-in for one
 /// that carried none.
@@ -112,4 +118,75 @@ pub async fn planner_gave_up(store: &Store, goal: &Goal, attempts: u32) -> Resul
             ),
         })
         .await
+}
+
+/// The words a planner ended its turn on, put into its goal's thread as a
+/// message for the user.
+///
+/// The one thing here the daemon did not compose. A planner that ends its
+/// turn on a plain-text question — no `post_message`, no `AskUserQuestion` —
+/// leaves no trace anywhere the user looks: the thread stays empty and
+/// nothing goes up on the attention strip, so the question is only ever found
+/// by opening the pane. The text is in the daemon's hands either way (the
+/// idle event carries it, see
+/// [`crate::http::classify::last_assistant_message`]), so it is written as
+/// the message the planner would have posted itself — the same shape a
+/// `post_message` to "user" produces — and the delivery path raises it from
+/// there, the way it raises every other message addressed to the user.
+///
+/// What makes the guess safe is the status. A planner whose turn ends while
+/// its goal is still in planning is by construction waiting for the user: it
+/// did not call `finalize_plan`, so it either asked something or is showing
+/// them the plan. `None` for anything else, and nothing is written:
+///
+/// - another role — an engineer or a reviewer that ends a turn is waiting for
+///   the daemon's nudge, not for a person, and flagging it for the user takes
+///   it out of the watchdog that would have nudged it;
+/// - a goal past planning, where a planner that has finalized is nobody's to
+///   wake;
+/// - text that is empty or nothing but whitespace;
+/// - text the planner posted itself during this same turn, which is what
+///   keeps a `post_message` to "user" followed by the same words at the end
+///   of the turn from arriving in the thread twice.
+///
+/// `turn_began_at` is when the turn that is ending began — the timestamp of
+/// the session's last turn-start event ([`crate::http::classify::TURN_STARTS`]).
+/// It is what keeps that last exception to one turn: a planner that asked
+/// something, was answered, and asks the very same thing again turns later is
+/// asking it afresh, and suppressing it would leave the user waiting on a
+/// question nothing shows. `None` — a session with no turn-start recorded at
+/// all — deduplicates nothing, since a line said twice in the thread costs
+/// the user a glance and a question swallowed costs them the goal.
+pub async fn planner_ended_its_turn(
+    store: &Store,
+    session: &AgentSession,
+    text: &str,
+    turn_began_at: Option<&str>,
+) -> Result<Option<Message>> {
+    let body = text.trim();
+    if session.role() != Role::Planner || body.is_empty() {
+        return Ok(None);
+    }
+    if store.get_goal(&session.goal_id).await?.status() != GoalStatus::Planning {
+        return Ok(None);
+    }
+    if let Some(began) = turn_began_at
+        && store
+            .last_goal_message_from(&session.goal_id, &session.id)
+            .await?
+            .is_some_and(|last| last.body.trim() == body && last.created_at.as_str() >= began)
+    {
+        return Ok(None);
+    }
+    let message = store
+        .create_message(NewMessage {
+            goal_id: session.goal_id.clone(),
+            task_id: None,
+            author_role: AuthorRole::Planner,
+            author_session_id: Some(session.id.clone()),
+            recipient: Some(Recipient::User),
+            body: body.to_string(),
+        })
+        .await?;
+    Ok(Some(message))
 }

@@ -68,6 +68,28 @@ impl Store {
         .await?)
     }
 
+    /// The last thing one session said in a goal's own thread, or `None`
+    /// where it has said nothing there yet.
+    ///
+    /// What a would-be duplicate is held against: the daemon relays the words
+    /// a planner ended its turn on into the thread, and a planner that posted
+    /// them itself a moment earlier must not have them written twice.
+    pub async fn last_goal_message_from(
+        &self,
+        goal_id: &str,
+        session_id: &str,
+    ) -> Result<Option<Message>> {
+        Ok(sqlx::query_as::<_, Message>(
+            "SELECT * FROM messages
+              WHERE goal_id = ? AND task_id IS NULL AND author_session_id = ?
+              ORDER BY id DESC LIMIT 1",
+        )
+        .bind(goal_id)
+        .bind(session_id)
+        .fetch_optional(self.r())
+        .await?)
+    }
+
     /// Goal-level thread (task_id IS NULL), keyset-paginated by id.
     pub async fn list_goal_messages(
         &self,
