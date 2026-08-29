@@ -83,7 +83,12 @@ export function GoalsListPage() {
   }
 
   // The board owns the scrolling (its headers stick to it), so the screen is a
-  // fixed-height column rather than a page that grows.
+  // fixed-height column rather than a page that grows: `h-full` against the
+  // shell's `<main>`, which is itself a `flex-1 min-h-0` item, and both engines
+  // resolve it — measured in the Tauri window, the board comes out exactly as
+  // tall as what is left. Keeping `<main>` from scrolling behind it is the
+  // board's own job, on `BOARD_BOX`: what a scrollport hides is still overflow
+  // for the scroller above it unless the scrollport says otherwise.
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
       <PageHeader

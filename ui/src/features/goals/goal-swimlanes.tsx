@@ -68,10 +68,33 @@ const BOARD_WIDTH = "min-w-[60rem] xl:min-w-[72rem]"
  * The board's own scrollport: sticky only works against the box that scrolls.
  * It fills {@link BOARD_FRAME}, which is what the edge fades are positioned
  * against — they have to sit outside the thing that scrolls under them.
+ *
+ * `contain-paint` is what keeps that scrolling to *this* box. Without it the
+ * lanes hidden past the bottom edge still counted as overflow for the shell's
+ * `<main>`, which scrolls the whole screen: measured in the Tauri window,
+ * `main.scrollHeight` came back 4418px against a 712px port — with the board
+ * itself correctly 249px tall — so the page scrolled behind a board that was
+ * already scrolling, two vertical scrollbars, and the page header and the
+ * attention strip slid away under the first one. Chromium counts it the same
+ * way (4470 against 657), so this is not a WebKit workaround: it is the box
+ * saying what it already means, that it draws nothing outside itself, which is
+ * what stops the overflow reaching an ancestor scroller.
+ *
+ * It costs the board nothing: paint containment does not size anything, so
+ * every height here is what it was, sticky still sticks to this scrollport,
+ * and the focus ring below is this box's own rather than a descendant's — the
+ * one thing containment would have clipped.
  */
-const BOARD_BOX = "h-full rounded-lg border"
+const BOARD_BOX = "h-full rounded-lg border contain-paint"
 
-/** The board's slot on the screen: the height it gets, and the fades' anchor. */
+/**
+ * The board's slot on the screen: the height it gets, and the fades' anchor.
+ *
+ * The height is flex's, from the fixed-height column in `goals-list-page.tsx`,
+ * and it lands the same in both engines — measured in the Tauri window, this
+ * frame is what is left of `<main>` to the pixel. What differed there is only
+ * what escapes the scrollport inside it; see {@link BOARD_BOX}.
+ */
 const BOARD_FRAME = "relative min-h-0 flex-1"
 
 /** Opaque, because the lanes scroll underneath it. */
