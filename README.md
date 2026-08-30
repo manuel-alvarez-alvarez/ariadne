@@ -35,13 +35,19 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    says how deeply that model reasons — one of the efforts `ariadne models ls`
    lists for it (`--effort xhigh`); left out, the model runs at whatever its
    agent CLI runs it at.
-2. The planner breaks the goal down on its own — it asks nothing, and writes
-   any reading the goal text left open into the task it affects — and creates
-   the tasks through the Ariadne MCP tools (assigning an engineer profile and
-   reviewer profiles per task, with optional `depends_on` ordering). Nothing
-   runs while the goal is in `planning` — read the tasks and edit what they
-   still need with `ariadne task update` — and it is `finalize_plan` that
-   starts the work. The planner also picks what each of those agents runs on,
+2. The planner first drafts a spec from the goal text, then asks its
+   questions in its terminal and waits — `ariadne goal attach` drops you into
+   that terminal to answer them. A planner waiting on you shows up wherever
+   Ariadne lists what needs attention. It asks for an explicit yes on the
+   finished spec before it creates any task.
+3. Once the spec is approved, the planner creates the tasks through the
+   Ariadne MCP tools (assigning an engineer profile and reviewer profiles per
+   task, with optional `depends_on` ordering). The first task commits the
+   approved spec to the repository; every other task depends on it and
+   references it. Nothing runs while the goal is in `planning` — read the
+   tasks and edit what they still need with `ariadne task update` — and it is
+   `finalize_plan` that starts the work. The planner also picks what each of
+   those agents runs on,
    sizing the model and the effort to the task it wrote; the last word is
    yours, with
    `ariadne task update <task-id> --model claude_code:claude-opus-5 --effort
@@ -60,17 +66,17 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    fit for, and what each of its efforts buys — `ariadne models show
    <model>` prints the same card (or, until that lands, `ariadne models ls
    --format json` carries the same fields).
-3. The scheduler takes over: when a task's dependencies are merged it becomes
+4. The scheduler takes over: when a task's dependencies are merged it becomes
    `ready` and an **engineer** is spawned in a dedicated git worktree, on a
    branch named after the task — its title slugged plus a short tail of its
    id, as in `fix-the-landing-briefing-real-fetch-r9jr7c`. It implements,
    commits and calls `request_review` under a summary of what it did, which is
    what the reviewers read first.
-4. **Reviewers** spawn in read-only detached worktrees, inspect the diff and
+5. **Reviewers** spawn in read-only detached worktrees, inspect the diff and
    `submit_verdict`, approving or requesting changes. Change requests resume
    the engineer with the feedback; enough approvals move the task to
    `approved`.
-5. The task never leaves the engineer that wrote it: it keeps its session and
+6. The task never leaves the engineer that wrote it: it keeps its session and
    its worktree, and is briefed to land the change with the repository's
    **landing briefing** — the whole procedure, which the engineer then runs.
    That briefing is the repository's own: it is prefilled from the repository's
@@ -95,7 +101,7 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
      into and added to, never rewritten. Once the request is approved and green
      it merges it with `--squash`, fast-forwards the base branch and reports
      the sha.
-6. Worktrees are cleaned up, dependent tasks wake up, and the goal completes
+7. Worktrees are cleaned up, dependent tasks wake up, and the goal completes
    when everything is merged.
 
 Task lifecycle: `pending → ready → in_progress → under_review →
