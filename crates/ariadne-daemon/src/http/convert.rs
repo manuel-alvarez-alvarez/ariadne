@@ -69,6 +69,8 @@ dto! {
 
     pub fn repository_dto(r: store::Repository) -> RepositoryDto {
         merge_strategy: r.merge_strategy(),
+        landing_prompt: r.landing_prompt_text().to_string(),
+        landing_prompt_is_default: r.landing_prompt_is_default(),
         .. id, path, base_branch, description, created_at, updated_at
     }
 

@@ -641,6 +641,7 @@ impl Harness {
                 base_branch: "main".into(),
                 description: None,
                 merge_strategy: Default::default(),
+                landing_prompt: None,
             })
             .await
             .unwrap()

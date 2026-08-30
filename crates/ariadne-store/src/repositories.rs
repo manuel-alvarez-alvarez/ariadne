@@ -14,6 +14,9 @@ pub struct NewRepository {
     pub description: Option<String>,
     /// How a task lands on `base_branch` here.
     pub merge_strategy: MergeStrategy,
+    /// The landing briefing this repository hands its engineer. None, or a
+    /// text with nothing in it, is the built-in default of `merge_strategy`.
+    pub landing_prompt: Option<String>,
 }
 
 /// Partial update; `None` leaves a field alone.
@@ -24,22 +27,30 @@ pub struct RepositoryUpdate {
     /// Some(None) clears the description.
     pub description: Option<Option<String>>,
     pub merge_strategy: Option<MergeStrategy>,
+    /// Some(None) puts the landing briefing back on the default of the merge
+    /// strategy in force, by dropping the text set on the repository.
+    ///
+    /// A strategy written without one keeps whatever text is set: the words
+    /// are the user's, and a reset is what asks for the new strategy's.
+    pub landing_prompt: Option<Option<String>>,
 }
 
 impl Store {
     pub async fn create_repository(&self, new: NewRepository) -> Result<Repository> {
         let id = new_id();
         let ts = now();
+        let landing_prompt = landing_prompt(new.landing_prompt)?;
         sqlx::query(
             "INSERT INTO repositories (id, path, base_branch, description, merge_strategy,
-                                       created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                       landing_prompt, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&new.path)
         .bind(&new.base_branch)
         .bind(&new.description)
         .bind(new.merge_strategy.as_str())
+        .bind(&landing_prompt)
         .bind(&ts)
         .bind(&ts)
         .execute(self.w())
@@ -76,15 +87,20 @@ impl Store {
         let merge_strategy = update
             .merge_strategy
             .map_or(current.merge_strategy, |s| s.as_str().to_string());
+        let landing = match update.landing_prompt {
+            Some(set) => landing_prompt(set)?,
+            None => current.landing_prompt,
+        };
         sqlx::query(
             "UPDATE repositories SET path = ?, base_branch = ?, description = ?,
-                                     merge_strategy = ?, updated_at = ?
+                                     merge_strategy = ?, landing_prompt = ?, updated_at = ?
              WHERE id = ?",
         )
         .bind(&path)
         .bind(&base_branch)
         .bind(&description)
         .bind(&merge_strategy)
+        .bind(&landing)
         .bind(now())
         .bind(id)
         .execute(self.w())
@@ -119,6 +135,23 @@ impl Store {
         self.publish(Change::RepositoryDeleted(id.to_string()));
         Ok(())
     }
+}
+
+/// The landing briefing to store: the text as it was given, or NULL where
+/// there is none to store — which is what puts the merge strategy's own
+/// default in force.
+///
+/// A text is refused here rather than at landing time for the same reason a
+/// profile's briefing is (see [`crate::prompts`]): rendering would carry a
+/// `{token}` nothing fills in through to the agent as it stands, and the save
+/// is the last moment anyone is looking.
+fn landing_prompt(given: Option<String>) -> Result<Option<String>> {
+    let Some(text) = given.filter(|t| !t.is_empty()) else {
+        return Ok(None);
+    };
+    MergeStrategy::validate_landing_template(&text)
+        .map_err(|e| StoreError::Invalid(e.to_string()))?;
+    Ok(Some(text))
 }
 
 /// The `UNIQUE (path, base_branch)` violation, said in the terms the caller

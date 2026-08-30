@@ -163,7 +163,7 @@ async fn a_placeholder_the_kind_cannot_fill_in_is_a_400_naming_it() {
 async fn a_kind_of_another_role_is_refused_with_a_sentence() {
     let h = harness().await;
     let planner = h.profile("plan", Role::Planner).await;
-    let uri = format!("/v1/profiles/{}/prompts/landing_pull_request", planner.id);
+    let uri = format!("/v1/profiles/{}/prompts/changes_requested", planner.id);
 
     for request in [
         put_json(&uri, serde_json::json!({ "content": "..." })),
@@ -172,8 +172,46 @@ async fn a_kind_of_another_role_is_refused_with_a_sentence() {
         let err = h.error(request, StatusCode::BAD_REQUEST).await;
         assert_eq!(err.error.code, "invalid_request");
         assert!(
-            err.error.message.contains("landing_pull_request")
+            err.error.message.contains("changes_requested")
                 && err.error.message.contains("engineer"),
+            "unhelpful message: {}",
+            err.error.message
+        );
+    }
+}
+
+/// A kind nobody owns any more is one nobody can write: the landing briefing
+/// is the repository's, and the prompt routes answer for it the way they
+/// answer for a name that never existed.
+#[tokio::test]
+async fn a_landing_kind_is_no_longer_a_prompt_of_the_engineer() {
+    let h = harness().await;
+    let engineer = h.profile("eng", Role::Engineer).await;
+
+    let prompts: Vec<ProfilePromptDto> =
+        h.get(&format!("/v1/profiles/{}/prompts", engineer.id)).await;
+    assert_eq!(
+        prompts.iter().map(|p| p.kind).collect::<Vec<_>>(),
+        vec![
+            PromptKind::EngineerBriefing,
+            PromptKind::EngineerResume,
+            PromptKind::ChangesRequested,
+        ]
+    );
+
+    for kind in ["landing_direct", "landing_pull_request"] {
+        let err = h
+            .error(
+                put_json(
+                    &format!("/v1/profiles/{}/prompts/{kind}", engineer.id),
+                    serde_json::json!({ "content": "..." }),
+                ),
+                StatusCode::BAD_REQUEST,
+            )
+            .await;
+        assert_eq!(err.error.code, "invalid_request");
+        assert!(
+            err.error.message.contains(kind) && err.error.message.contains("engineer_briefing"),
             "unhelpful message: {}",
             err.error.message
         );

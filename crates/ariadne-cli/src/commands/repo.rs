@@ -96,6 +96,10 @@ pub async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Result<()
                         base_branch: branch,
                         description,
                         merge_strategy: Some(merge_strategy),
+                        // The landing briefing is edited through the API; the
+                        // CLI has no flag for it yet, so a new repository
+                        // starts on its strategy's default.
+                        landing_prompt: None,
                     },
                 )
                 .await?;
@@ -155,6 +159,7 @@ pub async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Result<()
                         base_branch: branch,
                         description,
                         merge_strategy,
+                        landing_prompt: None,
                     },
                 )
                 .await?;

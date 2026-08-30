@@ -71,6 +71,11 @@ CREATE TABLE repositories (
     updated_at     TEXT NOT NULL,
     merge_strategy TEXT NOT NULL DEFAULT 'direct'
                    CHECK (merge_strategy IN ('direct', 'pull_request')),
+    -- The landing briefing the engineer of an approved task is handed here.
+    -- NULL = the built-in default of `merge_strategy` (see
+    -- `ariadne_store::defaults::default_landing_prompt`), which is also what
+    -- a reset goes back to by clearing this column.
+    landing_prompt TEXT,
     -- The same checkout can be registered once per base branch.
     UNIQUE (path, base_branch)
 );

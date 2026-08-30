@@ -92,6 +92,19 @@ async fn approve(h: &Harness, task: &Task, reviewer: &str) {
 /// engineer's worktree — which it never gave up — and the session that has
 /// been briefed to land the change.
 async fn walk_to_approved(h: &Harness, task: &Task, reviewer: &str) -> (PathBuf, AgentSession) {
+    let heading = format!("# Land task: {}", task.title);
+    walk_to_landing(h, task, reviewer, &heading).await
+}
+
+/// The same walk, waiting for a landing briefing that opens on `briefed`:
+/// what the engineer is handed is the repository's text, so a repository with
+/// one of its own is picked up with words the defaults never contain.
+async fn walk_to_landing(
+    h: &Harness,
+    task: &Task,
+    reviewer: &str,
+    briefed: &str,
+) -> (PathBuf, AgentSession) {
     h.notify(&task.id);
     eventually(TIMEOUT, "the engineer to be spawned", async || {
         h.status(&task.id).await == TaskStatus::InProgress
@@ -122,10 +135,7 @@ async fn walk_to_approved(h: &Harness, task: &Task, reviewer: &str) -> (PathBuf,
         h.status(&task.id).await == TaskStatus::Approved
             && h.running_session(&task.id, Role::Engineer)
                 .await
-                .is_some_and(|s| {
-                    h.spawn_argv(&s.id)
-                        .contains(&format!("# Land task: {}", task.title))
-                })
+                .is_some_and(|s| h.spawn_argv(&s.id).contains(briefed))
     })
     .await;
     let landing = h
@@ -226,6 +236,41 @@ async fn an_approved_task_is_landed_by_its_own_engineer() {
             )
     })
     .await;
+}
+
+/// The landing briefing belongs to the repository: a text written on it is
+/// what its engineer is picked up with, rendered with this task's values, and
+/// the merge strategy's default is only what stands while there is none.
+#[tokio::test]
+async fn an_approved_engineer_is_briefed_with_the_repositorys_own_landing_text() {
+    let (h, cast) = seeded(MergeStrategy::Direct).await;
+    let task = cast.task.clone();
+    h.store
+        .update_repository(
+            &cast.repo.id,
+            RepositoryUpdate {
+                landing_prompt: Some(Some(
+                    "Ship {task_title}: {branch} onto {base_branch} in {repo_path}.".into(),
+                )),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    let heading = format!("Ship {}:", task.title);
+    let (_worktree, engineer) = walk_to_landing(&h, &task, &cast.reviewer.id, &heading).await;
+
+    let argv = h.spawn_argv(&engineer.id);
+    assert!(
+        argv.contains(&format!(
+            "Ship {}: {} onto main in {}.",
+            task.title, task.branch, cast.repo.path
+        )),
+        "the repository's landing text did not reach the engineer, filled in: {argv}"
+    );
+    // And nothing of the default it replaced.
+    assert!(!argv.contains("git reset --soft main"), "{argv}");
 }
 
 /// A merge nobody made is refused, under either procedure: the daemon checks

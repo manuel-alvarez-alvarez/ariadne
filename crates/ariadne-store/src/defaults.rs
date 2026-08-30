@@ -5,7 +5,8 @@
 //! [`Store::reset_profile_prompt`](crate::Store::reset_profile_prompt) puts it
 //! back on them by dropping what was set — nothing is ever copied into the
 //! database, so rewriting a text here reaches every profile that never edited
-//! it.
+//! it. A repository's landing briefing works the same way, off its merge
+//! strategy rather than a role ([`default_landing_prompt`]).
 //!
 //! Each rule is written once, in the layer it belongs to. A system prompt
 //! states what a role owes, from its first read to the call that ends its
@@ -23,7 +24,7 @@
 //! The texts are kept small on purpose, and `size_caps_hold` below is what
 //! keeps them that way.
 
-use ariadne_core::{PromptKind, Role};
+use ariadne_core::{MergeStrategy, PromptKind, Role};
 
 /// A profile Ariadne seeds into an empty database: one per role, on the
 /// auto-resolved agent CLI (no agent kind, no model) and on every default
@@ -77,10 +78,24 @@ pub fn default_prompt_text(kind: PromptKind) -> &'static str {
         PromptKind::EngineerBriefing => ENGINEER_BRIEFING,
         PromptKind::EngineerResume => ENGINEER_RESUME,
         PromptKind::ChangesRequested => CHANGES_REQUESTED,
-        PromptKind::LandingDirect => LANDING_DIRECT,
-        PromptKind::LandingPullRequest => LANDING_PULL_REQUEST,
         PromptKind::ReviewerBriefing => REVIEWER_BRIEFING,
         PromptKind::ReviewerResume => REVIEWER_RESUME,
+    }
+}
+
+/// The landing briefing a repository on `strategy` runs on while it has none
+/// of its own: the whole procedure of that strategy, which is what its
+/// engineer is handed once the task is approved.
+///
+/// One text per strategy rather than one with two halves: a repository lands
+/// one way, so the engineer reads the procedure it runs and nothing of the
+/// other. A repository may be given a text of its own instead
+/// ([`Repository::landing_prompt_text`](crate::Repository::landing_prompt_text)),
+/// and clearing it puts this back in force.
+pub fn default_landing_prompt(strategy: MergeStrategy) -> &'static str {
+    match strategy {
+        MergeStrategy::Direct => LANDING_DIRECT,
+        MergeStrategy::PullRequest => LANDING_PULL_REQUEST,
     }
 }
 
@@ -166,7 +181,7 @@ const CHANGES_REQUESTED: &str = r#"Changes were requested.
 Answer every point; where you disagree, say why the code stays."#;
 
 /// What the engineer of an approved task in a `direct` repository is briefed
-/// with: rebase, squash, fast-forward, so the base branch grows one commit per
+/// with, unless the repository was given a landing briefing of its own: rebase, squash, fast-forward, so the base branch grows one commit per
 /// task and its history stays linear.
 ///
 /// The push comes before `mark_merged` because that call ends the task, and
@@ -183,7 +198,8 @@ Approved. Squash {branch} onto {base_branch} in {repo_path}; `<remote>` is what 
 6. `mark_merged` with `git -C {repo_path} rev-parse {base_branch}`."#;
 
 /// What the engineer of an approved task in a `pull_request` repository is
-/// briefed with: publish it, then see it through in this session.
+/// briefed with, unless the repository was given one of its own: publish it,
+/// then see it through in this session.
 ///
 /// The forge is read off the `origin` remote at that moment — GitHub takes
 /// `gh`, GitLab `glab` — rather than configured anywhere, since the remote is
@@ -232,7 +248,9 @@ Summary: {summary}"#;
 mod tests {
     use super::*;
 
-    /// Every default text there is, named as the test failures name it.
+    /// Every default text there is, named as the test failures name it: the
+    /// system prompt of each role, the template of each prompt kind, and the
+    /// landing briefing of each merge strategy.
     fn all_defaults() -> Vec<(String, &'static str)> {
         Role::ALL
             .into_iter()
@@ -247,7 +265,17 @@ mod tests {
                     .into_iter()
                     .map(|kind| (kind.as_str().to_string(), default_prompt_text(kind))),
             )
+            .chain(
+                MergeStrategy::ALL
+                    .into_iter()
+                    .map(|strategy| (landing_name(strategy), default_landing_prompt(strategy))),
+            )
             .collect()
+    }
+
+    /// How a strategy's landing briefing is named in a failure.
+    fn landing_name(strategy: MergeStrategy) -> String {
+        format!("{} landing briefing", strategy.as_str())
     }
 
     /// The size a prompt may grow back to, per kind, and in total.
@@ -258,8 +286,9 @@ mod tests {
     /// explained twice, a closing paragraph repeating the playbook, all show
     /// up as characters.
     ///
-    /// The total is over the prompt kinds — what a briefing costs per turn —
-    /// with the three system prompts pinned separately and counted again in a
+    /// The totals are over the prompt kinds — what a briefing costs per turn
+    /// — and over the landing briefings a repository runs on, with the three
+    /// system prompts pinned separately and every text counted again in a
     /// grand total, since a session pays for one of each.
     ///
     /// Their history is a long creep and one cut. A system prompt went from
@@ -280,17 +309,20 @@ mod tests {
     /// way round a failing assertion.
     #[test]
     fn size_caps_hold() {
-        const KIND_TOTAL: usize = 3300;
+        const KIND_TOTAL: usize = 1100;
+        const LANDING_TOTAL: usize = 2200;
         const GRAND_TOTAL: usize = 6000;
         const SYSTEM_PROMPT: usize = 1000;
 
         let cap = |kind: PromptKind| match kind {
-            PromptKind::LandingDirect => 900,
-            PromptKind::LandingPullRequest => 1300,
-            PromptKind::PlannerResume
-            | PromptKind::EngineerResume
-            | PromptKind::ReviewerResume => 200,
+            PromptKind::PlannerResume | PromptKind::EngineerResume | PromptKind::ReviewerResume => {
+                200
+            }
             _ => 300,
+        };
+        let landing_cap = |strategy: MergeStrategy| match strategy {
+            MergeStrategy::Direct => 900,
+            MergeStrategy::PullRequest => 1300,
         };
 
         for (name, text) in all_defaults() {
@@ -324,8 +356,28 @@ mod tests {
             "the briefing templates total {kinds} characters, over {KIND_TOTAL}"
         );
 
+        let mut landings = 0;
+        for strategy in MergeStrategy::ALL {
+            let text = default_landing_prompt(strategy);
+            landings += text.len();
+            assert!(
+                text.len() <= landing_cap(strategy),
+                "the {} is {} characters, over its {}",
+                landing_name(strategy),
+                text.len(),
+                landing_cap(strategy)
+            );
+        }
+        assert!(
+            landings <= LANDING_TOTAL,
+            "the landing briefings total {landings} characters, over {LANDING_TOTAL}"
+        );
+
         let grand: usize = all_defaults().iter().map(|(_, text)| text.len()).sum();
-        println!("{kinds:5}  every briefing template\n{grand:5}  every default text");
+        println!(
+            "{kinds:5}  every briefing template\n{landings:5}  every landing briefing\n\
+             {grand:5}  every default text"
+        );
         assert!(
             grand <= GRAND_TOTAL,
             "the defaults total {grand} characters, over {GRAND_TOTAL}"
@@ -385,11 +437,11 @@ mod tests {
     /// alone with nothing left to notice.
     #[test]
     fn nothing_the_engineer_still_has_to_run_comes_after_the_call_that_ends_the_task() {
-        for kind in [PromptKind::LandingDirect, PromptKind::LandingPullRequest] {
-            let text = default_prompt_text(kind);
+        for strategy in MergeStrategy::ALL {
+            let text = default_landing_prompt(strategy);
             let ends = text
                 .find("`mark_merged`")
-                .unwrap_or_else(|| panic!("the {} briefing never ends the task", kind.as_str()));
+                .unwrap_or_else(|| panic!("the {} never ends the task", landing_name(strategy)));
             for command in [
                 "git -C {repo_path} push",
                 "git push",
@@ -401,8 +453,8 @@ mod tests {
                 if let Some(at) = text.find(command) {
                     assert!(
                         at < ends,
-                        "the {} briefing runs {command} after mark_merged",
-                        kind.as_str()
+                        "the {} runs {command} after mark_merged",
+                        landing_name(strategy)
                     );
                 }
             }
@@ -410,18 +462,18 @@ mod tests {
 
         // And the reason is in the text, where the agent reading it is.
         assert!(
-            default_prompt_text(PromptKind::LandingDirect).contains("Push first:"),
+            default_landing_prompt(MergeStrategy::Direct).contains("Push first:"),
             "the direct briefing does not say why the push comes first"
         );
     }
 
     /// Each landing briefing is the procedure of one merge strategy, whole,
-    /// and carries nothing of the other: the daemon picks the kind, so the
-    /// engineer has neither a section to skip nor a choice to make.
+    /// and carries nothing of the other: the repository is on one strategy, so
+    /// the engineer has neither a section to skip nor a choice to make.
     #[test]
     fn each_landing_briefing_is_one_strategy_and_nothing_of_the_other() {
-        let direct = default_prompt_text(PromptKind::LandingDirect);
-        let published = default_prompt_text(PromptKind::LandingPullRequest);
+        let direct = default_landing_prompt(MergeStrategy::Direct);
+        let published = default_landing_prompt(MergeStrategy::PullRequest);
 
         // Squashed onto the base with git alone.
         for step in [
@@ -489,9 +541,9 @@ mod tests {
     /// needs it. A rule restated in a second one is a rule that goes stale in
     /// one of them.
     ///
-    /// The two landing kinds count as one place between them: a repository has
-    /// one merge strategy, so an engineer is handed one of the two and never
-    /// both.
+    /// The two landing briefings count as one place between them: a repository
+    /// has one merge strategy, so an engineer is handed one of the two and
+    /// never both.
     #[test]
     fn each_rule_is_stated_in_exactly_one_briefing() {
         // What a published branch may be done to, what ends a piece of
@@ -508,9 +560,9 @@ mod tests {
             let places = all_defaults()
                 .into_iter()
                 .filter(|(_, text)| text.contains(marker))
-                .map(|(name, _)| match name.as_str() {
-                    "landing_direct" | "landing_pull_request" => "a landing briefing".to_string(),
-                    other => other.to_string(),
+                .map(|(name, _)| match name.ends_with("landing briefing") {
+                    true => "a landing briefing".to_string(),
+                    false => name,
                 })
                 .collect::<std::collections::BTreeSet<_>>();
             assert_eq!(
@@ -532,6 +584,14 @@ mod tests {
                 Ok(()),
                 "the default {} template",
                 kind.as_str()
+            );
+        }
+        for strategy in MergeStrategy::ALL {
+            assert_eq!(
+                MergeStrategy::validate_landing_template(default_landing_prompt(strategy)),
+                Ok(()),
+                "the default {}",
+                landing_name(strategy)
             );
         }
     }

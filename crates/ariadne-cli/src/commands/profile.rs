@@ -50,8 +50,8 @@ pub enum ProfileCommand {
     /// Both are repeatable and take each kind once. `<kind>` is `system` for
     /// the profile's own system prompt, or one of the briefings its role owns
     /// (planner: planner-briefing; engineer: engineer-briefing,
-    /// changes-requested, landing-direct, landing-pull-request; reviewer:
-    /// reviewer-briefing, reviewer-resume). Whatever is not given starts as the role default.
+    /// changes-requested; reviewer: reviewer-briefing, reviewer-resume).
+    /// Whatever is not given starts as the role default.
     ///
     /// A briefing may use only the `{placeholder}` tokens its kind fills in;
     /// one that names another is refused, with the allowed ones listed.
@@ -101,8 +101,8 @@ pub enum ProfileCommand {
     /// and `--prompt-file <kind>=<path>` flags `profile create` takes:
     /// `system` for the profile's own system prompt, or one of the briefings
     /// its role owns (planner: planner-briefing; engineer: engineer-briefing,
-    /// changes-requested, landing-direct, landing-pull-request; reviewer:
-    /// reviewer-briefing, reviewer-resume). Both are repeatable and take each kind once; a prompt
+    /// changes-requested; reviewer: reviewer-briefing, reviewer-resume). Both
+    /// are repeatable and take each kind once; a prompt
     /// nobody names is left exactly as it is.
     ///
     /// A briefing may use only the `{placeholder}` tokens its kind fills in;
@@ -159,9 +159,9 @@ pub enum ProfileCommand {
 }
 
 /// The kind is one of the prompts the profile's role owns (planner:
-/// `planner-briefing`; engineer: `engineer-briefing`, `changes-requested`,
-/// `landing-direct`, `landing-pull-request`; reviewer: `reviewer-briefing`,
-/// `reviewer-resume`), or `system` for the profile's own system prompt.
+/// `planner-briefing`; engineer: `engineer-briefing`, `changes-requested`;
+/// reviewer: `reviewer-briefing`, `reviewer-resume`), or `system` for the
+/// profile's own system prompt.
 #[derive(Subcommand)]
 pub enum PromptCommand {
     /// Print a prompt's content raw, ready to be piped to a file

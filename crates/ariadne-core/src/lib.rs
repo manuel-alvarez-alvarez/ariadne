@@ -98,6 +98,29 @@ wire_enum! { MergeStrategy, "merge strategy", [
     Direct = "direct", PullRequest = "pull_request",
 ]}
 
+impl MergeStrategy {
+    /// The placeholders a landing briefing may name, whichever strategy it is
+    /// written for: the branch, the base and the checkout its commands act
+    /// on, and the task they are landing.
+    ///
+    /// The contract between a repository's landing text and the daemon's
+    /// `landing_briefing` builder, read the same way
+    /// [`PromptKind::placeholders`] is read: a `{token}` outside this list is
+    /// one nothing will ever substitute.
+    pub const LANDING_PLACEHOLDERS: &'static [&'static str] =
+        &["task_title", "branch", "base_branch", "repo_path"];
+
+    /// Refuse a landing template that names a placeholder nothing fills in.
+    ///
+    /// The same check, and the same leniency about what is text, as
+    /// [`PromptKind::validate_template`]: saving is the last moment anyone
+    /// looks at a `{task_titel}`, since rendering carries it through to the
+    /// agent as it stands.
+    pub fn validate_landing_template(template: &str) -> Result<(), UnknownPlaceholders> {
+        unknown_placeholders("landing", Self::LANDING_PLACEHOLDERS, template)
+    }
+}
+
 /// A prompt a profile owns beside its system prompt: one of the texts an
 /// agent of that role is started, resumed or nudged with. Every briefing a
 /// profile carries is one of these, and each kind belongs to the role that
@@ -127,10 +150,6 @@ pub enum PromptKind {
     ReviewerBriefing,
     /// What a reviewer that owes a verdict is picked up with.
     ReviewerResume,
-    /// Landing briefing of a repository that squashes onto its base branch.
-    LandingDirect,
-    /// Landing briefing of a repository that takes a pull or merge request.
-    LandingPullRequest,
 }
 
 wire_enum! { PromptKind, "prompt kind", [
@@ -139,34 +158,18 @@ wire_enum! { PromptKind, "prompt kind", [
     EngineerBriefing = "engineer_briefing",
     EngineerResume = "engineer_resume",
     ChangesRequested = "changes_requested",
-    LandingDirect = "landing_direct",
-    LandingPullRequest = "landing_pull_request",
     ReviewerBriefing = "reviewer_briefing",
     ReviewerResume = "reviewer_resume",
 ]}
 
 impl PromptKind {
-    /// The landing briefing a repository on `strategy` hands its engineer.
-    ///
-    /// One kind per strategy rather than one text with two halves: the daemon
-    /// knows which it is when it renders, so the engineer is handed the
-    /// procedure it runs and nothing of the other.
-    pub fn landing_for(strategy: MergeStrategy) -> PromptKind {
-        match strategy {
-            MergeStrategy::Direct => PromptKind::LandingDirect,
-            MergeStrategy::PullRequest => PromptKind::LandingPullRequest,
-        }
-    }
-
     /// The roles whose profiles own this prompt.
     pub fn roles(&self) -> &'static [Role] {
         match self {
             PromptKind::PlannerBriefing | PromptKind::PlannerResume => &[Role::Planner],
             PromptKind::EngineerBriefing
             | PromptKind::EngineerResume
-            | PromptKind::ChangesRequested
-            | PromptKind::LandingDirect
-            | PromptKind::LandingPullRequest => &[Role::Engineer],
+            | PromptKind::ChangesRequested => &[Role::Engineer],
             PromptKind::ReviewerBriefing | PromptKind::ReviewerResume => &[Role::Reviewer],
         }
     }
@@ -184,8 +187,6 @@ impl PromptKind {
                 PromptKind::EngineerBriefing,
                 PromptKind::EngineerResume,
                 PromptKind::ChangesRequested,
-                PromptKind::LandingDirect,
-                PromptKind::LandingPullRequest,
             ],
             Role::Reviewer => &[PromptKind::ReviewerBriefing, PromptKind::ReviewerResume],
         }
@@ -227,11 +228,6 @@ impl PromptKind {
             ],
             PromptKind::EngineerResume => &["task_title", "branch"],
             PromptKind::ChangesRequested => &["feedback"],
-            // Which procedure applies is the kind, not a value inside it, so
-            // a landing briefing names only what its commands act on.
-            PromptKind::LandingDirect | PromptKind::LandingPullRequest => {
-                &["task_title", "branch", "base_branch", "repo_path"]
-            }
             PromptKind::ReviewerBriefing => &[
                 "task_title",
                 "review_round",
@@ -260,31 +256,47 @@ impl PromptKind {
     /// that only plain identifiers: an unclosed brace, a `{}` and a JSON
     /// snippet are text to rendering, so they are text here too.
     pub fn validate_template(&self, template: &str) -> Result<(), UnknownPlaceholders> {
-        let mut unknown: Vec<String> = Vec::new();
-        for name in placeholder_names(template) {
-            if !is_identifier(name)
-                || self.placeholders().contains(&name)
-                || unknown.iter().any(|seen| seen == name)
-            {
-                continue;
-            }
-            unknown.push(name.to_string());
-        }
-        if unknown.is_empty() {
-            return Ok(());
-        }
-        Err(UnknownPlaceholders {
-            kind: *self,
-            unknown,
-        })
+        unknown_placeholders(self.as_str(), self.placeholders(), template)
     }
 }
 
-/// A template saved with `{token}`s the daemon has no value for, and the kind
-/// that would have had to fill them in.
+/// The check both `validate` calls make: the names `template` would have
+/// looked up, minus what rendering treats as text and minus `allowed`.
+/// `whose` names the template in the message.
+fn unknown_placeholders(
+    whose: &'static str,
+    allowed: &'static [&'static str],
+    template: &str,
+) -> Result<(), UnknownPlaceholders> {
+    let mut unknown: Vec<String> = Vec::new();
+    for name in placeholder_names(template) {
+        if !is_identifier(name)
+            || allowed.contains(&name)
+            || unknown.iter().any(|seen| seen == name)
+        {
+            continue;
+        }
+        unknown.push(name.to_string());
+    }
+    if unknown.is_empty() {
+        return Ok(());
+    }
+    Err(UnknownPlaceholders {
+        whose,
+        allowed,
+        unknown,
+    })
+}
+
+/// A template saved with `{token}`s the daemon has no value for, and what
+/// would have had to fill them in: a prompt kind, or a landing briefing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnknownPlaceholders {
-    pub kind: PromptKind,
+    /// How the template is named in the message: a prompt kind's spelling, or
+    /// `landing` for a repository's landing briefing.
+    pub whose: &'static str,
+    /// The names the template was allowed to use.
+    pub allowed: &'static [&'static str],
     /// The offending names, without braces, in the order they appear.
     pub unknown: Vec<String>,
 }
@@ -298,7 +310,7 @@ impl std::fmt::Display for UnknownPlaceholders {
                 .join(", ")
         };
         let unknown = braced(&mut self.unknown.iter().map(String::as_str));
-        let allowed = braced(&mut self.kind.placeholders().iter().copied());
+        let allowed = braced(&mut self.allowed.iter().copied());
         let plural = if self.unknown.len() == 1 {
             "placeholder"
         } else {
@@ -308,7 +320,7 @@ impl std::fmt::Display for UnknownPlaceholders {
             f,
             "the {} template has no value for {plural} {unknown}; \
              the ones it can use are {allowed}",
-            self.kind.as_str()
+            self.whose
         )
     }
 }
@@ -712,7 +724,41 @@ mod tests {
     #[test]
     fn a_template_may_use_none_of_its_placeholders() {
         assert_eq!(
-            PromptKind::LandingDirect.validate_template("Land it yourself."),
+            PromptKind::EngineerResume.validate_template("Carry on."),
+            Ok(())
+        );
+        assert_eq!(
+            MergeStrategy::validate_landing_template("Land it yourself."),
+            Ok(())
+        );
+    }
+
+    /// A landing briefing is a repository's, not a kind's, and it is checked
+    /// the same way: what the daemon fills in passes, a typo is named with
+    /// the whole allowed set, and what renders as text is text here too.
+    #[test]
+    fn a_landing_template_names_only_what_the_landing_briefing_fills_in() {
+        let all = MergeStrategy::LANDING_PLACEHOLDERS
+            .iter()
+            .map(|name| format!("{{{name}}}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(MergeStrategy::validate_landing_template(&all), Ok(()));
+
+        let err = MergeStrategy::validate_landing_template("Squash {branch} onto {base_brunch}.")
+            .unwrap_err();
+        assert_eq!(err.unknown, ["base_brunch"]);
+        let message = err.to_string();
+        assert!(message.contains("landing"), "{message}");
+        assert!(message.contains("{base_brunch}"), "{message}");
+        assert!(message.contains("{base_branch}"), "{message}");
+        assert!(message.contains("{repo_path}"), "{message}");
+
+        // A placeholder of a profile's briefing is not one a landing text can
+        // use: the sets are per template, not one pool.
+        assert!(MergeStrategy::validate_landing_template("{task_description}").is_err());
+        assert_eq!(
+            MergeStrategy::validate_landing_template("Answer with {\"ok\": true} and {}."),
             Ok(())
         );
     }

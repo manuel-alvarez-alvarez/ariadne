@@ -4,7 +4,7 @@ use ariadne_core::{
     Actor, AgentKind, AttentionReason, GoalStatus, MergeStrategy, PromptKind,
     ReviewVerdict, Role, SessionStatus, TaskStatus, TokenUsage,
 };
-use ariadne_store::defaults::{default_prompt, default_system_prompt};
+use ariadne_store::defaults::{default_landing_prompt, default_prompt, default_system_prompt};
 use ariadne_store::*;
 
 async fn test_store() -> (Store, tempfile::TempDir) {
@@ -36,6 +36,7 @@ async fn seed_repository(store: &Store) -> Repository {
             base_branch: "main".into(),
             description: None,
             merge_strategy: MergeStrategy::Direct,
+            landing_prompt: None,
         })
         .await
         .unwrap()
@@ -300,6 +301,7 @@ async fn repository_crud_and_unique_path_branch() {
             base_branch: "main".into(),
             description: Some("the one repo".into()),
             merge_strategy: Default::default(),
+            landing_prompt: None,
         })
         .await
         .unwrap();
@@ -318,6 +320,7 @@ async fn repository_crud_and_unique_path_branch() {
             base_branch: "next".into(),
             description: None,
             merge_strategy: Default::default(),
+            landing_prompt: None,
         })
         .await
         .unwrap();
@@ -331,6 +334,7 @@ async fn repository_crud_and_unique_path_branch() {
             base_branch: "main".into(),
             description: None,
             merge_strategy: Default::default(),
+            landing_prompt: None,
         })
         .await;
     assert!(matches!(dup, Err(StoreError::Conflict(_))));
@@ -392,6 +396,7 @@ async fn a_repository_says_how_a_task_lands_on_it() {
             base_branch: "main".into(),
             description: None,
             merge_strategy: MergeStrategy::PullRequest,
+            landing_prompt: None,
         })
         .await
         .unwrap();
@@ -429,6 +434,160 @@ async fn a_repository_says_how_a_task_lands_on_it() {
         .unwrap();
     assert_eq!(renamed.merge_strategy(), MergeStrategy::Direct);
     assert_eq!(renamed.description.as_deref(), Some("still the one"));
+}
+
+/// The landing briefing is the repository's: prefilled from its merge
+/// strategy, replaceable with words of its own, and put back on the
+/// strategy's default by clearing it.
+#[tokio::test]
+async fn a_repository_owns_the_briefing_its_engineer_lands_with() {
+    let (store, _dir) = test_store().await;
+
+    // Created with nothing: the default of the strategy is what is in force,
+    // and nothing was written down for it.
+    let plain = store
+        .create_repository(NewRepository {
+            path: "/tmp/plain".into(),
+            base_branch: "main".into(),
+            description: None,
+            merge_strategy: MergeStrategy::PullRequest,
+            landing_prompt: None,
+        })
+        .await
+        .unwrap();
+    assert!(plain.landing_prompt.is_none());
+    assert!(plain.landing_prompt_is_default());
+    assert_eq!(
+        plain.landing_prompt_text(),
+        default_landing_prompt(MergeStrategy::PullRequest)
+    );
+
+    // Created with a text: that text, and it is nobody's default.
+    let mine = "Squash {branch} onto {base_branch} in {repo_path}.";
+    let own = store
+        .create_repository(NewRepository {
+            path: "/tmp/own".into(),
+            base_branch: "main".into(),
+            description: None,
+            merge_strategy: MergeStrategy::Direct,
+            landing_prompt: Some(mine.into()),
+        })
+        .await
+        .unwrap();
+    assert_eq!(own.landing_prompt_text(), mine);
+    assert!(!own.landing_prompt_is_default());
+
+    // An update sets one, and an update that says nothing about it leaves it.
+    let set = store
+        .update_repository(
+            &plain.id,
+            RepositoryUpdate {
+                landing_prompt: Some(Some(mine.into())),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(set.landing_prompt_text(), mine);
+    let untouched = store
+        .update_repository(
+            &plain.id,
+            RepositoryUpdate {
+                description: Some(Some("still mine".into())),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(untouched.landing_prompt_text(), mine);
+
+    // The strategy moves under a text of the repository's own and the text
+    // stays: the words are the user's, and a reset is what asks for the new
+    // strategy's.
+    let moved = store
+        .update_repository(
+            &plain.id,
+            RepositoryUpdate {
+                merge_strategy: Some(MergeStrategy::Direct),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(moved.merge_strategy(), MergeStrategy::Direct);
+    assert_eq!(moved.landing_prompt_text(), mine);
+
+    // Cleared, and the default of the strategy now in force stands.
+    let reset = store
+        .update_repository(
+            &plain.id,
+            RepositoryUpdate {
+                landing_prompt: Some(None),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(reset.landing_prompt_is_default());
+    assert_eq!(
+        reset.landing_prompt_text(),
+        default_landing_prompt(MergeStrategy::Direct)
+    );
+}
+
+/// A landing briefing may name only the placeholders the daemon fills in, and
+/// the refusal says which token and what it could have used instead — on the
+/// create and on the update alike.
+#[tokio::test]
+async fn a_landing_briefing_naming_an_unknown_placeholder_is_refused() {
+    let (store, _dir) = test_store().await;
+    let repo = store
+        .create_repository(NewRepository {
+            path: "/tmp/checked".into(),
+            base_branch: "main".into(),
+            description: None,
+            merge_strategy: MergeStrategy::Direct,
+            landing_prompt: None,
+        })
+        .await
+        .unwrap();
+
+    let broken = "Land {branch} the {nope} way.";
+    let Err(StoreError::Invalid(message)) = store
+        .create_repository(NewRepository {
+            path: "/tmp/broken".into(),
+            base_branch: "main".into(),
+            description: None,
+            merge_strategy: MergeStrategy::Direct,
+            landing_prompt: Some(broken.into()),
+        })
+        .await
+    else {
+        panic!("a landing briefing with an unknown placeholder was created");
+    };
+    assert!(message.contains("{nope}"), "{message}");
+    for allowed in ["{task_title}", "{branch}", "{base_branch}", "{repo_path}"] {
+        assert!(message.contains(allowed), "{message}");
+    }
+
+    let refused = store
+        .update_repository(
+            &repo.id,
+            RepositoryUpdate {
+                landing_prompt: Some(Some(broken.into())),
+                ..Default::default()
+            },
+        )
+        .await;
+    assert!(matches!(refused, Err(StoreError::Invalid(_))));
+    // ...and nothing was written: the repository is still on its default.
+    assert!(
+        store
+            .get_repository(&repo.id)
+            .await
+            .unwrap()
+            .landing_prompt_is_default()
+    );
 }
 
 #[tokio::test]
@@ -2179,12 +2338,12 @@ async fn a_template_naming_a_placeholder_its_kind_cannot_fill_in_is_refused() {
     // placeholders at all.
     let engineer = store.get_profile_by_name("Engineer").await.unwrap();
     for content in [
-        "Land {branch} on {base_branch}, then answer {\"merged\": true}.",
+        "Pick {task_title} up on {branch}, then answer {\"resumed\": true}.",
         "Do it yourself.",
         "{unclosed and {branch}",
     ] {
         store
-            .update_profile_prompt(&engineer.id, PromptKind::LandingDirect, content)
+            .update_profile_prompt(&engineer.id, PromptKind::EngineerResume, content)
             .await
             .unwrap();
     }

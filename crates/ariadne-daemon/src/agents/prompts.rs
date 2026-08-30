@@ -11,8 +11,13 @@
 //! returns an error. A profile with a mangled briefing gets a mangled
 //! briefing, never a session that refuses to start. A `{token}` nothing here
 //! fills in is caught where a template is *saved* instead — see
-//! [`PromptKind::validate_template`], whose allowed names are the ones the
-//! briefings below pass.
+//! [`PromptKind::validate_template`] and
+//! [`MergeStrategy::validate_landing_template`](ariadne_core::MergeStrategy::validate_landing_template),
+//! whose allowed names are the ones the briefings below pass.
+//!
+//! One briefing is not a profile's: the landing procedure belongs to the
+//! repository the task lands in (`Repository::landing_prompt_text`), since
+//! how a change reaches a base branch is the repository's to say.
 
 use ariadne_core::PromptKind;
 use ariadne_store::defaults::default_prompt_text;
@@ -229,10 +234,10 @@ pub fn changes_requested_briefing(template: &str, feedback: &[(String, String)])
 /// What the engineer of an approved task is briefed with: the branch, the base
 /// and the checkout the procedure's commands act on.
 ///
-/// Which procedure that is comes from the kind the caller read the template
-/// for — [`PromptKind::landing_for`] picks it off the repository's merge
-/// strategy — so the text rendered here is the one the engineer runs and
-/// carries nothing of the other.
+/// The template is the repository's own ([`Repository::landing_prompt_text`]),
+/// which is the text set on it or the default of its merge strategy — so what
+/// is rendered here is the one procedure the engineer runs, and nothing of the
+/// other.
 pub fn landing_briefing(template: &str, task: &Task, repo: &Repository) -> String {
     render(
         template,
@@ -248,6 +253,9 @@ pub fn landing_briefing(template: &str, task: &Task, repo: &Repository) -> Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use ariadne_core::MergeStrategy;
+    use ariadne_store::defaults::default_landing_prompt;
 
     fn goal() -> Goal {
         Goal {
@@ -273,6 +281,7 @@ mod tests {
             base_branch: "main".into(),
             description: None,
             merge_strategy: "direct".into(),
+            landing_prompt: None,
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:00Z".into(),
         }
@@ -381,9 +390,6 @@ mod tests {
                 PromptKind::ReviewerResume => {
                     reviewer_resume_briefing(&template, &task, Some("done"))
                 }
-                PromptKind::LandingDirect | PromptKind::LandingPullRequest => {
-                    landing_briefing(&template, &task, &repo)
-                }
             };
             assert!(
                 !rendered.contains('{'),
@@ -391,6 +397,19 @@ mod tests {
                 kind.as_str()
             );
         }
+
+        // And the landing briefing, whose allowed names are the repository's
+        // to hold rather than a kind's.
+        let template = MergeStrategy::LANDING_PLACEHOLDERS
+            .iter()
+            .map(|name| format!("{{{name}}}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let rendered = landing_briefing(&template, &task, &repo);
+        assert!(
+            !rendered.contains('{'),
+            "the landing briefing left a placeholder of its own unfilled: {rendered}"
+        );
     }
 
     /// One kind's rendering: what its briefing produced, and the values it was
@@ -532,26 +551,6 @@ mod tests {
                     ("summary", "I rewrote the thing."),
                 ],
             ),
-            (
-                PromptKind::LandingDirect,
-                landing_briefing(default(PromptKind::LandingDirect), &task, &repo),
-                vec![
-                    ("task_title", &task.title),
-                    ("branch", &task.branch),
-                    ("base_branch", &repo.base_branch),
-                    ("repo_path", &repo.path),
-                ],
-            ),
-            (
-                PromptKind::LandingPullRequest,
-                landing_briefing(default(PromptKind::LandingPullRequest), &task, &repo),
-                vec![
-                    ("task_title", &task.title),
-                    ("branch", &task.branch),
-                    ("base_branch", &repo.base_branch),
-                    ("repo_path", &repo.path),
-                ],
-            ),
         ];
 
         for (kind, rendered, values) in cases {
@@ -566,6 +565,34 @@ mod tests {
                 !rendered.contains('{'),
                 "the {} briefing left a placeholder unfilled: {rendered}",
                 kind.as_str()
+            );
+        }
+
+        // And the landing briefing of each strategy, the same way: the
+        // repository's default text with this task's values put in.
+        let landing_values = vec![
+            ("task_title", task.title.as_str()),
+            ("branch", task.branch.as_str()),
+            ("base_branch", repo.base_branch.as_str()),
+            ("repo_path", repo.path.as_str()),
+        ];
+        for strategy in MergeStrategy::ALL {
+            let repo = Repository {
+                merge_strategy: strategy.as_str().into(),
+                ..repo.clone()
+            };
+            let template = default_landing_prompt(strategy);
+            let rendered = landing_briefing(repo.landing_prompt_text(), &task, &repo);
+            assert_eq!(
+                rendered,
+                filled(template, &landing_values),
+                "the default {} landing briefing, substituted",
+                strategy.as_str()
+            );
+            assert!(
+                !rendered.contains('{'),
+                "the {} landing briefing left a placeholder unfilled: {rendered}",
+                strategy.as_str()
             );
         }
     }
@@ -618,39 +645,29 @@ mod tests {
             "{changes}"
         );
 
-        let landing = landing_briefing(default(PromptKind::LandingDirect), &task, &repo);
+        let landing = landing_briefing(repo.landing_prompt_text(), &task, &repo);
         assert!(landing.starts_with(&format!("# Land task: {}", task.title)));
     }
 
-    /// A repository's merge strategy picks the landing kind, and the kind is
-    /// the whole of what the engineer reads: the branch, the base and the
-    /// checkout its commands act on, and one procedure, not two.
+    /// The landing briefing is the repository's: with nothing set on it, the
+    /// default of its merge strategy, which is the whole of what the engineer
+    /// reads — the branch, the base and the checkout its commands act on, and
+    /// one procedure, not two.
     #[test]
-    fn the_merge_strategy_picks_the_landing_briefing() {
+    fn the_repository_says_what_the_engineer_lands_with() {
         let task = task();
         let repo = repo();
-        assert_eq!(
-            PromptKind::landing_for(repo.merge_strategy()),
-            PromptKind::LandingDirect
-        );
         let published_repo = Repository {
             merge_strategy: "pull_request".into(),
             ..repo.clone()
         };
-        assert_eq!(
-            PromptKind::landing_for(published_repo.merge_strategy()),
-            PromptKind::LandingPullRequest
-        );
 
-        let direct = landing_briefing(default(PromptKind::LandingDirect), &task, &repo);
+        let direct = landing_briefing(repo.landing_prompt_text(), &task, &repo);
         assert!(direct.contains("git reset --soft main"), "{direct}");
         assert!(!direct.contains("gh pr"), "{direct}");
 
-        let published = landing_briefing(
-            default(PromptKind::LandingPullRequest),
-            &task,
-            &published_repo,
-        );
+        let published =
+            landing_briefing(published_repo.landing_prompt_text(), &task, &published_repo);
         assert!(
             published.contains("gh pr create --base main"),
             "{published}"
@@ -662,6 +679,17 @@ mod tests {
             assert!(published.contains(value), "{value}: {published}");
         }
         assert!(!published.contains('{'), "{published}");
+
+        // A text of the repository's own is what is rendered instead, and the
+        // merge strategy under it changes nothing about that.
+        let custom = Repository {
+            landing_prompt: Some("Land {branch} onto {base_branch} however you like.".into()),
+            ..published_repo.clone()
+        };
+        assert_eq!(
+            landing_briefing(custom.landing_prompt_text(), &task, &custom),
+            format!("Land {} onto main however you like.", task.branch)
+        );
     }
 
     /// A repository is registered with a description; the planner is told it,

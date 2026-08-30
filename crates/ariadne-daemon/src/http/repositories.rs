@@ -6,7 +6,11 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 
-use ariadne_api::repositories::{CreateRepositoryRequest, RepositoryDto, UpdateRepositoryRequest};
+use ariadne_api::repositories::{
+    CreateRepositoryRequest, MergeStrategyDto, RepositoryDto, UpdateRepositoryRequest,
+};
+use ariadne_core::MergeStrategy;
+use ariadne_store::defaults::default_landing_prompt;
 use ariadne_store::{NewRepository, RepositoryUpdate};
 
 use super::AppState;
@@ -19,7 +23,8 @@ use crate::gitwt::GitManager;
     request_body = CreateRepositoryRequest,
     responses(
         (status = 201, body = RepositoryDto),
-        (status = 400, description = "not an absolute path, not a git work tree, or unknown branch"),
+        (status = 400, description = "not an absolute path, not a git work tree, unknown branch, \
+                                      or a landing prompt naming a placeholder nothing fills in"),
         (status = 409, description = "this path and base branch are already registered")
     ))]
 pub async fn create(
@@ -35,6 +40,7 @@ pub async fn create(
             base_branch,
             description: req.description,
             merge_strategy: req.merge_strategy.unwrap_or_default(),
+            landing_prompt: req.landing_prompt,
         })
         .await?;
     Ok((StatusCode::CREATED, Json(repository_dto(repository))))
@@ -65,7 +71,8 @@ pub async fn get(
     params(("id" = String, Path, description = "repository id")),
     responses(
         (status = 200, body = RepositoryDto),
-        (status = 400, description = "not an absolute path, not a git work tree, or unknown branch"),
+        (status = 400, description = "not an absolute path, not a git work tree, unknown branch, \
+                                      or a landing prompt naming a placeholder nothing fills in"),
         (status = 404),
         (status = 409, description = "this path and base branch are already registered")
     ))]
@@ -99,10 +106,35 @@ pub async fn update(
                     false => Some(d),
                 }),
                 merge_strategy: req.merge_strategy,
+                // Empty resets, exactly as an empty description clears one:
+                // what is left in force is the merge strategy's own text.
+                landing_prompt: req.landing_prompt.map(|p| match p.is_empty() {
+                    true => None,
+                    false => Some(p),
+                }),
             },
         )
         .await?;
     Ok(Json(repository_dto(repository)))
+}
+
+/// List the merge strategies and their built-in landing briefings.
+///
+/// The landing briefing is the repository's, and a client editing one needs
+/// the text of the strategy it is prefilled from and reset to before that
+/// repository exists. One entry per strategy, in [`MergeStrategy::ALL`] order.
+#[utoipa::path(get, path = "/v1/merge-strategies", tag = "repositories",
+    responses((status = 200, body = [MergeStrategyDto])))]
+pub async fn list_merge_strategies() -> Json<Vec<MergeStrategyDto>> {
+    Json(
+        MergeStrategy::ALL
+            .into_iter()
+            .map(|merge_strategy| MergeStrategyDto {
+                merge_strategy,
+                landing_prompt: default_landing_prompt(merge_strategy).to_string(),
+            })
+            .collect(),
+    )
 }
 
 /// Delete a repository.

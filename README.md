@@ -71,9 +71,12 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    the engineer with the feedback; enough approvals move the task to
    `approved`.
 5. The task never leaves the engineer that wrote it: it keeps its session and
-   its worktree, and is briefed to land the change the way the repository's
-   **merge strategy** says (`ariadne repo add --merge-strategy`, default
-   `direct`).
+   its worktree, and is briefed to land the change with the repository's
+   **landing briefing** — the whole procedure, which the engineer then runs.
+   That briefing is the repository's own: it is prefilled from the repository's
+   **merge strategy** (`ariadne repo add --merge-strategy`, default `direct`),
+   can be rewritten per repository, and is put back on the strategy's default
+   by clearing it. What the two strategies ship is:
    - **`direct`** — rebase onto the base, squash into one commit with a
      conventional subject, fast-forward the base branch in the primary
      checkout, push it where there is a remote, then `mark_merged`. The daemon

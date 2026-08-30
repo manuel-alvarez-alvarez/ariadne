@@ -110,6 +110,7 @@ impl AppState {
         profiles::reset_system_prompt,
         repositories::create, repositories::list, repositories::get,
         repositories::update, repositories::delete,
+        repositories::list_merge_strategies,
         goals::create, goals::list, goals::get, goals::delete,
         goals::cancel, goals::finalize,
         tasks::create, tasks::list, tasks::get, tasks::update,
@@ -124,6 +125,7 @@ impl AppState {
         logs::snapshot, logs::stream,
     ),
     components(schemas(
+        ariadne_api::repositories::MergeStrategyDto,
         ariadne_api::stream::DomainEvent, ariadne_api::stream::ResyncDto,
         ariadne_api::stream::HeartbeatDto,
         ariadne_api::sessions::SessionLogChunk, ariadne_api::sessions::SessionLogEnd,
@@ -185,6 +187,10 @@ pub fn router(state: AppState) -> Router {
             get(repositories::get)
                 .put(repositories::update)
                 .delete(repositories::delete),
+        )
+        .route(
+            "/v1/merge-strategies",
+            get(repositories::list_merge_strategies),
         )
         // goals
         .route("/v1/goals", post(goals::create).get(goals::list))

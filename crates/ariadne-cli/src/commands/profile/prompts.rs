@@ -421,8 +421,7 @@ mod tests {
         );
         assert_eq!(
             kinds(Role::Engineer),
-            "system, engineer-briefing, engineer-resume, changes-requested, \
-             landing-direct, landing-pull-request"
+            "system, engineer-briefing, engineer-resume, changes-requested"
         );
     }
 
@@ -440,15 +439,13 @@ mod tests {
                 "{spelling}"
             );
         }
-        assert_eq!(
-            parse_prompt_arg("changes_requested"),
-            Ok(PromptArg::Briefing(PromptKind::ChangesRequested))
-        );
-        assert_eq!(
-            parse_prompt_arg("landing-pull-request"),
-            Ok(PromptArg::Briefing(PromptKind::LandingPullRequest)),
-            "every underscore of a kind gives way, not just the first"
-        );
+        for spelling in ["changes-requested", "changes_requested"] {
+            assert_eq!(
+                parse_prompt_arg(spelling),
+                Ok(PromptArg::Briefing(PromptKind::ChangesRequested)),
+                "{spelling}"
+            );
+        }
     }
 
     /// A typo must not send the caller to `--help` to find the spelling: the
@@ -512,7 +509,7 @@ mod tests {
         );
         assert_eq!(
             reset_question(&p, &owned(Some(p.role)), true, &subject),
-            "Reset all 6 prompts of \"Engineer\" (…000abcde) to the engineer defaults?"
+            "Reset all 4 prompts of \"Engineer\" (…000abcde) to the engineer defaults?"
         );
     }
 

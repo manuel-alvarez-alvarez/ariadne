@@ -3,14 +3,18 @@
 //! The contract is that a repository is validated exactly the way a goal's
 //! repos are — an absolute path into a real git work tree, on a branch that
 //! exists and has a commit — that the same checkout is registered once per
-//! base branch, and that every write reaches the domain-event stream.
+//! base branch, that every write reaches the domain-event stream, and that
+//! the landing briefing it hands its engineer is its own: prefilled from its
+//! merge strategy, editable, and reset by writing an empty one.
 
 mod common;
 
 use axum::http::StatusCode;
 
-use ariadne_api::repositories::RepositoryDto;
+use ariadne_api::repositories::{MergeStrategyDto, RepositoryDto};
 use ariadne_api::stream::DomainEvent;
+use ariadne_core::MergeStrategy;
+use ariadne_store::defaults::default_landing_prompt;
 
 use common::{delete, get, harness, next_event, post_json, put_json, sh};
 
@@ -199,4 +203,185 @@ async fn the_same_path_and_branch_cannot_be_registered_twice() {
         StatusCode::CONFLICT,
     )
     .await;
+}
+
+/// The landing briefing of a new repository is the default of its merge
+/// strategy, and a text given at creation is what stands instead.
+#[tokio::test]
+async fn a_new_repository_lands_by_its_strategys_briefing_unless_it_was_given_one() {
+    let h = harness().await;
+    let repo = h.git_repo("repo");
+
+    let created: RepositoryDto = h
+        .json(
+            post_json(
+                "/v1/repositories",
+                serde_json::json!({"path": repo.display().to_string(),
+                                   "merge_strategy": "pull_request"}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(
+        created.landing_prompt,
+        default_landing_prompt(MergeStrategy::PullRequest)
+    );
+    assert!(created.landing_prompt_is_default);
+
+    let mine = "Squash {branch} onto {base_branch} in {repo_path}.";
+    let own: RepositoryDto = h
+        .json(
+            post_json(
+                "/v1/repositories",
+                serde_json::json!({"path": repo.display().to_string(),
+                                   "base_branch": "next", "landing_prompt": mine}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(own.landing_prompt, mine);
+    assert!(!own.landing_prompt_is_default);
+}
+
+/// An update sets the landing briefing, an empty one puts the strategy's
+/// default back, and a strategy that moves under a text of the repository's
+/// own leaves those words exactly where they are.
+#[tokio::test]
+async fn the_landing_briefing_is_set_reset_and_kept_across_a_strategy_change() {
+    let h = harness().await;
+    let repo = h.git_repo("repo");
+    let created: RepositoryDto = h
+        .json(
+            post_json(
+                "/v1/repositories",
+                serde_json::json!({"path": repo.display().to_string()}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    let uri = format!("/v1/repositories/{}", created.id);
+
+    let mine = "Ship {task_title} from {repo_path}.";
+    let set: RepositoryDto = h
+        .json(
+            put_json(&uri, serde_json::json!({"landing_prompt": mine})),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(set.landing_prompt, mine);
+    assert!(!set.landing_prompt_is_default);
+
+    // An update that says nothing about it leaves it, and so does one that
+    // moves the repository onto the other strategy.
+    let described: RepositoryDto = h
+        .json(
+            put_json(&uri, serde_json::json!({"description": "the toy repo"})),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(described.landing_prompt, mine);
+    let moved: RepositoryDto = h
+        .json(
+            put_json(&uri, serde_json::json!({"merge_strategy": "pull_request"})),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(moved.merge_strategy, MergeStrategy::PullRequest);
+    assert_eq!(moved.landing_prompt, mine, "the words are the user's");
+
+    // Empty resets, and what stands is the default of the strategy in force.
+    let reset: RepositoryDto = h
+        .json(
+            put_json(&uri, serde_json::json!({"landing_prompt": ""})),
+            StatusCode::OK,
+        )
+        .await;
+    assert!(reset.landing_prompt_is_default);
+    assert_eq!(
+        reset.landing_prompt,
+        default_landing_prompt(MergeStrategy::PullRequest)
+    );
+}
+
+/// A landing briefing naming a placeholder nothing fills in is a 400 that
+/// says which token and what it could have used instead — on both writes.
+#[tokio::test]
+async fn a_landing_briefing_with_an_unknown_placeholder_is_a_400() {
+    let h = harness().await;
+    let repo = h.git_repo("repo");
+    let broken = "Land {branch} the {nope} way.";
+
+    let err = h
+        .error(
+            post_json(
+                "/v1/repositories",
+                serde_json::json!({"path": repo.display().to_string(),
+                                   "landing_prompt": broken}),
+            ),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+    assert_eq!(err.error.code, "invalid_request");
+    for named in [
+        "{nope}",
+        "{task_title}",
+        "{branch}",
+        "{base_branch}",
+        "{repo_path}",
+    ] {
+        assert!(err.error.message.contains(named), "{}", err.error.message);
+    }
+
+    let created: RepositoryDto = h
+        .json(
+            post_json(
+                "/v1/repositories",
+                serde_json::json!({"path": repo.display().to_string()}),
+            ),
+            StatusCode::CREATED,
+        )
+        .await;
+    h.error(
+        put_json(
+            &format!("/v1/repositories/{}", created.id),
+            serde_json::json!({"landing_prompt": broken}),
+        ),
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
+    // ...and nothing was written.
+    let unchanged: RepositoryDto = h
+        .json(
+            get(&format!("/v1/repositories/{}", created.id)),
+            StatusCode::OK,
+        )
+        .await;
+    assert!(unchanged.landing_prompt_is_default);
+}
+
+/// Every merge strategy and the landing briefing it prefills, so a client can
+/// show one before the repository exists — and the endpoint is in the OpenAPI
+/// document, since that is what the clients are generated from.
+#[tokio::test]
+async fn the_merge_strategies_are_listed_with_their_landing_briefings() {
+    let h = harness().await;
+    let strategies: Vec<MergeStrategyDto> =
+        h.json(get("/v1/merge-strategies"), StatusCode::OK).await;
+    assert_eq!(
+        strategies
+            .iter()
+            .map(|s| s.merge_strategy)
+            .collect::<Vec<_>>(),
+        MergeStrategy::ALL
+    );
+    for listed in &strategies {
+        assert_eq!(
+            listed.landing_prompt,
+            default_landing_prompt(listed.merge_strategy)
+        );
+    }
+
+    let doc: serde_json::Value = h.get("/api-docs/openapi.json").await;
+    assert!(doc["paths"]["/v1/merge-strategies"]["get"].is_object());
+    assert!(doc["components"]["schemas"]["MergeStrategyDto"].is_object());
 }

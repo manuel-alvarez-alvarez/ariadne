@@ -118,6 +118,8 @@ pub fn repository(id: &str, path: &str, base_branch: &str) -> RepositoryDto {
         base_branch: base_branch.into(),
         merge_strategy: MergeStrategy::Direct,
         description: None,
+        landing_prompt: "Land {branch} onto {base_branch}.".into(),
+        landing_prompt_is_default: true,
         created_at: NOW.into(),
         updated_at: NOW.into(),
     }

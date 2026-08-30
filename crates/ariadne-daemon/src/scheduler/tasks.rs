@@ -583,15 +583,14 @@ impl super::Scheduler {
     async fn resume_text(&self, task: &Task) -> anyhow::Result<String> {
         if task.status() == TaskStatus::Approved {
             let repo = self.store.get_repository(&task.repo_id).await?;
-            // One landing briefing per merge strategy, and the repository says
-            // which: what reaches the engineer is the procedure it runs.
-            let template = prompts::template_for(
-                &self.store,
-                &task.engineer_profile_id,
-                PromptKind::landing_for(repo.merge_strategy()),
-            )
-            .await;
-            return Ok(prompts::landing_briefing(&template, task, &repo));
+            // The landing briefing is the repository's: the text set on it, or
+            // the default of its merge strategy. What reaches the engineer is
+            // the procedure that repository lands by.
+            return Ok(prompts::landing_briefing(
+                repo.landing_prompt_text(),
+                task,
+                &repo,
+            ));
         }
         let template = prompts::template_for(
             &self.store,
