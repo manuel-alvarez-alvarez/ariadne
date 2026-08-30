@@ -263,7 +263,8 @@ async fn print_log(client: &Client) -> Result<()> {
         },
     )?;
     let snapshot: LogSnapshotResponse = client.get_json(&path).await?;
-    let lines: Vec<String> = snapshot.lines.iter().map(log_line).collect();
+    let color = view().color;
+    let lines: Vec<String> = snapshot.lines.iter().map(|l| log_line(l, color)).collect();
     pager::page(&format!("{}\n", lines.join("\n")))
 }
 
@@ -276,6 +277,7 @@ async fn print_log(client: &Client) -> Result<()> {
 /// [`Shown`] says the two stop overlapping.
 async fn follow_log(client: &Client) -> Result<()> {
     let mut shown = Shown::default();
+    let color = view().color;
     follow::frames_reconnecting(client, "/v1/logs/stream", move |frame| {
         match frame.event.as_str() {
             "snapshot" => {
@@ -288,13 +290,13 @@ async fn follow_log(client: &Client) -> Result<()> {
                     false => shown.boundary(&snapshot.lines),
                 };
                 for line in &snapshot.lines[from..] {
-                    println!("{}", log_line(line));
+                    println!("{}", log_line(line, color));
                     shown.note(line);
                 }
             }
             "delta" => {
                 let line: LogLineDto = serde_json::from_str(&frame.data)?;
-                println!("{}", log_line(&line));
+                println!("{}", log_line(&line, color));
                 shown.note(&line);
             }
             _ => {}
@@ -365,12 +367,19 @@ fn same(a: &LogLineDto, b: &LogLineDto) -> bool {
 
 /// One captured line as a terminal reads it: when, how loud, from where, and
 /// what it said.
-fn log_line(line: &LogLineDto) -> String {
+///
+/// `time` and `target` are context and dim to `META`; `message` is the line
+/// itself and stays as plain as it always was; `level` carries
+/// `style::level`'s colour, on the same five characters `{:<5}` has always
+/// padded it to — padded first, so the escapes around it never count toward
+/// the column's width.
+fn log_line(line: &LogLineDto, color: bool) -> String {
+    let level = format!("{:<5}", line.level);
     format!(
-        "{}  {:<5}  {}  {}",
-        local_time(&line.ts),
-        line.level,
-        line.target,
+        "{}  {}  {}  {}",
+        style::paint(color, style::META, &local_time(&line.ts)),
+        style::paint(color, style::level(&line.level), &level),
+        style::paint(color, style::META, &line.target),
         line.message
     )
 }
@@ -760,5 +769,49 @@ mod tests {
             .await
         );
         assert_eq!(asked.get(), 2, "and the answer was not the first one");
+    }
+
+    /// With colour off, a log line is exactly what it always was: no
+    /// escapes, the level padded to five characters. With colour on, `ERROR`
+    /// carries `style::level`'s colour for it and `DEBUG` carries its dimmed
+    /// one — the two ends of that range — and the level column is still five
+    /// wide either way, since it is padded before it is painted.
+    #[test]
+    fn a_log_line_is_plain_off_and_painted_on() {
+        let error = LogLineDto {
+            level: "ERROR".into(),
+            ..log("2026-08-29T02:00:00Z", "planner crashed")
+        };
+        let plain = log_line(&error, false);
+        assert_eq!(
+            plain,
+            format!(
+                "{}  ERROR  ariadned  planner crashed",
+                local_time("2026-08-29T02:00:00Z")
+            )
+        );
+        assert!(!plain.contains('\u{1b}'), "{plain}");
+
+        let painted = log_line(&error, true);
+        assert!(
+            painted.contains(&style::paint(true, style::level("ERROR"), "ERROR")),
+            "{painted}"
+        );
+        assert!(
+            painted.contains(&style::paint(true, style::META, "ariadned")),
+            "{painted}"
+        );
+        assert!(painted.ends_with("planner crashed"), "{painted}");
+
+        let debug = LogLineDto {
+            level: "DEBUG".into(),
+            ..log("2026-08-29T02:00:00Z", "polling socket")
+        };
+        assert!(log_line(&debug, true).contains(&style::paint(
+            true,
+            style::level("DEBUG"),
+            "DEBUG"
+        )));
+        assert!(!log_line(&debug, false).contains('\u{1b}'));
     }
 }

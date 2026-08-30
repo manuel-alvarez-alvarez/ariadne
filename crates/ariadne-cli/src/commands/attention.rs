@@ -27,8 +27,8 @@ use ariadne_core::{AttentionReason, TaskStatus};
 
 use super::follow;
 
-use crate::output::{Format, note, print_json, print_table, view};
-use board::{ROWS, group, heading, rows, task_titles};
+use crate::output::{Format, note, print_json, print_table, style, view};
+use board::{Group, ROWS, group, heading, rows, task_titles};
 
 /// Why a row is on the list — the task reasons and the session reasons in one
 /// vocabulary, since one table lists both. `failed` is a task's alone: a
@@ -138,6 +138,13 @@ fn relevant(frame: &SseEvent) -> bool {
     )
 }
 
+/// The heading a goal's table stands under, in `HEADING`'s bold — the same
+/// section-break role it plays in `ariadne doctor`. With colour off it is
+/// exactly [`heading`]'s own string, byte for byte.
+fn heading_line(group: &Group, color: bool) -> String {
+    style::paint(color, style::HEADING, &heading(group))
+}
+
 pub async fn run(client: &Client, watch: bool, format: Format) -> Result<()> {
     if !watch {
         return render(client, format).await;
@@ -177,11 +184,12 @@ async fn render(client: &Client, format: Format) -> Result<()> {
             }
         }
         Format::Table => {
+            let color = view().color;
             for (i, group) in attention.goals.iter().enumerate() {
                 if i > 0 {
                     println!();
                 }
-                println!("{}", heading(group));
+                println!("{}", heading_line(group, color));
                 print_table(ROWS, &rows(group, &titles, now))?;
             }
             if attention.goals.is_empty() {
@@ -333,5 +341,22 @@ pub(crate) mod tests {
 
         // Failed, but the daemon never stamped an end on it.
         assert_eq!(session_at(&dead("01S", "01GA", None)), NOW);
+    }
+
+    /// With colour off the heading is exactly `heading`'s own string; with
+    /// it on the whole thing is `HEADING`'s bold.
+    #[test]
+    fn the_goal_heading_is_bold_when_colour_is_on() {
+        let g = Group {
+            goal_id: "01GA".into(),
+            goal: Some(goal("01GA", "Ship the board")),
+            tasks: Vec::new(),
+            sessions: Vec::new(),
+        };
+        assert_eq!(heading_line(&g, false), heading(&g));
+        assert_eq!(
+            heading_line(&g, true),
+            style::paint(true, style::HEADING, &heading(&g))
+        );
     }
 }

@@ -28,7 +28,7 @@ use ariadne_client::{Client, SseEvent};
 use super::attention::reason_label;
 use super::follow::{self, Next};
 use super::{query_path, recipient_label};
-use crate::output::{Format, local_time, note};
+use crate::output::{Format, local_time, note, style, view};
 
 /// How many recorded events the snapshot asks for. The daemon caps a page at
 /// 200, and a tail wants the recent past rather than all of it.
@@ -88,28 +88,80 @@ struct Line {
     /// narrows to, and never printed on its own.
     #[serde(skip_serializing_if = "Option::is_none")]
     session: Option<String>,
+    /// The lifecycle status `detail` ends in `[brackets]` with, for `render`
+    /// to paint — set only where `detail` was built from one (`task_line`,
+    /// the goal arm of [`domain_line`], `session_line`), and skipped from
+    /// json since `detail` already spells the same word.
+    #[serde(skip)]
+    status: Option<String>,
 }
 
 impl Line {
     /// `time · kind · subject · detail`, in local time, with an empty detail
     /// leaving no dangling separator behind it.
-    fn render(&self) -> String {
+    ///
+    /// `color` off is the plain line this command has always printed — the
+    /// shape every fixture below still pins byte for byte. `color` on paints
+    /// three of the four parts: the time dims to context, the kind turns
+    /// bold in `TITLE`'s style (a kind is what the row is about, the same job
+    /// a table's title column does — `HEADING` is for the section breaks a
+    /// stream running past never has), and where `detail` ends in the
+    /// lifecycle status the daemon just set, that word picks up its colour
+    /// and its glyph together — never the glyph alone, since the plain line
+    /// has never carried one and still must not.
+    fn render(&self, color: bool) -> String {
         let mut out = format!(
             "{} · {} · {}",
-            local_time(&self.at),
-            self.kind,
+            style::paint(color, style::META, &local_time(&self.at)),
+            style::paint(color, style::TITLE, &self.kind),
             self.subject
         );
         if !self.detail.is_empty() {
             out.push_str(" · ");
-            out.push_str(&self.detail);
+            out.push_str(&self.painted_detail(color));
         }
         out
+    }
+
+    /// `detail`, with its `[status]` painted where there is one to paint and
+    /// `color` says to. A word `style::status` does not recognise — an
+    /// unfamiliar status, a transition's `from → to` — comes back unstyled
+    /// and glyph-less, so it is written back exactly as it sat in `detail`.
+    ///
+    /// The bracket painted is the *last* one that matches, never the first: a
+    /// goal or task title is free text a person wrote, and `titled` appends
+    /// `[state]` after it rather than escaping what is already there, so a
+    /// title that happens to end in the same words in brackets — `Investigate
+    /// [under_review]`, status `under_review` — must not have its own bracket
+    /// mistaken for the one the daemon actually set.
+    fn painted_detail(&self, color: bool) -> String {
+        let Some(word) = &self.status else {
+            return self.detail.clone();
+        };
+        if !color {
+            return self.detail.clone();
+        }
+        let bracket = format!("[{word}]");
+        let Some(at) = self.detail.rfind(&bracket) else {
+            return self.detail.clone();
+        };
+        let (style, glyph) = style::status(word);
+        let glyphed = match glyph {
+            Some(glyph) => format!("{glyph} {word}"),
+            None => word.clone(),
+        };
+        let painted = style::paint(true, style, &glyphed);
+        format!(
+            "{}[{painted}]{}",
+            &self.detail[..at],
+            &self.detail[at + bracket.len()..]
+        )
     }
 }
 
 pub async fn run(client: &Client, filters: Filters, follow_it: bool, format: Format) -> Result<()> {
     let recorded = snapshot(client, &filters).await?;
+    let color = view().color;
     match format {
         Format::Json => {
             for line in &recorded {
@@ -118,7 +170,7 @@ pub async fn run(client: &Client, filters: Filters, follow_it: bool, format: For
         }
         Format::Table => {
             for line in &recorded {
-                println!("{}", line.render());
+                println!("{}", line.render(color));
             }
             // An empty list under a filter is not an empty system, and saying
             // so would send the reader looking for events that are right
@@ -150,7 +202,7 @@ pub async fn run(client: &Client, filters: Filters, follow_it: bool, format: For
             }
             match format {
                 Format::Json => print_jsonl(&line)?,
-                Format::Table => println!("{}", line.render()),
+                Format::Table => println!("{}", line.render(color)),
             }
         }
         Ok(Next::Go)
@@ -278,6 +330,7 @@ fn agent_line(e: &AgentEventDto) -> Line {
             .unwrap_or_else(|| "-".into()),
         detail: e.agent_kind.clone().unwrap_or_default(),
         session: e.session_id.clone(),
+        status: None,
     }
 }
 
@@ -291,6 +344,7 @@ fn domain_line(event: &DomainEvent) -> Line {
             subject: g.id.clone(),
             detail: titled(&g.title, g.status.as_str()),
             session: None,
+            status: Some(g.status.as_str().to_string()),
         },
         DomainEvent::TaskCreated(t) => task_line(kind, t, t.status.as_str().to_string()),
         DomainEvent::TaskUpdated(TaskUpdatedDto { task, transition }) => task_line(
@@ -312,6 +366,7 @@ fn domain_line(event: &DomainEvent) -> Line {
             subject: task_id.clone(),
             detail: format!("{branch} @ {}", short(head)),
             session: None,
+            status: None,
         },
         DomainEvent::MessageCreated(m) => message_line(kind, m),
         DomainEvent::ReviewCreated(r) => Line {
@@ -320,6 +375,7 @@ fn domain_line(event: &DomainEvent) -> Line {
             subject: r.task_id.clone(),
             detail: format!("round {} {}", r.round, r.verdict.as_str()),
             session: r.session_id.clone(),
+            status: None,
         },
         DomainEvent::SessionCreated(s) | DomainEvent::SessionUpdated(s) => session_line(kind, s),
         DomainEvent::AgentEvent(e) => agent_line(e),
@@ -329,6 +385,7 @@ fn domain_line(event: &DomainEvent) -> Line {
             subject: p.id.clone(),
             detail: format!("{} ({})", p.name, p.role.as_str()),
             session: None,
+            status: None,
         },
         DomainEvent::RepositoryCreated(r) | DomainEvent::RepositoryUpdated(r) => Line {
             at: now(),
@@ -336,6 +393,7 @@ fn domain_line(event: &DomainEvent) -> Line {
             subject: r.id.clone(),
             detail: r.path.clone(),
             session: None,
+            status: None,
         },
         DomainEvent::GoalDeleted(DeletedDto { id })
         | DomainEvent::ProfileDeleted(DeletedDto { id })
@@ -345,6 +403,7 @@ fn domain_line(event: &DomainEvent) -> Line {
             subject: id.clone(),
             detail: String::new(),
             session: None,
+            status: None,
         },
     }
 }
@@ -356,6 +415,7 @@ fn task_line(kind: String, t: &TaskDto, state: String) -> Line {
         subject: t.id.clone(),
         detail: titled(&t.title, &state),
         session: None,
+        status: Some(state),
     }
 }
 
@@ -370,6 +430,7 @@ fn message_line(kind: String, m: &MessageDto) -> Line {
         subject: m.task_id.clone().unwrap_or_else(|| m.goal_id.clone()),
         detail: brief(&format!("{}{to}: {}", m.author_role.as_str(), m.body)),
         session: m.author_session_id.clone(),
+        status: None,
     }
 }
 
@@ -396,6 +457,7 @@ fn session_line(kind: String, s: &SessionDto) -> Line {
         subject: s.id.clone(),
         detail,
         session: Some(s.id.clone()),
+        status: Some(s.status.as_str().to_string()),
     }
 }
 
@@ -447,7 +509,7 @@ mod tests {
     const AT: &str = "2026-08-18T11:00:00Z";
 
     fn rendered(line: &Line) -> String {
-        line.render()
+        line.render(false)
             .replace(&local_time(AT), "<time>")
             .replace(&local_time(&line.at), "<time>")
     }
@@ -495,6 +557,66 @@ mod tests {
         assert_eq!(
             rendered(&domain_line(&DomainEvent::TaskCreated(task()))),
             "<time> · task_created · 01TASK · Wire the screen [under_review]"
+        );
+    }
+
+    /// With colour on, the kind turns bold and the lifecycle status inside
+    /// the detail's brackets carries its colour and its glyph together; with
+    /// colour off nothing changes at all — no escapes, no glyph — which is
+    /// the same plain line every other fixture in this module pins.
+    #[test]
+    fn a_status_detail_is_painted_only_when_colour_is_on() {
+        let line = domain_line(&DomainEvent::TaskCreated(task()));
+        assert_eq!(
+            rendered(&line),
+            "<time> · task_created · 01TASK · Wire the screen [under_review]"
+        );
+        assert!(!line.render(false).contains('\u{1b}'));
+
+        let painted = line.render(true);
+        let (sty, glyph) = style::status("under_review");
+        assert!(
+            painted.contains(&style::paint(true, style::TITLE, "task_created")),
+            "{painted}"
+        );
+        assert!(
+            painted.contains(&style::paint(
+                true,
+                sty,
+                &format!("{} under_review", glyph.expect("under_review has a glyph"))
+            )),
+            "{painted}"
+        );
+    }
+
+    /// A title is free text a person wrote, and can end in something that
+    /// reads exactly like the status in brackets. The bracket `titled`
+    /// actually appended — always the rightmost one — is what gets painted;
+    /// the title's own is left exactly as it came, in the plain render and
+    /// in the painted one alike.
+    #[test]
+    fn a_title_that_echoes_the_status_does_not_steal_the_paint() {
+        let echoing = TaskDto {
+            title: "Investigate [under_review]".into(),
+            ..task()
+        };
+        let line = domain_line(&DomainEvent::TaskCreated(echoing));
+        assert_eq!(
+            rendered(&line),
+            "<time> · task_created · 01TASK · Investigate [under_review] [under_review]"
+        );
+
+        let painted = line.render(true);
+        let (sty, glyph) = style::status("under_review");
+        let glyphed = style::paint(
+            true,
+            sty,
+            &format!("{} under_review", glyph.expect("under_review has a glyph")),
+        );
+        assert!(painted.ends_with(&format!("[{glyphed}]")), "{painted}");
+        assert!(
+            painted.contains("Investigate [under_review] ["),
+            "the title's own bracket is untouched: {painted}"
         );
     }
 
@@ -650,6 +772,7 @@ mod tests {
             subject: "01X".into(),
             detail: String::new(),
             session: session.map(str::to_owned),
+            status: None,
         }
     }
 

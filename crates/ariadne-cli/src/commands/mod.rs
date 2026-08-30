@@ -34,7 +34,7 @@ use ariadne_client::{Client, endpoint};
 use ariadne_core::models::ModelRef;
 use ariadne_core::{RecipientKind, probe};
 
-use crate::output::{Format, local_time, note, print, print_kv, short_id, warn};
+use crate::output::{Format, local_time, note, print, print_kv, short_id, style, view, warn};
 
 /// `ariadne version` — client version always, daemon version when reachable.
 ///
@@ -192,19 +192,26 @@ pub fn one_of<T: Copy>(statuses: &[T]) -> Option<T> {
 }
 
 /// One conversation message as `goal thread` and `task thread` print it:
-/// `[time] role: body`, with the addressee after the author when there is one.
-pub fn message_line(message: &MessageDto) -> String {
-    let author = match &message.recipient {
-        Some(recipient) => format!(
-            "{} → {}",
-            message.author_role.as_str(),
-            recipient_label(recipient)
+/// `[time] role: body`, with the addressee after the author when there is
+/// one.
+///
+/// `[` and `]` stay bare so the line still parses by eye the same way with
+/// colour on: the time inside them dims to `META`, the role turns bold, and
+/// `→ recipient` dims with it — body and the `:` between them are the
+/// content and stay as plain as they always were.
+pub fn message_line(message: &MessageDto, color: bool) -> String {
+    let role = style::paint(color, style::TITLE, message.author_role.as_str());
+    let addressee = match &message.recipient {
+        Some(recipient) => style::paint(
+            color,
+            style::META,
+            &format!(" → {}", recipient_label(recipient)),
         ),
-        None => message.author_role.as_str().to_string(),
+        None => String::new(),
     };
     format!(
-        "[{}] {author}: {}",
-        local_time(&message.created_at),
+        "[{}] {role}{addressee}: {}",
+        style::paint(color, style::META, &local_time(&message.created_at)),
         message.body
     )
 }
@@ -213,8 +220,9 @@ pub fn message_line(message: &MessageDto) -> String {
 /// daemon's own list for a script, one line per message for a person.
 pub fn print_messages(messages: &[MessageDto], format: Format) -> Result<()> {
     print(format, &messages, || {
+        let color = view().color;
         for message in messages {
-            println!("{}", message_line(message));
+            println!("{}", message_line(message, color));
         }
         if messages.is_empty() {
             note("no messages yet");
@@ -557,16 +565,41 @@ mod tests {
     #[test]
     fn only_an_addressed_message_names_a_recipient() {
         assert_eq!(
-            message_line(&message(None)),
+            message_line(&message(None), false),
             "[not a time] engineer: rebased onto main"
         );
         assert_eq!(
-            message_line(&message(Some(profile_recipient(
-                Some("01PROF"),
-                Some("Reviewer")
-            )))),
+            message_line(
+                &message(Some(profile_recipient(Some("01PROF"), Some("Reviewer")))),
+                false
+            ),
             "[not a time] engineer → Reviewer: rebased onto main"
         );
+    }
+
+    /// With colour on, the time and the addressee dim and the role turns
+    /// bold; the brackets and the colon stay bare, so the line still reads
+    /// the same way at a glance.
+    #[test]
+    fn a_coloured_message_line_paints_time_role_and_addressee() {
+        let addressed = message(Some(profile_recipient(Some("01PROF"), Some("Reviewer"))));
+        let painted = message_line(&addressed, true);
+        assert!(
+            painted.starts_with(&format!(
+                "[{}]",
+                style::paint(true, style::META, "not a time")
+            )),
+            "{painted}"
+        );
+        assert!(
+            painted.contains(&style::paint(true, style::TITLE, "engineer")),
+            "{painted}"
+        );
+        assert!(
+            painted.contains(&style::paint(true, style::META, " → Reviewer")),
+            "{painted}"
+        );
+        assert!(painted.ends_with(": rebased onto main"), "{painted}");
     }
 
     /// A client and a daemon of different builds is the cause of the odd 404
