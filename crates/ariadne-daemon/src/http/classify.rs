@@ -317,10 +317,16 @@ mod tests {
     fn every_declared_event_is_acted_on() {
         let codex = ariadne_core::codex_hooks::EVENTS
             .iter()
-            .map(|e| ariadne_core::codex_hooks::event_kind(e));
-        for kind in codex.chain(crate::opencode_plugin::declared_events()) {
+            .map(|e| (AgentKind::Codex, ariadne_core::codex_hooks::event_kind(e)));
+        let opencode = crate::opencode_plugin::declared_events()
+            .into_iter()
+            .map(|e| (AgentKind::Opencode, e));
+        for (agent, kind) in codex.chain(opencode) {
             let acted_on = status_for_event(&kind).is_some()
                 || attention_for_event(&kind, &permission_asked()).is_some()
+                // The end of a compaction: what the scheduler waits for
+                // before typing into the pane again.
+                || crate::agents::adapter_for(agent).compaction_done(&kind, &permission_asked())
                 // Forwarded for its payload alone: `info.id` is where the
                 // internal session id comes from, and `session.updated`
                 // deliberately maps to no status (it keeps firing after

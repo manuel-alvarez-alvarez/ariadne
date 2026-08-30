@@ -1,7 +1,7 @@
 //! What a goal wants, by status: a planner while it is being planned, its
 //! tasks while it is active, and nothing running once it is over.
 
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use ariadne_core::{
     Actor, AttentionReason, GoalStatus, PromptKind, Role, SessionStatus, TaskStatus,
@@ -47,6 +47,10 @@ impl super::Scheduler {
                 }
             }
             GoalStatus::Active => {
+                // The plan is finalized, which is the planner's hand-off:
+                // what it is owed before it is let go is the compaction of
+                // everything it said and read getting there.
+                self.owe_planner_compaction(&goal).await;
                 self.end_idle_planner(&goal.id).await;
                 let tasks = self
                     .store
@@ -223,7 +227,10 @@ impl super::Scheduler {
     /// Ended, not unreachable: what the agent CLI holds is its own history,
     /// not the pane, so a session ended here is one `session resume` puts
     /// back where it was. What is not ended is a planner mid-turn: whatever
-    /// it is writing is finished first, and the next tick finds it idle.
+    /// it is writing is finished first, and the next tick finds it idle. Nor
+    /// one still owed its compaction: that history is exactly what the
+    /// compaction shortens, and a pane killed under a running one leaves the
+    /// conversation as it was.
     async fn end_idle_planner(&self, goal_id: &str) {
         let Ok(sessions) = self
             .store
@@ -240,10 +247,27 @@ impl super::Scheduler {
             .iter()
             .filter(|s| s.role() == Role::Planner && s.status() == SessionStatus::Idle)
         {
+            if self.compaction_pending(planner) {
+                debug!(goal = %goal_id, session = %planner.id, "the idle planner is left up until the compaction it owes is done");
+                continue;
+            }
             info!(goal = %goal_id, session = %planner.id, "the goal is past planning; ending its idle planner");
             if let Err(e) = self.launcher.kill_session(&planner.id).await {
                 warn!(goal = %goal_id, session = %planner.id, error = %e, "ending the planner failed");
             }
+        }
+    }
+
+    /// Owe the goal's live planners the compaction their hand-off earns,
+    /// once: the plan is finalized, and the situation that names is the goal
+    /// being active.
+    async fn owe_planner_compaction(&mut self, goal: &Goal) {
+        let Ok(planners) = self.live_sessions(&goal.id, None, Role::Planner).await else {
+            return;
+        };
+        for planner in planners {
+            self.owe_compaction(&planner, (goal.status.clone(), 0))
+                .await;
         }
     }
 

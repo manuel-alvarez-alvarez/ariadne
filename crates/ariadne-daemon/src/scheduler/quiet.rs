@@ -101,8 +101,9 @@ impl super::Scheduler {
         // pane to kill either: the paste and the Enter behind it would come
         // back as a message nobody could be given, and the user would be told
         // about a composer that was only ever interrupted. It waits for the
-        // pass after the delivery has settled.
-        if self.typing.contains(&session.id) {
+        // pass after the delivery has settled. A pane compacting its
+        // conversation is the same pane for as long as that runs.
+        if self.pane_busy(&session.id) {
             return Ok(());
         }
         let done = self.quiet.entry(session.id.clone()).or_default();

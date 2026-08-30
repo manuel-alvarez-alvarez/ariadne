@@ -191,7 +191,13 @@ CREATE TABLE agent_sessions (
     model               TEXT,
     -- Copied off the pin the session's role carries, beside its model.
     effort              TEXT,
-    launched_at         TEXT
+    launched_at         TEXT,
+    -- When the daemon last decided this session owes a compaction of its
+    -- agent conversation — set at every hand-off (a plan finalized, a review
+    -- requested, a verdict given) and cleared once the CLI reports the
+    -- compaction done, or the daemon stops waiting for it. NULL = nothing
+    -- owed.
+    compact_owed_at     TEXT
 );
 CREATE INDEX idx_sessions_task ON agent_sessions (task_id);
 CREATE INDEX idx_sessions_status ON agent_sessions (status);

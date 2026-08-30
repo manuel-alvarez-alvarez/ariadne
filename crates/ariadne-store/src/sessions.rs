@@ -51,6 +51,8 @@ pub struct SessionFilter {
     pub live_only: bool,
     /// Only sessions currently flagged as needing attention.
     pub attention_only: bool,
+    /// Only sessions that owe a compaction of their agent conversation.
+    pub compaction_owed: bool,
 }
 
 impl Store {
@@ -93,6 +95,7 @@ impl Store {
             .maybe(" AND status = ?", filter.status.map(|s| s.as_str()))
             .flag(LIVE_STATUSES, filter.live_only)
             .flag(" AND attention_reason IS NOT NULL", filter.attention_only)
+            .flag(" AND compact_owed_at IS NOT NULL", filter.compaction_owed)
             .fetch(self, " ORDER BY id", &[])
             .await
     }
@@ -325,6 +328,53 @@ impl Store {
         )
         .await?;
         self.publish_session_update(id).await
+    }
+
+    /// Note that a session owes a compaction of its agent conversation: a
+    /// hand-off has just passed, and what the transcript holds up to it is
+    /// what every later resume would replay.
+    ///
+    /// Answers whether this write is what put the debt there: a session that
+    /// already owes one keeps the moment it was first owed, so that how long
+    /// a compaction has been waiting is measured from the hand-off and not
+    /// from the last pass that noticed it. A session that does not exist is
+    /// an error, as everywhere else.
+    pub async fn owe_compaction(&self, id: &str) -> Result<bool> {
+        let n = sqlx::query(
+            "UPDATE agent_sessions SET compact_owed_at = ?
+              WHERE id = ? AND compact_owed_at IS NULL",
+        )
+        .bind(now())
+        .bind(id)
+        .execute(self.w())
+        .await?
+        .rows_affected();
+        if n == 0 {
+            self.get_session(id).await?;
+            return Ok(false);
+        }
+        self.publish_session_update(id).await?;
+        Ok(true)
+    }
+
+    /// Take the debt down: the CLI reported the compaction done, or the
+    /// daemon stopped waiting for it. Answers whether anything was owed —
+    /// a compaction the agent ran on its own pays a debt that may not exist.
+    pub async fn clear_compaction_owed(&self, id: &str) -> Result<bool> {
+        let n = sqlx::query(
+            "UPDATE agent_sessions SET compact_owed_at = NULL
+              WHERE id = ? AND compact_owed_at IS NOT NULL",
+        )
+        .bind(id)
+        .execute(self.w())
+        .await?
+        .rows_affected();
+        if n == 0 {
+            self.get_session(id).await?;
+            return Ok(false);
+        }
+        self.publish_session_update(id).await?;
+        Ok(true)
     }
 
     pub async fn touch_session(&self, id: &str) -> Result<()> {

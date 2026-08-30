@@ -70,6 +70,33 @@ pub trait AgentAdapter: Send + Sync {
         internal_id: &str,
         instruction: &str,
     ) -> Result<SpawnPlan>;
+    /// What the daemon types into this CLI's composer to have it compact its
+    /// conversation, with the focus of `role` where the CLI takes one
+    /// ([`compaction_focus`]); `None` for a CLI whose compaction cannot be
+    /// started from outside.
+    fn compaction_command(&self, role: Role) -> Option<String>;
+    /// Whether an event this CLI reported — `kind` as `ariadne agent-event`
+    /// spells it, with its payload — says a compaction has just finished.
+    /// Whatever started it: one the daemon asked for, one the user typed, or
+    /// the CLI's own near the context limit.
+    fn compaction_done(&self, kind: &str, payload: &serde_json::Value) -> bool;
+}
+
+/// What a compaction is told to keep, per role, for the CLIs that take a
+/// focus beside the command.
+///
+/// Simplified Technical English: short imperative sentences, one instruction
+/// each, so the summary that comes out carries what the next resume of this
+/// role has to know and nothing it does not.
+pub fn compaction_focus(role: Role) -> &'static str {
+    match role {
+        Role::Engineer => {
+            "Keep the task and the branch. Keep what changed and why. \
+             Keep how you verified it. Keep the open review points."
+        }
+        Role::Reviewer => "Keep what you checked. Keep each finding of each verdict you gave.",
+        Role::Planner => "Keep the goal. Keep the decisions. Keep the tasks you created.",
+    }
 }
 
 pub fn adapter_for(kind: AgentKind) -> &'static dyn AgentAdapter {
@@ -121,4 +148,95 @@ pub fn env_json(ctx: &SpawnCtx) -> serde_json::Map<String, serde_json::Value> {
         .into_iter()
         .map(|(k, v)| (k, serde_json::Value::String(v)))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{adapter_for, compaction_focus};
+
+    use ariadne_core::{AgentKind, Role};
+    use serde_json::json;
+
+    /// Every CLI can be told to compact from its composer, and only Claude
+    /// Code takes the focus text on the same line: the other two run
+    /// `/compact` bare and are handed nothing else.
+    #[test]
+    fn every_cli_has_a_compaction_command_and_only_claude_takes_a_focus() {
+        for role in [Role::Planner, Role::Engineer, Role::Reviewer] {
+            let claude = adapter_for(AgentKind::ClaudeCode)
+                .compaction_command(role)
+                .unwrap();
+            assert_eq!(
+                claude,
+                format!("/compact {}", compaction_focus(role)),
+                "{role:?}"
+            );
+            assert!(
+                !claude.contains('\n'),
+                "one line, or the paste submits in pieces"
+            );
+            for kind in [AgentKind::Codex, AgentKind::Opencode] {
+                assert_eq!(
+                    adapter_for(kind).compaction_command(role).as_deref(),
+                    Some("/compact"),
+                    "{kind:?} {role:?}"
+                );
+            }
+        }
+    }
+
+    /// The focus texts are Simplified Technical English: short imperative
+    /// sentences, each one an instruction of its own.
+    #[test]
+    fn the_focus_texts_are_short_imperative_sentences() {
+        for role in [Role::Planner, Role::Engineer, Role::Reviewer] {
+            for sentence in compaction_focus(role)
+                .split('.')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                assert!(
+                    sentence.starts_with("Keep"),
+                    "{role:?}: {sentence:?} does not start with an imperative"
+                );
+                assert!(
+                    sentence.split_whitespace().count() <= 20,
+                    "{role:?}: {sentence:?} is longer than a Simplified Technical English sentence"
+                );
+            }
+        }
+    }
+
+    /// Each CLI says a compaction is over in its own vocabulary, and nothing
+    /// else it reports is mistaken for it — least of all the session start of
+    /// a resume, which Claude Code spells with the same hook.
+    #[test]
+    fn a_compaction_is_done_when_the_cli_says_so_and_not_before() {
+        let claude = adapter_for(AgentKind::ClaudeCode);
+        assert!(claude.compaction_done(
+            "session_start",
+            &json!({"hook_event_name": "SessionStart", "source": "compact"})
+        ));
+        for (kind, payload) in [
+            ("session_start", json!({"source": "resume"})),
+            ("session_start", json!({"source": "startup"})),
+            ("session_start", json!({})),
+            ("pre_compact", json!({"trigger": "manual"})),
+            ("stop", json!({})),
+        ] {
+            assert!(!claude.compaction_done(kind, &payload), "{kind} {payload}");
+        }
+
+        let codex = adapter_for(AgentKind::Codex);
+        assert!(codex.compaction_done("post_compact", &json!({})));
+        for kind in ["pre_compact", "session_start", "stop"] {
+            assert!(!codex.compaction_done(kind, &json!({})), "{kind}");
+        }
+
+        let opencode = adapter_for(AgentKind::Opencode);
+        assert!(opencode.compaction_done("session.compacted", &json!({"sessionID": "ses_x"})));
+        for kind in ["session.idle", "session.updated", "session.created"] {
+            assert!(!opencode.compaction_done(kind, &json!({})), "{kind}");
+        }
+    }
 }

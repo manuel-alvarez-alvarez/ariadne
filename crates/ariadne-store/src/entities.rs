@@ -308,6 +308,10 @@ pub struct AgentSession {
     /// When this session's agent process was last started. Every launch moves
     /// it, so it dates the run the session is in rather than the row.
     pub launched_at: Option<String>,
+    /// When this session was last found to owe a compaction of its agent
+    /// conversation, or None where nothing is owed: set at every hand-off
+    /// and cleared once the compaction is done or given up on.
+    pub compact_owed_at: Option<String>,
     pub created_at: String,
     pub ended_at: Option<String>,
 }

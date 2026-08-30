@@ -168,12 +168,18 @@ export const AriadneEvents = async ({ $, client }) => {
   //
   // The `permission.ask` plugin hook is deliberately not used: 1.18.15 never
   // calls it, the event bus is where approvals surface now.
+  //
+  // `session.compacted` {sessionID} is how OpenCode says a compaction is over
+  // — the `/compact` Ariadne types at every hand-off, and the one OpenCode runs
+  // on its own near the context limit alike — which is when the daemon may
+  // type into the pane again.
   const interesting = new Set([
     "session.created",
     "session.updated",
     "session.idle",
     "session.error",
     "session.deleted",
+    "session.compacted",
     "permission.asked",
     "permission.updated",
     "permission.replied",

@@ -10,13 +10,17 @@
 //! - MCP: `--mcp-config <run>/mcp.json`
 //! - Hooks: `--settings <run>/settings.json` (command hooks piping JSON into
 //!   `ariadne agent-event --kind claude_code`)
+//! - Compaction: `/compact <focus>` typed into the composer; the CLI reports
+//!   it done with a `SessionStart` hook whose `source` is `compact`, the same
+//!   hook a `startup` or a `resume` fires with its own source (verified on
+//!   2.1.251)
 
 use anyhow::{Context, Result};
 use serde_json::json;
 
-use ariadne_core::AgentKind;
+use ariadne_core::{AgentKind, Role};
 
-use super::{AgentAdapter, SpawnCtx, SpawnPlan, base_env, env_json};
+use super::{AgentAdapter, SpawnCtx, SpawnPlan, base_env, compaction_focus, env_json};
 
 pub struct ClaudeAdapter;
 
@@ -131,5 +135,13 @@ impl AgentAdapter for ClaudeAdapter {
             internal_session_id: Some(internal_id.to_string()),
             post_launch_input: None,
         })
+    }
+
+    fn compaction_command(&self, role: Role) -> Option<String> {
+        Some(format!("/compact {}", compaction_focus(role)))
+    }
+
+    fn compaction_done(&self, kind: &str, payload: &serde_json::Value) -> bool {
+        kind == "session_start" && payload.get("source").and_then(|v| v.as_str()) == Some("compact")
     }
 }

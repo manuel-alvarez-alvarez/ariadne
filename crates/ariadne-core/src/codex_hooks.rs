@@ -21,10 +21,15 @@
 /// about to ask the user to approve a command, which is the only moment a
 /// blocked session is distinguishable from an idle one.
 ///
-/// Of the eleven events codex 0.147 declares, none reports a failed turn — an
-/// API or auth error reaches the TUI as a thread event and never a hook — so
+/// `PostCompact` fires once codex has compacted the conversation — the one it
+/// was asked for with `/compact` and the one it runs on its own near the
+/// context limit alike — which is how the daemon knows a compaction it typed
+/// is over and the pane may be typed into again.
+///
+/// Of the events codex 0.151 declares, none reports a failed turn — an API or
+/// auth error reaches the TUI as a thread event and never a hook — so
 /// `agent_error` has no codex source yet.
-pub const EVENTS: [&str; 7] = [
+pub const EVENTS: [&str; 8] = [
     "SessionStart",
     "UserPromptSubmit",
     "PreToolUse",
@@ -32,6 +37,7 @@ pub const EVENTS: [&str; 7] = [
     "PostToolUse",
     "Stop",
     "SessionEnd",
+    "PostCompact",
 ];
 
 /// The command every hook runs. One command for all events: the event name
@@ -151,6 +157,17 @@ mod tests {
         // Every declared event has one, and no two share it.
         let keys: std::collections::BTreeSet<_> = EVENTS.iter().map(|e| trust_key(e)).collect();
         assert_eq!(keys.len(), EVENTS.len());
+    }
+
+    /// The compaction hook is what ends a compaction the daemon typed:
+    /// without it the pane would be left alone until a timeout, every time.
+    #[test]
+    fn the_compaction_hook_is_declared() {
+        assert!(EVENTS.contains(&"PostCompact"));
+        assert_eq!(
+            trust_key("PostCompact"),
+            "/<session-flags>/config.toml:post_compact:0:0"
+        );
     }
 
     /// The approval hook is the point of the whole exercise: without it a

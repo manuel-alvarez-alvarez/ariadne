@@ -16,10 +16,13 @@
 //! - System prompt: no append-safe flag — prepended to the initial prompt
 //! - Resume: `codex resume <thread-id>`; flags must be re-passed (they are
 //!   not inherited from the original session)
+//! - Compaction: `/compact` typed into the composer — the command takes no
+//!   focus text — reported done by the `PostCompact` hook, which is why that
+//!   event is among the ones the user is asked to trust
 
 use anyhow::Result;
 
-use ariadne_core::AgentKind;
+use ariadne_core::{AgentKind, Role};
 
 use super::{AgentAdapter, SpawnCtx, SpawnPlan, base_env};
 
@@ -113,5 +116,13 @@ impl AgentAdapter for CodexAdapter {
             internal_session_id: Some(internal_id.to_string()),
             post_launch_input: None,
         })
+    }
+
+    fn compaction_command(&self, _role: Role) -> Option<String> {
+        Some("/compact".into())
+    }
+
+    fn compaction_done(&self, kind: &str, _payload: &serde_json::Value) -> bool {
+        kind == "post_compact"
     }
 }

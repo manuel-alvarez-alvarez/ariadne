@@ -52,6 +52,7 @@ pub async fn list(
             status: q.status,
             live_only: false,
             attention_only: q.attention.unwrap_or(false),
+            compaction_owed: false,
         })
         .await?;
     let mut out = Vec::with_capacity(sessions.len());

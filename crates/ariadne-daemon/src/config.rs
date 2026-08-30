@@ -28,6 +28,7 @@ pub struct Config {
     pub delete_merged_worktrees: bool,
     pub prevent_sleep: bool,
     pub typed_input_window: Duration,
+    pub compaction_timeout: Duration,
 }
 
 /// How long a freshly launched pane is watched for a TUI to type a resume
@@ -39,6 +40,18 @@ pub struct Config {
 /// on it. There is no `config.toml` key behind it: nothing about it is the
 /// user's to choose.
 const DEFAULT_TYPED_INPUT_WINDOW: Duration = Duration::from_secs(120);
+
+/// How long a compaction the daemon typed into a pane is waited for before
+/// the session is treated as if it never ran (see
+/// `scheduler::compaction`): three minutes, which is longer than a CLI takes
+/// to summarise even a long conversation, and short enough that a done signal
+/// that never comes — hooks broken, a CLI that changed its vocabulary — holds
+/// up the hand-off behind it by no more than that.
+///
+/// A field rather than a constant for the same reason as the window above: a
+/// test about the timeout cannot spend three real minutes on it. There is no
+/// `config.toml` key behind it either.
+const DEFAULT_COMPACTION_TIMEOUT: Duration = Duration::from_secs(180);
 
 /// Default `ariadne` CLI: sibling of the running ariadned, else PATH lookup.
 fn default_cli_bin() -> String {
@@ -83,6 +96,7 @@ impl Config {
             delete_merged_worktrees: file.delete_merged_worktrees.unwrap_or(true),
             prevent_sleep: file.prevent_sleep.unwrap_or(true),
             typed_input_window: DEFAULT_TYPED_INPUT_WINDOW,
+            compaction_timeout: DEFAULT_COMPACTION_TIMEOUT,
             root,
         };
 

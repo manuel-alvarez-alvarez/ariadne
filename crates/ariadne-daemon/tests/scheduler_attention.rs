@@ -797,8 +797,28 @@ async fn the_sweep_lets_go_of_a_blocked_agent_only_once_its_work_moved_on() {
     let control = w.engineer_on(&handed_over, TaskStatus::UnderReview).await;
     w.raise(&control, AttentionReason::WaitingPermission).await;
 
-    // The sweep runs on the tick, and the first tick is immediate.
+    // The sweep runs on the tick, and the first tick is immediate. The
+    // hand-off owes the finished engineer a compaction first, and a dialog
+    // on a pane the daemon means to type into is not stale while it does:
+    // the flag stands until the debt is paid or written off, and comes down
+    // on the pass after.
     let _sched = w.scheduler();
+    eventually(TIMEOUT, "the finished engineer to owe a compaction", async || {
+        w.store
+            .get_session(&control.id)
+            .await
+            .unwrap()
+            .compact_owed_at
+            .is_some()
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        w.attention(&control).await,
+        Some(AttentionReason::WaitingPermission),
+        "the dialog stands while the compaction it holds up is owed"
+    );
+    w.store.clear_compaction_owed(&control.id).await.unwrap();
     eventually(TIMEOUT, "the finished engineer to be let go", async || {
         w.attention(&control).await.is_none()
     })
@@ -1519,8 +1539,19 @@ async fn an_idle_planner_is_let_go_once_the_goal_leaves_planning() {
     w.set_status(&planner, SessionStatus::Idle).await;
 
     // The first tick is immediate, and one reconciliation of the goal is all
-    // it takes.
+    // it takes — once the planner has compacted the conversation the
+    // finalized plan earned it, which its CLI reports done.
     let _sched = w.scheduler();
+    eventually(TIMEOUT, "the planner to be told to compact", async || {
+        w.pasted(&planner).contains("/compact")
+    })
+    .await;
+    w.ingest(
+        &planner,
+        "session_start",
+        serde_json::json!({"hook_event_name": "SessionStart", "source": "compact"}),
+    )
+    .await;
     eventually(TIMEOUT, "the planner to be let go", async || {
         w.session_status(&planner).await == SessionStatus::Exited
     })

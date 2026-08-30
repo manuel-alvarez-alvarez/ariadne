@@ -20,11 +20,13 @@
 //!   OpenCode (verified on 1.18.15) silently drops `--prompt` when resuming
 //!   an existing session — so it goes out as [`SpawnPlan::post_launch_input`]
 //!   for the launcher to type into the TUI once it is up.
+//! - Compaction: `/compact` typed into the TUI — no focus text — reported
+//!   done by the `session.compacted` event the plugin forwards.
 
 use anyhow::{Context, Result};
 use serde_json::json;
 
-use ariadne_core::AgentKind;
+use ariadne_core::{AgentKind, Role};
 
 use super::{AgentAdapter, SpawnCtx, SpawnPlan, base_env};
 
@@ -170,5 +172,13 @@ impl AgentAdapter for OpencodeAdapter {
             // Empty instruction = interactive resume without a message.
             post_launch_input: (!instruction.is_empty()).then(|| instruction.to_string()),
         })
+    }
+
+    fn compaction_command(&self, _role: Role) -> Option<String> {
+        Some("/compact".into())
+    }
+
+    fn compaction_done(&self, kind: &str, _payload: &serde_json::Value) -> bool {
+        kind == "session.compacted"
     }
 }

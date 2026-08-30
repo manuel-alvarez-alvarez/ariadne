@@ -157,7 +157,9 @@ async fn a_planner_is_the_agent_work_waits_on_until_it_finalizes() {
 }
 
 /// What a reconciliation pass makes of a finalized goal: the plan it was
-/// started for is being worked on, so an idle planner under it is let go.
+/// started for is being worked on, so an idle planner under it is let go —
+/// once the compaction the finalized plan earned it is done, which the CLI
+/// reports as a session start from `compact`.
 #[tokio::test]
 async fn a_scheduler_pass_ends_the_idle_planner_of_an_active_goal() {
     let h = harness().scheduler().await;
@@ -169,6 +171,20 @@ async fn a_scheduler_pass_ends_the_idle_planner_of_an_active_goal() {
 
     h.notify_goal(&cast.goal.id);
 
+    eventually(TIMEOUT, "the planner to be told to compact", async || {
+        h.pasted(&planner).contains("/compact")
+    })
+    .await;
+    assert!(
+        !h.killed_panes().contains(&planner.tmux_session),
+        "the planner is not let go under its compaction"
+    );
+    h.ingest(
+        &planner,
+        "session_start",
+        serde_json::json!({"hook_event_name": "SessionStart", "source": "compact"}),
+    )
+    .await;
     eventually(TIMEOUT, "the idle planner to be let go", async || {
         h.killed_panes().contains(&planner.tmux_session)
     })

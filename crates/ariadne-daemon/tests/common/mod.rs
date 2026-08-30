@@ -31,7 +31,9 @@ use tower::ServiceExt;
 use ariadne_api::SESSION_HEADER;
 use ariadne_api::error::ErrorBody;
 use ariadne_api::stream::DomainEvent;
-use ariadne_core::{Actor, AgentKind, AttentionReason, GoalStatus, Role, SessionStatus, TaskStatus};
+use ariadne_core::{
+    Actor, AgentKind, AttentionReason, GoalStatus, Role, SessionStatus, TaskStatus,
+};
 use ariadne_daemon::branch::BranchWatchers;
 use ariadne_daemon::bus::{BusEvent, EventBus};
 use ariadne_daemon::config::Config;
@@ -99,6 +101,7 @@ pub struct HarnessBuilder {
     spawns: bool,
     logs: Option<LogBuffer>,
     typed_input_window: Option<Duration>,
+    compaction_timeout: Option<Duration>,
 }
 
 /// A daemon in a temporary directory: a stub `tmux`, no scheduler.
@@ -110,6 +113,7 @@ pub fn harness() -> HarnessBuilder {
         spawns: true,
         logs: None,
         typed_input_window: None,
+        compaction_timeout: None,
     }
 }
 
@@ -154,6 +158,13 @@ impl HarnessBuilder {
         self
     }
 
+    /// How long a compaction the daemon typed is waited for. Seconds rather
+    /// than the configured minutes, for the test about the wait running out.
+    pub fn compaction_timeout(mut self, timeout: Duration) -> Self {
+        self.compaction_timeout = Some(timeout);
+        self
+    }
+
     async fn build(self) -> Harness {
         raise_open_file_limit();
         let dir = tempfile::tempdir().unwrap();
@@ -168,6 +179,9 @@ impl HarnessBuilder {
         }
         if let Some(window) = self.typed_input_window {
             config.typed_input_window = window;
+        }
+        if let Some(timeout) = self.compaction_timeout {
+            config.compaction_timeout = timeout;
         }
         let tmux = match self.tmux {
             Tmux::Stub => write_tmux_stub(dir.path()),
@@ -431,14 +445,20 @@ impl Harness {
 
     /// What the stub tmux's `display-message` reports about the pane's screen.
     pub fn pane_geometry(&self, cols: u16, rows: u16, cursor_x: u16, cursor_y: u16) {
-        self.put("pane-size", &format!("{cols}x{rows} {cursor_x},{cursor_y}\n"));
+        self.put(
+            "pane-size",
+            &format!("{cols}x{rows} {cursor_x},{cursor_y}\n"),
+        );
     }
 
     /// Resize the pane during the next `capture-pane`, once: the capture comes
     /// back drawn at the new grid, and only a measurement taken *after* it can
     /// know that.
     pub fn resize_on_capture(&self, cols: u16, rows: u16, cursor_x: u16, cursor_y: u16) {
-        self.put("resize-on-capture", &format!("{cols}x{rows} {cursor_x},{cursor_y}\n"));
+        self.put(
+            "resize-on-capture",
+            &format!("{cols}x{rows} {cursor_x},{cursor_y}\n"),
+        );
     }
 
     /// Whether the stub tmux's `capture-pane` fails — a pane that is there
@@ -794,7 +814,8 @@ impl Harness {
             role.as_str(),
             Some(&profile_id[profile_id.len() - 4..]),
         );
-        self.session_named(goal, task, role, profile_id, &tmux).await
+        self.session_named(goal, task, role, profile_id, &tmux)
+            .await
     }
 
     /// A planner session on a goal of its own, bound to the tmux session
@@ -805,7 +826,9 @@ impl Harness {
         let planner = self
             .profile(&format!("planner-{tmux_name}"), Role::Planner)
             .await;
-        let repo = self.repository(&self.at(&format!("repo-{tmux_name}"))).await;
+        let repo = self
+            .repository(&self.at(&format!("repo-{tmux_name}")))
+            .await;
         let goal = self.goal_on(&planner, &repo, 1).await;
         self.session_named(&goal, None, Role::Planner, &planner.id, tmux_name)
             .await
@@ -914,7 +937,12 @@ impl Harness {
     pub async fn resumable_engineer(&self) -> (Cast, AgentSession) {
         let cast = self.cast().await;
         let session = self
-            .session(&cast.goal, Some(&cast.task), Role::Engineer, &cast.engineer.id)
+            .session(
+                &cast.goal,
+                Some(&cast.task),
+                Role::Engineer,
+                &cast.engineer.id,
+            )
             .await;
         self.make_resumable(&cast.task, &session).await;
         self.set_status(&session, SessionStatus::Exited).await;
@@ -1064,7 +1092,6 @@ impl Harness {
             .find(|s| s.role() == role && s.status() == SessionStatus::Running)
     }
 
-
     // -- the clock ----------------------------------------------------------
 
     /// An agent that has been sitting there doing nothing for `secs`.
@@ -1152,7 +1179,12 @@ impl Harness {
     /// rendered, so a database can still hold a briefing naming a token
     /// nothing fills in: edited by hand, restored from a backup, or written
     /// before the check existed.
-    pub async fn plant_prompt(&self, profile_id: &str, kind: ariadne_core::PromptKind, content: &str) {
+    pub async fn plant_prompt(
+        &self,
+        profile_id: &str,
+        kind: ariadne_core::PromptKind,
+        content: &str,
+    ) {
         sqlx::query(
             "INSERT INTO profile_prompts (profile_id, kind, content, updated_at)
              VALUES (?, ?, ?, 't')
@@ -1401,7 +1433,10 @@ pub async fn sse_message_within(body: &mut Body, within: Duration) -> Option<Str
 /// The next SSE message, which has to be a `name` one: its decoded payload.
 pub async fn expect_sse(body: &mut Body, name: &str) -> serde_json::Value {
     let (got, payload) = parse_sse(&next_sse_message(body).await);
-    assert_eq!(got, name, "expected an {name} message, got {got}: {payload}");
+    assert_eq!(
+        got, name,
+        "expected an {name} message, got {got}: {payload}"
+    );
     payload
 }
 

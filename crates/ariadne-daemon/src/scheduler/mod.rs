@@ -9,8 +9,10 @@
 //! The rules are a module each: `goals` and `tasks` for what the two entities
 //! want, `sweeps` for the two passes that see every session whatever it
 //! belongs to, `quiet` for the watchdog over an agent that stopped reporting,
-//! and `delivery` for typing into a pane off the loop.
+//! `compaction` for the compaction every session is owed at a hand-off, and
+//! `delivery` for typing into a pane off the loop.
 
+mod compaction;
 mod delivery;
 mod goals;
 mod quiet;
@@ -30,6 +32,7 @@ use ariadne_store::{SessionFilter, Store, TaskFilter};
 use crate::launcher::Launcher;
 use crate::sleep::SleepInhibitor;
 
+use compaction::{Compacting, CompactionReport};
 use delivery::DeliveryReport;
 use quiet::Quiet;
 
@@ -98,6 +101,12 @@ pub const QUIET_FLAG_SECS: i64 = 600;
 /// minutes of one, after which nobody is coming and the agent has been silent
 /// for half an hour.
 pub const QUIET_RELAUNCH_SECS: i64 = 1_800;
+/// How long a compaction may stay owed without ever being started before the
+/// debt is written off: a session that never comes back to its prompt — a
+/// turn that runs on, a dialog nobody answers — is not held for it any
+/// longer than this, and neither is whatever waits on that session. Ten
+/// minutes, the same wait the user is told about a silent agent after.
+pub const COMPACTION_OWED_FOR_SECS: i64 = 600;
 
 /// The watchdog is one timeline, and the order of its thresholds is what
 /// makes it one: nudged before the user is told, told before a pane is killed
@@ -142,6 +151,23 @@ pub struct Scheduler {
     typing: HashSet<String>,
     /// Where a delivery that ran off the loop reports back to.
     reports: mpsc::UnboundedSender<DeliveryReport>,
+    /// The situation — status and round — each session was last found to owe
+    /// a compaction for, by session id, so that the passes after the one that
+    /// noticed a hand-off do not owe it again for the same one. In memory
+    /// like the maps above: a daemon that restarts over a hand-off owes the
+    /// compaction once more, and one compaction too many costs a summary
+    /// where one too few costs every resume after it.
+    compaction_owed_for: HashMap<String, (String, i64)>,
+    /// Sessions with a compaction going on in their pane right now, by
+    /// session id: typed and confirmed, and not yet reported done. Nothing
+    /// else is typed into such a pane, and nothing kills it, until the CLI
+    /// says the compaction is over or the wait for that runs out.
+    compacting: HashMap<String, Compacting>,
+    /// Passes at typing a compaction that tmux refused, by session id, so a
+    /// pane that will not take it is not asked every tick for ever.
+    compaction_refused: HashMap<String, u32>,
+    /// Where a compaction typed off the loop reports back to.
+    compaction_reports: mpsc::UnboundedSender<CompactionReport>,
     /// Held while any session is live, so the machine does not idle-sleep
     /// out from under a working agent.
     sleep: SleepInhibitor,
@@ -160,6 +186,7 @@ pub fn start(
     // one, so the loop still ends when the daemon drops the sender it was
     // given: the scheduler holds this one for as long as it lives.
     let (reports, mut settled) = mpsc::unbounded_channel();
+    let (compaction_reports, mut compacted) = mpsc::unbounded_channel();
     let mut scheduler = Scheduler {
         store,
         launcher,
@@ -168,6 +195,10 @@ pub fn start(
         landing_briefed: HashSet::new(),
         typing: HashSet::new(),
         reports,
+        compaction_owed_for: HashMap::new(),
+        compacting: HashMap::new(),
+        compaction_refused: HashMap::new(),
+        compaction_reports,
         sleep: SleepInhibitor::new(),
         prevent_sleep,
     };
@@ -183,6 +214,7 @@ pub fn start(
                     None => break, // daemon shutting down
                 },
                 Some(report) = settled.recv() => scheduler.delivery_settled(report).await,
+                Some(report) = compacted.recv() => scheduler.compaction_settled(report).await,
                 _ = tick.tick() => scheduler.reconcile_all().await,
             }
         }
@@ -260,7 +292,21 @@ impl Scheduler {
         if let Some(live) = self.liveness_sweep().await {
             self.sleep.set_active(self.prevent_sleep && live > 0);
         }
+        self.reconcile_entities().await;
+        // After the goals and tasks, not before: reconciling a hand-off is
+        // what writes the compaction a session owes, and the sweeps below
+        // read that debt — the attention sweep to leave a prompt standing
+        // on a pane the compaction will be typed into, the compaction sweep
+        // to know the pane is not free for it. A daemon starting cold over a
+        // hand-off nothing has reconciled yet would otherwise drop the
+        // prompt as stale in this very pass and type into the dialog on the
+        // next.
         self.stale_attention_sweep().await;
+        self.compaction_sweep().await;
+    }
+
+    /// Every goal, and every task of the active ones, reconciled in turn.
+    async fn reconcile_entities(&mut self) {
         let goals = match self.store.list_goals(&[]).await {
             Ok(goals) => goals,
             Err(e) => {
@@ -313,6 +359,10 @@ impl Scheduler {
         let Ok(session) = self.store.get_session(session_id).await else {
             return;
         };
+        // What the event may have changed about the session's compaction —
+        // a turn that ended, a compaction reported done — before the work
+        // that waits on it is reconciled.
+        self.settle_compaction(&session).await;
         match &session.task_id {
             Some(task) => self.reconcile(Target::Task(task)).await,
             None => self.reconcile(Target::Goal(&session.goal_id)).await,

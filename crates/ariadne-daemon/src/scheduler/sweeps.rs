@@ -127,6 +127,14 @@ impl super::Scheduler {
     /// the same question as the one above — an exited planner of a goal still
     /// being planned is very much owed, which is what the sweep before this
     /// one raises as `disconnected`.
+    ///
+    /// One flag stands whatever the work did: a prompt on a live session
+    /// that still owes a compaction. The dialog is on the screen whether or
+    /// not anybody waits on the agent, and the daemon is about to type into
+    /// that pane — the flag is what keeps it from typing into the dialog
+    /// (see `compaction::ready_for_compaction`), and the user answering it
+    /// is what lets the compaction run. It comes down with the debt: paid,
+    /// or written off once it has waited too long.
     pub(super) async fn stale_attention_sweep(&self) {
         let Ok(flagged) = self
             .store
@@ -139,10 +147,11 @@ impl super::Scheduler {
             return;
         };
         for session in flagged {
-            let why = if !session.status().is_live()
-                && session.attention_reason().is_some_and(|r| r.is_prompt())
-            {
+            let prompt = session.attention_reason().is_some_and(|r| r.is_prompt());
+            let why = if !session.status().is_live() && prompt {
                 "the session ended on a prompt nobody can answer"
+            } else if prompt && session.status().is_live() && self.compaction_pending(&session) {
+                continue;
             } else if !attention::work_is_active(&self.store, &session).await {
                 "the work moved on"
             } else {

@@ -1,7 +1,7 @@
 //! What a task wants, by status: an engineer from `ready` to the merge, the
 //! reviewers a round is waiting on, and the cleanup its ending owes.
 
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use ariadne_core::{Actor, AttentionReason, GoalStatus, PromptKind, ReviewVerdict, Role, TaskStatus};
 use ariadne_store::{AgentSession, SessionFilter, Task, TaskFilter};
@@ -34,16 +34,7 @@ impl super::Scheduler {
         // engineer's is not one of them — it holds the worktree from the
         // first commit to the merge.
         if task.status() != TaskStatus::UnderReview {
-            self.kill_sessions(
-                SessionFilter {
-                    task_id: Some(task.id.clone()),
-                    live_only: true,
-                    ..Default::default()
-                },
-                Some(Role::Reviewer),
-                "the reviewers' part of the lifecycle has passed",
-            )
-            .await;
+            self.end_reviewers(&task).await;
         }
         // A task that has left `approved` — landed, or sent back to the
         // reviewers with a revision — is one whose engineer wants briefing
@@ -108,6 +99,13 @@ impl super::Scheduler {
                     .store
                     .list_reviews(&task.id, Some(task.review_round))
                     .await?;
+
+                // Two hand-offs meet here, and each earns the session that
+                // made it a compaction: the engineer's, which requested this
+                // review, and every reviewer's whose verdict is in. Owed
+                // before the verdicts are read, so that a round they close
+                // ends the reviewers only once the compaction is done.
+                self.owe_review_compactions(&task, &reviews).await?;
 
                 // Verdicts first: they may close the round.
                 let changes_requested = reviews
@@ -203,6 +201,15 @@ impl super::Scheduler {
                             &resume,
                         )
                         .await?;
+                    } else if let Some(compacting) = live
+                        .iter()
+                        .find(|s| s.profile_id == profile_id && self.compaction_in_flight(s))
+                    {
+                        // Its earlier session is still compacting the last
+                        // round: relaunching it now would kill the pane
+                        // under that, so the round waits for the pass after
+                        // the compaction ends.
+                        info!(task = %task.id, session = %compacting.id, "the reviewer is compacting its conversation; its next round starts after it");
                     } else {
                         info!(task = %task.id, reviewer = %profile_id, round = task.review_round, "starting reviewer");
                         // Resumes the reviewer's earlier session when there is
@@ -236,6 +243,13 @@ impl super::Scheduler {
                         review.body.clone().unwrap_or_else(|| "(no details)".into()),
                     ));
                 }
+                // The engineer's pane is not killed under a compaction: the
+                // feedback goes out on the pass after it ends, and the task
+                // waits here for that pass.
+                if let Some(compacting) = self.engineer_compacting(&task).await? {
+                    info!(task = %task.id, session = %compacting.id, "the engineer is compacting its conversation; the review feedback goes out after it");
+                    return Ok(());
+                }
                 info!(task = %task.id, "resuming engineer with review feedback");
                 let template = prompts::template_for(
                     &self.store,
@@ -260,7 +274,14 @@ impl super::Scheduler {
                 // took the worktree away. What it has not had is the briefing
                 // that says the task is approved and how its repository takes
                 // it, so that goes out once — and from there the turn is
-                // watched like any other.
+                // watched like any other. Once its pane is free: an engineer
+                // compacting its conversation is briefed on the pass after.
+                if !self.landing_briefed.contains(&task.id)
+                    && let Some(compacting) = self.engineer_compacting(&task).await?
+                {
+                    info!(task = %task.id, session = %compacting.id, "the engineer is compacting its conversation; the landing briefing goes out after it");
+                    return Ok(());
+                }
                 if self.landing_briefed.insert(task.id.clone()) {
                     info!(task = %task.id, "approved: briefing the engineer to land it");
                     self.start_engineer(&task).await?;
@@ -293,6 +314,87 @@ impl super::Scheduler {
             TaskStatus::Failed => {}
         }
         Ok(())
+    }
+
+    /// Owe the compactions the review hand-offs earn: the engineer's for
+    /// requesting the round, and each voting reviewer's for its verdict —
+    /// once per round each, since the round is what the hand-off is about.
+    async fn owe_review_compactions(
+        &mut self,
+        task: &Task,
+        reviews: &[ariadne_store::Review],
+    ) -> anyhow::Result<()> {
+        let situation = (task.status.clone(), task.review_round);
+        let live = self
+            .store
+            .list_sessions(SessionFilter {
+                task_id: Some(task.id.clone()),
+                live_only: true,
+                ..Default::default()
+            })
+            .await?;
+        for engineer in live.iter().filter(|s| s.role() == Role::Engineer) {
+            self.owe_compaction(engineer, situation.clone()).await;
+        }
+        for review in reviews {
+            let Some(session_id) = &review.session_id else {
+                continue;
+            };
+            if let Some(reviewer) = live.iter().find(|s| &s.id == session_id) {
+                self.owe_compaction(reviewer, situation.clone()).await;
+            }
+        }
+        Ok(())
+    }
+
+    /// The task's live engineer session while a compaction is running in
+    /// its pane, if that is where it is: the one moment the engineer is not
+    /// relaunched with what the task has for it.
+    async fn engineer_compacting(&self, task: &Task) -> anyhow::Result<Option<AgentSession>> {
+        let live = self
+            .store
+            .list_sessions(SessionFilter {
+                task_id: Some(task.id.clone()),
+                live_only: true,
+                ..Default::default()
+            })
+            .await?;
+        Ok(live
+            .into_iter()
+            .find(|s| s.role() == Role::Engineer && self.compaction_in_flight(s)))
+    }
+
+    /// End the reviewers of a task whose review is over — but not one still
+    /// owed the compaction its verdict earned: the session serves every
+    /// round of the task, and what the compaction shortens is exactly what
+    /// the next round would otherwise replay. It is ended on the pass after
+    /// the compaction is done, or given up on.
+    async fn end_reviewers(&self, task: &Task) {
+        let live = match self
+            .store
+            .list_sessions(SessionFilter {
+                task_id: Some(task.id.clone()),
+                live_only: true,
+                ..Default::default()
+            })
+            .await
+        {
+            Ok(live) => live,
+            Err(e) => {
+                warn!(task = %task.id, error = %e, "listing the reviewers to end failed");
+                return;
+            }
+        };
+        for reviewer in live.iter().filter(|s| s.role() == Role::Reviewer) {
+            if self.compaction_pending(reviewer) {
+                debug!(task = %task.id, session = %reviewer.id, "the reviewer is left up until the compaction it owes is done");
+                continue;
+            }
+            info!(session = %reviewer.id, role = %reviewer.role, "killing session: the reviewers' part of the lifecycle has passed");
+            if let Err(e) = self.launcher.kill_session(&reviewer.id).await {
+                warn!(session = %reviewer.id, error = %e, "killing the session failed");
+            }
+        }
     }
 
     pub(super) async fn record_spawn_failure(&mut self, task_id: &str) {

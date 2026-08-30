@@ -947,6 +947,94 @@ async fn every_launch_of_a_session_is_dated() {
     assert!(second > first, "every launch moves the date");
 }
 
+/// A compaction is owed once per hand-off and paid once: the moment it was
+/// first owed stands through every later pass that notices the same debt,
+/// the clear says whether there was one to clear, and only the sessions that
+/// owe one are listed as owing.
+#[tokio::test]
+async fn a_session_owes_a_compaction_until_it_is_paid() {
+    let w = World::new().await;
+    let store = &w.store;
+    let session = w.engineer_session().await;
+    assert_eq!(
+        session.compact_owed_at, None,
+        "a fresh session owes nothing"
+    );
+    assert!(
+        !store.clear_compaction_owed(&session.id).await.unwrap(),
+        "and there is nothing to clear on it"
+    );
+
+    assert!(
+        store.owe_compaction(&session.id).await.unwrap(),
+        "the first hand-off is what puts the debt there"
+    );
+    let owed_at = store
+        .get_session(&session.id)
+        .await
+        .unwrap()
+        .compact_owed_at
+        .expect("the debt is dated");
+
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    assert!(
+        !store.owe_compaction(&session.id).await.unwrap(),
+        "a pass that notices the same debt again adds nothing"
+    );
+    assert_eq!(
+        store
+            .get_session(&session.id)
+            .await
+            .unwrap()
+            .compact_owed_at,
+        Some(owed_at),
+        "and leaves the moment it was first owed alone"
+    );
+
+    let owing = store
+        .list_sessions(SessionFilter {
+            compaction_owed: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        owing.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+        vec![session.id.as_str()]
+    );
+
+    assert!(store.clear_compaction_owed(&session.id).await.unwrap());
+    assert_eq!(
+        store
+            .get_session(&session.id)
+            .await
+            .unwrap()
+            .compact_owed_at,
+        None
+    );
+    assert!(
+        store
+            .list_sessions(SessionFilter {
+                compaction_owed: true,
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .is_empty(),
+        "a session whose debt is paid is no longer listed as owing"
+    );
+
+    // Neither write answers for a session that does not exist.
+    assert!(matches!(
+        store.owe_compaction("nope").await,
+        Err(StoreError::NotFound { .. })
+    ));
+    assert!(matches!(
+        store.clear_compaction_owed("nope").await,
+        Err(StoreError::NotFound { .. })
+    ));
+}
+
 /// A resumed agent conversation keeps its one session row: restarting puts
 /// the row back where a spawn leaves it, so nothing downstream can tell the
 /// relaunch from a first launch.
