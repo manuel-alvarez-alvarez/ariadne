@@ -44,8 +44,8 @@ pub struct PostMessageReq {
     pub body: String,
     /// Task id; defaults to your own task (planner: goal-level thread).
     pub task_id: Option<String>,
-    /// Whom to address, waking them, as your system prompt spells it; leave
-    /// it out to address the thread itself.
+    /// Whom to wake, as the MCP instructions spell it; omit to leave the
+    /// message in the thread.
     pub to: Option<String>,
 }
 
@@ -56,12 +56,11 @@ pub struct PostMessageReq {
 pub struct ReviewerReq {
     /// Reviewer profile id or name.
     pub profile: String,
-    /// What this reviewer runs on, `<agent_kind>[:<model>]` as `list_models`
-    /// spells it, whose entries compare on tier, cost and speed; omit it for
-    /// the profile's own.
+    /// What it runs on, `<agent_kind>[:<model>]` as `list_models` spells it;
+    /// omit for the profile's own.
     pub model: Option<String>,
-    /// One of the `efforts[].id` `list_models` lists for that model; omit it
-    /// for the model's own default.
+    /// An `efforts[].id` `list_models` lists for that model; omit for its
+    /// default.
     pub effort: Option<String>,
 }
 
@@ -73,11 +72,10 @@ pub struct CreateTaskReq {
     /// Engineer profile id or name that will own the task.
     pub engineer_profile: String,
     /// What the engineer runs on, `<agent_kind>[:<model>]` as `list_models`
-    /// spells it, whose entries compare on tier, cost and speed; omit it for
-    /// the profile's own.
+    /// spells it; omit for the profile's own.
     pub engineer_model: Option<String>,
-    /// One of the `efforts[].id` `list_models` lists for that model; omit it
-    /// for the model's own default.
+    /// An `efforts[].id` `list_models` lists for that model; omit for its
+    /// default.
     pub engineer_effort: Option<String>,
     /// The reviewers of the task, in review order (at least one).
     pub reviewers: Vec<ReviewerReq>,
@@ -93,11 +91,11 @@ pub struct UpdateTaskReq {
     pub task_id: String,
     pub title: Option<String>,
     pub description: Option<String>,
-    /// What the engineer runs on, comparable on `list_models`' tier, cost and
-    /// speed; "default" hands it back to the profile's own model.
+    /// What the engineer runs on; "default" hands the slot back to the
+    /// profile's own.
     pub engineer_model: Option<String>,
-    /// One of the `efforts[].id` `list_models` lists for that model;
-    /// "default" hands it back to the model's own.
+    /// An `efforts[].id` for that model; "default" hands it back to the
+    /// model's own.
     pub engineer_effort: Option<String>,
     /// Full replacement list of the reviewers, in review order.
     pub reviewers: Option<Vec<ReviewerReq>>,
@@ -163,8 +161,8 @@ pub enum Verdict {
 pub struct SubmitVerdictReq {
     /// approve | request_changes
     pub verdict: Verdict,
-    /// The note that goes with an approval; the feedback the engineer is
-    /// resumed with on a change request, where it is required.
+    /// An approval's note; on a change request, the feedback the engineer is
+    /// resumed with, and required.
     pub body: Option<String>,
 }
 
@@ -233,7 +231,7 @@ fn review_request(verdict: Verdict, body: Option<String>) -> Result<CreateReview
 #[tool_router(vis = "pub(super)")]
 impl AriadneMcp {
     #[tool(
-        description = "Read a task: its status, its branch, its dependencies and the profile names of its engineer, its reviewers and the planner."
+        description = "Read a task: status, branch, dependencies, and the profile names of its engineer, its reviewers and the planner."
     )]
     async fn get_task(
         &self,
@@ -277,7 +275,7 @@ impl AriadneMcp {
     // ---- planner ----
 
     #[tool(
-        description = "Create one task in the goal, owned by one engineer profile and gated by at least one reviewer profile. Name, for the engineer and for each reviewer, the model and the effort this task deserves, out of `list_models`; omit either and that slot runs its profile's own. The user may still override any of it until the task starts."
+        description = "Create one task in the goal: one engineer profile, at least one reviewer profile, and per slot the model and effort this task deserves out of `list_models`. Omit either and the slot runs its profile's own; the user may override until the task starts."
     )]
     async fn create_task(
         &self,
@@ -298,7 +296,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Edit a task's title, description, reviewers, dependencies or the model and effort its engineer and its reviewers run at, as long as it has not started. `reviewers` replaces the whole list; \"default\" as a model or an effort hands that slot back to its profile's own."
+        description = "Edit a task that has not started: title, description, reviewers, dependencies, or any slot's model and effort. `reviewers` replaces the whole list; \"default\" hands a slot back to its profile's own."
     )]
     async fn update_task(
         &self,
@@ -320,7 +318,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "List what an engineer or a reviewer can be pinned to: every agent CLI and model, spelled the way a task takes it, each with a one-line description; a `tier` (frontier, strong, balanced, fast, or `unknown` where nothing is curated about it, in which case there are no cost/speed bands or best_for/avoid_for either); a `cost` and a `speed`, both 1-5 bands ranked across the whole catalog, cost low to high and speed slow to fast; `best_for` and `avoid_for`, the task shapes it does and does not suit; and `efforts`, each with an id, a description of what it buys, and one flagged `default` for the effort its agent CLI runs it at without `--effort`."
+        description = "Every agent CLI and model a slot can be pinned to, as a task takes it: a description; a `tier` (frontier down to fast, or `unknown`, with no bands or shapes); `cost` and `speed` 1-5, low to high and slow to fast; `best_for`/`avoid_for` shapes; `efforts`, each an id and what it buys, one `default`."
     )]
     async fn list_models(
         &self,
@@ -333,7 +331,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "List the agent profiles a task can be assigned to, each with the name, model, effort and system prompt that say what it is for."
+        description = "The agent profiles a task can be assigned to, each with the name, model, effort and system prompt that say what it is for."
     )]
     async fn list_profiles(
         &self,
@@ -347,7 +345,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Finalize the plan and start its tasks: only after the user has confirmed in the thread that the plan is complete."
+        description = "Finalize the plan and start its tasks: only after the user has confirmed in the thread that it is complete."
     )]
     async fn finalize_plan(
         &self,
@@ -362,7 +360,7 @@ impl AriadneMcp {
 
     // ---- engineer ----
 
-    #[tool(description = "Submit your task for review, with the summary the reviewers read first.")]
+    #[tool(description = "Submit your task for review, under the summary the reviewers read first.")]
     async fn request_review(
         &self,
         Parameters(req): Parameters<RequestReviewReq>,
@@ -391,7 +389,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Report the sha your branch landed on its base branch as, which ends the task."
+        description = "Report the sha your branch landed on its base branch as; this ends the task."
     )]
     async fn mark_merged(
         &self,
@@ -429,7 +427,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Deliver your verdict on the change under review, approving it or requesting changes with the feedback the engineer is resumed with."
+        description = "Your verdict on the change: approve it, or request changes with the feedback the engineer is resumed with."
     )]
     async fn submit_verdict(
         &self,
@@ -481,6 +479,23 @@ mod tests {
             .find(|t| t.name == name)
             .unwrap_or_else(|| panic!("no {name} tool"));
         serde_json::to_value(&tool.input_schema).expect("schema")
+    }
+
+    /// A description is read on every tool listing, of every session: it says
+    /// what the tool is for and what the agent has to decide, and stops there.
+    /// The long ones were a second copy of a field's own doc.
+    #[test]
+    fn no_tool_is_described_at_length() {
+        const CAP: usize = 300;
+        for tool in AriadneMcp::tool_router().list_all() {
+            let described = tool.description.as_deref().unwrap_or_default();
+            assert!(
+                described.len() <= CAP,
+                "{} is described in {} characters, over the {CAP}",
+                tool.name,
+                described.len()
+            );
+        }
     }
 
     /// A planner server against a daemon that records what it is sent.

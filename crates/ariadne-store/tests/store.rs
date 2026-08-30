@@ -2010,8 +2010,8 @@ async fn a_fresh_database_is_seeded_with_the_built_in_profiles_on_every_default(
     assert!(
         reviewer
             .effective_system_prompt()
-            .contains("install dependencies and run the build"),
-        "reviewers are told to install dependencies and verify"
+            .contains("install what it needs and build, test and lint right here"),
+        "reviewers are told to install what it needs and verify"
     );
     // User edits stick.
     let engineer = store.get_profile_by_name("Engineer").await.unwrap();

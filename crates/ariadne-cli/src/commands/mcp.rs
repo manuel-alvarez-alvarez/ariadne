@@ -152,13 +152,16 @@ fn json_result(v: serde_json::Value) -> Result<CallToolResult, McpError> {
 }
 
 /// The rules that hold whoever is reading them: what Ariadne is reached
-/// through, and how a message addresses someone.
+/// through, how a message addresses someone, and how sparing to be with both
+/// messages and turns.
 ///
 /// One block, appended to the server's instructions above, which every session
 /// of every role receives before its first prompt. It used to be pasted into
 /// the three system prompts instead, where it was three copies to keep in step
-/// and a profile's own text for a user to edit away.
-const SESSION_RULES: &str = r#"Reach Ariadne only through them: every backticked operation in your prompts is one of these tools, never a shell command. `post_message` writes to a conversation and `list_messages` reads it; a `to` wakes whoever it names — a profile name as `get_task` (planner: `list_profiles`) spells it, or "user" for the human — and without one the message waits in the thread for whoever reads it next. Work autonomously; wait for a human only when a message asks. One may attach to this terminal and type follow-ups at any time."#;
+/// and a profile's own text for a user to edit away. Whom to write to and how
+/// little to write are here for the same reason: they held for all three
+/// roles, so all three said them.
+const SESSION_RULES: &str = r#"Reach Ariadne only through these tools; a backticked name is one. `post_message` writes to the thread, `list_messages` reads; a `to` wakes who it names ("user" the human, a profile as `get_task` spells it), else it waits. Work autonomously; wait only when a message asks; a human may attach anytime. Write briefly, only where it changes what someone does next, "user" only where they must act; never narrate progress; take as few turns as you can."#;
 
 impl ServerHandler for AriadneMcp {
     /// The server's own instructions, which every session receives before its
@@ -357,21 +360,36 @@ pub(crate) mod tests {
 
     /// The rules that hold for every role are the server's instructions, and
     /// every session gets them whatever its role and whatever its profile's
-    /// prompts have been edited into.
+    /// prompts have been edited into: how Ariadne is reached, whom a message
+    /// addresses, and how little of both to spend.
     #[test]
     fn every_session_is_told_how_ariadne_is_reached() {
         for role in ROLES {
             let mcp = server_at(role.clone(), Client::resolve(Some("http://127.0.0.1:1"), None));
             let instructions = mcp.get_info().instructions.expect("instructions");
             for rule in [
-                "Reach Ariadne only through them",
-                "`post_message` writes to a conversation",
-                "\"user\" for the human",
+                "Reach Ariadne only through these tools",
+                "`post_message` writes to the thread",
+                "\"user\" the human",
                 "Work autonomously",
+                "take as few turns as you can",
             ] {
                 assert!(instructions.contains(rule), "{role:?}: {instructions}");
             }
         }
+    }
+
+    /// The rules are read before every first prompt of every session, so they
+    /// are kept to the size of the rules themselves: each one a clause, none
+    /// of them explained twice.
+    #[test]
+    fn the_shared_rules_stay_small() {
+        const CAP: usize = 450;
+        assert!(
+            SESSION_RULES.len() <= CAP,
+            "the session rules are {} characters, over their {CAP}",
+            SESSION_RULES.len()
+        );
     }
 
     /// The daemon refuses an addressee with the sentence that says which ones

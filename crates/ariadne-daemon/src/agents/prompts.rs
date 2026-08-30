@@ -256,7 +256,7 @@ const MESSAGE_DELIVERY: &str = r#"New message from the {author} in {thread}:
 
 {body}
 
-`list_messages` reads the rest of it, `post_message` answers."#;
+`list_messages` reads the thread, `post_message` answers."#;
 
 /// What an agent of any role is woken with when a message addresses it: who
 /// wrote, what they wrote, and which conversation it is in.
@@ -722,7 +722,7 @@ mod tests {
             "{text}"
         );
         assert!(
-            text.contains("`list_messages` reads the rest of it, `post_message` answers"),
+            text.contains("`list_messages` reads the thread, `post_message` answers"),
             "{text}"
         );
         assert!(!text.contains("  "), "{text}");

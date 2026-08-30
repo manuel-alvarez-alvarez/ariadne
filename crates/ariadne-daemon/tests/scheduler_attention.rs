@@ -184,7 +184,7 @@ impl Sched {
 /// The engineer's resume template, as its profile has it: the words the daemon
 /// is about to type into the pane, which is what a composer that never lets go
 /// keeps showing.
-const RESUME: &str = r#"Pick "task" up again: your worktree is on"#;
+const RESUME: &str = r#"Pick "task" up again on"#;
 
 // -- the timeline -----------------------------------------------------------
 

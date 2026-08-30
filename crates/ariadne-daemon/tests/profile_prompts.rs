@@ -310,9 +310,9 @@ async fn a_planner_on_the_default_prompt_is_briefed_to_size_the_slots_it_assigns
         assert_eq!(profile.system_prompt, default_system_prompt(Role::Planner));
         for guidance in [
             "`list_models`",
-            "by the task's complexity",
-            "never by default",
-            "a reviewer usually needs less than its engineer",
+            "Size each slot",
+            "top efforts only where earned",
+            "reviewers under engineers",
             "`best_for`",
             "`cost`",
             "tier: unknown",

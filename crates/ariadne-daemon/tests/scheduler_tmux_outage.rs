@@ -209,7 +209,7 @@ async fn a_silent_agent_whose_pane_cannot_be_read_is_left_for_the_next_pass() {
     // tmux comes back, and the pane it could not answer for is still holding
     // the instruction the launch put there — as the engineer's resume template
     // words it.
-    h.composer_keeps(r#"Pick "task" up again: your worktree is on"#);
+    h.composer_keeps(r#"Pick "task" up again on"#);
     tmux_comes_back(&h);
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     loop {
