@@ -16,6 +16,7 @@ mod checks;
 
 use std::process::ExitCode;
 
+use anstyle::Style;
 use anyhow::Result;
 use serde::Serialize;
 
@@ -24,7 +25,7 @@ use ariadne_api::profiles::ProfileDto;
 use ariadne_client::{Client, endpoint};
 use ariadne_core::AgentKind;
 
-use crate::output::{Format, note, print};
+use crate::output::{Format, View, note, print, style, view};
 
 /// Which agent binaries can actually be launched, from both points of view.
 #[derive(Debug, Default, Clone)]
@@ -216,11 +217,13 @@ impl Report {
 /// `ariadne doctor` — build the report, print it, and answer with it.
 pub async fn run(client: &Client, format: Format) -> Result<ExitCode> {
     let report = examine(client).await;
+    let view = view();
     print(format, &report, || {
-        for line in render(&report) {
+        for line in render(&report, view) {
             println!("{line}");
         }
-        note(&summary(&report));
+        let verdict_style = style::check(report.status.label()).0;
+        note(&style::paint(view.color, verdict_style, &summary(&report)));
     })?;
     Ok(report.exit_code())
 }
@@ -304,14 +307,37 @@ async fn examine(client: &Client) -> Report {
     )
 }
 
+/// A check's status word, painted in `style::check`'s colour and prefixed
+/// with its glyph: `✓ ok`, `! warn`, `✗ fail`.
+fn verdict(status: Status) -> (Style, String) {
+    let (style, glyph) = style::check(status.label());
+    let text = match glyph {
+        Some(glyph) => format!("{glyph} {}", status.label()),
+        None => status.label().to_string(),
+    };
+    (style, text)
+}
+
 /// The report as lines: a heading per section, a line per check, and the hint
 /// of anything that is not `ok` under it.
-fn render(report: &Report) -> Vec<String> {
-    let width = report
+///
+/// The status column is padded on its unpainted text — glyph included — so
+/// the escapes colour adds never throw off `name` and `detail`, which start
+/// at the same offset whatever the verdict.
+fn render(report: &Report, view: &View) -> Vec<String> {
+    let checks: Vec<&Check> = report
         .sections
         .iter()
         .flat_map(|s| s.checks.iter())
+        .collect();
+    let name_width = checks
+        .iter()
         .map(|c| c.name.chars().count())
+        .max()
+        .unwrap_or(0);
+    let status_width = checks
+        .iter()
+        .map(|c| verdict(c.status).1.chars().count())
         .max()
         .unwrap_or(0);
 
@@ -320,16 +346,27 @@ fn render(report: &Report) -> Vec<String> {
         if !lines.is_empty() {
             lines.push(String::new());
         }
-        lines.push(section.name.to_uppercase());
+        lines.push(style::paint(
+            view.color,
+            style::HEADING,
+            &section.name.to_uppercase(),
+        ));
         for check in &section.checks {
+            let (style, text) = verdict(check.status);
+            let painted = style::paint(view.color, style, &text);
+            let pad = " ".repeat(status_width - text.chars().count() + 2);
             lines.push(format!(
-                "  {:<6}{:<width$}   {}",
-                check.status.label(),
-                check.name,
-                check.detail
+                "  {painted}{pad}{:<name_width$}   {}",
+                check.name, check.detail
             ));
             if let Some(hint) = &check.hint {
-                lines.push(format!("  {:<6}{:<width$}   {hint}", "", ""));
+                let hint = style::paint(view.color, style::META, hint);
+                lines.push(format!(
+                    "  {:<status_width$}{:<name_width$}   {hint}",
+                    "",
+                    "",
+                    status_width = status_width + 2
+                ));
             }
         }
     }
@@ -400,17 +437,103 @@ pub(crate) mod tests {
 
     #[test]
     fn every_check_prints_under_its_section_with_its_hint() {
-        let lines = render(&Report::new(
-            "/tmp/ariadne.sock",
-            vec![Section::new(
-                "client",
-                vec![Check::fail("ariadned", "not found").hint("install it")],
-            )],
-        ));
+        let lines = render(
+            &Report::new(
+                "/tmp/ariadne.sock",
+                vec![Section::new(
+                    "client",
+                    vec![Check::fail("ariadned", "not found").hint("install it")],
+                )],
+            ),
+            &View::plain(),
+        );
         assert_eq!(lines[0], "CLIENT");
-        assert!(lines[1].contains("fail"), "{lines:?}");
+        assert!(lines[1].contains("✗ fail"), "{lines:?}");
         assert!(lines[1].contains("ariadned"), "{lines:?}");
         assert!(lines[2].contains("install it"), "{lines:?}");
+        assert!(!lines.join("\n").contains('\u{1b}'), "{lines:?}");
+    }
+
+    /// With colour on: the section heading is bold, each status word carries
+    /// its glyph in `check()`'s colour, a hint is dimmed — and the `name`
+    /// column starts at the same offset whether the row above it says `ok`,
+    /// `warn` or `fail`. With colour off, the same report differs only by
+    /// the glyphs the status words now carry.
+    #[test]
+    fn the_coloured_report_paints_headings_verdicts_and_hints_and_keeps_columns_aligned() {
+        let report = Report::new(
+            "/tmp/ariadne.sock",
+            vec![Section::new(
+                "tools",
+                vec![
+                    Check::ok("git", "2.43.0"),
+                    Check::warn("gh", "not authenticated"),
+                    Check::fail("tmux", "not found").hint("install tmux"),
+                ],
+            )],
+        );
+        let colour = View {
+            color: true,
+            ..View::plain()
+        };
+        let lines = render(&report, &colour);
+        let [heading, ok_line, warn_line, fail_line, hint_line]: [&String; 5] =
+            lines.iter().collect::<Vec<_>>().try_into().unwrap();
+
+        assert_eq!(*heading, style::paint(true, style::HEADING, "TOOLS"));
+        assert!(
+            ok_line.contains(&style::paint(true, style::check("ok").0, "✓ ok")),
+            "{ok_line}"
+        );
+        assert!(
+            warn_line.contains(&style::paint(true, style::check("warn").0, "! warn")),
+            "{warn_line}"
+        );
+        assert!(
+            fail_line.contains(&style::paint(true, style::check("fail").0, "✗ fail")),
+            "{fail_line}"
+        );
+        assert!(
+            hint_line.contains(&style::paint(true, style::META, "install tmux")),
+            "{hint_line}"
+        );
+
+        // `name` starts in the same column on every row, escapes and all —
+        // a character offset, since a multi-byte glyph like `✗` would throw
+        // a byte offset off despite costing the terminal a single column.
+        let name_offset = |line: &str, name: &str| {
+            let plain = visible(line);
+            plain.find(name).map(|byte| plain[..byte].chars().count())
+        };
+        assert_eq!(name_offset(ok_line, "git"), name_offset(warn_line, "gh"));
+        assert_eq!(name_offset(ok_line, "git"), name_offset(fail_line, "tmux"));
+
+        // Plain is the same report, minus every escape — and the glyphs,
+        // which are the one thing colour is allowed to have added.
+        let plain = render(&report, &View::plain());
+        let stripped: Vec<String> = lines.iter().map(|l| visible(l)).collect();
+        assert_eq!(stripped, plain);
+        for line in &plain {
+            assert!(!line.contains('\u{1b}'), "{line:?}");
+        }
+        assert!(plain[1].contains("✓ ok"), "{plain:?}");
+        assert!(plain[2].contains("! warn"), "{plain:?}");
+        assert!(plain[3].contains("✗ fail"), "{plain:?}");
+    }
+
+    /// A line as the reader sees it: the escapes taken back out.
+    fn visible(line: &str) -> String {
+        let mut out = String::new();
+        let mut escaped = false;
+        for c in line.chars() {
+            match (escaped, c) {
+                (false, '\u{1b}') => escaped = true,
+                (true, 'm') => escaped = false,
+                (true, _) => {}
+                (false, c) => out.push(c),
+            }
+        }
+        out
     }
 
     #[test]
