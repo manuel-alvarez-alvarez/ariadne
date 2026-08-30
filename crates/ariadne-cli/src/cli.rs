@@ -63,8 +63,12 @@ const REPO_EXAMPLES: &str = "\
 Examples:
   ariadne repo add ~/projects/api --description \"the public API\"
   ariadne repo add ~/projects/ui --branch next --merge-strategy pull-request
+  ariadne repo add ~/projects/ui --landing-prompt-file landing.md
   ariadne repo ls
   ariadne repo update <repo-id> --branch main
+  ariadne repo prompt get <repo-id> > landing.md   # pipe it out, edit, pipe it back
+  ariadne repo prompt set <repo-id> --file landing.md
+  ariadne repo prompt reset <repo-id>              # back to the strategy's default
 ";
 
 const GOAL_EXAMPLES: &str = "\

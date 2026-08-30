@@ -75,8 +75,11 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    **landing briefing** — the whole procedure, which the engineer then runs.
    That briefing is the repository's own: it is prefilled from the repository's
    **merge strategy** (`ariadne repo add --merge-strategy`, default `direct`),
-   can be rewritten per repository, and is put back on the strategy's default
-   by clearing it. What the two strategies ship is:
+   can be set at registration or rewritten after (`--landing-prompt`,
+   `--landing-prompt-file`, and `ariadne repo prompt get|set|reset` for a
+   repository that already exists), and is put back on the strategy's default
+   by clearing it (`repo update --reset-landing-prompt`, or `repo prompt
+   reset`). What the two strategies ship is:
    - **`direct`** — rebase onto the base, squash into one commit with a
      conventional subject, fast-forward the base branch in the primary
      checkout, push it where there is a remote, then `mark_merged`. The daemon
@@ -258,6 +261,14 @@ ariadne daemon start           # unix socket at ~/.ariadne/ariadne.sock
 ariadne repo add ~/projects/api --description "the public API"
 ariadne goal create --title "Add rate limiting" --repo ~/projects/api
 ariadne goal attach <goal-id>
+
+# the landing briefing an approved task's engineer runs it with: prefilled
+# from --merge-strategy, rewritten per repository at registration or after
+ariadne repo add ~/projects/ui --merge-strategy pull-request \
+    --landing-prompt-file landing.md
+ariadne repo prompt get <repo-id> > landing.md   # pipe it out, edit, pipe it back
+ariadne repo prompt set <repo-id> --file landing.md
+ariadne repo prompt reset <repo-id>              # back to the strategy's default
 
 # an agent CLI of your own, a model of it where you want one, and how deeply
 # it reasons there
