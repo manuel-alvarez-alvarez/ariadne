@@ -17,7 +17,7 @@ use super::resolve::{self, Kind};
 use super::{ProfileNames, Subject, confirm, parse_effort, parse_model, print_thread, recipient};
 use crate::cli::values::Spelling;
 use crate::output::{
-    Column, Format, UNCAPPED, age, col, moment, ok_id_line, print, print_kv, print_list,
+    Column, Format, Kv, UNCAPPED, age, col, moment, ok_id_line, print, print_kv, print_list,
     status_line, usage_block, usage_cell, view,
 };
 
@@ -244,21 +244,25 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
             let profiles = ProfileNames::for_format(client, format).await;
             print(format, &g, || {
                 print_kv(&[
-                    ("id", g.id.clone()),
-                    ("title", g.title.clone()),
-                    ("status", g.status.as_str().into()),
+                    ("id", Kv::id(g.id.clone())),
+                    ("title", Kv::title(g.title.clone())),
+                    ("status", Kv::status(g.status.as_str())),
                     (
                         "planner",
-                        profiles.pinned_label(
-                            &g.planner_profile_id,
-                            g.model.as_deref(),
-                            g.effort.as_deref(),
-                        ),
+                        profiles
+                            .pinned_label(
+                                &g.planner_profile_id,
+                                g.model.as_deref(),
+                                g.effort.as_deref(),
+                            )
+                            .into(),
                     ),
-                    ("approvals", g.required_approvals.to_string()),
+                    ("approvals", g.required_approvals.to_string().into()),
                     (
                         "max_tasks",
-                        g.max_tasks.map_or("unbounded".into(), |m| m.to_string()),
+                        g.max_tasks
+                            .map_or("unbounded".into(), |m| m.to_string())
+                            .into(),
                     ),
                     (
                         "repos",
@@ -266,11 +270,12 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                             .iter()
                             .map(|r| format!("{} [{}] ({})", r.path, r.base_branch, r.id))
                             .collect::<Vec<_>>()
-                            .join(INDENT),
+                            .join(INDENT)
+                            .into(),
                     ),
-                    ("tokens", usage_lines(&g)),
-                    ("created", moment(&g.created_at)),
-                    ("description", format!("\n---\n{}", g.description)),
+                    ("tokens", usage_lines(&g).into()),
+                    ("created", Kv::meta(moment(&g.created_at))),
+                    ("description", format!("\n---\n{}", g.description).into()),
                 ])
             })?;
         }

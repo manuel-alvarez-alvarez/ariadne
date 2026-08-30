@@ -24,8 +24,8 @@ use super::{
 };
 use crate::cli::values::Spelling;
 use crate::output::{
-    Column, Format, UNCAPPED, age, col, dash, local_time, moment, note, ok_id_line, pager, print,
-    print_json, print_kv, print_list, status_line, usage_block, usage_cell, view, yes_no,
+    Column, Format, Kv, UNCAPPED, age, col, dash, local_time, moment, note, ok_id_line, pager,
+    print, print_json, print_kv, print_list, status_line, usage_block, usage_cell, view, yes_no,
 };
 use edit::{parse_reviewer, resolve_repo, resolved_reviewers, update_request};
 
@@ -360,58 +360,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             let id = resolve::id(client, Kind::Task, &id).await?;
             let t: TaskDto = client.get_json(&task_path(&id)).await?;
             let profiles = ProfileNames::for_format(client, format).await;
-            print(format, &t, || {
-                print_kv(&[
-                    ("id", t.id.clone()),
-                    ("goal", t.goal_id.clone()),
-                    ("title", t.title.clone()),
-                    ("status", t.status.as_str().into()),
-                    (
-                        "engineer",
-                        profiles.pinned_label(
-                            &t.engineer_profile_id,
-                            t.model.as_deref(),
-                            t.effort.as_deref(),
-                        ),
-                    ),
-                    (
-                        "reviewers",
-                        // One reviewer per line: each is a mention and the two
-                        // facts after it, and the review order is what the
-                        // column reads down.
-                        t.reviewers
-                            .iter()
-                            .map(|r| {
-                                profiles.pinned_label(
-                                    &r.profile_id,
-                                    r.model.as_deref(),
-                                    r.effort.as_deref(),
-                                )
-                            })
-                            .collect::<Vec<_>>()
-                            .join(INDENT),
-                    ),
-                    (
-                        "depends_on",
-                        match t.depends_on.is_empty() {
-                            true => "-".into(),
-                            false => t.depends_on.join(", "),
-                        },
-                    ),
-                    ("branch", t.branch.clone()),
-                    ("worktree", dash(t.worktree_path.as_deref())),
-                    ("tokens", usage_lines(&t)),
-                    ("round", t.review_round.to_string()),
-                    ("stalled", yes_no(t.stalled, "no")),
-                    ("merge", dash(t.merge_commit.as_deref())),
-                    // The forge's own link, where the rest of a published
-                    // task's story is; only an engineer that opened one
-                    // reports it.
-                    ("pull_request", dash(t.pr_url.as_deref())),
-                    ("created", moment(&t.created_at)),
-                    ("description", format!("\n---\n{}", t.description)),
-                ])
-            })?;
+            print(format, &t, || print_kv(&inspect_pairs(&t, &profiles)))?;
         }
         TaskCommand::Thread { id, limit, tail } => {
             let id = resolve::id(client, Kind::Task, &id).await?;
@@ -634,6 +583,59 @@ fn visible(tasks: Vec<TaskDto>, all: bool, statuses: &[TaskStatus]) -> Vec<TaskD
     tasks
 }
 
+/// The key/value pairs `task inspect` prints, in the order it prints them —
+/// pulled out of the `Inspect` arm so the block's own content is testable
+/// without a daemon behind it.
+fn inspect_pairs(t: &TaskDto, profiles: &ProfileNames) -> Vec<(&'static str, Kv)> {
+    vec![
+        ("id", Kv::id(t.id.clone())),
+        ("goal", Kv::id(t.goal_id.clone())),
+        ("title", Kv::title(t.title.clone())),
+        ("status", Kv::status(t.status.as_str())),
+        (
+            "engineer",
+            profiles
+                .pinned_label(
+                    &t.engineer_profile_id,
+                    t.model.as_deref(),
+                    t.effort.as_deref(),
+                )
+                .into(),
+        ),
+        (
+            "reviewers",
+            // One reviewer per line: each is a mention and the two facts
+            // after it, and the review order is what the column reads down.
+            t.reviewers
+                .iter()
+                .map(|r| {
+                    profiles.pinned_label(&r.profile_id, r.model.as_deref(), r.effort.as_deref())
+                })
+                .collect::<Vec<_>>()
+                .join(INDENT)
+                .into(),
+        ),
+        (
+            "depends_on",
+            Kv::id(match t.depends_on.is_empty() {
+                true => "-".into(),
+                false => t.depends_on.join(", "),
+            }),
+        ),
+        ("branch", t.branch.clone().into()),
+        ("worktree", dash(t.worktree_path.as_deref()).into()),
+        ("tokens", usage_lines(t).into()),
+        ("round", t.review_round.to_string().into()),
+        ("stalled", yes_no(t.stalled, "no").into()),
+        ("merge", dash(t.merge_commit.as_deref()).into()),
+        // The forge's own link, where the rest of a published task's story
+        // is; only an engineer that opened one reports it.
+        ("pull_request", dash(t.pr_url.as_deref()).into()),
+        ("created", Kv::meta(moment(&t.created_at))),
+        ("description", format!("\n---\n{}", t.description).into()),
+    ]
+}
+
 /// What the task cost, spender by spender: the total first, then the
 /// engineer and each reviewer under it, named the way a message addresses
 /// them.
@@ -708,6 +710,7 @@ mod tests {
     use ariadne_api::tasks::{ProfileUsageDto, TaskReviewerDto, TaskUsageDto};
 
     use crate::commands::fixtures;
+    use crate::output::{View, kv_block, style};
 
     /// Three hours after every fixture was created, so an `AGE` cell is a
     /// figure a test can name.
@@ -838,6 +841,66 @@ mod tests {
         let profiles = ProfileNames::from_pairs([("01REV".to_string(), "My Reviewer".to_string())]);
         assert_eq!(profiles.label("01REV"), "My Reviewer (01REV)");
         assert_eq!(profiles.label("01GONE"), "01GONE");
+    }
+
+    /// `task inspect` types its id, its goal, its title and its status the
+    /// way a row of `task ls` would: the id and the goal dimmed, the title
+    /// bold, the status carrying its glyph inside its colour. Colour is
+    /// escapes and nothing else — strip them and the block reads exactly as
+    /// it does with `--color never`, and everything this task leaves plain
+    /// (branch, tokens, round, …) is untouched either way.
+    #[test]
+    fn the_inspect_block_types_its_id_title_and_status() {
+        let t = TaskDto {
+            depends_on: vec!["01DEP".into()],
+            ..dto()
+        };
+        let pairs = inspect_pairs(&t, &ProfileNames::default());
+
+        let coloured = kv_block(
+            &pairs,
+            &View {
+                color: true,
+                ..View::plain()
+            },
+        );
+        assert!(
+            coloured.contains(&style::paint(true, style::ID, &t.id)),
+            "{coloured}"
+        );
+        assert!(
+            coloured.contains(&style::paint(
+                true,
+                style::status("in_progress").0,
+                "● in_progress"
+            )),
+            "{coloured}"
+        );
+        assert!(
+            coloured.contains(&style::paint(true, style::ID, "01DEP")),
+            "depends_on is a list of ids, painted whole: {coloured}"
+        );
+        assert!(coloured.contains("add-the-frobnicator"), "{coloured}");
+
+        let plain = kv_block(&pairs, &View::plain());
+        assert!(!plain.contains('\u{1b}'), "{plain}");
+        assert_eq!(strip_escapes(&coloured), plain, "colour adds only escapes");
+    }
+
+    /// The escapes taken back out of a line, the way a reader's terminal
+    /// would show it: what is left is what `--color never` prints outright.
+    fn strip_escapes(line: &str) -> String {
+        let mut out = String::new();
+        let mut escaped = false;
+        for c in line.chars() {
+            match (escaped, c) {
+                (false, '\u{1b}') => escaped = true,
+                (true, 'm') => escaped = false,
+                (true, _) => {}
+                (false, c) => out.push(c),
+            }
+        }
+        out
     }
 
     /// A published task says so in the list, which is the question a table

@@ -12,7 +12,7 @@ use super::resolve::{self, Kind};
 use super::{Subject, confirm};
 use crate::cli::values::Spelling;
 use crate::output::{
-    Column, Format, UNCAPPED, age, col, moment, ok_id_line, print, print_kv, print_list, view,
+    Column, Format, Kv, UNCAPPED, age, col, moment, ok_id_line, print, print_kv, print_list, view,
 };
 
 /// Columns of `repo ls`. The path is what a repository is, so it stays
@@ -126,16 +126,16 @@ pub async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Result<()
             let r: RepositoryDto = client.get_json(&repo_path(&id)).await?;
             print(format, &r, || {
                 print_kv(&[
-                    ("id", r.id.clone()),
-                    ("path", r.path.clone()),
-                    ("branch", r.base_branch.clone()),
+                    ("id", Kv::id(r.id.clone())),
+                    ("path", r.path.clone().into()),
+                    ("branch", r.base_branch.clone().into()),
                     ("merge_strategy", r.merge_strategy.as_str().into()),
                     (
                         "description",
-                        r.description.clone().unwrap_or_else(|| "-".into()),
+                        r.description.clone().unwrap_or_else(|| "-".into()).into(),
                     ),
-                    ("created", moment(&r.created_at)),
-                    ("updated", moment(&r.updated_at)),
+                    ("created", Kv::meta(moment(&r.created_at))),
+                    ("updated", Kv::meta(moment(&r.updated_at))),
                 ])
             })?;
         }

@@ -302,7 +302,11 @@ fn write_kv<W: Write, V: Into<Kv> + Clone>(
 /// the value column starts at the same place with colour on as with it off —
 /// and where a value spills over several lines, the `INDENT` its caller
 /// continues them on is that same width, so they stay under it.
-fn kv_block<V: Into<Kv> + Clone>(pairs: &[(&str, V)], view: &View) -> String {
+///
+/// `pub(crate)` rather than private: the commands that build a typed block
+/// render it in a unit test the same way this module does, without a daemon
+/// or a terminal behind either.
+pub(crate) fn kv_block<V: Into<Kv> + Clone>(pairs: &[(&str, V)], view: &View) -> String {
     let pad = pairs.iter().map(|(k, _)| width(k)).max().unwrap_or(0);
     pairs
         .iter()

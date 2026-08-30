@@ -9,7 +9,7 @@ use ariadne_client::Client;
 use ariadne_core::AgentKind;
 
 use super::parse_model;
-use crate::output::{Column, Format, UNCAPPED, col, note, print, print_kv, print_list, view};
+use crate::output::{Column, Format, Kv, UNCAPPED, col, note, print, print_kv, print_list, view};
 
 /// Columns of `models ls`. `model` is the whole id — `claude_code:o3`, not
 /// `o3` — because that is the string `--model` takes, and a column somebody
@@ -131,20 +131,23 @@ fn print_card(m: &ModelDto) {
 /// The key/value pairs `models show` prints, in the order it prints them —
 /// pulled out of [`print_card`] so the card's own content is testable
 /// without printing anything.
-fn card_pairs(m: &ModelDto) -> Vec<(&'static str, String)> {
+///
+/// `tier` stays as plain as it is in `models ls`: the table gives that column
+/// no colour of its own, and a card is not the place to invent one.
+fn card_pairs(m: &ModelDto) -> Vec<(&'static str, Kv)> {
     let indent = format!("\n{}", " ".repeat(SHOW_KEY_WIDTH + 2));
     vec![
-        ("id", m.id.clone()),
-        ("tier", m.tier.as_str().to_string()),
-        ("cost", band(m.cost)),
-        ("speed", band(m.speed)),
+        ("id", Kv::id(m.id.clone())),
+        ("tier", m.tier.as_str().to_string().into()),
+        ("cost", band(m.cost).into()),
+        ("speed", band(m.speed).into()),
         (
             "description",
-            m.description.clone().unwrap_or_else(|| "-".into()),
+            m.description.clone().unwrap_or_else(|| "-".into()).into(),
         ),
-        ("best_for", shapes(&m.best_for, &indent)),
-        ("avoid_for", shapes(&m.avoid_for, &indent)),
-        ("efforts", efforts_block(&m.efforts, &indent)),
+        ("best_for", shapes(&m.best_for, &indent).into()),
+        ("avoid_for", shapes(&m.avoid_for, &indent).into()),
+        ("efforts", efforts_block(&m.efforts, &indent).into()),
     ]
 }
 
@@ -439,16 +442,17 @@ mod tests {
         assert_eq!(
             card_pairs(&fixture()[0]),
             vec![
-                ("id", "codex:gpt-5.6-luna".to_string()),
-                ("tier", "balanced".to_string()),
-                ("cost", "3/5".to_string()),
-                ("speed", "3/5".to_string()),
-                ("description", "balanced coding model".to_string()),
-                ("best_for", "well-specified fixes".to_string()),
-                ("avoid_for", "cross-subsystem design".to_string()),
+                ("id", Kv::id("codex:gpt-5.6-luna")),
+                ("tier", "balanced".into()),
+                ("cost", "3/5".into()),
+                ("speed", "3/5".into()),
+                ("description", "balanced coding model".into()),
+                ("best_for", "well-specified fixes".into()),
+                ("avoid_for", "cross-subsystem design".into()),
                 (
                     "efforts",
-                    format!("low — lighter reasoning{indent}medium — balanced reasoning (default)"),
+                    format!("low — lighter reasoning{indent}medium — balanced reasoning (default)")
+                        .into(),
                 ),
             ]
         );
@@ -462,14 +466,14 @@ mod tests {
         assert_eq!(
             card_pairs(&bare),
             vec![
-                ("id", "opencode:llama3".to_string()),
-                ("tier", "unknown".to_string()),
-                ("cost", "-".to_string()),
-                ("speed", "-".to_string()),
-                ("description", "-".to_string()),
-                ("best_for", "-".to_string()),
-                ("avoid_for", "-".to_string()),
-                ("efforts", "-".to_string()),
+                ("id", Kv::id("opencode:llama3")),
+                ("tier", "unknown".into()),
+                ("cost", "-".into()),
+                ("speed", "-".into()),
+                ("description", "-".into()),
+                ("best_for", "-".into()),
+                ("avoid_for", "-".into()),
+                ("efforts", "-".into()),
             ]
         );
     }

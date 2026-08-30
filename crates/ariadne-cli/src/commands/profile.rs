@@ -20,7 +20,8 @@ use super::{
 };
 use crate::cli::values::Spelling;
 use crate::output::{
-    Column, Format, UNCAPPED, age, col, moment, note, ok_id_line, print, print_kv, print_list, view,
+    Column, Format, Kv, UNCAPPED, age, col, moment, note, ok_id_line, print, print_kv, print_list,
+    view,
 };
 
 pub use flags::{PromptAssignment, read_prompts};
@@ -259,13 +260,13 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
             let p = get_profile(client, &id).await?;
             print(format, &p, || {
                 print_kv(&[
-                    ("id", p.id.clone()),
-                    ("name", p.name.clone()),
+                    ("id", Kv::id(p.id.clone())),
+                    ("name", Kv::title(p.name.clone())),
                     ("role", p.role.as_str().into()),
-                    ("model", model_label(p.model.as_deref())),
-                    ("effort", effort_label(p.effort.as_deref())),
-                    ("created", moment(&p.created_at)),
-                    ("prompt", format!("\n---\n{}", p.system_prompt)),
+                    ("model", model_label(p.model.as_deref()).into()),
+                    ("effort", effort_label(p.effort.as_deref()).into()),
+                    ("created", Kv::meta(moment(&p.created_at))),
+                    ("prompt", format!("\n---\n{}", p.system_prompt).into()),
                 ])
             })?;
         }

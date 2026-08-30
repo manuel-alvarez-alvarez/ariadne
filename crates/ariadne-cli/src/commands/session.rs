@@ -19,7 +19,7 @@ use super::resolve::{self, Kind};
 use super::{ProfileNames, Subject, confirm, one_of, query_path};
 use crate::cli::values::Spelling;
 use crate::output::{
-    Column, Format, UNCAPPED, age, at, col, dash, moment, note, ok_id_line, pager, print,
+    Column, Format, Kv, UNCAPPED, age, at, col, dash, moment, note, ok_id_line, pager, print,
     print_json, print_kv, print_list, short_id, status_line, style, usage_block, usage_cell, view,
 };
 
@@ -211,40 +211,7 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
             let id = resolve::id(client, Kind::Session, &id).await?;
             let s: SessionDto = client.get_json(&session_path(&id)).await?;
             let profiles = ProfileNames::for_format(client, format).await;
-            print(format, &s, || {
-                print_kv(&[
-                    ("id", s.id.clone()),
-                    ("goal", s.goal_id.clone()),
-                    ("task", dash(s.task_id.as_deref())),
-                    ("role", s.role.as_str().into()),
-                    ("profile", profiles.label(&s.profile_id)),
-                    ("agent", s.agent_kind.as_str().into()),
-                    // Recorded at launch, so it is what this session runs on
-                    // even if the profile has moved on since.
-                    ("model", s.model.clone().unwrap_or_else(|| "default".into())),
-                    // How deeply it reasons there, recorded with the model it
-                    // belongs to; `default` is whatever the agent CLI runs
-                    // that model at.
-                    (
-                        "effort",
-                        s.effort.clone().unwrap_or_else(|| "default".into()),
-                    ),
-                    ("status", s.status.as_str().into()),
-                    ("attention", attention_label(s.attention_reason)),
-                    ("attention since", at(s.attention_since.as_deref())),
-                    ("tmux", s.tmux_session.clone()),
-                    ("worktree", dash(s.worktree_path.as_deref())),
-                    (
-                        "round",
-                        s.review_round.map_or("-".into(), |r| r.to_string()),
-                    ),
-                    ("internal id", dash(s.internal_session_id.as_deref())),
-                    ("tokens", usage_block(&s.usage, &[], INDENT)),
-                    ("activity", at(s.last_activity_at.as_deref())),
-                    ("created", moment(&s.created_at)),
-                    ("ended", at(s.ended_at.as_deref())),
-                ])
-            })?;
+            print(format, &s, || print_kv(&inspect_pairs(&s, &profiles)))?;
         }
         SessionCommand::Send {
             id,
@@ -482,6 +449,52 @@ fn attention_label(reason: Option<AttentionReason>) -> String {
     reason.map_or("-".into(), |r| reason_label(r).to_string())
 }
 
+/// The key/value pairs `session inspect` prints, in the order it prints them
+/// — pulled out of the `Inspect` arm so the block's own content is testable
+/// without a daemon behind it.
+fn inspect_pairs(s: &SessionDto, profiles: &ProfileNames) -> Vec<(&'static str, Kv)> {
+    vec![
+        ("id", Kv::id(s.id.clone())),
+        ("goal", Kv::id(s.goal_id.clone())),
+        ("task", Kv::id(dash(s.task_id.as_deref()))),
+        ("role", s.role.as_str().into()),
+        ("profile", profiles.label(&s.profile_id).into()),
+        ("agent", s.agent_kind.as_str().into()),
+        // Recorded at launch, so it is what this session runs on even if the
+        // profile has moved on since.
+        (
+            "model",
+            s.model.clone().unwrap_or_else(|| "default".into()).into(),
+        ),
+        // How deeply it reasons there, recorded with the model it belongs
+        // to; `default` is whatever the agent CLI runs that model at.
+        (
+            "effort",
+            s.effort.clone().unwrap_or_else(|| "default".into()).into(),
+        ),
+        ("status", Kv::status(s.status.as_str())),
+        (
+            "attention",
+            Kv::attention(attention_label(s.attention_reason)),
+        ),
+        (
+            "attention since",
+            Kv::meta(at(s.attention_since.as_deref())),
+        ),
+        ("tmux", s.tmux_session.clone().into()),
+        ("worktree", dash(s.worktree_path.as_deref()).into()),
+        (
+            "round",
+            s.review_round.map_or("-".into(), |r| r.to_string()).into(),
+        ),
+        ("internal id", dash(s.internal_session_id.as_deref()).into()),
+        ("tokens", usage_block(&s.usage, &[], INDENT).into()),
+        ("activity", Kv::meta(at(s.last_activity_at.as_deref()))),
+        ("created", Kv::meta(moment(&s.created_at))),
+        ("ended", Kv::meta(at(s.ended_at.as_deref()))),
+    ]
+}
+
 /// Whose terminal it is: a session has no title, and the role and the piece
 /// of work it was spawned for are what stand in for one.
 fn what_for(s: &SessionDto) -> String {
@@ -508,6 +521,7 @@ mod tests {
     use ariadne_core::Role;
 
     use crate::commands::fixtures::session;
+    use crate::output::{View, kv_block};
 
     fn context() -> SessionContext {
         SessionContext {
@@ -651,5 +665,67 @@ mod tests {
         );
         assert_eq!(attention_label(Some(AttentionReason::Stalled)), "stalled");
         assert_eq!(attention_label(None), "-");
+    }
+
+    /// `session inspect` types its id, its goal, its task and its status the
+    /// way a row of `session ls` would: the ids dimmed, the status carrying
+    /// its glyph inside its colour, a waiting attention carrying its own.
+    /// Colour is escapes and nothing else — strip them and the block reads
+    /// exactly as it does with `--color never`.
+    #[test]
+    fn the_inspect_block_types_its_ids_status_and_attention() {
+        let s = SessionDto {
+            attention_reason: Some(AttentionReason::WaitingInput),
+            ..session("01SESS", "01GOAL", Some("01TASK"))
+        };
+        let pairs = inspect_pairs(&s, &ProfileNames::default());
+
+        let coloured = kv_block(
+            &pairs,
+            &View {
+                color: true,
+                ..View::plain()
+            },
+        );
+        assert!(
+            coloured.contains(&style::paint(true, style::ID, &s.id)),
+            "{coloured}"
+        );
+        assert!(
+            coloured.contains(&style::paint(true, style::ID, "01TASK")),
+            "the task id is dimmed too: {coloured}"
+        );
+        assert!(
+            coloured.contains(&style::paint(true, style::status("running").0, "● running")),
+            "{coloured}"
+        );
+        assert!(
+            coloured.contains(&style::paint(
+                true,
+                style::attention("waiting for input").0,
+                "? waiting for input"
+            )),
+            "{coloured}"
+        );
+
+        let plain = kv_block(&pairs, &View::plain());
+        assert!(!plain.contains('\u{1b}'), "{plain}");
+        assert_eq!(strip_escapes(&coloured), plain, "colour adds only escapes");
+    }
+
+    /// The escapes taken back out of a line, the way a reader's terminal
+    /// would show it: what is left is what `--color never` prints outright.
+    fn strip_escapes(line: &str) -> String {
+        let mut out = String::new();
+        let mut escaped = false;
+        for c in line.chars() {
+            match (escaped, c) {
+                (false, '\u{1b}') => escaped = true,
+                (true, 'm') => escaped = false,
+                (true, _) => {}
+                (false, c) => out.push(c),
+            }
+        }
+        out
     }
 }
