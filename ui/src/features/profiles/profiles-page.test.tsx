@@ -19,7 +19,7 @@ import { beforeEach, describe, expect, it } from "vitest"
 
 import type { ModelDto, ProfileDto, ProfilePromptDto } from "@/api"
 import { PROFILE_PARAM, paths } from "@/routes/paths"
-import { aProfile } from "@/test/fixtures"
+import { aModel, anEffort, aProfile } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { ProfilesPage } from "./profiles-page"
 
@@ -54,13 +54,19 @@ const PINNED: ProfileDto = {
 }
 
 const CATALOG: ModelDto[] = [
-  {
+  aModel({
     id: "claude_code:claude-opus-5",
     agent_kind: "claude_code",
     description: "Opus tier: deep analysis",
-    efforts: ["low", "medium", "high", "xhigh", "max"],
-    default_effort: "high",
-  },
+    tier: "strong",
+    efforts: [
+      anEffort({ id: "low" }),
+      anEffort({ id: "medium" }),
+      anEffort({ id: "high", default: true }),
+      anEffort({ id: "xhigh" }),
+      anEffort({ id: "max" }),
+    ],
+  }),
 ]
 
 /** One stored briefing of each kind a role owns, in the daemon's order. */

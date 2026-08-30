@@ -314,8 +314,11 @@ export interface paths {
          *     live (`opencode models --verbose`) for opencode.
          * @description The union always, and grouped by agent CLI: a model is chosen by one
          *     string that carries its CLI, so nothing scopes this catalog any more.
-         *     Each entry carries the reasoning efforts it can be run at, cheapest
-         *     first, and what its CLI runs it at when none is passed.
+         *     Each entry says what the model is for — its tier, its cost and speed
+         *     next to every other entry, the work it suits and the work it does not
+         *     — and carries the efforts it can be run at, cheapest first, each with
+         *     what spending it buys and whether it is the one its CLI runs by
+         *     default.
          */
         get: operations["models_list"];
         put?: never;
@@ -1180,6 +1183,29 @@ export interface components {
             event: "repository_deleted";
         };
         /**
+         * @description One reasoning effort an entry can be run at: the name it is passed by, and
+         *     what spending it buys.
+         *
+         *     At most one effort of a model is the `default`: what its agent CLI runs it
+         *     at when a task pins no effort at all. None of them are where the CLI has no
+         *     default to name.
+         */
+        EffortDto: {
+            /**
+             * @description Whether this is what the agent CLI runs the model at when none is
+             *     passed.
+             */
+            default: boolean;
+            /**
+             * @description What spending this effort buys — the same on every model of one agent
+             *     CLI. `null` where nothing knows, which is where the effort was
+             *     discovered rather than curated.
+             */
+            description?: string | null;
+            /** @example high */
+            id: string;
+        };
+        /**
          * @description Body of `POST /v1/goals/{id}/finalize`: the planner ends planning once the
          *     user has validated the plan in the goal thread, and execution starts. The
          *     planner's call, not the user's.
@@ -1338,26 +1364,72 @@ export interface components {
          *
          *     The id is what a request writes as its `model`, whole. `agent_kind` is the
          *     same fact taken apart, so a picker can group the catalog by CLI without
-         *     parsing anything.
+         *     parsing anything. The rest is what a planner sizes a task from: what this
+         *     model is, what it costs and how fast it answers next to every other entry,
+         *     the work it is and is not the choice for, and what each of its efforts
+         *     buys.
          */
         ModelDto: {
             /** @description The agent CLI this entry runs on. */
             agent_kind: components["schemas"]["AgentKind"];
             /**
-             * @description What the agent CLI runs this model at when no effort is passed.
-             * @example high
+             * @description Task shapes it is the wrong choice for; empty where nothing knows.
+             * @example [
+             *       "cross-subsystem design"
+             *     ]
              */
-            default_effort?: string | null;
-            /** @description One-line capability summary (absent for discovered opencode models). */
+            avoid_for: string[];
+            /**
+             * @description Task shapes this entry is the right choice for; empty where nothing
+             *     knows.
+             * @example [
+             *       "well-specified single-file fixes"
+             *     ]
+             */
+            best_for: string[];
+            /**
+             * Format: int32
+             * @description What it costs to run: 1 (free) to 5 (frontier), ranked across the whole
+             *     catalog so entries of different agent CLIs compare. `null` where
+             *     nothing knows.
+             * @example 3
+             */
+            cost?: number | null;
+            /** @description One line about the model, which is what a picker shows beside the id. */
             description?: string | null;
             /**
              * @description The reasoning efforts this entry can be run at, cheapest first; empty
              *     where the model takes none, or where nothing knows what it takes.
              */
-            efforts: string[];
+            efforts: components["schemas"]["EffortDto"][];
             /** @example claude_code:claude-fable-5 */
             id: string;
+            /**
+             * Format: int32
+             * @description How fast it answers: 1 (thinks for minutes) to 5 (near-instant),
+             *     ranked the same way. `null` where nothing knows.
+             * @example 4
+             */
+            speed?: number | null;
+            /**
+             * @description The capability class this entry belongs to, or `unknown` where nothing
+             *     says — a bare agent CLI, or a model discovered at runtime that nothing
+             *     has been written about.
+             */
+            tier: components["schemas"]["ModelTier"];
         };
+        /**
+         * @description Roughly what a model is, as a picker and a planner compare models: the
+         *     capability class it belongs to, across every agent CLI at once.
+         *
+         *     One ladder for the whole catalog, so a claude_code entry and a codex entry
+         *     that sit at the same rung really are alternatives for the same work.
+         *     `Unknown` is what an entry nothing has been written about says — a model
+         *     discovered at runtime, or an agent CLI on whatever model it defaults to —
+         *     and it is a genuine answer rather than a missing one.
+         * @enum {string}
+         */
+        ModelTier: "frontier" | "strong" | "balanced" | "fast" | "unknown";
         /** @description A file or directory the daemon depends on. */
         PathStateDto: {
             exists: boolean;

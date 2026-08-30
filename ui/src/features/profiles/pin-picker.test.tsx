@@ -15,66 +15,85 @@ import userEvent from "@testing-library/user-event"
 import { useState } from "react"
 import { expect, it } from "vitest"
 
-import type { ModelDto } from "@/api"
+import type { EffortDto, ModelDto } from "@/api"
+import { aModel, anEffort } from "@/test/fixtures"
 
 import { PinPicker } from "./pin-picker"
+
+/** One reasoning effort, named by its id, the way every fixture entry wants it. */
+function effort(id: string, overrides: Partial<EffortDto> = {}): EffortDto {
+  return anEffort({ id, ...overrides })
+}
 
 /**
  * A slice of the daemon's catalog: each agent CLI on its own and models of it,
  * deliberately not in agent order, since the picker groups it itself.
  */
 const CATALOG: ModelDto[] = [
-  {
+  aModel({
     id: "codex:gpt-5.5",
     agent_kind: "codex",
     description: "Frontier reasoning: agentic loops",
-    efforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
-    default_effort: "medium",
-  },
-  {
+    tier: "frontier",
+    cost: 5,
+    speed: 2,
+    best_for: ["cross-subsystem design"],
+    avoid_for: ["small scoped edits"],
+    efforts: [
+      effort("low"),
+      effort("medium", { description: "Balanced reasoning for everyday work", default: true }),
+      effort("high"),
+      effort("xhigh"),
+      effort("max"),
+      effort("ultra"),
+    ],
+  }),
+  aModel({
     id: "codex",
     agent_kind: "codex",
     description: "codex on its own default model",
-    efforts: [],
-    default_effort: null,
-  },
-  {
+  }),
+  aModel({
     id: "claude_code",
     agent_kind: "claude_code",
     description: "claude_code on its own default model",
-    efforts: [],
-    default_effort: null,
-  },
-  {
+  }),
+  aModel({
     id: "claude_code:claude-sonnet-5",
     agent_kind: "claude_code",
     description: "Everyday coding",
-    efforts: ["low", "medium", "high", "xhigh", "max"],
-    default_effort: "high",
-  },
-  {
+    tier: "balanced",
+    cost: 3,
+    speed: 3,
+    best_for: ["everyday coding"],
+    efforts: [
+      effort("low"),
+      effort("medium"),
+      effort("high", { description: "Deeper reasoning, worth the wait", default: true }),
+      effort("xhigh"),
+      effort("max"),
+    ],
+  }),
+  aModel({
     id: "claude_code:claude-haiku-4-5",
     agent_kind: "claude_code",
     description: "Fast and cheap",
-    efforts: [],
-    default_effort: null,
-  },
-  {
+    tier: "fast",
+    cost: 1,
+    speed: 5,
+  }),
+  aModel({
     id: "opencode",
     agent_kind: "opencode",
     description: "opencode on its own default model",
-    efforts: [],
-    default_effort: null,
-  },
-  {
+  }),
+  aModel({
     // Discovered, with the variants that model was configured with: an
     // opencode effort belongs to its own model and to nothing else.
     id: "opencode:zai-coding-plan/glm-4.6",
     agent_kind: "opencode",
-    description: null,
-    efforts: ["thinking", "non-thinking"],
-    default_effort: null,
-  },
+    efforts: [effort("thinking"), effort("non-thinking")],
+  }),
 ]
 
 const LABEL = "Reviewer 2 runs on"
@@ -126,11 +145,40 @@ async function listbox(): Promise<HTMLElement> {
   return await screen.findByRole("listbox", { name: "Models" })
 }
 
-/** The efforts offered for whatever is pinned, in order. */
+/** The catalog row for one model id, found by its own id text. */
+async function modelRow(id: string): Promise<HTMLElement> {
+  const row = within(await listbox())
+    .getByText(id)
+    .closest('[role="option"]')
+  if (!row) throw new Error(`no model row for "${id}"`)
+  return row as HTMLElement
+}
+
+/** The effort ids offered for whatever is pinned, in order — the label's own line. */
 function efforts(): string[] {
   return screen
     .getAllByRole("radio")
-    .map((radio) => (radio.closest("label")?.textContent ?? "").trim())
+    .map((radio) => radio.closest("label")?.querySelector("span")?.textContent?.trim() ?? "")
+}
+
+/**
+ * The radio for one effort, found by its own id line rather than by accessible
+ * name — which a description joins once it has one.
+ */
+function effortRadio(id: string): HTMLElement {
+  const radio = screen
+    .getAllByRole("radio")
+    .find(
+      (candidate) => candidate.closest("label")?.querySelector("span")?.textContent?.trim() === id,
+    )
+  if (!radio) throw new Error(`no effort radio labelled "${id}"`)
+  return radio
+}
+
+/** The muted description line under one effort's id, or undefined where it has none. */
+function effortDescription(id: string): string | undefined {
+  const spans = effortRadio(id).closest("label")?.querySelectorAll("span")
+  return spans && spans.length > 1 ? (spans.item(1).textContent ?? undefined) : undefined
 }
 
 async function openPicker(user: ReturnType<typeof userEvent.setup>) {
@@ -159,6 +207,52 @@ it("offers the whole catalog, grouped by agent CLI, each group led by the CLI it
   expect(ids[1]).toContain("claude_code")
   expect(ids[2]).toContain("claude_code:claude-sonnet-5")
   expect(ids.at(-1)).toContain("Other")
+})
+
+it("shows tier and cost/speed pills for a curated model", async () => {
+  const user = userEvent.setup()
+  renderPicker()
+
+  await openPicker(user)
+  const row = await modelRow("claude_code:claude-sonnet-5")
+
+  expect(within(row).getByText("balanced")).toBeDefined()
+  expect(within(row).getByText("cost 3/5")).toBeDefined()
+  expect(within(row).getByText("speed 3/5")).toBeDefined()
+})
+
+it("shows no pills for a model nothing knows the tier, cost or speed of", async () => {
+  const user = userEvent.setup()
+  renderPicker()
+
+  await openPicker(user)
+  const row = await modelRow("opencode:zai-coding-plan/glm-4.6")
+
+  expect(within(row).queryByText("unknown")).toBeNull()
+  expect(within(row).queryByText(/cost \d\/5/)).toBeNull()
+  expect(within(row).queryByText(/speed \d\/5/)).toBeNull()
+})
+
+it("puts what the catalog says a model is and is not for in the row's tooltip", async () => {
+  const user = userEvent.setup()
+  renderPicker()
+
+  await openPicker(user)
+  const row = await modelRow("codex:gpt-5.5")
+
+  expect(row.querySelector("[title]")?.getAttribute("title")).toBe(
+    "best for: cross-subsystem design\navoid for: small scoped edits",
+  )
+})
+
+it("finds a model by what the catalog says it is best for", async () => {
+  const user = userEvent.setup()
+  renderPicker()
+
+  await openPicker(user)
+  await search(user, "cross-subsystem design")
+
+  expect(within(await listbox()).getByText("codex:gpt-5.5")).toBeDefined()
 })
 
 it("pins the picked id, agent CLI and all, and stays open for the effort", async () => {
@@ -192,12 +286,15 @@ it("offers the efforts of the pinned model, the CLI's own first, and stores the 
 
   await openPicker(user)
   expect(efforts()).toEqual(["auto (high)", "low", "medium", "high", "xhigh", "max"])
+  // The catalog's own words for what the effort buys, muted under its id.
+  expect(effortDescription("high")).toBe("Deeper reasoning, worth the wait")
+  expect(effortDescription("medium")).toBeUndefined()
 
-  await user.click(screen.getByRole("radio", { name: "medium" }))
+  await user.click(effortRadio("medium"))
   expect(pin.effort).toBe("medium")
   expect(reads()).toBe("Claude Code claude-sonnet-5 · medium")
 
-  await user.click(screen.getByRole("radio", { name: "auto (high)" }))
+  await user.click(effortRadio("auto (high)"))
   expect(pin.effort).toBe("")
 })
 
@@ -292,8 +389,9 @@ it("pins an effort of its own over the profile's model, and says so", async () =
 
   await openPicker(user)
   expect(efforts()).toEqual(["auto (medium)", "low", "medium", "high", "xhigh", "max", "ultra"])
+  expect(effortDescription("medium")).toBe("Balanced reasoning for everyday work")
 
-  await user.click(screen.getByRole("radio", { name: "medium" }))
+  await user.click(effortRadio("medium"))
 
   expect(pin).toEqual({ model: "", effort: "medium" })
   // The profile's own `high` is not what it is run at any more, so the line

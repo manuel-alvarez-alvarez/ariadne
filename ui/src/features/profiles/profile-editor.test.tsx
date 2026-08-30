@@ -24,7 +24,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { ModelDto, ProfileDto, ProfilePromptDto } from "@/api"
 import { paths } from "@/routes/paths"
-import { aProfile } from "@/test/fixtures"
+import { aModel, anEffort, aProfile } from "@/test/fixtures"
 import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { ProfileEditor } from "./profile-editor"
 
@@ -66,27 +66,41 @@ const STORED_PROMPTS: ProfilePromptDto[] = [
 
 /** A slice of the daemon's curated catalog, two agents wide. */
 const CATALOG: ModelDto[] = [
-  {
+  aModel({
     id: "claude_code:claude-fable-5",
     agent_kind: "claude_code",
     description: "Frontier: highest capability",
-    efforts: ["low", "medium", "high", "xhigh", "max"],
-    default_effort: "high",
-  },
-  {
+    efforts: [
+      anEffort({ id: "low" }),
+      anEffort({ id: "medium" }),
+      anEffort({ id: "high", default: true }),
+      anEffort({ id: "xhigh" }),
+      anEffort({ id: "max" }),
+    ],
+  }),
+  aModel({
     id: "claude_code:claude-opus-5",
     agent_kind: "claude_code",
     description: "Opus tier: deep analysis",
-    efforts: ["low", "medium", "high", "xhigh", "max"],
-    default_effort: "high",
-  },
-  {
+    efforts: [
+      anEffort({ id: "low" }),
+      anEffort({ id: "medium" }),
+      anEffort({ id: "high", default: true }),
+      anEffort({ id: "xhigh" }),
+      anEffort({ id: "max" }),
+    ],
+  }),
+  aModel({
     id: "codex:gpt-5.5-codex",
     agent_kind: "codex",
     description: "Frontier reasoning: agentic loops",
-    efforts: ["low", "medium", "high", "xhigh"],
-    default_effort: "medium",
-  },
+    efforts: [
+      anEffort({ id: "low" }),
+      anEffort({ id: "medium", default: true }),
+      anEffort({ id: "high" }),
+      anEffort({ id: "xhigh" }),
+    ],
+  }),
 ]
 
 interface Recorded {

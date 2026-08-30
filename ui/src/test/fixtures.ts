@@ -14,8 +14,10 @@
 
 import type {
   AgentConfigDto,
+  EffortDto,
   GoalDto,
   MessageDto,
+  ModelDto,
   ProfileDto,
   RepositoryDto,
   SessionDto,
@@ -146,6 +148,32 @@ export function anAgentConfig(overrides: Partial<AgentConfigDto> = {}): AgentCon
     agent_kind: "claude_code",
     extra_flags: [],
     default_flags: [],
+    ...overrides,
+  }
+}
+
+/** One reasoning effort a `GET /v1/models` entry can be run at. */
+export function anEffort(overrides: Partial<EffortDto> = {}): EffortDto {
+  return {
+    id: "medium",
+    description: null,
+    default: false,
+    ...overrides,
+  }
+}
+
+/** One entry of the model catalog `GET /v1/models` serves. */
+export function aModel(overrides: Partial<ModelDto> = {}): ModelDto {
+  return {
+    id: "claude_code:claude-sonnet-5",
+    agent_kind: "claude_code",
+    description: null,
+    tier: "unknown",
+    cost: null,
+    speed: null,
+    best_for: [],
+    avoid_for: [],
+    efforts: [],
     ...overrides,
   }
 }

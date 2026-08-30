@@ -28,7 +28,7 @@ import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { GoalDto, ModelDto, ProfileDto } from "@/api"
-import { aGoal, aProfile } from "@/test/fixtures"
+import { aGoal, aModel, anEffort, aProfile } from "@/test/fixtures"
 import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { CreateTaskDialog, EditTaskDialog } from "./task-form-dialog"
 
@@ -60,28 +60,39 @@ const STRICT_REVIEWER: ProfileDto = {
 
 /** The catalog every model box offers, whole, with the efforts of each entry. */
 const CATALOG: ModelDto[] = [
-  {
+  aModel({
     id: "claude_code:claude-opus-5",
     agent_kind: "claude_code",
     description: "Opus tier: deep analysis",
-    efforts: ["low", "medium", "high", "xhigh", "max"],
-    default_effort: "high",
-  },
-  {
+    tier: "strong",
+    efforts: [
+      anEffort({ id: "low" }),
+      anEffort({ id: "medium" }),
+      anEffort({ id: "high", default: true }),
+      anEffort({ id: "xhigh" }),
+      anEffort({ id: "max" }),
+    ],
+  }),
+  aModel({
     // The one that takes none at all, which is what disables the field.
     id: "claude_code:claude-haiku-4-5",
     agent_kind: "claude_code",
     description: "Fast and cheap",
-    efforts: [],
-    default_effort: null,
-  },
-  {
+    tier: "fast",
+  }),
+  aModel({
     id: "codex:gpt-5.3-codex",
     agent_kind: "codex",
     description: "Frontier reasoning: agentic loops",
-    efforts: ["low", "medium", "high", "xhigh", "ultra"],
-    default_effort: "medium",
-  },
+    tier: "frontier",
+    efforts: [
+      anEffort({ id: "low" }),
+      anEffort({ id: "medium", default: true }),
+      anEffort({ id: "high" }),
+      anEffort({ id: "xhigh" }),
+      anEffort({ id: "ultra" }),
+    ],
+  }),
 ]
 
 /** The bodies of the writes the dialog made, in order. */

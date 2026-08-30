@@ -46,9 +46,10 @@
 
 import { Popover } from "@base-ui/react/popover"
 import { ChevronsUpDownIcon } from "lucide-react"
-import { useEffect, useId, useMemo, useRef, useState } from "react"
+import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react"
 
-import type { ModelDto } from "@/api"
+import type { EffortDto, ModelDto } from "@/api"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Command,
@@ -164,7 +165,7 @@ export function PinPicker({
     if (effort.length === 0) return
     if (
       choices.kind === "none" ||
-      (choices.kind === "options" && !choices.efforts.includes(effort))
+      (choices.kind === "options" && !choices.efforts.some((one) => one.id === effort))
     )
       onChange({ model, effort: "" })
   }, [choices, effort, model, onChange])
@@ -199,7 +200,8 @@ export function PinPicker({
     const moved = effortChoices(trimmed, models)
     const travels =
       effort.length > 0 &&
-      (moved.kind === "free" || (moved.kind === "options" && moved.efforts.includes(effort)))
+      (moved.kind === "free" ||
+        (moved.kind === "options" && moved.efforts.some((one) => one.id === effort)))
     onChange({ model: trimmed, effort: travels ? effort : "" })
   }
 
@@ -287,12 +289,15 @@ export function PinPicker({
                       <CommandItem
                         key={entry.id}
                         value={entry.id}
-                        keywords={entry.description ? [entry.description] : undefined}
+                        keywords={modelKeywords(entry)}
                         data-checked={entry.id === pinned ? "true" : "false"}
                         onSelect={pick}
                       >
-                        <span className="flex min-w-0 flex-col">
-                          <span className="truncate font-mono text-[13px]">{entry.id}</span>
+                        <span className="flex min-w-0 flex-col" title={modelTitle(entry)}>
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            <span className="truncate font-mono text-[13px]">{entry.id}</span>
+                            <ModelPills entry={entry} />
+                          </span>
                           {entry.description ? (
                             // Two lines, so a long blurb is readable without
                             // one option taking over the list.
@@ -412,6 +417,59 @@ function TriggerLabel({
 }
 
 /**
+ * What a search matches beyond the id: the blurb, and the task shapes the
+ * catalog says this entry is and is not for — so typing "review" or "design"
+ * finds a model by what it is good at, not only by its name.
+ */
+function modelKeywords(entry: ModelDto): string[] | undefined {
+  const words = [entry.description, ...entry.best_for, ...entry.avoid_for].filter(
+    (word): word is string => Boolean(word),
+  )
+  return words.length > 0 ? words : undefined
+}
+
+/**
+ * The row's tooltip: what the catalog says this entry is and is not the
+ * choice for, one line each — kept off the row itself so a model with a long
+ * list of either stays the same three lines as one with none.
+ */
+function modelTitle(entry: ModelDto): string | undefined {
+  const lines = [
+    entry.best_for.length > 0 ? `best for: ${entry.best_for.join(", ")}` : null,
+    entry.avoid_for.length > 0 ? `avoid for: ${entry.avoid_for.join(", ")}` : null,
+  ].filter((line): line is string => line !== null)
+  return lines.length > 0 ? lines.join("\n") : undefined
+}
+
+/**
+ * Tier, cost and speed, compact enough to sit beside the id: a pill is left
+ * out rather than shown empty where the catalog does not know it, which for
+ * an opencode model nothing has been written about is all three.
+ */
+function ModelPills({ entry }: { entry: ModelDto }) {
+  return (
+    <span className="flex shrink-0 items-center gap-1">
+      {entry.tier !== "unknown" ? <Pill>{entry.tier}</Pill> : null}
+      {entry.cost !== null && entry.cost !== undefined ? <Pill>cost {entry.cost}/5</Pill> : null}
+      {entry.speed !== null && entry.speed !== undefined ? (
+        <Pill>speed {entry.speed}/5</Pill>
+      ) : null}
+    </span>
+  )
+}
+
+function Pill({ children }: { children: ReactNode }) {
+  return (
+    <Badge
+      variant="outline"
+      className="h-4 rounded-sm px-1 py-0 text-[10px] font-normal leading-none"
+    >
+      {children}
+    </Badge>
+  )
+}
+
+/**
  * The efforts the chosen model can be run at, under the list that chose it.
  *
  * Radios rather than buttons carrying `role="radio"`: the group's keyboard —
@@ -451,24 +509,33 @@ function EffortStrip({
     )
   }
 
-  const items = [
+  const items: { label: string; description: string | null; value: string }[] = [
     {
       // A choice, not a blank: the CLI's own level, named where the catalog
       // says what it is.
       label: choices.defaultEffort
         ? `${AUTO_EFFORT_LABEL} (${choices.defaultEffort})`
         : AUTO_EFFORT_LABEL,
+      description: null,
       value: "",
     },
-    ...choices.efforts.map((one) => ({ label: one, value: one })),
+    ...choices.efforts.map((one) => ({
+      label: one.id,
+      description: one.description ?? null,
+      value: one.id,
+    })),
   ]
 
   return (
-    <div role="radiogroup" aria-label="Effort" className="flex flex-wrap gap-1 border-t px-3 py-2">
+    <div
+      role="radiogroup"
+      aria-label="Effort"
+      className="flex max-h-40 flex-col gap-0.5 overflow-y-auto border-t p-1"
+    >
       {items.map((item) => (
         <label
           key={item.value || AUTO_EFFORT_LABEL}
-          className="cursor-pointer rounded-md px-2 py-1 text-xs transition-colors select-none has-checked:bg-primary has-checked:text-primary-foreground has-focus-visible:ring-3 has-focus-visible:ring-ring/50 hover:bg-muted has-checked:hover:bg-primary"
+          className="group flex cursor-pointer flex-col rounded-md px-2 py-1 text-xs transition-colors select-none has-checked:bg-primary has-checked:text-primary-foreground has-focus-visible:ring-3 has-focus-visible:ring-ring/50 hover:bg-muted has-checked:hover:bg-primary"
         >
           <input
             type="radio"
@@ -477,7 +544,15 @@ function EffortStrip({
             checked={value === item.value}
             onChange={() => onChange(item.value)}
           />
-          {item.label}
+          <span className="truncate">{item.label}</span>
+          {item.description ? (
+            // Muted under the id, the same way a model's blurb sits under
+            // its id above — checked or not, since the primary background
+            // still needs the text readable over it.
+            <span className="truncate text-[11px] leading-snug text-muted-foreground group-has-checked:text-primary-foreground/80">
+              {item.description}
+            </span>
+          ) : null}
         </label>
       ))}
     </div>
@@ -487,7 +562,7 @@ function EffortStrip({
 /** What can be offered beside a model, and why nothing can where nothing is. */
 type EffortChoices =
   /** The efforts to offer, cheapest first, and what the CLI runs the model at. */
-  | { kind: "options"; efforts: string[]; defaultEffort: string | null }
+  | { kind: "options"; efforts: EffortDto[]; defaultEffort: string | null }
   /** Nothing knows the list: whatever is typed is passed on, as a model is. */
   | { kind: "free" }
   /** Nothing to choose, and the reason, which the strip shows as its hint. */
@@ -525,7 +600,8 @@ function effortChoices(model: string, models: ModelDto[] | undefined): EffortCho
     if (entry.efforts.length === 0) {
       return { kind: "none", reason: `${id} takes no effort at all.` }
     }
-    return { kind: "options", efforts: entry.efforts, defaultEffort: entry.default_effort ?? null }
+    const defaultEffort = entry.efforts.find((effort) => effort.default)?.id ?? null
+    return { kind: "options", efforts: entry.efforts, defaultEffort }
   }
 
   // An opencode model the catalog does not carry takes whichever variants it
@@ -537,18 +613,26 @@ function effortChoices(model: string, models: ModelDto[] | undefined): EffortCho
 
   // Any other model the catalog does not carry, or an agent CLI on its own
   // default model — which one that is, is the CLI's own business. Everything
-  // that CLI accepts, then, which is the union of what its models take.
+  // that CLI accepts, then, which is the union of what its models take. Which
+  // model's own description that id belongs to is not asked here — the ids
+  // are the only fact every model of the CLI agrees on — so the strip shows
+  // these with no description line rather than one that may not fit the model
+  // actually run.
   const union = unionOfEfforts(models, ref.agentKind)
   if (union.length === 0) return { kind: "free" }
-  return { kind: "options", efforts: union, defaultEffort: null }
+  return {
+    kind: "options",
+    efforts: union.map((id) => ({ id, description: null, default: false })),
+    defaultEffort: null,
+  }
 }
 
-/** Every effort the catalog lists for one agent CLI, in the order it lists them. */
+/** Every effort id the catalog lists for one agent CLI, in the order it lists them. */
 function unionOfEfforts(models: ModelDto[], kind: ModelDto["agent_kind"]): string[] {
   const seen: string[] = []
   for (const model of models) {
     if (model.agent_kind !== kind) continue
-    for (const effort of model.efforts) if (!seen.includes(effort)) seen.push(effort)
+    for (const effort of model.efforts) if (!seen.includes(effort.id)) seen.push(effort.id)
   }
   return seen
 }

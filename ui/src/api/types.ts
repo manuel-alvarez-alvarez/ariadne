@@ -55,6 +55,8 @@ export type PromptKind = Schemas["PromptKind"]
 export type Role = Schemas["Role"]
 export type AgentKind = Schemas["AgentKind"]
 export type ModelDto = Schemas["ModelDto"]
+export type ModelTier = Schemas["ModelTier"]
+export type EffortDto = Schemas["EffortDto"]
 
 export type AgentConfigDto = Schemas["AgentConfigDto"]
 

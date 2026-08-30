@@ -685,7 +685,7 @@
           "models"
         ],
         "summary": "Everything an agent can be pinned to, `<agent_kind>[:<model>]` apiece:\neach agent CLI on its own — that CLI on its own default model — and\nthen the models of it, curated for claude_code and codex, discovered\nlive (`opencode models --verbose`) for opencode.",
-        "description": "The union always, and grouped by agent CLI: a model is chosen by one\nstring that carries its CLI, so nothing scopes this catalog any more.\nEach entry carries the reasoning efforts it can be run at, cheapest\nfirst, and what its CLI runs it at when none is passed.",
+        "description": "The union always, and grouped by agent CLI: a model is chosen by one\nstring that carries its CLI, so nothing scopes this catalog any more.\nEach entry says what the model is for — its tier, its cost and speed\nnext to every other entry, the work it suits and the work it does not\n— and carries the efforts it can be run at, cheapest first, each with\nwhat spending it buys and whether it is the one its CLI runs by\ndefault.",
         "operationId": "list",
         "responses": {
           "200": {
@@ -2930,6 +2930,31 @@
         ],
         "description": "One domain event. Serialized as `{\"event\": \"<kind>\", \"data\": <payload>}`;\non the SSE wire the kind becomes the `event:` field and the payload alone\nthe `data:` field."
       },
+      "EffortDto": {
+        "type": "object",
+        "description": "One reasoning effort an entry can be run at: the name it is passed by, and\nwhat spending it buys.\n\nAt most one effort of a model is the `default`: what its agent CLI runs it\nat when a task pins no effort at all. None of them are where the CLI has no\ndefault to name.",
+        "required": [
+          "id",
+          "default"
+        ],
+        "properties": {
+          "default": {
+            "type": "boolean",
+            "description": "Whether this is what the agent CLI runs the model at when none is\npassed."
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What spending this effort buys — the same on every model of one agent\nCLI. `null` where nothing knows, which is where the effort was\ndiscovered rather than curated."
+          },
+          "id": {
+            "type": "string",
+            "example": "high"
+          }
+        }
+      },
       "FinalizePlanRequest": {
         "type": "object",
         "description": "Body of `POST /v1/goals/{id}/finalize`: the planner ends planning once the\nuser has validated the plan in the goal thread, and execution starts. The\nplanner's call, not the user's.",
@@ -3230,10 +3255,13 @@
       },
       "ModelDto": {
         "type": "object",
-        "description": "One thing an agent can be pinned to, as served by `GET /v1/models`: an\nagent CLI on a model of it (`claude_code:claude-fable-5`), or an agent CLI\non its own, which is that CLI on its own default model.\n\nThe id is what a request writes as its `model`, whole. `agent_kind` is the\nsame fact taken apart, so a picker can group the catalog by CLI without\nparsing anything.",
+        "description": "One thing an agent can be pinned to, as served by `GET /v1/models`: an\nagent CLI on a model of it (`claude_code:claude-fable-5`), or an agent CLI\non its own, which is that CLI on its own default model.\n\nThe id is what a request writes as its `model`, whole. `agent_kind` is the\nsame fact taken apart, so a picker can group the catalog by CLI without\nparsing anything. The rest is what a planner sizes a task from: what this\nmodel is, what it costs and how fast it answers next to every other entry,\nthe work it is and is not the choice for, and what each of its efforts\nbuys.",
         "required": [
           "id",
           "agent_kind",
+          "tier",
+          "best_for",
+          "avoid_for",
           "efforts"
         ],
         "properties": {
@@ -3241,33 +3269,82 @@
             "$ref": "#/components/schemas/AgentKind",
             "description": "The agent CLI this entry runs on."
           },
-          "default_effort": {
+          "avoid_for": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Task shapes it is the wrong choice for; empty where nothing knows.",
+            "example": [
+              "cross-subsystem design"
+            ]
+          },
+          "best_for": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Task shapes this entry is the right choice for; empty where nothing\nknows.",
+            "example": [
+              "well-specified single-file fixes"
+            ]
+          },
+          "cost": {
             "type": [
-              "string",
+              "integer",
               "null"
             ],
-            "description": "What the agent CLI runs this model at when no effort is passed.",
-            "example": "high"
+            "format": "int32",
+            "description": "What it costs to run: 1 (free) to 5 (frontier), ranked across the whole\ncatalog so entries of different agent CLIs compare. `null` where\nnothing knows.",
+            "example": 3,
+            "maximum": 5,
+            "minimum": 1
           },
           "description": {
             "type": [
               "string",
               "null"
             ],
-            "description": "One-line capability summary (absent for discovered opencode models)."
+            "description": "One line about the model, which is what a picker shows beside the id."
           },
           "efforts": {
             "type": "array",
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/EffortDto"
             },
             "description": "The reasoning efforts this entry can be run at, cheapest first; empty\nwhere the model takes none, or where nothing knows what it takes."
           },
           "id": {
             "type": "string",
             "example": "claude_code:claude-fable-5"
+          },
+          "speed": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "How fast it answers: 1 (thinks for minutes) to 5 (near-instant),\nranked the same way. `null` where nothing knows.",
+            "example": 4,
+            "maximum": 5,
+            "minimum": 1
+          },
+          "tier": {
+            "$ref": "#/components/schemas/ModelTier",
+            "description": "The capability class this entry belongs to, or `unknown` where nothing\nsays — a bare agent CLI, or a model discovered at runtime that nothing\nhas been written about."
           }
         }
+      },
+      "ModelTier": {
+        "type": "string",
+        "description": "Roughly what a model is, as a picker and a planner compare models: the\ncapability class it belongs to, across every agent CLI at once.\n\nOne ladder for the whole catalog, so a claude_code entry and a codex entry\nthat sit at the same rung really are alternatives for the same work.\n`Unknown` is what an entry nothing has been written about says — a model\ndiscovered at runtime, or an agent CLI on whatever model it defaults to —\nand it is a genuine answer rather than a missing one.",
+        "enum": [
+          "frontier",
+          "strong",
+          "balanced",
+          "fast",
+          "unknown"
+        ]
       },
       "PathStateDto": {
         "type": "object",

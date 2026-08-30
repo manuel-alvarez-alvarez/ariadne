@@ -32,7 +32,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { ModelDto, ProfileDto, RepositoryDto } from "@/api"
 import { paths } from "@/routes/paths"
-import { aProfile, aRepository } from "@/test/fixtures"
+import { aModel, anEffort, aProfile, aRepository } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { CreateGoalDialog } from "./create-goal-dialog"
 
@@ -51,20 +51,33 @@ const ARIADNE: RepositoryDto = aRepository({
 
 /** Two agents' worth of catalog, which the picker offers whole. */
 const CATALOG: ModelDto[] = [
-  {
+  aModel({
     id: "claude_code:claude-opus-5",
     agent_kind: "claude_code",
     description: "Opus tier: deep analysis",
-    efforts: ["low", "medium", "high", "xhigh", "max"],
-    default_effort: "high",
-  },
-  {
+    tier: "strong",
+    efforts: [
+      anEffort({ id: "low" }),
+      anEffort({ id: "medium" }),
+      anEffort({ id: "high", default: true }),
+      anEffort({ id: "xhigh" }),
+      anEffort({ id: "max" }),
+    ],
+  }),
+  aModel({
     id: "codex:gpt-5.3-codex",
     agent_kind: "codex",
     description: "Frontier reasoning: agentic loops",
-    efforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
-    default_effort: "medium",
-  },
+    tier: "frontier",
+    efforts: [
+      anEffort({ id: "low" }),
+      anEffort({ id: "medium", default: true }),
+      anEffort({ id: "high" }),
+      anEffort({ id: "xhigh" }),
+      anEffort({ id: "max" }),
+      anEffort({ id: "ultra" }),
+    ],
+  }),
 ]
 
 const SANDBOX: RepositoryDto = aRepository({
