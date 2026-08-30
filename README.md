@@ -357,29 +357,21 @@ after it.
 ## Workspace layout
 
 ```
-crates/
-  ariadne-core     domain types, task state machine, the shared binary/path probe
-  ariadne-api      REST DTOs / error shape (single source of truth for OpenAPI)
-  ariadne-store    SQLite persistence (sqlx, one embedded init migration)
-  ariadne-client   REST client (unix socket / TCP), used by CLI + MCP
-  ariadne-daemon   ariadned: axum API, scheduler, tmux/git managers, agent adapters
-  ariadne-cli      ariadne: CLI, MCP server (`mcp serve`), hook sink (`agent-event`)
+crates/          the Rust workspace: ariadned, the ariadne CLI and the libraries
+                 they share — crate by crate in crates/AGENTS.md
 assets/opencode-plugin/  event-forwarding plugin installed for OpenCode
 scripts/         install.sh / uninstall.sh + lib.sh, their shared step output
 ui/              Ariadne Desktop (Tauri 2 + React): a REST/SSE client of the daemon's
-                 TCP listener, outside the cargo workspace — see ui/README.md
+                 TCP listener, outside the cargo workspace — see ui/AGENTS.md and
+                 ui/README.md
 ```
 
 ## Development
 
-```sh
-cargo test                                  # unit + store integration tests
-cargo clippy --all-targets
-cargo build -p ariadne-cli                  # the tmux/git integration tests spawn
-cargo test -p ariadne-daemon -- --ignored   # target/debug/ariadne, so build it first
-```
-
 [`AGENTS.md`](AGENTS.md) holds the conventions for changing this repository,
-the commit types included — they are written down there and nowhere else. The
-release loop is in [`.github/RELEASING.md`](.github/RELEASING.md); the desktop
-app has its own [`ui/README.md`](ui/README.md).
+the commit types included — they are written down there and nowhere else — and
+points at the file each area keeps: [`crates/AGENTS.md`](crates/AGENTS.md) for
+the Rust workspace and its cargo commands,
+[`ui/AGENTS.md`](ui/AGENTS.md) for the desktop app. The release loop is in
+[`.github/RELEASING.md`](.github/RELEASING.md); running the desktop app is
+[`ui/README.md`](ui/README.md).

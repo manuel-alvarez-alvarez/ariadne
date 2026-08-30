@@ -1,17 +1,32 @@
 # AGENTS.md
 
-Instructions for coding agents working in this repository. Read them before
-you commit.
+Ariadne is a docker-style orchestrator for AI coding agents: a daemon
+(`ariadned`) that breaks goals into tasks and runs planner, engineer and
+reviewer agents on them until each one is merged, a CLI (`ariadne`) that drives
+it, and a desktop app. What it is and how it is used is
+[`README.md`](README.md).
 
-## Where things are, and what checks them
+The conventions for changing it are split by area. This file holds what applies
+everywhere; each area keeps its own, and names the checks to run there.
 
-The tree, area by area, is [`README.md`'s Workspace
-layout](README.md#workspace-layout); `ui/` has its own
-[`ui/README.md`](ui/README.md).
+## Where the conventions are
+
+Read the file for the area before changing anything under it. Only some agent
+CLIs load a nested `AGENTS.md` by themselves, so a file that is not named here
+is a file an agent may never see.
+
+- [`crates/AGENTS.md`](crates/AGENTS.md) — the Rust workspace: what each crate
+  holds, and the cargo commands that test and lint it.
+- [`ui/AGENTS.md`](ui/AGENTS.md) — Ariadne Desktop under `ui/`: its layout, how
+  it calls the daemon, query keys, the event stream, routes, keyboard chords,
+  the shadcn setup, and the npm commands that check it.
+- [`.github/RELEASING.md`](.github/RELEASING.md) — the release loop: how
+  release-please turns commits into versions, tags and release notes.
+- [`README.md`](README.md) — the user-facing manual: installing, configuring
+  and running Ariadne, and the top-level tree.
 
 Before changing anything, read the surrounding code and match its style,
-naming and tooling. Run `cargo test` and `cargo clippy --all-targets` for Rust
-changes; in `ui/`, `npm test`, `npm run typecheck` and `npm run lint`.
+naming and tooling.
 
 ## Commit messages
 
