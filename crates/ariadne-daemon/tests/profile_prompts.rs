@@ -320,12 +320,13 @@ async fn a_created_profile_starts_on_the_defaults_its_system_prompt_aside() {
     assert!(reset.system_prompt_is_default);
 }
 
-/// The planner sizes each slot it assigns, and that rule reaches a planner
-/// nobody has edited: it is a constant, never a row, so the seeded Planner and
-/// every profile still on the default answer with the text the code ships
-/// today rather than the one that was current when they were created.
+/// The planner writes a spec the user approves and sizes each slot it
+/// assigns, and both rules reach a planner nobody has edited: the text is a
+/// constant, never a row, so the seeded Planner and every profile still on the
+/// default answer with the text the code ships today rather than the one that
+/// was current when they were created.
 #[tokio::test]
-async fn a_planner_on_the_default_prompt_is_briefed_to_size_the_slots_it_assigns() {
+async fn a_planner_on_the_default_prompt_is_briefed_to_write_a_spec_and_size_its_slots() {
     let h = harness().await;
     let seeded = BUILTIN_PROFILES
         .iter()
@@ -347,6 +348,10 @@ async fn a_planner_on_the_default_prompt_is_briefed_to_size_the_slots_it_assigns
         assert!(profile.system_prompt_is_default, "{id} was edited");
         assert_eq!(profile.system_prompt, default_system_prompt(Role::Planner));
         for guidance in [
+            "Draft a spec: scope, behavior, acceptance criteria.",
+            "Ask the user about each unclear point.",
+            "Ask again until the user writes an explicit yes.",
+            "Call `create_task` for task 1",
             "`list_models`",
             "Size each slot",
             "a top effort only where the task earns it",

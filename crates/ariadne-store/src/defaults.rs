@@ -14,12 +14,12 @@
 //! whatever is only true of this moment — a new round's feedback, the landing
 //! procedure — and nothing of the playbook that already reached the agent. A
 //! resume is a nudge: where the work stands and what ends it. What every
-//! session is told alike — that Ariadne is reached through its MCP tools, that
-//! nobody is there to be asked, and how few turns to take — is the MCP
-//! server's `instructions`, which every session already receives, and appears
-//! in no prompt here. What each role does when it cannot go on is one line of
-//! its own: the planner assumes, the engineer gives the task up, the reviewer
-//! asks for changes.
+//! session is told alike — that Ariadne is reached through its MCP tools, whom
+//! a question reaches, and how few turns to take — is the MCP server's
+//! `instructions`, which every session already receives, and appears in no
+//! prompt here. What each role does when it cannot go on is one line of its
+//! own: the planner asks the user, the engineer gives the task up, the
+//! reviewer asks for changes.
 //!
 //! Every text here is written in ASD-STE100 Simplified Technical English: one
 //! instruction to a sentence, the imperative for an instruction, the active
@@ -113,12 +113,25 @@ pub fn default_landing_prompt(strategy: MergeStrategy) -> &'static str {
 /// Planner persona and playbook, and the one place `finalize_plan` is
 /// explained: it starts every task at once, and the planner makes that call
 /// itself once the plan is written.
-const PLANNER_SYSTEM_PROMPT: &str = r#"You plan an Ariadne goal into a few small tasks. Never write code.
+///
+/// The playbook is spec-driven: the goal becomes a written spec the user
+/// approves, and only then a plan. So the planner talks to the user, which no
+/// other role does — it writes one question in its turn text and waits for
+/// the answer in the terminal, and the daemon holds its quiet nudge back
+/// while a session waits on an answer. The approved spec is committed by task
+/// 1, and every other task depends on it, so each engineer reads the spec in
+/// its own worktree.
+const PLANNER_SYSTEM_PROMPT: &str = r#"You plan an Ariadne goal into an approved spec, then into a few small tasks. Never write code.
 
-1. Read the goal. Explore its repositories. Where the goal is unclear, take the smaller reading. Write the assumption into the task.
-2. Call `create_task` per task: small, mergeable alone, one repository. Write the ticket in STE: context, what to do, what not to touch, acceptance criteria. Name an engineer and one or more reviewers from `list_profiles`. Add `depends_on` only for a real dependency. The rest run together: keep them off the same code.
-3. Size each slot from `list_models`: shape from `best_for` and `avoid_for`, risk from `cost`, routine from `speed`, effort from its description. Give a top effort only where the task earns it, `tier: unknown` only on request. Keep a reviewer under its engineer. Else the profile's own.
-4. Call `finalize_plan` once you write the whole plan. It starts every task and ends planning. Call it no earlier."#;
+1. Read the goal. Explore its repositories.
+2. Draft a spec: scope, behavior, acceptance criteria.
+3. Ask the user about each unclear point. Write one question in your turn text. Wait for the answer in the terminal.
+4. Revise the spec after each answer. Ask again until the user writes an explicit yes. Create no task before it.
+5. Find the folder the repository keeps specs or docs in. Where it has none, ask the user for a path.
+6. Call `create_task` for task 1: commit the approved spec there. Give every other task `depends_on` task 1. Name the spec path in each ticket.
+7. Call `create_task` per task after it: small, mergeable alone, one repository. Write the ticket in STE: context, what to do, what not to touch, acceptance criteria. Name an engineer and one or more reviewers from `list_profiles`. Add another `depends_on` only for a real dependency. The rest run together: keep them off the same code.
+8. Size each slot from `list_models`: shape from `best_for` and `avoid_for`, risk from `cost`, routine from `speed`, effort from its description. Give a top effort only where the task earns it, `tier: unknown` only on request. Keep a reviewer under its engineer. Else the profile's own.
+9. Call `finalize_plan` once you write the whole plan. It starts every task and ends planning. Call it no earlier."#;
 
 /// Engineer persona and playbook: what it may touch, what it writes, and the
 /// one place `request_review` is explained. Landing is its own too, but the
@@ -154,10 +167,15 @@ const PLANNER_BRIEFING: &str = r#"# Goal: {goal_title}
 - {required_approvals} approvals per task"#;
 
 /// What a planner that has gone quiet is picked up with. The goal is still in
-/// planning, so there is one thing left to do with it and one call that ends
-/// it; the goal itself the session has read already.
-const PLANNER_RESUME: &str =
-    r#"Continue "{goal_title}". Call `create_task` for what it still needs, then `finalize_plan`."#;
+/// planning, so it stands in one of the two phases of planning, and the nudge
+/// fits both: a spec the user has not approved yet wants that conversation
+/// carried on — a revision, the next question, an answer waited for — and an
+/// approved one wants the tasks. Which of the three the planner owes is the
+/// playbook's to say, and only the planner knows where it got to. A nudge
+/// that named `finalize_plan` alone would push it to plan a spec nobody
+/// agreed to; one that named a question alone would push it to ask again over
+/// an answer it has. The goal itself the session has read already.
+const PLANNER_RESUME: &str = r#"Continue "{goal_title}" where it stands. Without an explicit yes on the spec, stay in the spec conversation. With one, create the tasks that are left, then call `finalize_plan`."#;
 
 /// Initial briefing of an engineer session: the task, and the values its
 /// commands act on.
@@ -404,13 +422,28 @@ mod tests {
     /// 2123 characters for the 2087 they were, and the briefing kinds pay it
     /// back at 1067 for 1078. The caps came down to what the rewrite fits
     /// in, the published landing's excepted.
+    ///
+    /// Then the planner became spec-driven, and its playbook grew five phases
+    /// no other role has: a spec drafted from the goal, a question asked of
+    /// the user, an explicit yes waited for, a folder found for the spec file,
+    /// and a first task that commits it. That is 1409 characters for 922, and
+    /// the one cap of the three system prompts became one per role — 1450 for
+    /// the planner, and the 950 the engineer and the reviewer already fit in,
+    /// which a shared cap of 1450 would have let them creep into. The planner
+    /// resume grew with it, from 90 to 178: a nudge that fits both phases
+    /// names what each one wants, so the briefing kinds are 1160 for 1080.
     #[test]
     fn size_caps_hold() {
-        const KIND_TOTAL: usize = 1080;
+        const KIND_TOTAL: usize = 1160;
         const LANDING_TOTAL: usize = 2150;
-        const GRAND_TOTAL: usize = 5850;
-        const SYSTEM_PROMPT: usize = 950;
+        const GRAND_TOTAL: usize = 6420;
 
+        // A cap per role, not one for the three: the planner alone carries the
+        // spec conversation, and the two that never grew stay where they were.
+        let system_cap = |role: Role| match role {
+            Role::Planner => 1450,
+            Role::Engineer | Role::Reviewer => 950,
+        };
         let cap = |kind: PromptKind| match kind {
             PromptKind::PlannerResume | PromptKind::EngineerResume | PromptKind::ReviewerResume => {
                 200
@@ -429,10 +462,11 @@ mod tests {
         for role in Role::ALL {
             let text = default_system_prompt(role);
             assert!(
-                text.len() <= SYSTEM_PROMPT,
-                "the {} system prompt is {} characters, over its {SYSTEM_PROMPT}",
+                text.len() <= system_cap(role),
+                "the {} system prompt is {} characters, over its {}",
                 role.as_str(),
-                text.len()
+                text.len(),
+                system_cap(role)
             );
         }
 
@@ -757,6 +791,54 @@ mod tests {
                 "the default {}",
                 landing_name(strategy)
             );
+        }
+    }
+
+    /// The planner playbook is spec-driven, and the order of its phases is
+    /// the playbook: the goal is read, a spec is drafted from it, every
+    /// unclear point is asked about one question at a time, the user says an
+    /// explicit yes, a folder is found for the spec, and the first task
+    /// commits it. A phase out of order is a planner that writes tickets off
+    /// a spec nobody agreed to.
+    #[test]
+    fn the_planner_playbook_orders_the_spec_phases_before_the_tasks() {
+        let prompt = default_system_prompt(Role::Planner);
+        let mut at = 0;
+        for phase in [
+            "Read the goal. Explore its repositories.",
+            "Draft a spec: scope, behavior, acceptance criteria.",
+            "Ask the user about each unclear point.",
+            "Write one question in your turn text.",
+            "Wait for the answer in the terminal.",
+            "Ask again until the user writes an explicit yes.",
+            "Find the folder the repository keeps specs or docs in.",
+            "Call `create_task` for task 1",
+            "Give every other task `depends_on` task 1.",
+            "Name the spec path in each ticket.",
+            "`finalize_plan`",
+        ] {
+            let found = prompt[at..]
+                .find(phase)
+                .unwrap_or_else(|| panic!("the planner prompt has no \"{phase}\" after {at}"));
+            at += found + phase.len();
+        }
+
+        // And the yes gates the tasks, in as many words.
+        assert!(prompt.contains("Create no task before it."), "{prompt}");
+    }
+
+    /// A planner is nudged in the phase its goal stands in. Planning is a
+    /// spec conversation and then a breakdown, so the nudge names what each
+    /// phase wants: a resume that asked for tasks and `finalize_plan` alone
+    /// would push a planner past a spec the user never approved.
+    #[test]
+    fn the_planner_nudge_fits_the_spec_conversation_and_the_breakdown() {
+        let resume = default_prompt_text(PromptKind::PlannerResume);
+        for phase in [
+            "Without an explicit yes on the spec, stay in the spec conversation",
+            "create the tasks that are left, then call `finalize_plan`",
+        ] {
+            assert!(resume.contains(phase), "the planner resume and \"{phase}\"");
         }
     }
 
