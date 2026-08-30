@@ -576,6 +576,31 @@
         }
       }
     },
+    "/v1/merge-strategies": {
+      "get": {
+        "tags": [
+          "repositories"
+        ],
+        "summary": "List the merge strategies and their built-in landing briefings.",
+        "description": "The landing briefing is the repository's, and a client editing one needs\nthe text of the strategy it is prefilled from and reset to before that\nrepository exists. One entry per strategy, in [`MergeStrategy::ALL`] order.",
+        "operationId": "list_merge_strategies",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MergeStrategyDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/models": {
       "get": {
         "tags": [
@@ -1011,7 +1036,7 @@
             }
           },
           "400": {
-            "description": "not an absolute path, not a git work tree, or unknown branch"
+            "description": "not an absolute path, not a git work tree, unknown branch, or a landing prompt naming a placeholder nothing fills in"
           },
           "409": {
             "description": "this path and base branch are already registered"
@@ -1092,7 +1117,7 @@
             }
           },
           "400": {
-            "description": "not an absolute path, not a git work tree, or unknown branch"
+            "description": "not an absolute path, not a git work tree, unknown branch, or a landing prompt naming a placeholder nothing fills in"
           },
           "404": {
             "description": ""
@@ -1691,7 +1716,7 @@
           "tasks"
         ],
         "summary": "Record the pull or merge request the engineer opened for a task.",
-        "description": "The URL travels as a tool call, so a published task is either one the UI\nand the CLI can point at or one that was never reported.\n\nAnd this is the moment the task becomes the user's: a request nobody can\nmerge but a human is exactly what `waiting_user` says, so it goes up here,\non the session that opened it — the pane they answer in, and the one place\nthe request can be traced back to. It used to be raised by a line the\nlanding briefing told the engineer to write, and a published task with\nnothing on the strip is one nobody knows to go and merge.\n\nIt stays up until the user acts: an agent's own events never take\n`waiting_user` down (`clear_agent_attention`), and the engineer polling its\nrequest is exactly such an agent. `Scheduler::keep_waiting_user` puts it\nback on whatever comes up when that engineer is restarted, which is what\nmakes the two halves one flag rather than two.",
+        "description": "The URL travels as a tool call, so a published task is either one the UI\nand the CLI can point at or one that was never reported.\n\nAnd this is the moment the task becomes the user's: a request nobody can\nmerge but a human is exactly what `waiting_user` says, so it goes up here,\non the session that opened it — the pane they answer in, and the one place\nthe request can be traced back to. It used to be raised by the message the\nlanding briefing told the engineer to write, and a published task with\nnothing on the strip is one nobody knows to go and merge.\n\nIt stays up until the user acts: an agent's own events never take\n`waiting_user` down (`clear_agent_attention`), and the engineer polling its\nrequest is exactly such an agent. `Scheduler::keep_waiting_user` puts it\nback on whatever comes up when that engineer is restarted, which is what\nmakes the two halves one flag rather than two.",
         "operationId": "record_pull_request",
         "parameters": [
           {
@@ -2206,6 +2231,13 @@
               "string",
               "null"
             ]
+          },
+          "landing_prompt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The landing briefing this repository hands its engineer. Omitted or\nempty = the built-in default of `merge_strategy`, which\n`GET /v1/merge-strategies` hands out for prefilling. A briefing may\nuse only the placeholders a landing text is rendered with\n(`{task_title}`, `{branch}`, `{base_branch}`, `{repo_path}`); one that\nnames another is refused."
           },
           "merge_strategy": {
             "oneOf": [
@@ -2913,6 +2945,23 @@
           "pull_request"
         ]
       },
+      "MergeStrategyDto": {
+        "type": "object",
+        "description": "One merge strategy and the landing briefing a repository on it runs on\nwhile it has none of its own: what `GET /v1/merge-strategies` lists, so a\nclient can show and prefill a landing prompt before the repository exists.",
+        "required": [
+          "merge_strategy",
+          "landing_prompt"
+        ],
+        "properties": {
+          "landing_prompt": {
+            "type": "string",
+            "description": "The built-in landing briefing of this strategy."
+          },
+          "merge_strategy": {
+            "$ref": "#/components/schemas/MergeStrategy"
+          }
+        }
+      },
       "ModelDto": {
         "type": "object",
         "description": "One thing an agent can be pinned to, as served by `GET /v1/models`: an\nagent CLI on a model of it (`claude_code:claude-fable-5`), or an agent CLI\non its own, which is that CLI on its own default model.\n\nThe id is what a request writes as its `model`, whole. `agent_kind` is the\nsame fact taken apart, so a picker can group the catalog by CLI without\nparsing anything. The rest is what a planner sizes a task from: what this\nmodel is, what it costs and how fast it answers next to every other entry,\nthe work it is and is not the choice for, and what each of its efforts\nbuys.",
@@ -3142,9 +3191,7 @@
           "engineer_resume",
           "changes_requested",
           "reviewer_briefing",
-          "reviewer_resume",
-          "landing_direct",
-          "landing_pull_request"
+          "reviewer_resume"
         ]
       },
       "RecordPullRequestRequest": {
@@ -3167,6 +3214,8 @@
           "path",
           "base_branch",
           "merge_strategy",
+          "landing_prompt",
+          "landing_prompt_is_default",
           "created_at",
           "updated_at"
         ],
@@ -3185,6 +3234,14 @@
           },
           "id": {
             "type": "string"
+          },
+          "landing_prompt": {
+            "type": "string",
+            "description": "The landing briefing the engineer of an approved task is handed here:\nthe text set on this repository, or the built-in default of its merge\nstrategy while it has none of its own."
+          },
+          "landing_prompt_is_default": {
+            "type": "boolean",
+            "description": "Whether `landing_prompt` is that strategy default rather than a text\nset on this repository."
           },
           "merge_strategy": {
             "$ref": "#/components/schemas/MergeStrategy",
@@ -3955,6 +4012,13 @@
               "null"
             ],
             "description": "New description, or empty to clear it. Absent = unchanged."
+          },
+          "landing_prompt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New landing briefing, or empty to put it back on the built-in default\nof the merge strategy in force. Absent = unchanged, which is also what\na `merge_strategy` written on its own does to it: the words are the\nuser's, and the reset is what asks for the new strategy's text. A\nbriefing may use only the placeholders a landing text is rendered with\n(`{task_title}`, `{branch}`, `{base_branch}`, `{repo_path}`); one that\nnames another is refused."
           },
           "merge_strategy": {
             "oneOf": [

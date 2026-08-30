@@ -31,6 +31,18 @@ export function repositoriesQueryOptions() {
   })
 }
 
+/**
+ * `GET /v1/merge-strategies` — each strategy's built-in landing briefing, so
+ * the form can prefill and reset one before the repository exists. Static:
+ * nothing on the daemon ever changes it, so no event invalidates this query.
+ */
+export function mergeStrategiesQueryOptions() {
+  return queryOptions({
+    queryKey: qk.mergeStrategies.list(),
+    queryFn: () => unwrap(api().GET("/v1/merge-strategies")),
+  })
+}
+
 export function useCreateRepository() {
   const queryClient = useQueryClient()
   return useMutation({

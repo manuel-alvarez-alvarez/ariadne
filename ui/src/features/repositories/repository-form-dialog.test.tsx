@@ -18,19 +18,29 @@ import { screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import type { RepositoryDto } from "@/api"
-import { aRepository } from "@/test/fixtures"
-import { daemonFetch, errorResponse, renderScreen } from "@/test/harness"
+import type { MergeStrategyDto, RepositoryDto } from "@/api"
+import { aMergeStrategy, aRepository, LANDING_PROMPT_DEFAULTS } from "@/test/fixtures"
+import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { RepositoryFormDialog } from "./repository-form-dialog"
 
 const REPOSITORY: RepositoryDto = aRepository({
   id: "01JREPO00000000000000ARI",
 })
 
+const MERGE_STRATEGIES: MergeStrategyDto[] = [
+  aMergeStrategy({ merge_strategy: "direct" }),
+  aMergeStrategy({ merge_strategy: "pull_request" }),
+]
+
 interface Recorded {
   method: string
   path: string
-  body: { path?: string; base_branch?: string | null; description?: string | null } | null
+  body: {
+    path?: string
+    base_branch?: string | null
+    description?: string | null
+    landing_prompt?: string
+  } | null
 }
 
 let requests: Recorded[] = []
@@ -40,7 +50,10 @@ function lastWrite(): Recorded | undefined {
   return requests.filter((one) => one.method !== "GET").at(-1)
 }
 
-/** The daemon, echoing writes back — or refusing one, as `failure` says. */
+/**
+ * The daemon: `GET /v1/merge-strategies` answers with the fixed catalog, and
+ * every write echoes back — or is refused, as `failure` says.
+ */
 function stubDaemon(failure?: { status: number; code: string; message: string }) {
   daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(String(input), init)
@@ -48,6 +61,8 @@ function stubDaemon(failure?: { status: number; code: string; message: string })
     const raw = await request.text()
     const body = raw.length > 0 ? JSON.parse(raw) : null
     requests.push({ method: request.method, path: pathname, body })
+
+    if (pathname === "/v1/merge-strategies") return jsonResponse(MERGE_STRATEGIES)
 
     if (failure) {
       const { status, code, message } = failure
@@ -79,6 +94,13 @@ describe("registering a repository", () => {
     const user = userEvent.setup()
     renderDialog(null)
 
+    // The default briefing has to have loaded before submit, or its untouched
+    // "" would go out as a customized empty one instead of being omitted.
+    await waitFor(() => {
+      expect((screen.getByLabelText("Landing briefing") as HTMLTextAreaElement).value).toBe(
+        LANDING_PROMPT_DEFAULTS.direct,
+      )
+    })
     await user.type(screen.getByLabelText("Path"), "/home/me/dev/new")
     await user.click(screen.getByRole("button", { name: "Register repository" }))
 
@@ -171,6 +193,215 @@ describe("registering a repository", () => {
     const alert = await screen.findByRole("alert")
     expect(alert.textContent).toContain("already registered")
   })
+
+  it("puts a placeholder refusal on the landing briefing field, not the branch its message also names", async () => {
+    const user = userEvent.setup()
+    stubDaemon({
+      status: 400,
+      code: "bad_request",
+      message:
+        "the landing template has no value for placeholder {silly}; the ones it can use are {task_title}, {branch}, {base_branch}, {repo_path}",
+    })
+    renderDialog(null)
+
+    await user.type(screen.getByLabelText("Path"), "/home/me/dev/new")
+    await user.click(screen.getByRole("button", { name: "Register repository" }))
+
+    const message = await screen.findByText(/has no value for placeholder/)
+    expect(message.closest("[data-slot=field]")?.textContent).toContain("Landing briefing")
+  })
+})
+
+/**
+ * The briefing field: prefilled from `GET /v1/merge-strategies`, following an
+ * untouched strategy pick and holding still for a customized one, and the
+ * reset button that puts it back.
+ */
+describe("the landing briefing", () => {
+  it("prefills a new repository with the selected strategy's default, and starts the reset button disabled", async () => {
+    renderDialog(null)
+
+    const textarea = (await screen.findByLabelText("Landing briefing")) as HTMLTextAreaElement
+    await waitFor(() => {
+      expect(textarea.value).toBe(LANDING_PROMPT_DEFAULTS.direct)
+    })
+    expect(screen.getByRole("button", { name: "Reset to default" }).hasAttribute("disabled")).toBe(
+      true,
+    )
+  })
+
+  it("prefills an existing repository with its own stored text", async () => {
+    renderDialog(REPOSITORY)
+
+    expect((screen.getByLabelText("Landing briefing") as HTMLTextAreaElement).value).toBe(
+      REPOSITORY.landing_prompt,
+    )
+  })
+
+  it("swaps in the new strategy's default while the briefing is still untouched", async () => {
+    const user = userEvent.setup()
+    renderDialog(null)
+
+    const textarea = (await screen.findByLabelText("Landing briefing")) as HTMLTextAreaElement
+    await waitFor(() => expect(textarea.value).toBe(LANDING_PROMPT_DEFAULTS.direct))
+
+    await user.click(screen.getByLabelText("Merge strategy"))
+    await user.click(await screen.findByRole("option", { name: /^Pull request/ }))
+
+    await waitFor(() => {
+      expect(textarea.value).toBe(LANDING_PROMPT_DEFAULTS.pull_request)
+    })
+  })
+
+  it("seeds the strategy picked before the strategies query answered, not the form's opening default", async () => {
+    const user = userEvent.setup()
+    let answer = () => {}
+    const held = new Promise<void>((resolve) => {
+      answer = resolve
+    })
+    daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(String(input), init)
+      const { pathname } = new URL(request.url)
+      if (pathname === "/v1/merge-strategies") {
+        await held
+        return jsonResponse(MERGE_STRATEGIES)
+      }
+      return jsonResponse(REPOSITORY)
+    })
+    renderDialog(null)
+
+    // Picked while the query is still in flight — nothing to seed from yet.
+    await user.click(screen.getByLabelText("Merge strategy"))
+    await user.click(await screen.findByRole("option", { name: /^Pull request/ }))
+    const textarea = screen.getByLabelText("Landing briefing") as HTMLTextAreaElement
+    expect(textarea.value).toBe("")
+
+    answer()
+
+    await waitFor(() => {
+      expect(textarea.value).toBe(LANDING_PROMPT_DEFAULTS.pull_request)
+    })
+  })
+
+  it("keeps words typed before the strategies query answers, instead of overwriting them with the default", async () => {
+    const user = userEvent.setup()
+    let answer = () => {}
+    const held = new Promise<void>((resolve) => {
+      answer = resolve
+    })
+    daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(String(input), init)
+      const { pathname } = new URL(request.url)
+      if (pathname === "/v1/merge-strategies") {
+        await held
+        return jsonResponse(MERGE_STRATEGIES)
+      }
+      return jsonResponse(REPOSITORY)
+    })
+    renderDialog(null)
+
+    // Typed while the query is still in flight — nothing seeded yet.
+    const textarea = screen.getByLabelText("Landing briefing") as HTMLTextAreaElement
+    await user.type(textarea, "Always squash, never rebase.")
+
+    answer()
+    await waitFor(() => {
+      const resetButton = screen.getByRole("button", { name: "Reset to default" })
+      expect(resetButton.hasAttribute("disabled")).toBe(false)
+    })
+
+    expect(textarea.value).toBe("Always squash, never rebase.")
+  })
+
+  it("keeps a customized briefing when the strategy changes", async () => {
+    const user = userEvent.setup()
+    renderDialog(null)
+
+    const textarea = (await screen.findByLabelText("Landing briefing")) as HTMLTextAreaElement
+    await waitFor(() => expect(textarea.value).toBe(LANDING_PROMPT_DEFAULTS.direct))
+    await user.clear(textarea)
+    await user.type(textarea, "Always squash, never rebase.")
+
+    await user.click(screen.getByLabelText("Merge strategy"))
+    await user.click(await screen.findByRole("option", { name: /^Pull request/ }))
+
+    expect(textarea.value).toBe("Always squash, never rebase.")
+  })
+
+  it("resets the briefing to the selected strategy's default, and disables itself again once it matches", async () => {
+    const user = userEvent.setup()
+    renderDialog(null)
+
+    const textarea = (await screen.findByLabelText("Landing briefing")) as HTMLTextAreaElement
+    await waitFor(() => expect(textarea.value).toBe(LANDING_PROMPT_DEFAULTS.direct))
+    await user.clear(textarea)
+    await user.type(textarea, "Always squash, never rebase.")
+    const resetButton = screen.getByRole("button", { name: "Reset to default" })
+    expect(resetButton.hasAttribute("disabled")).toBe(false)
+
+    await user.click(resetButton)
+
+    expect(textarea.value).toBe(LANDING_PROMPT_DEFAULTS.direct)
+    expect(resetButton.hasAttribute("disabled")).toBe(true)
+  })
+
+  it("omits the briefing on create while it is still the strategy's default", async () => {
+    const user = userEvent.setup()
+    renderDialog(null)
+
+    await waitFor(() => {
+      expect((screen.getByLabelText("Landing briefing") as HTMLTextAreaElement).value).toBe(
+        LANDING_PROMPT_DEFAULTS.direct,
+      )
+    })
+    await user.type(screen.getByLabelText("Path"), "/home/me/dev/new")
+    await user.click(screen.getByRole("button", { name: "Register repository" }))
+
+    await waitFor(() => {
+      expect(lastWrite()).toBeDefined()
+    })
+    expect(lastWrite()?.body).not.toHaveProperty("landing_prompt")
+  })
+
+  it("sends the customized text on create", async () => {
+    const user = userEvent.setup()
+    renderDialog(null)
+
+    const textarea = (await screen.findByLabelText("Landing briefing")) as HTMLTextAreaElement
+    await waitFor(() => expect(textarea.value).toBe(LANDING_PROMPT_DEFAULTS.direct))
+    await user.clear(textarea)
+    await user.type(textarea, "Always squash, never rebase.")
+
+    await user.type(screen.getByLabelText("Path"), "/home/me/dev/new")
+    await user.click(screen.getByRole("button", { name: "Register repository" }))
+
+    await waitFor(() => {
+      expect(lastWrite()).toBeDefined()
+    })
+    expect(lastWrite()?.body).toMatchObject({ landing_prompt: "Always squash, never rebase." })
+  })
+
+  it("sends an empty string on save once a customized briefing is reset to the default", async () => {
+    const user = userEvent.setup()
+    const customized: RepositoryDto = aRepository({
+      id: "01JREPO00000000000000CUS",
+      landing_prompt: "Always squash, never rebase.",
+      landing_prompt_is_default: false,
+    })
+    renderDialog(customized)
+
+    const textarea = (await screen.findByLabelText("Landing briefing")) as HTMLTextAreaElement
+    expect(textarea.value).toBe("Always squash, never rebase.")
+    await user.click(screen.getByRole("button", { name: "Reset to default" }))
+    expect(textarea.value).toBe(LANDING_PROMPT_DEFAULTS.direct)
+
+    await user.click(screen.getByRole("button", { name: "Save changes" }))
+
+    await waitFor(() => {
+      expect(lastWrite()).toBeDefined()
+    })
+    expect(lastWrite()?.body).toMatchObject({ landing_prompt: "" })
+  })
 })
 
 describe("editing a repository", () => {
@@ -198,6 +429,10 @@ describe("editing a repository", () => {
       base_branch: "main",
       merge_strategy: "direct",
       description: "The orchestrator itself. Now with repositories.",
+      // Untouched, and REPOSITORY already runs on its strategy's own default,
+      // so this is the daemon's spelling of "no override" rather than a copy
+      // of the text.
+      landing_prompt: "",
     })
   })
 

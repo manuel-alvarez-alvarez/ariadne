@@ -73,13 +73,7 @@ const CATALOG: ModelDto[] = [
 function briefings(role: ProfileDto["role"]): ProfilePromptDto[] {
   const kinds: Record<ProfileDto["role"], ProfilePromptDto["kind"][]> = {
     planner: ["planner_briefing", "planner_resume"],
-    engineer: [
-      "engineer_briefing",
-      "engineer_resume",
-      "changes_requested",
-      "landing_direct",
-      "landing_pull_request",
-    ],
+    engineer: ["engineer_briefing", "engineer_resume", "changes_requested"],
     reviewer: ["reviewer_briefing", "reviewer_resume"],
   }
   return kinds[role].map((kind) => ({
@@ -294,8 +288,6 @@ describe("the selection", () => {
       "Engineer briefing",
       "Engineer resume",
       "Changes requested",
-      "Landing (direct)",
-      "Landing (pull request)",
     ])
   })
 

@@ -281,6 +281,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/merge-strategies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the merge strategies and their built-in landing briefings.
+         * @description The landing briefing is the repository's, and a client editing one needs
+         *     the text of the strategy it is prefilled from and reset to before that
+         *     repository exists. One entry per strategy, in [`MergeStrategy::ALL`] order.
+         */
+        get: operations["repositories_list_merge_strategies"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/models": {
         parameters: {
             query?: never;
@@ -759,7 +781,7 @@ export interface paths {
          *     And this is the moment the task becomes the user's: a request nobody can
          *     merge but a human is exactly what `waiting_user` says, so it goes up here,
          *     on the session that opened it — the pane they answer in, and the one place
-         *     the request can be traced back to. It used to be raised by a line the
+         *     the request can be traced back to. It used to be raised by the message the
          *     landing briefing told the engineer to write, and a published task with
          *     nothing on the strip is one nobody knows to go and merge.
          *
@@ -985,6 +1007,15 @@ export interface components {
             /** @description Omit for the repo's currently checked-out branch. */
             base_branch?: string | null;
             description?: string | null;
+            /**
+             * @description The landing briefing this repository hands its engineer. Omitted or
+             *     empty = the built-in default of `merge_strategy`, which
+             *     `GET /v1/merge-strategies` hands out for prefilling. A briefing may
+             *     use only the placeholders a landing text is rendered with
+             *     (`{task_title}`, `{branch}`, `{base_branch}`, `{repo_path}`); one that
+             *     names another is refused.
+             */
+            landing_prompt?: string | null;
             merge_strategy?: null | components["schemas"]["MergeStrategy"];
             /**
              * @description Absolute path of an existing git work tree.
@@ -1283,6 +1314,16 @@ export interface components {
          */
         MergeStrategy: "direct" | "pull_request";
         /**
+         * @description One merge strategy and the landing briefing a repository on it runs on
+         *     while it has none of its own: what `GET /v1/merge-strategies` lists, so a
+         *     client can show and prefill a landing prompt before the repository exists.
+         */
+        MergeStrategyDto: {
+            /** @description The built-in landing briefing of this strategy. */
+            landing_prompt: string;
+            merge_strategy: components["schemas"]["MergeStrategy"];
+        };
+        /**
          * @description One thing an agent can be pinned to, as served by `GET /v1/models`: an
          *     agent CLI on a model of it (`claude_code:claude-fable-5`), or an agent CLI
          *     on its own, which is that CLI on its own default model.
@@ -1436,7 +1477,7 @@ export interface components {
          *     receives it (see [`PromptKind::roles`]).
          * @enum {string}
          */
-        PromptKind: "planner_briefing" | "planner_resume" | "engineer_briefing" | "engineer_resume" | "changes_requested" | "reviewer_briefing" | "reviewer_resume" | "landing_direct" | "landing_pull_request";
+        PromptKind: "planner_briefing" | "planner_resume" | "engineer_briefing" | "engineer_resume" | "changes_requested" | "reviewer_briefing" | "reviewer_resume";
         /**
          * @description The engineer reporting the pull or merge request it opened for a task, so
          *     the user has somewhere to go and read it: taken off `gh pr create`'s output
@@ -1451,6 +1492,17 @@ export interface components {
             created_at: string;
             description?: string | null;
             id: string;
+            /**
+             * @description The landing briefing the engineer of an approved task is handed here:
+             *     the text set on this repository, or the built-in default of its merge
+             *     strategy while it has none of its own.
+             */
+            landing_prompt: string;
+            /**
+             * @description Whether `landing_prompt` is that strategy default rather than a text
+             *     set on this repository.
+             */
+            landing_prompt_is_default: boolean;
             /** @description How a task lands on `base_branch` here. */
             merge_strategy: components["schemas"]["MergeStrategy"];
             /** @description Absolute path of the checkout. */
@@ -1832,6 +1884,16 @@ export interface components {
             base_branch?: string | null;
             /** @description New description, or empty to clear it. Absent = unchanged. */
             description?: string | null;
+            /**
+             * @description New landing briefing, or empty to put it back on the built-in default
+             *     of the merge strategy in force. Absent = unchanged, which is also what
+             *     a `merge_strategy` written on its own does to it: the words are the
+             *     user's, and the reset is what asks for the new strategy's text. A
+             *     briefing may use only the placeholders a landing text is rendered with
+             *     (`{task_title}`, `{branch}`, `{base_branch}`, `{repo_path}`); one that
+             *     names another is refused.
+             */
+            landing_prompt?: string | null;
             merge_strategy?: null | components["schemas"]["MergeStrategy"];
             path?: string | null;
         };
@@ -2302,6 +2364,25 @@ export interface operations {
             };
         };
     };
+    repositories_list_merge_strategies: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MergeStrategyDto"][];
+                };
+            };
+        };
+    };
     models_list: {
         parameters: {
             query?: never;
@@ -2639,7 +2720,7 @@ export interface operations {
                     "application/json": components["schemas"]["RepositoryDto"];
                 };
             };
-            /** @description not an absolute path, not a git work tree, or unknown branch */
+            /** @description not an absolute path, not a git work tree, unknown branch, or a landing prompt naming a placeholder nothing fills in */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -2707,7 +2788,7 @@ export interface operations {
                     "application/json": components["schemas"]["RepositoryDto"];
                 };
             };
-            /** @description not an absolute path, not a git work tree, or unknown branch */
+            /** @description not an absolute path, not a git work tree, unknown branch, or a landing prompt naming a placeholder nothing fills in */
             400: {
                 headers: {
                     [name: string]: unknown;

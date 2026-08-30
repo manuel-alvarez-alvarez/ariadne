@@ -138,6 +138,14 @@ function RepositoryRow({
       </TableCell>
       <TableCell className="text-xs text-muted-foreground">
         {MERGE_STRATEGY_META[repository.merge_strategy].label}
+        {!repository.landing_prompt_is_default ? (
+          <span
+            className="ml-1.5 text-muted-foreground/70 italic"
+            title="The landing briefing was edited away from the strategy's default."
+          >
+            custom
+          </span>
+        ) : null}
       </TableCell>
       <TableCell className="min-w-48 whitespace-normal text-muted-foreground">
         {repository.description ?? <span className="italic">no description</span>}

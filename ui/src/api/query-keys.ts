@@ -89,6 +89,16 @@ export const qk = {
     detail: (id: string) => ["repositories", "detail", id] as const,
   },
   /**
+   * The merge strategies and their built-in landing briefings
+   * (`GET /v1/merge-strategies`): static data nothing on the daemon ever
+   * changes, so no event invalidates it.
+   */
+  mergeStrategies: {
+    all: () => ["merge-strategies"] as const,
+    lists: () => ["merge-strategies", "list"] as const,
+    list: () => ["merge-strategies", "list", {}] as const,
+  },
+  /**
    * How each coding-agent CLI is launched (`GET /v1/agents`): one unfiltered
    * list of every agent kind, because the daemon answers with all of them.
    */

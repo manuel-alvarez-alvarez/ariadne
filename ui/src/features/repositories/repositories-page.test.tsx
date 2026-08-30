@@ -23,7 +23,7 @@ import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it } from "vitest"
 
 import type { RepositoryDto } from "@/api"
-import { aRepository } from "@/test/fixtures"
+import { aMergeStrategy, aRepository } from "@/test/fixtures"
 import { daemonFetch, errorResponse, jsonResponse, renderScreen } from "@/test/harness"
 import { RepositoriesPage } from "./repositories-page"
 
@@ -31,13 +31,21 @@ const ARIADNE: RepositoryDto = aRepository({
   id: "01JREPO00000000000000ARI",
 })
 
+// Customized, unlike ARIADNE: the row this screen has to tell apart.
 const SANDBOX: RepositoryDto = aRepository({
   id: "01JREPO00000000000000SND",
   path: "/home/me/dev/sandbox",
   base_branch: "trunk",
   merge_strategy: "pull_request",
   description: null,
+  landing_prompt: "Ping me before you land anything here.",
+  landing_prompt_is_default: false,
 })
+
+const MERGE_STRATEGIES = [
+  aMergeStrategy({ merge_strategy: "direct" }),
+  aMergeStrategy({ merge_strategy: "pull_request" }),
+]
 
 /** `DELETE /v1/repositories/{id}` answers this instead of 204, when set. */
 let deleteFailure: { status: number; code: string; message: string } | null = null
@@ -46,11 +54,13 @@ function stubDaemon(repositories: RepositoryDto[]) {
   deleteFailure = null
   daemonFetch.mockImplementation(async (input: Request | string | URL, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(String(input), init)
+    const { pathname } = new URL(request.url)
     if (request.method === "DELETE") {
       if (!deleteFailure) return new Response(null, { status: 204 })
       const { status, code, message } = deleteFailure
       return errorResponse(status, code, message)
     }
+    if (pathname === "/v1/merge-strategies") return jsonResponse(MERGE_STRATEGIES)
     return jsonResponse(repositories)
   })
 }
@@ -87,6 +97,15 @@ describe("RepositoriesPage", () => {
     // each repository in turn.
     expect(screen.getByText("Direct")).toBeDefined()
     expect(screen.getByText("Pull request")).toBeDefined()
+  })
+
+  it("marks the strategy cell of a repository whose landing briefing was edited away from the default", async () => {
+    renderScreen(<RepositoriesPage />)
+
+    await screen.findByText("Direct")
+    // ARIADNE runs its strategy's own briefing; SANDBOX's was customized.
+    expect(screen.getByText("Direct").closest("td")?.textContent).toBe("Direct")
+    expect(screen.getByText("Pull request").closest("td")?.textContent).toBe("Pull requestcustom")
   })
 
   it("caps the path so the description has room to be a sentence", async () => {

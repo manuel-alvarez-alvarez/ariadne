@@ -44,6 +44,7 @@ export function FormSelect<V extends FieldValues>({
   className,
   empty = "",
   renderOption,
+  onValueChange,
 }: {
   control: Control<V>
   name: FieldPath<V>
@@ -60,6 +61,12 @@ export function FormSelect<V extends FieldValues>({
   empty?: string
   /** A richer item body than its label — a path in mono, a title beside its id. */
   renderOption?: (option: SelectOption) => ReactNode
+  /**
+   * A pick reaching the form, for a caller that keeps another field in step
+   * with this one. Fired only from an actual pick — `field.onChange` alone
+   * covers a programmatic `reset`, which must not retrigger it.
+   */
+  onValueChange?: (value: string) => void
 }) {
   return (
     <Controller
@@ -68,7 +75,11 @@ export function FormSelect<V extends FieldValues>({
       render={({ field }) => (
         <Select
           value={field.value || null}
-          onValueChange={(value) => field.onChange(value ?? empty)}
+          onValueChange={(value) => {
+            const next = value ?? empty
+            field.onChange(next)
+            onValueChange?.(next)
+          }}
           disabled={disabled}
           // Without this the trigger would show the stored value rather than
           // the option's label.

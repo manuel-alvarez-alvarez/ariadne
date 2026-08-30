@@ -16,6 +16,7 @@ import type {
   AgentConfigDto,
   EffortDto,
   GoalDto,
+  MergeStrategyDto,
   ModelDto,
   ProfileDto,
   RepositoryDto,
@@ -116,15 +117,35 @@ export function aProfile(overrides: Partial<ProfileDto> = {}): ProfileDto {
   }
 }
 
+/** The built-in landing briefing `GET /v1/merge-strategies` answers with, by strategy. */
+export const LANDING_PROMPT_DEFAULTS: Record<RepositoryDto["merge_strategy"], string> = {
+  direct: "Default direct briefing. Land {task_title} on {base_branch} at {repo_path}.",
+  pull_request:
+    "Default pull request briefing. Open {branch} against {base_branch} at {repo_path}.",
+}
+
 export function aRepository(overrides: Partial<RepositoryDto> = {}): RepositoryDto {
+  const merge_strategy = overrides.merge_strategy ?? "direct"
   return {
     id: REPO_ID,
     path: "/home/me/dev/ariadne",
     base_branch: "main",
-    merge_strategy: "direct",
+    merge_strategy,
     description: "The orchestrator itself.",
+    landing_prompt: LANDING_PROMPT_DEFAULTS[merge_strategy],
+    landing_prompt_is_default: true,
     created_at: STAMP,
     updated_at: STAMP,
+    ...overrides,
+  }
+}
+
+/** One entry of `GET /v1/merge-strategies`. */
+export function aMergeStrategy(overrides: Partial<MergeStrategyDto> = {}): MergeStrategyDto {
+  const merge_strategy = overrides.merge_strategy ?? "direct"
+  return {
+    merge_strategy,
+    landing_prompt: LANDING_PROMPT_DEFAULTS[merge_strategy],
     ...overrides,
   }
 }
