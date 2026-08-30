@@ -35,7 +35,7 @@ import {
   taskListQueryOptions,
 } from "@/features/tasks"
 import { useHorizontalOverflow } from "@/hooks/use-scroll-overflow"
-import { cn } from "@/lib/format"
+import { cn, folderName } from "@/lib/format"
 import { paths } from "@/routes/paths"
 import { type BoardAttention, taskAttentionReason, useBoardAttention } from "./attention"
 import { useCollapsedLanes } from "./collapsed-lanes"
@@ -219,6 +219,12 @@ function Lane({
 }) {
   const total = tasks?.all.length ?? 0
   const repos = goal.repos.map((repo) => `${repo.path} [${repo.base_branch}]`).join("\n")
+  // Folder name, not the full path: the header is a line among five other
+  // cells, and the path in full is what the tooltip on the title already
+  // gives — this is only the part that tells lanes apart at a glance.
+  const repoSummary = goal.repos
+    .map((repo) => `${folderName(repo.path)} [${repo.base_branch}]`)
+    .join(", ")
   // A planner belongs to no task, so it has no card to be flagged on: the lane
   // header is the only place its goal is named, and so the only place it can
   // ask for a person. It is shown collapsed too — a lane folded away is
@@ -258,6 +264,9 @@ function Lane({
             </span>
           </TooltipContent>
         </Tooltip>
+        {repoSummary && (
+          <span className="min-w-0 truncate text-xs text-muted-foreground">{repoSummary}</span>
+        )}
         <StatusBadge
           box="badge"
           label={GOAL_STATUS_META[goal.status].label}

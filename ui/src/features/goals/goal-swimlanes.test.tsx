@@ -32,7 +32,7 @@ import userEvent from "@testing-library/user-event"
 import { beforeEach, expect, it } from "vitest"
 
 import type { GoalDto, SessionDto, TaskDto } from "@/api"
-import { aGoal, aSession, aTask } from "@/test/fixtures"
+import { aGoal, aRepository, aSession, aTask } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { GoalSwimlanes } from "./goal-swimlanes"
 
@@ -262,6 +262,50 @@ it("says zero for a goal whose agents have spent nothing", async () => {
   // Both halves, and a figure rather than a dash: an agent that has spent
   // nothing has spent nothing, which is a number the daemon knows.
   expect(screen.getByText(/0\/1 merged · created/).textContent).toContain("0 in, 0% cached, 0 out")
+})
+
+// ── The repository, in the header itself ──────────────────────────────────
+
+it("names the goal's repository and branch in the lane header", async () => {
+  const goal = aGoal({
+    repos: [aRepository({ path: "/home/me/dev/ariadne", base_branch: "main" })],
+  })
+  stubDaemon({ tasks: [{ ...TASK, goal_id: goal.id }] })
+  renderBoard(goal)
+
+  await screen.findByText(TASK.title)
+  expect(laneHeader(goal.title).textContent).toContain("ariadne [main]")
+})
+
+it("joins several repositories, folder and branch, in the order the goal has them", async () => {
+  const goal = aGoal({
+    repos: [
+      aRepository({
+        id: "01JREPO0000000000000000001",
+        path: "/home/me/dev/a",
+        base_branch: "main",
+      }),
+      aRepository({
+        id: "01JREPO0000000000000000002",
+        path: "/home/me/dev/b",
+        base_branch: "next",
+      }),
+    ],
+  })
+  stubDaemon({ tasks: [{ ...TASK, goal_id: goal.id }] })
+  renderBoard(goal)
+
+  await screen.findByText(TASK.title)
+  expect(laneHeader(goal.title).textContent).toContain("a [main], b [next]")
+})
+
+it("shows nothing extra for a goal on no repository", async () => {
+  stubDaemon({ tasks: [TASK] })
+  renderBoard(aGoal({ repos: [] }))
+
+  await screen.findByText(TASK.title)
+  // No trailing separator or empty span left where the summary would sit.
+  expect(laneHeader(GOAL.title).textContent).not.toMatch(/\[.*\]/)
 })
 
 // ── Where the lane is up to ───────────────────────────────────────────────

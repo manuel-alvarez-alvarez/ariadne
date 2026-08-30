@@ -4,6 +4,7 @@ import { ApiError } from "@/api"
 import {
   cachedShare,
   describeError,
+  folderName,
   formatAbsolute,
   formatAge,
   formatDuration,
@@ -161,6 +162,20 @@ describe("middleTruncate", () => {
       const { head, tail } = middleTruncate(value)
       expect(head + tail).toBe(value)
     }
+  })
+})
+
+describe("folderName", () => {
+  it("takes the last segment of a checkout path", () => {
+    expect(folderName("/a/b/ariadne")).toBe("ariadne")
+  })
+
+  it("ignores a trailing slash", () => {
+    expect(folderName("/a/b/ariadne/")).toBe("ariadne")
+  })
+
+  it("leaves a bare name, with no separator, whole", () => {
+    expect(folderName("ariadne")).toBe("ariadne")
   })
 })
 

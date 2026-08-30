@@ -188,6 +188,20 @@ export function middleTruncate(value: string): { head: string; tail: string } {
   return { head: value.slice(0, -TAIL_CHARS), tail: value.slice(-TAIL_CHARS) }
 }
 
+/**
+ * The last segment of a repository's checkout path — `ariadne` from
+ * `/home/me/dev/ariadne` — which is what a reader recognises a repository by,
+ * where the full path is only worth showing on hover.
+ *
+ * Not Node's `path`: this runs in the browser, and a trailing slash is the one
+ * shape a plain `lastIndexOf` split would get wrong, so it is stripped first.
+ */
+export function folderName(path: string): string {
+  const trimmed = path.endsWith("/") ? path.slice(0, -1) : path
+  const cut = trimmed.lastIndexOf("/")
+  return cut < 0 ? trimmed : trimmed.slice(cut + 1)
+}
+
 // ── The daemon's vocabulary ───────────────────────────────────────────────
 
 /**
