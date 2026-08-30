@@ -77,31 +77,6 @@ impl Store {
         Ok(last.as_deref() == Some("pre_tool_use"))
     }
 
-    /// When a session last reported one of `kinds`, or `None` where it never
-    /// has.
-    ///
-    /// Asked to bound a turn, the way the one above is asked to bound a
-    /// question: what a session said after the last event that starts a turn
-    /// was said in the turn that is ending now. Which kinds start one is the
-    /// caller's vocabulary, for the same reason the tool name above is.
-    pub async fn last_event_at(&self, session_id: &str, kinds: &[&str]) -> Result<Option<String>> {
-        if kinds.is_empty() {
-            return Ok(None);
-        }
-        // Only the placeholders are assembled; every value is bound.
-        let holes = vec!["?"; kinds.len()].join(", ");
-        let mut q = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(format!(
-            "SELECT created_at FROM agent_events
-              WHERE session_id = ? AND kind IN ({holes})
-              ORDER BY id DESC LIMIT 1"
-        )))
-        .bind(session_id);
-        for kind in kinds {
-            q = q.bind(*kind);
-        }
-        Ok(q.fetch_optional(self.r()).await?)
-    }
-
     pub async fn list_events(&self, filter: EventFilter) -> Result<Vec<AgentEvent>> {
         let limit = match filter.limit {
             n if n <= 0 => 50,

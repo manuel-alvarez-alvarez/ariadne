@@ -8,22 +8,17 @@
 //! preserved row plus a "no live sessions" reading is exactly how one task
 //! ends up with two engineers.
 //!
-//! The same goes for a message somebody was addressed with. An unanswerable
-//! `has-session` is not an agent that has ended, so nothing is relaunched on
-//! top of it and the message is not spent on the pass that could not be made:
-//! it waits, and goes in the moment tmux answers again.
-//!
-//! And for the watchdog over an agent that has reported nothing: what it does
-//! at the first threshold turns on what the pane is drawing, and a pane that
-//! cannot be read says nothing about that either.
+//! The same goes for the watchdog over an agent that has reported nothing:
+//! what it does at the first threshold turns on what the pane is drawing, and
+//! a pane that cannot be read says nothing about that either.
 
 mod common;
 
 use std::time::Duration;
 
-use ariadne_core::{Actor, AuthorRole, Role, SessionStatus, TaskStatus};
+use ariadne_core::{Actor, Role, SessionStatus, TaskStatus};
 use ariadne_daemon::scheduler::{self, SchedEvent};
-use ariadne_store::{AgentSession, NewMessage, Recipient};
+use ariadne_store::AgentSession;
 
 use common::{Cast, Harness, harness};
 
@@ -89,87 +84,6 @@ async fn reconciliation_with_tmux_unavailable_neither_spawns_nor_fails_the_task(
         h.status(&cast.task.id).await,
         TaskStatus::Failed,
         "an unreachable tmux is not the task's fault, and must not spend its retry budget"
-    );
-}
-
-/// A message addressed to an agent whose pane nobody can ask about. The
-/// daemon has learned nothing: not that the agent has gone (so it starts
-/// nothing on top of it), and not that it is there (so the message is not
-/// counted as delivered). The message waits, and the moment tmux answers
-/// again it goes in.
-#[tokio::test]
-async fn a_message_for_an_unreachable_pane_waits_rather_than_relaunching_its_agent() {
-    let (h, cast, session) = world().await;
-    h.advance(&cast.task, TaskStatus::InProgress).await;
-
-    // The scheduler first, and its opening reconciliation with it: what this
-    // test counts is the passes made at one message, and a tick that came
-    // round before the message existed makes none.
-    let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
-    tokio::time::sleep(Duration::from_millis(150)).await;
-
-    let message = h
-        .store
-        .create_message(NewMessage {
-            goal_id: cast.goal.id.clone(),
-            task_id: Some(cast.task.id.clone()),
-            author_role: AuthorRole::User,
-            author_session_id: None,
-            recipient: Some(Recipient::Profile(cast.engineer.id.clone())),
-            body: "Use the other endpoint.".into(),
-        })
-        .await
-        .unwrap();
-    // One pass at it while nothing can be asked, of the several it is worth.
-    sched
-        .send(SchedEvent::MessagePosted(message.id.clone()))
-        .unwrap();
-    tokio::time::sleep(Duration::from_millis(150)).await;
-
-    let sessions = h.sessions_of(&cast.task.id).await;
-    assert_eq!(
-        sessions.len(),
-        1,
-        "nothing was started for an agent that may well be sitting there: {sessions:#?}"
-    );
-    assert!(
-        sessions[0].status().is_live(),
-        "and it was not written off either: {:?}",
-        sessions[0].status()
-    );
-    assert!(
-        !h.plan_file(&session.id).exists(),
-        "no relaunch was planned for it"
-    );
-    assert_eq!(
-        h.attention(&session).await,
-        None,
-        "and the user is not told about a message that still has passes left"
-    );
-
-    // tmux comes back, and with it the pane it could not answer for. The
-    // reconciliation tick would offer the message again on its own; the test
-    // asks for the same passes rather than waiting a quarter of a minute for
-    // each of them.
-    tmux_comes_back(&h);
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    loop {
-        sched
-            .send(SchedEvent::MessagePosted(message.id.clone()))
-            .unwrap();
-        if h.pasted(&session).contains("Use the other endpoint.") {
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "timed out waiting for the message to be delivered once tmux answered"
-        );
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    assert_eq!(
-        h.attention(&session).await,
-        None,
-        "a message that got there in the end raises nothing"
     );
 }
 

@@ -220,16 +220,12 @@ pub fn row(id: impl Into<String>, label: impl Into<String>) -> Row {
     }
 }
 
-/// The addressee that is not a profile, as `--to` spells it and the daemon
-/// reads it.
-pub const USER: &str = "user";
-
 /// The profiles the arguments of one command name.
 ///
 /// A profile is named by its name as often as by its id — `--planner`,
-/// `--engineer`, a `--reviewer`'s half, a `--to` — so the list is what all of
-/// them are matched against, read once however many there are and not at all
-/// when every one of them is already a whole id.
+/// `--engineer`, a `--reviewer`'s half — so the list is what all of them are
+/// matched against, read once however many there are and not at all when
+/// every one of them is already a whole id.
 pub enum Profiles<'a> {
     /// Nothing read yet, and where to read it from.
     Daemon(&'a Client),
@@ -257,24 +253,6 @@ impl<'a> Profiles<'a> {
             unreachable!("the profiles have just been read")
         };
         Ok(list.pick(typed)?.id.clone())
-    }
-
-    /// A `--to` as the daemon should receive it.
-    ///
-    /// [`USER`] is not a profile, and neither is a word no profile answers
-    /// to: it travels untouched, because what the daemon says about an
-    /// addressee a thread cannot deliver to names everyone it *can* address —
-    /// more use to the caller than a listing of every profile there is.
-    pub async fn recipient(&mut self, typed: &str) -> Result<String> {
-        if typed == USER {
-            return Ok(typed.to_string());
-        }
-        match self.id(typed).await {
-            Err(e) if crate::error::exit(&e) == crate::error::Exit::NotFound => {
-                Ok(typed.to_string())
-            }
-            other => other,
-        }
     }
 }
 
@@ -603,23 +581,6 @@ mod tests {
         );
         let err = profiles.id("Nobody").await.expect_err("no such profile");
         assert_eq!(err.to_string(), "no profile matches \"Nobody\"");
-    }
-
-    /// `--to` is the one profile argument that is not always a profile: the
-    /// human is `user`, and a word no profile answers to is left for the
-    /// daemon, whose refusal names everyone this thread can address.
-    #[tokio::test]
-    async fn a_recipient_that_names_no_profile_travels_untouched() {
-        let mut profiles = profiles();
-        assert_eq!(profiles.recipient(USER).await.expect("the human"), "user");
-        assert_eq!(
-            profiles.recipient("Nobody").await.expect("left alone"),
-            "Nobody"
-        );
-        assert_eq!(
-            profiles.recipient("0000abcde").await.expect("a short id"),
-            "01m0prof0000000000000abcde"
-        );
     }
 
     /// The rows come off the daemon's own listing payloads, which is where

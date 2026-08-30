@@ -65,8 +65,7 @@ impl super::Scheduler {
                 if let Some(blocker) = self.store.task_dependencies_blocked(&task.id).await? {
                     let reason = blocked_reason(&blocker);
                     warn!(task = %task.id, dependency = %blocker.id, "dependency ended unmerged, failing task");
-                    let task = self
-                        .store
+                    self.store
                         .transition_task(
                             &task.id,
                             TaskStatus::Failed,
@@ -75,7 +74,6 @@ impl super::Scheduler {
                             None,
                         )
                         .await?;
-                    self.announce_ending(&task, Some(&reason)).await;
                     return Ok(());
                 }
                 if self.store.task_dependencies_merged(&task.id).await? {
@@ -302,20 +300,16 @@ impl super::Scheduler {
         *failures += 1;
         if *failures >= SPAWN_RETRY_BUDGET {
             warn!(task = %task_id, failures, "retry budget exhausted, failing task");
-            let reason = "the agent could not be started";
-            if let Ok(task) = self
+            let _ = self
                 .store
                 .transition_task(
                     task_id,
                     TaskStatus::Failed,
                     Actor::Daemon,
-                    Some(reason),
+                    Some("the agent could not be started"),
                     None,
                 )
-                .await
-            {
-                self.announce_ending(&task, Some(reason)).await;
-            }
+                .await;
             self.spawn_failures.remove(task_id);
         }
     }

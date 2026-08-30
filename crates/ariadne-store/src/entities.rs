@@ -5,7 +5,7 @@
 use std::str::FromStr;
 
 use ariadne_core::{
-    AgentKind, AttentionReason, AuthorRole, GoalStatus, MergeStrategy, PromptKind, RecipientKind,
+    AgentKind, AttentionReason, GoalStatus, MergeStrategy, PromptKind,
     ReviewVerdict, Role, SessionStatus, TaskStatus,
 };
 
@@ -54,7 +54,6 @@ enum_columns! {
         status: SessionStatus,
         attention_reason: [AttentionReason],
     }
-    Message { author_role: AuthorRole }
     Review { verdict: ReviewVerdict }
 }
 
@@ -311,61 +310,6 @@ pub struct AgentSession {
     pub launched_at: Option<String>,
     pub created_at: String,
     pub ended_at: Option<String>,
-}
-
-#[derive(Debug, Clone, sqlx::FromRow)]
-pub struct Message {
-    pub id: String,
-    pub goal_id: String,
-    pub task_id: Option<String>,
-    pub author_role: String,
-    pub author_session_id: Option<String>,
-    /// Whom the message is addressed to, if anyone. None = the thread.
-    pub recipient_kind: Option<String>,
-    /// The addressed profile, set exactly when the kind is `profile`.
-    pub recipient_profile_id: Option<String>,
-    pub body: String,
-    pub created_at: String,
-}
-
-impl Message {
-    /// The addressee, rebuilt from the two columns that hold it.
-    pub fn recipient(&self) -> Option<Recipient> {
-        let kind = RecipientKind::from_str(self.recipient_kind.as_deref()?)
-            .expect("valid recipient kind in db");
-        Some(match kind {
-            RecipientKind::Profile => Recipient::Profile(
-                self.recipient_profile_id
-                    .clone()
-                    .expect("a profile recipient in db carries its profile id"),
-            ),
-            RecipientKind::User => Recipient::User,
-        })
-    }
-}
-
-/// A message's addressee: one agent profile, or the human user.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Recipient {
-    Profile(String),
-    User,
-}
-
-impl Recipient {
-    pub fn kind(&self) -> RecipientKind {
-        match self {
-            Recipient::Profile(_) => RecipientKind::Profile,
-            Recipient::User => RecipientKind::User,
-        }
-    }
-
-    /// The addressed profile's id; None when the user is the addressee.
-    pub fn profile_id(&self) -> Option<&str> {
-        match self {
-            Recipient::Profile(id) => Some(id),
-            Recipient::User => None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]

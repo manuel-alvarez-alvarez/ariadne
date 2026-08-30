@@ -42,8 +42,8 @@ use ariadne_daemon::log::LogBuffer;
 use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_daemon::tmux::{TmuxManager, session_name};
 use ariadne_store::{
-    AgentSession, Goal, Message, NewAgentEvent, NewGoal, NewProfile, NewRepository, NewSession,
-    NewTask, Profile, Recipient, Repository, ReviewerSlot, SessionFilter, Store, Task,
+    AgentSession, Goal, NewAgentEvent, NewGoal, NewProfile, NewRepository, NewSession,
+    NewTask, Profile, Repository, ReviewerSlot, SessionFilter, Store, Task,
 };
 
 /// How long a test waits for something the daemon does off the request path —
@@ -559,9 +559,8 @@ fn target_of(call: &str) -> Option<String> {
 
 // -- seeding ----------------------------------------------------------------
 
-/// The people of one goal with one task, and the repository behind it:
-/// everyone a thread of it can address, and every agent that can be spawned
-/// for it.
+/// The people of one goal with one task, and the repository behind it: every
+/// agent that can be spawned for it.
 pub struct Cast {
     pub goal: Goal,
     pub task: Task,
@@ -909,25 +908,6 @@ impl Harness {
             .unwrap();
     }
 
-    /// The goal-level thread, as anyone reading it would see it.
-    pub async fn goal_thread(&self, goal: &Goal) -> Vec<Message> {
-        self.store
-            .list_goal_messages(&goal.id, None, 50)
-            .await
-            .unwrap()
-    }
-
-    /// The bodies of a task thread, as anyone reading it would see them.
-    pub async fn thread(&self, task: &Task) -> Vec<String> {
-        self.store
-            .list_task_messages(&task.id, None, 50)
-            .await
-            .unwrap()
-            .into_iter()
-            .map(|m| m.body)
-            .collect()
-    }
-
     /// A task whose engineer session has already run once: a worktree on disk,
     /// an agent conversation to resume, and a pane that is no longer alive.
     /// What the launcher relaunches when the reviewers bounce a task back.
@@ -1038,17 +1018,6 @@ impl Harness {
             .attention_reason()
     }
 
-    /// What a task's thread said to the user, in the order it was said.
-    pub async fn user_messages(&self, task: &Task) -> Vec<Message> {
-        self.store
-            .list_task_messages(&task.id, None, 100)
-            .await
-            .unwrap()
-            .into_iter()
-            .filter(|m| m.recipient() == Some(Recipient::User))
-            .collect()
-    }
-
     /// Poke the scheduler about a task, the way an HTTP handler does after a
     /// write. Only for a harness built with [`HarnessBuilder::scheduler`].
     pub fn notify(&self, task_id: &str) {
@@ -1058,13 +1027,6 @@ impl Harness {
     /// The same about a goal: what a status change sends.
     pub fn notify_goal(&self, goal_id: &str) {
         self.wake(SchedEvent::GoalChanged(goal_id.to_string()));
-    }
-
-    /// Offer a posted message to the scheduler again — the pass a
-    /// reconciliation tick would make, without waiting a quarter of a minute
-    /// for it.
-    pub fn notify_message(&self, message_id: &str) {
-        self.wake(SchedEvent::MessagePosted(message_id.to_string()));
     }
 
     fn wake(&self, event: SchedEvent) {

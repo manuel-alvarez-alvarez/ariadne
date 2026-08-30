@@ -1,5 +1,6 @@
 //! Axum application: routes, shared state, OpenAPI document.
 
+mod caller;
 mod catalog;
 mod classify;
 pub(crate) mod convert;
@@ -12,7 +13,6 @@ mod logs;
 mod pane;
 mod pins;
 mod profiles;
-mod recipients;
 mod repositories;
 mod session_logs;
 mod sessions;
@@ -91,11 +91,6 @@ impl AppState {
     pub fn notify_scheduler_goal(&self, goal_id: &str) {
         self.wake(SchedEvent::GoalChanged(goal_id.to_string()));
     }
-
-    /// A message was posted: whoever it addresses is woken with it.
-    pub fn notify_scheduler_message(&self, message_id: &str) {
-        self.wake(SchedEvent::MessagePosted(message_id.to_string()));
-    }
 }
 
 #[derive(OpenApi)]
@@ -117,10 +112,8 @@ impl AppState {
         repositories::update, repositories::delete,
         goals::create, goals::list, goals::get, goals::delete,
         goals::cancel, goals::finalize,
-        goals::list_messages, goals::post_message,
         tasks::create, tasks::list, tasks::get, tasks::update,
         tasks::transition, tasks::cancel, tasks::retry, tasks::list_transitions,
-        tasks::list_messages, tasks::post_message,
         landing::list_reviews, landing::post_review, landing::diff,
         landing::record_pull_request,
         sessions::list, sessions::get, sessions::kill, sessions::resume,
@@ -142,8 +135,8 @@ impl AppState {
         (name = "agents", description = "Per-agent-CLI launch configuration"),
         (name = "profiles", description = "Agent profiles (role + system prompt + agent CLI)"),
         (name = "repositories", description = "Git repositories registered with the daemon"),
-        (name = "goals", description = "Goals and their planning threads"),
-        (name = "tasks", description = "Tasks, transitions, conversations, reviews"),
+        (name = "goals", description = "Goals and their plans"),
+        (name = "tasks", description = "Tasks, transitions, reviews"),
         (name = "sessions", description = "Agent sessions (tmux-hosted)"),
         (name = "events", description = "Raw agent events from hooks, and the live domain-event stream"),
         (name = "models", description = "Model catalogs per agent CLI"),
@@ -198,10 +191,6 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/goals/{id}", get(goals::get).delete(goals::delete))
         .route("/v1/goals/{id}/cancel", post(goals::cancel))
         .route("/v1/goals/{id}/finalize", post(goals::finalize))
-        .route(
-            "/v1/goals/{id}/messages",
-            get(goals::list_messages).post(goals::post_message),
-        )
         .route("/v1/goals/{goal_id}/tasks", post(tasks::create))
         // tasks
         .route("/v1/tasks", get(tasks::list))
@@ -212,10 +201,6 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/v1/tasks/{id}/cancel", post(tasks::cancel))
         .route("/v1/tasks/{id}/retry", post(tasks::retry))
-        .route(
-            "/v1/tasks/{id}/messages",
-            get(tasks::list_messages).post(tasks::post_message),
-        )
         .route(
             "/v1/tasks/{id}/reviews",
             get(landing::list_reviews).post(landing::post_review),

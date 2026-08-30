@@ -2,7 +2,7 @@
 //!
 //! The contract is that only a finished goal can go — an active one still owns
 //! tmux sessions and worktrees that cancelling is what tears down — that what
-//! goes takes its tasks and messages with it, and that the deletion reaches the
+//! goes takes its tasks with it, and that the deletion reaches the
 //! domain-event stream so clients stop showing what no longer exists.
 
 mod common;
@@ -10,7 +10,6 @@ mod common;
 use axum::http::StatusCode;
 
 use ariadne_api::goals::GoalDto;
-use ariadne_api::messages::MessageDto;
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::stream::DomainEvent;
 use ariadne_api::tasks::TaskDto;
@@ -81,21 +80,12 @@ async fn live_session(h: &Harness, goal: &GoalDto) -> AgentSession {
     session
 }
 
-/// A cancelled goal deletes, tasks and messages with it, and the stream says so.
+/// A cancelled goal deletes, its tasks with it, and the stream says so.
 #[tokio::test]
 async fn deleting_a_finished_goal_takes_its_children_and_reaches_the_stream() {
     let h = harness().await;
     let goal = goal(&h, "repo").await;
     let task = task_in(&h, &goal).await;
-    let _: MessageDto = h
-        .json(
-            post_json(
-                &format!("/v1/goals/{}/messages", goal.id),
-                serde_json::json!({"body": "how is it going?"}),
-            ),
-            StatusCode::CREATED,
-        )
-        .await;
     let goal = cancel(&h, &goal).await;
 
     let mut rx = h.bus.subscribe();
@@ -125,7 +115,7 @@ async fn deleting_a_finished_goal_takes_its_children_and_reaches_the_stream() {
     let goals: Vec<GoalDto> = h.get("/v1/goals").await;
     assert!(goals.is_empty(), "the goal is gone from the list too");
 
-    // ON DELETE CASCADE: the task went with it, and so did the thread.
+    // ON DELETE CASCADE: the task went with it.
     h.error(
         get(&format!("/v1/tasks/{}", task.id)),
         StatusCode::NOT_FOUND,
@@ -133,11 +123,6 @@ async fn deleting_a_finished_goal_takes_its_children_and_reaches_the_stream() {
     .await;
     let tasks: Vec<TaskDto> = h.get("/v1/tasks").await;
     assert!(tasks.is_empty(), "no task outlives its goal");
-    h.error(
-        get(&format!("/v1/goals/{}/messages", goal.id)),
-        StatusCode::NOT_FOUND,
-    )
-    .await;
 
     // The repository the goal referenced is untouched, and free again.
     let repos: Vec<RepositoryDto> = h.get("/v1/repositories").await;

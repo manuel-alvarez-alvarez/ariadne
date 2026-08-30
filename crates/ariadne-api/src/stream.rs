@@ -13,7 +13,6 @@ use utoipa::{IntoParams, ToSchema};
 
 use crate::events::AgentEventDto;
 use crate::goals::GoalDto;
-use crate::messages::MessageDto;
 use crate::profiles::ProfileDto;
 use crate::repositories::RepositoryDto;
 use crate::reviews::ReviewDto;
@@ -85,7 +84,7 @@ pub enum DomainEvent {
     GoalCreated(GoalDto),
     /// Covers status changes: finalize, cancel, completion.
     GoalUpdated(GoalDto),
-    /// A terminal goal was deleted, tasks and messages with it.
+    /// A terminal goal was deleted, its tasks with it.
     GoalDeleted(DeletedDto),
     TaskCreated(TaskDto),
     /// Covers status transitions, edits, stall flags and worktree changes.
@@ -93,7 +92,6 @@ pub enum DomainEvent {
     /// Covers commits made in the task's worktree: the branch head moved, so
     /// the task's diff against its base is no longer the one a client holds.
     TaskBranchUpdated(TaskBranchDto),
-    MessageCreated(MessageDto),
     ReviewCreated(ReviewDto),
     SessionCreated(SessionDto),
     /// Covers status changes: kill, resume, exit, activity.
@@ -118,7 +116,6 @@ impl DomainEvent {
             Self::TaskCreated(_) => "task_created",
             Self::TaskUpdated(_) => "task_updated",
             Self::TaskBranchUpdated(_) => "task_branch_updated",
-            Self::MessageCreated(_) => "message_created",
             Self::ReviewCreated(_) => "review_created",
             Self::SessionCreated(_) => "session_created",
             Self::SessionUpdated(_) => "session_updated",
@@ -144,7 +141,6 @@ impl DomainEvent {
             Self::TaskCreated(t) => json(t),
             Self::TaskUpdated(t) => json(t),
             Self::TaskBranchUpdated(b) => json(b),
-            Self::MessageCreated(m) => json(m),
             Self::ReviewCreated(r) => json(r),
             Self::SessionCreated(s) | Self::SessionUpdated(s) => json(s),
             Self::AgentEvent(e) => json(e),

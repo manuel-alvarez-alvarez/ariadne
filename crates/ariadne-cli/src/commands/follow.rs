@@ -27,7 +27,7 @@ use crate::output::note;
 /// How long a redraw waits for the burst it is in to finish.
 ///
 /// One thing happening produces several events — a task transition is a
-/// `task_updated` and the `message_created` and `session_updated` around it —
+/// `task_updated` and the `review_created` and `session_updated` around it —
 /// and redrawing on each of them is a flicker showing three views of one
 /// moment. Short enough that a watch still feels immediate.
 const SETTLE: Duration = Duration::from_millis(250);

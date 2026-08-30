@@ -535,6 +535,34 @@ impl Store {
         .flatten())
     }
 
+    /// Why a task that ended without merging ended: the reason on the
+    /// transition that put it into `failed` or `cancelled`.
+    ///
+    /// The status is the fact and the transition is the words, so this is
+    /// where the two are put back together — what an engineer's `fail_task`
+    /// said, what a dependency that never landed said, what cancelled the
+    /// goal. Read off the audit row that recorded it rather than kept in a
+    /// column of its own, which would be a second copy to drift.
+    ///
+    /// `None` for a task that has not ended that way, and for one that ended
+    /// with nothing said.
+    pub async fn ended_reason(&self, task: &Task) -> Result<Option<String>> {
+        let status = task.status();
+        if !matches!(status, TaskStatus::Failed | TaskStatus::Cancelled) {
+            return Ok(None);
+        }
+        Ok(sqlx::query_scalar::<_, Option<String>>(
+            "SELECT reason FROM task_transitions
+              WHERE task_id = ? AND to_status = ?
+              ORDER BY id DESC LIMIT 1",
+        )
+        .bind(&task.id)
+        .bind(status.as_str())
+        .fetch_optional(self.r())
+        .await?
+        .flatten())
+    }
+
     /// Reviewer profile ids in planner-assigned order.
     pub async fn list_task_reviewers(&self, task_id: &str) -> Result<Vec<String>> {
         Ok(sqlx::query_scalar(

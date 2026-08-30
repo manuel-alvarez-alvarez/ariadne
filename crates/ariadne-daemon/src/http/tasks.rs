@@ -1,12 +1,10 @@
-//! Task endpoints: CRUD, transitions and the task conversation. What a task
-//! being reviewed and landed goes through is in [`super::landing`].
+//! Task endpoints: CRUD and transitions. What a task being reviewed and
+//! landed goes through is in [`super::landing`].
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 
-use ariadne_api::Page;
-use ariadne_api::messages::{CreateMessageRequest, MessageDto};
 use ariadne_api::tasks::{
     CreateTaskRequest, ReviewerAssignment, TaskDto, TaskListQuery, TaskTransitionDto,
     TransitionRequest, UpdateTaskRequest,
@@ -15,12 +13,11 @@ use ariadne_core::{Actor, Role, TaskStatus};
 use ariadne_store::{NewTask, Profile, ReviewerSlot, Store, Task, TaskFilter, TaskUpdate};
 
 use super::AppState;
-use super::convert::{message_dtos, task_dto_of, transition_dto};
+use super::convert::{task_dto_of, transition_dto};
 use super::error::{ApiError, ApiResult};
 use super::landing;
 use super::pins::{self, Repin, Standing};
-use super::recipients::{self, CallCtx, Thread, call_ctx, ensure_task_scope};
-use crate::notify;
+use super::caller::{CallCtx, call_ctx, ensure_task_scope};
 
 /// Resolve one profile id-or-name, checking it has `role`: the shape every
 /// profile assignment takes.
@@ -273,12 +270,6 @@ pub(crate) async fn apply_transition(
             req.merge_commit.as_deref(),
         )
         .await?;
-    // A task that ended is told to the user here, where every transition a
-    // person or an agent asks for goes through: `notify::task_ended` writes
-    // nothing for the statuses that are not endings.
-    if let Some(msg) = notify::task_ended(&state.store, &task, req.reason.as_deref()).await? {
-        state.notify_scheduler_message(&msg.id);
-    }
     // A task going back to `ready` is a task starting over, and the only way
     // there is a retry of a failed one. Whatever it was published as is not
     // its request any more — a request closed unmerged is what fails a
@@ -353,41 +344,4 @@ pub async fn list_transitions(
     state.store.get_task(&id).await?;
     let rows = state.store.list_task_transitions(&id).await?;
     Ok(Json(rows.into_iter().map(transition_dto).collect()))
-}
-
-/// Task conversation.
-#[utoipa::path(get, path = "/v1/tasks/{id}/messages", tag = "tasks",
-    params(("id" = String, Path, description = "task id"), Page),
-    responses((status = 200, body = [MessageDto])))]
-pub async fn list_messages(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Query(page): Query<Page>,
-) -> ApiResult<Json<Vec<MessageDto>>> {
-    state.store.get_task(&id).await?;
-    let msgs = state
-        .store
-        .list_task_messages(&id, page.after.as_deref(), page.limit())
-        .await?;
-    Ok(Json(message_dtos(&state.store, msgs).await?))
-}
-
-/// Post into the task conversation.
-#[utoipa::path(post, path = "/v1/tasks/{id}/messages", tag = "tasks",
-    request_body = CreateMessageRequest,
-    params(("id" = String, Path, description = "task id")),
-    responses(
-        (status = 201, body = MessageDto),
-        (status = 400, description = "unknown addressee, or one taking no part in the task")
-    ))]
-pub async fn post_message(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    headers: HeaderMap,
-    Json(req): Json<CreateMessageRequest>,
-) -> ApiResult<(StatusCode, Json<MessageDto>)> {
-    let ctx = call_ctx(&state.store, &headers).await?;
-    ensure_task_scope(&ctx, &id)?;
-    let task = state.store.get_task(&id).await?;
-    recipients::post(&state, ctx, Thread::Task(task), req).await
 }

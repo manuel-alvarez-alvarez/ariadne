@@ -5,13 +5,10 @@
 //! enum, a derived flag, a name the caller loaded. Only the second kind is
 //! worth reading, so [`dto!`] is what writes the first.
 
-use std::collections::HashMap;
-use std::collections::hash_map::Entry;
 
 use ariadne_api::agents::AgentConfigDto;
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::goals::{GoalDto, GoalUsageDto};
-use ariadne_api::messages::{MessageDto, MessageRecipientDto};
 use ariadne_api::profiles::{ProfileDto, ProfilePromptDto};
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::reviews::ReviewDto;
@@ -99,6 +96,7 @@ dto! {
 
     /// The names come from the caller, which loads them: the engineer's, the
     /// planner's of the task's goal, and one per reviewer slot in slot order.
+    /// So does `reason`, which only an ended task has.
     fn task_dto(
         t: store::Task,
         reviewers: Vec<(store::TaskReviewer, Option<String>)>,
@@ -106,6 +104,7 @@ dto! {
         engineer_profile_name: Option<String>,
         planner_profile_name: Option<String>,
         usage: TaskUsageDto,
+        reason: Option<String>,
     ) -> TaskDto {
         status: t.status(),
         stalled: t.is_stalled(),
@@ -118,6 +117,7 @@ dto! {
         engineer_profile_name: engineer_profile_name,
         planner_profile_name: planner_profile_name,
         usage: usage,
+        reason: reason,
         .. id, goal_id, repo_id, title, description, engineer_profile_id,
            effort, branch, worktree_path, review_round, merge_commit, pr_url,
            created_at, updated_at
@@ -125,18 +125,6 @@ dto! {
 
     pub fn transition_dto(t: store::TaskTransition) -> TaskTransitionDto {
         .. id, from_status, to_status, actor, reason, created_at
-    }
-
-    /// `name` is the addressed profile's name, which the callers below load;
-    /// it is ignored for a message addressed to the user or to nobody.
-    fn message_dto(m: store::Message, name: Option<String>) -> MessageDto {
-        author_role: m.author_role(),
-        recipient: m.recipient().map(|r| MessageRecipientDto {
-            kind: r.kind(),
-            profile_id: r.profile_id().map(str::to_string),
-            profile_name: r.profile_id().and(name),
-        }),
-        .. id, goal_id, task_id, author_session_id, body, created_at
     }
 
     pub fn review_dto(r: store::Review) -> ReviewDto {
@@ -162,21 +150,20 @@ dto! {
     }
 }
 
-/// The name a message addresses one profile by, or None where the profile is
-/// gone — which a profile a task names cannot be, the store refusing to delete
-/// one anything references, so this leaves a task readable rather than failing
+/// The name a task names one profile by, or None where the profile is gone —
+/// which a profile a task names cannot be, the store refusing to delete one
+/// anything references, so this leaves a task readable rather than failing
 /// the read.
 async fn profile_name(store: &Store, id: &str) -> Option<String> {
     store.get_profile(id).await.ok().map(|p| p.name)
 }
 
 /// [`task_dto`] with everything it needs loaded from the store: the reviewer
-/// slots, the dependencies, and the profile names an agent addresses the task's
-/// participants by — the engineer's, every reviewer's, and the planner's of its
-/// goal, which takes part in the thread without being a field of the task.
+/// slots, the dependencies, and the profile names the task's participants are
+/// known by — the engineer's, every reviewer's, and the planner's of its goal.
 ///
-/// A name beside every id is what a task is read for: `to` takes a name, and no
-/// prompt can teach an agent to read an id.
+/// A name beside every id is what a task is read for: no prompt can teach an
+/// agent to read an id.
 pub async fn task_dto_of(store: &Store, task: store::Task) -> Result<TaskDto, StoreError> {
     let mut reviewers = Vec::new();
     for pin in store.list_task_reviewer_pins(&task.id).await? {
@@ -188,8 +175,9 @@ pub async fn task_dto_of(store: &Store, task: store::Task) -> Result<TaskDto, St
     let planner_id = store.get_goal(&task.goal_id).await?.planner_profile_id;
     let planner = profile_name(store, &planner_id).await;
     let usage = task_usage(store, &task.id, &reviewers).await?;
+    let reason = store.ended_reason(&task).await?;
     Ok(task_dto(
-        task, reviewers, depends_on, engineer, planner, usage,
+        task, reviewers, depends_on, engineer, planner, usage, reason,
     ))
 }
 
@@ -278,36 +266,3 @@ async fn goal_usage(store: &Store, goal_id: &str) -> Result<GoalUsageDto, StoreE
     })
 }
 
-/// [`message_dto`] with the addressee's name loaded from the store.
-pub async fn message_dto_of(store: &Store, m: store::Message) -> Result<MessageDto, StoreError> {
-    let name = match &m.recipient_profile_id {
-        Some(id) => Some(store.get_profile(id).await?.name),
-        None => None,
-    };
-    Ok(message_dto(m, name))
-}
-
-/// A whole thread, resolving each addressed profile once however many of its
-/// messages name it.
-pub async fn message_dtos(
-    store: &Store,
-    msgs: Vec<store::Message>,
-) -> Result<Vec<MessageDto>, StoreError> {
-    let mut names: HashMap<String, String> = HashMap::new();
-    for id in msgs.iter().filter_map(|m| m.recipient_profile_id.clone()) {
-        if let Entry::Vacant(slot) = names.entry(id) {
-            let name = store.get_profile(slot.key()).await?.name;
-            slot.insert(name);
-        }
-    }
-    Ok(msgs
-        .into_iter()
-        .map(|m| {
-            let name = m
-                .recipient_profile_id
-                .as_ref()
-                .and_then(|id| names.get(id).cloned());
-            message_dto(m, name)
-        })
-        .collect())
-}

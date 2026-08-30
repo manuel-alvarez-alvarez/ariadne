@@ -305,24 +305,6 @@ pub fn reviewer_profiles() -> Vec<CompletionCandidate> {
     profiles(Some("reviewer"))
 }
 
-/// Whom a goal's planning thread can address (`goal msg --to`): its planner,
-/// or the user.
-pub fn goal_message_recipients() -> Vec<CompletionCandidate> {
-    message_recipients(Some("planner"))
-}
-
-/// Whom a task's thread can address (`task msg --to`): anyone working on the
-/// task — engineer, reviewers, planner — or the user.
-pub fn task_message_recipients() -> Vec<CompletionCandidate> {
-    message_recipients(None)
-}
-
-fn message_recipients(role: Option<&str>) -> Vec<CompletionCandidate> {
-    let mut out = profiles(role);
-    out.push(CompletionCandidate::new("user").help(Some("the human user".into())));
-    out
-}
-
 /// Registered repository ids (repo subcommands, `goal create --repo`).
 pub fn repo_ids() -> Vec<CompletionCandidate> {
     fetch("/v1/repositories").iter().map(repository).collect()

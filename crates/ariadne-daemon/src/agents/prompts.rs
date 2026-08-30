@@ -3,9 +3,7 @@
 //! Every briefing an agent is started or resumed on belongs to its profile,
 //! and either layer may be the default of the code — which is what a profile
 //! nobody edited runs on, without anything having been copied into the
-//! database first. What Ariadne says on its own behalf is not a briefing and
-//! belongs to no profile: [`message_delivery`] is the daemon's own notice,
-//! worded here and nowhere else.
+//! database first.
 //!
 //! Those templates are editable, so they are also breakable. Rendering is
 //! lenient by construction: an unknown `{token}`, a brace that never closes,
@@ -18,7 +16,7 @@
 
 use ariadne_core::PromptKind;
 use ariadne_store::defaults::default_prompt_text;
-use ariadne_store::{Goal, Message, Profile, Repository, Store, Task};
+use ariadne_store::{Goal, Profile, Repository, Store, Task};
 
 /// The text `kind` is rendered from: the one set on the profile, or the
 /// default of the kind, which is what the store answers while nothing is set.
@@ -247,34 +245,6 @@ pub fn landing_briefing(template: &str, task: &Task, repo: &Repository) -> Strin
     )
 }
 
-/// The notice an agent of any role is woken with when a message addresses it.
-///
-/// Ariadne's own plumbing rather than a persona text, so it is worded here and
-/// is nobody's to edit. The message is quoted whole rather than pointed at: an
-/// agent sent to go and read what it was woken for has been woken for nothing.
-const MESSAGE_DELIVERY: &str = r#"New message from the {author} in {thread}:
-
-{body}
-
-`list_messages` reads the thread, `post_message` answers."#;
-
-/// What an agent of any role is woken with when a message addresses it: who
-/// wrote, what they wrote, and which conversation it is in.
-pub fn message_delivery(message: &Message) -> String {
-    let thread = match message.task_id {
-        Some(_) => "your task conversation",
-        None => "the goal's planning thread",
-    };
-    render(
-        MESSAGE_DELIVERY,
-        &[
-            ("author", message.author_role().as_str()),
-            ("thread", thread),
-            ("body", &message.body),
-        ],
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -328,20 +298,6 @@ mod tests {
             pr_url: None,
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:00Z".into(),
-        }
-    }
-
-    fn message() -> Message {
-        Message {
-            id: "01messagexxxxxxxxxxxxxxxxx".into(),
-            goal_id: "01goalxxxxxxxxxxxxxxxxxxxx".into(),
-            task_id: Some("01taskxxxxxxxxxxxxxxxxxxxx".into()),
-            author_role: "planner".into(),
-            author_session_id: None,
-            recipient_kind: None,
-            recipient_profile_id: None,
-            body: "the scope grew: drop the second forge".into(),
-            created_at: "2026-01-01T00:00:00Z".into(),
         }
     }
 
@@ -706,35 +662,6 @@ mod tests {
             assert!(published.contains(value), "{value}: {published}");
         }
         assert!(!published.contains('{'), "{published}");
-    }
-
-    /// The notice a woken agent reads carries the message itself, not a
-    /// pointer to go and read it, and names the two calls it hands the agent.
-    #[test]
-    fn the_delivery_notice_quotes_the_message_and_names_its_tools() {
-        let text = message_delivery(&message());
-        assert!(
-            text.contains("New message from the planner in your task conversation"),
-            "{text}"
-        );
-        assert!(
-            text.contains("the scope grew: drop the second forge"),
-            "{text}"
-        );
-        assert!(
-            text.contains("`list_messages` reads the thread, `post_message` answers"),
-            "{text}"
-        );
-        assert!(!text.contains("  "), "{text}");
-
-        let planning = message_delivery(&Message {
-            task_id: None,
-            ..message()
-        });
-        assert!(
-            planning.contains("in the goal's planning thread"),
-            "{planning}"
-        );
     }
 
     /// A repository is registered with a description; the planner is told it,

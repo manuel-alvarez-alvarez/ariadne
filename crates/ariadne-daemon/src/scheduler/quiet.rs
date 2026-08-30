@@ -165,25 +165,27 @@ impl super::Scheduler {
         // the nudge and will not submit it is raised for the user rather than
         // nudged again, and one tmux would not take at all gives the nudge
         // back — see [`Self::delivery_settled`].
-        self.spawn_delivery(session, resume.to_string(), None);
+        self.spawn_delivery(session, resume.to_string());
         Ok(())
     }
 
     /// The one clock: when this session was last heard from at all.
     ///
-    /// Three things count, and the latest of them is the answer. What the
-    /// agent reported is the plain one — every hook and every plugin event
-    /// stamps `last_activity_at`, so an agent that is working keeps its own
-    /// clock reset however slowly it works, and a wedged one is exactly the
-    /// one that cannot. A confirmed delivery counts because it is a nudge in
-    /// its own right, and a better one: an agent told what to do a moment ago
-    /// is not asked why it has stopped. And the launch counts because a
-    /// session that has reported nothing at all still has to be measured from
-    /// something — an instruction left sitting in a composer fires no hook
-    /// whatsoever.
+    /// Two things count, and the later of them is the answer. What the agent
+    /// reported is the plain one — every hook and every plugin event stamps
+    /// `last_activity_at`, so an agent that is working keeps its own clock
+    /// reset however slowly it works, and a wedged one is exactly the one that
+    /// cannot. And the launch counts because a session that has reported
+    /// nothing at all still has to be measured from something — an instruction
+    /// left sitting in a composer fires no hook whatsoever.
     ///
-    /// `None` when none of the three is known, which is a session nothing is
-    /// concluded about.
+    /// A nudge that went in counts for neither: the whole point of the
+    /// thresholds behind it is that an agent which was told to get on with the
+    /// work and still says nothing is escalated, and a clock the nudge itself
+    /// reset would never reach them.
+    ///
+    /// `None` when neither is known, which is a session nothing is concluded
+    /// about.
     fn last_heard_from(&self, session: &AgentSession) -> Option<chrono::DateTime<chrono::Utc>> {
         let stamped = |at: &Option<String>| {
             at.as_deref()
@@ -193,7 +195,6 @@ impl super::Scheduler {
         [
             stamped(&session.last_activity_at),
             stamped(&session.launched_at),
-            self.delivered_at.get(&session.id).copied(),
         ]
         .into_iter()
         .flatten()
@@ -242,23 +243,18 @@ impl super::Scheduler {
             if let Err(e) = self.launcher.kill_session(&session.id).await {
                 warn!(session = %session.id, error = %e, "killing the wedged session failed");
             }
-            // Told to the user like every other ending the daemon decides,
-            // and by the same call: a task nobody is coming back to is worth
-            // a line in its thread.
-            let reason = "its agent stopped mid-turn after every relaunch";
-            if let Ok(task) = self
+            // The task carries why it ended: its status and the reason on it
+            // are what the user reads.
+            let _ = self
                 .store
                 .transition_task(
                     &task_id,
                     TaskStatus::Failed,
                     Actor::Daemon,
-                    Some(reason),
+                    Some("its agent stopped mid-turn after every relaunch"),
                     None,
                 )
-                .await
-            {
-                self.announce_ending(&task, Some(reason)).await;
-            }
+                .await;
             return Ok(());
         }
         info!(session = %session.id, role = %session.role, relaunch = spent, "the agent has reported nothing for too long, relaunching it");

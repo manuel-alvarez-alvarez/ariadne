@@ -1,7 +1,7 @@
 //! Store integration tests against a temp-file SQLite database.
 
 use ariadne_core::{
-    Actor, AgentKind, AttentionReason, AuthorRole, GoalStatus, MergeStrategy, PromptKind,
+    Actor, AgentKind, AttentionReason, GoalStatus, MergeStrategy, PromptKind,
     ReviewVerdict, Role, SessionStatus, TaskStatus, TokenUsage,
 };
 use ariadne_store::defaults::{default_prompt, default_system_prompt};
@@ -870,9 +870,9 @@ async fn a_task_remembers_the_request_it_was_published_as() {
 }
 
 #[tokio::test]
-async fn messages_sessions_events_round_trip() {
+async fn sessions_and_events_round_trip() {
     let w = World::new().await;
-    let (store, goal, task) = (&w.store, &w.goal, &w.task);
+    let (store, task) = (&w.store, &w.task);
 
     let session = w.engineer_session().await;
     store
@@ -893,29 +893,6 @@ async fn messages_sessions_events_round_trip() {
     assert_eq!(live.len(), 1);
 
     store
-        .create_message(NewMessage {
-            goal_id: goal.id.clone(),
-            task_id: Some(task.id.clone()),
-            author_role: AuthorRole::Engineer,
-            author_session_id: Some(session.id.clone()),
-            recipient: None,
-            body: "starting work".into(),
-        })
-        .await
-        .unwrap();
-    let msgs = store.list_task_messages(&task.id, None, 50).await.unwrap();
-    assert_eq!(msgs.len(), 1);
-    assert_eq!(msgs[0].author_role(), AuthorRole::Engineer);
-    // Keyset pagination: nothing after the last id.
-    assert!(
-        store
-            .list_task_messages(&task.id, Some(&msgs[0].id), 50)
-            .await
-            .unwrap()
-            .is_empty()
-    );
-
-    store
         .create_event(NewAgentEvent {
             session_id: Some(session.id.clone()),
             task_id: Some(task.id.clone()),
@@ -934,107 +911,6 @@ async fn messages_sessions_events_round_trip() {
         .unwrap();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].kind, "post_tool_use");
-}
-
-/// A message can name who it is for: one profile, or the user. Saying nothing
-/// keeps it addressed to the thread, the way every message was before
-/// recipients existed, and whichever of the three it is survives the round
-/// trip through the list a thread is read with.
-#[tokio::test]
-async fn a_message_can_be_addressed_to_a_profile_or_to_the_user() {
-    let w = World::new().await;
-    let (store, goal, task, planner) = (&w.store, &w.goal, &w.task, &w.planner);
-    let engineer = Recipient::Profile(task.engineer_profile_id.clone());
-
-    for (recipient, body) in [
-        (Some(engineer.clone()), "over to you"),
-        (Some(Recipient::User), "a question for you"),
-        (None, "thinking out loud"),
-    ] {
-        store
-            .create_message(NewMessage {
-                goal_id: goal.id.clone(),
-                task_id: Some(task.id.clone()),
-                author_role: AuthorRole::Reviewer,
-                author_session_id: None,
-                recipient,
-                body: body.into(),
-            })
-            .await
-            .unwrap();
-    }
-
-    let msgs = store.list_task_messages(&task.id, None, 50).await.unwrap();
-    assert_eq!(
-        msgs.iter().map(Message::recipient).collect::<Vec<_>>(),
-        vec![Some(engineer.clone()), Some(Recipient::User), None]
-    );
-    // The columns behind the accessor: only a profile addressee carries an id.
-    assert_eq!(
-        (
-            msgs[0].recipient_kind.as_deref(),
-            msgs[0].recipient_profile_id.as_deref()
-        ),
-        (Some("profile"), Some(task.engineer_profile_id.as_str()))
-    );
-    assert_eq!(
-        (
-            msgs[1].recipient_kind.as_deref(),
-            msgs[1].recipient_profile_id.as_deref()
-        ),
-        (Some("user"), None)
-    );
-    assert_eq!(msgs[2].recipient_kind, None);
-
-    // The goal thread addresses the same way, and what create_message returns
-    // already carries the recipient it was given.
-    let msg = store
-        .create_message(NewMessage {
-            goal_id: goal.id.clone(),
-            task_id: None,
-            author_role: AuthorRole::User,
-            author_session_id: None,
-            recipient: Some(Recipient::Profile(planner.id.clone())),
-            body: "over to you, planner".into(),
-        })
-        .await
-        .unwrap();
-    let addressed_planner = Some(Recipient::Profile(planner.id.clone()));
-    assert_eq!(msg.recipient(), addressed_planner);
-    let goal_msgs = store.list_goal_messages(&goal.id, None, 50).await.unwrap();
-    assert_eq!(goal_msgs[0].recipient(), addressed_planner);
-}
-
-/// A profile someone addressed is a profile the database is holding on to:
-/// deleting it is refused the same way a profile in use by a goal or a task
-/// is, rather than leaving the message pointing at nothing.
-#[tokio::test]
-async fn a_profile_a_message_addresses_cannot_be_deleted() {
-    let w = World::new().await;
-    let (store, goal) = (&w.store, &w.goal);
-    // A profile nothing else references, so only the message can hold it.
-    let bystander = seed_profile(store, "bystander", Role::Reviewer).await;
-
-    store
-        .create_message(NewMessage {
-            goal_id: goal.id.clone(),
-            task_id: None,
-            author_role: AuthorRole::User,
-            author_session_id: None,
-            recipient: Some(Recipient::Profile(bystander.id.clone())),
-            body: "a word with you".into(),
-        })
-        .await
-        .unwrap();
-
-    let err = store.delete_profile(&bystander.id).await.unwrap_err();
-    let StoreError::Conflict(message) = err else {
-        panic!("expected a conflict, got {err:?}");
-    };
-    assert!(
-        message.contains("1 message as its addressee"),
-        "the refusal says what holds the profile: {message}"
-    );
 }
 
 /// What a launch is dated for: the one clock a watchdog reads when a session
@@ -1414,7 +1290,7 @@ async fn a_pending_question_is_the_last_word_of_a_sessions_log() {
     }
 
     // What an answered question takes down is its own flag and no other: the
-    // dialog and the message to the user are answered somewhere else.
+    // dialog and what the user owes the task are answered somewhere else.
     for (raised, left) in [
         (AttentionReason::WaitingInput, None),
         (
@@ -1444,92 +1320,11 @@ async fn a_pending_question_is_the_last_word_of_a_sessions_log() {
     }
 }
 
-/// The user speaking in a thread is the answer to whatever was waiting for
-/// them there, and to nothing else: `waiting_user` comes down across the whole
-/// thread, every other reason stays exactly where it was, and the threads
-/// beside it are not touched.
-#[tokio::test]
-async fn a_user_message_takes_only_waiting_user_down_and_only_in_its_own_thread() {
-    let w = World::new().await;
-    let store = &w.store;
-    let engineer = w.engineer_session().await;
-    let reviewer = w
-        .session(
-            "ariadne-test-rev",
-            Role::Reviewer,
-            &w.planner.id.clone(),
-            Some(&w.task.id),
-        )
-        .await;
-    // The goal's own thread, which is where its planner works, and a second
-    // task of the same goal: two threads the message is not written in.
-    let planner = w
-        .session("ariadne-test-plan", Role::Planner, &w.planner.id.clone(), None)
-        .await;
-    let other = seed_task(store, &w.goal, &w.repo, vec![]).await;
-    let elsewhere = w
-        .session(
-            "ariadne-test-other",
-            Role::Engineer,
-            &other.engineer_profile_id.clone(),
-            Some(&other.id),
-        )
-        .await;
-    for session in [&engineer, &planner, &elsewhere] {
-        store
-            .set_session_attention(&session.id, AttentionReason::WaitingUser)
-            .await
-            .unwrap();
-    }
-    // The one flag a message answers nothing about: a dialog is on a pane.
-    store
-        .set_session_attention(&reviewer.id, AttentionReason::WaitingPermission)
-        .await
-        .unwrap();
-
-    store
-        .clear_user_attention_in_thread(&w.goal.id, Some(&w.task.id))
-        .await
-        .unwrap();
-
-    let reason = async |session: &AgentSession| {
-        store
-            .get_session(&session.id)
-            .await
-            .unwrap()
-            .attention_reason()
-    };
-    assert_eq!(reason(&engineer).await, None, "the thread it was written in");
-    assert_eq!(
-        reason(&reviewer).await,
-        Some(AttentionReason::WaitingPermission),
-        "a dialog on a pane is not answered from a conversation"
-    );
-    assert_eq!(
-        reason(&planner).await,
-        Some(AttentionReason::WaitingUser),
-        "the goal's own thread is not this task's"
-    );
-    assert_eq!(
-        reason(&elsewhere).await,
-        Some(AttentionReason::WaitingUser),
-        "and neither is another task's"
-    );
-
-    // The goal thread reaches the sessions sitting on no task, and only them.
-    store
-        .clear_user_attention_in_thread(&w.goal.id, None)
-        .await
-        .unwrap();
-    assert_eq!(reason(&planner).await, None);
-    assert_eq!(reason(&elsewhere).await, Some(AttentionReason::WaitingUser));
-}
-
 /// What an agent's own detectors may raise over, and what they may not.
 ///
 /// `waiting_user` is the one flag no agent put up: it says a person owes this
-/// task something — a message written to them, a request that is theirs to
-/// merge — and a prompt, a disconnect or a stall neither settles that nor is
+/// task something — a request that is theirs to merge — and a prompt, a
+/// disconnect or a stall neither settles that nor is
 /// more use to whoever is reading the strip. So a raise from any of them is
 /// withheld, clock included, and the write says nothing to the watchers
 /// either: nothing about the session changed.
@@ -1654,6 +1449,72 @@ async fn the_review_summary_is_the_reason_of_the_latest_review_request() {
         store.review_summary(&task.id).await.unwrap().as_deref(),
         Some("the lane widths, as asked")
     );
+}
+
+/// Why an ended task ended, read off the transition that ended it: the
+/// engineer's own `fail_task` reason, or whatever cancelled it.
+///
+/// Only an ending has one. A task still being worked on carries nothing,
+/// however much has been said in its transitions — a review request's summary
+/// is the round's, not the task's — and a retry that puts it back to work
+/// takes the answer away with it.
+#[tokio::test]
+async fn an_ended_task_carries_the_reason_the_transition_that_ended_it_gave() {
+    let w = World::new().await;
+    let (store, task) = (&w.store, &w.task);
+    let reason = async || {
+        let task = store.get_task(&task.id).await.unwrap();
+        store.ended_reason(&task).await.unwrap()
+    };
+    assert_eq!(reason().await, None, "a pending task has not ended");
+
+    walk_to(store, &task.id, TaskStatus::InProgress).await;
+    store
+        .transition_task(
+            &task.id,
+            TaskStatus::UnderReview,
+            Actor::Engineer,
+            Some("the first pass, with a test per lane"),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        reason().await,
+        None,
+        "a round's summary is not why the task ended"
+    );
+
+    store
+        .transition_task(
+            &task.id,
+            TaskStatus::Failed,
+            Actor::Engineer,
+            Some("the crate it names was deleted upstream"),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        reason().await.as_deref(),
+        Some("the crate it names was deleted upstream")
+    );
+
+    // Retried: the task is being worked on again, so there is no ending to
+    // explain.
+    store
+        .transition_task(&task.id, TaskStatus::Ready, Actor::User, None, None)
+        .await
+        .unwrap();
+    assert_eq!(reason().await, None);
+
+    // And an ending nobody gave a reason for says nothing rather than
+    // answering with the one before it.
+    store
+        .transition_task(&task.id, TaskStatus::Cancelled, Actor::User, None, None)
+        .await
+        .unwrap();
+    assert_eq!(reason().await, None);
 }
 
 /// A stalled task is a task with a stalled agent on it: the flag on the

@@ -101,9 +101,7 @@ const LEAVES: &[(&str, bool)] = &[
     ("goal create", true),
     ("goal inspect", true),
     ("goal ls", true),
-    ("goal msg", true),
     ("goal rm", true),
-    ("goal thread", true),
     ("mcp serve", false),
     ("models ls", true),
     ("models show", true),
@@ -136,10 +134,8 @@ const LEAVES: &[(&str, bool)] = &[
     ("task inspect", true),
     ("task logs", true),
     ("task ls", true),
-    ("task msg", true),
     ("task retry", true),
     ("task reviews", true),
-    ("task thread", true),
     ("task update", true),
     ("version", true),
 ];
@@ -255,7 +251,7 @@ fn the_display_flags_parse_on_either_side_of_the_subcommand() {
 }
 
 /// Every `ls` that hides finished work behind `--all` takes the same short
-/// flag for it, and the thread commands take a window of the same two.
+/// flag for it.
 #[test]
 fn a_listing_hides_what_is_finished_behind_the_same_flag() {
     let all = |argv: &[&str]| match parse(argv).command {
@@ -280,36 +276,6 @@ fn a_listing_hides_what_is_finished_behind_the_same_flag() {
         with.push("-a");
         assert!(all(&with), "{with:?} lists everything");
     }
-
-    let window = |argv: &[&str]| match parse(argv).command {
-        Command::Goal {
-            command: GoalCommand::Thread { limit, tail, .. },
-        } => (limit, tail),
-        Command::Task {
-            command: TaskCommand::Thread { limit, tail, .. },
-        } => (limit, tail),
-        _ => panic!("thread"),
-    };
-    assert_eq!(window(&["ariadne", "task", "thread", "01T"]), (None, None));
-    assert_eq!(
-        window(&["ariadne", "task", "thread", "01T", "--tail", "20"]),
-        (None, Some(20))
-    );
-    assert_eq!(
-        window(&["ariadne", "goal", "thread", "01G", "--limit", "5"]),
-        (Some(5), None)
-    );
-    assert!(
-        try_parse(&[
-            "ariadne", "goal", "thread", "01G", "--limit", "5", "--tail", "5"
-        ])
-        .is_err(),
-        "one end of the thread or the other, not both"
-    );
-    assert!(
-        try_parse(&["ariadne", "goal", "thread", "01G", "--limit", "0"]).is_err(),
-        "a window of no messages is not a window"
-    );
 }
 
 /// `_spawn` is tmux's end of a launch, not a command anyone types: it takes
@@ -502,34 +468,6 @@ fn task_statuses(values: &[&str]) -> Vec<TaskStatus> {
         panic!("task ls");
     };
     statuses
-}
-
-/// `--to` is what addresses a message, on either thread, and leaving it out is
-/// still the unaddressed post it has always been.
-#[test]
-fn a_message_is_addressed_only_when_to_says_so() {
-    let to = |argv: &[&str]| match parse(argv).command {
-        Command::Goal {
-            command: GoalCommand::Msg { to, .. },
-        } => to,
-        Command::Task {
-            command: TaskCommand::Msg { to, .. },
-        } => to,
-        _ => panic!("msg"),
-    };
-    assert_eq!(to(&["ariadne", "goal", "msg", "01GOAL", "ping"]), None);
-    assert_eq!(
-        to(&["ariadne", "goal", "msg", "01GOAL", "ping", "--to", "user"]).as_deref(),
-        Some("user")
-    );
-    assert_eq!(to(&["ariadne", "task", "msg", "01TASK", "ping"]), None);
-    assert_eq!(
-        to(&[
-            "ariadne", "task", "msg", "01TASK", "ping", "--to", "Engineer"
-        ])
-        .as_deref(),
-        Some("Engineer")
-    );
 }
 
 /// What each agent runs on is chosen on the way in, as one string: `--model`

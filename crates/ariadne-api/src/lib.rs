@@ -9,7 +9,6 @@ pub mod error;
 pub mod events;
 pub mod goals;
 pub mod logs;
-pub mod messages;
 pub mod models;
 pub mod profiles;
 pub mod repositories;

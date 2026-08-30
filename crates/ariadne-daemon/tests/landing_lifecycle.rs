@@ -24,7 +24,7 @@ use axum::http::StatusCode;
 
 use ariadne_api::reviews::ReviewDto;
 use ariadne_api::tasks::TaskDto;
-use ariadne_core::{Actor, MergeStrategy, ReviewVerdict, Role, TaskStatus};
+use ariadne_core::{Actor, AttentionReason, MergeStrategy, ReviewVerdict, Role, TaskStatus};
 use ariadne_store::{AgentSession, NewReview, RepositoryUpdate, Repository, ReviewerSlot, Task};
 
 use common::{Cast, Harness, as_session, eventually, get, harness, sh};
@@ -281,17 +281,6 @@ async fn a_revision_of_a_published_request_goes_back_to_the_reviewers() {
         .await;
     assert_eq!(published.pr_url.as_deref(), Some(URL));
 
-    // The URL and nothing else: telling the user where the request is belongs
-    // to the engineer that opened it, so recording one writes no message of
-    // the daemon's own into the thread.
-    assert!(
-        h.store
-            .list_task_messages(&task.id, None, 100)
-            .await
-            .unwrap()
-            .is_empty(),
-        "recording a request wrote a message into the thread"
-    );
     let reviewer_session = h
         .session(&cast.goal, Some(&task), Role::Reviewer, &cast.reviewer.id)
         .await;
@@ -389,6 +378,44 @@ async fn a_squashed_request_lands_on_the_sha_the_engineer_fast_forwarded_to() {
             "the published landing briefing names {squashed}: {argv}"
         );
     }
+
+    // Publishing it is the engineer's next step, and reporting the URL is
+    // what hands the task to a human: nobody but them can merge a request, so
+    // the strip has to say so. Nothing said it before the report.
+    const URL: &str = "https://github.com/owner/repo/pull/12";
+    assert_eq!(
+        h.attention(&engineer).await,
+        None,
+        "an engineer that has published nothing yet is nobody's to answer"
+    );
+    let published: TaskDto = h
+        .json(
+            as_session(
+                &format!("/v1/tasks/{}/pull-request", task.id),
+                &engineer.id,
+                serde_json::json!({"url": URL}),
+            ),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(published.pr_url.as_deref(), Some(URL));
+    assert_eq!(
+        h.attention(&engineer).await,
+        Some(AttentionReason::WaitingUser),
+        "a published request is the user's to merge, and the strip says so"
+    );
+
+    // And it stays up while the engineer polls: what it reports is the agent
+    // working, which was never what the flag was about.
+    h.store
+        .clear_agent_attention(&engineer.id)
+        .await
+        .expect("an agent event that changes nothing is not an error");
+    assert_eq!(
+        h.attention(&engineer).await,
+        Some(AttentionReason::WaitingUser),
+        "the agent polling its own request does not answer for the user"
+    );
 
     // What a squash merge on the forge leaves behind, reproduced with git: a
     // commit on the base that no branch points at, and a task branch that is

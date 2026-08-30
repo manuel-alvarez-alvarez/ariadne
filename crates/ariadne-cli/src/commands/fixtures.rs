@@ -60,6 +60,7 @@ pub fn task(id: &str, goal_id: &str) -> TaskDto {
         stalled: false,
         merge_commit: None,
         pr_url: None,
+        reason: None,
         usage: Default::default(),
         created_at: NOW.into(),
         updated_at: NOW.into(),

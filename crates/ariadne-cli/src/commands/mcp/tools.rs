@@ -5,16 +5,15 @@
 //! chooses between — so a rename here is a rename an agent sees.
 //!
 //! Every tool is the same three steps: name the endpoint, send the request,
-//! answer with what came back. Only the endpoint differs, and the two that
+//! answer with what came back. Only the endpoint differs, and the ones that
 //! depend on the session rather than on the arguments go through
-//! [`AriadneMcp::thread`] and [`AriadneMcp::task_path`].
+//! [`AriadneMcp::task_path`].
 
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock};
 use rmcp::{ErrorData as McpError, schemars, tool, tool_router};
 
 use ariadne_api::goals::FinalizePlanRequest;
-use ariadne_api::messages::{CreateMessageRequest, MessageDto};
 use ariadne_api::reviews::CreateReviewRequest;
 use ariadne_api::tasks::{
     CreateTaskRequest, RecordPullRequestRequest, ReviewerAssignment, TransitionRequest,
@@ -35,18 +34,6 @@ pub struct Empty {}
 pub struct TaskIdOpt {
     /// Task id; defaults to your own task.
     pub task_id: Option<String>,
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-#[schemars(crate = "rmcp::schemars")]
-pub struct PostMessageReq {
-    /// Message body for the conversation.
-    pub body: String,
-    /// Task id; defaults to your own task (planner: goal-level thread).
-    pub task_id: Option<String>,
-    /// Whom to wake, as the MCP instructions spell it; omit to leave the
-    /// message in the thread.
-    pub to: Option<String>,
 }
 
 /// One reviewer of a task as a planner names it: the profile that reviews,
@@ -119,16 +106,17 @@ pub struct ListProfilesReq {
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub struct FinalizePlanReq {
-    /// Short summary of the agreed plan.
+pub struct RequestReviewReq {
+    /// Summary of what you built, for the reviewers.
     pub summary: String,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub struct RequestReviewReq {
-    /// Summary of what you built, for the reviewers.
-    pub summary: String,
+pub struct FailTaskReq {
+    /// Why the task cannot be done as written. Recorded on the task, and all
+    /// the user is told.
+    pub reason: String,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -167,21 +155,6 @@ pub struct SubmitVerdictReq {
 }
 
 // ---------- helpers ----------
-
-/// One message as an agent reads it: the DTO's nested recipient flattened into
-/// the `to` that `post_message` takes, so a listing shows the word that
-/// addresses a reply back.
-fn addressed_message(message: &MessageDto) -> serde_json::Value {
-    serde_json::json!({
-        "id": message.id,
-        "task_id": message.task_id,
-        "author_role": message.author_role.as_str(),
-        "author_session_id": message.author_session_id,
-        "to": message.recipient.as_ref().map(crate::commands::recipient_label),
-        "body": message.body,
-        "created_at": message.created_at,
-    })
-}
 
 /// The reviewer slot a planner named, as the API takes it: the profile, and
 /// the pin it is to be cut at.
@@ -238,38 +211,6 @@ impl AriadneMcp {
         Parameters(req): Parameters<TaskIdOpt>,
     ) -> Result<CallToolResult, McpError> {
         json_result(self.get(&self.task_path(req.task_id, "")?).await?)
-    }
-
-    #[tool(
-        description = "Read a task's conversation, or the goal thread when a planner passes no task_id."
-    )]
-    async fn list_messages(
-        &self,
-        Parameters(req): Parameters<TaskIdOpt>,
-    ) -> Result<CallToolResult, McpError> {
-        let path = self.thread(req.task_id, "/messages?limit=200");
-        let messages: Vec<MessageDto> = self.get(&path).await?;
-        json_result(messages.iter().map(addressed_message).collect())
-    }
-
-    #[tool(
-        description = "Write a message into a task's conversation, or into the goal thread when a planner passes no task_id."
-    )]
-    async fn post_message(
-        &self,
-        Parameters(req): Parameters<PostMessageReq>,
-    ) -> Result<CallToolResult, McpError> {
-        let path = self.thread(req.task_id, "/messages");
-        json_result(
-            self.post(
-                &path,
-                &CreateMessageRequest {
-                    body: req.body,
-                    to: req.to,
-                },
-            )
-            .await?,
-        )
     }
 
     // ---- planner ----
@@ -344,48 +285,48 @@ impl AriadneMcp {
         json_result(self.get(&path).await?)
     }
 
-    #[tool(
-        description = "Finalize the plan and start its tasks: only after the user has confirmed in the thread that it is complete."
-    )]
+    #[tool(description = "Finalize the plan and start its tasks; this ends planning.")]
     async fn finalize_plan(
         &self,
-        Parameters(req): Parameters<FinalizePlanReq>,
+        Parameters(_): Parameters<Empty>,
     ) -> Result<CallToolResult, McpError> {
         let path = format!("/v1/goals/{}/finalize", self.goal_id);
-        let body = FinalizePlanRequest {
-            summary: req.summary,
-        };
-        json_result(self.post(&path, &body).await?)
+        json_result(self.post(&path, &FinalizePlanRequest {}).await?)
     }
 
     // ---- engineer ----
 
-    #[tool(description = "Submit your task for review, under the summary the reviewers read first.")]
+    #[tool(
+        description = "Submit your task for review. The summary is the whole of what the reviewers are told: what changed, why, how you verified it."
+    )]
     async fn request_review(
         &self,
         Parameters(req): Parameters<RequestReviewReq>,
     ) -> Result<CallToolResult, McpError> {
-        // Summary first (reviewers read it), then the status transition.
-        self.post(
-            &self.task_path(None, "/messages")?,
-            &CreateMessageRequest {
-                body: format!("Review requested: {}", req.summary),
-                to: None,
-            },
-        )
-        .await?;
         json_result(
             self.transition(TaskStatus::UnderReview, Some(req.summary), None)
                 .await?,
         )
     }
 
-    #[tool(description = "Read the verdicts and feedback on your task, every round of them.")]
-    async fn get_reviews(
+    #[tool(
+        description = "Give the task up: it cannot be done as written. The reason is recorded on the task and is all the user is told."
+    )]
+    async fn fail_task(
         &self,
-        Parameters(_): Parameters<Empty>,
+        Parameters(req): Parameters<FailTaskReq>,
     ) -> Result<CallToolResult, McpError> {
-        json_result(self.get(&self.task_path(None, "/reviews")?).await?)
+        let reason = req.reason.trim();
+        if reason.is_empty() {
+            return Err(McpError::invalid_params(
+                "fail_task needs a reason: it is all the user is told about the task",
+                None,
+            ));
+        }
+        json_result(
+            self.transition(TaskStatus::Failed, Some(reason.to_string()), None)
+                .await?,
+        )
     }
 
     #[tool(
@@ -464,9 +405,7 @@ impl AriadneMcp {
 mod tests {
     use super::*;
 
-    use ariadne_api::messages::MessageRecipientDto;
     use ariadne_client::Client;
-    use ariadne_core::{AuthorRole, RecipientKind};
 
     use crate::commands::mcp::McpRole;
     use crate::commands::mcp::tests::{recording_daemon, recording_daemon_answering, server_at};
@@ -506,33 +445,77 @@ mod tests {
         )
     }
 
-    /// An agent reads a thread to know who was asked; the addressee it reads
-    /// is spelled the way `post_message`'s `to` would address them back.
-    #[test]
-    fn a_listed_message_carries_the_word_that_addressed_it() {
-        let message = |recipient| MessageDto {
-            id: "01MSG".into(),
-            goal_id: "01GOAL".into(),
-            task_id: Some("01TASK".into()),
-            author_role: AuthorRole::Reviewer,
-            author_session_id: Some("01SESSION".into()),
-            recipient,
-            body: "rebase first".into(),
-            created_at: "2026-01-01T00:00:00Z".into(),
-        };
-        let to_engineer = MessageRecipientDto {
-            kind: RecipientKind::Profile,
-            profile_id: Some("01PROF".into()),
-            profile_name: Some("Engineer".into()),
-        };
-        let addressed = addressed_message(&message(Some(to_engineer)));
-        assert_eq!(addressed["to"], serde_json::json!("Engineer"));
-        assert_eq!(addressed["body"], serde_json::json!("rebase first"));
-        assert_eq!(addressed["author_role"], serde_json::json!("reviewer"));
-        assert_eq!(
-            addressed_message(&message(None))["to"],
-            serde_json::Value::Null
+    /// An engineer submits its work in one request, and the summary travels
+    /// as the transition's reason: it is the whole of what the reviewers are
+    /// told, so nothing may be written anywhere else for them to have to
+    /// find.
+    #[tokio::test]
+    async fn a_review_request_is_one_transition_carrying_the_summary() {
+        let (endpoint, seen) = recording_daemon().await;
+        let mcp = server_at(
+            McpRole::Engineer,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
         );
+        mcp.request_review(Parameters(RequestReviewReq {
+            summary: "Rewrote the parser; cargo test green.".into(),
+        }))
+        .await
+        .expect("submit for review");
+
+        let seen = seen.lock().expect("lock").clone();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert_eq!(seen[0].method, "POST");
+        assert_eq!(seen[0].path, "/v1/tasks/01TASK/transitions");
+        let sent: serde_json::Value = serde_json::from_str(&seen[0].body).expect("json");
+        assert_eq!(sent["to"], serde_json::json!("under_review"));
+        assert_eq!(
+            sent["reason"],
+            serde_json::json!("Rewrote the parser; cargo test green.")
+        );
+    }
+
+    /// Giving a task up moves it to `failed` with the reason on it, which is
+    /// all the user is ever told; a reason with nothing in it is refused here
+    /// rather than recorded, since a failed task saying nothing says nothing.
+    #[tokio::test]
+    async fn giving_a_task_up_records_the_reason_on_it() {
+        let (endpoint, seen) = recording_daemon().await;
+        let mcp = server_at(
+            McpRole::Engineer,
+            Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+        );
+        mcp.fail_task(Parameters(FailTaskReq {
+            reason: "the crate it names was deleted upstream".into(),
+        }))
+        .await
+        .expect("fail the task");
+
+        let seen = seen.lock().expect("lock").clone();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert_eq!(seen[0].method, "POST");
+        assert_eq!(seen[0].path, "/v1/tasks/01TASK/transitions");
+        let sent: serde_json::Value = serde_json::from_str(&seen[0].body).expect("json");
+        assert_eq!(sent["to"], serde_json::json!("failed"));
+        assert_eq!(
+            sent["reason"],
+            serde_json::json!("the crate it names was deleted upstream")
+        );
+
+        for empty in ["", "  \n "] {
+            let (endpoint, seen) = recording_daemon().await;
+            let mcp = server_at(
+                McpRole::Engineer,
+                Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
+            );
+            let err = mcp
+                .fail_task(Parameters(FailTaskReq {
+                    reason: empty.into(),
+                }))
+                .await
+                .expect_err("a failure with no reason");
+            assert!(err.message.contains("needs a reason"), "{}", err.message);
+            assert!(seen.lock().expect("lock").is_empty());
+        }
     }
 
     /// Reading a task is one round trip: the daemon names the profiles on it,

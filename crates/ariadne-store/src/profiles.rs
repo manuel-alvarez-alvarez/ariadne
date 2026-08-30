@@ -118,27 +118,20 @@ impl Store {
     /// naming what holds it — a bare count leaves the user nowhere to look.
     pub async fn delete_profile(&self, id: &str) -> Result<()> {
         self.get_profile(id).await?;
-        let (goals, tasks, reviews, sessions, messages): (i64, i64, i64, i64, i64) =
-            sqlx::query_as(
-                "SELECT (SELECT COUNT(*) FROM goals WHERE planner_profile_id = ?1),
-                        (SELECT COUNT(*) FROM tasks WHERE engineer_profile_id = ?1),
-                        (SELECT COUNT(*) FROM task_reviewers WHERE profile_id = ?1),
-                        (SELECT COUNT(*) FROM agent_sessions WHERE profile_id = ?1),
-                        (SELECT COUNT(*) FROM messages WHERE recipient_profile_id = ?1)",
-            )
-            .bind(id)
-            .fetch_one(self.r())
-            .await?;
+        let (goals, tasks, reviews, sessions): (i64, i64, i64, i64) = sqlx::query_as(
+            "SELECT (SELECT COUNT(*) FROM goals WHERE planner_profile_id = ?1),
+                    (SELECT COUNT(*) FROM tasks WHERE engineer_profile_id = ?1),
+                    (SELECT COUNT(*) FROM task_reviewers WHERE profile_id = ?1),
+                    (SELECT COUNT(*) FROM agent_sessions WHERE profile_id = ?1)",
+        )
+        .bind(id)
+        .fetch_one(self.r())
+        .await?;
         let holders = [
             (goals, "goal", "goals"),
             (tasks, "task", "tasks"),
             (reviews, "task as a reviewer", "tasks as a reviewer"),
             (sessions, "agent session", "agent sessions"),
-            (
-                messages,
-                "message as its addressee",
-                "messages as their addressee",
-            ),
         ];
         let referenced = plural_list(&holders);
         if !referenced.is_empty() {

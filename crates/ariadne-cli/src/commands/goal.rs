@@ -6,7 +6,6 @@ use serde::Serialize;
 use serde_json::json;
 
 use ariadne_api::goals::{CreateGoalRequest, GoalDto};
-use ariadne_api::messages::{CreateMessageRequest, MessageDto};
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::tasks::{TaskDto, TaskListQuery};
 use ariadne_client::Client;
@@ -14,7 +13,7 @@ use ariadne_core::GoalStatus;
 
 use super::query_path;
 use super::resolve::{self, Kind};
-use super::{ProfileNames, Subject, confirm, parse_effort, parse_model, print_thread, recipient};
+use super::{ProfileNames, Subject, confirm, parse_effort, parse_model};
 use crate::cli::values::Spelling;
 use crate::output::{
     Column, Format, Kv, UNCAPPED, age, col, moment, ok_id_line, print, print_kv, print_list,
@@ -65,8 +64,8 @@ pub enum GoalCommand {
     ///
     /// Names what is to be achieved and the registered repositories it is to
     /// be achieved in, and spawns the planner that breaks it into tasks.
-    /// Nothing runs until you confirm the plan in the goal's conversation.
-    /// Prints the new goal id.
+    /// Nothing runs until the planner finalizes the plan. Prints the new goal
+    /// id.
     #[command(after_help = CREATE_EXAMPLES)]
     Create {
         /// Short goal title (what the whole effort is called)
@@ -132,7 +131,7 @@ pub enum GoalCommand {
     ///
     /// Only a completed or cancelled goal can go: an active one still owns
     /// tmux sessions and worktrees, and `goal cancel` is what tears those
-    /// down. What goes takes its tasks and messages with it, for good.
+    /// down. What goes takes its tasks with it, for good.
     Rm {
         /// Goal id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::deletable_goal_ids))]
@@ -140,32 +139,6 @@ pub enum GoalCommand {
         /// Do not ask for confirmation
         #[arg(short, long)]
         yes: bool,
-    },
-    /// Show the goal-level conversation
-    Thread {
-        /// Goal id
-        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
-        id: String,
-        /// Read this many messages from the start of the thread
-        /// (default 200)
-        #[arg(long, value_parser = clap::value_parser!(u32).range(1..), conflicts_with = "tail")]
-        limit: Option<u32>,
-        /// Read this many messages from the end of the thread instead
-        #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
-        tail: Option<u32>,
-    },
-    /// Post a message into the goal-level conversation
-    Msg {
-        /// Goal id
-        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
-        id: String,
-        /// Message body
-        body: String,
-        /// Address the message: the goal's planner, by profile id or name, or
-        /// "user" to reach the human. An addressed recipient is woken to read
-        /// it.
-        #[arg(long, value_name = "PROFILE|user", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_message_recipients))]
-        to: Option<String>,
     },
     /// Attach to the goal's planner tmux session
     Attach {
@@ -326,30 +299,6 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
             let id = resolve::id(client, Kind::Goal, &id).await?;
             crate::commands::attach::attach(client, &id, None).await?;
         }
-        GoalCommand::Thread { id, limit, tail } => {
-            let id = resolve::id(client, Kind::Goal, &id).await?;
-            print_thread(
-                client,
-                &format!("/v1/goals/{id}/messages"),
-                limit,
-                tail,
-                format,
-            )
-            .await?;
-        }
-        GoalCommand::Msg { id, body, to } => {
-            let id = resolve::id(client, Kind::Goal, &id).await?;
-            let to = recipient(client, to).await?;
-            let m: MessageDto = client
-                .post_json(
-                    &format!("/v1/goals/{id}/messages"),
-                    &CreateMessageRequest { body, to },
-                )
-                .await?;
-            print(format, &m, || {
-                println!("{}", ok_id_line(view().color, "posted", &m.id))
-            })?;
-        }
     }
     Ok(())
 }
@@ -439,9 +388,9 @@ async fn cancel_question(client: &Client, goal: &GoalDto, subject: &Subject) -> 
     format!("Cancel goal {} — {tail}?", subject.named())
 }
 
-/// What `goal rm` asks before it deletes: the goal's tasks, messages and
-/// review history go with it and none of it comes back, so the question names
-/// how much history is about to be dropped.
+/// What `goal rm` asks before it deletes: the goal's tasks and their review
+/// history go with it and none of it comes back, so the question names how
+/// much history is about to be dropped.
 async fn rm_question(client: &Client, goal: &GoalDto, subject: &Subject) -> String {
     let tail = match goal_tasks(client, &goal.id).await.len() {
         0 => "no tasks".into(),
@@ -449,7 +398,7 @@ async fn rm_question(client: &Client, goal: &GoalDto, subject: &Subject) -> Stri
         n => format!("{n} tasks"),
     };
     format!(
-        "Delete {} goal {} for good, with {tail} and their messages?",
+        "Delete {} goal {} for good, with {tail} and their reviews?",
         goal.status.as_str(),
         subject.named()
     )
@@ -652,6 +601,27 @@ mod tests {
         assert_eq!(
             goals_path(&[GoalStatus::Active, GoalStatus::Completed]).unwrap(),
             "/v1/goals?status=active%2Ccompleted"
+        );
+    }
+
+    /// What `goal rm` asks about is everything that goes with the goal: its
+    /// tasks and their reviews, which is the whole of a goal's history now.
+    /// The question is the last thing a person reads before something
+    /// irreversible, so its words are pinned rather than left to drift.
+    #[tokio::test]
+    async fn the_delete_question_names_what_goes_with_the_goal() {
+        // Nothing answers, so the task count falls back to none: what is
+        // pinned here is the sentence, not the listing behind it.
+        let client = Client::resolve(Some("http://127.0.0.1:1"), None);
+        let g = GoalDto {
+            status: GoalStatus::Cancelled,
+            ..goal("01m15hg1d4j6de91a4amkhsfgt", "Ship the board")
+        };
+        let subject = Subject::new("goal", &g.title, &g.id);
+        assert_eq!(
+            rm_question(&client, &g, &subject).await,
+            "Delete cancelled goal \"Ship the board\" (…amkhsfgt) for good, \
+             with no tasks and their reviews?"
         );
     }
 

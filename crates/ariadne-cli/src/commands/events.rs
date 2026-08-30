@@ -3,7 +3,7 @@
 //! Two sources behind one vocabulary. The recorded half is `GET /v1/events`:
 //! the agent events hooks reported, which is the only history there is. The
 //! live half is `GET /v1/events/stream`, the daemon's domain events — every
-//! goal, task, session, message and review as it changes, with the agent
+//! goal, task, session and review as it changes, with the agent
 //! events among them. So `ariadne events` prints what has happened and
 //! `ariadne events -f` goes on printing what happens next, in the same shape:
 //! `time · kind · subject · detail`.
@@ -17,7 +17,6 @@ use serde::Serialize;
 
 use ariadne_api::Page;
 use ariadne_api::events::{AgentEventDto, EventListQuery};
-use ariadne_api::messages::MessageDto;
 use ariadne_api::sessions::SessionDto;
 use ariadne_api::stream::{
     DeletedDto, DomainEvent, EventStreamQuery, TaskBranchDto, TaskUpdatedDto,
@@ -27,7 +26,7 @@ use ariadne_client::{Client, SseEvent};
 
 use super::attention::reason_label;
 use super::follow::{self, Next};
-use super::{query_path, recipient_label};
+use super::query_path;
 use crate::output::{Format, local_time, note, style, view};
 
 /// How many recorded events the snapshot asks for. The daemon caps a page at
@@ -368,7 +367,6 @@ fn domain_line(event: &DomainEvent) -> Line {
             session: None,
             status: None,
         },
-        DomainEvent::MessageCreated(m) => message_line(kind, m),
         DomainEvent::ReviewCreated(r) => Line {
             at: r.created_at.clone(),
             kind,
@@ -419,20 +417,6 @@ fn task_line(kind: String, t: &TaskDto, state: String) -> Line {
     }
 }
 
-fn message_line(kind: String, m: &MessageDto) -> Line {
-    let to = match &m.recipient {
-        Some(recipient) => format!(" → {}", recipient_label(recipient)),
-        None => String::new(),
-    };
-    Line {
-        at: m.created_at.clone(),
-        kind,
-        subject: m.task_id.clone().unwrap_or_else(|| m.goal_id.clone()),
-        detail: brief(&format!("{}{to}: {}", m.author_role.as_str(), m.body)),
-        session: m.author_session_id.clone(),
-        status: None,
-    }
-}
 
 fn session_line(kind: String, s: &SessionDto) -> Line {
     let mut detail = format!(
@@ -501,7 +485,7 @@ mod tests {
 
     use ariadne_api::goals::GoalDto;
     use ariadne_api::tasks::TaskTransitionDto;
-    use ariadne_core::{AttentionReason, AuthorRole, RecipientKind, SessionStatus, TaskStatus};
+    use ariadne_core::{AttentionReason, SessionStatus, TaskStatus};
 
     use crate::commands::fixtures;
 
@@ -665,35 +649,6 @@ mod tests {
         assert_eq!(
             rendered(&domain_line(&DomainEvent::SessionUpdated(waiting))),
             "<time> · session_updated · 01SESS · engineer claude_code [running] · waiting for input"
-        );
-    }
-
-    /// A message is who said it, to whom, and what — the same three things
-    /// `task messages` prints, on one line.
-    #[test]
-    fn a_message_line_names_its_author_and_its_addressee() {
-        let mut message = MessageDto {
-            id: "01MSG".into(),
-            goal_id: "01GOAL".into(),
-            task_id: Some("01TASK".into()),
-            author_role: AuthorRole::Engineer,
-            author_session_id: Some("01SESS".into()),
-            recipient: None,
-            body: "rebased onto main".into(),
-            created_at: AT.into(),
-        };
-        assert_eq!(
-            rendered(&domain_line(&DomainEvent::MessageCreated(message.clone()))),
-            "<time> · message_created · 01TASK · engineer: rebased onto main"
-        );
-        message.recipient = Some(ariadne_api::messages::MessageRecipientDto {
-            kind: RecipientKind::User,
-            profile_id: None,
-            profile_name: None,
-        });
-        assert_eq!(
-            rendered(&domain_line(&DomainEvent::MessageCreated(message))),
-            "<time> · message_created · 01TASK · engineer → user: rebased onto main"
         );
     }
 

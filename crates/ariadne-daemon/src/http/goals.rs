@@ -1,4 +1,4 @@
-//! Goal endpoints (incl. the goal-level message thread).
+//! Goal endpoints.
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -6,17 +6,15 @@ use axum::http::{HeaderMap, StatusCode};
 use serde::Deserialize;
 use utoipa::IntoParams;
 
-use ariadne_api::Page;
 use ariadne_api::goals::{CreateGoalRequest, FinalizePlanRequest, GoalDto};
-use ariadne_api::messages::{CreateMessageRequest, MessageDto};
 use ariadne_core::{GoalStatus, Role};
-use ariadne_store::{Goal, NewGoal, NewMessage, SessionFilter, Store, TaskFilter};
+use ariadne_store::{Goal, NewGoal, SessionFilter, Store, TaskFilter};
 
 use super::AppState;
-use super::convert::{goal_dto_of, message_dtos};
+use super::convert::goal_dto_of;
 use super::error::{ApiError, ApiResult};
 use super::pins::{self, Standing};
-use super::recipients::{self, Thread, call_ctx};
+use super::caller::call_ctx;
 
 #[derive(Debug, Default, Deserialize, IntoParams)]
 pub struct GoalListQuery {
@@ -209,8 +207,7 @@ pub async fn delete(
 }
 
 /// Finalize the plan: goal moves planning -> active and its tasks start. The
-/// planner's call alone — it makes it once the user has validated the plan in
-/// the goal thread, and there is nothing left for the user to approve.
+/// planner's call alone, and there is nothing left for the user to approve.
 #[utoipa::path(post, path = "/v1/goals/{id}/finalize", tag = "goals",
     request_body = FinalizePlanRequest,
     params(("id" = String, Path, description = "goal id")),
@@ -219,10 +216,10 @@ pub async fn finalize(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
-    Json(req): Json<FinalizePlanRequest>,
+    Json(_req): Json<FinalizePlanRequest>,
 ) -> ApiResult<Json<GoalDto>> {
     let ctx = call_ctx(&state.store, &headers).await?;
-    if ctx.author_role != ariadne_core::AuthorRole::Planner {
+    if ctx.actor != ariadne_core::Actor::Planner {
         return Err(ApiError::forbidden(
             "only the planner may finalize the plan",
         ));
@@ -244,61 +241,12 @@ pub async fn finalize(
     if tasks.is_empty() {
         return Err(ApiError::conflict("cannot finalize a plan with no tasks"));
     }
-    // Written straight rather than through `recipients::post`: it addresses
-    // nobody, and the scheduler is woken below by every task the plan holds.
-    state
-        .store
-        .create_message(NewMessage {
-            goal_id: id.clone(),
-            task_id: None,
-            author_role: ctx.author_role,
-            author_session_id: ctx.session.map(|s| s.id),
-            recipient: None,
-            body: format!("Plan finalized: {}", req.summary),
-        })
-        .await?;
     let goal = state.store.set_goal_status(&id, GoalStatus::Active).await?;
     // Wake the scheduler: pending tasks with no deps become ready now.
     for task in tasks {
         state.notify_scheduler(&task.id);
     }
     to_dto(&state.store, goal).await
-}
-
-/// Goal-level message thread (planner discussion).
-#[utoipa::path(get, path = "/v1/goals/{id}/messages", tag = "goals",
-    params(("id" = String, Path, description = "goal id"), Page),
-    responses((status = 200, body = [MessageDto])))]
-pub async fn list_messages(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Query(page): Query<Page>,
-) -> ApiResult<Json<Vec<MessageDto>>> {
-    state.store.get_goal(&id).await?;
-    let msgs = state
-        .store
-        .list_goal_messages(&id, page.after.as_deref(), page.limit())
-        .await?;
-    Ok(Json(message_dtos(&state.store, msgs).await?))
-}
-
-/// Post to the goal-level thread.
-#[utoipa::path(post, path = "/v1/goals/{id}/messages", tag = "goals",
-    request_body = CreateMessageRequest,
-    params(("id" = String, Path, description = "goal id")),
-    responses(
-        (status = 201, body = MessageDto),
-        (status = 400, description = "unknown addressee, or one taking no part in the goal")
-    ))]
-pub async fn post_message(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    headers: HeaderMap,
-    Json(req): Json<CreateMessageRequest>,
-) -> ApiResult<(StatusCode, Json<MessageDto>)> {
-    let ctx = call_ctx(&state.store, &headers).await?;
-    let goal = state.store.get_goal(&id).await?;
-    recipients::post(&state, ctx, Thread::Goal(goal), req).await
 }
 
 #[cfg(test)]

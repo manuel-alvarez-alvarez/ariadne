@@ -154,8 +154,11 @@ pub fn check_transition(
                 Err(TransitionError::Forbidden { from, to, actor })
             };
         }
+        // The daemon fails a task it cannot keep running, and the engineer
+        // fails the one it owns: a task that cannot be done as written is the
+        // engineer's own finding, and `fail_task` is where it says so.
         S::Failed if !from.is_terminal() && from != S::Failed => {
-            return if actor == A::Daemon {
+            return if matches!(actor, A::Daemon | A::Engineer) {
                 Ok(())
             } else {
                 Err(TransitionError::Forbidden { from, to, actor })
@@ -219,7 +222,10 @@ mod tests {
         }
         // Blanket cancel / fail rules.
         (to == S::Cancelled && actor == A::User && !from.is_terminal() && from != S::Cancelled)
-            || (to == S::Failed && actor == A::Daemon && !from.is_terminal() && from != S::Failed)
+            || (to == S::Failed
+                && matches!(actor, A::Daemon | A::Engineer)
+                && !from.is_terminal()
+                && from != S::Failed)
     }
 
     /// Exhaustively check every (from, to, actor) combination against the
@@ -251,6 +257,27 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    /// Failing a task is the daemon's and the engineer's, and nobody else's:
+    /// the daemon fails one whose agent it cannot keep running, and the
+    /// engineer fails the one it owns when the task cannot be done as
+    /// written. That is the whole of what an engineer says about it, so the
+    /// edge exists from wherever its work had got to.
+    #[test]
+    fn the_engineer_may_fail_the_task_it_owns() {
+        for from in [
+            S::Ready,
+            S::InProgress,
+            S::UnderReview,
+            S::ChangesRequested,
+            S::Approved,
+        ] {
+            assert!(check_transition(from, S::Failed, A::Engineer).is_ok());
+        }
+        for actor in [A::Planner, A::Reviewer, A::User] {
+            assert!(check_transition(S::InProgress, S::Failed, actor).is_err());
         }
     }
 

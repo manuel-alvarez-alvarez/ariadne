@@ -9,7 +9,6 @@ use ariadne_core::{
 use ariadne_store::{AgentSession, Goal, SessionFilter, TaskFilter};
 
 use crate::agents::prompts;
-use crate::notify;
 
 use super::SPAWN_RETRY_BUDGET;
 
@@ -63,16 +62,9 @@ impl super::Scheduler {
                     && tasks.iter().any(|t| t.status() == TaskStatus::Merged);
                 if all_merged {
                     info!(goal = %goal.id, "all tasks merged, goal completed");
-                    let goal = self
-                        .store
+                    self.store
                         .set_goal_status(&goal.id, GoalStatus::Completed)
                         .await?;
-                    // Before the planner is killed with the rest, so that the
-                    // thread it was held in says how it ended rather than
-                    // simply stopping.
-                    if let Err(e) = notify::goal_completed(&self.store, &goal).await {
-                        warn!(goal = %goal.id, error = %e, "writing the goal's last message failed");
-                    }
                     self.kill_goal_sessions(&goal.id).await;
                 }
             }
@@ -88,7 +80,7 @@ impl super::Scheduler {
                     .await?
                 {
                     if !task.status().is_terminal() && task.status() != TaskStatus::Failed {
-                        let cancelled = self
+                        let _ = self
                             .store
                             .transition_task(
                                 &task.id,
@@ -98,9 +90,6 @@ impl super::Scheduler {
                                 None,
                             )
                             .await;
-                        if let Ok(task) = cancelled {
-                            self.announce_ending(&task, Some("goal cancelled")).await;
-                        }
                     }
                     let _ = self.launcher.cleanup_task(&task.id, false, false).await;
                 }
@@ -200,9 +189,6 @@ impl super::Scheduler {
             .store
             .set_session_attention(&alarm, AttentionReason::Disconnected)
             .await;
-        if let Err(e) = notify::planner_gave_up(&self.store, goal, failures).await {
-            warn!(goal = %goal.id, error = %e, "writing the planner's give-up notice failed");
-        }
     }
 
     /// The goal's planner sessions, oldest first, or `None` when the store
@@ -234,12 +220,10 @@ impl super::Scheduler {
     /// process and the machine's sleep inhibitor open until the goal
     /// completes.
     ///
-    /// Ended, not unreachable: the goal's tasks may still have something to
-    /// say to their planner, and a message addressed to an exited session is
-    /// what `wake_profile` revives it with — the conversation is in the agent
-    /// CLI's own history, not in the pane. What is not ended is a planner
-    /// mid-turn: whatever it is writing is finished first, and the next tick
-    /// finds it idle.
+    /// Ended, not unreachable: what the agent CLI holds is its own history,
+    /// not the pane, so a session ended here is one `session resume` puts
+    /// back where it was. What is not ended is a planner mid-turn: whatever
+    /// it is writing is finished first, and the next tick finds it idle.
     async fn end_idle_planner(&self, goal_id: &str) {
         let Ok(sessions) = self
             .store

@@ -24,8 +24,8 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
 1. `ariadne goal create` — you describe a goal, pick the registered
    repositories it works in (`ariadne repo add`), how many reviewer approvals
    a task needs (default 1) and optionally a max task count. The daemon spawns
-   the **planner** in tmux; `ariadne goal attach` drops you into the
-   conversation. `--model` runs that planner on something other than what its
+   the **planner** in tmux; `ariadne goal attach` drops you into its terminal.
+   `--model` runs that planner on something other than what its
    profile is on, and it is the whole choice: a model is spelled
    `<agent>[:<model>]` — the agent CLI that runs it (`claude_code`, `codex`,
    `opencode`) and, after a colon, one model of that CLI (`--model
@@ -35,14 +35,15 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    says how deeply that model reasons — one of the efforts `ariadne models ls`
    lists for it (`--effort xhigh`); left out, the model runs at whatever its
    agent CLI runs it at.
-2. The planner discusses the breakdown with you, creates tasks through the
-   Ariadne MCP tools (assigning an engineer profile and reviewer profiles per
-   task, with optional `depends_on` ordering). Nothing runs while the goal is
-   in `planning`: read the tasks, edit what they still need (`ariadne task
-   update`) or ask the planner for changes, and once you confirm in the
-   conversation that the plan is right it calls `finalize_plan`, which starts
-   the work. The planner also picks what each of those agents runs on, sizing
-   the model and the effort to the task it wrote; the last word is yours, with
+2. The planner breaks the goal down on its own — it asks nothing, and writes
+   any reading the goal text left open into the task it affects — and creates
+   the tasks through the Ariadne MCP tools (assigning an engineer profile and
+   reviewer profiles per task, with optional `depends_on` ordering). Nothing
+   runs while the goal is in `planning` — read the tasks and edit what they
+   still need with `ariadne task update` — and it is `finalize_plan` that
+   starts the work. The planner also picks what each of those agents runs on,
+   sizing the model and the effort to the task it wrote; the last word is
+   yours, with
    `ariadne task update <task-id> --model claude_code:claude-opus-5 --effort
    xhigh --reviewer Reviewer=codex:gpt-5.6-luna@high`, which a task takes while
    it is still pending or ready (`--model default` hands it back to the
@@ -63,7 +64,8 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    `ready` and an **engineer** is spawned in a dedicated git worktree, on a
    branch named after the task — its title slugged plus a short tail of its
    id, as in `fix-the-landing-briefing-real-fetch-r9jr7c`. It implements,
-   commits and calls `request_review`.
+   commits and calls `request_review` under a summary of what it did, which is
+   what the reviewers read first.
 4. **Reviewers** spawn in read-only detached worktrees, inspect the diff and
    `submit_verdict`, approving or requesting changes. Change requests resume
    the engineer with the feedback; enough approvals move the task to
@@ -94,8 +96,10 @@ Task lifecycle: `pending → ready → in_progress → under_review →
 (changes_requested → in_progress …) → approved → merged`, with
 `cancelled`/`failed` (retryable) escapes. From `approved` the engineer can also
 `request_review` again, which is how a revision of a published request is
-reviewed. Every transition is validated against a typed state machine and
-recorded in an audit table.
+reviewed. A task that cannot be done as written is the engineer's own
+`fail_task`, whose reason is what `ariadne task inspect` shows you. Every
+transition is validated against a typed state machine and recorded in an audit
+table.
 
 Agents run with permissions bypassed — `--dangerously-skip-permissions` for
 Claude Code, `--dangerously-bypass-approvals-and-sandbox` for Codex, `--auto`
@@ -234,7 +238,6 @@ ariadne task update <task-id> --effort default  # at whatever the CLI reasons it
 ariadne attention                      # what is waiting for you, across every goal
 ariadne task ls --goal <goal-id>       # what is going on; -a adds the finished work
 ariadne task attach <task-id>          # engineer terminal (or --role reviewer)
-ariadne task msg <task-id> "hold on, use the middleware crate instead"
 ariadne attach <id>                    # session, task or goal id
 
 # without attaching to a terminal
@@ -248,7 +251,6 @@ ariadne task ls -o wide                # every column, however narrow the termin
 ariadne task ls --columns id,title,age # or exactly the ones you name
 ariadne task ls -q | xargs -n1 ariadne task inspect
 ariadne task diff <task-id>            # coloured, and through $PAGER on a terminal
-ariadne task thread <task-id> --tail 20 # the last of a long conversation
 ```
 
 `ariadne --help` lists every command and `ariadne <command> --help` every flag:
@@ -269,8 +271,6 @@ pipe a listing into whatever acts on it. `ariadne goal ls`, `task ls` and
 `session ls` show what is going on rather than everything there has ever been;
 `-a/--all` includes the finished work, and `--status` names the statuses
 precisely. A pipe or a file gets every column, since there is no screen to fit.
-`goal thread` and `task thread` read the last `--tail N` messages, or the first
-`--limit N`, and say when there are more.
 
 Statuses are coloured and carry a glyph — `●` running, `○` pending, `✓` done
 or ok, `✗` failed or cancelled, `?` waiting on you, `!` a warning worth a look

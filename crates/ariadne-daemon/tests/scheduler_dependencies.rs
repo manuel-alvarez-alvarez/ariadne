@@ -94,19 +94,20 @@ impl World {
             .unwrap();
     }
 
-    /// What the second task's thread says, as a single body naming the first
-    /// task — the notice the daemon writes for an ending.
-    async fn notice(&self) -> String {
-        self.thread(&self.second)
+    /// Why the second task ended, as its own last transition records it.
+    async fn reason(&self) -> String {
+        self.store
+            .list_task_transitions(&self.second.id)
             .await
-            .into_iter()
-            .find(|body| body.contains(&self.first.title))
-            .unwrap_or_else(|| panic!("no notice naming \"{}\"", self.first.title))
+            .unwrap()
+            .last()
+            .and_then(|t| t.reason.clone())
+            .expect("the task says why it ended")
     }
 }
 
-/// A dependency that failed ends the task waiting on it, and the thread says
-/// which dependency it was.
+/// A dependency that failed ends the task waiting on it, and the reason on
+/// the transition says which dependency it was.
 #[tokio::test]
 async fn a_failed_dependency_fails_the_task_waiting_on_it() {
     let w = World::new().await;
@@ -121,26 +122,15 @@ async fn a_failed_dependency_fails_the_task_waiting_on_it() {
         w.status(&w.second.id).await == TaskStatus::Failed
     })
     .await;
-    let notice = w.notice().await;
+    let reason = w.reason().await;
     assert!(
-        notice.contains(&format!("dependency \"{}\"", w.first.title)) && notice.contains("failed"),
-        "the notice does not say the dependency failed: {notice}"
+        reason.starts_with(&format!("dependency \"{}\"", w.first.title))
+            && reason.contains("failed"),
+        "the reason does not say the dependency failed: {reason}"
     );
     assert!(
-        notice.contains(&w.first.id[w.first.id.len() - 8..]),
-        "the notice does not name the dependency's id: {notice}"
-    );
-    assert_eq!(
-        w.store
-            .list_task_transitions(&w.second.id)
-            .await
-            .unwrap()
-            .last()
-            .and_then(|t| t.reason.clone())
-            .as_deref()
-            .map(|r| r.starts_with(&format!("dependency \"{}\"", w.first.title))),
-        Some(true),
-        "the transition itself carries the reason"
+        reason.contains(&w.first.id[w.first.id.len() - 8..]),
+        "the reason does not name the dependency's id: {reason}"
     );
 }
 
@@ -160,11 +150,11 @@ async fn a_cancelled_dependency_fails_the_task_waiting_on_it() {
         w.status(&w.second.id).await == TaskStatus::Failed
     })
     .await;
-    let notice = w.notice().await;
+    let reason = w.reason().await;
     assert!(
-        notice.contains(&format!("dependency \"{}\"", w.first.title))
-            && notice.contains("was cancelled"),
-        "the notice does not say the dependency was cancelled: {notice}"
+        reason.contains(&format!("dependency \"{}\"", w.first.title))
+            && reason.contains("was cancelled"),
+        "the reason does not say the dependency was cancelled: {reason}"
     );
 }
 

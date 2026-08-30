@@ -140,8 +140,8 @@ impl Store {
     /// A prompt-style reason additionally only lands on a session that is
     /// still live, and a reason an agent raised for itself does not land on a
     /// row already flagged for the user: `waiting_user` says a person owes
-    /// this task something — a message written to them, a request that is
-    /// theirs to merge — and a permission dialog, a disconnect or a stall
+    /// this task something — a request that is theirs to merge — and a
+    /// permission dialog, a disconnect or a stall
     /// neither settles that nor is more use to whoever reads the strip. The
     /// agent's flag comes back on its own the moment the user's is taken
     /// down, since every detector behind it runs again.
@@ -186,8 +186,8 @@ impl Store {
     ///
     /// An agent that is working again says so by working — but `waiting_user`
     /// was never its flag, and the agent getting on with something else is
-    /// not the user having merged the request or read the message. It stays
-    /// up until the user acts, or until the sweep's
+    /// not the user having merged the request. It stays up until the user
+    /// acts, or until the sweep's
     /// [`Store::clear_session_attention`] drops it like any other.
     pub async fn clear_agent_attention(&self, id: &str) -> Result<()> {
         let cleared = self
@@ -244,48 +244,6 @@ impl Store {
     pub async fn clear_session_attention(&self, id: &str) -> Result<()> {
         let cleared = self.clear_attention(id, "", &[]).await?;
         self.announce_attention(id, cleared).await
-    }
-
-    /// Take `waiting_user` down across a whole thread: the user has spoken in
-    /// it, so nothing in it is still waiting for them to.
-    ///
-    /// A thread is one task's conversation, or a goal's own — the sessions of
-    /// the goal that sit on no task, which is where its planner works. Every
-    /// session of it is cleared rather than only the one that wrote the
-    /// message: "waiting for you" is about the conversation the user answered,
-    /// and which agent happened to raise it there is not what they replied to.
-    ///
-    /// Only that one reason. A permission dialog an agent is holding is not
-    /// answered by anything typed in a thread, so it stays up until the pane
-    /// itself is dealt with.
-    pub async fn clear_user_attention_in_thread(
-        &self,
-        goal_id: &str,
-        task_id: Option<&str>,
-    ) -> Result<()> {
-        let scope = match task_id {
-            Some(_) => " AND task_id = ?",
-            None => " AND task_id IS NULL",
-        };
-        let mut q = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-            "SELECT id FROM agent_sessions
-              WHERE goal_id = ? AND attention_reason = ?{scope}"
-        )))
-        .bind(goal_id)
-        .bind(AttentionReason::WaitingUser.as_str());
-        if let Some(task_id) = task_id {
-            q = q.bind(task_id);
-        }
-        let waiting: Vec<String> = q.fetch_all(self.r()).await?;
-        // One statement each, so that every watcher is handed the session it
-        // is watching and the task stall of each is brought into line.
-        for id in waiting {
-            let cleared = self
-                .clear_attention(&id, ONE_REASON, &[AttentionReason::WaitingUser.as_str()])
-                .await?;
-            self.announce_attention(&id, cleared).await?;
-        }
-        Ok(())
     }
 
     /// Take the attention flag down, narrowed by `and`: the caller's clause

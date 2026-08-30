@@ -39,8 +39,6 @@ impl McpRole {
         match self {
             McpRole::Planner => &[
                 "get_task",
-                "list_messages",
-                "post_message",
                 "create_task",
                 "update_task",
                 "list_models",
@@ -49,21 +47,12 @@ impl McpRole {
             ],
             McpRole::Engineer => &[
                 "get_task",
-                "list_messages",
-                "post_message",
                 "request_review",
-                "get_reviews",
+                "fail_task",
                 "mark_merged",
                 "record_pull_request",
-                "get_diff",
             ],
-            McpRole::Reviewer => &[
-                "get_task",
-                "list_messages",
-                "post_message",
-                "get_diff",
-                "submit_verdict",
-            ],
+            McpRole::Reviewer => &["get_task", "get_diff", "submit_verdict"],
         }
     }
 }
@@ -107,16 +96,6 @@ impl AriadneMcp {
         Ok(format!("/v1/tasks/{task}{tail}"))
     }
 
-    /// Where a conversation lives: under the task a tool named, else under
-    /// this session's own — and, for a planner that has neither, the goal
-    /// thread, which is the one conversation with no task behind it.
-    fn thread(&self, named: Option<String>, tail: &str) -> String {
-        match named.or_else(|| self.task_id.clone()) {
-            Some(task) => format!("/v1/tasks/{task}{tail}"),
-            None => format!("/v1/goals/{}{tail}", self.goal_id),
-        }
-    }
-
     async fn get<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, McpError> {
         self.client.get_json(path).await.map_err(to_mcp_err)
     }
@@ -132,9 +111,9 @@ impl AriadneMcp {
 
 /// The daemon's refusal, as the agent reads it.
 ///
-/// A 4xx is the agent's own doing — an addressee nobody in the thread answers
-/// to, a transition its task cannot make — and the daemon already spelled out
-/// what would have worked, so it comes back as bad parameters carrying that
+/// A 4xx is the agent's own doing — a transition its task cannot make, a
+/// reviewer it is not assigned as — and the daemon already spelled out what
+/// would have worked, so it comes back as bad parameters carrying that
 /// sentence rather than as a server failure.
 fn to_mcp_err(e: ClientError) -> McpError {
     match &e {
@@ -152,16 +131,15 @@ fn json_result(v: serde_json::Value) -> Result<CallToolResult, McpError> {
 }
 
 /// The rules that hold whoever is reading them: what Ariadne is reached
-/// through, how a message addresses someone, and how sparing to be with both
-/// messages and turns.
+/// through, and how sparing to be with turns.
 ///
 /// One block, appended to the server's instructions above, which every session
 /// of every role receives before its first prompt. It used to be pasted into
 /// the three system prompts instead, where it was three copies to keep in step
-/// and a profile's own text for a user to edit away. Whom to write to and how
-/// little to write are here for the same reason: they held for all three
-/// roles, so all three said them.
-const SESSION_RULES: &str = r#"Reach Ariadne only through these tools; a backticked name is one. `post_message` writes to the thread, `list_messages` reads; a `to` wakes who it names ("user" the human, a profile as `get_task` spells it), else it waits. Work autonomously; wait only when a message asks; a human may attach anytime. Write briefly, only where it changes what someone does next, "user" only where they must act; never narrate progress; take as few turns as you can."#;
+/// and a profile's own text for a user to edit away. How little to spend is
+/// here for the same reason: it held for all three roles, so all three said
+/// it.
+const SESSION_RULES: &str = r#"Reach Ariadne only through these tools; a backticked name is one. Work autonomously; nobody answers a question, so do not ask. A human may attach anytime. Never narrate progress; take as few turns as you can."#;
 
 impl ServerHandler for AriadneMcp {
     /// The server's own instructions, which every session receives before its
@@ -266,7 +244,9 @@ pub(crate) mod tests {
     ///
     /// The engineer owns its task from the first commit to the merge, so the
     /// tools that land one are its own — and the send-back a fourth role once
-    /// had is gone with it.
+    /// had is gone with it. What it has no tools for is reading: the verdicts
+    /// reach it in the briefing it is resumed with, and the diff is in the
+    /// worktree it is standing in.
     #[test]
     fn every_role_has_the_tools_its_playbook_names_and_no_others() {
         for (role, tools) in [
@@ -274,8 +254,6 @@ pub(crate) mod tests {
                 McpRole::Planner,
                 &[
                     "get_task",
-                    "list_messages",
-                    "post_message",
                     "create_task",
                     "update_task",
                     "list_models",
@@ -287,24 +265,15 @@ pub(crate) mod tests {
                 McpRole::Engineer,
                 &[
                     "get_task",
-                    "list_messages",
-                    "post_message",
                     "request_review",
-                    "get_reviews",
+                    "fail_task",
                     "mark_merged",
                     "record_pull_request",
-                    "get_diff",
                 ][..],
             ),
             (
                 McpRole::Reviewer,
-                &[
-                    "get_task",
-                    "list_messages",
-                    "post_message",
-                    "get_diff",
-                    "submit_verdict",
-                ][..],
+                &["get_task", "get_diff", "submit_verdict"][..],
             ),
         ] {
             assert_eq!(role.tools(), tools, "the tools of the {role:?}");
@@ -314,15 +283,13 @@ pub(crate) mod tests {
         /// so a tool added or dropped is a line of this file.
         const EVERY_TOOL: &[&str] = &[
             "create_task",
+            "fail_task",
             "finalize_plan",
             "get_diff",
-            "get_reviews",
             "get_task",
-            "list_messages",
             "list_models",
             "list_profiles",
             "mark_merged",
-            "post_message",
             "record_pull_request",
             "request_review",
             "submit_verdict",
@@ -360,8 +327,8 @@ pub(crate) mod tests {
 
     /// The rules that hold for every role are the server's instructions, and
     /// every session gets them whatever its role and whatever its profile's
-    /// prompts have been edited into: how Ariadne is reached, whom a message
-    /// addresses, and how little of both to spend.
+    /// prompts have been edited into: how Ariadne is reached, that nobody is
+    /// there to be asked, and how few turns to spend.
     #[test]
     fn every_session_is_told_how_ariadne_is_reached() {
         for role in ROLES {
@@ -369,12 +336,25 @@ pub(crate) mod tests {
             let instructions = mcp.get_info().instructions.expect("instructions");
             for rule in [
                 "Reach Ariadne only through these tools",
-                "`post_message` writes to the thread",
-                "\"user\" the human",
-                "Work autonomously",
+                "nobody answers a question, so do not ask",
                 "take as few turns as you can",
             ] {
                 assert!(instructions.contains(rule), "{role:?}: {instructions}");
+            }
+        }
+    }
+
+    /// And no session is told about a conversation there is not: the thread,
+    /// the tools that read and wrote it and the word that addressed a message
+    /// are gone, and an instruction that still named one would be an agent
+    /// reaching for a tool nothing serves.
+    #[test]
+    fn no_session_is_told_of_a_conversation() {
+        for role in ROLES {
+            let mcp = server_at(role.clone(), Client::resolve(Some("http://127.0.0.1:1"), None));
+            let instructions = mcp.get_info().instructions.expect("instructions");
+            for gone in ["thread", "message", "conversation"] {
+                assert!(!instructions.contains(gone), "{role:?}: {instructions}");
             }
         }
     }
@@ -392,13 +372,12 @@ pub(crate) mod tests {
         );
     }
 
-    /// The daemon refuses an addressee with the sentence that says which ones
-    /// would have worked; that sentence is the whole value of the failure, so
-    /// it has to reach the agent instead of a generic "call failed".
+    /// The daemon refuses a call with the sentence that says what would have
+    /// worked; that sentence is the whole value of the failure, so it has to
+    /// reach the agent instead of a generic "call failed".
     #[test]
-    fn a_refused_addressee_reaches_the_agent_in_the_daemons_words() {
-        let refusal =
-            "Planner takes no part in this thread; address one of: Engineer, Reviewer, user";
+    fn a_refused_call_reaches_the_agent_in_the_daemons_words() {
+        let refusal = "only an approved task can be marked merged (task is in_progress)";
         let err = to_mcp_err(ClientError::Api {
             status: http::StatusCode::BAD_REQUEST,
             code: "bad_request".into(),

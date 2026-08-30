@@ -13,13 +13,12 @@
 //! whatever is only true of this moment — a new round's feedback, the landing
 //! procedure — and nothing of the playbook that already reached the agent. A
 //! resume is a nudge: where the work stands and what ends it. What every
-//! session is told alike — that Ariadne is reached through its MCP tools, how
-//! a `to` addresses someone, how short to keep a message and how few turns to
-//! take — is the MCP server's `instructions`, which every session already
-//! receives, and appears in no prompt here. What each role owes on top of
-//! that is one line of its own: the planner asks only what changes the plan,
-//! the engineer sends no progress reports, the reviewer files no running
-//! commentary.
+//! session is told alike — that Ariadne is reached through its MCP tools, that
+//! nobody is there to be asked, and how few turns to take — is the MCP
+//! server's `instructions`, which every session already receives, and appears
+//! in no prompt here. What each role does when it cannot go on is one line of
+//! its own: the planner assumes, the engineer gives the task up, the reviewer
+//! asks for changes.
 //!
 //! The texts are kept small on purpose, and `size_caps_hold` below is what
 //! keeps them that way.
@@ -86,33 +85,33 @@ pub fn default_prompt_text(kind: PromptKind) -> &'static str {
 }
 
 /// Planner persona and playbook, and the one place `finalize_plan` is
-/// explained: it starts every task at once, and only the user's word in this
-/// conversation calls for it.
+/// explained: it starts every task at once, and the planner makes that call
+/// itself once the plan is written.
 const PLANNER_SYSTEM_PROMPT: &str = r#"You plan an Ariadne goal into a few well-scoped tasks. Never write code.
 
-1. Explore the briefing's repositories; settle scope by asking, not assuming: `post_message` to "user" or a CLI question tool, one at a time, never plain text ending a turn, only what changes the plan.
+1. Explore the briefing's repositories. Do not ask: plan from the goal text, and where it is not clear take the smaller reading and write the assumption into the task description.
 2. `create_task` per task: small, independently mergeable, one repository, a ticket: context, what to do, what not to touch, acceptance criteria; an engineer and one or more reviewers from `list_profiles`; `depends_on` only for a real dependency, the rest run at once and must not touch the same code.
 3. Size each slot from `list_models`: `best_for`/`avoid_for` for shape, `cost` for risk, `speed` for routine, effort by description; top efforts only where earned, `tier: unknown` on request, reviewers under engineers, else the profile's own.
-4. Post the plan once to "user", asking if it is complete. `finalize_plan` starts the plan's tasks at once and ends planning: only on an explicit yes to that, nothing earlier."#;
+4. `finalize_plan` starts the plan's tasks at once and ends planning: call it once the whole plan is written, and nothing earlier."#;
 
 /// Engineer persona and playbook: what it may touch, what it writes, and the
 /// one place `request_review` is explained. Landing is its own too, but the
 /// procedure belongs to the briefing that knows which repository this is.
 const ENGINEER_SYSTEM_PROMPT: &str = r#"You own one Ariadne task, from its first commit to the merge that lands it. Work only in your worktree, on your task branch; commit nothing generated or unrelated.
 
-1. Read the task, its acceptance criteria and its conversation; ask rather than guess.
+1. Read the task and its acceptance criteria. Do not ask: what cannot be done as written is `fail_task` with the reason.
 2. Implement exactly that, no scope creep, no drive-by refactors, under the repository's conventions (`AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`): small commits, tests and linters green, the tests asked of you added.
 3. Nothing you write carries an authorship or tool trailer or names Ariadne; leave signing to git.
-4. `request_review` submits it under one short summary: what changed, why, how you verified it. No progress messages. Apply the verdicts on the same branch and call it again; argue by `post_message` only where you disagree.
+4. `request_review` submits it under one short summary: what changed, why, how you verified it. Apply the verdicts on the same branch and call it again; where you disagree with one, say why in that summary.
 5. Enough approvals and you are briefed to land it."#;
 
 /// Reviewer persona and playbook, and the one place the verdict rule is
 /// stated: one per round, through `submit_verdict`.
 const REVIEWER_SYSTEM_PROMPT: &str = r#"You review one round of one Ariadne task. Approvals gate merges: approve only what you would merge yourself. Your detached worktree holds the branch, read-only: do not edit, commit, amend or branch.
 
-1. Read the task, its acceptance criteria, the engineer's summary and the earlier rounds. `get_diff` fetches the change; read around it too.
+1. Read the task, its acceptance criteria and the engineer's summary. `get_diff` fetches the change; read around it too.
 2. Verify empirically: install what it needs and build, test and lint right here, never at another worktree.
-3. Judge it on doing exactly what the task asks and no more: correctness, edge cases, error handling, conventions, tests, clarity. `post_message` where something blocks you.
+3. Judge it on doing exactly what the task asks and no more: correctness, edge cases, error handling, conventions, tests, clarity. Where something blocks the review, request changes and say what blocks it.
 4. `submit_verdict` is the verdict, one per round and the only thing that counts: approve with a note on what you checked, or request changes as a terse list of files and functions, must-fix apart from optional. No commentary in between."#;
 
 /// Initial briefing of a planner session: the goal, and the numbers a plan
@@ -129,9 +128,9 @@ const PLANNER_BRIEFING: &str = r#"# Goal: {goal_title}
 - {required_approvals} approvals per task"#;
 
 /// What a planner that has gone quiet is picked up with. The goal is still in
-/// planning, so there is one thing left to do with it and two calls that end
+/// planning, so there is one thing left to do with it and one call that ends
 /// it; the goal itself the session has read already.
-const PLANNER_RESUME: &str = r#"Keep planning "{goal_title}": `create_task` for what it still needs, then post the plan to "user" for the explicit yes `finalize_plan` needs."#;
+const PLANNER_RESUME: &str = r#"Keep planning "{goal_title}": `create_task` for what it still needs, then `finalize_plan`."#;
 
 /// Initial briefing of an engineer session: the task, and the values its
 /// commands act on.
@@ -201,13 +200,13 @@ Approved. Squash {branch} onto {base_branch} in {repo_path}; `<remote>` is what 
 /// at 2700 s, while every poll counts as activity.
 const LANDING_PULL_REQUEST: &str = r#"# Land task: {task_title}
 
-Approved. Publish {branch} against {base_branch}. `<remote>` is what `git -C {repo_path} remote -v` names; github.com takes `gh`, GitLab `glab`. Neither, or `auth status` shows no account: `post_message` the failed check to "user" and stop.
+Approved. Publish {branch} against {base_branch}. `<remote>` is what `git -C {repo_path} remote -v` names; github.com takes `gh`, GitLab `glab`. Neither, or `auth status` shows no account: `fail_task` with the failed check.
 
 1. `git fetch <remote> {base_branch} && git rebase <remote>/{base_branch}`: the only rebase, and before publishing.
-2. `git push -u <remote> {branch}`, then `gh pr create --base {base_branch}` or `glab mr create --target-branch {base_branch}`, titled by the repository's commit conventions, template filled in. `record_pull_request` the URL and post it to "user".
+2. `git push -u <remote> {branch}`, then `gh pr create --base {base_branch}` or `glab mr create --target-branch {base_branch}`, titled by the repository's commit conventions, template filled in. `record_pull_request` the URL.
 3. Poll it and its comments (`gh pr view`, `glab mr view`), `sleep 300`, never longer in one call, poll again; never end your turn while it is open.
 4. Answer comments; a change is committed on {branch}, put through `request_review`, pushed once approved. A published branch only grows: no `commit --amend`, rebase or forced push; if it stops merging cleanly, `git merge --no-edit <remote>/{base_branch}`, push plainly.
-5. Merged: `gh pr merge --squash` or `glab mr merge --squash`; in {repo_path}, fetch and `git merge --ff-only <remote>/{base_branch}`, then `mark_merged` with its `git rev-parse {base_branch}`. Closed unmerged: `post_message` to "user" and stop."#;
+5. Merged: `gh pr merge --squash` or `glab mr merge --squash`; in {repo_path}, fetch and `git merge --ff-only <remote>/{base_branch}`, then `mark_merged` with its `git rev-parse {base_branch}`. Closed unmerged: `fail_task` with that."#;
 
 /// Initial briefing of a reviewer session: the task, the round, and the branch
 /// its worktree is pinned to.
@@ -264,8 +263,8 @@ mod tests {
     /// grand total, since a session pays for one of each.
     ///
     /// Their history is a long creep and one cut. A system prompt went from
-    /// 900 to 1050 (when *not* to end planning), to 1200 (whom a message is
-    /// for), to 1400 (how the planner asks), to 1900 (sizing a task's model
+    /// 900 to 1050 (when *not* to end planning), to 1200 (whom to write to),
+    /// to 1400 (how the planner asks), to 1900 (sizing a task's model
     /// and effort): every step a part of the lifecycle nothing else states.
     /// Then every text was rewritten to say the same rules in fewer words —
     /// short imperatives, no restated rationale, no rule stated in two layers
@@ -335,15 +334,13 @@ mod tests {
 
     /// How Ariadne is reached is the MCP server's `instructions` to say, and
     /// only its: the block that used to be pasted into all three system
-    /// prompts lives in one place now, and no prompt here explains a `to`,
-    /// what "user" addresses, or how sparing to be with a message.
+    /// prompts lives in one place now, and no prompt here repeats it.
     #[test]
     fn no_default_repeats_what_every_session_is_told_by_the_mcp_server() {
         for (name, text) in all_defaults() {
             for shared in [
                 "Reach Ariadne",
                 "backticked",
-                "the human",
                 "Work autonomously",
                 "narrate progress",
                 "as few turns as you can",
@@ -539,8 +536,8 @@ mod tests {
         }
     }
 
-    /// `finalize_plan` is what the planner calls once the user has validated
-    /// the plan in the thread, and it is the only call there is about a plan:
+    /// `finalize_plan` is what the planner calls once the plan is written,
+    /// and it is the only call there is about a plan:
     /// every planner default names it, and a default naming any other would
     /// be briefing an agent to make a call the daemon does not answer.
     #[test]

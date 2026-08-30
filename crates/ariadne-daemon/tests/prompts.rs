@@ -20,9 +20,8 @@
 
 mod common;
 
-use ariadne_core::{Actor, AuthorRole, PromptKind, Role, SessionStatus, TaskStatus};
+use ariadne_core::{Actor, PromptKind, Role, SessionStatus, TaskStatus};
 use ariadne_daemon::agents::prompts;
-use ariadne_store::NewMessage;
 use ariadne_store::defaults::default_prompt;
 
 use common::{Cast, Harness, harness};
@@ -30,7 +29,6 @@ use common::{Cast, Harness, harness};
 /// What the engineer requested review with, and what it wrote afterwards:
 /// the briefing has to carry the first and never the second.
 const SUMMARY: &str = "Rendered the board from the store, with a test per lane.";
-const AFTERWARDS: &str = "Thanks — I will look at the lane widths next.";
 
 /// A task ready for its engineer to be spawned, in a real repo.
 async fn seeded(h: &Harness) -> Cast {
@@ -235,20 +233,6 @@ async fn a_reviewer_is_briefed_with_the_summary_review_was_requested_with() {
         )
         .await
         .unwrap();
-    // And then it says something else in the thread, as an engineer answering
-    // a question about the change does.
-    h.store
-        .create_message(NewMessage {
-            goal_id: task.goal_id.clone(),
-            task_id: Some(task.id.clone()),
-            author_role: AuthorRole::Engineer,
-            author_session_id: None,
-            recipient: None,
-            body: AFTERWARDS.into(),
-        })
-        .await
-        .unwrap();
-
     let session = h
         .launcher
         .spawn_reviewer(&task.id, &cast.reviewer.id)
@@ -274,10 +258,8 @@ async fn a_reviewer_is_briefed_with_the_summary_review_was_requested_with() {
         "the review-round briefing, assembled: {:?}",
         plan.argv
     );
-    // Which pins both halves of the summary rule at once: what the engineer
-    // requested review with is in there, and what it said afterwards — and any
-    // decoration of the summary on its way — is not.
-    assert!(!expected.contains(AFTERWARDS));
+    // The summary is what the engineer requested review with, undecorated:
+    // it is the whole of what the reviewer is told.
     assert!(!expected.contains("Review requested:"));
 }
 

@@ -72,16 +72,14 @@ Examples:
   ariadne goal create --title \"Add rate limiting\" --repo ~/projects/api
   ariadne goal ls --status planning,active
   ariadne goal attach <goal-id>            # the planner's terminal
-  ariadne goal msg <goal-id> \"the middleware crate, not a new one\"
-  ariadne goal thread <goal-id>            # the whole conversation
+  ariadne goal inspect <goal-id>
 ";
 
 const TASK_EXAMPLES: &str = "\
 Examples:
   ariadne task ls --goal <goal-id>
   ariadne task ls --status in-progress,under-review
-  ariadne task inspect <task-id>           # and: diff, reviews, history, thread
-  ariadne task msg <task-id> \"hold on, use the middleware crate instead\"
+  ariadne task inspect <task-id>           # and: diff, reviews, history
   ariadne task attach <task-id>            # the engineer's terminal
 ";
 
@@ -320,10 +318,9 @@ pub enum Command {
     },
     /// Manage goals
     ///
-    /// A goal is a whole effort. A planner agent breaks it into tasks and
-    /// discusses the breakdown with you in the goal's conversation — `goal
-    /// thread` reads it, `goal msg` writes to it — and nothing runs until you
-    /// confirm the plan there.
+    /// A goal is a whole effort. A planner agent breaks it into tasks from
+    /// the goal's own description and starts them; `goal inspect` shows what
+    /// it made of it.
     #[command(after_help = GOAL_EXAMPLES)]
     Goal {
         #[command(subcommand)]
@@ -333,8 +330,8 @@ pub enum Command {
     ///
     /// A task is one unit of a goal, owned by an engineer agent in a worktree
     /// of its own from its first commit to the merge that lands it, with
-    /// reviewer agents gating that merge. Its diff, its reviews, its history
-    /// and its conversation are all here.
+    /// reviewer agents gating that merge. Its diff, its reviews and its
+    /// history are all here.
     #[command(after_help = TASK_EXAMPLES)]
     Task {
         #[command(subcommand)]
@@ -354,7 +351,7 @@ pub enum Command {
     /// Show what the daemon has been doing, one line per event
     ///
     /// The agent events already recorded, and with -f the live stream on top
-    /// of them: goals, tasks, sessions, messages and reviews as they change.
+    /// of them: goals, tasks, sessions and reviews as they change.
     /// Each line is `time · kind · subject · detail`; `--format json` writes
     /// one object per line, so a pipe can read it as it goes.
     Events {

@@ -386,9 +386,9 @@ mod tests {
             ColorChoice::Always
         );
         assert_eq!(
-            argv(&["ariadne", "task", "msg", "01T", "--color always"]),
+            argv(&["ariadne", "goal", "create", "--title", "--color always"]),
             ColorChoice::Auto,
-            "a message body that merely mentions the flag is not the flag"
+            "a value that merely mentions the flag is not the flag"
         );
         assert_eq!(argv(&["ariadne", "--color"]), ColorChoice::Auto);
         assert_eq!(argv(&["ariadne", "--color", "purple"]), ColorChoice::Auto);

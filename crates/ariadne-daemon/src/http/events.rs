@@ -11,8 +11,8 @@ use ariadne_store::{EventFilter, NewAgentEvent};
 
 use super::AppState;
 use super::classify::{
-    QUESTION_TOOL, TURN_STARTS, attention_for_event, extract_internal_id, last_assistant_message,
-    question_for_event, status_for_event, usage_for_event,
+    QUESTION_TOOL, attention_for_event, extract_internal_id, question_for_event, status_for_event,
+    usage_for_event,
 };
 use super::convert::event_dto;
 use super::error::ApiResult;
@@ -169,35 +169,6 @@ pub async fn ingest(
                 }
             }
             _ => {}
-        }
-    }
-
-    // And the last thing an idle-mapped event may be carrying is the words
-    // the turn ended on. A planner that stops talking while its goal is still
-    // being planned is waiting for the user, whether or not it said so with a
-    // tool call, so what it said goes into the goal's thread as its own
-    // message — see `notify::planner_ended_its_turn` for who that is written
-    // for and who it is withheld from. From there it is a message addressed
-    // to the user like any other: the scheduler is told, and it is the one
-    // that raises `waiting_user` for it.
-    if status == Some(ariadne_core::SessionStatus::Idle)
-        && let Some(text) = last_assistant_message(&req.payload)
-    {
-        // When the turn now ending began, which is what bounds "already said
-        // this" to it. Read here rather than inside the writer because the
-        // event vocabulary is this module's, and read only for an idle event
-        // that actually carries words — everything else asks nothing of the
-        // event log.
-        let turn_began_at = state.store.last_event_at(&session.id, &TURN_STARTS).await?;
-        if let Some(message) = crate::notify::planner_ended_its_turn(
-            &state.store,
-            &session,
-            text,
-            turn_began_at.as_deref(),
-        )
-        .await?
-        {
-            state.notify_scheduler_message(&message.id);
         }
     }
 

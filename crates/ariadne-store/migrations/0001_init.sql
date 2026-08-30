@@ -221,29 +221,6 @@ CREATE TABLE session_usage (
     PRIMARY KEY (session_id, source)
 );
 
--- A conversation line. NULL `recipient_kind` is said to the thread, addressed
--- to nobody in particular; a profile addressee carries its id and the user has
--- none, hence the two checks tying the id to the kind (written with `IS`,
--- since a comparison against a NULL kind would be NULL, and a NULL check
--- passes).
-CREATE TABLE messages (
-    id                   TEXT PRIMARY KEY,
-    goal_id              TEXT NOT NULL REFERENCES goals (id) ON DELETE CASCADE,
-    task_id              TEXT REFERENCES tasks (id) ON DELETE CASCADE,  -- NULL = goal-level thread
-    author_role          TEXT NOT NULL
-                         CHECK (author_role IN ('planner', 'engineer', 'reviewer',
-                                                'user', 'system')),
-    author_session_id    TEXT REFERENCES agent_sessions (id),
-    body                 TEXT NOT NULL,
-    created_at           TEXT NOT NULL,
-    recipient_kind       TEXT CHECK (recipient_kind IN ('profile', 'user')),
-    recipient_profile_id TEXT REFERENCES profiles (id)
-                         CHECK (recipient_profile_id IS NULL OR recipient_kind IS 'profile')
-                         CHECK (recipient_kind IS NOT 'profile' OR recipient_profile_id IS NOT NULL)
-);
-CREATE INDEX idx_messages_task ON messages (task_id, id);
-CREATE INDEX idx_messages_goal ON messages (goal_id, id);
-
 CREATE TABLE reviews (
     id                  TEXT PRIMARY KEY,
     task_id             TEXT NOT NULL REFERENCES tasks (id) ON DELETE CASCADE,

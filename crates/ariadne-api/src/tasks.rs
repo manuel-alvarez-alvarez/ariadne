@@ -16,11 +16,10 @@ pub struct TaskDto {
     pub description: String,
     pub status: TaskStatus,
     pub engineer_profile_id: String,
-    /// Name of the engineer's profile, the way a message addresses it; None
-    /// only if that profile is gone.
+    /// Name of the engineer's profile; None only if that profile is gone.
     pub engineer_profile_name: Option<String>,
-    /// Name of the planner profile of the task's goal, which takes part in
-    /// every task thread without being a field of the task.
+    /// Name of the planner profile of the task's goal, which wrote the task
+    /// without being a field of it.
     pub planner_profile_name: Option<String>,
     /// What the engineer runs on, `<agent_kind>[:<model>]`: the agent CLI and,
     /// after a `:`, the model of it (`codex`, `claude_code:claude-opus-5`).
@@ -47,6 +46,11 @@ pub struct TaskDto {
     /// URL of the pull or merge request the task was published as, once its
     /// engineer has reported one; None for a task landed directly.
     pub pr_url: Option<String>,
+    /// Why a `failed` or `cancelled` task ended — the engineer's own
+    /// `fail_task` reason, a dependency that never landed, a cancelled goal.
+    /// None for every other status, and for an ending nobody gave a reason
+    /// for.
+    pub reason: Option<String>,
     /// What the agents of this task have spent between them.
     pub usage: TaskUsageDto,
     pub created_at: String,
@@ -85,7 +89,7 @@ pub struct ProfileUsageDto {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TaskReviewerDto {
     pub profile_id: String,
-    /// Name of the reviewer's profile, the way a message addresses it; None
+    /// Name of the reviewer's profile; None
     /// only if that profile is gone.
     pub profile_name: Option<String>,
     /// What this reviewer runs on, `<agent_kind>[:<model>]`. None = auto: the
@@ -200,7 +204,7 @@ pub struct TransitionRequest {
 
 /// The engineer reporting the pull or merge request it opened for a task, so
 /// the user has somewhere to go and read it: taken off `gh pr create`'s output
-/// rather than out of the conversation.
+/// and recorded on the task.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RecordPullRequestRequest {
     /// The request's URL, e.g. `https://github.com/owner/repo/pull/12`.

@@ -18,10 +18,7 @@
 //!
 //! None of it waits on the keystrokes themselves: typing into a pane settles
 //! for a second or two, and a pass with three agents to nudge sends all three
-//! at once rather than one after another. A message that reached an agent
-//! counts for the same pass as the nudge would have — it says the same thing
-//! and better — so nothing tells an agent to get on with what it was asked to
-//! do a moment ago.
+//! at once rather than one after another.
 //!
 //! The scheduler is started after the seeding rather than with the harness, so
 //! that the pass a test asks for is the first one over the state it just
@@ -37,7 +34,7 @@ use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 
 use ariadne_core::{
-    Actor, AttentionReason, AuthorRole, GoalStatus, ReviewVerdict, Role, SessionStatus, TaskStatus,
+    Actor, AttentionReason, GoalStatus, ReviewVerdict, Role, SessionStatus, TaskStatus,
 };
 // The watchdog's timeline and the planner's budget come from the scheduler
 // rather than being written down again here, so that moving a threshold moves
@@ -48,7 +45,7 @@ use ariadne_daemon::scheduler::{
     QUIET_RELAUNCH_SECS as RELAUNCH_SECS, START_GRACE_SECS, SchedEvent,
 };
 use ariadne_store::{
-    AgentSession, Goal, NewMessage, NewReview, Recipient, ReviewerSlot, SessionFilter, Task,
+    AgentSession, Goal, NewReview, ReviewerSlot, SessionFilter, Task,
 };
 
 use common::{Harness, eventually, harness};
@@ -176,11 +173,6 @@ impl Sched {
             .unwrap();
     }
 
-    fn message(&self, message_id: &str) {
-        self.0
-            .send(SchedEvent::MessagePosted(message_id.to_string()))
-            .unwrap();
-    }
 }
 
 /// The engineer's resume template, as its profile has it: the words the daemon
@@ -322,8 +314,7 @@ async fn an_idle_agent_is_nudged_once_for_the_situation_it_went_quiet_in() {
 /// A nudge that does not leave the composer is not a nudge. The pane keeps
 /// showing it however many Enters follow, so the session is raised for the
 /// user rather than counted as told — the flag says the agent is not moving,
-/// which is exactly what a message it never received leaves behind, and the
-/// task it is not moving on says so with it.
+/// and the task it is not moving on says so with it.
 #[tokio::test]
 async fn a_nudge_that_never_submits_raises_the_session() {
     let w = World::active().await;
@@ -1037,10 +1028,10 @@ async fn a_session_that_outlived_its_completed_goal_is_killed() {
 }
 
 /// A task nothing could be started for is a task nobody is coming back to:
-/// the retry budget runs out, and the user is told once, in the task's own
-/// thread, what stopped it.
+/// the retry budget runs out, and the task itself says what stopped it — its
+/// status, and the reason on the transition that ended it.
 #[tokio::test]
-async fn a_task_that_could_never_be_started_tells_the_user_it_failed() {
+async fn a_task_that_could_never_be_started_fails_with_the_reason_on_it() {
     let w = World::cannot_spawn().await;
     let sched = w.scheduler();
     eventually(TIMEOUT, "the retry budget to run out", async || {
@@ -1049,22 +1040,25 @@ async fn a_task_that_could_never_be_started_tells_the_user_it_failed() {
     })
     .await;
 
-    // Said once, however many passes ask about a task that has already ended.
+    // Failed once, however many passes ask about a task that has already
+    // ended.
     for _ in 0..3 {
         sched.task(&w.task);
     }
-    eventually(TIMEOUT, "the failure to reach the user", async || {
-        w.user_messages(&w.task).await.len() == 1
-    })
-    .await;
-    let told = w.user_messages(&w.task).await;
-    assert_eq!(told.len(), 1, "{told:?}");
-    assert_eq!(told[0].author_role(), AuthorRole::System);
-    assert!(told[0].body.contains(&w.task.title), "{}", told[0].body);
-    assert!(
-        told[0].body.contains("the agent could not be started"),
-        "the notice does not say what stopped it: {}",
-        told[0].body
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let ended: Vec<_> = w
+        .store
+        .list_task_transitions(&w.task.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|t| t.to_status == TaskStatus::Failed.as_str())
+        .collect();
+    assert_eq!(ended.len(), 1, "{ended:?}");
+    assert_eq!(
+        ended[0].reason.as_deref(),
+        Some("the agent could not be started"),
+        "the task does not say what stopped it"
     );
 }
 
@@ -1073,7 +1067,7 @@ async fn a_task_that_could_never_be_started_tells_the_user_it_failed() {
 /// not know, a CLI that is not installed — used to leave a fresh
 /// "disconnected" session on the strip every tick, for ever. So the
 /// attempts are counted the way a task's engineer's are, and when they run out
-/// one row is left carrying the alarm, with the goal's own thread saying why.
+/// one row is left carrying the alarm.
 ///
 /// The user's answer to it is that alarm coming down: resuming the session it
 /// sits on is what says somebody has dealt with what stopped it, and the count
@@ -1108,15 +1102,12 @@ async fn a_planner_that_can_never_be_started_gives_up_with_one_alarm() {
         sched.goal(&goal);
     }
     eventually(TIMEOUT, "the planner's spawn budget to run out", async || {
-        !h.goal_thread(&goal).await.is_empty()
+        planners(&h, &goal)
+            .await
+            .iter()
+            .any(|s| s.attention_reason() == Some(AttentionReason::Disconnected))
     })
     .await;
-
-    let told = h.goal_thread(&goal).await;
-    assert_eq!(told.len(), 1, "{told:?}");
-    assert_eq!(told[0].author_role(), AuthorRole::System);
-    assert_eq!(told[0].recipient(), None, "it wakes nobody");
-    assert!(told[0].body.contains(&goal.title), "{}", told[0].body);
 
     let rows = planners(&h, &goal).await;
     let mut flagged = rows
@@ -1132,7 +1123,7 @@ async fn a_planner_that_can_never_be_started_gives_up_with_one_alarm() {
         "and no planner left running: {rows:?}"
     );
 
-    // And the passes after it try nothing at all: no new row, no second notice.
+    // And the passes after it try nothing at all: no new row.
     for _ in 0..3 {
         sched.goal(&goal);
     }
@@ -1142,7 +1133,6 @@ async fn a_planner_that_can_never_be_started_gives_up_with_one_alarm() {
         rows.len(),
         "a planner that was given up on is not spawned again"
     );
-    assert_eq!(h.goal_thread(&goal).await.len(), 1, "nor said twice");
 
     // The user's answer: resuming the flagged session. Nothing here can get an
     // agent up, so the resume fails at the launch like every attempt before it
@@ -1159,10 +1149,9 @@ async fn a_planner_that_can_never_be_started_gives_up_with_one_alarm() {
 }
 
 /// A goal the user cancelled takes its tasks with it, and every one of them
-/// says so where it happened: a cancelled task is not a task that quietly
-/// stopped.
+/// records why: a cancelled task is not a task that quietly stopped.
 #[tokio::test]
-async fn a_cancelled_goal_tells_the_user_of_every_task_it_took_with_it() {
+async fn a_cancelled_goal_records_why_on_every_task_it_took_with_it() {
     let w = World::cannot_spawn().await;
     let second = w.extra_task("the other one").await;
     w.store
@@ -1175,22 +1164,27 @@ async fn a_cancelled_goal_tells_the_user_of_every_task_it_took_with_it() {
         sched.goal(&w.goal);
     }
     for task in [&w.task, &second] {
-        eventually(TIMEOUT, "the task to be cancelled and said so", async || {
+        eventually(TIMEOUT, "the task to be cancelled", async || {
             w.store.get_task(&task.id).await.unwrap().status() == TaskStatus::Cancelled
-                && !w.user_messages(task).await.is_empty()
         })
         .await;
-        let told = w.user_messages(task).await;
-        assert_eq!(told.len(), 1, "{told:?}");
-        assert!(told[0].body.contains(&task.title), "{}", told[0].body);
-        assert!(told[0].body.contains("goal cancelled"), "{}", told[0].body);
+        let ended: Vec<_> = w
+            .store
+            .list_task_transitions(&task.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|t| t.to_status == TaskStatus::Cancelled.as_str())
+            .collect();
+        assert_eq!(ended.len(), 1, "{ended:?}");
+        assert_eq!(ended[0].reason.as_deref(), Some("goal cancelled"));
     }
 }
 
-/// And a goal whose tasks all landed ends in its own thread rather than in
-/// the killing of its planner.
+/// And a goal whose tasks all landed is completed, with nothing of it left
+/// running.
 #[tokio::test]
-async fn a_completed_goal_says_so_in_its_thread() {
+async fn a_goal_whose_tasks_all_landed_is_completed() {
     let w = World::active().await;
     w.advance(&w.task, TaskStatus::UnderReview).await;
     for (status, actor) in [
@@ -1217,15 +1211,18 @@ async fn a_completed_goal_says_so_in_its_thread() {
         w.store.get_goal(&w.goal.id).await.unwrap().status() == GoalStatus::Completed
     })
     .await;
-    let thread = w
-        .store
-        .list_goal_messages(&w.goal.id, None, 100)
-        .await
-        .unwrap();
-    assert_eq!(thread.len(), 1, "{thread:?}");
-    assert_eq!(thread[0].author_role(), AuthorRole::System);
-    assert_eq!(thread[0].recipient(), None, "it wakes nobody");
-    assert!(thread[0].body.contains(&w.goal.title), "{}", thread[0].body);
+    eventually(TIMEOUT, "its sessions to be let go", async || {
+        w.store
+            .list_sessions(SessionFilter {
+                goal_id: Some(w.goal.id.clone()),
+                live_only: true,
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .is_empty()
+    })
+    .await;
 }
 
 // -- deliveries and relaunches ----------------------------------------------
@@ -1272,66 +1269,6 @@ async fn a_pass_with_three_agents_to_nudge_does_not_wait_on_the_keystrokes() {
     assert!(
         spread < Duration::from_millis(900),
         "the three nudges went out together, not one after another: {spread:?}"
-    );
-}
-
-/// A message that reached an agent is a nudge, and a better one: it says what
-/// to do rather than asking why nothing is being done. So the pass that would
-/// have nudged this session leaves it alone, and the escalation behind the
-/// nudge does not happen either — the clock runs from the delivery.
-#[tokio::test]
-async fn a_delivered_message_stands_in_for_the_stall_nudge() {
-    let w = World::active().await;
-    let session = w.engineer_on(&w.task, TaskStatus::InProgress).await;
-    w.idle_for(&session, 5).await;
-    // Another task's agent, idle long enough to be nudged in the same passes:
-    // what says a pass really looked at both of them.
-    let other = w.extra_task("second").await;
-    let canary = w.engineer_on(&other, TaskStatus::InProgress).await;
-    w.idle_for(&canary, NUDGE_SECS + 60).await;
-
-    let sched = w.scheduler();
-    let message = w.message_to_engineer("Use the other endpoint.").await;
-    sched.message(&message);
-    eventually(TIMEOUT, "the message to reach the pane", async || {
-        w.keystrokes(&session) > 1
-    })
-    .await;
-    // The delivery is confirmed a beat after the Enter, by reading the pane
-    // back; nothing here means anything until the scheduler has been told.
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    let after_delivery = w.keystrokes(&session);
-
-    // And now what the agent's own clock says: nothing since long before the
-    // message — long enough to have been nudged, raised and relaunched, had
-    // the delivery not been the freshest thing that happened to it.
-    w.idle_for(&session, RELAUNCH_SECS + 60).await;
-    for _ in 0..2 {
-        sched.task(&w.task);
-        sched.task(&other);
-        eventually(TIMEOUT, "the other agent to be nudged", async || {
-            w.keystrokes(&canary) > 0
-        })
-        .await;
-    }
-
-    assert_eq!(
-        w.keystrokes(&session),
-        after_delivery,
-        "nothing was typed at an agent that has just been told what to do"
-    );
-    assert_eq!(
-        w.attention(&session).await,
-        None,
-        "and it was not raised for the user either"
-    );
-    assert!(
-        !w.store.get_task(&w.task.id).await.unwrap().is_stalled(),
-        "nor was its task"
-    );
-    assert!(
-        w.pane_is_alive(&session),
-        "and its pane was left where it is"
     );
 }
 
@@ -1547,19 +1484,18 @@ async fn an_agent_that_wedges_after_every_relaunch_fails_its_task() {
         SessionStatus::Exited,
         "and it is not left holding a pane under a failed task"
     );
-    // A task nobody is coming back to is told to the user, whichever watchdog
-    // gave up on it.
-    eventually(TIMEOUT, "the failure to reach the user", async || {
-        w.user_messages(&w.task).await.len() == 1
-    })
-    .await;
-    let told = w.user_messages(&w.task).await;
+    // A task nobody is coming back to carries why, whichever watchdog gave up
+    // on it.
+    let ended = w.store.list_task_transitions(&w.task.id).await.unwrap();
+    let reason = ended
+        .iter()
+        .rev()
+        .find(|t| t.to_status == TaskStatus::Failed.as_str())
+        .and_then(|t| t.reason.clone())
+        .expect("the task says why it failed");
     assert!(
-        told[0]
-            .body
-            .contains("stopped mid-turn after every relaunch"),
-        "the notice says what stopped it: {}",
-        told[0].body
+        reason.contains("stopped mid-turn after every relaunch"),
+        "{reason}"
     );
 }
 
@@ -1567,11 +1503,6 @@ async fn an_agent_that_wedges_after_every_relaunch_fails_its_task() {
 /// worked on, an idle planner is an agent nobody is waiting on holding a pane
 /// and the machine's sleep inhibitor open until the last task lands, so it is
 /// let go — and being gone is what is expected of it, not a disconnect.
-///
-/// Gone, not unreachable: a task thread can still address its planner —
-/// whose session belongs to the goal rather than to that task — and the
-/// message is what brings the session back on the conversation it was
-/// having.
 #[tokio::test]
 async fn an_idle_planner_is_let_go_once_the_goal_leaves_planning() {
     let w = World::active().await;
@@ -1589,7 +1520,7 @@ async fn an_idle_planner_is_let_go_once_the_goal_leaves_planning() {
 
     // The first tick is immediate, and one reconciliation of the goal is all
     // it takes.
-    let sched = w.scheduler();
+    let _sched = w.scheduler();
     eventually(TIMEOUT, "the planner to be let go", async || {
         w.session_status(&planner).await == SessionStatus::Exited
     })
@@ -1602,73 +1533,34 @@ async fn an_idle_planner_is_let_go_once_the_goal_leaves_planning() {
         "a planner that is done is expected to be gone, not reported disconnected"
     );
 
-    // And the engineer of one of its tasks still reaches it, from a thread
-    // the planner has no session in: the ended session is revived on the
-    // agent conversation it was having, which is the whole reason it is ended
-    // rather than kept alive.
-    let engineer = w
-        .session(&w.goal, Some(&w.task), Role::Engineer, &w.engineer)
-        .await;
-    let message = w
-        .message(
-            AuthorRole::Engineer,
-            Some(&engineer.id),
-            &w.goal.planner_profile_id.clone(),
-            "Task three overlaps with task one; which of them owns the store?",
-        )
-        .await;
-    sched.message(&message);
-
-    eventually(TIMEOUT, "the planner to be revived with the message", async || {
-        w.session_status(&planner).await != SessionStatus::Exited
-    })
-    .await;
-    let argv = w.spawn_argv(&planner.id);
-    assert!(
-        argv.contains("uuid-planner"),
-        "the same conversation is resumed: {argv}"
-    );
-    assert!(
-        argv.contains("which of them owns the store?"),
-        "and it is woken with what was said to it: {argv}"
-    );
 }
 
 /// A pane with a delivery going into it is not a pane to kill, wedged or not:
-/// the paste and the Enters behind it would come back as a message nobody
-/// could be given, and the user would be told about a composer that was only
-/// ever interrupted. The relaunch waits for the pass after the delivery has
-/// settled — and then it happens, because a composer that took a paste says
-/// nothing about the turn the agent is stuck in.
+/// the paste and the Enters behind it would be interrupted mid-word, and the
+/// user would be told about a composer that was only ever cut off. The
+/// relaunch waits for the pass after the delivery has settled — and then it
+/// happens, because a composer that took a paste says nothing about the turn
+/// the agent is stuck in.
 #[tokio::test]
-async fn a_wedged_agent_is_not_killed_while_a_message_is_going_into_its_pane() {
+async fn a_wedged_agent_is_not_killed_while_a_nudge_is_going_into_its_pane() {
     let w = World::active().await;
     let session = w.engineer_on(&w.task, TaskStatus::InProgress).await;
     w.make_resumable(&w.task, &session).await;
-    // Past the flag and nowhere near the relaunch, so the first pass only
-    // raises it: what the relaunch has to wait for is set up after that.
-    w.launched_ago(&session, FLAG_SECS + 60).await;
 
-    let sched = w.scheduler();
-    sched.task(&w.task);
-    eventually(TIMEOUT, "the wedged agent to be raised", async || {
-        w.attention(&session).await == Some(AttentionReason::Stalled)
-    })
-    .await;
-
-    // A composer that never lets go: the delivery spends its whole backoff in
+    // A composer that never lets go: the nudge spends its whole backoff in
     // the pane, which is the window this is about.
-    w.composer_keeps("Use the other endpoint.");
-    let message = w.message_to_engineer("Use the other endpoint.").await;
-    sched.message(&message);
-    eventually(TIMEOUT, "the message to reach the pane", async || {
+    w.composer_keeps(RESUME);
+    let sched = w.scheduler();
+    w.idle_for(&session, NUDGE_SECS + 60).await;
+    sched.task(&w.task);
+    eventually(TIMEOUT, "the nudge to reach the pane", async || {
         w.keystrokes(&session) > 0
     })
     .await;
 
     // Now it is past the relaunch threshold too, and every pass while the
     // pane is being typed into leaves it exactly where it is.
-    w.launched_ago(&session, RELAUNCH_SECS + 60).await;
+    w.idle_for(&session, RELAUNCH_SECS + 60).await;
     let launched = w.launched_at(&session).await;
     for _ in 0..6 {
         sched.task(&w.task);
@@ -1694,10 +1586,10 @@ async fn a_wedged_agent_is_not_killed_while_a_message_is_going_into_its_pane() {
 }
 
 /// A flag raised for the user is not an agent waiting on one. `waiting_user`
-/// says the user has something to do about this task — a message written to
-/// them, a request that is theirs to merge — and nothing about whether the
-/// agent is working, so it is neither overwritten with a stall nor taken as a
-/// reason to leave a wedged agent where it is.
+/// says the user has something to do about this task — a request that is
+/// theirs to merge — and nothing about whether the agent is working, so it is
+/// neither overwritten with a stall nor taken as a reason to leave a wedged
+/// agent where it is.
 #[tokio::test]
 async fn a_wedged_agent_flagged_for_the_user_keeps_the_flag_and_is_relaunched() {
     let w = World::active().await;
@@ -1727,7 +1619,7 @@ async fn a_wedged_agent_flagged_for_the_user_keeps_the_flag_and_is_relaunched() 
     // And the silence was measured all the same: a threshold later the agent
     // is put back on its feet like any other — and what the user is owed
     // comes back up with it, since a relaunch is not the user having merged
-    // the request or read the message.
+    // the request.
     w.launched_ago(&session, RELAUNCH_SECS + 60).await;
     let launched = w.launched_at(&session).await;
     sched.task(&w.task);
@@ -1802,33 +1694,4 @@ async fn a_published_task_still_says_the_merge_is_the_users_after_its_engineer_i
         !w.store.get_task(&w.task.id).await.unwrap().is_stalled(),
         "and what the user is owed is not the task stalling"
     );
-}
-
-impl World {
-    /// A message in the task's thread, addressed to its engineer.
-    async fn message_to_engineer(&self, body: &str) -> String {
-        self.message(AuthorRole::User, None, &self.engineer.clone(), body)
-            .await
-    }
-
-    async fn message(
-        &self,
-        author_role: AuthorRole,
-        author_session_id: Option<&str>,
-        to: &str,
-        body: &str,
-    ) -> String {
-        self.store
-            .create_message(NewMessage {
-                goal_id: self.goal.id.clone(),
-                task_id: Some(self.task.id.clone()),
-                author_role,
-                author_session_id: author_session_id.map(str::to_string),
-                recipient: Some(Recipient::Profile(to.to_string())),
-                body: body.into(),
-            })
-            .await
-            .unwrap()
-            .id
-    }
 }

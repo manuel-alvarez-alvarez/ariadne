@@ -6,7 +6,6 @@ use anyhow::Result;
 use clap::Subcommand;
 use serde_json::json;
 
-use ariadne_api::messages::{CreateMessageRequest, MessageDto};
 use ariadne_api::reviews::ReviewDto;
 use ariadne_api::stream::EventStreamQuery;
 use ariadne_api::tasks::{
@@ -20,7 +19,7 @@ use super::follow;
 use super::resolve::{self, Kind};
 use super::{
     ProfileNames, Subject, confirm, one_of, parse_effort, parse_effort_or_default, parse_model,
-    parse_model_or_default, print_thread, query_path, recipient,
+    parse_model_or_default, query_path,
 };
 use crate::cli::values::Spelling;
 use crate::output::{
@@ -201,32 +200,6 @@ pub enum TaskCommand {
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
         id: String,
     },
-    /// Show a task's conversation
-    Thread {
-        /// Task id
-        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
-        id: String,
-        /// Read this many messages from the start of the thread
-        /// (default 200)
-        #[arg(long, value_parser = clap::value_parser!(u32).range(1..), conflicts_with = "tail")]
-        limit: Option<u32>,
-        /// Read this many messages from the end of the thread instead
-        #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
-        tail: Option<u32>,
-    },
-    /// Post a message into a task's conversation
-    Msg {
-        /// Task id
-        #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
-        id: String,
-        /// Message body
-        body: String,
-        /// Address the message: the task's engineer, one of its reviewers,
-        /// or the goal's planner, by profile id or name, or "user" to reach
-        /// the human. An addressed recipient is woken to read it.
-        #[arg(long, value_name = "PROFILE|user", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_message_recipients))]
-        to: Option<String>,
-    },
     /// Show a task's reviews
     Reviews {
         /// Task id
@@ -361,30 +334,6 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             let t: TaskDto = client.get_json(&task_path(&id)).await?;
             let profiles = ProfileNames::for_format(client, format).await;
             print(format, &t, || print_kv(&inspect_pairs(&t, &profiles)))?;
-        }
-        TaskCommand::Thread { id, limit, tail } => {
-            let id = resolve::id(client, Kind::Task, &id).await?;
-            print_thread(
-                client,
-                &format!("/v1/tasks/{id}/messages"),
-                limit,
-                tail,
-                format,
-            )
-            .await?;
-        }
-        TaskCommand::Msg { id, body, to } => {
-            let id = resolve::id(client, Kind::Task, &id).await?;
-            let to = recipient(client, to).await?;
-            let m: MessageDto = client
-                .post_json(
-                    &format!("/v1/tasks/{id}/messages"),
-                    &CreateMessageRequest { body, to },
-                )
-                .await?;
-            print(format, &m, || {
-                println!("{}", ok_id_line(view().color, "posted", &m.id))
-            })?;
         }
         TaskCommand::Reviews { id } => {
             let id = resolve::id(client, Kind::Task, &id).await?;
@@ -628,6 +577,9 @@ fn inspect_pairs(t: &TaskDto, profiles: &ProfileNames) -> Vec<(&'static str, Kv)
         ("round", t.review_round.to_string().into()),
         ("stalled", yes_no(t.stalled, "no").into()),
         ("merge", dash(t.merge_commit.as_deref()).into()),
+        // Why a failed or cancelled task ended, which is the whole of what
+        // the engineer that gave it up said about it.
+        ("reason", dash(t.reason.as_deref()).into()),
         // The forge's own link, where the rest of a published task's story
         // is; only an engineer that opened one reports it.
         ("pull_request", dash(t.pr_url.as_deref()).into()),
@@ -637,8 +589,7 @@ fn inspect_pairs(t: &TaskDto, profiles: &ProfileNames) -> Vec<(&'static str, Kv)
 }
 
 /// What the task cost, spender by spender: the total first, then the
-/// engineer and each reviewer under it, named the way a message addresses
-/// them.
+/// engineer and each reviewer under it, named by their profiles.
 ///
 /// Every reviewer slot of the task gets a line, whether or not it has spent
 /// anything: a reviewer missing from the block would read as one the task

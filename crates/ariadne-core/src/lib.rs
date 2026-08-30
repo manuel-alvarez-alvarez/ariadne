@@ -579,41 +579,6 @@ wire_enum! { ReviewVerdict, "review verdict", [
     Approve = "approve", RequestChanges = "request_changes",
 ]}
 
-/// Author of a conversation message.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[serde(rename_all = "snake_case")]
-pub enum AuthorRole {
-    Planner,
-    Engineer,
-    Reviewer,
-    User,
-    System,
-}
-
-wire_enum! { AuthorRole, "author role", [
-    Planner = "planner",
-    Engineer = "engineer",
-    Reviewer = "reviewer",
-    User = "user",
-    System = "system",
-]}
-
-/// Who a conversation message is addressed to: one agent profile, or the
-/// human user. Orthogonal to the author role, and optional — a message with
-/// no recipient is addressed to the thread rather than to anyone in it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
-#[serde(rename_all = "snake_case")]
-pub enum RecipientKind {
-    Profile,
-    User,
-}
-
-wire_enum! { RecipientKind, "recipient kind", [
-    Profile = "profile", User = "user",
-]}
-
 #[cfg(test)]
 mod tests {
     use super::*;

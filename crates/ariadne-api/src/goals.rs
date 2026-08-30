@@ -53,14 +53,11 @@ pub struct GoalUsageDto {
     pub reviewers: TokenUsageDto,
 }
 
-/// Body of `POST /v1/goals/{id}/finalize`: the planner ends planning once the
-/// user has validated the plan in the goal thread, and execution starts. The
-/// planner's call, not the user's.
+/// Body of `POST /v1/goals/{id}/finalize`: the planner ends planning and
+/// execution starts. The planner's call, not the user's, and it carries
+/// nothing — the plan is the tasks it wrote.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct FinalizePlanRequest {
-    /// Plan summary, recorded in the goal thread.
-    pub summary: String,
-}
+pub struct FinalizePlanRequest {}
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateGoalRequest {

@@ -28,13 +28,12 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use serde_json::json;
 
-use ariadne_api::messages::{MessageDto, MessageRecipientDto};
 use ariadne_api::profiles::ProfileDto;
 use ariadne_client::{Client, endpoint};
 use ariadne_core::models::ModelRef;
-use ariadne_core::{RecipientKind, probe};
+use ariadne_core::probe;
 
-use crate::output::{Format, local_time, note, print, print_kv, short_id, style, view, warn};
+use crate::output::{Format, print, print_kv, short_id, warn};
 
 /// `ariadne version` — client version always, daemon version when reachable.
 ///
@@ -150,35 +149,6 @@ pub fn confirm(verb: &str, subject: &Subject, question: &str, yes: bool) -> Resu
     }
 }
 
-/// A `--to` as the daemon should receive it, or nothing where the message
-/// addresses nobody.
-///
-/// The one profile argument that is not always a profile: `user` is the human
-/// and travels as itself, and so does anything the profiles do not answer to
-/// — the daemon answers that with the people this thread can address.
-pub async fn recipient(client: &Client, to: Option<String>) -> Result<Option<String>> {
-    match to {
-        Some(to) => Ok(Some(resolve::Profiles::new(client).recipient(&to).await?)),
-        None => Ok(None),
-    }
-}
-
-/// Whom a message addresses, spelled the way `--to` and the MCP `to` spell it:
-/// a profile's name, or `user`.
-///
-/// A profile the database no longer holds leaves its id: the message still
-/// addressed somebody, and the id is all that is left to name them.
-pub fn recipient_label(recipient: &MessageRecipientDto) -> String {
-    match recipient.kind {
-        RecipientKind::User => "user".to_string(),
-        RecipientKind::Profile => recipient
-            .profile_name
-            .clone()
-            .or_else(|| recipient.profile_id.clone())
-            .unwrap_or_else(|| "profile".to_string()),
-    }
-}
-
 /// The one status `GET /v1/tasks` and `GET /v1/sessions` filter by, when the
 /// caller named exactly one: those two endpoints take a single status, so
 /// several are narrowed on the answer instead — as `session ls --role`
@@ -188,135 +158,6 @@ pub fn one_of<T: Copy>(statuses: &[T]) -> Option<T> {
     match statuses {
         [only] => Some(*only),
         _ => None,
-    }
-}
-
-/// One conversation message as `goal thread` and `task thread` print it:
-/// `[time] role: body`, with the addressee after the author when there is
-/// one.
-///
-/// `[` and `]` stay bare so the line still parses by eye the same way with
-/// colour on: the time inside them dims to `META`, the role turns bold, and
-/// `→ recipient` dims with it — body and the `:` between them are the
-/// content and stay as plain as they always were.
-pub fn message_line(message: &MessageDto, color: bool) -> String {
-    let role = style::paint(color, style::TITLE, message.author_role.as_str());
-    let addressee = match &message.recipient {
-        Some(recipient) => style::paint(
-            color,
-            style::META,
-            &format!(" → {}", recipient_label(recipient)),
-        ),
-        None => String::new(),
-    };
-    format!(
-        "[{}] {role}{addressee}: {}",
-        style::paint(color, style::META, &local_time(&message.created_at)),
-        message.body
-    )
-}
-
-/// A conversation as `goal thread` and `task thread` print it: the
-/// daemon's own list for a script, one line per message for a person.
-pub fn print_messages(messages: &[MessageDto], format: Format) -> Result<()> {
-    print(format, &messages, || {
-        let color = view().color;
-        for message in messages {
-            println!("{}", message_line(message, color));
-        }
-        if messages.is_empty() {
-            note("no messages yet");
-        }
-    })
-}
-
-/// How much of a conversation is read when nothing was asked for.
-pub const THREAD_LIMIT: u32 = 200;
-
-/// The most `GET .../messages` answers in one request — `ariadne_api::Page`
-/// clamps `limit` there — and so the size of a page when there is more to
-/// read than that.
-const PAGE: u32 = 200;
-
-/// A conversation, from the daemon and onto the terminal: the oldest
-/// `--limit` messages, or the newest `--tail` ones, with a word on stderr
-/// when there were more.
-///
-/// The cap used to be silent, which is the worst of both: a thread that had
-/// run past 200 messages was cut with nothing to say it had been. What is
-/// left out is now said, and both ends of the thread are reachable — the
-/// daemon pages, so neither is limited to what one request holds.
-pub async fn print_thread(
-    client: &Client,
-    path: &str,
-    limit: Option<u32>,
-    tail: Option<u32>,
-    format: Format,
-) -> Result<()> {
-    let want = tail.or(limit).unwrap_or(THREAD_LIMIT);
-    let (messages, more) = match tail {
-        // The end of a thread is only knowable from its start: keyset
-        // pagination pages forward, so the tail is what is left after reading
-        // the whole of it.
-        Some(_) => {
-            let all = read_thread(client, path, u32::MAX).await?;
-            let more = all.len().saturating_sub(want as usize);
-            let messages = all[all.len() - want.min(all.len() as u32) as usize..].to_vec();
-            (messages, more)
-        }
-        None => {
-            // One more than asked for, which is what says whether the answer
-            // was the whole thread or the start of it.
-            let mut all = read_thread(client, path, want.saturating_add(1)).await?;
-            let more = all.len().saturating_sub(want as usize);
-            all.truncate(want as usize);
-            (all, more)
-        }
-    };
-    print_messages(&messages, format)?;
-    if more > 0 && matches!(format, Format::Table) {
-        note(&match tail {
-            Some(_) => format!(
-                "{more} earlier message{} not shown — read from the start with --limit",
-                plural(more)
-            ),
-            None => {
-                format!("more messages follow — raise --limit, or read the end with --tail {want}")
-            }
-        });
-    }
-    Ok(())
-}
-
-/// Up to `want` messages of a thread, oldest first, in as many requests as
-/// the daemon's page size makes necessary.
-async fn read_thread(client: &Client, path: &str, want: u32) -> Result<Vec<MessageDto>> {
-    let mut out: Vec<MessageDto> = Vec::new();
-    loop {
-        let remaining = want.saturating_sub(out.len() as u32);
-        if remaining == 0 {
-            return Ok(out);
-        }
-        let limit = remaining.min(PAGE);
-        let after = out.last().map(|m| m.id.clone());
-        let query = match &after {
-            Some(id) => format!("?limit={limit}&after={id}"),
-            None => format!("?limit={limit}"),
-        };
-        let page: Vec<MessageDto> = client.get_json(&format!("{path}{query}")).await?;
-        let last = page.len() < limit as usize;
-        out.extend(page);
-        if last {
-            return Ok(out);
-        }
-    }
-}
-
-/// An `s` where there is more than one of something.
-fn plural(count: usize) -> &'static str {
-    match count {
-        1 => "",
-        _ => "s",
     }
 }
 
@@ -514,93 +355,7 @@ mod tests {
 
     use ariadne_api::sessions::SessionListQuery;
     use ariadne_api::tasks::TaskListQuery;
-    use ariadne_core::{AuthorRole, SessionStatus, TaskStatus};
-
-    fn message(recipient: Option<MessageRecipientDto>) -> MessageDto {
-        MessageDto {
-            id: "01MSG".into(),
-            goal_id: "01GOAL".into(),
-            task_id: Some("01TASK".into()),
-            author_role: AuthorRole::Engineer,
-            author_session_id: Some("01SESSION".into()),
-            recipient,
-            body: "rebased onto main".into(),
-            created_at: "not a time".into(),
-        }
-    }
-
-    fn profile_recipient(id: Option<&str>, name: Option<&str>) -> MessageRecipientDto {
-        MessageRecipientDto {
-            kind: RecipientKind::Profile,
-            profile_id: id.map(str::to_owned),
-            profile_name: name.map(str::to_owned),
-        }
-    }
-
-    /// The addressee reads as the word that would have addressed it, so what a
-    /// listing shows is what `--to` takes — and a profile that is gone leaves
-    /// its id, which still names somebody.
-    #[test]
-    fn a_recipient_reads_as_the_name_that_addresses_it() {
-        assert_eq!(
-            recipient_label(&profile_recipient(Some("01PROF"), Some("Reviewer"))),
-            "Reviewer"
-        );
-        assert_eq!(
-            recipient_label(&profile_recipient(Some("01PROF"), None)),
-            "01PROF"
-        );
-        assert_eq!(
-            recipient_label(&MessageRecipientDto {
-                kind: RecipientKind::User,
-                profile_id: None,
-                profile_name: None,
-            }),
-            "user"
-        );
-    }
-
-    /// An unaddressed message prints exactly as it always did; an addressed
-    /// one names its addressee after the author.
-    #[test]
-    fn only_an_addressed_message_names_a_recipient() {
-        assert_eq!(
-            message_line(&message(None), false),
-            "[not a time] engineer: rebased onto main"
-        );
-        assert_eq!(
-            message_line(
-                &message(Some(profile_recipient(Some("01PROF"), Some("Reviewer")))),
-                false
-            ),
-            "[not a time] engineer → Reviewer: rebased onto main"
-        );
-    }
-
-    /// With colour on, the time and the addressee dim and the role turns
-    /// bold; the brackets and the colon stay bare, so the line still reads
-    /// the same way at a glance.
-    #[test]
-    fn a_coloured_message_line_paints_time_role_and_addressee() {
-        let addressed = message(Some(profile_recipient(Some("01PROF"), Some("Reviewer"))));
-        let painted = message_line(&addressed, true);
-        assert!(
-            painted.starts_with(&format!(
-                "[{}]",
-                style::paint(true, style::META, "not a time")
-            )),
-            "{painted}"
-        );
-        assert!(
-            painted.contains(&style::paint(true, style::TITLE, "engineer")),
-            "{painted}"
-        );
-        assert!(
-            painted.contains(&style::paint(true, style::META, " → Reviewer")),
-            "{painted}"
-        );
-        assert!(painted.ends_with(": rebased onto main"), "{painted}");
-    }
+    use ariadne_core::{SessionStatus, TaskStatus};
 
     /// A client and a daemon of different builds is the cause of the odd 404
     /// and the missing field, so the warning names both versions and the two

@@ -19,8 +19,8 @@ use ariadne_api::stream::{DeletedDto, DomainEvent, TaskUpdatedDto};
 use ariadne_store::{AgentSession, Change, Goal, Result, Store, Task};
 
 use crate::http::convert::{
-    event_dto, goal_dto_of, message_dto_of, profile_dto, repository_dto, review_dto,
-    session_dto_of, task_dto_of, transition_dto,
+    event_dto, goal_dto_of, profile_dto, repository_dto, review_dto, session_dto_of, task_dto_of,
+    transition_dto,
 };
 
 /// Events buffered per subscriber before it is considered too slow.
@@ -138,11 +138,6 @@ async fn fatten(store: &Store, change: Change) -> Result<BusEvent> {
                 task_id: Some(keys.1),
             }
         }
-        Change::MessageCreated(message) => BusEvent {
-            goal_id: Some(message.goal_id.clone()),
-            task_id: message.task_id.clone(),
-            event: DomainEvent::MessageCreated(message_dto_of(store, message).await?),
-        },
         Change::ReviewCreated(review) => {
             // A review carries no goal id of its own; resolve it via the task
             // so a `goal`-filtered stream still sees verdicts.

@@ -8,13 +8,13 @@ use axum::http::{HeaderMap, StatusCode};
 
 use ariadne_api::reviews::{CreateReviewRequest, ReviewDto};
 use ariadne_api::tasks::{RecordPullRequestRequest, TaskDto};
-use ariadne_core::{MergeStrategy, Role, TaskStatus};
+use ariadne_core::{AttentionReason, MergeStrategy, Role, TaskStatus};
 use ariadne_store::{NewReview, Repository, Task};
 
 use super::AppState;
 use super::convert::{review_dto, task_dto_of};
 use super::error::{ApiError, ApiResult};
-use super::recipients::{call_ctx, ensure_task_scope};
+use super::caller::{call_ctx, ensure_task_scope};
 
 /// Git could not answer about the task's branch: a conflict, since what the
 /// caller asked for cannot be established rather than being wrong.
@@ -84,15 +84,21 @@ pub(super) async fn verify_merged(
 
 /// Record the pull or merge request the engineer opened for a task.
 ///
-/// The URL travels as a tool call rather than as a sentence in the
-/// conversation, so a published task is either one the UI and the CLI can
-/// point at or one that was never reported — never half-known from a message
-/// somebody has to parse.
+/// The URL travels as a tool call, so a published task is either one the UI
+/// and the CLI can point at or one that was never reported.
 ///
-/// Recording it writes the URL and nothing else. Telling the user where the
-/// request is belongs to the engineer that opened it — its landing briefing
-/// says to `post_message` them the link — and a notice the daemon composed
-/// beside this write would be a second author for the same news.
+/// And this is the moment the task becomes the user's: a request nobody can
+/// merge but a human is exactly what `waiting_user` says, so it goes up here,
+/// on the session that opened it — the pane they answer in, and the one place
+/// the request can be traced back to. It used to be raised by the message the
+/// landing briefing told the engineer to write, and a published task with
+/// nothing on the strip is one nobody knows to go and merge.
+///
+/// It stays up until the user acts: an agent's own events never take
+/// `waiting_user` down (`clear_agent_attention`), and the engineer polling its
+/// request is exactly such an agent. `Scheduler::keep_waiting_user` puts it
+/// back on whatever comes up when that engineer is restarted, which is what
+/// makes the two halves one flag rather than two.
 #[utoipa::path(post, path = "/v1/tasks/{id}/pull-request", tag = "tasks",
     request_body = RecordPullRequestRequest,
     params(("id" = String, Path, description = "task id")),
@@ -110,15 +116,11 @@ pub async fn record_pull_request(
 ) -> ApiResult<Json<TaskDto>> {
     let ctx = call_ctx(&state.store, &headers).await?;
     ensure_task_scope(&ctx, &id)?;
-    if !ctx
-        .session
-        .as_ref()
-        .is_some_and(|s| s.role() == Role::Engineer)
-    {
+    let Some(engineer) = ctx.session.filter(|s| s.role() == Role::Engineer) else {
         return Err(ApiError::forbidden(
             "only the engineer of a task may record its pull request",
         ));
-    }
+    };
     let task = state.store.get_task(&id).await?;
     if task.status() != TaskStatus::Approved {
         return Err(ApiError::conflict(format!(
@@ -134,6 +136,10 @@ pub async fn record_pull_request(
         ));
     }
     state.store.set_task_pull_request(&id, url).await?;
+    state
+        .store
+        .set_session_attention(&engineer.id, AttentionReason::WaitingUser)
+        .await?;
     state.notify_scheduler(&id);
     let task = state.store.get_task(&id).await?;
     Ok(Json(task_dto_of(&state.store, task).await?))

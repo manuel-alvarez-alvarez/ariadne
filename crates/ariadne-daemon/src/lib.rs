@@ -10,7 +10,6 @@ pub mod gitwt;
 pub mod http;
 pub mod launcher;
 pub mod log;
-pub mod notify;
 pub mod opencode_plugin;
 pub mod scheduler;
 pub mod sleep;
