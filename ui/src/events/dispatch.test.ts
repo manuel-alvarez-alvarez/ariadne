@@ -113,7 +113,6 @@ describe("goal events", () => {
     const queryClient = seeded()
     queryClient.setQueryData(qk.goals.list(), [GOAL])
     queryClient.setQueryData(qk.goals.detail(GOAL.id), GOAL)
-    queryClient.setQueryData(qk.goals.messages(GOAL.id), [])
     queryClient.setQueryData(qk.tasks.list({ goal: GOAL.id }), [])
     queryClient.setQueryData(qk.sessions.list({ goal: GOAL.id }), [])
 
@@ -121,10 +120,8 @@ describe("goal events", () => {
 
     // The board is what has to lose the row, without anyone touching it.
     expect(stale(queryClient, qk.goals.list())).toBe(true)
-    // Nothing of the goal is left to be read back out of the cache — its
-    // thread goes with it, because it is nested under the detail key.
+    // Nothing of the goal is left to be read back out of the cache.
     expect(queryClient.getQueryData(qk.goals.detail(GOAL.id))).toBeUndefined()
-    expect(queryClient.getQueryData(qk.goals.messages(GOAL.id))).toBeUndefined()
     // Its tasks and their sessions were deleted with it.
     expect(stale(queryClient, qk.tasks.list({ goal: GOAL.id }))).toBe(true)
     expect(stale(queryClient, qk.sessions.list({ goal: GOAL.id }))).toBe(true)

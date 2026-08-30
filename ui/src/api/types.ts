@@ -28,11 +28,6 @@ export type TaskTransitionDto = Schemas["TaskTransitionDto"]
 export type CreateTaskRequest = Schemas["CreateTaskRequest"]
 export type UpdateTaskRequest = Schemas["UpdateTaskRequest"]
 
-export type MessageDto = Schemas["MessageDto"]
-export type MessageRecipientDto = Schemas["MessageRecipientDto"]
-export type CreateMessageRequest = Schemas["CreateMessageRequest"]
-export type AuthorRole = Schemas["AuthorRole"]
-
 export type ReviewDto = Schemas["ReviewDto"]
 export type ReviewVerdict = Schemas["ReviewVerdict"]
 

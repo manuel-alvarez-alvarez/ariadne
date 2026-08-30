@@ -34,8 +34,8 @@ const APPROVE = "y\r"
 export function SessionBlockedBanner({ session }: { session: SessionDto }) {
   const [sending, setSending] = useState(false)
   const reason = session.attention_reason
-  // Only the two the pane itself is waiting on. `waiting_user` is a question
-  // asked in a thread, and the row that leads here does not lead here for it.
+  // Only the two the pane itself is waiting on. `waiting_user` is something
+  // else the user owes the session, not a keystroke in this pane.
   if (reason !== "waiting_permission" && reason !== "waiting_input") return null
   const permission = reason === "waiting_permission"
   // A pane that is gone cannot be typed into; the reason outlives it.

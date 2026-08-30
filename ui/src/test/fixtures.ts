@@ -16,7 +16,6 @@ import type {
   AgentConfigDto,
   EffortDto,
   GoalDto,
-  MessageDto,
   ModelDto,
   ProfileDto,
   RepositoryDto,
@@ -126,19 +125,6 @@ export function aRepository(overrides: Partial<RepositoryDto> = {}): RepositoryD
     description: "The orchestrator itself.",
     created_at: STAMP,
     updated_at: STAMP,
-    ...overrides,
-  }
-}
-
-export function aMessage(overrides: Partial<MessageDto> = {}): MessageDto {
-  return {
-    id: "01JMESG0000000000000000001",
-    goal_id: GOAL_ID,
-    task_id: null,
-    author_role: "user",
-    author_session_id: null,
-    body: "",
-    created_at: STAMP,
     ...overrides,
   }
 }

@@ -36,10 +36,9 @@ beforeEach(() => {
 
 // jsdom lays nothing out, so it implements neither of these — and it gives
 // neither web storage: `localStorage`, which `zustand/middleware` takes hold of
-// the moment `@/stores/settings` is imported, and `sessionStorage`, where an
-// unsent draft is kept (`thread-drafts.ts`). A test that cares what is in one
-// of them clears it itself; both survive between the tests of a file, exactly
-// as they survive between screens in the app.
+// the moment `@/stores/settings` is imported, and `sessionStorage`. A test
+// that cares what is in one of them clears it itself; both survive between
+// the tests of a file, exactly as they survive between screens in the app.
 if (typeof window !== "undefined") {
   globalThis.localStorage = webStorage()
   globalThis.sessionStorage = webStorage()

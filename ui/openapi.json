@@ -454,7 +454,7 @@
         "tags": [
           "goals"
         ],
-        "summary": "Finalize the plan: goal moves planning -> active and its tasks start. The\nplanner's call alone — it makes it once the user has validated the plan in\nthe goal thread, and there is nothing left for the user to approve.",
+        "summary": "Finalize the plan: goal moves planning -> active and its tasks start. The\nplanner's call alone, and there is nothing left for the user to approve.",
         "operationId": "finalize",
         "parameters": [
           {
@@ -493,109 +493,6 @@
           },
           "409": {
             "description": ""
-          }
-        }
-      }
-    },
-    "/v1/goals/{id}/messages": {
-      "get": {
-        "tags": [
-          "goals"
-        ],
-        "summary": "Goal-level message thread (planner discussion).",
-        "operationId": "list_messages",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "goal id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "after",
-            "in": "query",
-            "description": "Return items with id greater than this.",
-            "required": false,
-            "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "Max items to return (default 50, cap 200).",
-            "required": false,
-            "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "int64"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/MessageDto"
-                  }
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "goals"
-        ],
-        "summary": "Post to the goal-level thread.",
-        "operationId": "post_message",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "goal id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateMessageRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MessageDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "unknown addressee, or one taking no part in the goal"
           }
         }
       }
@@ -1788,116 +1685,13 @@
         }
       }
     },
-    "/v1/tasks/{id}/messages": {
-      "get": {
-        "tags": [
-          "tasks"
-        ],
-        "summary": "Task conversation.",
-        "operationId": "list_messages",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "task id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "after",
-            "in": "query",
-            "description": "Return items with id greater than this.",
-            "required": false,
-            "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "description": "Max items to return (default 50, cap 200).",
-            "required": false,
-            "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "int64"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/MessageDto"
-                  }
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "tasks"
-        ],
-        "summary": "Post into the task conversation.",
-        "operationId": "post_message",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "task id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateMessageRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MessageDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "unknown addressee, or one taking no part in the task"
-          }
-        }
-      }
-    },
     "/v1/tasks/{id}/pull-request": {
       "post": {
         "tags": [
           "tasks"
         ],
         "summary": "Record the pull or merge request the engineer opened for a task.",
-        "description": "The URL travels as a tool call rather than as a sentence in the\nconversation, so a published task is either one the UI and the CLI can\npoint at or one that was never reported — never half-known from a message\nsomebody has to parse.\n\nRecording it writes the URL and nothing else. Telling the user where the\nrequest is belongs to the engineer that opened it — its landing briefing\nsays to `post_message` them the link — and a notice the daemon composed\nbeside this write would be a second author for the same news.",
+        "description": "The URL travels as a tool call, so a published task is either one the UI\nand the CLI can point at or one that was never reported.\n\nAnd this is the moment the task becomes the user's: a request nobody can\nmerge but a human is exactly what `waiting_user` says, so it goes up here,\non the session that opened it — the pane they answer in, and the one place\nthe request can be traced back to. It used to be raised by a line the\nlanding briefing told the engineer to write, and a published task with\nnothing on the strip is one nobody knows to go and merge.\n\nIt stays up until the user acts: an agent's own events never take\n`waiting_user` down (`clear_agent_attention`), and the engineer polling its\nrequest is exactly such an agent. `Scheduler::keep_waiting_user` puts it\nback on whatever comes up when that engineer is restarted, which is what\nmakes the two halves one flag rather than two.",
         "operationId": "record_pull_request",
         "parameters": [
           {
@@ -2250,17 +2044,6 @@
           "stalled"
         ]
       },
-      "AuthorRole": {
-        "type": "string",
-        "description": "Author of a conversation message.",
-        "enum": [
-          "planner",
-          "engineer",
-          "reviewer",
-          "user",
-          "system"
-        ]
-      },
       "BinaryDto": {
         "type": "object",
         "description": "A binary as the daemon can — or cannot — find it.",
@@ -2363,25 +2146,6 @@
           },
           "title": {
             "type": "string"
-          }
-        }
-      },
-      "CreateMessageRequest": {
-        "type": "object",
-        "required": [
-          "body"
-        ],
-        "properties": {
-          "body": {
-            "type": "string"
-          },
-          "to": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Whom to address: a profile id or name, as tasks name their profiles, or\nthe literal `\"user\"`. Omitted leaves the message addressed to the\nthread. Only a participant of the thread may be addressed.",
-            "example": "reviewer-default"
           }
         }
       },
@@ -2649,7 +2413,7 @@
           },
           {
             "type": "object",
-            "description": "A terminal goal was deleted, tasks and messages with it.",
+            "description": "A terminal goal was deleted, its tasks with it.",
             "required": [
               "data",
               "event"
@@ -2657,7 +2421,7 @@
             "properties": {
               "data": {
                 "$ref": "#/components/schemas/DeletedDto",
-                "description": "A terminal goal was deleted, tasks and messages with it."
+                "description": "A terminal goal was deleted, its tasks with it."
               },
               "event": {
                 "type": "string",
@@ -2721,24 +2485,6 @@
                 "type": "string",
                 "enum": [
                   "task_branch_updated"
-                ]
-              }
-            }
-          },
-          {
-            "type": "object",
-            "required": [
-              "data",
-              "event"
-            ],
-            "properties": {
-              "data": {
-                "$ref": "#/components/schemas/MessageDto"
-              },
-              "event": {
-                "type": "string",
-                "enum": [
-                  "message_created"
                 ]
               }
             }
@@ -2957,16 +2703,7 @@
       },
       "FinalizePlanRequest": {
         "type": "object",
-        "description": "Body of `POST /v1/goals/{id}/finalize`: the planner ends planning once the\nuser has validated the plan in the goal thread, and execution starts. The\nplanner's call, not the user's.",
-        "required": [
-          "summary"
-        ],
-        "properties": {
-          "summary": {
-            "type": "string",
-            "description": "Plan summary, recorded in the goal thread."
-          }
-        }
+        "description": "Body of `POST /v1/goals/{id}/finalize`: the planner ends planning and\nexecution starts. The planner's call, not the user's, and it carries\nnothing — the plan is the tasks it wrote."
       },
       "GoalDto": {
         "type": "object",
@@ -3175,83 +2912,6 @@
           "direct",
           "pull_request"
         ]
-      },
-      "MessageDto": {
-        "type": "object",
-        "required": [
-          "id",
-          "goal_id",
-          "author_role",
-          "body",
-          "created_at"
-        ],
-        "properties": {
-          "author_role": {
-            "$ref": "#/components/schemas/AuthorRole"
-          },
-          "author_session_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "body": {
-            "type": "string"
-          },
-          "created_at": {
-            "type": "string"
-          },
-          "goal_id": {
-            "type": "string"
-          },
-          "id": {
-            "type": "string"
-          },
-          "recipient": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/MessageRecipientDto",
-                "description": "Whom the message addresses. None = the thread, addressed to nobody in\nparticular."
-              }
-            ]
-          },
-          "task_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "None = goal-level thread."
-          }
-        }
-      },
-      "MessageRecipientDto": {
-        "type": "object",
-        "description": "A message's addressee, resolved: an agent profile comes with its name, so a\nclient renders \"to Alice\" without a lookup of its own.",
-        "required": [
-          "kind"
-        ],
-        "properties": {
-          "kind": {
-            "$ref": "#/components/schemas/RecipientKind"
-          },
-          "profile_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The addressed profile, set exactly when `kind` is `profile`."
-          },
-          "profile_name": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "That profile's name, unless the profile is gone."
-          }
-        }
       },
       "ModelDto": {
         "type": "object",
@@ -3487,17 +3147,9 @@
           "landing_pull_request"
         ]
       },
-      "RecipientKind": {
-        "type": "string",
-        "description": "Who a conversation message is addressed to: one agent profile, or the\nhuman user. Orthogonal to the author role, and optional — a message with\nno recipient is addressed to the thread rather than to anyone in it.",
-        "enum": [
-          "profile",
-          "user"
-        ]
-      },
       "RecordPullRequestRequest": {
         "type": "object",
-        "description": "The engineer reporting the pull or merge request it opened for a task, so\nthe user has somewhere to go and read it: taken off `gh pr create`'s output\nrather than out of the conversation.",
+        "description": "The engineer reporting the pull or merge request it opened for a task, so\nthe user has somewhere to go and read it: taken off `gh pr create`'s output\nand recorded on the task.",
         "required": [
           "url"
         ],
@@ -3957,7 +3609,7 @@
               "string",
               "null"
             ],
-            "description": "Name of the engineer's profile, the way a message addresses it; None\nonly if that profile is gone."
+            "description": "Name of the engineer's profile; None only if that profile is gone."
           },
           "goal_id": {
             "type": "string"
@@ -3984,7 +3636,7 @@
               "string",
               "null"
             ],
-            "description": "Name of the planner profile of the task's goal, which takes part in\nevery task thread without being a field of the task."
+            "description": "Name of the planner profile of the task's goal, which wrote the task\nwithout being a field of it."
           },
           "pr_url": {
             "type": [
@@ -3992,6 +3644,13 @@
               "null"
             ],
             "description": "URL of the pull or merge request the task was published as, once its\nengineer has reported one; None for a task landed directly."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why a `failed` or `cancelled` task ended — the engineer's own\n`fail_task` reason, a dependency that never landed, a cancelled goal.\nNone for every other status, and for an ending nobody gave a reason\nfor."
           },
           "repo_id": {
             "type": "string",
@@ -4064,7 +3723,7 @@
               "string",
               "null"
             ],
-            "description": "Name of the reviewer's profile, the way a message addresses it; None\nonly if that profile is gone."
+            "description": "Name of the reviewer's profile; None\nonly if that profile is gone."
           }
         }
       },
@@ -4407,11 +4066,11 @@
     },
     {
       "name": "goals",
-      "description": "Goals and their planning threads"
+      "description": "Goals and their plans"
     },
     {
       "name": "tasks",
-      "description": "Tasks, transitions, conversations, reviews"
+      "description": "Tasks, transitions, reviews"
     },
     {
       "name": "sessions",

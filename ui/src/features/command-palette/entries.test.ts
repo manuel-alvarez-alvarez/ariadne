@@ -130,9 +130,9 @@ describe("buildPaletteEntries", () => {
  */
 describe("attentionEntries", () => {
   const FAILED = aTask({ ...TASK, id: "01JTASK0000000000000FAILED", status: "failed" })
-  const WAITING: SessionDto = {
+  const FLAGGED: SessionDto = {
     ...SESSION,
-    attention_reason: "waiting_user",
+    attention_reason: "agent_error",
     attention_since: "2026-01-02T00:00:00Z",
   }
 
@@ -145,13 +145,13 @@ describe("attentionEntries", () => {
   })
 
   it("leads with the session's reason on a row that carries one", () => {
-    const [entry] = attentionEntries(collectAttention([GOAL], [TASK], [WAITING]))
+    const [entry] = attentionEntries(collectAttention([GOAL], [TASK], [FLAGGED]))
 
     // The row is the task's — a task and the agent stuck on it are one thing
     // gone wrong — and what it is asking for is the session's reason.
     expect(entry?.label).toBe(TASK.title)
-    expect(entry?.detail).toBe("Waiting for you")
-    expect(entry?.keywords).toContain(WAITING.id)
+    expect(entry?.detail).toBe("Agent error")
+    expect(entry?.keywords).toContain(FLAGGED.id)
   })
 
   it("names a planner's row by its role and goal, having no task", () => {
@@ -173,8 +173,8 @@ describe("attentionEntries", () => {
   })
 
   it("sends a pick exactly where the strip's own row goes", () => {
-    const [item] = collectAttention([GOAL], [TASK], [WAITING])
-    const [entry] = attentionEntries(collectAttention([GOAL], [TASK], [WAITING]))
+    const [item] = collectAttention([GOAL], [TASK], [FLAGGED])
+    const [entry] = attentionEntries(collectAttention([GOAL], [TASK], [FLAGGED]))
     const search = new URLSearchParams("status=failed")
     if (!item || !entry) throw new Error("nothing was collected")
 

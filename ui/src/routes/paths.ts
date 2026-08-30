@@ -24,26 +24,16 @@ export const PROFILE_PARAM = "profile"
 
 /**
  * What a link asks the screen it opens to hand the keyboard to, under
- * `?focus=`: the compose box of a thread, or a session's terminal pane.
+ * `?focus=`: a session's terminal pane.
  *
- * The attention list is where these come from — a row that says an agent is
- * waiting on you has to land on the box the answer is typed into, not merely
- * on the screen that contains it. It is a request rather than a state: it is
- * read once by whichever control it names and dropped from the URL there (see
- * {@link useComposerRequest}), so a reload, a tab switch or a second panel
- * opened later never takes the keyboard again.
+ * The attention list is where this comes from — a row that says an agent is
+ * blocked on a prompt has to land on the pane the answer is typed into, not
+ * merely on the screen that contains it. It is a request rather than a state:
+ * it is read once by whichever control it names and dropped from the URL there
+ * (see {@link useTerminalFocusRequest}), so a reload, a tab switch or a second
+ * panel opened later never takes the keyboard again.
  */
 const FOCUS_PARAM = "focus"
-
-/**
- * Whom a compose box opened by a link starts addressed to, under `?to=` — the
- * profile of the agent that asked. Travels with {@link FOCUS_PARAM} and is
- * dropped with it.
- */
-const ADDRESSEE_PARAM = "to"
-
-/** The controls {@link FOCUS_PARAM} can name. */
-type FocusTarget = "composer" | "terminal"
 
 export const paths = {
   goals: () => "/goals",
@@ -167,8 +157,8 @@ export function sessionPanelFrom(
  * everything else is kept, `tab` and `session` point the panel at it. `null`
  * is the way back out of the session, onto the list it came from.
  *
- * This is how a session id mentioned somewhere in a panel — a message's
- * author, a review's session — becomes a way to watch that agent.
+ * This is how a session id mentioned somewhere in a panel — a review's session
+ * — becomes a way to watch that agent.
  */
 export function panelSessionTo(
   current: URLSearchParams,
@@ -231,61 +221,14 @@ export function taskSessionPanelFrom(
 function withoutArrival(current: URLSearchParams): URLSearchParams {
   const next = new URLSearchParams(current)
   next.delete(FOCUS_PARAM)
-  next.delete(ADDRESSEE_PARAM)
   return next
 }
 
 /** A panel link that also asks for a control on the way in. */
-function arriving(
-  target: { search: string },
-  focus: FocusTarget,
-  addressee?: string | null,
-): { search: string } {
+function arriving(target: { search: string }, focus: "terminal"): { search: string } {
   const next = new URLSearchParams(target.search)
   next.set(FOCUS_PARAM, focus)
-  if (addressee) next.set(ADDRESSEE_PARAM, addressee)
   return { search: `?${next.toString()}` }
-}
-
-/**
- * Link target that opens the task's panel on its conversation, with the
- * compose box focused and addressed to `addressee`.
- *
- * Where an agent waiting on the *user* is answered: what it asked is a message
- * in this thread, and the answer is another one — so the row that says so
- * lands on the box that writes it, already addressed to whoever asked.
- */
-export function taskConversationFrom(
-  pathname: string,
-  current: URLSearchParams,
-  taskId: string,
-  addressee?: string | null,
-): PanelTarget {
-  const panel = taskPanelFrom(pathname, current, taskId)
-  const next = new URLSearchParams(panel.search)
-  next.set("tab", "conversation")
-  return { ...panel, ...arriving({ search: `?${next.toString()}` }, "composer", addressee) }
-}
-
-/**
- * {@link taskConversationFrom} for a planner, whose thread is the goal's: it has
- * no task to be answered in, and the goal panel only opens on the board — so
- * this one carries a pathname of its own.
- */
-export function goalThreadTo(
-  current: URLSearchParams,
-  goalId: string,
-  addressee?: string | null,
-): { pathname: string; search: string } {
-  const next = withoutArrival(current)
-  next.set("goal", goalId)
-  next.set("tab", "thread")
-  next.delete("task")
-  next.delete("session")
-  return {
-    pathname: paths.goals(),
-    ...arriving({ search: `?${next.toString()}` }, "composer", addressee),
-  }
 }
 
 /**
@@ -312,7 +255,7 @@ export function sessionTerminalFrom(
  * it does — and once it has been given, a re-render, a tab switch or a reload
  * must not give it again.
  */
-function useArrival(target: FocusTarget): boolean {
+function useArrival(target: "terminal"): boolean {
   const [search, setSearch] = useSearchParams()
   const [asked] = useState(() => search.get(FOCUS_PARAM) === target)
   // The effect below runs once, and the params it rewrites are whatever they
@@ -327,17 +270,6 @@ function useArrival(target: FocusTarget): boolean {
   }, [asked])
 
   return asked
-}
-
-/**
- * What a link asked of the compose box below a thread: to take the keyboard,
- * and to open addressed to the agent that asked.
- */
-export function useComposerRequest(): { focus: boolean; to: string | null } {
-  const [search] = useSearchParams()
-  const focus = useArrival("composer")
-  const [to] = useState(() => search.get(ADDRESSEE_PARAM))
-  return { focus, to: focus ? to : null }
 }
 
 /** Whether a link asked this session's pane to take the keyboard. */

@@ -1,7 +1,7 @@
 /**
  * One task in full, in a side panel over whatever screen it was opened from —
- * the `task inspect` equivalent, plus everything hanging off it: its thread,
- * its reviews, its transition log, its branch diff and the agents that ran it.
+ * the `task inspect` equivalent, plus everything hanging off it: its reviews,
+ * its transition log, its branch diff and the agents that ran it.
  *
  * The tab lives in the URL (like the panel itself) so a link can point at,
  * say, the diff of a task, and a reload stays where the user was. The sessions
@@ -27,7 +27,6 @@ import { Markdown } from "@/components/markdown"
 import { PanelSheet } from "@/components/panel-sheet"
 import { StatusBadge } from "@/components/status-badge"
 import { TabCount } from "@/components/tab-count"
-import { UnreadBadge, useUnreadCount } from "@/components/thread-unread"
 import { SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -41,11 +40,10 @@ import { taskCopyEntries } from "@/lib/clipboard"
 import { cn, shortId } from "@/lib/format"
 import { paths, usePanelSessionNavigation } from "@/routes/paths"
 
-import { taskMessagesQueryOptions, taskQueryOptions, taskReviewsQueryOptions } from "./queries"
+import { taskQueryOptions, taskReviewsQueryOptions } from "./queries"
 import { StalledBadge } from "./stalled"
 import { primaryStatus, subStatus, TASK_STATUS_META } from "./status"
 import { TaskActions } from "./task-actions"
-import { TaskConversation } from "./task-conversation"
 import { TaskDiff } from "./task-diff"
 import { TaskFacts } from "./task-facts"
 import { TaskHistory } from "./task-history"
@@ -54,7 +52,7 @@ import { TaskSessions, TaskSessionView } from "./task-sessions"
 
 // Description leads the strip and is where the panel opens: it is what the
 // task *is*, and the first thing to read on a task just landed on.
-const TABS = ["description", "conversation", "reviews", "history", "diff", "sessions"] as const
+const TABS = ["description", "reviews", "history", "diff", "sessions"] as const
 type Tab = (typeof TABS)[number]
 
 export function TaskPanel({
@@ -76,11 +74,6 @@ export function TaskPanel({
   // dialog cannot do for us — nothing closed. See `useFocusReturn`.
   const panel = useRef<HTMLDivElement>(null)
   useFocusReturn(session ?? null, panel)
-  // Read whichever tab is showing: the Conversation trigger carries how long
-  // the thread is, and how much of it has been said since the reader last had
-  // it open — which is a thing the panel has to know before they go back to it.
-  const messages = useQuery(taskMessagesQueryOptions(taskId))
-  const unread = useUnreadCount(`task:${taskId}`, messages.data)
   // The two counted tabs, on the very keys their own tabs read, so the numbers
   // cost nothing beyond the first tab that is opened — and stay live with it,
   // since the dispatcher invalidates both lists. The sessions filter is the
@@ -96,7 +89,7 @@ export function TaskPanel({
   }
 
   return (
-    <PanelSheet onClose={onClose} draftKey={`task:${taskId}`}>
+    <PanelSheet onClose={onClose}>
       <SheetContent
         ref={panel}
         // Stacked, it leaves the goal's sheet showing at its left and takes
@@ -153,16 +146,6 @@ export function TaskPanel({
             <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
               <TabsList>
                 <TabsTrigger value="description">Description</TabsTrigger>
-                {/* Two numbers, and they answer different questions: how
-                    much has been said, then — only while there is any — how
-                    much of it the reader has not seen. The muted one leads, as
-                    it does on the other tabs; the filled one is what they are
-                    being pointed at. */}
-                <TabsTrigger value="conversation">
-                  Conversation
-                  <TabCount count={messages.data?.length} noun="message" />
-                  <UnreadBadge count={unread} />
-                </TabsTrigger>
                 {/* The verdicts, not the rounds they are grouped into: a
                     round is how the tab is laid out, and a task around for the
                     third time has said more than three things about itself. */}
@@ -183,9 +166,6 @@ export function TaskPanel({
                 ) : (
                   <EmptyState emphasis="quiet" title="This task has no description" />
                 )}
-              </TabsContent>
-              <TabsContent value="conversation" className="pt-3">
-                <TaskConversation taskId={taskId} />
               </TabsContent>
               <TabsContent value="reviews" className="pt-3">
                 <TaskReviews taskId={taskId} />

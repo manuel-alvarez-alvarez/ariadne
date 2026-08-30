@@ -5,7 +5,7 @@
  *
  *     ["goals", "list", filters?]            list of goals
  *     ["goals", "detail", id]                one goal
- *     ["goals", "detail", id, "messages"]    a sub-resource of that goal
+ *     ["tasks", "detail", id, "reviews"]     a sub-resource of that task
  *
  * Two consequences the SSE dispatcher relies on, so do not deviate:
  *
@@ -49,7 +49,6 @@ export const qk = {
     list: (filters?: PageFilters) => ["goals", "list", filters ?? {}] as const,
     details: () => ["goals", "detail"] as const,
     detail: (id: string) => ["goals", "detail", id] as const,
-    messages: (id: string) => ["goals", "detail", id, "messages"] as const,
   },
   tasks: {
     all: () => ["tasks"] as const,
@@ -57,7 +56,6 @@ export const qk = {
     list: (filters?: TaskFilters) => ["tasks", "list", filters ?? {}] as const,
     details: () => ["tasks", "detail"] as const,
     detail: (id: string) => ["tasks", "detail", id] as const,
-    messages: (id: string) => ["tasks", "detail", id, "messages"] as const,
     reviews: (id: string) => ["tasks", "detail", id, "reviews"] as const,
     transitions: (id: string) => ["tasks", "detail", id, "transitions"] as const,
     diff: (id: string) => ["tasks", "detail", id, "diff"] as const,

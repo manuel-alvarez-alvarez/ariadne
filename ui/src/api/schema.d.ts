@@ -213,28 +213,9 @@ export interface paths {
         put?: never;
         /**
          * Finalize the plan: goal moves planning -> active and its tasks start. The
-         *     planner's call alone — it makes it once the user has validated the plan in
-         *     the goal thread, and there is nothing left for the user to approve.
+         *     planner's call alone, and there is nothing left for the user to approve.
          */
         post: operations["goals_finalize"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/goals/{id}/messages": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Goal-level message thread (planner discussion). */
-        get: operations["goals_list_messages"];
-        put?: never;
-        /** Post to the goal-level thread. */
-        post: operations["goals_post_message"];
         delete?: never;
         options?: never;
         head?: never;
@@ -761,24 +742,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/tasks/{id}/messages": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Task conversation. */
-        get: operations["tasks_list_messages"];
-        put?: never;
-        /** Post into the task conversation. */
-        post: operations["tasks_post_message"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/tasks/{id}/pull-request": {
         parameters: {
             query?: never;
@@ -790,15 +753,21 @@ export interface paths {
         put?: never;
         /**
          * Record the pull or merge request the engineer opened for a task.
-         * @description The URL travels as a tool call rather than as a sentence in the
-         *     conversation, so a published task is either one the UI and the CLI can
-         *     point at or one that was never reported — never half-known from a message
-         *     somebody has to parse.
+         * @description The URL travels as a tool call, so a published task is either one the UI
+         *     and the CLI can point at or one that was never reported.
          *
-         *     Recording it writes the URL and nothing else. Telling the user where the
-         *     request is belongs to the engineer that opened it — its landing briefing
-         *     says to `post_message` them the link — and a notice the daemon composed
-         *     beside this write would be a second author for the same news.
+         *     And this is the moment the task becomes the user's: a request nobody can
+         *     merge but a human is exactly what `waiting_user` says, so it goes up here,
+         *     on the session that opened it — the pane they answer in, and the one place
+         *     the request can be traced back to. It used to be raised by a line the
+         *     landing briefing told the engineer to write, and a published task with
+         *     nothing on the strip is one nobody knows to go and merge.
+         *
+         *     It stays up until the user acts: an agent's own events never take
+         *     `waiting_user` down (`clear_agent_attention`), and the engineer polling its
+         *     request is exactly such an agent. `Scheduler::keep_waiting_user` puts it
+         *     back on whatever comes up when that engineer is restarted, which is what
+         *     makes the two halves one flag rather than two.
          */
         post: operations["tasks_record_pull_request"];
         delete?: never;
@@ -917,11 +886,6 @@ export interface components {
          * @enum {string}
          */
         AttentionReason: "waiting_permission" | "waiting_input" | "waiting_user" | "agent_error" | "disconnected" | "stalled";
-        /**
-         * @description Author of a conversation message.
-         * @enum {string}
-         */
-        AuthorRole: "planner" | "engineer" | "reviewer" | "user" | "system";
         /** @description A binary as the daemon can — or cannot — find it. */
         BinaryDto: {
             agent_kind?: null | components["schemas"]["AgentKind"];
@@ -988,16 +952,6 @@ export interface components {
              */
             required_approvals?: number | null;
             title: string;
-        };
-        CreateMessageRequest: {
-            body: string;
-            /**
-             * @description Whom to address: a profile id or name, as tasks name their profiles, or
-             *     the literal `"user"`. Omitted leaves the message addressed to the
-             *     thread. Only a participant of the thread may be addressed.
-             * @example reviewer-default
-             */
-            to?: string | null;
         };
         CreateProfileRequest: {
             /**
@@ -1114,7 +1068,7 @@ export interface components {
             /** @enum {string} */
             event: "goal_updated";
         } | {
-            /** @description A terminal goal was deleted, tasks and messages with it. */
+            /** @description A terminal goal was deleted, its tasks with it. */
             data: components["schemas"]["DeletedDto"];
             /** @enum {string} */
             event: "goal_deleted";
@@ -1135,10 +1089,6 @@ export interface components {
             data: components["schemas"]["TaskBranchDto"];
             /** @enum {string} */
             event: "task_branch_updated";
-        } | {
-            data: components["schemas"]["MessageDto"];
-            /** @enum {string} */
-            event: "message_created";
         } | {
             data: components["schemas"]["ReviewDto"];
             /** @enum {string} */
@@ -1206,14 +1156,11 @@ export interface components {
             id: string;
         };
         /**
-         * @description Body of `POST /v1/goals/{id}/finalize`: the planner ends planning once the
-         *     user has validated the plan in the goal thread, and execution starts. The
-         *     planner's call, not the user's.
+         * @description Body of `POST /v1/goals/{id}/finalize`: the planner ends planning and
+         *     execution starts. The planner's call, not the user's, and it carries
+         *     nothing — the plan is the tasks it wrote.
          */
-        FinalizePlanRequest: {
-            /** @description Plan summary, recorded in the goal thread. */
-            summary: string;
-        };
+        FinalizePlanRequest: Record<string, never>;
         GoalDto: {
             created_at: string;
             description: string;
@@ -1335,28 +1282,6 @@ export interface components {
          * @enum {string}
          */
         MergeStrategy: "direct" | "pull_request";
-        MessageDto: {
-            author_role: components["schemas"]["AuthorRole"];
-            author_session_id?: string | null;
-            body: string;
-            created_at: string;
-            goal_id: string;
-            id: string;
-            recipient?: null | components["schemas"]["MessageRecipientDto"];
-            /** @description None = goal-level thread. */
-            task_id?: string | null;
-        };
-        /**
-         * @description A message's addressee, resolved: an agent profile comes with its name, so a
-         *     client renders "to Alice" without a lookup of its own.
-         */
-        MessageRecipientDto: {
-            kind: components["schemas"]["RecipientKind"];
-            /** @description The addressed profile, set exactly when `kind` is `profile`. */
-            profile_id?: string | null;
-            /** @description That profile's name, unless the profile is gone. */
-            profile_name?: string | null;
-        };
         /**
          * @description One thing an agent can be pinned to, as served by `GET /v1/models`: an
          *     agent CLI on a model of it (`claude_code:claude-fable-5`), or an agent CLI
@@ -1513,16 +1438,9 @@ export interface components {
          */
         PromptKind: "planner_briefing" | "planner_resume" | "engineer_briefing" | "engineer_resume" | "changes_requested" | "reviewer_briefing" | "reviewer_resume" | "landing_direct" | "landing_pull_request";
         /**
-         * @description Who a conversation message is addressed to: one agent profile, or the
-         *     human user. Orthogonal to the author role, and optional — a message with
-         *     no recipient is addressed to the thread rather than to anyone in it.
-         * @enum {string}
-         */
-        RecipientKind: "profile" | "user";
-        /**
          * @description The engineer reporting the pull or merge request it opened for a task, so
          *     the user has somewhere to go and read it: taken off `gh pr create`'s output
-         *     rather than out of the conversation.
+         *     and recorded on the task.
          */
         RecordPullRequestRequest: {
             /** @description The request's URL, e.g. `https://github.com/owner/repo/pull/12`. */
@@ -1733,10 +1651,7 @@ export interface components {
              */
             effort?: string | null;
             engineer_profile_id: string;
-            /**
-             * @description Name of the engineer's profile, the way a message addresses it; None
-             *     only if that profile is gone.
-             */
+            /** @description Name of the engineer's profile; None only if that profile is gone. */
             engineer_profile_name?: string | null;
             goal_id: string;
             id: string;
@@ -1752,8 +1667,8 @@ export interface components {
              */
             model?: string | null;
             /**
-             * @description Name of the planner profile of the task's goal, which takes part in
-             *     every task thread without being a field of the task.
+             * @description Name of the planner profile of the task's goal, which wrote the task
+             *     without being a field of it.
              */
             planner_profile_name?: string | null;
             /**
@@ -1761,6 +1676,13 @@ export interface components {
              *     engineer has reported one; None for a task landed directly.
              */
             pr_url?: string | null;
+            /**
+             * @description Why a `failed` or `cancelled` task ended — the engineer's own
+             *     `fail_task` reason, a dependency that never landed, a cancelled goal.
+             *     None for every other status, and for an ending nobody gave a reason
+             *     for.
+             */
+            reason?: string | null;
             /** @description Id of the repository the task works in, one of its goal's. */
             repo_id: string;
             /** Format: int64 */
@@ -1798,7 +1720,7 @@ export interface components {
             model?: string | null;
             profile_id: string;
             /**
-             * @description Name of the reviewer's profile, the way a message addresses it; None
+             * @description Name of the reviewer's profile; None
              *     only if that profile is gone.
              */
             profile_name?: string | null;
@@ -2311,66 +2233,6 @@ export interface operations {
                 content?: never;
             };
             409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    goals_list_messages: {
-        parameters: {
-            query?: {
-                /** @description Return items with id greater than this. */
-                after?: string | null;
-                /** @description Max items to return (default 50, cap 200). */
-                limit?: number | null;
-            };
-            header?: never;
-            path: {
-                /** @description goal id */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MessageDto"][];
-                };
-            };
-        };
-    };
-    goals_post_message: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description goal id */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateMessageRequest"];
-            };
-        };
-        responses: {
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MessageDto"];
-                };
-            };
-            /** @description unknown addressee, or one taking no part in the goal */
-            400: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3299,66 +3161,6 @@ export interface operations {
                 content?: never;
             };
             409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    tasks_list_messages: {
-        parameters: {
-            query?: {
-                /** @description Return items with id greater than this. */
-                after?: string | null;
-                /** @description Max items to return (default 50, cap 200). */
-                limit?: number | null;
-            };
-            header?: never;
-            path: {
-                /** @description task id */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MessageDto"][];
-                };
-            };
-        };
-    };
-    tasks_post_message: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description task id */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateMessageRequest"];
-            };
-        };
-        responses: {
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MessageDto"];
-                };
-            };
-            /** @description unknown addressee, or one taking no part in the task */
-            400: {
                 headers: {
                     [name: string]: unknown;
                 };

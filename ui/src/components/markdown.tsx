@@ -1,7 +1,7 @@
 /**
- * Markdown as the agents write it: goal descriptions and planner threads, task
- * descriptions, conversation messages and review bodies — one renderer, so the
- * same prose reads the same wherever it is shown.
+ * Markdown as the agents write it: goal and task descriptions, review bodies
+ * and profile prompts — one renderer, so the same prose reads the same
+ * wherever it is shown.
  *
  * No typography plugin is installed, so the element styles are spelled out
  * here, as variants on the wrapper rather than as element overrides: the list

@@ -27,13 +27,7 @@ import {
 } from "@/features/sessions/session-display"
 import { STALLED_META, TASK_STATUS_META, taskListQueryOptions } from "@/features/tasks"
 import { ROLE_LABELS, shortId } from "@/lib/format"
-import {
-  goalThreadTo,
-  sessionPanelFrom,
-  sessionTerminalFrom,
-  taskConversationFrom,
-  taskPanelFrom,
-} from "@/routes/paths"
+import { sessionPanelFrom, sessionTerminalFrom, taskPanelFrom } from "@/routes/paths"
 
 import { goalsQueryOptions } from "./queries"
 
@@ -308,12 +302,9 @@ function reasons(index: Map<string, Flagged>): Map<string, SessionAttention> {
  * answer is given through.
  *
  * The daemon's reason is what decides, because it is what says *how* the
- * agent is stuck. A `waiting_user` agent asked its question in a thread and is
- * answered by a message, so the row opens that thread with the box focused and
- * addressed to it — the session's own panel would show a pane with nothing to
- * type into. An agent blocked on a permission or an input prompt is the
- * opposite: the answer is a keystroke in its pane, so the row opens the
- * terminal with the keyboard already in it.
+ * agent is stuck. An agent blocked on a permission or an input prompt is
+ * answered with a keystroke in its pane, so the row opens the terminal with
+ * the keyboard already in it.
  *
  * Everything else lands where it always did — the task's panel for a row that
  * is about a task, the session's for one that is only about a session — since
@@ -330,12 +321,6 @@ export function attentionTarget(
   pathname: string,
 ): { pathname?: string; search: string } {
   const { session, sessionReason, taskId } = item
-  if (session && sessionReason === "waiting_user") {
-    // A planner belongs to no task, so its question is in the goal's thread.
-    return taskId
-      ? taskConversationFrom(pathname, current, taskId, session.profile_id)
-      : goalThreadTo(current, item.goalId, session.profile_id)
-  }
   if (session && (sessionReason === "waiting_permission" || sessionReason === "waiting_input")) {
     return sessionTerminalFrom(pathname, current, session.id)
   }

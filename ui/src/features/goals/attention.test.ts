@@ -163,6 +163,14 @@ describe("sessionAttention", () => {
       "agent_error",
     )
   })
+
+  // `waiting_user` used to mean a question sat in a thread the app no longer
+  // has; the daemon may still raise it, but it is not a reason to add a row.
+  it("no longer surfaces waiting_user, which was a question in a thread", () => {
+    expect(
+      sessionAttention(session({ status: "idle", attention_reason: "waiting_user" })),
+    ).toBeNull()
+  })
 })
 
 describe("collectAttention", () => {
@@ -286,7 +294,7 @@ describe("collectAttention", () => {
       [goal({})],
       [task({ id: "t1", status: "failed" })],
       [
-        session({ id: "s1", role: "planner", attention_reason: "waiting_user" }),
+        session({ id: "s1", role: "planner", attention_reason: "disconnected" }),
         session({ id: "s2", task_id: "t1", attention_reason: "agent_error" }),
       ],
     )

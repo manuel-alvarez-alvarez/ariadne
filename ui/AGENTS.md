@@ -25,7 +25,7 @@ src/
     command-palette/ ⌘K: search over every entity, plus the actions
     goals/         the goals board (swimlanes, attention strip), the goal panel,
                    and the attention count the shell shows everywhere else
-    tasks/         the task panel: facts, diff, reviews, history, conversation
+    tasks/         the task panel: facts, diff, reviews, history
     sessions/      the sessions screen, the session panel and the terminal
     profiles/      profiles screen and the prompts a profile overrides
     repositories/  the registered checkouts goals are created against
@@ -78,18 +78,17 @@ write a key literal. Every key is `[entity, "list" | "detail", ...]`:
 ["agent-events", "list", filters]
 ```
 
-Sub-resources hang off their detail key: `["tasks", "detail", id, "messages"]`,
-`… "reviews"`, `… "transitions"`, `… "diff"`, `["goals", "detail", id,
-"messages"]`, `["sessions", "detail", id, "logs"]`, `["profiles", "detail", id,
-"prompts"]`. Two consequences the event dispatcher depends on: invalidating
-`qk.tasks.lists()` refetches every task list without disturbing an open detail
-view, and invalidating a detail key also invalidates that entity's
-sub-resources.
+Sub-resources hang off their detail key: `["tasks", "detail", id, "reviews"]`,
+`… "transitions"`, `… "diff"`, `["sessions", "detail", id, "logs"]`,
+`["profiles", "detail", id, "prompts"]`. Two consequences the event dispatcher
+depends on: invalidating `qk.tasks.lists()` refetches every task list without
+disturbing an open detail view, and invalidating a detail key also invalidates
+that entity's sub-resources.
 
 `src/api/queries.ts` holds what the features would otherwise each spell out:
-`cacheRow` / `dropRow` (write the detail entry, refetch the lists), `useRowAction`
-(a confirmed action, optimistic where the landing status is knowable) and
-`usePostMessage`.
+`cacheRow` / `dropRow` (write the detail entry, refetch the lists) and
+`useRowAction` (a confirmed action, optimistic where the landing status is
+knowable).
 
 ### The event stream
 
@@ -111,7 +110,6 @@ the query cache and it stays live.
 | `goal_deleted` | remove `goals.detail`, invalidate `goals.lists` and every task and session key |
 | `task_created` | patch `tasks.detail`, invalidate `tasks.lists` |
 | `task_updated` | patch `tasks.detail`, invalidate `tasks.lists`, and `tasks.transitions` when the event carries a transition |
-| `message_created` | invalidate `tasks.messages` or, for a goal-level message, `goals.messages` |
 | `review_created` | invalidate `tasks.reviews` |
 | `session_created`, `session_updated` | patch `sessions.detail`, invalidate `sessions.lists` |
 | `agent_event` | invalidate `agentEvents.lists` |
@@ -189,9 +187,9 @@ opened **from**: `taskPanelFrom(pathname, …)` lands on the board from the
 sessions screen, where `?task=` would otherwise narrow the list instead of
 opening what was picked, and `sessionPanelFrom` leaves that screen's `?goal=`
 and `?task=` alone where every other screen has them cleared away. Everything
-built on them — `taskConversationFrom`, `sessionTerminalFrom`,
-`taskSessionPanelFrom`, and `attentionTarget` above all — inherits the rule, so
-the attention list answers correctly from every screen it is carried onto.
+built on them — `sessionTerminalFrom`, `taskSessionPanelFrom`, and
+`attentionTarget` above all — inherits the rule, so the attention list answers
+correctly from every screen it is carried onto.
 
 Link with the helpers in `src/routes/paths.ts` (`paths.goal`, `taskPanelFrom`,
 `sessionPanelFrom`, `panelSessionTo`, …) rather than hand-written paths, so a
@@ -221,8 +219,8 @@ palette opens the same sheet.
 The palette (`src/features/command-palette/`) leads with **Needs attention** —
 the attention list's own rows (`features/goals/attention.ts`), which decide
 where a pick lands through the same `attentionTarget` the strip and the alerts
-ask, so a question opens the thread it was asked in and a prompt opens the pane
-it is waiting in — and then the actions, including the ones that only
+ask, so a prompt opens the pane it is waiting in and anything else opens
+wherever it is otherwise read — and then the actions, including the ones that only
 exist for what the screen underneath has open: a new task in the goal whose
 panel is up, `ariadne attach <id>` for the task or session that is. It searches
 the goal, task, session and profile lists that are **already in the query

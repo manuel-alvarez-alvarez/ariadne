@@ -1,5 +1,5 @@
 /**
- * The two things a user can do to a goal from outside the thread.
+ * The two things a user can do to a goal.
  *
  * Each is confirmed first — cancelling tears the goal's sessions and worktrees
  * down, deleting drops the goal and every trace of it — and each surfaces the
@@ -134,10 +134,10 @@ function CancelGoalDialog({
 }
 
 /**
- * Deleting is the one action with nothing after it: the goal, its tasks, their
- * messages and the planner thread go, and the daemon keeps no copy. So the
- * question names what goes rather than only asking whether to go ahead — the
- * same thing `ariadne goal rm` asks before it deletes.
+ * Deleting is the one action with nothing after it: the goal and its tasks go,
+ * and the daemon keeps no copy. So the question names what goes rather than
+ * only asking whether to go ahead — the same thing `ariadne goal rm` asks
+ * before it deletes.
  *
  * The 409 the daemon answers a goal that is running again with is handled by
  * `DeleteDialog`, along with the rest of the shape this shares with the
@@ -165,8 +165,8 @@ function DeleteGoalDialog({
       description={
         <>
           <span className="font-medium text-foreground">{goal.title}</span> and everything under it
-          — its tasks, their messages and the whole planner thread — are removed for good. This
-          cannot be undone and none of it can be recovered afterwards.
+          — its tasks and every session that ran them — are removed for good. This cannot be undone
+          and none of it can be recovered afterwards.
         </>
       }
       confirmLabel="Delete goal"

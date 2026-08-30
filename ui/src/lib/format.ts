@@ -4,8 +4,8 @@
  * Everything here is app-wide vocabulary rather than any one feature's: an id
  * is shortened the same way on the board and in a panel, a timestamp reads the
  * same in a table and in a tooltip, and a role is called the same thing in the
- * profiles table, the session lists and the message threads. Written per
- * feature, these drifted; written once, they cannot.
+ * profiles table and the session lists. Written per feature, these drifted;
+ * written once, they cannot.
  *
  * Formatting only, and pure. *Which* form a screen shows, when it re-renders
  * and where the exact stamp hangs off it is one decision made once, in
@@ -15,14 +15,7 @@
 import { type ClassValue, clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
 
-import {
-  type AgentKind,
-  ApiError,
-  type AuthorRole,
-  HTTP_ERROR_CODE,
-  type Role,
-  type TokenUsage,
-} from "@/api"
+import { type AgentKind, ApiError, HTTP_ERROR_CODE, type Role, type TokenUsage } from "@/api"
 
 /**
  * The language every formatted value is spelled in, pinned rather than taken
@@ -212,16 +205,6 @@ export const ROLE_LABELS: Record<Role, string> = {
   planner: "Planner",
   engineer: "Engineer",
   reviewer: "Reviewer",
-}
-
-/**
- * A message author is a role plus the two speakers that run no session: the
- * person at the keyboard, and the daemon itself.
- */
-export const AUTHOR_ROLE_LABELS: Record<AuthorRole, string> = {
-  ...ROLE_LABELS,
-  user: "You",
-  system: "System",
 }
 
 export const AGENT_KIND_LABELS: Record<AgentKind, string> = {

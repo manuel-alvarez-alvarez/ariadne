@@ -121,7 +121,7 @@ export const SESSION_ATTENTION_META: Record<SessionAttention, SessionAttentionMe
   },
   waiting_user: {
     label: "Waiting for you",
-    hint: "Something only you can do: a message addressed to you, or a published request that is yours to merge.",
+    hint: "Something only you can do: a published request that is yours to merge.",
     badge: "bg-status-warn-soft text-status-warn-fg",
     border: "border-status-warn/40",
   },
@@ -148,14 +148,20 @@ export const SESSION_ATTENTION_META: Record<SessionAttention, SessionAttentionMe
 /**
  * Why a session wants the user, and nothing when it does not.
  *
- * The stored reason is the whole rule. A dead session raises no reason of its
- * own on purpose: the daemon flags the agent it still owes work to as
- * `disconnected` and leaves the rest alone, so a reviewer that exited after
- * voting is finished, not stuck, and reading `status` here would put it back
- * on the list the daemon kept it off. Kept identical in `attention.rs`.
+ * The stored reason is the whole rule, with one exception: `waiting_user` used
+ * to mean a question sat in a thread this app no longer has, so it is no
+ * longer something the attention strip, the board's badges or the sessions
+ * screen's own filter raise a row for — see {@link SessionAttentionBadge},
+ * which still draws it where a session's own panel shows the raw reason the
+ * daemon reported. A dead session raises no reason of its own on purpose: the
+ * daemon flags the agent it still owes work to as `disconnected` and leaves
+ * the rest alone, so a reviewer that exited after voting is finished, not
+ * stuck, and reading `status` here would put it back on the list the daemon
+ * kept it off.
  */
 export function sessionAttention(session: SessionDto): SessionAttention | null {
-  return session.attention_reason ?? null
+  const reason = session.attention_reason
+  return reason && reason !== "waiting_user" ? reason : null
 }
 
 /**

@@ -47,14 +47,14 @@ const SESSION: SessionDto = aSession({
   tmux_session: "ariadne-01JSESS0000000000000000001",
 })
 
-/** A planner's: no task, and a thread of the goal's rather than of a task's. */
+/** A planner's: no task, and a lane header of the goal's rather than a task card. */
 const PLANNER_SESSION: SessionDto = aSession({
   id: "01JSESS0000000000000000009",
   role: "planner",
   task_id: null,
   status: "idle",
   ended_at: undefined,
-  attention_reason: "waiting_user",
+  attention_reason: "disconnected",
   attention_since: "2026-01-01T03:00:00Z",
   goal_id: GOAL.id,
   profile_id: PLANNER,
@@ -152,7 +152,7 @@ it("mixes tasks and stuck sessions into one list, each naming its goal", async (
   const rows = await screen.findAllByRole("listitem")
   // The planner raised its reason two hours after the task moved, so it leads.
   expect(rows).toHaveLength(2)
-  expect(rows[0]?.textContent).toContain("Waiting for you")
+  expect(rows[0]?.textContent).toContain("Disconnected")
   expect(rows[1]?.textContent).toContain("Wire the strip")
   for (const row of rows) expect(row.textContent).toContain(GOAL.title)
 })
@@ -247,30 +247,13 @@ it("flags a stalled task without a status of its own to show it", async () => {
   expect(await screen.findByText("Stalled")).not.toBeNull()
 })
 
-// An agent waiting on a *person* asked its question in a thread, so the row
-// opens that thread with the box focused and addressed to whoever asked —
-// where it used to open a pane with nothing to type into.
-it("sends a question in a task thread to that thread's compose box", async () => {
-  stubDaemon({
-    tasks: [TASK],
-    sessions: [
-      { ...SESSION, status: "idle", ended_at: undefined, attention_reason: "waiting_user" },
-    ],
-  })
-  renderStrip()
-
-  expect(await hrefs()).toEqual([
-    `/goals?status=active&task=${TASK.id}&tab=conversation&focus=composer&to=${ENGINEER}`,
-  ])
-})
-
-it("sends a planner's question to the goal thread, the only one it has", async () => {
+// A planner belongs to no task, so it has no card of its own to be read from
+// — its own panel, reached through its session, is the only place left.
+it("sends a stuck planner to its own session panel, having no card of its own", async () => {
   stubDaemon({ sessions: [PLANNER_SESSION] })
   renderStrip()
 
-  expect(await hrefs()).toEqual([
-    `/goals?status=active&goal=${GOAL.id}&tab=thread&focus=composer&to=${PLANNER}`,
-  ])
+  expect(await hrefs()).toEqual([`/goals?status=active&session=${PLANNER_SESSION.id}`])
 })
 
 // A prompt is answered with a keystroke, so this one does open the pane — and

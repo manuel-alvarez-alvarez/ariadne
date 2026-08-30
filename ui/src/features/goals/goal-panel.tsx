@@ -1,7 +1,7 @@
 /**
  * One goal in a side panel over the goals board: what it is, what it is
- * allowed to do, its tasks, its planner thread and the sessions it has run.
- * `ariadne goal inspect` plus `goal thread`.
+ * allowed to do, its tasks and the sessions it has run. `ariadne goal
+ * inspect`.
  *
  * Everything reads the query cache, which the SSE dispatcher patches, so a
  * status change made from the CLI or by the daemon lands here on its own.
@@ -29,7 +29,6 @@ import { Markdown } from "@/components/markdown"
 import { PanelSheet } from "@/components/panel-sheet"
 import { StatusBadge } from "@/components/status-badge"
 import { TabCount } from "@/components/tab-count"
-import { UnreadBadge, useUnreadCount } from "@/components/thread-unread"
 import { goalUsageRows, TokenFigure } from "@/components/token-figure"
 import { Button } from "@/components/ui/button"
 import { SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
@@ -46,30 +45,20 @@ import { paths, taskPanelTo, usePanelSessionNavigation } from "@/routes/paths"
 import { GoalActions } from "./goal-actions"
 import { GoalSessions, GoalSessionView } from "./goal-sessions"
 import { GoalTasks } from "./goal-tasks"
-import { GoalThread } from "./goal-thread"
-import { goalMessagesQueryOptions, goalQueryOptions } from "./queries"
-import { GOAL_STATUS_META, isStillPlanning, isTerminalGoalStatus } from "./status"
+import { goalQueryOptions } from "./queries"
+import { GOAL_STATUS_META, isTerminalGoalStatus } from "./status"
 
 // Description leads the strip — it is what the goal *is* — but the panel opens
-// on whichever tab the goal is actually happening in: see {@link defaultTab}.
+// on the tasks, which is what the goal comes down to, whatever its status.
 //
 // `sessions` keeps its param name while the tab is called "Planner sessions":
 // the tab is in the URL, and renaming the value would break every link already
 // pointing at one.
-const TABS = ["description", "tasks", "thread", "sessions"] as const
+const TABS = ["description", "tasks", "sessions"] as const
 type Tab = (typeof TABS)[number]
 
-/**
- * Where the panel opens when the URL does not say.
- *
- * While the plan is being written the tasks are a list that is still growing
- * and the thread is where that is happening — it is also where the planner
- * asks its questions, which are addressed to whoever just opened the goal.
- * Everything after that, the tasks are what the goal comes down to.
- */
-function defaultTab(status: GoalDto["status"]): Tab {
-  return isStillPlanning(status) ? "thread" : "tasks"
-}
+/** Where the panel opens when the URL does not say: the tasks, always. */
+const DEFAULT_TAB: Tab = "tasks"
 
 export function GoalPanel({
   goalId,
@@ -105,7 +94,7 @@ export function GoalPanel({
   // waiting for the goal it hangs off.
   if (sessionId) {
     return (
-      <GoalSheet goalId={goalId} onClose={onClose} stackedPanel={stackedPanel} panelRef={panel}>
+      <GoalSheet onClose={onClose} stackedPanel={stackedPanel} panelRef={panel}>
         <GoalSessionView
           goalId={goalId}
           goalTitle={goal.data?.title}
@@ -117,7 +106,7 @@ export function GoalPanel({
   }
 
   return (
-    <GoalSheet goalId={goalId} onClose={onClose} stackedPanel={stackedPanel} panelRef={panel}>
+    <GoalSheet onClose={onClose} stackedPanel={stackedPanel} panelRef={panel}>
       {error ? (
         <>
           <SheetTitle className="sr-only">Goal {goalId}</SheetTitle>
@@ -157,14 +146,11 @@ export function GoalPanel({
  * `data-nested-dialog-open`.
  */
 function GoalSheet({
-  goalId,
   onClose,
   stackedPanel,
   panelRef,
   children,
 }: {
-  /** Whose draft a dismissal has to ask about. */
-  goalId: string
   onClose: () => void
   stackedPanel?: ReactNode
   /** The popup itself, for the focus this panel has to hand back by hand. */
@@ -172,10 +158,7 @@ function GoalSheet({
   children: ReactNode
 }) {
   return (
-    // The draft the guard protects is the goal's own thread; a task stacked
-    // over this panel guards its own, and Base UI only ever asks the topmost
-    // sheet about a dismissal.
-    <PanelSheet onClose={onClose} draftKey={`goal:${goalId}`}>
+    <PanelSheet onClose={onClose}>
       {/* As wide as the task panel: the sessions tab holds a table. The panel
           on top is narrower, so this one keeps a strip showing at its left —
           the stack is a thing the user can see, and click back onto. */}
@@ -205,15 +188,10 @@ function GoalView({
 }) {
   const [search, setSearch] = useSearchParams()
   const [newTaskOpen, setNewTaskOpen] = useState(false)
-  const tab = TABS.find((value) => value === search.get("tab")) ?? defaultTab(goal.status)
-  // Read whichever tab is showing: the Thread trigger carries how long the
-  // thread is, and how much of it has been said since the reader last had it
-  // open — which is a thing the panel has to know before they go back to it.
-  const messages = useQuery(goalMessagesQueryOptions(goal.id))
-  const unread = useUnreadCount(`goal:${goal.id}`, messages.data)
-  // The other two counted tabs, on the very keys their own tabs read, so the
-  // numbers cost nothing beyond the first tab that is opened — and stay live
-  // with it, since the dispatcher invalidates both lists.
+  const tab = TABS.find((value) => value === search.get("tab")) ?? DEFAULT_TAB
+  // The two counted tabs, on the very keys their own tabs read, so the numbers
+  // cost nothing beyond the first tab that is opened — and stay live with it,
+  // since the dispatcher invalidates both lists.
   const tasks = useQuery(taskListQueryOptions({ goal: goal.id }))
   const plannerSessions = useQuery(sessionsQueryOptions({ goal: goal.id, role: "planner" }))
 
@@ -270,15 +248,6 @@ function GoalView({
             Tasks
             <TabCount count={tasks.data?.length} noun="task" />
           </TabsTrigger>
-          {/* Two numbers, and they answer different questions: how much has
-              been said, then — only while there is any — how much of it the
-              reader has not seen. The muted one leads, as it does on every
-              other tab; the filled one is what they are being pointed at. */}
-          <TabsTrigger value="thread">
-            Thread
-            <TabCount count={messages.data?.length} noun="message" />
-            <UnreadBadge count={unread} />
-          </TabsTrigger>
           {/* Named for what it holds: the goal's own agent, and none of the
               sessions its tasks have run — those are each task panel's. */}
           <TabsTrigger value="sessions">
@@ -298,9 +267,6 @@ function GoalView({
             goalId={goal.id}
             onNewTask={canCreateTask ? () => setNewTaskOpen(true) : undefined}
           />
-        </TabsContent>
-        <TabsContent value="thread" className="pt-3">
-          <GoalThread goalId={goal.id} />
         </TabsContent>
         <TabsContent value="sessions" className="pt-3">
           <GoalSessions goalId={goal.id} onSelect={onSelectSession} />

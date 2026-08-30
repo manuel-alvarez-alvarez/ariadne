@@ -218,9 +218,8 @@ const SUBMIT: Shortcut = { key: "Enter" }
  *
  * A form whose longest field is a textarea cannot be finished from the
  * keyboard otherwise: a plain Enter there is a newline and has to stay one. So
- * these forms answer to the chord the message composer already teaches, and
- * for the same reason either modifier fires — only the printed hints pick a
- * side.
+ * these forms answer to ⌘/Ctrl+Enter instead, and either modifier fires —
+ * only the printed hint picks a side.
  */
 export function submitOnChord(event: KeyboardEvent<HTMLFormElement>): void {
   if (!matchesShortcut(event, SUBMIT)) return

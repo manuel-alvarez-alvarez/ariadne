@@ -2,17 +2,16 @@
  * Everything the goal screens ask the daemon for.
  *
  * Keys are built from the `qk` helpers, so the SSE dispatcher keeps reaching
- * them: it invalidates `qk.goals.lists()` and `qk.goals.messages(id)` and
- * patches `qk.goals.detail(id)`, and every key below is either exactly one of
- * those or nested under it. The cache work each write does is
- * `@/api`'s — see `cacheRow`, `dropRow` and `useRowAction` — and what is left
- * here is what only a goal knows: which endpoint, and what else it moved.
+ * them: it invalidates `qk.goals.lists()` and patches `qk.goals.detail(id)`,
+ * and every key below is either exactly one of those or nested under it. The
+ * cache work each write does is `@/api`'s — see `cacheRow`, `dropRow` and
+ * `useRowAction` — and what is left here is what only a goal knows: which
+ * endpoint, and what else it moved.
  *
  * Two lists here are filtered server-side (`?status=`, `?role=planner`) but the
  * shared filter types carry no `status` / `role` field, so their filter segment
  * is appended to `qk.<entity>.lists()` rather than produced by
- * `qk.<entity>.list()`. Same shape, same prefix — see the note posted on the
- * task thread about widening the shared filter types.
+ * `qk.<entity>.list()`. Same shape, same prefix.
  */
 
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query"
@@ -24,19 +23,11 @@ import {
   dropRow,
   type GoalDto,
   type GoalStatus,
-  type MessageDto,
   type ProfileDto,
   qk,
   unwrap,
-  usePostMessage,
   useRowAction,
 } from "@/api"
-
-/** Page size for the goal thread; the daemon caps `limit` at 200. */
-const MESSAGE_PAGE_SIZE = 200
-
-/** Stop walking the thread eventually, however long it grew. */
-const MAX_MESSAGE_PAGES = 20
 
 interface GoalListFilters {
   /** Statuses to match, any of them; empty or absent is every status. */
@@ -69,37 +60,6 @@ export function goalQueryOptions(goalId: string) {
   })
 }
 
-export function goalMessagesQueryOptions(goalId: string) {
-  return queryOptions({
-    queryKey: qk.goals.messages(goalId),
-    queryFn: () => fetchGoalThread(goalId),
-  })
-}
-
-/**
- * The whole goal thread, oldest first.
- *
- * `GET /v1/goals/{id}/messages` pages forward from the oldest message and caps
- * a page at 200, and there is no "give me the last N" — so a long thread has to
- * be walked to its end or the screen would show only its beginning.
- */
-async function fetchGoalThread(goalId: string): Promise<MessageDto[]> {
-  const thread: MessageDto[] = []
-  let after: string | undefined
-  for (let page = 0; page < MAX_MESSAGE_PAGES; page += 1) {
-    const batch = await unwrap(
-      api().GET("/v1/goals/{id}/messages", {
-        params: { path: { id: goalId }, query: { after, limit: MESSAGE_PAGE_SIZE } },
-      }),
-    )
-    thread.push(...batch)
-    const last = batch.at(-1)
-    if (batch.length < MESSAGE_PAGE_SIZE || !last) break
-    after = last.id
-  }
-  return thread
-}
-
 /** Planner profiles, for the planner picker on the create form. */
 export function plannerProfilesQueryOptions() {
   return queryOptions({
@@ -109,13 +69,6 @@ export function plannerProfilesQueryOptions() {
     queryFn: () => unwrap(api().GET("/v1/profiles", { params: { query: { role: "planner" } } })),
     select: (profiles: ProfileDto[]) => [...profiles].sort((a, b) => a.name.localeCompare(b.name)),
   })
-}
-
-/** `POST /v1/goals/{id}/messages` — the thread tab's compose box. */
-export function usePostGoalMessage(goalId: string) {
-  return usePostMessage(qk.goals.messages(goalId), (body) =>
-    unwrap(api().POST("/v1/goals/{id}/messages", { params: { path: { id: goalId } }, body })),
-  )
 }
 
 export function useCreateGoal() {
@@ -149,8 +102,8 @@ export function useCancelGoal(goalId: string) {
 }
 
 /**
- * `DELETE /v1/goals/{id}` — the goal, its tasks and its messages, in one write
- * that nothing undoes.
+ * `DELETE /v1/goals/{id}` — the goal and its tasks, in one write that nothing
+ * undoes.
  *
  * Nothing here is optimistic, unlike cancelling: the daemon refuses a goal that
  * is not terminal with a 409, and a goal taken off the board before that answer

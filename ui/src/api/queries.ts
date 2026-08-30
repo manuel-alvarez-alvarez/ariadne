@@ -2,11 +2,10 @@
  * The pieces every entity's queries and mutations are built from.
  *
  * Six feature directories talk to the daemon and each of them was spelling the
- * same four things out for itself: the client that answers a read, the cache
- * work a write does, the optimistic flip a confirmed action does, and — for the
- * two screens that have a thread — how a sent message reaches the one on
- * screen. They live here once, keyed by the `qk` entry the entity already owns,
- * so a feature's `queries.ts` is left with what is actually its own: which
+ * same three things out for itself: the client that answers a read, the cache
+ * work a write does, and the optimistic flip a confirmed action does. They
+ * live here once, keyed by the `qk` entry the entity already owns, so a
+ * feature's `queries.ts` is left with what is actually its own: which
  * endpoint, which body, and what else a write invalidates.
  *
  * Everything below writes the same keys the SSE dispatcher does. That is not
@@ -23,7 +22,6 @@ import type { QueryKey } from "@tanstack/react-query"
 import { QueryClient, useMutation, useQueryClient } from "@tanstack/react-query"
 
 import { ApiError } from "./errors"
-import type { CreateMessageRequest, MessageDto } from "./types"
 
 // ── The cache, per entity ─────────────────────────────────────────────────
 
@@ -156,40 +154,6 @@ export function useRowAction<T extends { id: string }, V = void>(
     onSuccess: (row) => {
       cacheRow(queryClient, keys, row)
       options.alsoInvalidates?.(queryClient)
-    },
-  })
-}
-
-// ── Message threads ───────────────────────────────────────────────────────
-
-/**
- * The compose box of a goal's or a task's thread.
- *
- * The request is the whole `CreateMessageRequest`, body and optional addressee:
- * the daemon resolves `to` against the thread's participants and answers 400 if
- * it names anyone else, which is the error the box draws.
- *
- * The daemon answers with the created message, which is appended straight to
- * the cached thread: it is the newest by construction (ids are ordered and it
- * was just minted), so the send shows up without waiting for the
- * `message_created` event to invalidate. The invalidation still runs for the
- * messages an offline stream may have missed; the append is deduped by id, so
- * event and refetch land on the same thread.
- */
-export function usePostMessage(
-  messagesKey: QueryKey,
-  post: (message: CreateMessageRequest) => Promise<MessageDto>,
-) {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: post,
-    onSuccess: (message) => {
-      queryClient.setQueryData<MessageDto[]>(messagesKey, (thread) =>
-        thread && !thread.some((existing) => existing.id === message.id)
-          ? [...thread, message]
-          : thread,
-      )
-      void queryClient.invalidateQueries({ queryKey: messagesKey })
     },
   })
 }

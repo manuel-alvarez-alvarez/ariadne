@@ -186,9 +186,9 @@ export function compareByAttention(a: TaskDto, b: TaskDto): number {
  * Terminal statuses are frozen: nothing, and nobody, moves a task out of them.
  *
  * `failed` is not one of them — the user can retry it, and a task waiting for
- * that decision is still a task somebody may say something to.
+ * that decision is still one an agent may be started on again.
  */
-export function isTerminalTaskStatus(status: TaskStatus): boolean {
+function isTerminalTaskStatus(status: TaskStatus): boolean {
   return status === "merged" || status === "cancelled"
 }
 

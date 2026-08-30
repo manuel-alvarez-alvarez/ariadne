@@ -57,9 +57,9 @@ export interface SessionListFilters {
   /**
    * Only the sessions the daemon has raised a reason on. Client-side again,
    * and by {@link sessionAttention} rather than by a rule of its own: the
-   * sessions screen, the attention strip and `ariadne attention` all have to
-   * agree on which agents are asking for a person. The request is the same one
-   * an unfiltered list makes, so this costs no round trip of its own.
+   * sessions screen and the attention strip have to agree on which agents are
+   * asking for a person. The request is the same one an unfiltered list makes,
+   * so this costs no round trip of its own.
    */
   attention?: boolean
 }

@@ -21,18 +21,10 @@
 
 import { screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { beforeEach, describe, expect, it } from "vitest"
+import { describe, expect, it } from "vitest"
 
-import {
-  type GoalDto,
-  type MessageDto,
-  type ProfileDto,
-  qk,
-  type SessionDto,
-  type TaskDto,
-} from "@/api"
-import { markThreadSeen } from "@/components/thread-unread"
-import { aGoal, aMessage, aProfile, aSession, aTask } from "@/test/fixtures"
+import { type GoalDto, type ProfileDto, qk, type SessionDto, type TaskDto } from "@/api"
+import { aGoal, aProfile, aSession, aTask } from "@/test/fixtures"
 import { renderScreen } from "@/test/harness"
 import { GoalPanel } from "./goal-panel"
 
@@ -62,11 +54,7 @@ const PLANNER: ProfileDto = aProfile({
  */
 function mount(
   goal: GoalDto = GOAL,
-  {
-    tasks = [],
-    sessions = [],
-    messages,
-  }: { tasks?: TaskDto[]; sessions?: SessionDto[]; messages?: MessageDto[] } = {},
+  { tasks = [], sessions = [] }: { tasks?: TaskDto[]; sessions?: SessionDto[] } = {},
 ) {
   renderScreen(<GoalPanel goalId={goal.id} onClose={() => {}} />, {
     route: `/goals?goal=${goal.id}`,
@@ -75,15 +63,9 @@ function mount(
       client.setQueryData(qk.profiles.list({}), [PLANNER])
       client.setQueryData(qk.tasks.list({ goal: goal.id }), tasks)
       client.setQueryData(qk.sessions.list({ goal: goal.id }), sessions)
-      if (messages) client.setQueryData(qk.goals.messages(goal.id), messages)
     },
   })
 }
-
-// How far into a thread the reader has got outlives a panel, and so a test.
-beforeEach(() => {
-  localStorage.clear()
-})
 
 /** A tab by its name, whatever count is sitting on it. */
 function tab(name: string): HTMLElement {
@@ -186,13 +168,13 @@ it("says `auto` for a goal that pinned nothing, rather than the profile's own", 
 })
 
 describe("which tab the panel opens on", () => {
-  it("opens a planned goal on its thread, where the plan is being written", () => {
+  it("opens a goal still being planned on its tasks, the list still growing", () => {
     mount(aGoal({ status: "planning" }))
 
-    expect(tab("Thread")).toHaveProperty("ariaSelected", "true")
+    expect(tab("Tasks")).toHaveProperty("ariaSelected", "true")
   })
 
-  it("opens every other goal on its tasks, which is what a goal comes down to", () => {
+  it("opens every other goal on its tasks too, which is what a goal comes down to", () => {
     mount(aGoal({ status: "active" }))
 
     expect(tab("Tasks")).toHaveProperty("ariaSelected", "true")
@@ -232,31 +214,6 @@ describe("what the tabs are called, and how much is behind them", () => {
     // nothing about what the two are; each pill names what it counts.
     expect(within(tab("Tasks")).getByLabelText("2 tasks").textContent).toBe("2")
     expect(within(tab("Planner sessions")).getByLabelText("1 session").textContent).toBe("1")
-  })
-
-  it("puts the thread's length beside how much of it is new, not instead of it", () => {
-    const messages = ["01JMESG1", "01JMESG2", "01JMESG3"].map((id) =>
-      aMessage({ id, goal_id: GOAL.id, task_id: null, author_role: "planner", body: id }),
-    )
-    markThreadSeen(`goal:${GOAL.id}`, "01JMESG1")
-    mount(GOAL, { messages })
-
-    // The two answer different questions — how much has been said, and how
-    // much of it the reader has not seen — so they are two pills, the muted
-    // total first and the filled unread one after it.
-    const thread = within(tab("Thread"))
-    expect(thread.getByLabelText("3 messages").textContent).toBe("3")
-    expect(thread.getByLabelText("2 unread messages").textContent).toBe("2")
-    expect(tab("Thread").textContent).toBe("Thread32")
-  })
-
-  it("still says how long a thread is once the reader is up to date with it", () => {
-    const messages = [aMessage({ id: "01JMESG1", goal_id: GOAL.id, task_id: null })]
-    markThreadSeen(`goal:${GOAL.id}`, "01JMESG1")
-    mount(GOAL, { messages })
-
-    expect(within(tab("Thread")).getByLabelText("1 message").textContent).toBe("1")
-    expect(within(tab("Thread")).queryByLabelText(/unread/)).toBeNull()
   })
 
   it("says nothing about a count it does not have yet", () => {

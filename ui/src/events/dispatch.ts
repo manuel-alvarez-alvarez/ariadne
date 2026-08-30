@@ -69,14 +69,6 @@ export function dispatchDomainEvent(queryClient: QueryClient, event: DomainEvent
       void queryClient.invalidateQueries({ queryKey: qk.tasks.diff(event.data.task_id) })
       break
     }
-    case "message_created": {
-      // A message belongs either to a task thread or to the goal's plan thread.
-      const key = event.data.task_id
-        ? qk.tasks.messages(event.data.task_id)
-        : qk.goals.messages(event.data.goal_id)
-      void queryClient.invalidateQueries({ queryKey: key })
-      break
-    }
     case "review_created": {
       void queryClient.invalidateQueries({ queryKey: qk.tasks.reviews(event.data.task_id) })
       break

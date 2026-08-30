@@ -18,7 +18,6 @@ import {
   type TaskStatus,
   type UpdateTaskRequest,
   unwrap,
-  usePostMessage,
   useRowAction,
 } from "@/api"
 
@@ -44,21 +43,6 @@ export function taskQueryOptions(taskId: string) {
   return queryOptions({
     queryKey: qk.tasks.detail(taskId),
     queryFn: () => unwrap(api().GET("/v1/tasks/{id}", { params: { path: { id: taskId } } })),
-  })
-}
-
-/** The cap the daemon enforces on a page of messages. */
-const MESSAGE_PAGE_LIMIT = 200
-
-export function taskMessagesQueryOptions(taskId: string) {
-  return queryOptions({
-    queryKey: qk.tasks.messages(taskId),
-    queryFn: () =>
-      unwrap(
-        api().GET("/v1/tasks/{id}/messages", {
-          params: { path: { id: taskId }, query: { limit: MESSAGE_PAGE_LIMIT } },
-        }),
-      ),
   })
 }
 
@@ -142,14 +126,6 @@ export function useUpdateTask(taskId: string) {
       void queryClient.invalidateQueries({ queryKey: qk.tasks.transitions(taskId) })
     },
   })
-}
-
-/** `POST /v1/tasks/{id}/messages` — the conversation tab's compose box, the
- * web's `ariadne task msg`. */
-export function usePostTaskMessage(taskId: string) {
-  return usePostMessage(qk.tasks.messages(taskId), (body) =>
-    unwrap(api().POST("/v1/tasks/{id}/messages", { params: { path: { id: taskId } }, body })),
-  )
 }
 
 /**
