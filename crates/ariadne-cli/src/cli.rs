@@ -167,7 +167,8 @@ pub struct Cli {
     /// Colour is never the only signal: a status carries a glyph too, so the
     /// same table reads through a pipe, through NO_COLOR and to a
     /// colour-blind eye. The set is ● running, ○ pending or idle, ✓ done
-    /// (merged, completed, exited), ✗ failed or cancelled, ? waiting on you.
+    /// (merged, completed, exited) or ok, ✗ failed or cancelled, ? waiting on
+    /// you, ! a warning worth a look.
     #[arg(
         long,
         global = true,

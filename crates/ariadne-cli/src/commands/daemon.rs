@@ -22,7 +22,7 @@ use ariadne_client::{Client, endpoint};
 use self::service::{Action, Service};
 use super::follow::{self, Next};
 use super::{ariadne_home, find_ariadned, query_path};
-use crate::output::{Format, duration, local_time, note, pager, print};
+use crate::output::{Format, Kv, duration, local_time, note, pager, print, print_kv};
 
 /// How long `daemon start` waits for a daemon it just launched to answer.
 const READY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -171,21 +171,25 @@ pub async fn status(client: &Client, home: Option<PathBuf>, format: Format) -> R
         })),
     });
     print(format, &payload, || {
-        println!("status:   {}", h.status);
-        println!(
-            "version:  {}",
-            version.map_or("-".into(), |v| format!("{} {}", v.name, v.version))
-        );
-        // Seconds are a number to divide; `2d 3h` is the answer one was
-        // after. The exact count stays in `--format json`.
-        println!("uptime:   {}", duration(h.uptime_secs));
-        println!(
-            "pid:      {}",
-            pid.map_or("-".into(), |pid| pid.to_string())
-        );
-        println!("socket:   {}", client.endpoint());
-        println!("tcp:      {}", tcp.unwrap_or_else(|| "disabled".into()));
-        println!("service:  {}", management(service.as_ref()));
+        print_kv(&[
+            // A daemon that answered says `ok`: a verdict rather than a
+            // lifecycle status, and it reads here in the green `✓` `ariadne
+            // doctor` gives the same word.
+            ("status", Kv::check(&h.status)),
+            (
+                "version",
+                version
+                    .map_or("-".into(), |v| format!("{} {}", v.name, v.version))
+                    .into(),
+            ),
+            // Seconds are a number to divide; `2d 3h` is the answer one was
+            // after. The exact count stays in `--format json`.
+            ("uptime", duration(h.uptime_secs).into()),
+            ("pid", pid.map_or("-".into(), |pid| pid.to_string()).into()),
+            ("socket", client.endpoint().into()),
+            ("tcp", tcp.unwrap_or_else(|| "disabled".into()).into()),
+            ("service", management(service.as_ref()).into()),
+        ]);
     })
 }
 

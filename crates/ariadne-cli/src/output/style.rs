@@ -14,6 +14,7 @@
 //! | `✓` | done: merged, completed, exited |
 //! | `✗` | failed or cancelled |
 //! | `?` | waiting on you |
+//! | `!` | a warning: worth a look, short of a failure |
 
 use std::io::IsTerminal;
 
@@ -97,6 +98,36 @@ pub const TITLE: Style = Style::new().bold();
 /// A note that something is off, for the lines that are not table cells.
 pub const WARN: Style = Style::new().fg_color(Some(anstyle::Color::Ansi(AnsiColor::Yellow)));
 
+// The rest of the palette: one vocabulary for everything the CLI prints for
+// a person rather than for a script — the key column of an inspect block, a
+// section header, the context around a line, a confirmation, an `error:`.
+// Spelled here once rather than in each of the files that print them; the
+// `allow`s come off as `doctor`, the streams and the one-line answers reach
+// for their own.
+
+/// A section header: `ariadne doctor`'s sections, `attention`'s per-goal
+/// headings — what a reader's eye jumps between on a long screen.
+#[allow(dead_code)]
+pub const HEADING: Style = Style::new().bold();
+
+/// The key column of an inspect block. Dimmed because it is scanned down
+/// rather than read: what one came for is the value beside it.
+pub const KEY: Style = Style::new().dimmed();
+
+/// The part of a line that is context rather than content — a timestamp, a
+/// log target, who a message was addressed to — so the content it wraps is
+/// what stands out.
+pub const META: Style = Style::new().dimmed();
+
+/// Something happened as asked: the one-line confirmation a command ends on.
+#[allow(dead_code)]
+pub const OK: Style = green();
+
+/// The `error:` a command fails with — the one thing on the screen that has
+/// to be seen.
+#[allow(dead_code)]
+pub const ERROR: Style = red().bold();
+
 /// `changes_requested`: past a warning, short of a failure. No ANSI-16 colour
 /// sits between yellow and red, so it is the 256-colour orange.
 const ORANGE: Style = Style::new().fg_color(Some(anstyle::Color::Ansi256(Ansi256Color(208))));
@@ -142,6 +173,45 @@ pub fn attention(label: &str) -> (Style, Option<char>) {
     }
 }
 
+/// A glyph and a colour for one of `ariadne doctor`'s verdicts.
+///
+/// The same contract as [`status`], for the other vocabulary the CLI reads
+/// words in: a verdict is never colour alone, and a word this build does not
+/// know keeps itself and loses the glyph rather than being guessed at.
+pub fn check(word: &str) -> (Style, Option<char>) {
+    match word {
+        "ok" => (green(), Some(DONE)),
+        // Short of a failure: it works, and something about it is worth
+        // knowing.
+        "warn" => (yellow(), Some(ALERT)),
+        "fail" => (red(), Some(FAILED)),
+        _ => (Style::new(), None),
+    }
+}
+
+/// The colour of one log level, as `ariadne daemon logs` and the event stream
+/// spell it.
+///
+/// Only the two levels that are about something wrong carry a colour of their
+/// own; `INFO` is the level most lines are and stays as plain as the line it
+/// belongs to, and the two below it are dimmed so a `--level debug` run still
+/// reads as the story with its detail underneath. Case-insensitive, since a
+/// level arrives spelled however its writer spelled it.
+#[allow(dead_code)]
+pub fn level(level: &str) -> Style {
+    let is = |word: &str| level.eq_ignore_ascii_case(word);
+    if is("error") {
+        ERROR
+    } else if is("warn") {
+        WARN
+    } else if is("debug") || is("trace") {
+        Style::new().dimmed()
+    } else {
+        // `INFO`, and anything this build has never heard of.
+        Style::new()
+    }
+}
+
 /// Something is working on it.
 pub const RUNNING: char = '●';
 /// Waiting for its turn.
@@ -152,6 +222,8 @@ pub const DONE: char = '✓';
 pub const FAILED: char = '✗';
 /// Waiting on you.
 pub const WAITING: char = '?';
+/// Worth a look, short of a failure.
+pub const ALERT: char = '!';
 
 const fn grey() -> Style {
     fg(AnsiColor::BrightBlack)
@@ -234,6 +306,34 @@ mod tests {
     #[test]
     fn an_unknown_status_is_left_alone() {
         assert_eq!(status("integrating"), (Style::new(), None));
+    }
+
+    /// `doctor`'s three verdicts, in the glyphs of the documented set — and a
+    /// fourth word this build does not know left as plain as it came, the
+    /// same contract a status is held to.
+    #[test]
+    fn a_check_maps_to_a_glyph_of_the_documented_set() {
+        assert_eq!(check("ok"), (green(), Some(DONE)));
+        assert_eq!(check("warn"), (yellow(), Some(ALERT)));
+        assert_eq!(check("fail"), (red(), Some(FAILED)));
+        assert_eq!(check("skipped"), (Style::new(), None));
+    }
+
+    /// The two levels that are about something wrong are coloured, `INFO` is
+    /// the line itself, and what runs under it is dimmed — whatever case the
+    /// writer of the line spelled its level in.
+    #[test]
+    fn a_log_level_is_coloured_by_how_much_it_wants_reading() {
+        assert_eq!(level("ERROR"), ERROR);
+        assert_eq!(level("WARN"), WARN);
+        assert_eq!(level("INFO"), Style::new());
+        assert_eq!(level("DEBUG"), Style::new().dimmed());
+        assert_eq!(level("TRACE"), Style::new().dimmed());
+        assert_eq!(level("error"), ERROR);
+        assert_eq!(level("Warn"), WARN);
+        assert_eq!(level("info"), Style::new());
+        assert_eq!(level("trace"), Style::new().dimmed());
+        assert_eq!(level("NOTICE"), Style::new());
     }
 
     /// The colours the reader is told about: blue for work in flight, green

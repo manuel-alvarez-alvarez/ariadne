@@ -4,9 +4,11 @@
 //! long ones are cut to the column's cap with `…` (docker-style, `--no-trunc`
 //! restores them), columns the terminal has no room for are dropped (`-o
 //! wide` keeps them), statuses are coloured and carry a glyph, and timestamps
-//! read as local time. `--format json` is for scripts: it is the daemon's own
-//! payload, RFC3339 timestamps and all — and so is `-q`, which prints one id
-//! per line and nothing else.
+//! read as local time — and an inspect block is that table stood on its side,
+//! its keys dimmed and its values carrying the colour and the glyph their
+//! kind carries in a cell. `--format json` is for scripts: it is the
+//! daemon's own payload, RFC3339 timestamps and all — and so is `-q`, which
+//! prints one id per line and nothing else.
 //!
 //! Anything that is not the payload — "no tasks yet", a confirmation prompt —
 //! goes to stderr, so stdout stays exactly what a pipe wants.
@@ -21,6 +23,7 @@ pub mod table;
 use std::io::Write;
 use std::sync::OnceLock;
 
+use anstyle::Style;
 use ariadne_api::usage::TokenUsageDto;
 use serde::Serialize;
 
@@ -152,12 +155,165 @@ pub fn print_table(columns: &[Column], rows: &[Vec<String>]) -> anyhow::Result<(
     Ok(())
 }
 
-/// Print a key/value inspect block.
-pub fn print_kv(pairs: &[(&str, String)]) {
-    let width = pairs.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
-    for (k, v) in pairs {
-        println!("{k:<width$}  {v}");
+/// What a block's value holds, which is what says how it is painted: the
+/// same question [`table::Cell`] asks of a column, asked of one value.
+///
+/// `daemon status` is the only block that types a value so far, and it types
+/// a verdict; the inspect blocks that type the rest are the next task, and
+/// the `allow`s come off with them.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    /// Anything with no meaning of its own: counts, paths, flags, prose.
+    Plain,
+    /// An id: there to be copied, not read.
+    Id,
+    /// What the block is about.
+    Title,
+    /// A lifecycle status — coloured, and prefixed with its glyph.
+    Status,
+    /// A verdict in `ariadne doctor`'s words: `ok`, `warn`, `fail`.
+    Check,
+    /// Why the thing wants a person, in `ariadne attention`'s words.
+    Attention,
+    /// Context rather than content: a timestamp, an endpoint, a target.
+    Meta,
+}
+
+/// One value of an inspect block: what it says, and what kind of thing it is.
+///
+/// Most of a block is prose the CLI has already spelled, and says so by
+/// arriving as a `String` or a `&str`; the values that carry a meaning the
+/// table has a colour for say which one — `Kv::status(..)`, `Kv::id(..)` —
+/// and are then painted exactly as the same thing is painted in a cell.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Kv {
+    text: String,
+    kind: Kind,
+}
+
+impl Kv {
+    #[allow(dead_code)]
+    pub fn id(text: impl Into<String>) -> Self {
+        Self::new(text, Kind::Id)
     }
+
+    #[allow(dead_code)]
+    pub fn title(text: impl Into<String>) -> Self {
+        Self::new(text, Kind::Title)
+    }
+
+    #[allow(dead_code)]
+    pub fn status(text: impl Into<String>) -> Self {
+        Self::new(text, Kind::Status)
+    }
+
+    pub fn check(text: impl Into<String>) -> Self {
+        Self::new(text, Kind::Check)
+    }
+
+    #[allow(dead_code)]
+    pub fn attention(text: impl Into<String>) -> Self {
+        Self::new(text, Kind::Attention)
+    }
+
+    #[allow(dead_code)]
+    pub fn meta(text: impl Into<String>) -> Self {
+        Self::new(text, Kind::Meta)
+    }
+
+    fn new(text: impl Into<String>, kind: Kind) -> Self {
+        Self {
+            text: text.into(),
+            kind,
+        }
+    }
+
+    /// The value as it is printed: its glyph where its kind has one, in its
+    /// colour where there is colour to have.
+    ///
+    /// A value is not flattened the way a cell is — a block is where the
+    /// several lines of a description, a spend or a list of reviewers are
+    /// read — and one that spans lines is printed exactly as it came,
+    /// whatever it says it holds: a style would wrap the newlines up with the
+    /// text, and a glyph would sit on the first line as though that line were
+    /// the whole value. Painting inside those lines is a job for whoever
+    /// builds them.
+    fn render(&self, color: bool) -> String {
+        if self.text.contains('\n') {
+            return self.text.clone();
+        }
+        let (style, glyph) = match self.kind {
+            Kind::Plain => (Style::new(), None),
+            Kind::Id => (style::ID, None),
+            Kind::Title => (style::TITLE, None),
+            Kind::Status => style::status(&self.text),
+            Kind::Check => style::check(&self.text),
+            Kind::Attention => style::attention(&self.text),
+            Kind::Meta => (style::META, None),
+        };
+        let text = match glyph {
+            Some(glyph) => format!("{glyph} {}", self.text),
+            None => self.text.clone(),
+        };
+        style::paint(color, style, &text)
+    }
+}
+
+impl From<String> for Kv {
+    fn from(text: String) -> Self {
+        Self::new(text, Kind::Plain)
+    }
+}
+
+impl From<&str> for Kv {
+    fn from(text: &str) -> Self {
+        Self::new(text, Kind::Plain)
+    }
+}
+
+/// Print a key/value inspect block.
+pub fn print_kv<V: Into<Kv> + Clone>(pairs: &[(&str, V)]) {
+    let _ = write_kv(&mut std::io::stdout().lock(), pairs, view());
+}
+
+/// The block and the newline that ends it — and nothing at all, newline
+/// included, for a block with no pairs in it: that is the line the loop this
+/// renderer replaced never printed, and a blank one would read as a value
+/// that came back empty.
+///
+/// Written rather than printed so that what reaches stdout is what a test
+/// reads back.
+fn write_kv<W: Write, V: Into<Kv> + Clone>(
+    out: &mut W,
+    pairs: &[(&str, V)],
+    view: &View,
+) -> std::io::Result<()> {
+    match kv_block(pairs, view) {
+        block if block.is_empty() => Ok(()),
+        block => writeln!(out, "{block}"),
+    }
+}
+
+/// The block as one string: every key padded to the longest, then two spaces,
+/// then the value in whatever its kind is worth.
+///
+/// The padding is counted on the bare key rather than on the painted one, so
+/// the value column starts at the same place with colour on as with it off —
+/// and where a value spills over several lines, the `INDENT` its caller
+/// continues them on is that same width, so they stay under it.
+fn kv_block<V: Into<Kv> + Clone>(pairs: &[(&str, V)], view: &View) -> String {
+    let pad = pairs.iter().map(|(k, _)| width(k)).max().unwrap_or(0);
+    pairs
+        .iter()
+        .map(|(k, v)| {
+            let value = v.clone().into().render(view.color);
+            let key = style::paint(view.color, style::KEY, k);
+            let gap = " ".repeat(pad - width(k) + 2);
+            format!("{key}{gap}{value}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// An optional cell: the value, or a dash where there is none.
@@ -440,6 +596,18 @@ fn width(cell: &str) -> usize {
 mod tests {
     use super::*;
 
+    /// An id as a block prints it: whole, since a block is where one is
+    /// copied from.
+    const ID: &str = "01M0R9EPJK7QYAGYCN31E8EF58";
+
+    /// An inspect block as the callers that have not been upgraded yet write
+    /// one: a key and a `String`, all the way down.
+    const PAIRS: [(&str, &str); 3] = [
+        ("id", ID),
+        ("status", "in_progress"),
+        ("branch", "add-the-frobnicator"),
+    ];
+
     /// Three figures at most while a unit is left to carry into, and the
     /// digits themselves while they still mean something: a table is read
     /// down a column, and 12_345 next to 1_234_567 says nothing that `12k`
@@ -548,6 +716,143 @@ mod tests {
             ]
             .join("\n")
         );
+    }
+
+    /// The block a caller passing plain `String`s has always printed: keys
+    /// padded to the longest, two spaces, the value as it came — and not one
+    /// escape in it.
+    #[test]
+    fn a_block_without_colour_is_the_layout_it_always_was() {
+        let pairs = PAIRS.map(|(k, v)| (k, v.to_string()));
+        let width = pairs.iter().map(|(k, _)| k.len()).max().expect("a key");
+        let expected: Vec<String> = pairs
+            .iter()
+            .map(|(k, v)| format!("{k:<width$}  {v}"))
+            .collect();
+        let block = kv_block(&pairs, &View::plain());
+        assert_eq!(block, expected.join("\n"));
+        assert!(!block.contains('\u{1b}'), "{block:?}");
+    }
+
+    /// With colour on, a value is painted by what it holds — exactly as the
+    /// same thing is painted in a table cell, glyph included — the keys are
+    /// dimmed, and the column of values still starts where it started, since
+    /// the padding is counted on the bare key rather than on the escapes
+    /// around it.
+    #[test]
+    fn a_typed_block_paints_its_values_the_way_a_table_paints_its_cells() {
+        let pairs = [
+            ("id", Kv::id(ID)),
+            ("status", Kv::status("in_progress")),
+            ("health", Kv::check("ok")),
+            ("branch", "add-the-frobnicator".into()),
+        ];
+        let view = View {
+            color: true,
+            ..View::plain()
+        };
+        let block = kv_block(&pairs, &view);
+        assert!(
+            block.contains(&style::paint(true, style::KEY, "status")),
+            "{block}"
+        );
+        assert!(
+            block.contains(&style::paint(true, style::ID, ID)),
+            "{block}"
+        );
+        assert!(
+            block.contains(&style::paint(
+                true,
+                style::status("in_progress").0,
+                "● in_progress"
+            )),
+            "{block}"
+        );
+        assert!(
+            block.contains(&style::paint(true, style::check("ok").0, "✓ ok")),
+            "{block}"
+        );
+
+        // The same block without colour, character for character: the
+        // escapes are all that colour adds.
+        let stripped: Vec<String> = block.lines().map(visible).collect();
+        let plain = kv_block(&pairs, &View::plain());
+        assert_eq!(stripped, plain.lines().collect::<Vec<_>>());
+
+        // And every value starts in the same column: the longest key, `status`,
+        // and then two spaces.
+        for (line, (key, _)) in stripped.iter().zip(&pairs) {
+            let value = line
+                .char_indices()
+                .skip(width(key))
+                .find(|(_, c)| *c != ' ')
+                .map(|(i, _)| i);
+            assert_eq!(value, Some("status".len() + 2), "{line:?}");
+        }
+    }
+
+    /// A value that spans lines is printed as it came, whatever kind it says
+    /// it is: the escapes in the block are the ones around its keys, and
+    /// nothing has grown a glyph on its first line.
+    #[test]
+    fn a_value_of_several_lines_is_left_as_it_came() {
+        let pairs = [
+            ("id", Kv::id(format!("{ID}\n{ID}"))),
+            ("status", Kv::status("in_progress\nand then some")),
+            ("description", "\n---\nprose over two lines".into()),
+        ];
+        let view = View {
+            color: true,
+            ..View::plain()
+        };
+        let block = kv_block(&pairs, &view);
+        assert_eq!(
+            block.matches('\u{1b}').count(),
+            2 * pairs.len(),
+            "only the keys are painted: {block:?}"
+        );
+        assert!(!block.contains(style::RUNNING), "{block:?}");
+        assert_eq!(visible(&block), kv_block(&pairs, &View::plain()));
+    }
+
+    /// A block of nothing prints nothing: not a line, not the newline that
+    /// would end one. The loop this renderer replaced printed nothing for an
+    /// empty block, and a blank line would read as a value that came back
+    /// empty.
+    #[test]
+    fn a_block_with_no_pairs_prints_nothing_at_all() {
+        let none: [(&str, String); 0] = [];
+        assert_eq!(kv_block(&none, &View::plain()), "");
+        assert_eq!(written(&none, &View::plain()), "");
+
+        // And one with pairs in it is the block and a single newline.
+        let pairs = PAIRS.map(|(k, v)| (k, v.to_string()));
+        assert_eq!(
+            written(&pairs, &View::plain()),
+            format!("{}\n", kv_block(&pairs, &View::plain()))
+        );
+    }
+
+    /// What [`print_kv`] would put on stdout for these pairs.
+    fn written<V: Into<Kv> + Clone>(pairs: &[(&str, V)], view: &View) -> String {
+        let mut out = Vec::new();
+        write_kv(&mut out, pairs, view).expect("write");
+        String::from_utf8(out).expect("utf8")
+    }
+
+    /// A line as the reader sees it: the escapes taken back out.
+    fn visible(line: &str) -> String {
+        let mut out = String::new();
+        let mut escaped = false;
+        for c in line.chars() {
+            match (escaped, c) {
+                (false, '\u{1b}') => escaped = true,
+                (true, 'm') => escaped = false,
+                (true, _) => {}
+                (false, c) => out.push(c),
+            }
+        }
+        out
     }
 
     #[test]

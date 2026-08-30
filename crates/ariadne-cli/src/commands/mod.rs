@@ -34,7 +34,7 @@ use ariadne_client::{Client, endpoint};
 use ariadne_core::models::ModelRef;
 use ariadne_core::{RecipientKind, probe};
 
-use crate::output::{Format, local_time, note, print, short_id, warn};
+use crate::output::{Format, local_time, note, print, print_kv, short_id, warn};
 
 /// `ariadne version` — client version always, daemon version when reachable.
 ///
@@ -61,14 +61,19 @@ pub async fn version(client: &Client, format: Format) -> Result<()> {
         "mismatch": mismatch.is_some(),
     });
     print(format, &payload, || {
-        println!("client:    ariadne {client_version}");
-        match &daemon {
-            Ok(v) => println!("daemon:    {} {}", v.name, v.version),
-            Err(e) => println!("daemon:    {}", e.human()),
-        }
-        // The endpoint has been in `--format json` all along: which daemon
-        // answered is half of what the two versions mean.
-        println!("endpoint:  {}", client.endpoint());
+        print_kv(&[
+            ("client", format!("ariadne {client_version}")),
+            (
+                "daemon",
+                match &daemon {
+                    Ok(v) => format!("{} {}", v.name, v.version),
+                    Err(e) => e.human(),
+                },
+            ),
+            // The endpoint has been in `--format json` all along: which
+            // daemon answered is half of what the two versions mean.
+            ("endpoint", client.endpoint().to_string()),
+        ]);
         if let Some(version) = mismatch {
             warn(&version_mismatch(client_version, version));
         }

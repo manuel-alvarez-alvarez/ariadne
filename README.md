@@ -272,12 +272,12 @@ precisely. A pipe or a file gets every column, since there is no screen to fit.
 `goal thread` and `task thread` read the last `--tail N` messages, or the first
 `--limit N`, and say when there are more.
 
-Statuses are coloured and carry a glyph — `●` running, `○` pending, `✓` done,
-`✗` failed or cancelled, `?` waiting on you — so a table reads the same
-without colour. `--color auto|always|never` decides, `NO_COLOR` is honoured,
-and a pipe is plain unless you ask otherwise (`--color always`). `task diff`
-and the `logs` snapshots go through `$PAGER` (`less -R`) on a terminal;
-`--no-pager` streams them instead.
+Statuses are coloured and carry a glyph — `●` running, `○` pending, `✓` done
+or ok, `✗` failed or cancelled, `?` waiting on you, `!` a warning worth a look
+— so a table reads the same without colour. `--color auto|always|never`
+decides, `NO_COLOR` is honoured, and a pipe is plain unless you ask otherwise
+(`--color always`). `task diff` and the `logs` snapshots go through `$PAGER`
+(`less -R`) on a terminal; `--no-pager` streams them instead.
 
 ## Following what happens
 
