@@ -22,7 +22,7 @@ use ariadne_client::{Client, endpoint};
 use self::service::{Action, Service};
 use super::follow::{self, Next};
 use super::{ariadne_home, find_ariadned, query_path};
-use crate::output::{Format, Kv, duration, local_time, note, pager, print, print_kv};
+use crate::output::{Format, Kv, duration, local_time, note, pager, print, print_kv, style, view};
 
 /// How long `daemon start` waits for a daemon it just launched to answer.
 const READY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -64,7 +64,11 @@ pub async fn start(home: Option<PathBuf>, format: Format) -> Result<()> {
     if client.health().await.is_ok() {
         let payload = json!({"started": false, "endpoint": client.endpoint()});
         return print(format, &payload, || {
-            println!("daemon already running at {}", client.endpoint())
+            println!(
+                "{} {}",
+                style::paint(view().color, style::META, "daemon already running at"),
+                client.endpoint()
+            )
         });
     }
 
@@ -546,24 +550,40 @@ fn how(done: &Done) -> String {
 }
 
 fn started_line(done: &Done) -> String {
+    let verb = style::paint(view().color, style::OK, "ariadned started");
     match &done.service {
-        Some(argv) => format!("ariadned started with: {}", argv.join(" ")),
-        None => format!("ariadned started ({})", how(done)),
+        Some(argv) => format!("{verb} with: {}", argv.join(" ")),
+        None => format!("{verb} ({})", how(done)),
     }
 }
 
 fn stopped_line(done: &Done) -> String {
+    let color = view().color;
     match &done.service {
-        Some(argv) => format!("ariadned stopped with: {}", argv.join(" ")),
-        None => format!("sent SIGTERM to ariadned ({})", how(done)),
+        Some(argv) => format!(
+            "{} with: {}",
+            style::paint(color, style::OK, "ariadned stopped"),
+            argv.join(" ")
+        ),
+        None => format!(
+            "{} ({})",
+            style::paint(color, style::OK, "sent SIGTERM to ariadned"),
+            how(done)
+        ),
     }
 }
 
 fn gone_line(socket: &Path, waited: Duration) -> String {
+    let color = view().color;
     format!(
-        "socket {} gone after {:.1}s",
+        "{} {} {}",
+        style::paint(color, style::META, "socket"),
         socket.display(),
-        waited.as_secs_f64()
+        style::paint(
+            color,
+            style::META,
+            &format!("gone after {:.1}s", waited.as_secs_f64())
+        )
     )
 }
 

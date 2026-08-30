@@ -20,7 +20,7 @@ use super::{
 };
 use crate::cli::values::Spelling;
 use crate::output::{
-    Column, Format, UNCAPPED, age, col, moment, note, print, print_kv, print_list,
+    Column, Format, UNCAPPED, age, col, moment, note, ok_id_line, print, print_kv, print_list, view,
 };
 
 pub use flags::{PromptAssignment, read_prompts};
@@ -315,7 +315,7 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
             // caller asked about, and that it happened.
             let id = p.id;
             print(format, &json!({"profile": id, "deleted": true}), || {
-                println!("deleted {id}")
+                println!("{}", ok_id_line(view().color, "deleted", &id))
             })?;
         }
         ProfileCommand::Prompts { id } => prompts::list(client, &id, format).await?,

@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 
 use crate::codex_trust::Trust;
 use crate::commands::on_path;
+use crate::output::{style, view};
 
 /// `ariadne setup codex-hooks` — have the user trust Ariadne's Codex hooks.
 ///
@@ -21,7 +22,14 @@ pub fn codex_hooks(cli_bin: Option<String>) -> Result<()> {
     let cli_bin = cli_bin.unwrap_or_else(default_cli_bin);
     let flags = ariadne_core::codex_hooks::config_flags(&cli_bin);
 
-    println!("Codex hooks report session ids, liveness and approval waits to Ariadne:");
+    println!(
+        "{}",
+        style::paint(
+            view().color,
+            style::HEADING,
+            "Codex hooks report session ids, liveness and approval waits to Ariadne:"
+        )
+    );
     println!(
         "  command: {}",
         ariadne_core::codex_hooks::command(&cli_bin)
@@ -51,7 +59,10 @@ pub fn codex_hooks(cli_bin: Option<String>) -> Result<()> {
     }
     if !std::io::stdin().is_terminal() {
         println!("\nNot a terminal, so the prompt cannot be answered here. Run:");
-        println!("  ariadne setup codex-hooks");
+        println!(
+            "  {}",
+            style::paint(view().color, style::TITLE, "ariadne setup codex-hooks")
+        );
         return Ok(());
     }
 
@@ -73,7 +84,14 @@ pub fn codex_hooks(cli_bin: Option<String>) -> Result<()> {
         .status()
         .context("running codex")?;
     if !status.success() {
-        println!("\ncodex exited with {status}; the hooks may not be trusted yet.");
+        println!(
+            "\n{}",
+            style::paint(
+                view().color,
+                style::WARN,
+                &format!("codex exited with {status}; the hooks may not be trusted yet.")
+            )
+        );
         return Ok(());
     }
 
@@ -82,7 +100,14 @@ pub fn codex_hooks(cli_bin: Option<String>) -> Result<()> {
     // install goes unnoticed.
     match trust() {
         Some(after) if after.is_complete() => {
-            println!("\nDone. Ariadne's codex sessions will report from now on.");
+            println!(
+                "\n{}",
+                style::paint(
+                    view().color,
+                    style::OK,
+                    "Done. Ariadne's codex sessions will report from now on."
+                )
+            );
         }
         Some(after) => {
             println!(
@@ -94,7 +119,14 @@ pub fn codex_hooks(cli_bin: Option<String>) -> Result<()> {
                  this command\nagain and answer \"Trust all and continue\"."
             );
         }
-        None => println!("\nDone, as far as can be told — codex's home was not found."),
+        None => println!(
+            "\n{}",
+            style::paint(
+                view().color,
+                style::OK,
+                "Done, as far as can be told — codex's home was not found."
+            )
+        ),
     }
     Ok(())
 }

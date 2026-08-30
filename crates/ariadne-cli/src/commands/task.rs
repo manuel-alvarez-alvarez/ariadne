@@ -24,8 +24,8 @@ use super::{
 };
 use crate::cli::values::Spelling;
 use crate::output::{
-    Column, Format, UNCAPPED, age, col, dash, local_time, moment, note, pager, print, print_json,
-    print_kv, print_list, usage_block, usage_cell, view, yes_no,
+    Column, Format, UNCAPPED, age, col, dash, local_time, moment, note, ok_id_line, pager, print,
+    print_json, print_kv, print_list, status_line, usage_block, usage_cell, view, yes_no,
 };
 use edit::{parse_reviewer, resolve_repo, resolved_reviewers, update_request};
 
@@ -346,7 +346,9 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                 clear_depends_on,
             )?;
             let t: TaskDto = client.patch_json(&task_path(&id), &body).await?;
-            print(format, &t, || println!("updated {}", t.id))?;
+            print(format, &t, || {
+                println!("{}", ok_id_line(view().color, "updated", &t.id))
+            })?;
         }
         TaskCommand::Ls {
             goal,
@@ -431,7 +433,9 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                     &CreateMessageRequest { body, to },
                 )
                 .await?;
-            print(format, &m, || println!("posted {}", m.id))?;
+            print(format, &m, || {
+                println!("{}", ok_id_line(view().color, "posted", &m.id))
+            })?;
         }
         TaskCommand::Reviews { id } => {
             let id = resolve::id(client, Kind::Task, &id).await?;
@@ -690,7 +694,10 @@ fn cancel_question(t: &TaskDto, subject: &Subject) -> String {
 /// What a mutation prints: the task it produced, or where it got to.
 fn print_status(t: &TaskDto, format: Format) -> Result<()> {
     print(format, t, || {
-        println!("task {} is now {}", t.id, t.status.as_str())
+        println!(
+            "{}",
+            status_line(view().color, "task", &t.id, t.status.as_str())
+        )
     })
 }
 

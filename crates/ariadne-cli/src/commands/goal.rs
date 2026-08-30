@@ -17,8 +17,8 @@ use super::resolve::{self, Kind};
 use super::{ProfileNames, Subject, confirm, parse_effort, parse_model, print_thread, recipient};
 use crate::cli::values::Spelling;
 use crate::output::{
-    Column, Format, UNCAPPED, age, col, moment, print, print_kv, print_list, usage_block,
-    usage_cell,
+    Column, Format, UNCAPPED, age, col, moment, ok_id_line, print, print_kv, print_list,
+    status_line, usage_block, usage_cell, view,
 };
 
 /// Columns of `goal ls`. `tokens` is what every agent of the goal spent
@@ -314,7 +314,7 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
             // Nothing is left to print: what the caller asked about, and that
             // it happened.
             print(format, &json!({"goal": id, "deleted": true}), || {
-                println!("deleted {id}")
+                println!("{}", ok_id_line(view().color, "deleted", &id))
             })?;
         }
         GoalCommand::Attach { id } => {
@@ -341,7 +341,9 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                     &CreateMessageRequest { body, to },
                 )
                 .await?;
-            print(format, &m, || println!("posted {}", m.id))?;
+            print(format, &m, || {
+                println!("{}", ok_id_line(view().color, "posted", &m.id))
+            })?;
         }
     }
     Ok(())
@@ -393,7 +395,10 @@ fn goal_path(id: &str) -> String {
 /// to.
 fn print_status(g: &GoalDto, format: Format) -> Result<()> {
     print(format, g, || {
-        println!("goal {} is now {}", g.id, g.status.as_str())
+        println!(
+            "{}",
+            status_line(view().color, "goal", &g.id, g.status.as_str())
+        )
     })
 }
 

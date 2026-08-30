@@ -14,7 +14,7 @@ use std::process::ExitCode;
 use ariadne_client::ClientError;
 use http::StatusCode;
 
-use crate::output::Format;
+use crate::output::{self, Format, style};
 
 /// What a failed command exits with. `0` is success and is not in here;
 /// everything else says which kind of failure it was, so a script can branch
@@ -109,8 +109,21 @@ impl Failure {
 pub fn report(err: &anyhow::Error, format: Format) {
     match format {
         Format::Json => eprintln!("{}", serde_json::json!({"error": json_error(err)})),
-        Format::Table => eprintln!("error: {}", human_line(err)),
+        Format::Table => eprintln!("{}", error_line(output::view().color, err)),
     }
+}
+
+/// `error: <message>` — the `error:` painted red, since it is the one thing on
+/// the screen that has to be seen; the message is left exactly as
+/// [`human_line`] renders it. Stderr, so `view().color` is read the same way
+/// [`output::warn`] reads it: one decision for the run, not a second tty check
+/// for a different stream.
+fn error_line(color: bool, err: &anyhow::Error) -> String {
+    format!(
+        "{} {}",
+        style::paint(color, style::ERROR, "error:"),
+        human_line(err)
+    )
 }
 
 /// What the process exits with: what the CLI decided, else what the daemon's
@@ -240,6 +253,21 @@ mod tests {
             human_line(&anyhow::Error::new(not_found())),
             "task not found: badid123"
         );
+    }
+
+    /// With colour off, exactly the line every failed command has always
+    /// printed; with it on, the `error:` prefix carries the same escapes
+    /// `style::ERROR` gives any other line, and the message is untouched.
+    #[test]
+    fn the_error_line_paints_the_prefix_and_leaves_the_message_alone() {
+        let err = anyhow::Error::new(not_found());
+        assert_eq!(error_line(false, &err), "error: task not found: badid123");
+        let painted = error_line(true, &err);
+        assert!(
+            painted.contains(&style::paint(true, style::ERROR, "error:")),
+            "{painted}"
+        );
+        assert!(painted.ends_with("task not found: badid123"), "{painted}");
     }
 
     /// The human line drops status and code; `--format json` keeps them.

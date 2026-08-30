@@ -19,8 +19,8 @@ use super::resolve::{self, Kind};
 use super::{ProfileNames, Subject, confirm, one_of, query_path};
 use crate::cli::values::Spelling;
 use crate::output::{
-    Column, Format, UNCAPPED, age, at, col, dash, moment, note, pager, print, print_json, print_kv,
-    print_list, short_id, usage_block, usage_cell,
+    Column, Format, UNCAPPED, age, at, col, dash, moment, note, ok_id_line, pager, print,
+    print_json, print_kv, print_list, short_id, status_line, style, usage_block, usage_cell, view,
 };
 
 /// Columns of `session ls`. `context` is the one written by a human, so it is
@@ -262,7 +262,7 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
             print(
                 format,
                 &serde_json::json!({"sent": true, "session": id}),
-                || println!("typed into session {id}"),
+                || println!("{}", ok_id_line(view().color, "typed into session", &id)),
             )?;
         }
         SessionCommand::Logs { id, follow } => {
@@ -284,7 +284,12 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
                 format,
                 &serde_json::json!({"resumed": resumed, "session": s}),
                 || match resumed {
-                    true => println!("session {} resumed ({})", s.id, s.tmux_session),
+                    true => println!(
+                        "session {} {} ({})",
+                        style::paint(view().color, style::ID, &s.id),
+                        style::paint(view().color, style::OK, "resumed"),
+                        s.tmux_session
+                    ),
                     false => println!(
                         "session {} already has a running agent ({}); nothing to resume",
                         s.id, s.tmux_session
@@ -301,7 +306,10 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
                 .post_empty(&format!("/v1/sessions/{id}/kill"))
                 .await?;
             print(format, &s, || {
-                println!("session {} is now {}", s.id, s.status.as_str())
+                println!(
+                    "{}",
+                    status_line(view().color, "session", &s.id, s.status.as_str())
+                )
             })?;
         }
     }

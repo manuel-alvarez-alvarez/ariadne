@@ -558,6 +558,37 @@ pub fn yes_no(flag: bool, no_word: &str) -> String {
     }
 }
 
+/// `<kind> <id> is now <status>`: the line every status-changing command ends
+/// on, painted to agree with the table row the reader just saw — the id
+/// dimmed the way an id column always is, the status in its glyph and its
+/// colour, exactly as `style::status` gives them to a cell. With colour off
+/// this is the bare line the CLI has always printed: the glyph is part of
+/// the colour here, not a stand-in for it — unlike a table, this line
+/// already spells the status out in words.
+pub fn status_line(color: bool, kind: &str, id: &str, status: &str) -> String {
+    let (sty, glyph) = style::status(status);
+    let word = match (color, glyph) {
+        (true, Some(glyph)) => format!("{glyph} {status}"),
+        _ => status.to_string(),
+    };
+    format!(
+        "{kind} {} is now {}",
+        style::paint(color, style::ID, id),
+        style::paint(color, sty, &word)
+    )
+}
+
+/// `<verb> <id>`: the confirmation a mutation with nothing left to show ends
+/// on — `deleted`, `posted`, `updated`, `typed into session` — the verb in
+/// green, the id dimmed the way every table's id column is.
+pub fn ok_id_line(color: bool, verb: &str, id: &str) -> String {
+    format!(
+        "{} {}",
+        style::paint(color, style::OK, verb),
+        style::paint(color, style::ID, id)
+    )
+}
+
 /// A note that something looks wrong, in the same place and the same colour
 /// wherever it is said: stderr, so it never lands in what a pipe is reading.
 pub fn warn(message: &str) {
@@ -607,6 +638,59 @@ mod tests {
         ("status", "in_progress"),
         ("branch", "add-the-frobnicator"),
     ];
+
+    /// With colour off, exactly the bare line this always printed — no
+    /// glyph, no escapes; with it on, the id and the status carry the same
+    /// escapes a table cell would, glyph included.
+    #[test]
+    fn a_status_line_agrees_with_the_table_row_it_echoes() {
+        assert_eq!(
+            status_line(false, "task", ID, "merged"),
+            format!("task {ID} is now merged")
+        );
+        let painted = status_line(true, "task", ID, "merged");
+        assert!(
+            painted.contains(&style::paint(true, style::ID, ID)),
+            "{painted}"
+        );
+        assert!(
+            painted.contains(&style::paint(true, style::status("merged").0, "✓ merged")),
+            "{painted}"
+        );
+    }
+
+    /// A word this build does not know keeps its cell and loses the glyph,
+    /// the same contract [`style::status`] is held to — colour or not.
+    #[test]
+    fn a_status_line_leaves_an_unknown_status_alone() {
+        assert_eq!(
+            status_line(false, "task", ID, "integrating"),
+            format!("task {ID} is now integrating")
+        );
+        assert_eq!(
+            status_line(true, "task", ID, "integrating"),
+            format!(
+                "task {} is now integrating",
+                style::paint(true, style::ID, ID)
+            )
+        );
+    }
+
+    /// The same contract for a mutation with nothing left to show: the verb
+    /// green, the id dimmed, and nothing at all when colour is off.
+    #[test]
+    fn an_ok_id_line_paints_the_verb_and_the_id() {
+        assert_eq!(ok_id_line(false, "deleted", ID), format!("deleted {ID}"));
+        let painted = ok_id_line(true, "deleted", ID);
+        assert!(
+            painted.contains(&style::paint(true, style::OK, "deleted")),
+            "{painted}"
+        );
+        assert!(
+            painted.contains(&style::paint(true, style::ID, ID)),
+            "{painted}"
+        );
+    }
 
     /// Three figures at most while a unit is left to carry into, and the
     /// digits themselves while they still mean something: a table is read

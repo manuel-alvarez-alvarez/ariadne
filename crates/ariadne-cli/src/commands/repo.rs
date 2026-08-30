@@ -11,7 +11,9 @@ use serde_json::json;
 use super::resolve::{self, Kind};
 use super::{Subject, confirm};
 use crate::cli::values::Spelling;
-use crate::output::{Column, Format, UNCAPPED, age, col, moment, print, print_kv, print_list};
+use crate::output::{
+    Column, Format, UNCAPPED, age, col, moment, ok_id_line, print, print_kv, print_list, view,
+};
 
 /// Columns of `repo ls`. The path is what a repository is, so it stays
 /// whatever the terminal's width; the description is the first thing to go.
@@ -169,7 +171,7 @@ pub async fn run(client: &Client, cmd: RepoCommand, format: Format) -> Result<()
             // The repository is gone, so there is no DTO left to print: what
             // the caller asked about, and that it happened.
             print(format, &json!({"repository": id, "deleted": true}), || {
-                println!("deleted {id}")
+                println!("{}", ok_id_line(view().color, "deleted", &id))
             })?;
         }
     }

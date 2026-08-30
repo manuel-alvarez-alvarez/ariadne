@@ -12,6 +12,15 @@ use ariadne_api::sessions::SessionDto;
 use ariadne_client::{Client, ClientError};
 use ariadne_core::Role;
 
+use crate::output::{style, view};
+
+/// A hint about what this command is doing on the caller's behalf — reviving
+/// a session, attaching to one — never the payload itself, so it is dimmed
+/// the way every other line that is context rather than content is.
+fn hint(message: &str) -> String {
+    style::paint(view().color, style::META, message)
+}
+
 /// Sessions matching the id, plus the role to attach to: task first (default
 /// engineer), then goal (default planner).
 ///
@@ -92,9 +101,12 @@ async fn revive(client: &Client, id: &str, role: Option<Role>) -> Result<Session
             )
         })?;
     eprintln!(
-        "no live tmux for {id} — reviving session {} ({})",
-        target.id,
-        target.agent_kind.as_str()
+        "{}",
+        hint(&format!(
+            "no live tmux for {id} — reviving session {} ({})",
+            target.id,
+            target.agent_kind.as_str()
+        ))
     );
     client
         .post_empty(&format!("/v1/sessions/{}/resume", target.id))
@@ -144,9 +156,12 @@ async fn attach_session(client: &Client, session: SessionDto) -> Result<()> {
         session
     } else {
         eprintln!(
-            "no live tmux for {} — reviving it ({})",
-            session.id,
-            session.agent_kind.as_str()
+            "{}",
+            hint(&format!(
+                "no live tmux for {} — reviving it ({})",
+                session.id,
+                session.agent_kind.as_str()
+            ))
         );
         client
             .post_empty(&format!("/v1/sessions/{}/resume", session.id))
@@ -189,10 +204,13 @@ pub async fn attach_any(client: &Client, id: &str, role: Option<Role>) -> Result
 
 fn attach_to(session: &SessionDto) -> Result<()> {
     eprintln!(
-        "attaching to {} ({} / {})",
-        session.tmux_session,
-        session.role.as_str(),
-        session.agent_kind.as_str()
+        "{}",
+        hint(&format!(
+            "attaching to {} ({} / {})",
+            session.tmux_session,
+            session.role.as_str(),
+            session.agent_kind.as_str()
+        ))
     );
     exec_tmux_attach(&session.tmux_session)
 }

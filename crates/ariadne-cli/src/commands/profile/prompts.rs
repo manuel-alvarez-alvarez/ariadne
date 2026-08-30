@@ -23,7 +23,9 @@ use super::PromptCommand;
 
 use super::{get_profile, profile_path};
 use crate::commands::{Subject, confirm};
-use crate::output::{Column, Format, UNCAPPED, col, local_time, print, print_json, print_table};
+use crate::output::{
+    Column, Format, UNCAPPED, col, local_time, print, print_json, print_table, style, view,
+};
 
 /// Columns of `profile prompts`. The kind is what the row is about, and the
 /// opening of the text is what says whether it is the one you meant.
@@ -252,8 +254,18 @@ pub async fn run(client: &Client, cmd: PromptCommand, format: Format) -> Result<
             let profile = get_profile(client, &id).await?;
             let kind = Owner::Profile(&profile).owns(kind)?;
             let prompt = write(client, &profile, kind, Some(read_content(file)?)).await?;
-            let what = format!("{} of {} ({})", kind.spelling(), profile.name, profile.id);
-            print(format, &prompt.json(), || println!("updated {what}"))?;
+            let what = format!(
+                "{} of {} ({})",
+                kind.spelling(),
+                profile.name,
+                style::paint(view().color, style::ID, &profile.id)
+            );
+            print(format, &prompt.json(), || {
+                println!(
+                    "{} {what}",
+                    style::paint(view().color, style::OK, "updated")
+                )
+            })?;
         }
         PromptCommand::Reset { id, kind, all, yes } => {
             let profile = get_profile(client, &id).await?;
