@@ -93,7 +93,8 @@ interface ShortcutHelp {
  *
  * Spelled from the declarations above rather than written out a second time,
  * so a chord that moves cannot leave the sheet — and `ui/README.md`'s keyboard
- * table is the same list in the same order.
+ * table is the same list in the same order. See `ui/AGENTS.md` for how these
+ * chords are bound and guarded.
  *
  * `Escape` is on it and is bound by nothing: it belongs to whatever is on top,
  * and Base UI's dialogs already close the topmost one (see the note above).
