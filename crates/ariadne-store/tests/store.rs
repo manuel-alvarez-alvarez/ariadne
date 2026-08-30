@@ -2118,7 +2118,7 @@ async fn a_fresh_database_is_seeded_with_the_built_in_profiles_on_every_default(
     assert!(
         reviewer
             .effective_system_prompt()
-            .contains("install what it needs and build, test and lint right here"),
+            .contains("Install what it needs. Build, test and lint in this worktree"),
         "reviewers are told to install what it needs and verify"
     );
     // User edits stick.

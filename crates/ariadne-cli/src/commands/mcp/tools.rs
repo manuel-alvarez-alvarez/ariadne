@@ -32,22 +32,22 @@ pub struct Empty {}
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub struct TaskIdOpt {
-    /// Task id; defaults to your own task.
+    /// Task id. Omit it for your own task.
     pub task_id: Option<String>,
 }
 
-/// One reviewer of a task as a planner names it: the profile that reviews,
-/// and what this task is worth having it run on.
+/// One reviewer of a task, as a planner names it: the profile that reviews,
+/// and the model and effort this task is worth.
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub struct ReviewerReq {
     /// Reviewer profile id or name.
     pub profile: String,
-    /// What it runs on, `<agent_kind>[:<model>]` as `list_models` spells it;
-    /// omit for the profile's own.
+    /// What it runs on, `<agent_kind>[:<model>]` as `list_models` spells it.
+    /// Omit it for the model of the profile.
     pub model: Option<String>,
-    /// An `efforts[].id` `list_models` lists for that model; omit for its
-    /// default.
+    /// An `efforts[].id` `list_models` lists for that model. Omit it for the
+    /// default effort.
     pub effort: Option<String>,
 }
 
@@ -56,19 +56,19 @@ pub struct ReviewerReq {
 pub struct CreateTaskReq {
     pub title: String,
     pub description: String,
-    /// Engineer profile id or name that will own the task.
+    /// Engineer profile id or name. It owns the task.
     pub engineer_profile: String,
     /// What the engineer runs on, `<agent_kind>[:<model>]` as `list_models`
-    /// spells it; omit for the profile's own.
+    /// spells it. Omit it for the model of the profile.
     pub engineer_model: Option<String>,
-    /// An `efforts[].id` `list_models` lists for that model; omit for its
-    /// default.
+    /// An `efforts[].id` `list_models` lists for that model. Omit it for the
+    /// default effort.
     pub engineer_effort: Option<String>,
-    /// The reviewers of the task, in review order (at least one).
+    /// The reviewers of the task, in review order. Name at least one.
     pub reviewers: Vec<ReviewerReq>,
-    /// Ids of tasks that must merge before this one starts.
+    /// Ids of the tasks that must merge before this one starts.
     pub depends_on: Option<Vec<String>>,
-    /// Repository id; only needed when the goal works in several.
+    /// Repository id. Pass it only where the goal works in several.
     pub repo_id: Option<String>,
 }
 
@@ -78,15 +78,16 @@ pub struct UpdateTaskReq {
     pub task_id: String,
     pub title: Option<String>,
     pub description: Option<String>,
-    /// What the engineer runs on; "default" hands the slot back to the
-    /// profile's own.
+    /// What the engineer runs on. `default` puts the slot back on the model
+    /// of the profile.
     pub engineer_model: Option<String>,
-    /// An `efforts[].id` for that model; "default" hands it back to the
-    /// model's own.
+    /// An `efforts[].id` for that model. `default` puts it back on the
+    /// default effort.
     pub engineer_effort: Option<String>,
-    /// Full replacement list of the reviewers, in review order.
+    /// The reviewers, in review order. This list replaces the whole list.
     pub reviewers: Option<Vec<ReviewerReq>>,
-    /// Full replacement list of the ids of the tasks that must merge first.
+    /// The ids of the tasks that must merge first. This list replaces the
+    /// whole list.
     pub depends_on: Option<Vec<String>>,
 }
 
@@ -107,34 +108,34 @@ pub struct ListProfilesReq {
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub struct RequestReviewReq {
-    /// Summary of what you built, for the reviewers.
+    /// Your summary of the change, for the reviewers.
     pub summary: String,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub struct FailTaskReq {
-    /// Why the task cannot be done as written. Recorded on the task, and all
-    /// the user is told.
+    /// Why you cannot do the task as written. Ariadne records it on the
+    /// task, and the user reads only this.
     pub reason: String,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub struct MarkMergedReq {
-    /// The merge commit sha on the base branch.
+    /// The sha of the merge commit on the base branch.
     pub merge_commit: String,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub struct RecordPullRequestReq {
-    /// URL of the pull request, as `gh pr create` or `glab mr create`
+    /// The URL of the pull request, as `gh pr create` or `glab mr create`
     /// printed it.
     pub url: String,
 }
 
-/// The two verdicts a review round can end in, as the one verdict tool takes
+/// The two verdicts a review round ends in, as the one verdict tool takes
 /// them.
 #[derive(Clone, Copy, Debug, serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
@@ -149,8 +150,8 @@ pub enum Verdict {
 pub struct SubmitVerdictReq {
     /// approve | request_changes
     pub verdict: Verdict,
-    /// An approval's note; on a change request, the feedback the engineer is
-    /// resumed with, and required.
+    /// A note on an approval. On a change request, the feedback the engineer
+    /// starts again on, and required there.
     pub body: Option<String>,
 }
 
@@ -204,7 +205,7 @@ fn review_request(verdict: Verdict, body: Option<String>) -> Result<CreateReview
 #[tool_router(vis = "pub(super)")]
 impl AriadneMcp {
     #[tool(
-        description = "Read a task: status, branch, dependencies, and the profile names of its engineer, its reviewers and the planner."
+        description = "Read a task: the status, the branch, the dependencies, and the profile names of the engineer, the reviewers and the planner."
     )]
     async fn get_task(
         &self,
@@ -216,7 +217,7 @@ impl AriadneMcp {
     // ---- planner ----
 
     #[tool(
-        description = "Create one task in the goal: one engineer profile, at least one reviewer profile, and per slot the model and effort this task deserves out of `list_models`. Omit either and the slot runs its profile's own; the user may override until the task starts."
+        description = "Create one task in the goal. Name one engineer profile and at least one reviewer profile. Give each slot the model and the effort this task deserves out of `list_models`. Omit them, and the slot runs the model of its profile. The user can change a slot until the task starts."
     )]
     async fn create_task(
         &self,
@@ -237,7 +238,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Edit a task that has not started: title, description, reviewers, dependencies, or any slot's model and effort. `reviewers` replaces the whole list; \"default\" hands a slot back to its profile's own."
+        description = "Edit a task that has not started: the title, the description, the reviewers, the dependencies, or the model and effort of a slot. `reviewers` replaces the whole list. `default` puts a slot back on the model of its profile."
     )]
     async fn update_task(
         &self,
@@ -259,7 +260,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Every agent CLI and model a slot can be pinned to, as a task takes it: a description; a `tier` (frontier down to fast, or `unknown`, with no bands or shapes); `cost` and `speed` 1-5, low to high and slow to fast; `best_for`/`avoid_for` shapes; `efforts`, each an id and what it buys, one `default`."
+        description = "List the agent CLIs and models a slot can run on. Each entry gives:\n- a description and a `tier`, frontier to fast, or `unknown` with no bands or shapes\n- `cost` and `speed` 1-5, low to high, slow to fast\n- `best_for` and `avoid_for` shapes\n- `efforts`, each an id and what it buys, one `default`"
     )]
     async fn list_models(
         &self,
@@ -272,7 +273,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "The agent profiles a task can be assigned to, each with the name, model, effort and system prompt that say what it is for."
+        description = "List the agent profiles a task can name. Each entry gives the name, the model, the effort and the system prompt that say what it is for."
     )]
     async fn list_profiles(
         &self,
@@ -285,7 +286,9 @@ impl AriadneMcp {
         json_result(self.get(&path).await?)
     }
 
-    #[tool(description = "Finalize the plan and start its tasks; this ends planning.")]
+    #[tool(
+        description = "Finalize the plan. This call starts every task of the plan and ends planning."
+    )]
     async fn finalize_plan(
         &self,
         Parameters(_): Parameters<Empty>,
@@ -297,7 +300,7 @@ impl AriadneMcp {
     // ---- engineer ----
 
     #[tool(
-        description = "Submit your task for review. The summary is the whole of what the reviewers are told: what changed, why, how you verified it."
+        description = "Submit your task for review. The reviewers read your summary and nothing else: what changed, why, how you verified it."
     )]
     async fn request_review(
         &self,
@@ -310,7 +313,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Give the task up: it cannot be done as written. The reason is recorded on the task and is all the user is told."
+        description = "Give the task up, because you cannot do it as written. Ariadne records your reason on the task, and the user reads only that reason."
     )]
     async fn fail_task(
         &self,
@@ -330,7 +333,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Report the sha your branch landed on its base branch as; this ends the task."
+        description = "Report the sha your branch landed on its base branch as. This call ends the task."
     )]
     async fn mark_merged(
         &self,
@@ -342,7 +345,9 @@ impl AriadneMcp {
         )
     }
 
-    #[tool(description = "Report the URL of the pull or merge request you opened for this task.")]
+    #[tool(
+        description = "Report the URL of the pull request or merge request you opened for this task."
+    )]
     async fn record_pull_request(
         &self,
         Parameters(req): Parameters<RecordPullRequestReq>,
@@ -368,7 +373,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Your verdict on the change: approve it, or request changes with the feedback the engineer is resumed with."
+        description = "Give your verdict on the change. Approve it, or request changes. A change request carries the feedback the engineer starts again on."
     )]
     async fn submit_verdict(
         &self,

@@ -104,6 +104,18 @@ reviewed. A task that cannot be done as written is the engineer's own
 transition is validated against a typed state machine and recorded in an audit
 table.
 
+Every text Ariadne hands an agent is written in ASD-STE100 **Simplified
+Technical English**: the three system prompts, the briefings that start and
+resume a session, and the description of every MCP tool. One instruction to a
+sentence, the imperative for an instruction, the active voice, short sentences
+(20 words in a procedure, 25 in a description), one meaning per word, a list
+for a sequence of steps — what an agent misreads least, in the fewest tokens.
+The agents write it too: the session rules every agent receives before its
+first prompt, whatever its role and whatever its profile's prompts say, hold
+everything it writes to the same English — its turn text and visible
+reasoning, task titles and descriptions, review summaries, verdicts, failure
+reasons, commit subjects and bodies, and pull request text.
+
 Agents run with permissions bypassed — `--dangerously-skip-permissions` for
 Claude Code, `--dangerously-bypass-approvals-and-sandbox` for Codex, `--auto`
 plus an allow-everything permission block for OpenCode (`ariadne agent ls`

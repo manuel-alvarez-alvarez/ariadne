@@ -178,7 +178,7 @@ impl Sched {
 /// The engineer's resume template, as its profile has it: the words the daemon
 /// is about to type into the pane, which is what a composer that never lets go
 /// keeps showing.
-const RESUME: &str = r#"Pick "task" up again on"#;
+const RESUME: &str = r#"Continue "task" on"#;
 
 // -- the timeline -----------------------------------------------------------
 
@@ -1362,7 +1362,7 @@ async fn an_agent_that_reports_nothing_is_flagged_and_then_relaunched() {
         "the relaunch resumes the conversation it was having: {argv}"
     );
     assert!(
-        argv.contains(&w.task.branch) && argv.contains("Pick \"task\" up again"),
+        argv.contains(&w.task.branch) && argv.contains("Continue \"task\" on"),
         "and carries the resume its role is picked up with, rendered for this \
          task: {argv}"
     );

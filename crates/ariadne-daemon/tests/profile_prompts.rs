@@ -349,8 +349,8 @@ async fn a_planner_on_the_default_prompt_is_briefed_to_size_the_slots_it_assigns
         for guidance in [
             "`list_models`",
             "Size each slot",
-            "top efforts only where earned",
-            "reviewers under engineers",
+            "a top effort only where the task earns it",
+            "Keep a reviewer under its engineer",
             "`best_for`",
             "`cost`",
             "tier: unknown",

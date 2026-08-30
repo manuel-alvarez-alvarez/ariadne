@@ -131,7 +131,8 @@ fn json_result(v: serde_json::Value) -> Result<CallToolResult, McpError> {
 }
 
 /// The rules that hold whoever is reading them: what Ariadne is reached
-/// through, and how sparing to be with turns.
+/// through, how sparing to be with turns, and the English every text is
+/// written in.
 ///
 /// One block, appended to the server's instructions above, which every session
 /// of every role receives before its first prompt. It used to be pasted into
@@ -139,7 +140,28 @@ fn json_result(v: serde_json::Value) -> Result<CallToolResult, McpError> {
 /// and a profile's own text for a user to edit away. How little to spend is
 /// here for the same reason: it held for all three roles, so all three said
 /// it.
-const SESSION_RULES: &str = r#"Reach Ariadne only through these tools; a backticked name is one. Work autonomously; nobody answers a question, so do not ask. A human may attach anytime. Never narrate progress; take as few turns as you can."#;
+///
+/// ASD-STE100 Simplified Technical English is here for a third reason on top
+/// of those two: it holds for every word an agent writes, and a profile edit
+/// that dropped it would leave that session writing whatever it liked. Five
+/// rules are spelled out — the ones a sentence is read against — and the list
+/// of what they cover is the list of everything an agent writes, since a rule
+/// that named only some of it would read as licence for the rest. Each
+/// playbook names the texts of its own role again, in its own layer.
+const SESSION_RULES: &str = r#"Reach Ariadne only through these tools. A backticked name is a tool. Work alone. Nobody answers a question, so do not ask. A human can attach at any time. Never narrate progress. Take as few turns as you can.
+
+Write all text in ASD-STE100 Simplified Technical English (STE):
+- Write one instruction in one sentence.
+- Write an instruction in the imperative.
+- Write in the active voice.
+- Write no more than 20 words in a sentence.
+- Write a sequence of steps as a list.
+
+STE holds for all you write:
+- your turn text and your visible reasoning
+- task titles and descriptions
+- `request_review` summaries, verdicts and `fail_task` reasons
+- commit subjects and bodies, and pull request text"#;
 
 impl ServerHandler for AriadneMcp {
     /// The server's own instructions, which every session receives before its
@@ -154,8 +176,8 @@ impl ServerHandler for AriadneMcp {
         let mut info = ServerInfo::default();
         info.instructions = Some(format!(
             "Ariadne orchestrator tools for this {} session: session {}, goal {}{}. \
-             The tools listed here are the ones your role may call, and every \
-             call acts as this session. {SESSION_RULES}",
+             The tools here are the ones your role can call. Every call acts as \
+             this session. {SESSION_RULES}",
             self.role.as_str(),
             self.session_id,
             self.goal_id,
@@ -336,8 +358,11 @@ pub(crate) mod tests {
             let instructions = mcp.get_info().instructions.expect("instructions");
             for rule in [
                 "Reach Ariadne only through these tools",
-                "nobody answers a question, so do not ask",
-                "take as few turns as you can",
+                "Nobody answers a question, so do not ask",
+                "as few turns as you can",
+                "Write all text in ASD-STE100 Simplified Technical English",
+                "Write no more than 20 words in a sentence",
+                "commit subjects and bodies",
             ] {
                 assert!(instructions.contains(rule), "{role:?}: {instructions}");
             }
@@ -362,14 +387,93 @@ pub(crate) mod tests {
     /// The rules are read before every first prompt of every session, so they
     /// are kept to the size of the rules themselves: each one a clause, none
     /// of them explained twice.
+    ///
+    /// The cap was 450 for the four rules that were here before the English
+    /// the agents write in was one of them. That rule is five short lines and
+    /// the list of what they cover, and 700 is what those fit in: it holds
+    /// for every word of every role, and no playbook can state it for all
+    /// three.
     #[test]
     fn the_shared_rules_stay_small() {
-        const CAP: usize = 450;
+        const CAP: usize = 700;
         assert!(
             SESSION_RULES.len() <= CAP,
             "the session rules are {} characters, over their {CAP}",
             SESSION_RULES.len()
         );
+    }
+
+    /// Every text this server hands an agent is Simplified Technical English,
+    /// in the two rules of it a test can read off the text: no sentence runs
+    /// past [`ste::MAX_WORDS`], and no sentence uses a word of
+    /// [`ste::BANNED`].
+    ///
+    /// The texts are the instructions of every role, the rules inside them,
+    /// the description of every tool, and every description of the schema an
+    /// agent fills a call in against — a doc comment on a request type is one
+    /// of those, and reaches the agent as surely as the rest. The rules and
+    /// the way they are counted are the store's, where the default prompts
+    /// are held to the same two.
+    #[test]
+    fn every_text_the_server_hands_an_agent_is_simplified_technical_english() {
+        use ariadne_store::defaults::ste;
+
+        let mut texts = vec![("the session rules".to_string(), SESSION_RULES.to_string())];
+        for role in ROLES {
+            let mcp = server_at(
+                role.clone(),
+                Client::resolve(Some("http://127.0.0.1:1"), None),
+            );
+            texts.push((
+                format!("the {} instructions", role.as_str()),
+                mcp.get_info().instructions.expect("instructions"),
+            ));
+        }
+        for tool in AriadneMcp::tool_router().list_all() {
+            texts.push((
+                format!("the {} description", tool.name),
+                tool.description.as_deref().unwrap_or_default().to_string(),
+            ));
+            let schema = serde_json::to_value(&tool.input_schema).expect("schema");
+            for described in descriptions(&schema) {
+                texts.push((
+                    format!("a description of the {} schema", tool.name),
+                    described,
+                ));
+            }
+        }
+
+        for (name, text) in texts {
+            for sentence in ste::sentences(&text) {
+                let words = sentence.split_whitespace().count();
+                assert!(
+                    words <= ste::MAX_WORDS,
+                    "{name} runs a sentence of {words} words, over {}: {sentence}",
+                    ste::MAX_WORDS
+                );
+            }
+            assert_eq!(
+                ste::banned_word(&text),
+                None,
+                "{name} uses a word STE has no room for: {text}"
+            );
+        }
+    }
+
+    /// Every `description` in a JSON schema, at whatever depth it sits: what
+    /// the doc comments on the request types become.
+    fn descriptions(value: &serde_json::Value) -> Vec<String> {
+        match value {
+            serde_json::Value::Object(fields) => fields
+                .iter()
+                .flat_map(|(name, value)| match (name.as_str(), value.as_str()) {
+                    ("description", Some(text)) => vec![text.to_string()],
+                    _ => descriptions(value),
+                })
+                .collect(),
+            serde_json::Value::Array(items) => items.iter().flat_map(descriptions).collect(),
+            _ => Vec::new(),
+        }
     }
 
     /// The daemon refuses a call with the sentence that says what would have

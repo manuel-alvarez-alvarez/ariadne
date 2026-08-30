@@ -21,8 +21,19 @@
 //! its own: the planner assumes, the engineer gives the task up, the reviewer
 //! asks for changes.
 //!
+//! Every text here is written in ASD-STE100 Simplified Technical English: one
+//! instruction to a sentence, the imperative for an instruction, the active
+//! voice, sentences that stay short, one meaning per word, a list for a
+//! sequence of steps. It is what an agent misreads least and pays fewest
+//! tokens for, and each playbook holds the agent to it in turn — the planner
+//! for its task descriptions, the engineer for its summaries, commit text and
+//! failure reasons, the reviewer for its verdicts. That the rule holds for
+//! every role, and for every word an agent writes, is the MCP server's
+//! session rules to say, so `STE` is all a text here spells.
+//!
 //! The texts are kept small on purpose, and `size_caps_hold` below is what
-//! keeps them that way.
+//! keeps them that way; `every_default_text_is_simplified_technical_english`
+//! is what keeps the sentences short.
 
 use ariadne_core::{MergeStrategy, PromptKind, Role};
 
@@ -102,32 +113,32 @@ pub fn default_landing_prompt(strategy: MergeStrategy) -> &'static str {
 /// Planner persona and playbook, and the one place `finalize_plan` is
 /// explained: it starts every task at once, and the planner makes that call
 /// itself once the plan is written.
-const PLANNER_SYSTEM_PROMPT: &str = r#"You plan an Ariadne goal into a few well-scoped tasks. Never write code.
+const PLANNER_SYSTEM_PROMPT: &str = r#"You plan an Ariadne goal into a few small tasks. Never write code.
 
-1. Explore the briefing's repositories. Do not ask: plan from the goal text, and where it is not clear take the smaller reading and write the assumption into the task description.
-2. `create_task` per task: small, independently mergeable, one repository, a ticket: context, what to do, what not to touch, acceptance criteria; an engineer and one or more reviewers from `list_profiles`; `depends_on` only for a real dependency, the rest run at once and must not touch the same code.
-3. Size each slot from `list_models`: `best_for`/`avoid_for` for shape, `cost` for risk, `speed` for routine, effort by description; top efforts only where earned, `tier: unknown` on request, reviewers under engineers, else the profile's own.
-4. `finalize_plan` starts the plan's tasks at once and ends planning: call it once the whole plan is written, and nothing earlier."#;
+1. Read the goal. Explore its repositories. Where the goal is unclear, take the smaller reading. Write the assumption into the task.
+2. Call `create_task` per task: small, mergeable alone, one repository. Write the ticket in STE: context, what to do, what not to touch, acceptance criteria. Name an engineer and one or more reviewers from `list_profiles`. Add `depends_on` only for a real dependency. The rest run together: keep them off the same code.
+3. Size each slot from `list_models`: shape from `best_for` and `avoid_for`, risk from `cost`, routine from `speed`, effort from its description. Give a top effort only where the task earns it, `tier: unknown` only on request. Keep a reviewer under its engineer. Else the profile's own.
+4. Call `finalize_plan` once you write the whole plan. It starts every task and ends planning. Call it no earlier."#;
 
 /// Engineer persona and playbook: what it may touch, what it writes, and the
 /// one place `request_review` is explained. Landing is its own too, but the
 /// procedure belongs to the briefing that knows which repository this is.
-const ENGINEER_SYSTEM_PROMPT: &str = r#"You own one Ariadne task, from its first commit to the merge that lands it. Work only in your worktree, on your task branch; commit nothing generated or unrelated.
+const ENGINEER_SYSTEM_PROMPT: &str = r#"You own one Ariadne task, from its first commit to its merge. Work only in your worktree, on your task branch. Commit nothing generated or unrelated.
 
-1. Read the task and its acceptance criteria. Do not ask: what cannot be done as written is `fail_task` with the reason.
-2. Implement exactly that, no scope creep, no drive-by refactors, under the repository's conventions (`AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`): small commits, tests and linters green, the tests asked of you added.
-3. Nothing you write carries an authorship or tool trailer or names Ariadne; leave signing to git.
-4. `request_review` submits it under one short summary: what changed, why, how you verified it. Apply the verdicts on the same branch and call it again; where you disagree with one, say why in that summary.
-5. Enough approvals and you are briefed to land it."#;
+1. Read the task and its acceptance criteria. Where you cannot do it as written, call `fail_task` with the reason in STE.
+2. Implement that task and no more. Refactor nothing on the way. Obey the repository's conventions: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`. Make small commits, their text in STE. Keep tests and linters green. Add the tests the task asks for.
+3. Write no authorship trailer, no tool trailer, no mention of Ariadne. Leave signing to git.
+4. Call `request_review` with one short summary in STE: what changed, why, how you verified it. Apply every verdict on the same branch and call it again. Where you disagree, say why in that summary.
+5. Enough approvals, and Ariadne briefs you to land it."#;
 
 /// Reviewer persona and playbook, and the one place the verdict rule is
 /// stated: one per round, through `submit_verdict`.
-const REVIEWER_SYSTEM_PROMPT: &str = r#"You review one round of one Ariadne task. Approvals gate merges: approve only what you would merge yourself. Your detached worktree holds the branch, read-only: do not edit, commit, amend or branch.
+const REVIEWER_SYSTEM_PROMPT: &str = r#"You review one round of one Ariadne task. An approval gates the merge: approve only what you would merge yourself. Your detached worktree holds the branch, read-only: do not edit, commit, amend or branch.
 
-1. Read the task, its acceptance criteria and the engineer's summary. `get_diff` fetches the change; read around it too.
-2. Verify empirically: install what it needs and build, test and lint right here, never at another worktree.
-3. Judge it on doing exactly what the task asks and no more: correctness, edge cases, error handling, conventions, tests, clarity. Where something blocks the review, request changes and say what blocks it.
-4. `submit_verdict` is the verdict, one per round and the only thing that counts: approve with a note on what you checked, or request changes as a terse list of files and functions, must-fix apart from optional. No commentary in between."#;
+1. Read the task, its acceptance criteria and the engineer's summary. Call `get_diff` for the change. Read the code around it.
+2. Verify the change here. Install what it needs. Build, test and lint in this worktree, never another.
+3. Judge the change on the task and no more: correctness, edge cases, error handling, conventions, tests, clarity. Where something blocks the review, request changes and name it.
+4. Call `submit_verdict` once per round. It is the verdict, and nothing else counts. Approve with a note on what you checked. Or request changes: a list of files and functions, each must-fix or optional. Write the verdict in STE."#;
 
 /// Initial briefing of a planner session: the goal, and the numbers a plan
 /// has to fit inside.
@@ -145,7 +156,8 @@ const PLANNER_BRIEFING: &str = r#"# Goal: {goal_title}
 /// What a planner that has gone quiet is picked up with. The goal is still in
 /// planning, so there is one thing left to do with it and one call that ends
 /// it; the goal itself the session has read already.
-const PLANNER_RESUME: &str = r#"Keep planning "{goal_title}": `create_task` for what it still needs, then `finalize_plan`."#;
+const PLANNER_RESUME: &str =
+    r#"Continue "{goal_title}". Call `create_task` for what it still needs, then `finalize_plan`."#;
 
 /// Initial briefing of an engineer session: the task, and the values its
 /// commands act on.
@@ -164,8 +176,8 @@ const ENGINEER_BRIEFING: &str = r#"# Task: {task_title}
 /// What an engineer holding unfinished work is picked up with, in both
 /// situations there are: a session that ended and is being started again, and
 /// one that is merely sitting idle with the task still open. Neither wants the
-/// task read out to it again — it is in the worktree and in the conversation.
-const ENGINEER_RESUME: &str = r#"Pick "{task_title}" up again on {branch}: `git status` and `git log` say what the last session left. Carry on until the work is complete and verified."#;
+/// task read out to it again — it is in the worktree it is standing in.
+const ENGINEER_RESUME: &str = r#"Continue "{task_title}" on {branch}. `git status` and `git log` say what the last session left. Work until the task is complete and verified."#;
 
 /// Resume briefing of an engineer with a round of requested changes, wherever
 /// they were written.
@@ -173,12 +185,14 @@ const ENGINEER_RESUME: &str = r#"Pick "{task_title}" up again on {branch}: `git 
 /// One round can come from the reviewers Ariadne started, and one from the
 /// people reading a published pull or merge request; `{feedback}` carries
 /// whichever it is, each entry under a heading naming who wrote it. What to do
-/// with a verdict is the engineer's playbook to say, not this text's.
-const CHANGES_REQUESTED: &str = r#"Changes were requested.
+/// with a verdict is the engineer's playbook to say, not this text's; what
+/// this text says is what this round asks of the engineer, and a point it
+/// will not act on is answered as surely as one it will.
+const CHANGES_REQUESTED: &str = r#"A review requests changes.
 
 {feedback}
 
-Answer every point; where you disagree, say why the code stays."#;
+Answer every point. Where you disagree, say why the code stays."#;
 
 /// What the engineer of an approved task in a `direct` repository is briefed
 /// with, unless the repository was given a landing briefing of its own: rebase, squash, fast-forward, so the base branch grows one commit per
@@ -188,12 +202,12 @@ Answer every point; where you disagree, say why the code stays."#;
 /// the cleanup behind it takes the worktree the push would have run from.
 const LANDING_DIRECT: &str = r#"# Land task: {task_title}
 
-Approved. Squash {branch} onto {base_branch} in {repo_path}; `<remote>` is what `git -C {repo_path} remote -v` names, if anything.
+Approved. Squash {branch} onto {base_branch} in {repo_path}. `<remote>` is what `git -C {repo_path} remote -v` names, if anything.
 
-1. `git -C {repo_path} fetch <remote> {base_branch}`, then `merge --ff-only <remote>/{base_branch}` there if it is on {base_branch}, else `fetch <remote> {base_branch}:{base_branch}`.
-2. `git rebase {base_branch}` in your worktree; conflicts are yours.
-3. `git reset --soft {base_branch} && git commit`: one commit lands, Conventional Commits subject, body saying what changed and why.
-4. `git -C {repo_path} merge --ff-only {branch}`; refused because the base moved, back to step 1.
+1. `git -C {repo_path} fetch <remote> {base_branch}`. Then `merge --ff-only <remote>/{base_branch}` there, if it is on {base_branch}. Else `fetch <remote> {base_branch}:{base_branch}`.
+2. `git rebase {base_branch}` in your worktree. Conflicts are yours.
+3. `git reset --soft {base_branch} && git commit`. One commit lands. Give it a Conventional Commits subject and a body: what changed and why.
+4. `git -C {repo_path} merge --ff-only {branch}`. Refused because the base moved: back to step 1.
 5. `git -C {repo_path} push <remote> {base_branch}`. Push first: `mark_merged` ends the task and the cleanup takes your worktree.
 6. `mark_merged` with `git -C {repo_path} rev-parse {base_branch}`."#;
 
@@ -216,13 +230,13 @@ Approved. Squash {branch} onto {base_branch} in {repo_path}; `<remote>` is what 
 /// at 2700 s, while every poll counts as activity.
 const LANDING_PULL_REQUEST: &str = r#"# Land task: {task_title}
 
-Approved. Publish {branch} against {base_branch}. `<remote>` is what `git -C {repo_path} remote -v` names; github.com takes `gh`, GitLab `glab`. Neither, or `auth status` shows no account: `fail_task` with the failed check.
+Approved. Publish {branch} against {base_branch}. `<remote>` is what `git -C {repo_path} remote -v` names. github.com takes `gh`, GitLab `glab`. Neither, or `auth status` shows no account: `fail_task` with the failed check.
 
-1. `git fetch <remote> {base_branch} && git rebase <remote>/{base_branch}`: the only rebase, and before publishing.
-2. `git push -u <remote> {branch}`, then `gh pr create --base {base_branch}` or `glab mr create --target-branch {base_branch}`, titled by the repository's commit conventions, template filled in. `record_pull_request` the URL.
-3. Poll it and its comments (`gh pr view`, `glab mr view`), `sleep 300`, never longer in one call, poll again; never end your turn while it is open.
-4. Answer comments; a change is committed on {branch}, put through `request_review`, pushed once approved. A published branch only grows: no `commit --amend`, rebase or forced push; if it stops merging cleanly, `git merge --no-edit <remote>/{base_branch}`, push plainly.
-5. Merged: `gh pr merge --squash` or `glab mr merge --squash`; in {repo_path}, fetch and `git merge --ff-only <remote>/{base_branch}`, then `mark_merged` with its `git rev-parse {base_branch}`. Closed unmerged: `fail_task` with that."#;
+1. `git fetch <remote> {base_branch} && git rebase <remote>/{base_branch}`. The only rebase, and it comes before the push.
+2. `git push -u <remote> {branch}`. Then `gh pr create --base {base_branch}` or `glab mr create --target-branch {base_branch}`. Title it by the repository's commit conventions. Fill its template. Call `record_pull_request` with the URL.
+3. Poll it and its comments (`gh pr view`, `glab mr view`). `sleep 300` between polls, never longer in one call. Never end your turn while it is open.
+4. Answer every comment. Commit a change on {branch}. Put it through `request_review`. Push it once approved. A published branch only grows: no `commit --amend`, no rebase, no forced push. If it stops merging cleanly, `git merge --no-edit <remote>/{base_branch}` and push plainly.
+5. Merged: `gh pr merge --squash` or `glab mr merge --squash`. In {repo_path}, fetch and `git merge --ff-only <remote>/{base_branch}`. Then `mark_merged` with `git rev-parse {base_branch}`. Closed unmerged: `fail_task` with that."#;
 
 /// Initial briefing of a reviewer session: the task, the round, and the branch
 /// its worktree is pinned to.
@@ -240,9 +254,77 @@ const REVIEWER_BRIEFING: &str = r#"# Review task: {task_title} (round {review_ro
 /// there are: a later round, where the engineer revised the change under its
 /// worktree, and a round it has simply gone quiet in. Either way the diff it
 /// last read may be stale and the verdict is still outstanding.
-const REVIEWER_RESUME: &str = r#"Round {review_round} of "{task_title}" awaits your verdict, and {branch} may have been revised: read it again with `get_diff`.
+const REVIEWER_RESUME: &str = r#"Round {review_round} of "{task_title}" needs your verdict. {branch} can carry new commits: read it again with `get_diff`.
 
 Summary: {summary}"#;
+
+/// The two STE rules a text can be held to by reading it.
+///
+/// Every text an agent reads here is ASD-STE100 Simplified Technical English:
+/// one instruction to a sentence, the imperative for an instruction, the
+/// active voice, short sentences, one meaning per word. Two of those rules
+/// are countable — how long a sentence runs, and which words it uses — and
+/// both crates that hold agent-facing text count them the same way: the
+/// defaults above, and the tool descriptions and session rules of the MCP
+/// server in `ariadne-cli`.
+pub mod ste {
+    /// The words an agent-facing text never uses: the long spelling of a
+    /// short word, and the ones that leave an instruction optional or vague.
+    pub const BANNED: [&str; 6] = [
+        "utilise",
+        "prior to",
+        "in order to",
+        "ensure",
+        "should",
+        "may",
+    ];
+
+    /// The longest a sentence runs. STE holds a procedure to 20 words and a
+    /// description to 25; these texts are both, so 25 is the one number.
+    pub const MAX_WORDS: usize = 25;
+
+    /// The sentences of `text`, as the rules are read on them.
+    ///
+    /// A line is a statement of its own — a heading, a bullet, a numbered
+    /// step — and a line holding several sentences is cut at every `.`, `!`
+    /// or `?` that a space or the end of the line follows. The stop inside
+    /// `AGENTS.md` is followed by a letter and cuts nothing; the one after a
+    /// digit is left alone too, so neither the `1.` a step opens on nor a
+    /// `step 1.` it ends on starts a sentence of its own.
+    pub fn sentences(text: &str) -> Vec<&str> {
+        let mut out = Vec::new();
+        for line in text.lines() {
+            let (mut start, mut previous) = (0, None);
+            for (at, ch) in line.char_indices() {
+                let end = at + ch.len_utf8();
+                if matches!(ch, '.' | '!' | '?')
+                    && !previous.is_some_and(|c: char| c.is_ascii_digit())
+                    && line[end..].chars().next().is_none_or(|c| c == ' ')
+                {
+                    out.push(line[start..end].trim());
+                    start = end;
+                }
+                previous = Some(ch);
+            }
+            out.push(line[start..].trim());
+        }
+        out.retain(|sentence| !sentence.is_empty());
+        out
+    }
+
+    /// The first banned word `text` uses, whole and whatever its case.
+    pub fn banned_word(text: &str) -> Option<&'static str> {
+        let lowered = text.to_lowercase();
+        BANNED.into_iter().find(|word| {
+            lowered.match_indices(word).any(|(at, _)| {
+                let before = lowered[..at].chars().next_back();
+                let after = lowered[at + word.len()..].chars().next();
+                !before.is_some_and(char::is_alphanumeric)
+                    && !after.is_some_and(char::is_alphanumeric)
+            })
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -307,12 +389,27 @@ mod tests {
     /// those six spellings are ~90 characters an engineer on either forge
     /// needs in front of it. Moving a cap is a decision to argue for, never a
     /// way round a failing assertion.
+    ///
+    /// Then the texts were written again in Simplified Technical English,
+    /// which costs a sentence break where a semicolon used to join two
+    /// instructions, and pays for it in two ways. The two lines telling an
+    /// agent not to ask went, since the session rules already say it. And
+    /// the English a role writes its own texts in is said on the instruction
+    /// that writes them — `fail_task` with the reason in STE, commits whose
+    /// text is in STE — rather than in a step of its own. The whole is 5825
+    /// characters for the 5828 it was.
+    ///
+    /// The landings are where that English costs the most, since a step that
+    /// joined three commands with commas is three sentences now: they are
+    /// 2123 characters for the 2087 they were, and the briefing kinds pay it
+    /// back at 1067 for 1078. The caps came down to what the rewrite fits
+    /// in, the published landing's excepted.
     #[test]
     fn size_caps_hold() {
-        const KIND_TOTAL: usize = 1100;
-        const LANDING_TOTAL: usize = 2200;
-        const GRAND_TOTAL: usize = 6000;
-        const SYSTEM_PROMPT: usize = 1000;
+        const KIND_TOTAL: usize = 1080;
+        const LANDING_TOTAL: usize = 2150;
+        const GRAND_TOTAL: usize = 5850;
+        const SYSTEM_PROMPT: usize = 950;
 
         let cap = |kind: PromptKind| match kind {
             PromptKind::PlannerResume | PromptKind::EngineerResume | PromptKind::ReviewerResume => {
@@ -321,7 +418,7 @@ mod tests {
             _ => 300,
         };
         let landing_cap = |strategy: MergeStrategy| match strategy {
-            MergeStrategy::Direct => 900,
+            MergeStrategy::Direct => 880,
             MergeStrategy::PullRequest => 1300,
         };
 
@@ -384,6 +481,56 @@ mod tests {
         );
     }
 
+    /// How the two rules are read off a text: a line at a time, the stop
+    /// after a digit left where it is, and a banned word caught only where
+    /// it stands as a word of its own.
+    #[test]
+    fn the_ste_rules_are_read_off_a_text_line_by_line() {
+        assert_eq!(
+            ste::sentences("# Head\n1. Run it. Then stop.\n- a bullet"),
+            ["# Head", "1. Run it.", "Then stop.", "- a bullet"]
+        );
+        // A file name and a step number end no sentence of their own.
+        assert_eq!(
+            ste::sentences("Read `AGENTS.md` first. Back to step 1. Then push."),
+            ["Read `AGENTS.md` first.", "Back to step 1. Then push."]
+        );
+
+        assert_eq!(ste::banned_word("Ensure the tests pass"), Some("ensure"));
+        assert_eq!(
+            ste::banned_word("Rebase prior to the push"),
+            Some("prior to")
+        );
+        // And a word that only holds one is not one.
+        assert_eq!(ste::banned_word("The mayor of the branch"), None);
+    }
+
+    /// Every default text is Simplified Technical English, in the two rules
+    /// of it a test can read off the text: no sentence runs past
+    /// [`ste::MAX_WORDS`], and no sentence uses a word of [`ste::BANNED`].
+    ///
+    /// The rules a test cannot read — one instruction to a sentence, the
+    /// imperative, the active voice — are what the texts above are written
+    /// in, and what a rewrite of one is read against.
+    #[test]
+    fn every_default_text_is_simplified_technical_english() {
+        for (name, text) in all_defaults() {
+            for sentence in ste::sentences(text) {
+                let words = sentence.split_whitespace().count();
+                assert!(
+                    words <= ste::MAX_WORDS,
+                    "the {name} runs a sentence of {words} words, over {}: {sentence}",
+                    ste::MAX_WORDS
+                );
+            }
+            assert_eq!(
+                ste::banned_word(text),
+                None,
+                "the {name} uses a word STE has no room for"
+            );
+        }
+    }
+
     /// How Ariadne is reached is the MCP server's `instructions` to say, and
     /// only its: the block that used to be pasted into all three system
     /// prompts lives in one place now, and no prompt here repeats it.
@@ -393,9 +540,10 @@ mod tests {
             for shared in [
                 "Reach Ariadne",
                 "backticked",
-                "Work autonomously",
+                "Work alone",
                 "narrate progress",
                 "as few turns as you can",
+                "ASD-STE100",
             ] {
                 assert!(
                     !text.contains(shared),
@@ -411,12 +559,9 @@ mod tests {
     #[test]
     fn a_role_rule_is_stated_in_its_own_prompt_alone() {
         for (owner, rule) in [
-            (
-                Role::Reviewer,
-                "one per round and the only thing that counts",
-            ),
-            (Role::Engineer, "you are briefed to land it"),
-            (Role::Planner, "starts the plan's tasks at once"),
+            (Role::Reviewer, "It is the verdict, and nothing else counts"),
+            (Role::Engineer, "Ariadne briefs you to land it"),
+            (Role::Planner, "It starts every task and ends planning"),
         ] {
             for role in Role::ALL {
                 let prompt = default_system_prompt(role);
@@ -427,6 +572,25 @@ mod tests {
                     role.as_str()
                 );
             }
+        }
+    }
+
+    /// A round of requested changes asks the engineer for two things, and
+    /// the briefing that carries the feedback is where both are asked: every
+    /// point answered, and, for a point the engineer will not act on, why the
+    /// code stays as it is. A briefing that asked only for the answers would
+    /// read as leave to drop the rest in silence.
+    #[test]
+    fn a_round_of_requested_changes_asks_for_every_point_and_for_a_disagreement() {
+        let text = default_prompt_text(PromptKind::ChangesRequested);
+        for rule in [
+            "Answer every point",
+            "Where you disagree, say why the code stays",
+        ] {
+            assert!(
+                text.contains(rule),
+                "the changes-requested briefing and \"{rule}\": {text}"
+            );
         }
     }
 
@@ -553,9 +717,9 @@ mod tests {
             "git merge --no-edit",
             "push plainly",
             "--ff-only",
-            "`request_review` submits it",
-            "`submit_verdict` is the verdict",
-            "starts the plan's tasks at once",
+            "Call `request_review` with one short summary",
+            "Call `submit_verdict` once per round",
+            "It starts every task and ends planning",
         ] {
             let places = all_defaults()
                 .into_iter()
