@@ -342,8 +342,8 @@ doctor` both say so, by name, if it is still there.
 The file is read strictly — an unknown key stops the daemon rather than being
 ignored — so a `config.toml` naming `running_quiet_flag_secs` or
 `running_quiet_resume_secs` has to drop them: the one watchdog that reads how
-long a session has reported nothing keeps its own timeline (a nudge at five
-minutes, the flag at fifteen, a relaunch at forty-five) and takes neither key.
+long a session has reported nothing keeps its own timeline (a nudge at three
+minutes, the flag at ten, a relaunch at thirty) and takes neither key.
 
 `ARIADNE_HOME` moves the whole home directory: daemon and CLI alike resolve
 the socket from it (`--home` > `ARIADNE_HOME` > `~/.ariadne`, then that home's

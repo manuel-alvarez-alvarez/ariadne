@@ -14,10 +14,20 @@ const RAW_SEND_BATCH: usize = 512;
 /// How long a pane is left alone between the end of a paste and the Enter
 /// meant to submit it, so a TUI that reads fast input as a paste has closed
 /// that window. Codex needs the beat; without it the Enter becomes a newline.
-const PASTE_SETTLE: Duration = Duration::from_millis(400);
+///
+/// Measured against the three CLIs as they are today (claude 2.1.251, codex
+/// 0.151.0, opencode 1.18.20): a multi-line paste of briefing length went in
+/// and submitted on the first Enter with 50 ms of settle in all three, so 150
+/// is three times what any of them needed and still a third of what it was.
+const PASTE_SETTLE: Duration = Duration::from_millis(150);
 /// How long a TUI gets to redraw after an Enter before its pane is read for
 /// whether the message went. Doubled for each further attempt.
-const SUBMIT_SETTLE: Duration = Duration::from_millis(600);
+///
+/// Measured the same way: all three had drawn the submitted message — and an
+/// empty composer — within 150 ms of the Enter, so 300 is twice the longest
+/// of them, and the attempts behind it still widen to 600 and 1200 ms for a
+/// pane that is slower than any of them was.
+const SUBMIT_SETTLE: Duration = Duration::from_millis(300);
 /// How many Enters one delivery is worth before it is given up on.
 const SUBMIT_ATTEMPTS: u32 = 3;
 /// Shortest composer row taken as evidence that the message is still there.
@@ -152,7 +162,7 @@ impl TmuxManager {
     /// For deciding whether to *create* something — a second agent for a role
     /// that may already have one — where a wrong "no" duplicates work that is
     /// already under way, while a wrong "yes" costs a scheduler tick that does
-    /// nothing and asks again in fifteen seconds.
+    /// nothing and asks again a few seconds later.
     pub async fn has_session_or_unknown(&self, name: &str) -> bool {
         self.has_session_checked(name).await.unwrap_or(true)
     }

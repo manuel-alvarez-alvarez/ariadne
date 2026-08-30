@@ -1,8 +1,10 @@
 //! What the scheduler notices about agents that stopped working.
 //!
 //! One clock — how long since the session was last heard from at all — and
-//! one timeline on it: a nudge at five minutes, the user at fifteen, and at
-//! forty-five the pane killed and the agent put back on its feet. Every role
+//! one timeline on it: a nudge, then the user, then the pane killed and the
+//! agent put back on its feet. The three thresholds are the scheduler's own,
+//! read from it rather than copied, so a test says "past the nudge" and means
+//! whatever that is today. Every role
 //! is under it, since every role can go quiet: the planner of a goal still
 //! being planned, the reviewers a round is waiting on, and the engineer —
 //! which is the only one whose task carries a flag of its own next to the
@@ -37,23 +39,23 @@ use tokio::sync::mpsc::UnboundedSender;
 use ariadne_core::{
     Actor, AttentionReason, AuthorRole, GoalStatus, ReviewVerdict, Role, SessionStatus, TaskStatus,
 };
-use ariadne_daemon::scheduler::{self, SchedEvent};
+// The watchdog's timeline and the planner's budget come from the scheduler
+// rather than being written down again here, so that moving a threshold moves
+// the tests with it instead of leaving them backdating clocks past a number
+// nothing uses any more.
+use ariadne_daemon::scheduler::{
+    self, QUIET_FLAG_SECS as FLAG_SECS, QUIET_NUDGE_SECS as NUDGE_SECS,
+    QUIET_RELAUNCH_SECS as RELAUNCH_SECS, START_GRACE_SECS, SchedEvent,
+};
 use ariadne_store::{
     AgentSession, Goal, NewMessage, NewReview, Recipient, ReviewerSlot, SessionFilter, Task,
 };
 
 use common::{Harness, eventually, harness};
 
-/// The watchdog's timeline, as `scheduler.rs` has it: one nudge, then the
-/// user, then the pane killed and the agent put back on its feet.
-const NUDGE_SECS: i64 = 300;
-const FLAG_SECS: i64 = 900;
-const RELAUNCH_SECS: i64 = 2_700;
-/// And the two budgets the goal's planner and the liveness sweep spend, as
-/// `scheduler.rs` has them: how many attempts starting a planner is worth, and
-/// how long a session that is starting is given to get a pane.
-const SPAWN_RETRY_BUDGET: usize = 3;
-const START_GRACE_SECS: i64 = 30;
+/// The budget the goal's planner spends: how many attempts starting one is
+/// worth, as the scheduler has it.
+const SPAWN_RETRY_BUDGET: usize = ariadne_daemon::scheduler::SPAWN_RETRY_BUDGET as usize;
 /// How long a test waits for a reconciliation to reach the store. Generous
 /// because some of what is waited on is not the daemon thinking: a nudge no
 /// composer will let go of spends several seconds of widening backoff before
@@ -342,10 +344,13 @@ async fn a_nudge_that_never_submits_raises_the_session() {
         w.keystrokes(&session) > 2,
         "the paste was followed by more than one Enter"
     );
-    assert!(
-        w.store.get_task(&w.task.id).await.unwrap().is_stalled(),
-        "and the task says what its agent's flag says: a stall is recorded once"
-    );
+    // Waited for rather than read straight off: the task's column is the
+    // store's projection of the session's flag and is written after it, so a
+    // read taken between the two says nothing about either.
+    eventually(TIMEOUT, "the task to carry it too", async || {
+        w.store.get_task(&w.task.id).await.unwrap().is_stalled()
+    })
+    .await;
 }
 
 /// An agent waiting on a person is blocked, not stalled. Typing into it would
@@ -1066,7 +1071,7 @@ async fn a_task_that_could_never_be_started_tells_the_user_it_failed() {
 /// A goal in planning always wants a planner, and its row goes in before the
 /// launch: a spawn that cannot get off the ground — a model the agent CLI does
 /// not know, a CLI that is not installed — used to leave a fresh
-/// "disconnected" session on the strip every fifteen seconds, for ever. So the
+/// "disconnected" session on the strip every tick, for ever. So the
 /// attempts are counted the way a task's engineer's are, and when they run out
 /// one row is left carrying the alarm, with the goal's own thread saying why.
 ///
@@ -1366,8 +1371,12 @@ async fn an_agent_that_reports_nothing_is_flagged_and_then_relaunched() {
     w.launched_ago(&session, RELAUNCH_SECS + 60).await;
     let launched = w.launched_at(&session).await;
     sched.task(&w.task);
+    // Waited for through the status rather than the stamp: the row is put
+    // back into `starting` and stamped before the launch reaches tmux, so a
+    // read taken on the stamp alone can catch it on its way up.
     eventually(TIMEOUT, "the wedged agent to be relaunched", async || {
         w.launched_at(&session).await != launched
+            && w.session_status(&session).await == SessionStatus::Running
     })
     .await;
     let back = w.store.get_session(&session.id).await.unwrap();

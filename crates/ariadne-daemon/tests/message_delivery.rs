@@ -43,14 +43,16 @@ use common::{Cast, Harness, eventually, harness};
 /// read back, so this is not as generous as it looks.
 const TIMEOUT: Duration = Duration::from_secs(10);
 
-/// The same, for the one test that waits on a reconciliation tick rather than
-/// on an event: nothing re-posts a message in production, so a retry is the
-/// tick's to make and this is how long a tick can take to come round.
-const TICK_TIMEOUT: Duration = Duration::from_secs(40);
+/// The same, for the one test that waits on the scheduler's own retry rather
+/// than on an event: nothing re-posts a message in production, so a retry is
+/// the scheduler's to make, and this is how long the longest wait between two
+/// of its passes can take to come round.
+const RETRY_TIMEOUT: Duration = Duration::from_secs(40);
 
 /// How many passes one message is worth before the user is told it never
-/// arrived, mirroring the scheduler's `DELIVERY_ATTEMPTS`.
-const DELIVERY_ATTEMPTS: usize = 3;
+/// arrived — the scheduler's own number, so that changing it there changes
+/// what these tests expect rather than leaving them asserting the old one.
+const DELIVERY_ATTEMPTS: usize = ariadne_daemon::scheduler::DELIVERY_ATTEMPTS as usize;
 
 
 /// An active goal with one task on it, in progress, behind a real scheduler:
@@ -355,10 +357,9 @@ async fn ends_as(h: &Harness, task: &Task, to: TaskStatus, actor: Actor, reason:
 /// a task that is over.
 ///
 /// The flag is asserted never to have appeared rather than to be gone by now:
-/// the stale sweep took it down up to fifteen seconds later, which is a
-/// "Waiting for you" that flashes on every ending. A message posted behind the
-/// notice is what says the scheduler has been through it — the queue is one,
-/// and in order.
+/// the stale sweep took it down a tick later, which is a "Waiting for you"
+/// that flashes on every ending. A message posted behind the notice is what
+/// says the scheduler has been through it — the queue is one, and in order.
 async fn an_ending_raises_nothing(to: TaskStatus, actor: Actor, reason: Option<&str>) {
     let (h, cast) = seeded().await;
     let engineer = h
@@ -625,10 +626,11 @@ async fn a_task_thread_message_addressed_to_the_planner_wakes_it() {
 
 /// A tmux that would not take the keystrokes has said nothing about whether
 /// the agent is there to hear them: the message is not struck off for it. The
-/// reconciliation tick tries again — nothing re-posts a message in production,
-/// so this is the only thing that would — and the agent gets it once, whole.
+/// scheduler tries again a moment later — nothing re-posts a message in
+/// production, so this is the only thing that would — and the agent gets it
+/// once, whole.
 #[tokio::test]
-async fn a_delivery_tmux_refused_is_tried_again_on_a_later_tick() {
+async fn a_delivery_tmux_refused_is_tried_again_later() {
     let (h, cast) = seeded().await;
     let engineer = h
         .session(&cast.goal, Some(&cast.task), Role::Engineer, &cast.engineer.id)
@@ -653,7 +655,7 @@ async fn a_delivery_tmux_refused_is_tried_again_on_a_later_tick() {
 
     h.keystrokes_refused(false);
 
-    eventually(TICK_TIMEOUT, "the tick to try again", async || {
+    eventually(RETRY_TIMEOUT, "the scheduler to try again", async || {
         h.pasted(&engineer)
             .contains("The store already has that column.")
     })
@@ -693,9 +695,10 @@ async fn a_delivery_that_never_gets_through_raises_the_addressee() {
         )
         .await;
 
-    // The passes the tick would make, asked for without waiting a quarter of
-    // a minute for each: a message already in flight or already given up on
-    // is nobody's to deliver again, so the extra offers cost nothing.
+    // The passes the scheduler would make, asked for without waiting out the
+    // widening pause between them: a message already in flight or already
+    // given up on is nobody's to deliver again, so the extra offers cost
+    // nothing.
     eventually(TIMEOUT, "the engineer to be raised", async || {
         h.notify_message(&message.id);
         h.attention(&engineer).await == Some(AttentionReason::Stalled)
@@ -779,17 +782,19 @@ async fn a_message_whose_addressee_lost_its_session_raises_its_author() {
     )
     .await;
 
-    // Two passes at the session it still has — a paste and an Enter each ...
+    // Every pass but the last at the session it still has — a paste and an
+    // Enter each ...
+    let per_pass = 2;
     eventually(TIMEOUT, "the first passes to be made", async || {
         h.notify_message(&message.id);
-        h.keystrokes(&engineer) >= 4
+        h.keystrokes(&engineer) >= per_pass * (DELIVERY_ATTEMPTS - 1)
     })
     .await;
     // ... and on the last one the row goes while the keystrokes are still in
     // flight, which leaves the pass with a session id nothing answers to.
     eventually(TIMEOUT, "the last pass to be under way", async || {
         h.notify_message(&message.id);
-        h.keystrokes(&engineer) >= 5
+        h.keystrokes(&engineer) >= per_pass * DELIVERY_ATTEMPTS - 1
     })
     .await;
     h.forget_session(&engineer).await;
@@ -874,6 +879,45 @@ async fn a_message_waits_for_an_addressee_that_has_no_session_yet() {
     );
 }
 
+/// And the scheduler makes those passes itself. Nothing re-posts a message in
+/// production, so a message owed to an addressee that had no session when it
+/// was written only reaches the session that turns up later if the daemon
+/// asks again of its own accord — and it asks a second later, not when the
+/// next reconciliation tick comes round, which is what this waits far less
+/// than fifteen seconds for.
+#[tokio::test]
+async fn an_owed_message_is_retried_without_anything_re_posting_it() {
+    let (h, cast) = seeded().await;
+    let planner = h
+        .session(&cast.goal, None, Role::Planner, &cast.planner.id)
+        .await;
+    h.pane_exists(&planner);
+
+    // Written while the round has no reviewer: the first pass finds nobody.
+    post_to_task(
+        &h,
+        &cast.task,
+        "Start with the migration.",
+        Some("reviewer"),
+        Some(&planner),
+    )
+    .await;
+
+    // And now one turns up, with nothing to announce it: no message posted,
+    // no session event, nothing but the scheduler's own clock.
+    let reviewer = h
+        .session(&cast.goal, Some(&cast.task), Role::Reviewer, &cast.reviewer.id)
+        .await;
+    h.pane_exists(&reviewer);
+
+    eventually(
+        Duration::from_secs(8),
+        "the scheduler to hand the message over on its own",
+        async || h.pasted(&reviewer).contains("Start with the migration."),
+    )
+    .await;
+}
+
 /// The waiting is the thread's to end. A task that was cancelled never starts
 /// the reviewer this message was waiting on, so the message comes off the
 /// list the tick works through rather than being carried for as long as the
@@ -916,7 +960,7 @@ async fn a_message_whose_task_was_cancelled_is_dropped_from_the_retry_list() {
     // The tick works through what is owed before it reconciles anything, so a
     // task that has retired this session has been through the list with the
     // session in front of it — and typed nothing into it.
-    eventually(TICK_TIMEOUT, "the tick to come round", async || {
+    eventually(RETRY_TIMEOUT, "the retry to come round", async || {
         h.session_status(&reviewer).await == SessionStatus::Exited
     })
     .await;

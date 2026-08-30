@@ -15,7 +15,7 @@
 //! on that session: a task that has just ended says so to the user in its
 //! thread, and its engineer is not an agent anybody is being asked about.
 
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use ariadne_core::{AttentionReason, Role};
 use ariadne_store::{AgentSession, Message, SessionFilter, Task};
@@ -34,7 +34,7 @@ pub(super) enum Wake {
     /// or it is sitting on a dialog nobody but the user may answer — and it
     /// is there to read the thread once it has been.
     Nothing,
-    /// Its pane is busy with another delivery; a later tick tries again
+    /// Its pane is busy with another delivery; a later pass tries again
     /// without spending an attempt on it.
     Busy,
     /// This pass could not, with the session to raise for the user once the
@@ -53,7 +53,7 @@ impl super::Scheduler {
     /// away — is not a message lost: it keeps its place in the thread, and
     /// the briefings send every agent to read the conversation when it next
     /// starts. It is not a message delivered either, though, so the later
-    /// ticks go on asking until the session exists — nothing was typed, so
+    /// passes go on asking until the session exists — nothing was typed, so
     /// nothing is spent, and what ends the asking is the thread itself being
     /// over rather than a handful of seconds of passes.
     ///
@@ -62,7 +62,14 @@ impl super::Scheduler {
     /// made at this one.
     pub(super) async fn wake_profile(&mut self, message: &Message, profile_id: &str) -> anyhow::Result<Wake> {
         let Some(session) = self.recipient_session(message, profile_id).await? else {
-            info!(message = %message.id, profile = %profile_id, "nobody to wake for this message yet; it waits in the thread");
+            // Said once, at the volume of news: the passes after it are the
+            // same sentence about the same message every few seconds, and a
+            // log that repeats them is a log nobody reads.
+            if self.owed.contains_key(&message.id) {
+                debug!(message = %message.id, profile = %profile_id, "still nobody to wake for this message");
+            } else {
+                info!(message = %message.id, profile = %profile_id, "nobody to wake for this message yet; it waits in the thread");
+            }
             return Ok(Wake::Failed(None));
         };
         // An agent does not need waking for what it said itself.

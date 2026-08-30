@@ -20,8 +20,10 @@ mod wake;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::sync::mpsc;
+use tokio::time::Instant;
 use tracing::{info, warn};
 
 use ariadne_core::{GoalStatus, Role};
@@ -30,7 +32,7 @@ use ariadne_store::{SessionFilter, Store, TaskFilter};
 use crate::launcher::Launcher;
 use crate::sleep::SleepInhibitor;
 
-use delivery::DeliveryReport;
+use delivery::{DeliveryReport, Owed};
 use quiet::Quiet;
 
 /// Events that wake the scheduler for a scoped reconciliation.
@@ -48,7 +50,18 @@ pub enum SchedEvent {
 }
 
 /// How often the full reconciliation tick runs.
-const TICK_SECS: u64 = 15;
+///
+/// Not how long a hand-off waits: everything a write can report — a task
+/// moving on, a plan finalized, a verdict, a message posted, an agent's own
+/// hook — arrives as a [`SchedEvent`] and is acted on as it lands, in
+/// milliseconds. What is left for the tick is the state nothing reports, and
+/// the one that costs an agent its turn is a pane that went away without
+/// saying so: a killed tmux, a machine that dropped the session. This period
+/// is the ceiling on how long the successor of such an agent sits unstarted,
+/// so it is short — the pass costs one `tmux display-message` per live
+/// session and a handful of indexed reads, which is cheap enough to make five
+/// seconds the wait rather than fifteen.
+pub const TICK_SECS: u64 = 5;
 /// How long a session that is starting is given to get a pane before the
 /// liveness sweep concludes there is none.
 ///
@@ -59,27 +72,108 @@ const TICK_SECS: u64 = 15;
 /// moment the agent's first hook arrives, having flashed on the strip and over
 /// SSE in the meantime. Long enough for a launch to reach tmux, short enough
 /// that one which never will is still noticed within a tick or two.
-const START_GRACE_SECS: i64 = 30;
+pub const START_GRACE_SECS: i64 = 30;
 /// Spawn attempts before the daemon stops trying: per task, after which it is
 /// failed, and per goal, after which its planner is left alone.
-const SPAWN_RETRY_BUDGET: u32 = 3;
+pub const SPAWN_RETRY_BUDGET: u32 = 3;
 /// Passes one addressed message is worth before the user is told it never
 /// arrived. A tmux that would not take it says nothing about whether the
 /// agent is there to hear it, so the message is not spent on the attempt —
 /// but neither is it retried for ever, or nobody would ever hear that it is
 /// stuck.
-const DELIVERY_ATTEMPTS: u32 = 3;
+///
+/// Five of them, because they are no longer one a tick: they are spread over
+/// the widening wait below, so the first few are spent in seconds and all
+/// five still cover about half a minute of a tmux that will not answer —
+/// which is what three of them covered when each one waited fifteen seconds.
+pub const DELIVERY_ATTEMPTS: u32 = 5;
+/// How long a message waits for the pass after one that changed nothing, and
+/// what that wait grows from.
+///
+/// A pass that found nobody to type into — an addressee whose pane is not up
+/// yet, a reviewer whose round has not started — is a pass that tried
+/// nothing, and it used to be repeated only when the tick came round. A
+/// second is long enough to be no busier than the work it is waiting on and
+/// short enough that a message posted to an agent that is a moment from
+/// having a pane reaches it while it still means something.
+const RETRY_AFTER: Duration = Duration::from_secs(1);
+/// The longest a message waits between passes at an addressee that has a
+/// session and would not take it: the wait doubles after every one of those
+/// up to here, so the passes a message is worth are spread over about half a
+/// minute of a tmux that will not answer instead of being spent in seconds.
+/// Fifteen seconds is what *every* retry waited before, which makes this the
+/// worst case rather than a new one.
+const RETRY_AT_MOST: Duration = Duration::from_secs(15);
+/// And the longest between passes that found nobody to type into at all — a
+/// reviewer whose round has not started, an engineer whose task has not
+/// begun. Such a pass reads the store and touches no pane, so it can be made
+/// as often as the tick that used to make it, and the message goes to the
+/// session that turns up within a tick of it existing rather than within the
+/// wait above.
+const RETRY_FOR_NOBODY_AT_MOST: Duration = Duration::from_secs(TICK_SECS);
+/// And what a message whose addressee is mid-paste waits: the delivery in
+/// front of it settles in about half a second, and the composer is free the
+/// moment it does. Nothing was tried, so nothing was spent — this is only how
+/// long before asking again.
+const RETRY_WHILE_TYPING: Duration = Duration::from_millis(250);
 /// How long a session may report nothing before it is nudged: told to get on
 /// with the work in front of it, or given the Enter its composer is waiting
-/// for. Long enough that a slow start or a long tool call is not read as a
-/// stuck one.
-const QUIET_NUDGE_SECS: i64 = 300;
+/// for.
+///
+/// Long enough that a slow start or a long tool call is not read as a stuck
+/// one — three minutes, where it was five. What makes the shorter clock safe
+/// is that the nudge is not sent on it alone: an agent in the middle of a
+/// turn has an empty composer, and a pane whose composer is empty is left
+/// exactly where it is (see [`quiet`]). So the only pane this reaches sooner
+/// is one that is either idle with the work still in front of it or holding
+/// an instruction nobody submitted, and neither is a `cargo build`.
+pub const QUIET_NUDGE_SECS: i64 = 180;
 /// And before the silence is raised for the user, whom the nudge did not
 /// spare.
-const QUIET_FLAG_SECS: i64 = 900;
+///
+/// Ten minutes. Unlike the nudge this one is spent whatever the pane says, so
+/// it has to clear the longest wait an agent is *told* to take: the landing
+/// briefing sends an engineer to `sleep` at most five minutes at a time while
+/// it waits for a pull request to be merged, and this is twice that. A flag
+/// raised over a tool call that ran longer still is not the end of anything —
+/// the agent's next event takes it down again.
+pub const QUIET_FLAG_SECS: i64 = 600;
 /// And before the pane is killed and the agent put back on its feet: the flag
-/// plus enough of a wait for a person to have looked at it first.
-const QUIET_RELAUNCH_SECS: i64 = 2_700;
+/// plus enough of a wait for a person to have looked at it first — twenty
+/// minutes of one, after which nobody is coming and the agent has been silent
+/// for half an hour.
+pub const QUIET_RELAUNCH_SECS: i64 = 1_800;
+
+/// The watchdog is one timeline, and the order of its thresholds is what
+/// makes it one: nudged before the user is told, told before a pane is killed
+/// under them. The flag has a floor of its own — it is spent whatever the
+/// pane is doing, so it has to clear the longest wait an agent is *told* to
+/// take, which is the five-minute `sleep` the landing briefing sends an
+/// engineer to while a pull request waits to be merged. Checked here rather
+/// than in a test, so that a number edited into the wrong order does not
+/// build.
+const _: () = assert!(
+    QUIET_NUDGE_SECS < QUIET_FLAG_SECS,
+    "an agent is nudged before the user is told about it"
+);
+const _: () = assert!(
+    QUIET_FLAG_SECS < QUIET_RELAUNCH_SECS,
+    "and told before its pane is killed and the agent put back on its feet"
+);
+const _: () = assert!(
+    QUIET_FLAG_SECS >= 600,
+    "the flag stays clear of a five-minute sleep, with margin"
+);
+
+/// And the retry waits: shortest for a pane that is only mid-paste, longest
+/// at the bound, which is itself no shorter than the tick that used to make
+/// every retry.
+const _: () = assert!(
+    RETRY_WHILE_TYPING.as_millis() < RETRY_AFTER.as_millis()
+        && RETRY_AFTER.as_secs() <= RETRY_FOR_NOBODY_AT_MOST.as_secs()
+        && RETRY_FOR_NOBODY_AT_MOST.as_secs() <= RETRY_AT_MOST.as_secs(),
+    "a busy pane is asked again soonest, and no wait outlives the bound"
+);
 
 pub struct Scheduler {
     store: Store,
@@ -102,11 +196,12 @@ pub struct Scheduler {
     /// prevents is typing one message into a pane twice, which is only ever
     /// at stake while the daemon that saw it posted is still running.
     delivered: HashSet<String>,
-    /// What every message not yet confirmed has spent trying, by message id:
-    /// a delivery tmux would not take is tried again on later ticks up to
-    /// [`DELIVERY_ATTEMPTS`], and one that has spent them all is given up on
-    /// — the user has been told, and nothing is typed for it again.
-    attempts: HashMap<String, u32>,
+    /// What every message not yet confirmed has spent trying and when it is
+    /// next worth a pass, by message id: a delivery tmux would not take is
+    /// tried again on a widening wait up to [`DELIVERY_ATTEMPTS`], and one
+    /// that has spent them all is given up on — the user has been told, and
+    /// nothing is typed for it again.
+    owed: HashMap<String, Owed>,
     /// Sessions with a delivery going into their pane right now, by session
     /// id: two pastes into one composer at once would interleave into
     /// something neither of them said.
@@ -143,7 +238,7 @@ pub fn start(
         quiet: HashMap::new(),
         landing_briefed: HashSet::new(),
         delivered: HashSet::new(),
-        attempts: HashMap::new(),
+        owed: HashMap::new(),
         typing: HashSet::new(),
         delivered_at: HashMap::new(),
         reports,
@@ -151,9 +246,14 @@ pub fn start(
         prevent_sleep,
     };
     tokio::spawn(async move {
-        let mut tick = tokio::time::interval(std::time::Duration::from_secs(TICK_SECS));
+        let mut tick = tokio::time::interval(Duration::from_secs(TICK_SECS));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
+            // A message that is owed another pass has its own clock, read
+            // afresh every time round: a delivery that comes back changes
+            // when the next one is due, and the loop must be waiting on the
+            // new answer rather than on the one it took before.
+            let retry_at = scheduler.next_retry_at();
             tokio::select! {
                 event = rx.recv() => match event {
                     Some(SchedEvent::TaskChanged(id)) => scheduler.reconcile(Target::Task(&id)).await,
@@ -164,10 +264,23 @@ pub fn start(
                 },
                 Some(report) = settled.recv() => scheduler.delivery_settled(report).await,
                 _ = tick.tick() => scheduler.reconcile_all().await,
+                _ = until(retry_at) => scheduler.retry_deliveries().await,
             }
         }
     });
     tx
+}
+
+/// Wait until `at`, or for ever when there is nothing to wait for.
+///
+/// The retry arm of the loop needs an instant either way, and a branch that
+/// never fires is what "no message is owed a pass" looks like in a `select!`
+/// — better than waking the loop on a made-up deadline to find nothing to do.
+async fn until(at: Option<Instant>) {
+    match at {
+        Some(at) => tokio::time::sleep_until(at).await,
+        None => std::future::pending().await,
+    }
 }
 
 /// What one pass of reconciliation is about.

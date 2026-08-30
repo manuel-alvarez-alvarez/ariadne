@@ -8,6 +8,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 
@@ -24,6 +25,33 @@ use crate::branch::BranchWatchers;
 use crate::config::Config;
 use crate::gitwt::GitManager;
 use crate::tmux::{TmuxManager, TmuxSpawn, session_name, tail};
+
+/// How often a freshly launched pane is read while something is waited for in
+/// it: the directory-trust dialog to appear, or the TUI itself to draw its
+/// first frame. One `tmux capture-pane` per turn, so the interval is the
+/// latency it adds to whatever comes next — a fifth of a second of it, where
+/// half of one was two and a half times the wait for nothing.
+const PANE_POLL: Duration = Duration::from_millis(200);
+/// How long the directory-trust watcher watches for the dialog before giving
+/// up. Generous (two minutes): a slow CLI start renders the dialog well after
+/// the spawn, and a watcher that has already stopped leaves the agent waiting
+/// on it for ever.
+const TRUST_WATCH: Duration = Duration::from_secs(120);
+/// And how long it leaves the pane alone after accepting one, before reading
+/// it again. Unshortened on purpose: what this waits for is the dialog to go,
+/// and every capture taken before it has is another Enter into a pane that
+/// has already answered.
+const TRUST_ACCEPTED: Duration = Duration::from_millis(700);
+/// The beat between a TUI drawing its first frame and the resume instruction
+/// being typed into it, for the one CLI that takes its instruction that way
+/// (opencode; see [`SpawnPlan::post_launch_input`]).
+///
+/// It is not the frame that is waited for but the input handling behind it.
+/// Measured on opencode 1.18.20: a paste 100 ms after its first frame landed
+/// in the composer and submitted, every time, so 300 is three times what it
+/// needed — and the cost of being wrong is a message nobody sees, which is
+/// why this one keeps a margin rather than the tightest number that worked.
+const INPUT_BEAT: Duration = Duration::from_millis(300);
 
 pub struct Launcher {
     pub cfg: Arc<Config>,
@@ -140,9 +168,7 @@ impl Launcher {
     /// folders — and every worktree is a fresh folder. Watch the pane and
     /// accept the (pre-selected "yes") dialog with Enter.
     ///
-    /// The window is generous (two minutes): a slow CLI start renders the
-    /// dialog well after spawn, and a watcher that has already given up leaves
-    /// the agent waiting on it forever. A single failed capture is likewise no
+    /// The window is [`TRUST_WATCH`], and a single failed capture is no
     /// reason to stop watching — only the session going away is.
     /// What the trust dialog looks like in a pane, lowercased. Shared with
     /// the typed-input deliverer, which must not paste into that dialog.
@@ -156,8 +182,9 @@ impl Launcher {
     fn auto_accept_trust(&self, tmux_session: String) {
         let tmux = self.tmux.clone();
         tokio::spawn(async move {
-            for _ in 0..240 {
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let deadline = std::time::Instant::now() + TRUST_WATCH;
+            while std::time::Instant::now() < deadline {
+                tokio::time::sleep(PANE_POLL).await;
                 if !tmux.has_session(&tmux_session).await {
                     return;
                 }
@@ -168,7 +195,7 @@ impl Launcher {
                 if Self::TRUST_PATTERNS.iter().any(|p| lower.contains(p)) {
                     tracing::info!(session = %tmux_session, "accepting directory-trust dialog");
                     let _ = tmux.send_enter(&tmux_session).await;
-                    tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+                    tokio::time::sleep(TRUST_ACCEPTED).await;
                 }
             }
         });
@@ -197,7 +224,7 @@ impl Launcher {
         let deadline = std::time::Instant::now() + self.cfg.typed_input_window;
         tokio::spawn(async move {
             while std::time::Instant::now() < deadline {
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                tokio::time::sleep(PANE_POLL).await;
                 if !tmux.has_session(&tmux_session).await {
                     return;
                 }
@@ -211,7 +238,7 @@ impl Launcher {
                 }
                 // One more beat: a TUI that just painted its first frame may
                 // still be wiring up its input handling.
-                tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+                tokio::time::sleep(INPUT_BEAT).await;
                 match tmux.send_submitted(&tmux_session, &input).await {
                     Ok(true) => {
                         tracing::info!(session = %tmux_session, "typed the resume instruction into the TUI")
