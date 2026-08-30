@@ -272,6 +272,18 @@ export function RepositoryFormDialog({
         pending={saving}
       >
         <FormDialogBody>
+          <Field>
+            <FieldLabel htmlFor="repository-description">Description</FieldLabel>
+            <Textarea
+              id="repository-description"
+              placeholder="What lives in this repo."
+              {...register("description")}
+            />
+            <FieldDescription>
+              Optional. Shown next to the path wherever the repo is picked.
+            </FieldDescription>
+          </Field>
+
           <Field data-invalid={formState.errors.path ? true : undefined}>
             <FieldLabel htmlFor="repository-path">Path</FieldLabel>
             <Input
@@ -372,18 +384,6 @@ export function RepositoryFormDialog({
                 {"{base_branch}"} and {"{repo_path}"}.
               </FieldDescription>
             )}
-          </Field>
-
-          <Field>
-            <FieldLabel htmlFor="repository-description">Description</FieldLabel>
-            <Textarea
-              id="repository-description"
-              placeholder="What lives in this repo."
-              {...register("description")}
-            />
-            <FieldDescription>
-              Optional. Shown next to the path wherever the repo is picked.
-            </FieldDescription>
           </Field>
         </FormDialogBody>
       </FormDialogContent>
