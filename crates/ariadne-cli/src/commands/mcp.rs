@@ -130,16 +130,39 @@ fn json_result(v: serde_json::Value) -> Result<CallToolResult, McpError> {
     )]))
 }
 
+/// Whether a session gets an answer to a question: the planner writes a spec
+/// with the user, who is there in the terminal to ask; an engineer or
+/// reviewer works its task alone, with nobody there to answer one.
+///
+/// The planner's line replaced "work alone" whole, sentence for sentence: the
+/// user answering stands in place of nobody being there, asking in turn text
+/// stands in place of not asking, and waiting stands in place of a human
+/// attaching whenever it likes — the planner now waits for that human by
+/// design.
+fn ask_rule(role: &McpRole) -> &'static str {
+    match role {
+        McpRole::Planner => {
+            "The user answers in your terminal. Ask in plain turn text, one \
+             question at a time. Then wait."
+        }
+        McpRole::Engineer | McpRole::Reviewer => {
+            "Work alone. Nobody answers a question, so do not ask. A human \
+             can attach at any time."
+        }
+    }
+}
+
 /// The rules that hold whoever is reading them: what Ariadne is reached
-/// through, how sparing to be with turns, and the English every text is
-/// written in.
+/// through, how a session gets a question answered, how sparing to be with
+/// turns, and the English every text is written in.
 ///
 /// One block, appended to the server's instructions above, which every session
-/// of every role receives before its first prompt. It used to be pasted into
-/// the three system prompts instead, where it was three copies to keep in step
-/// and a profile's own text for a user to edit away. How little to spend is
-/// here for the same reason: it held for all three roles, so all three said
-/// it.
+/// receives before its first prompt. It used to be pasted into the three
+/// system prompts instead, where it was three copies to keep in step and a
+/// profile's own text for a user to edit away. How little to spend is here
+/// for the same reason: it held for all three roles, so all three said it.
+/// Asking is the one line that no longer holds for all three, so it alone is
+/// picked by role.
 ///
 /// ASD-STE100 Simplified Technical English is here for a third reason on top
 /// of those two: it holds for every word an agent writes, and a profile edit
@@ -148,7 +171,9 @@ fn json_result(v: serde_json::Value) -> Result<CallToolResult, McpError> {
 /// of what they cover is the list of everything an agent writes, since a rule
 /// that named only some of it would read as licence for the rest. Each
 /// playbook names the texts of its own role again, in its own layer.
-const SESSION_RULES: &str = r#"Reach Ariadne only through these tools. A backticked name is a tool. Work alone. Nobody answers a question, so do not ask. A human can attach at any time. Never narrate progress. Take as few turns as you can.
+fn session_rules(role: &McpRole) -> String {
+    format!(
+        r#"Reach Ariadne only through these tools. A backticked name is a tool. {} Never narrate progress. Take as few turns as you can.
 
 Write all text in ASD-STE100 Simplified Technical English (STE):
 - Write one instruction in one sentence.
@@ -161,7 +186,10 @@ STE holds for all you write:
 - your turn text and your visible reasoning
 - task titles and descriptions
 - `request_review` summaries, verdicts and `fail_task` reasons
-- commit subjects and bodies, and pull request text"#;
+- commit subjects and bodies, and pull request text"#,
+        ask_rule(role)
+    )
+}
 
 impl ServerHandler for AriadneMcp {
     /// The server's own instructions, which every session receives before its
@@ -177,14 +205,15 @@ impl ServerHandler for AriadneMcp {
         info.instructions = Some(format!(
             "Ariadne orchestrator tools for this {} session: session {}, goal {}{}. \
              The tools here are the ones your role can call. Every call acts as \
-             this session. {SESSION_RULES}",
+             this session. {}",
             self.role.as_str(),
             self.session_id,
             self.goal_id,
             match &self.task_id {
                 Some(task) => format!(", task {task}"),
                 None => String::new(),
-            }
+            },
+            session_rules(&self.role)
         ));
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
         info
@@ -349,16 +378,18 @@ pub(crate) mod tests {
 
     /// The rules that hold for every role are the server's instructions, and
     /// every session gets them whatever its role and whatever its profile's
-    /// prompts have been edited into: how Ariadne is reached, that nobody is
-    /// there to be asked, and how few turns to spend.
+    /// prompts have been edited into: how Ariadne is reached, and how few
+    /// turns to spend.
     #[test]
     fn every_session_is_told_how_ariadne_is_reached() {
         for role in ROLES {
-            let mcp = server_at(role.clone(), Client::resolve(Some("http://127.0.0.1:1"), None));
+            let mcp = server_at(
+                role.clone(),
+                Client::resolve(Some("http://127.0.0.1:1"), None),
+            );
             let instructions = mcp.get_info().instructions.expect("instructions");
             for rule in [
                 "Reach Ariadne only through these tools",
-                "Nobody answers a question, so do not ask",
                 "as few turns as you can",
                 "Write all text in ASD-STE100 Simplified Technical English",
                 "Write no more than 20 words in a sentence",
@@ -366,6 +397,36 @@ pub(crate) mod tests {
             ] {
                 assert!(instructions.contains(rule), "{role:?}: {instructions}");
             }
+        }
+    }
+
+    /// The planner is told the user answers in the terminal and to ask; an
+    /// engineer or reviewer is told the opposite, word for word as before.
+    #[test]
+    fn only_the_planner_is_told_to_ask() {
+        let planner = server_at(
+            McpRole::Planner,
+            Client::resolve(Some("http://127.0.0.1:1"), None),
+        );
+        let instructions = planner.get_info().instructions.expect("instructions");
+        assert!(instructions.contains("The user answers in your terminal"));
+        assert!(instructions.contains("Ask in plain turn text, one question at a time"));
+        assert!(instructions.contains("Then wait"));
+        assert!(!instructions.contains("Nobody answers a question, so do not ask"));
+
+        for role in [McpRole::Engineer, McpRole::Reviewer] {
+            let mcp = server_at(
+                role.clone(),
+                Client::resolve(Some("http://127.0.0.1:1"), None),
+            );
+            let instructions = mcp.get_info().instructions.expect("instructions");
+            assert!(
+                instructions.contains(
+                    "Work alone. Nobody answers a question, so do not ask. \
+                     A human can attach at any time."
+                ),
+                "{role:?}: {instructions}"
+            );
         }
     }
 
@@ -396,11 +457,14 @@ pub(crate) mod tests {
     #[test]
     fn the_shared_rules_stay_small() {
         const CAP: usize = 700;
-        assert!(
-            SESSION_RULES.len() <= CAP,
-            "the session rules are {} characters, over their {CAP}",
-            SESSION_RULES.len()
-        );
+        for role in ROLES {
+            let rules = session_rules(&role);
+            assert!(
+                rules.len() <= CAP,
+                "the {role:?} session rules are {} characters, over their {CAP}",
+                rules.len()
+            );
+        }
     }
 
     /// Every text this server hands an agent is Simplified Technical English,
@@ -418,8 +482,12 @@ pub(crate) mod tests {
     fn every_text_the_server_hands_an_agent_is_simplified_technical_english() {
         use ariadne_store::defaults::ste;
 
-        let mut texts = vec![("the session rules".to_string(), SESSION_RULES.to_string())];
+        let mut texts = Vec::new();
         for role in ROLES {
+            texts.push((
+                format!("the {} session rules", role.as_str()),
+                session_rules(&role),
+            ));
             let mcp = server_at(
                 role.clone(),
                 Client::resolve(Some("http://127.0.0.1:1"), None),
