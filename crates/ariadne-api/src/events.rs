@@ -19,6 +19,7 @@ pub struct AgentEventDto {
 /// Body of `POST /internal/agent-events`, sent by `ariadne agent-event`
 /// (hook/notify/plugin side).
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct IngestEventRequest {
     /// ARIADNE_SESSION_ID of the reporting agent.
     pub session_id: String,

@@ -11,7 +11,6 @@
 /// flags a profile used to carry belong to the agent, not to the persona.
 /// Every spawn and resume reads them, so an edit lands on the next launch.
 pub mod agents {
-    use axum::Json;
     use axum::extract::{Path, State};
 
     use ariadne_api::agents::{AgentConfigDto, UpdateAgentConfigRequest};
@@ -19,7 +18,7 @@ pub mod agents {
 
     use crate::http::AppState;
     use crate::http::convert::agent_config_dto;
-    use crate::http::error::{ApiError, ApiResult};
+    use crate::http::error::{ApiError, ApiResult, Json};
 
     /// Every agent kind's flags, current and default.
     #[utoipa::path(get, path = "/v1/agents", tag = "agents",

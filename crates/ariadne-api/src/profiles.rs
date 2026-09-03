@@ -31,6 +31,7 @@ pub struct ProfileDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CreateProfileRequest {
     #[schema(example = "rust-engineer")]
     pub name: String,
@@ -59,6 +60,7 @@ pub struct CreateProfileRequest {
 
 /// Partial update; absent fields stay unchanged.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateProfileRequest {
     pub name: Option<String>,
     /// What this profile runs on, `<agent_kind>[:<model>]`, or "default" (or

@@ -6,6 +6,7 @@ areas: [api, daemon]
 commits: [d94042f4, 481a405d, 224370f4]
 tests:
   - crates/ariadne-daemon/tests/events.rs
+  - crates/ariadne-daemon/tests/unknown_fields.rs
   - crates/ariadne-daemon/tests/logs.rs
   - crates/ariadne-daemon/tests/doctor.rs
   - crates/ariadne-store/tests/store.rs
@@ -34,7 +35,9 @@ Out: the CLI that consumes this (014) and the desktop app that consumes it
    from. Every endpoint appears in that document.
 3. A refusal is an envelope with a machine-readable code and one sentence a
    person can act on — the state machine's own explanation where a transition
-   was refused (001).
+   was refused (001). Every request DTO denies unknown fields, so a body that
+   carries a field its DTO does not declare is refused in that same envelope,
+   and the refusal names the field. A response DTO denies nothing.
 4. Every write emits a **fat event**: the changed entity, whole, so a client
    can apply it without a re-fetch. A task transition carries the transition
    that caused it, whether it came through HTTP or from the scheduler.
@@ -74,6 +77,9 @@ Out: the CLI that consumes this (014) and the desktop app that consumes it
   `::sse_stream_signals_resync_and_closes_when_a_client_lags`).
 - CORS allows preflight and cross-origin calls
   (`events.rs::cors_allows_preflight_and_cross_origin_calls`).
+- A body with a field its DTO does not declare is refused, and the refusal
+  names the field
+  (`unknown_fields.rs::an_unknown_field_is_refused_and_named`).
 - Ingested events raise and clear session attention
   (`events.rs::ingested_events_raise_and_clear_session_attention`,
   `::an_idle_report_clears_the_stall_and_the_error_and_nothing_else`,

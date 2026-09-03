@@ -1,6 +1,5 @@
 //! Profile endpoints.
 
-use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 
@@ -11,7 +10,7 @@ use ariadne_store::{NewProfile, ProfileUpdate, Store};
 
 use super::AppState;
 use super::convert::profile_dto;
-use super::error::ApiResult;
+use super::error::{ApiResult, Json};
 use super::pins::{self, Repin, Standing};
 
 /// The id behind a path segment: every profile endpoint takes an id or a

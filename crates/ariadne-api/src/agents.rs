@@ -18,6 +18,7 @@ pub struct AgentConfigDto {
 
 /// Body of `PUT /v1/agents/{kind}`: the whole new flag list, empty included.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateAgentConfigRequest {
     pub extra_flags: Vec<String>,
 }

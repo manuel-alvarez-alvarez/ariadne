@@ -63,6 +63,7 @@ pub struct SessionLogsResponse {
 
 /// Body of `POST /v1/sessions/{id}/input`.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SessionInputRequest {
     /// Keystrokes to type into the pane, exactly as the terminal produced
     /// them: `\r` for Return, `\x03` for Ctrl-C, `\x1b[A` for Up. Sent
@@ -76,6 +77,7 @@ pub struct SessionInputRequest {
 /// hands its pty when its window changes, and what `tmux attach` gives the
 /// pane it attaches to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SessionResizeRequest {
     pub cols: u16,
     pub rows: u16,

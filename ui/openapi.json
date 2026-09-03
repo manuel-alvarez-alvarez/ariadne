@@ -2030,7 +2030,8 @@
           "title": {
             "type": "string"
           }
-        }
+        },
+        "additionalProperties": false
       },
       "CreateProfileRequest": {
         "type": "object",
@@ -2069,7 +2070,8 @@
             ],
             "description": "Absent or null = the default of the role, which the profile then\nfollows. It is the one prompt a profile owns: the briefings that\nstart, resume and nudge a session are Ariadne's own."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "CreateRepositoryRequest": {
         "type": "object",
@@ -2113,7 +2115,8 @@
             "description": "Absolute path of an existing git work tree.",
             "example": "/home/me/dev/ariadne"
           }
-        }
+        },
+        "additionalProperties": false
       },
       "CreateReviewRequest": {
         "type": "object",
@@ -2137,7 +2140,8 @@
           "verdict": {
             "$ref": "#/components/schemas/ReviewVerdict"
           }
-        }
+        },
+        "additionalProperties": false
       },
       "CreateTaskRequest": {
         "type": "object",
@@ -2194,7 +2198,8 @@
           "title": {
             "type": "string"
           }
-        }
+        },
+        "additionalProperties": false
       },
       "DaemonReportDto": {
         "type": "object",
@@ -2593,7 +2598,8 @@
       },
       "FinalizePlanRequest": {
         "type": "object",
-        "description": "Body of `POST /v1/goals/{id}/finalize`: the planner ends planning and\nexecution starts. The planner's call, not the user's, and it carries\nnothing — the plan is the tasks it wrote."
+        "description": "Body of `POST /v1/goals/{id}/finalize`: the planner ends planning and\nexecution starts. The planner's call, not the user's, and it carries\nnothing — the plan is the tasks it wrote.",
+        "additionalProperties": false
       },
       "GoalDto": {
         "type": "object",
@@ -3021,7 +3027,8 @@
             "type": "string",
             "description": "The request's URL, e.g. `https://github.com/owner/repo/pull/12`."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "RepositoryDto": {
         "type": "object",
@@ -3167,7 +3174,8 @@
             "type": "string",
             "description": "Reviewer profile id or unique name."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "Role": {
         "type": "string",
@@ -3305,7 +3313,8 @@
             "type": "string",
             "description": "Keystrokes to type into the pane, exactly as the terminal produced\nthem: `\\r` for Return, `\\x03` for Ctrl-C, `\\x1b[A` for Up. Sent\nverbatim — nothing is appended, so a submit has to carry its own `\\r`."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "SessionLogChunk": {
         "type": "object",
@@ -3391,7 +3400,8 @@
             "format": "int32",
             "minimum": 0
           }
-        }
+        },
+        "additionalProperties": false
       },
       "SessionStatus": {
         "type": "string",
@@ -3748,7 +3758,8 @@
           "to": {
             "$ref": "#/components/schemas/TaskStatus"
           }
-        }
+        },
+        "additionalProperties": false
       },
       "UpdateAgentConfigRequest": {
         "type": "object",
@@ -3763,7 +3774,8 @@
               "type": "string"
             }
           }
-        }
+        },
+        "additionalProperties": false
       },
       "UpdateProfileRequest": {
         "type": "object",
@@ -3798,7 +3810,8 @@
             ],
             "description": "New system prompt. Absent = unchanged; putting it back on the role\ndefault is `POST /v1/profiles/{id}/system-prompt/reset`."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "UpdateRepositoryRequest": {
         "type": "object",
@@ -3840,7 +3853,8 @@
               "null"
             ]
           }
-        }
+        },
+        "additionalProperties": false
       },
       "UpdateTaskRequest": {
         "type": "object",
@@ -3893,7 +3907,8 @@
               "null"
             ]
           }
-        }
+        },
+        "additionalProperties": false
       },
       "VersionResponse": {
         "type": "object",

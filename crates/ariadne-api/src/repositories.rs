@@ -25,6 +25,7 @@ pub struct RepositoryDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CreateRepositoryRequest {
     /// Absolute path of an existing git work tree.
     #[schema(example = "/home/me/dev/ariadne")]
@@ -46,6 +47,7 @@ pub struct CreateRepositoryRequest {
 
 /// Partial update; absent fields stay unchanged.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateRepositoryRequest {
     pub path: Option<String>,
     pub base_branch: Option<String>,

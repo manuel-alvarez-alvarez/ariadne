@@ -1,6 +1,5 @@
 //! Agent-session endpoints.
 
-use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 
@@ -11,7 +10,7 @@ use ariadne_store::{AgentSession, SessionFilter};
 
 use super::AppState;
 use super::convert::session_dto_of;
-use super::error::{ApiError, ApiResult};
+use super::error::{ApiError, ApiResult, Json};
 
 /// The session behind `id`, with a pane to act on — or the conflict saying
 /// why there is none, in which `refusal` names what cannot be done.
@@ -242,6 +241,7 @@ pub async fn logs(
 
 /// Body of the internal debug-spawn endpoint.
 #[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DebugSpawnRequest {
     pub role: ariadne_core::Role,
     pub goal_id: Option<String>,
@@ -254,7 +254,7 @@ pub struct DebugSpawnRequest {
 /// drives spawns automatically). Not part of the public OpenAPI surface.
 pub async fn debug_spawn(
     State(state): State<AppState>,
-    axum::Json(req): axum::Json<DebugSpawnRequest>,
+    Json(req): Json<DebugSpawnRequest>,
 ) -> ApiResult<Json<SessionDto>> {
     use ariadne_core::Role;
     let launcher = &state.launcher;

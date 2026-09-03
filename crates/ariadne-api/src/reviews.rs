@@ -18,6 +18,7 @@ pub struct ReviewDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CreateReviewRequest {
     pub verdict: ReviewVerdict,
     pub body: Option<String>,

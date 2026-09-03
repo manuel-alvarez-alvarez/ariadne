@@ -110,6 +110,7 @@ pub struct TaskReviewerDto {
 /// one from the other. Omitted, the slot takes the profile's own model as it
 /// stands when the slot is assigned.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ReviewerAssignment {
     /// Reviewer profile id or unique name.
     pub profile: String,
@@ -140,6 +141,7 @@ impl ReviewerAssignment {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CreateTaskRequest {
     pub title: String,
     #[serde(default)]
@@ -169,6 +171,7 @@ pub struct CreateTaskRequest {
 
 /// Partial update; only allowed while the task is pending/ready.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateTaskRequest {
     pub title: Option<String>,
     pub description: Option<String>,
@@ -195,6 +198,7 @@ pub struct UpdateTaskRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TransitionRequest {
     pub to: TaskStatus,
     pub reason: Option<String>,
@@ -206,6 +210,7 @@ pub struct TransitionRequest {
 /// the user has somewhere to go and read it: taken off `gh pr create`'s output
 /// and recorded on the task.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RecordPullRequestRequest {
     /// The request's URL, e.g. `https://github.com/owner/repo/pull/12`.
     pub url: String,

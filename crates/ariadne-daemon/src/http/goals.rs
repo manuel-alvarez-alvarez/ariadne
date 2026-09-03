@@ -1,6 +1,5 @@
 //! Goal endpoints.
 
-use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use serde::Deserialize;
@@ -12,7 +11,7 @@ use ariadne_store::{Goal, NewGoal, SessionFilter, Store, TaskFilter};
 
 use super::AppState;
 use super::convert::goal_dto_of;
-use super::error::{ApiError, ApiResult};
+use super::error::{ApiError, ApiResult, Json};
 use super::pins::{self, Standing};
 use super::caller::call_ctx;
 

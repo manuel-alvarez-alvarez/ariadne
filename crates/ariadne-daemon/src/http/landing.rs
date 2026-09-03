@@ -2,7 +2,6 @@
 //! diff they are about, the request it was published as, and the proof that it
 //! landed.
 
-use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 
@@ -13,7 +12,7 @@ use ariadne_store::{NewReview, Repository, Task};
 
 use super::AppState;
 use super::convert::{review_dto, task_dto_of};
-use super::error::{ApiError, ApiResult};
+use super::error::{ApiError, ApiResult, Json};
 use super::caller::{call_ctx, ensure_task_scope};
 
 /// Git could not answer about the task's branch: a conflict, since what the

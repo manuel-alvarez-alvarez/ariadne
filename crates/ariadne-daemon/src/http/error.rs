@@ -1,8 +1,12 @@
-//! HTTP error mapping onto the uniform `{"error": {...}}` envelope.
+//! HTTP error mapping onto the uniform `{"error": {...}}` envelope, and the
+//! JSON body extractor that answers in it.
 
-use axum::Json;
+use axum::extract::rejection::JsonRejection;
+use axum::extract::{FromRequest, Request};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use ariadne_api::error::ErrorBody;
 use ariadne_store::StoreError;
@@ -63,11 +67,52 @@ impl From<StoreError> for ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (self.status, Json(self.body)).into_response()
+        (self.status, axum::Json(self.body)).into_response()
     }
 }
 
 pub type ApiResult<T> = Result<T, ApiError>;
+
+/// The JSON body of a request, and the JSON body of a reply: `axum::Json`
+/// with its rejection folded into the envelope every other refusal uses.
+///
+/// Every request DTO is `#[serde(deny_unknown_fields)]`, so a body carrying a
+/// field the DTO does not declare is refused here rather than dropped in
+/// silence. axum answers such a body with a plain-text `422`, which no client
+/// can branch on; this one answers with `invalid_request` and serde's own
+/// sentence, which names the field. The status axum chose is kept.
+pub struct Json<T>(pub T);
+
+impl<T, S> FromRequest<S> for Json<T>
+where
+    T: DeserializeOwned,
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        match axum::Json::<T>::from_request(req, state).await {
+            Ok(axum::Json(body)) => Ok(Self(body)),
+            Err(rejection) => Err(refused(&rejection)),
+        }
+    }
+}
+
+impl<T: Serialize> IntoResponse for Json<T> {
+    fn into_response(self) -> Response {
+        axum::Json(self.0).into_response()
+    }
+}
+
+/// The refusal a rejected body earns: the status axum chose, and serde's own
+/// sentence rather than axum's wrapper around it, which names Rust types the
+/// sender cannot see. A rejection with nothing under it — a missing content
+/// type — keeps its own words.
+fn refused(rejection: &JsonRejection) -> ApiError {
+    let message = std::error::Error::source(rejection)
+        .map_or_else(|| rejection.body_text(), |cause| cause.to_string());
+    ApiError::new(rejection.status(), "invalid_request", message)
+}
 
 #[cfg(test)]
 mod tests {

@@ -1,7 +1,6 @@
 //! Agent-event endpoints: public listing plus the internal ingestion sink for
 //! hooks/plugins.
 
-use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 
@@ -15,7 +14,7 @@ use super::classify::{
     usage_for_event,
 };
 use super::convert::event_dto;
-use super::error::ApiResult;
+use super::error::{ApiResult, Json};
 
 /// List agent events (poll with `after` for tailing).
 #[utoipa::path(get, path = "/v1/events", tag = "events",

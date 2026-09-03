@@ -57,9 +57,11 @@ pub struct GoalUsageDto {
 /// execution starts. The planner's call, not the user's, and it carries
 /// nothing — the plan is the tasks it wrote.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct FinalizePlanRequest {}
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CreateGoalRequest {
     pub title: String,
     #[serde(default)]
