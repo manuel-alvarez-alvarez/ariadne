@@ -24,6 +24,9 @@ is a file an agent may never see.
   release-please turns commits into versions, tags and release notes.
 - [`README.md`](README.md) — the user-facing manual: installing, configuring
   and running Ariadne, and the top-level tree.
+- [`specs/`](specs/README.md) — what each subsystem does, as it stands, with
+  every acceptance criterion tied to the test that proves it. Read the spec of
+  the area you are changing, and change it in the same commit as the code.
 
 Before changing anything, read the surrounding code and match its style,
 naming and tooling.
