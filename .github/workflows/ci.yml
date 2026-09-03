@@ -7,10 +7,10 @@ on:
     branches: [main]
   pull_request:
 
-# A new push to a branch makes the run in flight for it pointless.
+# A new push to a pull-request branch makes the run in flight for it pointless.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -40,6 +40,7 @@ jobs:
         with:
           # One cache per OS; the matrix legs must not share a target dir.
           key: ${{ matrix.os }}
+          cache-on-failure: true
 
       # The ignored integration tests drive real tmux panes, and the keystroke
       # ones script a TUI in python3. macOS runners have no tmux and do not
@@ -107,6 +108,7 @@ jobs:
         with:
           key: tauri-ubuntu-latest
           workspaces: ui/src-tauri
+          cache-on-failure: true
 
       # Tauri v2's documented Linux prerequisites: the -sys crates' build
       # scripts ask pkg-config for these headers, so even a `cargo check`
