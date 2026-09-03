@@ -202,6 +202,11 @@ impl PromptKind {
                 "repositories",
                 "max_tasks",
                 "required_approvals",
+                // The procedure that puts the approved spec on the base
+                // branch, rendered from the merge strategy of the repository
+                // the planner works in: the two strategies share no step, so
+                // the briefing carries the one that repository runs.
+                "spec_landing",
             ],
             // A nudge says what is waiting and nothing else: the planner it
             // reaches has read the goal already.

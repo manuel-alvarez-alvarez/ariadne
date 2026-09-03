@@ -38,13 +38,25 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
 2. The planner first drafts a spec from the goal text, then asks its
    questions in its terminal and waits — `ariadne goal attach` drops you into
    that terminal to answer them. A planner waiting on you shows up wherever
-   Ariadne lists what needs attention. It asks for an explicit yes on the
-   finished spec before it creates any task.
-3. Once the spec is approved, the planner creates the tasks through the
-   Ariadne MCP tools (assigning an engineer profile and reviewer profiles per
-   task, with optional `depends_on` ordering). The first task commits the
-   approved spec to the repository; every other task depends on it and
-   references it. Nothing runs while the goal is in `planning` — read the
+   Ariadne lists what needs attention. It writes the spec the way the
+   repository's existing specs are written; where the repository keeps none,
+   the path they go in and the format they take are two more things it agrees
+   with you first. It asks for an explicit yes on the finished spec before it
+   creates any task.
+3. Once the spec is approved, the planner lands it itself, the way the
+   repository takes any other change: on a `direct` repository it commits the
+   spec on the base branch of the primary checkout and pushes it; on a
+   `pull_request` one it publishes a spec branch from a throwaway worktree,
+   opens the request with `gh` or `glab`, answers the comments on it and
+   merges it with `--squash`. That procedure is Ariadne's own text, one per
+   merge strategy, and it reaches the planner in its briefing. No task is
+   written until the spec is on the base branch, so every engineer branches
+   off a base that already carries it and every ticket names its merged
+   path.
+4. Then the planner creates the tasks through the Ariadne MCP tools
+   (assigning an engineer profile and reviewer profiles per task, with
+   optional `depends_on` ordering, which is for real dependencies alone).
+   Nothing runs while the goal is in `planning` — read the
    tasks and edit what they still need with `ariadne task update` — and it is
    `finalize_plan` that starts the work. The planner also picks what each of
    those agents runs on,
@@ -66,17 +78,17 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    fit for, and what each of its efforts buys — `ariadne models show
    <model>` prints the same card (or, until that lands, `ariadne models ls
    --format json` carries the same fields).
-4. The scheduler takes over: when a task's dependencies are merged it becomes
+5. The scheduler takes over: when a task's dependencies are merged it becomes
    `ready` and an **engineer** is spawned in a dedicated git worktree, on a
    branch named after the task — its title slugged plus a short tail of its
    id, as in `fix-the-landing-briefing-real-fetch-r9jr7c`. It implements,
    commits and calls `request_review` under a summary of what it did, which is
    what the reviewers read first.
-5. **Reviewers** spawn in read-only detached worktrees, inspect the diff and
+6. **Reviewers** spawn in read-only detached worktrees, inspect the diff and
    `submit_verdict`, approving or requesting changes. Change requests resume
    the engineer with the feedback; enough approvals move the task to
    `approved`.
-6. The task never leaves the engineer that wrote it: it keeps its session and
+7. The task never leaves the engineer that wrote it: it keeps its session and
    its worktree, and is briefed to land the change with the repository's
    **landing briefing** — the whole procedure, which the engineer then runs.
    Profiles own only their system prompts. Ariadne supplies the built-in
@@ -87,8 +99,10 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    can be edited after registration (`--landing-prompt`,
    `--landing-prompt-file`, and `ariadne repo prompt get|set|reset`). It is put
    back on the strategy's default by clearing it (`repo update
-   --reset-landing-prompt`, or `repo prompt reset`). What the two strategies
-   prefill is:
+   --reset-landing-prompt`, or `repo prompt reset`). It is what the engineers
+   of that repository run: the spec its planner lands in step 3 goes by the
+   merge strategy alone, whatever this text was rewritten to. What the two
+   strategies prefill is:
    - **`direct`** — rebase onto the base, squash into one commit with a
      conventional subject, fast-forward the base branch in the primary
      checkout, push it where there is a remote, then `mark_merged`. The daemon
@@ -104,7 +118,7 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
      into and added to, never rewritten. Once the request is approved and green
      it merges it with `--squash`, fast-forwards the base branch and reports
      the sha.
-7. Worktrees are cleaned up, dependent tasks wake up, and the goal completes
+8. Worktrees are cleaned up, dependent tasks wake up, and the goal completes
    when everything is merged.
 
 Task lifecycle: `pending → ready → in_progress → under_review →
