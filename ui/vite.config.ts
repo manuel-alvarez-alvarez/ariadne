@@ -30,5 +30,10 @@ export default defineConfig({
     // is still the file's own `@vitest-environment` docblock: most of them are
     // pure and have no business paying for a DOM.
     setupFiles: ["./src/test/setup.ts"],
+    // CI turns a failing test into a named annotation (see ci.yml); adding
+    // the junit reporter only there keeps a local `npm test` writing nothing
+    // extra to disk.
+    reporters: process.env.CI ? ["default", "junit"] : ["default"],
+    outputFile: process.env.CI ? { junit: "./junit.xml" } : undefined,
   },
 })

@@ -35,6 +35,13 @@ jobs:
         with:
           components: clippy
 
+      # nextest's JUnit output is what the report step at the end of this job
+      # turns into named annotations; plain `cargo test` has no such report.
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
         with:
@@ -55,7 +62,12 @@ jobs:
         run: cargo build --workspace --all-targets
 
       - name: Test
-        run: cargo test --workspace
+        run: cargo nextest run --workspace --profile ci
+
+      # nextest does not run doctests; run them the normal way so they still
+      # gate CI.
+      - name: Doctests
+        run: cargo test --doc --workspace
 
       # `-D warnings` on top of the workspace's `clippy::all = warn`.
       - name: Clippy
@@ -63,9 +75,22 @@ jobs:
 
       # Real tmux and real git, plus the `ariadne` CLI the spawn-plan test
       # launches — built into the same target dir by the build step above.
+      # A separate nextest profile so this run's report does not overwrite
+      # the Test step's above.
       - name: Integration tests (tmux, git)
         if: matrix.os == 'ubuntu-latest'
-        run: cargo test -p ariadne-daemon -- --ignored
+        run: cargo nextest run -p ariadne-daemon --profile ci-ignored --run-ignored only
+
+      # Name the failed test in the run summary and as an annotation, rather
+      # than leaving it to a dig through the raw log. Runs even when a test
+      # above failed.
+      - name: Report test results
+        uses: mikepenz/action-junit-report@v5
+        if: always()
+        with:
+          report_paths: 'target/nextest/*/junit.xml'
+          check_name: Rust tests (${{ matrix.os }})
+          annotate_only: true
 
   ui:
     name: UI
@@ -93,6 +118,17 @@ jobs:
 
       - name: Test
         run: npm test
+
+      # Name the failed test in the run summary and as an annotation, rather
+      # than leaving it to a dig through the raw log. Runs even when a test
+      # above failed.
+      - name: Report test results
+        uses: mikepenz/action-junit-report@v5
+        if: always()
+        with:
+          report_paths: 'ui/junit.xml'
+          check_name: UI tests
+          annotate_only: true
 
   tauri:
     name: Tauri shell

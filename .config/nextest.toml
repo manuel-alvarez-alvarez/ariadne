@@ -1,0 +1,10 @@
+# CI turns every test result into a JUnit file the report step (ci.yml)
+# reads, so a failed test's name shows up in the run summary instead of
+# buried in the log. Two profiles because the ignored tmux/git integration
+# tests run as a second, separate invocation on ubuntu and must not
+# overwrite the first run's report.
+[profile.ci.junit]
+path = "junit.xml"
+
+[profile.ci-ignored.junit]
+path = "junit.xml"

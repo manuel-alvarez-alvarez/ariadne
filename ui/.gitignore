@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# CI's vitest JUnit report (see vite.config.ts)
+junit.xml
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
