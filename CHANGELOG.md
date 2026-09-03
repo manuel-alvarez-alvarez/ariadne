@@ -1,5 +1,129 @@
 # Changelog
 
+## [0.5.0](https://github.com/manuel-alvarez-alvarez/ariadne/compare/v0.4.0...v0.5.0) (2026-09-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* **api:** The API refuses a request body that carries a field its DTO does not declare. Such a body earned a 200 before.
+* The profile lifecycle prompt endpoints, CLI commands and flags are gone. Repository landing prompts are unchanged.
+* the `landing_direct` and `landing_pull_request` prompt kinds are gone. An engineer profile owns three briefings now, and the landing text is edited on the repository instead.
+* the message endpoints, the `message_created` stream event, the `goal msg` / `task msg` / `goal thread` / `task thread` commands and the two MCP conversation tools are removed, and `finalize_plan` no longer takes a summary. A database written by an earlier build is recreated, not migrated.
+* **api:** `ModelDto.efforts` carries objects rather than strings, and `default_effort` is gone — the effort the CLI runs by default is the one flagged in that list.
+* **cli:** `repo edit`, `agent list`, `goal messages` and `task messages` are gone; use `repo update`, `agent ls`, `goal thread` and `task thread`. `agent-event --kind claude` is now `--kind claude_code`.
+* **store:** a database written by an earlier release or by `main` cannot be opened. Delete `db_path` (default `~/.ariadne/ariadne.db`), along with its `-wal` and `-shm` files, before starting this version; the daemon writes a fresh one. Ariadne is pre-1.0, so a database is recreated rather than migrated.
+* **ui:** the generated API types are regenerated from a daemon carrying the collapsed `model` field, so `agent_kind` is gone from the goal, task, reviewer-slot and profile types and from every request.
+* **cli:** `--agent` is gone. `--model AGENT[:MODEL]` is the whole choice wherever it used to stand beside one, and `--reviewer` is `PROFILE[=MODEL]` in that spelling (`--reviewer Reviewer=codex:o3` reads as it always did). `task update --model default` replaces `--agent default`, and `profile update --model default` replaces `--agent auto`.
+* **ui:** the plan is the planner's to finalize; no approve action
+* **daemon:** `agent_kind` is gone from `GoalDto`, `TaskDto`, `TaskReviewerDto`, `ProfileDto`, `CreateGoalRequest`, `CreateTaskRequest`, `ReviewerAssignment`, `UpdateTaskRequest`, `CreateProfileRequest` and `UpdateProfileRequest`; each carries the agent CLI in its `model` instead. `GET /v1/models?agent=` is gone with it, `ModelDto.id` is now qualified, and `PUT /v1/profiles/{id}` spells clearing "default" rather than "auto". Session DTOs and `GET /v1/agents` are unchanged.
+* the planner finalizes its plan, once the user has validated it
+* **prompts:** the `message_delivery` prompt kind is gone, and migration 0003 drops any override that was set for it. The notice itself is unchanged.
+* **cli:** `--model` is no longer accepted without `--agent`, and `--reviewer PROFILE=MODEL` is now `PROFILE=AGENT[:MODEL]`.
+* **daemon:** a request naming a model and no agent is refused.
+
+### Features
+
+* account for the tokens every agent spends ([e6d25b7](https://github.com/manuel-alvarez-alvarez/ariadne/commit/e6d25b7e006490385822da13fead82f1cf902e9a))
+* **api:** describe every model and every effort the catalog serves ([d94042f](https://github.com/manuel-alvarez-alvarez/ariadne/commit/d94042f42dafad8ae3edc864b07a428efb1659ac))
+* **api:** refuse a request that carries an unknown field ([421d291](https://github.com/manuel-alvarez-alvarez/ariadne/commit/421d291aea1ba34922790834a3ff739200255693))
+* **cli:** choose the agent CLI first, and a model of it only after ([03fbf02](https://github.com/manuel-alvarez-alvarez/ariadne/commit/03fbf02d3f07a2a7ac220b20a2c2fe8a0264b33c))
+* **cli:** choose what an agent runs on with one --model, agent and all ([e94647f](https://github.com/manuel-alvarez-alvarez/ariadne/commit/e94647fd1efbf7beb537dea8c5338a2dc914de41))
+* **cli:** colour the doctor report ([b5c1f73](https://github.com/manuel-alvarez-alvarez/ariadne/commit/b5c1f734ebc6f3211347d940d04dbf8d0f52d1d9))
+* **cli:** colour the event, log and thread streams and the attention headings ([4497410](https://github.com/manuel-alvarez-alvarez/ariadne/commit/44974103223168fb1156f11ea3032028a51f9f7d))
+* **cli:** colour the inspect blocks and models show ([63ed3e3](https://github.com/manuel-alvarez-alvarez/ariadne/commit/63ed3e3d8b56c7caf5db67a5983ca05dfb035b95))
+* **cli:** colour the one-line confirmations, the error line and the setup prose ([0efa948](https://github.com/manuel-alvarez-alvarez/ariadne/commit/0efa948a44d4114582a9fc02ebe693206e2d9cf0))
+* **cli:** colour, glyphs, tables that fit, and lists you can pipe ([3e9b89c](https://github.com/manuel-alvarez-alvarez/ariadne/commit/3e9b89ce1394eb1768b5554b1a788a4af619c073))
+* **cli:** completions that are dynamic, verb-aware and one command away ([7f59d75](https://github.com/manuel-alvarez-alvarez/ariadne/commit/7f59d7509e01d38496c8f856164c26f8640c9ec1))
+* **cli:** count a Codex sub-agent's tokens in its task ([05a4e4d](https://github.com/manuel-alvarez-alvarez/ariadne/commit/05a4e4d6a7e92e47580257b7a781173b0abf40a1))
+* **cli:** follow what the daemon is doing instead of asking it again ([1b1715f](https://github.com/manuel-alvarez-alvarez/ariadne/commit/1b1715fce18ebfe3a70e324d155da405c8dcb834))
+* **cli:** let a planner session ask the user in the MCP rules ([09955c2](https://github.com/manuel-alvarez-alvarez/ariadne/commit/09955c220f33106d80386c516d210605b1ab0404))
+* **cli:** one verb per action, and a help screen that explains itself ([3dcba5f](https://github.com/manuel-alvarez-alvarez/ariadne/commit/3dcba5f127526b1e361dea3697163f4bee0d87e7))
+* **cli:** pin an effort wherever a model is pinned ([9513a3e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/9513a3e430de6d93efcb7352f1e0894d9af3b80f))
+* **cli:** report claude and codex token usage from the transcript ([b82ed70](https://github.com/manuel-alvarez-alvarez/ariadne/commit/b82ed700acf6de63ce20e1ac5e2521fac6df0c59))
+* **cli:** set, show and reset a repository's landing briefing ([3cd7045](https://github.com/manuel-alvarez-alvarez/ariadne/commit/3cd7045395976835126c9dfb18d27496b9b44ca5))
+* **cli:** show the cached share in token cells and exact counts in inspect ([224370f](https://github.com/manuel-alvarez-alvarez/ariadne/commit/224370f4fd092966d727a015739b5041e5cb88ec))
+* **cli:** show tier, cost, speed and effort descriptions in models ls and models show ([88e82f7](https://github.com/manuel-alvarez-alvarez/ariadne/commit/88e82f7a3314d0248c66810ed432333a17dfcafd))
+* **cli:** show token counts compactly everywhere, up to T ([e23bc62](https://github.com/manuel-alvarez-alvarez/ariadne/commit/e23bc6279a6dc5d8c17b7c76f556d5e5f259380a))
+* **cli:** show token figures as an in/out pair, matching the web ([825e82b](https://github.com/manuel-alvarez-alvarez/ariadne/commit/825e82b43127ec59dbff60c92c89eaece32df2bb))
+* **cli:** show token usage on sessions, tasks and goals ([9c5d9e2](https://github.com/manuel-alvarez-alvarez/ariadne/commit/9c5d9e29b5a59c11e4e7f5a251efc3b20eb281c2))
+* **cli:** style inspect blocks and share one palette across the CLI ([9f7fa36](https://github.com/manuel-alvarez-alvarez/ariadne/commit/9f7fa36b6f3e344be385f320f97f06e63f45dd22))
+* **cli:** take an id in any spelling, and never act unasked ([25e0e0e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/25e0e0e753c58271a6c17d73509c0457f70a0873))
+* **cli:** type into a session, list the models, and drive the daemon's service ([d6f92db](https://github.com/manuel-alvarez-alvarez/ariadne/commit/d6f92db1e693346d9f737a90e77658e1d98cf617))
+* **core:** teach the model catalog what effort each model runs at ([1065664](https://github.com/manuel-alvarez-alvarez/ariadne/commit/1065664bacc8d03e6220dc4af9e3702569a3121e))
+* **daemon:** choose one model, which names the agent CLI that runs it ([090c515](https://github.com/manuel-alvarez-alvarez/ariadne/commit/090c5158fe62f3867d61f6242c311e228c02fd85))
+* **daemon:** compact each agent session at every hand-off ([ab68914](https://github.com/manuel-alvarez-alvarez/ariadne/commit/ab689148ecc5d00ab6de66f50f93298845c26d52))
+* **daemon:** end a task whose dependency failed or was cancelled ([c98b83d](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c98b83da9f49126adb330ebbcf90c72caa7191f1))
+* **daemon:** pin the agent to run on, and the model only after it ([ed1c40d](https://github.com/manuel-alvarez-alvarez/ariadne/commit/ed1c40d34f8817a727853d114fde5ac161f4022d))
+* **daemon:** put a planner's last words in the goal thread ([9143811](https://github.com/manuel-alvarez-alvarez/ariadne/commit/91438117595604721c55479869cff7f7f10571a6))
+* **daemon:** raise "waiting for you" only where somebody waits ([6ec6610](https://github.com/manuel-alvarez-alvarez/ariadne/commit/6ec661058a238405d7fc50bd88760f10cb8d09c0))
+* **daemon:** run each agent at the effort its session was pinned to ([ef8db92](https://github.com/manuel-alvarez-alvarez/ariadne/commit/ef8db92662ae1c222a151b1548be8edd4964738e))
+* **daemon:** say who the daemon is on the event stream ([c5ad998](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c5ad9985ecd6036dd26301e1c6bf779dedb22ce7))
+* **daemon:** tell clients when a task branch's head moves ([481a405](https://github.com/manuel-alvarez-alvarez/ariadne/commit/481a405d792a154c8adeee29b1d2b5fbaa78a1f9))
+* **mcp:** let the planner size the model and effort of every task it writes ([305ad2f](https://github.com/manuel-alvarez-alvarez/ariadne/commit/305ad2fbab627897788a274e30bc2d95910c0287))
+* **mcp:** teach the planner to read the richer model catalog ([c42ebee](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c42ebeeeb344744926e0e8ec5c96e0dec7658da9))
+* move the landing briefing from the engineer profile to the repository ([305ee06](https://github.com/manuel-alvarez-alvarez/ariadne/commit/305ee06486a43634093b332118c1c73b37b90869))
+* **opencode:** report session token usage ([12945f0](https://github.com/manuel-alvarez-alvarez/ariadne/commit/12945f0908f51b9b162f87299afa3c91fd6296c2))
+* pick the model each agent runs on, per goal and per task ([b67e823](https://github.com/manuel-alvarez-alvarez/ariadne/commit/b67e823766cf64b30af30f8c3a857af2eba84fd2))
+* **prompts:** cut every agent-facing text and tell agents to be frugal ([a39959d](https://github.com/manuel-alvarez-alvarez/ariadne/commit/a39959d5e8733522f566c7e944ea21988763bf00))
+* **prompts:** land the approved spec before the tasks are created ([fdd0c5b](https://github.com/manuel-alvarez-alvarez/ariadne/commit/fdd0c5b66ab924b4329f0e6d72d6ee1451511a0c))
+* **prompts:** make the planner ask where the user is notified ([7add2a6](https://github.com/manuel-alvarez-alvarez/ariadne/commit/7add2a6143fa1aef1287e90b207015939e64a0ae))
+* **prompts:** plan a goal from a spec the user approves ([d421e30](https://github.com/manuel-alvarez-alvarez/ariadne/commit/d421e30b1c88ae9205773c8f2874c6f9ed08bf52))
+* **prompts:** word the message notice in the daemon, not in a profile ([09b07d4](https://github.com/manuel-alvarez-alvarez/ariadne/commit/09b07d4b7c487d81044748655e3f62731d695fcb))
+* **prompts:** write every agent-facing text in Simplified Technical English ([20d998b](https://github.com/manuel-alvarez-alvarez/ariadne/commit/20d998bc41b36ea48351baaafbb46426c5ce88c4))
+* remove the conversation between the user and the agents ([94486b0](https://github.com/manuel-alvarez-alvarez/ariadne/commit/94486b025055cdd789a8267201cd696f576c8374))
+* report token usage while a turn is still running ([11a5fd6](https://github.com/manuel-alvarez-alvarez/ariadne/commit/11a5fd688aa8921af0104575e4145991d5332a20))
+* restrict a profile's prompts to its system prompt ([95083a1](https://github.com/manuel-alvarez-alvarez/ariadne/commit/95083a17729e33cc5a7fe7cd2ebf2e159cd7b976))
+* **store:** fold the schema back into the one init migration ([7ac6b2e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/7ac6b2e3180297ffb1e09377b430d1dd46dffa6e))
+* **store:** pin the effort an agent runs at, beside its model ([d277fa6](https://github.com/manuel-alvarez-alvarez/ariadne/commit/d277fa6c5634337bd2d97be2a92f2324a45ab557))
+* the planner finalizes its plan, once the user has validated it ([7bcb30a](https://github.com/manuel-alvarez-alvarez/ariadne/commit/7bcb30a0c6d3ab48e4756abbc294edaca2d42a14))
+* the planner submits the plan, the user approves it ([991bf44](https://github.com/manuel-alvarez-alvarez/ariadne/commit/991bf442b2e84aae817ab33509d59a07d86e68a5))
+* **ui:** carry what needs attention to every screen, and answer it in one click ([3248233](https://github.com/manuel-alvarez-alvarez/ariadne/commit/324823374f1a27f1ba2ee01b7eac804aaada557c))
+* **ui:** choose and show the effort a model is run at ([ba7a7c8](https://github.com/manuel-alvarez-alvarez/ariadne/commit/ba7a7c8f754141ff18131940d9f092b08b1d9dba))
+* **ui:** choose each agent's model, and approve a plan before it starts ([f02185e](https://github.com/manuel-alvarez-alvarez/ariadne/commit/f02185e8c59e0f5e28e42e447917084825caf2b1))
+* **ui:** edit and reset the landing briefing in the repository dialog ([1090859](https://github.com/manuel-alvarez-alvarez/ariadne/commit/10908591fc0827bc02a83f8e09923851cc125b6a))
+* **ui:** edit profiles in place, on a list beside the editor ([0159994](https://github.com/manuel-alvarez-alvarez/ariadne/commit/0159994797863d968d1a193c078a043bc882929f))
+* **ui:** follow the conversation, keep the draft, and leave Escape to the agent ([4ede22f](https://github.com/manuel-alvarez-alvarez/ariadne/commit/4ede22ffcde2950507605725c27001181e867d7e))
+* **ui:** follow the daemon's heartbeat instead of polling it ([ecaa68c](https://github.com/manuel-alvarez-alvarez/ariadne/commit/ecaa68c5f9b3520c24d15f440628f3f37d758027))
+* **ui:** keep form dialogs' buttons in view and give briefs room ([86acb0d](https://github.com/manuel-alvarez-alvarez/ariadne/commit/86acb0d21cfb66c45793c31611bd52d005b78db2))
+* **ui:** keep the task diff live instead of asking for a refresh ([3f78be5](https://github.com/manuel-alvarez-alvarez/ariadne/commit/3f78be51e4aaea43017b6cb53bb25a5c6d76ff2e))
+* **ui:** make every label, colour and icon say one thing ([ce10e9b](https://github.com/manuel-alvarez-alvarez/ariadne/commit/ce10e9beb21b1134e126323de469e34b18dfc6fe))
+* **ui:** one model picker per slot replaces the agent select ([f37dfd7](https://github.com/manuel-alvarez-alvarez/ariadne/commit/f37dfd7bd663f819d966dcd14750a8abde2d15b9))
+* **ui:** pin the agent first on goals and tasks, the model under it ([ef2bed4](https://github.com/manuel-alvarez-alvarez/ariadne/commit/ef2bed44e0bf6506fe0c88dbb8e91a55cfe8682f))
+* **ui:** pin what an agent runs on with one control ([abb1541](https://github.com/manuel-alvarez-alvarez/ariadne/commit/abb1541c265ea931b4624795d7991bc5fdb1ec73))
+* **ui:** put active work first on the board and fit it on a laptop ([5cf4753](https://github.com/manuel-alvarez-alvarez/ariadne/commit/5cf47539784f6373b833af6528e8e569e4ff6efb))
+* **ui:** reach what is stuck from the palette, the Sessions screen and `?` ([e7d1ead](https://github.com/manuel-alvarez-alvarez/ariadne/commit/e7d1ead919b3173f06f232c0cbc9a07c615b30ce))
+* **ui:** round every token count, and spell them past M ([b9da8ae](https://github.com/manuel-alvarez-alvarez/ariadne/commit/b9da8ae43192a0e1e6a5f010e60a6004addd575d))
+* **ui:** say how much is behind each panel tab ([59b5581](https://github.com/manuel-alvarez-alvarez/ariadne/commit/59b5581222165e7d480b6061500989b054e37c8a))
+* **ui:** show a goal's repositories in its lane on the board ([c98a020](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c98a02018f299f99fa5997c81bf7cc8d8825505c))
+* **ui:** show the cached share of the input on every token figure ([af8e8b6](https://github.com/manuel-alvarez-alvarez/ariadne/commit/af8e8b6d9dd52e555931a492bf293a6bcc1cd56e))
+* **ui:** show tier, cost, speed and effort descriptions in the pickers ([0b6f2fe](https://github.com/manuel-alvarez-alvarez/ariadne/commit/0b6f2fed291010f1cd06ea8e715e829754af135a))
+* **ui:** show token usage per session, task and goal ([760a8f0](https://github.com/manuel-alvarez-alvarez/ariadne/commit/760a8f06cc394bd01182c399d202f688a2f07059))
+* **ui:** show tokens as a compact in/out pair ([a8fa9a9](https://github.com/manuel-alvarez-alvarez/ariadne/commit/a8fa9a9d25ede57e9b2613d5c74fbc790a071887))
+* **ui:** simplify profile prompt controls ([b150ce4](https://github.com/manuel-alvarez-alvarez/ariadne/commit/b150ce4436d81c0cade7184a66374979a03a7587))
+* **ui:** the plan is the planner's to finalize; no approve action ([31bb761](https://github.com/manuel-alvarez-alvarez/ariadne/commit/31bb76115b6040499d630dfb84983c9f1c72e3a5))
+
+
+### Bug Fixes
+
+* **daemon:** an idle agent is waiting for the daemon, not for you ([c560359](https://github.com/manuel-alvarez-alvarez/ariadne/commit/c56035994864430e02d4d4e4d481eff422637e46))
+* **daemon:** keep a pending question on the attention strip ([6a89bbc](https://github.com/manuel-alvarez-alvarez/ariadne/commit/6a89bbc54cc494d8ff337826c2ea45dcec76bd13))
+* **daemon:** keep a published request on the strip through a resume ([89025d9](https://github.com/manuel-alvarez-alvarez/ariadne/commit/89025d97e96f65d470ed0e2802295301dcc1f3fe))
+* **daemon:** pin test profiles by model, not agent_kind ([73617a1](https://github.com/manuel-alvarez-alvarez/ariadne/commit/73617a1cb0b87704463b7534f3a086692aa80ba3))
+* **daemon:** stop raising "disconnected" on agents nobody lost ([49d6137](https://github.com/manuel-alvarez-alvarez/ariadne/commit/49d61371bb65a7ee52a41324d20843d95d2715f7))
+* **daemon:** wait for a message's addressee instead of giving up in seconds ([24822b7](https://github.com/manuel-alvarez-alvarez/ariadne/commit/24822b709bfa5fcc7adad22a4bd1b2db8deb1a17))
+* **ui:** keep a board card's pills inside the card ([8dd5cd9](https://github.com/manuel-alvarez-alvarez/ariadne/commit/8dd5cd9954177686abe5dd49eaef1e4ab0e7aa81))
+* **ui:** read a panel's session as one line, role then id ([63305f4](https://github.com/manuel-alvarez-alvarez/ariadne/commit/63305f488766c587a395fe26883953ce6f2cef21))
+* **ui:** say the cached share once, beside the count it belongs to ([bcff29d](https://github.com/manuel-alvarez-alvarez/ariadne/commit/bcff29d3f518878879118c48f16233baf31e2149))
+* **ui:** scroll the goals board, not the screen around it ([f203e78](https://github.com/manuel-alvarez-alvarez/ariadne/commit/f203e78c70da41b1ab87011347224065ab389daf))
+* **ui:** show the command palette in the desktop window ([81dcc1d](https://github.com/manuel-alvarez-alvarez/ariadne/commit/81dcc1d9c864739c91202e963c8ada97611af812))
+* **ui:** stop panels and tables overflowing, and say each fact the same way ([7ec7067](https://github.com/manuel-alvarez-alvarez/ariadne/commit/7ec7067912bc623c900643b616a69990e522250f))
+* **ui:** stop refetching cached data on a clock ([97aab87](https://github.com/manuel-alvarez-alvarez/ariadne/commit/97aab8728856e05c6ae1853bcfc5406d1355d208))
+
+
+### Performance Improvements
+
+* **daemon:** shorten the waits on the orchestration critical path ([e9accbe](https://github.com/manuel-alvarez-alvarez/ariadne/commit/e9accbe7af6ea1d441830ecc7bf5badd91da2daa))
+
 ## [0.4.0](https://github.com/manuel-alvarez-alvarez/ariadne/compare/v0.3.0...v0.4.0) (2026-08-26)
 
 
