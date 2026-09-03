@@ -74,7 +74,6 @@ export const qk = {
     list: (filters?: PageFilters) => ["profiles", "list", filters ?? {}] as const,
     details: () => ["profiles", "detail"] as const,
     detail: (id: string) => ["profiles", "detail", id] as const,
-    prompts: (id: string) => ["profiles", "detail", id, "prompts"] as const,
   },
   /**
    * The registered checkouts goals are created against

@@ -344,8 +344,8 @@ export interface paths {
         put?: never;
         /**
          * Create a profile.
-         * @description It starts on the prompts of its role, every one of them the default: a
-         *     briefing is given to it afterwards, one `PUT` per kind.
+         * @description It starts on the system prompt of its role, and it owns no other prompt:
+         *     the briefings that start, resume and nudge a session are Ariadne's own.
          */
         post: operations["profiles_create"];
         delete?: never;
@@ -368,68 +368,6 @@ export interface paths {
         post?: never;
         /** Delete a profile (409 while referenced). */
         delete: operations["profiles_delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/profiles/{id}/prompts": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * The profile's briefing prompts, in briefing order: each one as it takes
-         *     effect, saying whether that is the default of its kind or a text set here.
-         */
-        get: operations["profiles_list_prompts"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/profiles/{id}/prompts/{kind}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /**
-         * Set the text of one prompt, which is what makes it the profile's own. A
-         *     template may drop every `{placeholder}` of its kind, but not name one the
-         *     kind has no value for: that token would reach the agent as literal text, so
-         *     it is refused here.
-         */
-        put: operations["profiles_update_prompt"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/profiles/{id}/prompts/{kind}/reset": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Put one prompt back on the default of its kind, dropping the text set on
-         *     the profile.
-         */
-        post: operations["profiles_reset_prompt"];
-        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -999,7 +937,8 @@ export interface components {
             role: components["schemas"]["Role"];
             /**
              * @description Absent or null = the default of the role, which the profile then
-             *     follows. Briefings are set afterwards, one `PUT` per kind.
+             *     follows. It is the one prompt a profile owns: the briefings that
+             *     start, resume and nudge a session are Ariadne's own.
              */
             system_prompt?: string | null;
         };
@@ -1441,28 +1380,6 @@ export interface components {
             system_prompt_is_default: boolean;
             updated_at: string;
         };
-        /**
-         * @description One of the briefing prompts a profile owns beside its system prompt, as it
-         *     takes effect.
-         */
-        ProfilePromptDto: {
-            /**
-             * @description Template text with `{placeholder}` tokens the daemon fills in: the one
-             *     set on the profile, or the default of the kind while it has none.
-             */
-            content: string;
-            /**
-             * @description Whether `content` is that default rather than a text set on this
-             *     profile.
-             */
-            is_default: boolean;
-            kind: components["schemas"]["PromptKind"];
-            /**
-             * @description When the text set on the profile was last written; null while the
-             *     default stands, which nothing dates.
-             */
-            updated_at?: string | null;
-        };
         /** @description What one profile spent on a task, named the way a reader addresses it. */
         ProfileUsageDto: {
             profile_id: string;
@@ -1470,14 +1387,6 @@ export interface components {
             profile_name?: string | null;
             usage: components["schemas"]["TokenUsageDto"];
         };
-        /**
-         * @description A prompt a profile owns beside its system prompt: one of the texts an
-         *     agent of that role is started, resumed or nudged with. Every briefing a
-         *     profile carries is one of these, and each kind belongs to the role that
-         *     receives it (see [`PromptKind::roles`]).
-         * @enum {string}
-         */
-        PromptKind: "planner_briefing" | "planner_resume" | "engineer_briefing" | "engineer_resume" | "changes_requested" | "reviewer_briefing" | "reviewer_resume";
         /**
          * @description The engineer reporting the pull or merge request it opened for a task, so
          *     the user has somewhere to go and read it: taken off `gh pr create`'s output
@@ -1847,10 +1756,6 @@ export interface components {
         /** @description Body of `PUT /v1/agents/{kind}`: the whole new flag list, empty included. */
         UpdateAgentConfigRequest: {
             extra_flags: string[];
-        };
-        /** @description Body of `PUT /v1/profiles/{id}/prompts/{kind}`: the whole new text. */
-        UpdateProfilePromptRequest: {
-            content: string;
         };
         /** @description Partial update; absent fields stay unchanged. */
         UpdateProfileRequest: {
@@ -2539,112 +2444,6 @@ export interface operations {
                 content?: never;
             };
             409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    profiles_list_prompts: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description profile id or name */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ProfilePromptDto"][];
-                };
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    profiles_update_prompt: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description profile id or name */
-                id: string;
-                /** @description prompt kind, e.g. engineer_briefing */
-                kind: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UpdateProfilePromptRequest"];
-            };
-        };
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ProfilePromptDto"];
-                };
-            };
-            /** @description unknown kind, a kind the profile's role does not own, or a placeholder the kind cannot fill in */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    profiles_reset_prompt: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description profile id or name */
-                id: string;
-                /** @description prompt kind, e.g. engineer_briefing */
-                kind: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ProfilePromptDto"];
-                };
-            };
-            /** @description unknown kind, or a kind the profile's role does not own */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: {
                 headers: {
                     [name: string]: unknown;
                 };

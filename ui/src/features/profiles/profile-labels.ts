@@ -12,7 +12,7 @@
  * read too.
  */
 
-import type { AgentKind, PromptKind, Role } from "@/api"
+import type { AgentKind, Role } from "@/api"
 import { AGENT_KIND_LABELS, ROLE_LABELS } from "@/lib/format"
 
 /** Roles, in the order the orchestration runs them. */
@@ -33,54 +33,4 @@ export function roleLabel(role: Role): string {
 
 export function agentKindLabel(kind: AgentKind | null | undefined): string {
   return kind ? AGENT_KIND_LABELS[kind] : AUTO_AGENT_LABEL
-}
-
-/**
- * The briefing prompts, named for the screen.
- *
- * A total record over the generated enum, so a prompt kind added to the daemon
- * fails to compile here until it is given a name. Which kinds a profile
- * actually has is the daemon's answer, not this map's: `GET
- * /v1/profiles/{id}/prompts` returns exactly the ones its role owns.
- */
-export const PROMPT_KIND_LABELS: Record<PromptKind, string> = {
-  planner_briefing: "Planner briefing",
-  planner_resume: "Planner resume",
-  engineer_briefing: "Engineer briefing",
-  engineer_resume: "Engineer resume",
-  changes_requested: "Changes requested",
-  reviewer_briefing: "Reviewer briefing",
-  reviewer_resume: "Reviewer resume",
-}
-
-/**
- * Every briefing kind, in the order above.
- *
- * The labels map is what proves this list total; this one exists because a zod
- * enum needs a tuple, not a record's keys.
- */
-export const PROMPT_KINDS = [
-  "planner_briefing",
-  "planner_resume",
-  "engineer_briefing",
-  "engineer_resume",
-  "changes_requested",
-  "reviewer_briefing",
-  "reviewer_resume",
-] as const satisfies readonly PromptKind[]
-
-/** When each briefing is sent, one line under the editor that holds it. */
-export const PROMPT_KIND_HINTS: Record<PromptKind, string> = {
-  planner_briefing: "Starts the planner on a goal.",
-  planner_resume: "Nudges the planner when the goal stops moving.",
-  engineer_briefing: "Starts the engineer on a task.",
-  engineer_resume: "Picks the engineer up again: a session that ended, or one gone quiet.",
-  changes_requested:
-    "Resumes the engineer with a round of requested changes, from the reviewers or from a published request.",
-  reviewer_briefing: "Starts a reviewer on a task under review.",
-  reviewer_resume: "Picks a reviewer up again: a new round, or one it has gone quiet in.",
-}
-
-export function promptKindLabel(kind: PromptKind): string {
-  return PROMPT_KIND_LABELS[kind]
 }

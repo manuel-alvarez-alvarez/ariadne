@@ -7,9 +7,6 @@
  * same state. Getting that backwards writes a profile pinned to a model
  * literally named "default", which nothing else in the stack would catch.
  *
- * The second is the prompt diff. A briefing left at its default must not be
- * sent — on create because the daemon seeds it, on update because a write it
- * did not need is a write that can fail.
  */
 
 import { describe, expect, it } from "vitest"
@@ -17,19 +14,11 @@ import { describe, expect, it } from "vitest"
 import type { ProfileDto } from "@/api"
 import { aProfile } from "@/test/fixtures"
 import {
-  changedPrompts,
   emptyProfileFormValues,
-  type PromptFormValue,
   profileToFormValues,
   toCreateRequest,
   toUpdateRequest,
 } from "./profile-form-values"
-
-/** What an engineer profile is briefed with, as its prompts endpoint answers. */
-const BRIEFINGS: PromptFormValue[] = [
-  { kind: "engineer_briefing", content: "Start the task." },
-  { kind: "changes_requested", content: "Apply the review." },
-]
 
 const PROFILE: ProfileDto = aProfile({
   id: "p1",
@@ -49,13 +38,7 @@ describe("profileToFormValues", () => {
       model: "claude_code:claude-opus-5",
       effort: "xhigh",
       systemPrompt: "You are a Rust engineer.",
-      prompts: [],
     })
-  })
-
-  it("takes the briefings from the second argument, which the DTO has no room for", () => {
-    const values = profileToFormValues(PROFILE, BRIEFINGS)
-    expect(values.prompts).toEqual(BRIEFINGS)
   })
 
   it("shows an unpinned model as the empty box that stands for auto", () => {
@@ -86,11 +69,6 @@ describe("toCreateRequest", () => {
     expect(toCreateRequest(values).system_prompt).toBeNull()
   })
 
-  it("carries no briefings: they are written to the profile once it exists", () => {
-    const values = profileToFormValues(PROFILE, BRIEFINGS)
-    expect(toCreateRequest(values)).not.toHaveProperty("prompts")
-  })
-
   it("passes a pinned model — agent CLI and all — through, at its effort", () => {
     const request = toCreateRequest(profileToFormValues(PROFILE))
     expect(request.model).toBe("claude_code:claude-opus-5")
@@ -118,21 +96,6 @@ describe("toUpdateRequest", () => {
   it("clears an emptied effort with the same sentinel, which is the CLI's own", () => {
     const values = profileToFormValues({ ...PROFILE, effort: null })
     expect(toUpdateRequest(values).effort).toBe("default")
-  })
-})
-
-describe("changedPrompts", () => {
-  it("is empty while nothing has been touched", () => {
-    expect(changedPrompts(BRIEFINGS, BRIEFINGS)).toEqual([])
-  })
-
-  it("keeps an emptied briefing, which is an edit like any other", () => {
-    const edited = [{ kind: "changes_requested" as const, content: "" }, ...BRIEFINGS.slice(2)]
-    expect(changedPrompts(edited, BRIEFINGS)).toEqual([{ kind: "changes_requested", content: "" }])
-  })
-
-  it("counts a kind the baseline never had as changed", () => {
-    expect(changedPrompts(BRIEFINGS, [])).toEqual(BRIEFINGS)
   })
 })
 

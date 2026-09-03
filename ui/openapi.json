@@ -672,7 +672,7 @@
           "profiles"
         ],
         "summary": "Create a profile.",
-        "description": "It starts on the prompts of its role, every one of them the default: a\nbriefing is given to it afterwards, one `PUT` per kind.",
+        "description": "It starts on the system prompt of its role, and it owns no other prompt:\nthe briefings that start, resume and nudge a session are Ariadne's own.",
         "operationId": "create",
         "requestBody": {
           "content": {
@@ -803,148 +803,6 @@
             "description": ""
           },
           "409": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/v1/profiles/{id}/prompts": {
-      "get": {
-        "tags": [
-          "profiles"
-        ],
-        "summary": "The profile's briefing prompts, in briefing order: each one as it takes\neffect, saying whether that is the default of its kind or a text set here.",
-        "operationId": "list_prompts",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "profile id or name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/ProfilePromptDto"
-                  }
-                }
-              }
-            }
-          },
-          "404": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/v1/profiles/{id}/prompts/{kind}": {
-      "put": {
-        "tags": [
-          "profiles"
-        ],
-        "summary": "Set the text of one prompt, which is what makes it the profile's own. A\ntemplate may drop every `{placeholder}` of its kind, but not name one the\nkind has no value for: that token would reach the agent as literal text, so\nit is refused here.",
-        "operationId": "update_prompt",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "profile id or name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "kind",
-            "in": "path",
-            "description": "prompt kind, e.g. engineer_briefing",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateProfilePromptRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProfilePromptDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "unknown kind, a kind the profile's role does not own, or a placeholder the kind cannot fill in"
-          },
-          "404": {
-            "description": ""
-          }
-        }
-      }
-    },
-    "/v1/profiles/{id}/prompts/{kind}/reset": {
-      "post": {
-        "tags": [
-          "profiles"
-        ],
-        "summary": "Put one prompt back on the default of its kind, dropping the text set on\nthe profile.",
-        "operationId": "reset_prompt",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "profile id or name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "kind",
-            "in": "path",
-            "description": "prompt kind, e.g. engineer_briefing",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProfilePromptDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "unknown kind, or a kind the profile's role does not own"
-          },
-          "404": {
             "description": ""
           }
         }
@@ -2209,7 +2067,7 @@
               "string",
               "null"
             ],
-            "description": "Absent or null = the default of the role, which the profile then\nfollows. Briefings are set afterwards, one `PUT` per kind."
+            "description": "Absent or null = the default of the role, which the profile then\nfollows. It is the one prompt a profile owns: the briefings that\nstart, resume and nudge a session are Ariadne's own."
           }
         }
       },
@@ -3129,35 +2987,6 @@
           }
         }
       },
-      "ProfilePromptDto": {
-        "type": "object",
-        "description": "One of the briefing prompts a profile owns beside its system prompt, as it\ntakes effect.",
-        "required": [
-          "kind",
-          "content",
-          "is_default"
-        ],
-        "properties": {
-          "content": {
-            "type": "string",
-            "description": "Template text with `{placeholder}` tokens the daemon fills in: the one\nset on the profile, or the default of the kind while it has none."
-          },
-          "is_default": {
-            "type": "boolean",
-            "description": "Whether `content` is that default rather than a text set on this\nprofile."
-          },
-          "kind": {
-            "$ref": "#/components/schemas/PromptKind"
-          },
-          "updated_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "When the text set on the profile was last written; null while the\ndefault stands, which nothing dates."
-          }
-        }
-      },
       "ProfileUsageDto": {
         "type": "object",
         "description": "What one profile spent on a task, named the way a reader addresses it.",
@@ -3180,19 +3009,6 @@
             "$ref": "#/components/schemas/TokenUsageDto"
           }
         }
-      },
-      "PromptKind": {
-        "type": "string",
-        "description": "A prompt a profile owns beside its system prompt: one of the texts an\nagent of that role is started, resumed or nudged with. Every briefing a\nprofile carries is one of these, and each kind belongs to the role that\nreceives it (see [`PromptKind::roles`]).",
-        "enum": [
-          "planner_briefing",
-          "planner_resume",
-          "engineer_briefing",
-          "engineer_resume",
-          "changes_requested",
-          "reviewer_briefing",
-          "reviewer_resume"
-        ]
       },
       "RecordPullRequestRequest": {
         "type": "object",
@@ -3946,18 +3762,6 @@
             "items": {
               "type": "string"
             }
-          }
-        }
-      },
-      "UpdateProfilePromptRequest": {
-        "type": "object",
-        "description": "Body of `PUT /v1/profiles/{id}/prompts/{kind}`: the whole new text.",
-        "required": [
-          "content"
-        ],
-        "properties": {
-          "content": {
-            "type": "string"
           }
         }
       },

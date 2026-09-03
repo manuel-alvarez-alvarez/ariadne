@@ -23,16 +23,10 @@
 
 import { z } from "zod"
 
-import type {
-  CreateProfileRequest,
-  ProfileDto,
-  PromptKind,
-  Role,
-  UpdateProfileRequest,
-} from "@/api"
+import type { CreateProfileRequest, ProfileDto, Role, UpdateProfileRequest } from "@/api"
 
 import { modelRefField } from "./model-ref"
-import { PROMPT_KINDS, ROLES } from "./profile-labels"
+import { ROLES } from "./profile-labels"
 
 /**
  * What the daemon reads as "not my choice": for the model, this profile back
@@ -40,22 +34,6 @@ import { PROMPT_KINDS, ROLES } from "./profile-labels"
  */
 const DEFAULT_SENTINEL = "default"
 
-/**
- * One briefing prompt while it is being edited: the daemon's kind and the text.
- *
- * Which kinds a form holds is never decided here — they are the ones the
- * profile's own prompts endpoint answers with, in the order it sends them, so a
- * new profile carries none until it exists.
- */
-export interface PromptFormValue {
-  kind: PromptKind
-  content: string
-}
-
-/**
- * The briefings are an array because `useFieldArray` keys rows by identity,
- * and because their order is the daemon's.
- */
 export const profileFormSchema = z.object({
   name: z
     .string()
@@ -73,7 +51,6 @@ export const profileFormSchema = z.object({
   // create an empty one means the role's default, so there is nothing to
   // validate.
   systemPrompt: z.string(),
-  prompts: z.array(z.object({ kind: z.enum(PROMPT_KINDS), content: z.string() })),
 })
 
 export type ProfileFormValues = z.infer<typeof profileFormSchema>
@@ -86,7 +63,6 @@ export function emptyProfileFormValues(role: Role = "engineer"): ProfileFormValu
     model: "",
     effort: "",
     systemPrompt: "",
-    prompts: [],
   }
 }
 
@@ -96,35 +72,14 @@ export function emptyProfileFormValues(role: Role = "engineer"): ProfileFormValu
  * Its briefings arrive from their own endpoint, later than the profile itself,
  * so they are a second argument rather than a field of the DTO.
  */
-export function profileToFormValues(
-  profile: ProfileDto,
-  prompts: readonly PromptFormValue[] = [],
-): ProfileFormValues {
+export function profileToFormValues(profile: ProfileDto): ProfileFormValues {
   return {
     name: profile.name,
     role: profile.role,
     model: profile.model ?? "",
     effort: profile.effort ?? "",
     systemPrompt: profile.system_prompt,
-    prompts: prompts.map((prompt) => ({ kind: prompt.kind, content: prompt.content })),
   }
-}
-
-/**
- * The prompts whose text is not what `baseline` holds.
- *
- * The baseline is what the daemon last answered, which is the default itself
- * for a prompt the profile has none of its own: an untouched briefing is never
- * written, so reading one does not quietly turn it into an override.
- */
-export function changedPrompts(
-  prompts: readonly PromptFormValue[],
-  baseline: readonly PromptFormValue[],
-): PromptFormValue[] {
-  const before = new Map(baseline.map((prompt) => [prompt.kind, prompt.content]))
-  return prompts
-    .filter((prompt) => before.get(prompt.kind) !== prompt.content)
-    .map((prompt) => ({ kind: prompt.kind, content: prompt.content }))
 }
 
 /**

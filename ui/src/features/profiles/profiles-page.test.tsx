@@ -17,13 +17,11 @@ import userEvent from "@testing-library/user-event"
 import { createMemoryRouter, RouterProvider, useLocation, useNavigate } from "react-router-dom"
 import { beforeEach, describe, expect, it } from "vitest"
 
-import type { ModelDto, ProfileDto, ProfilePromptDto } from "@/api"
+import type { ModelDto, ProfileDto } from "@/api"
 import { PROFILE_PARAM, paths } from "@/routes/paths"
 import { aModel, anEffort, aProfile } from "@/test/fixtures"
 import { daemonFetch, jsonResponse, renderScreen } from "@/test/harness"
 import { ProfilesPage } from "./profiles-page"
-
-const STAMP = "2026-01-01T00:00:00Z"
 
 const ENGINEER: ProfileDto = aProfile({
   id: "01JPROF000000000000000ENG",
@@ -69,21 +67,6 @@ const CATALOG: ModelDto[] = [
   }),
 ]
 
-/** One stored briefing of each kind a role owns, in the daemon's order. */
-function briefings(role: ProfileDto["role"]): ProfilePromptDto[] {
-  const kinds: Record<ProfileDto["role"], ProfilePromptDto["kind"][]> = {
-    planner: ["planner_briefing", "planner_resume"],
-    engineer: ["engineer_briefing", "engineer_resume", "changes_requested"],
-    reviewer: ["reviewer_briefing", "reviewer_resume"],
-  }
-  return kinds[role].map((kind) => ({
-    kind,
-    content: `Stored ${kind}.`,
-    is_default: false,
-    updated_at: STAMP,
-  }))
-}
-
 interface Recorded {
   method: string
   path: string
@@ -112,20 +95,6 @@ function stubDaemon(initial: ProfileDto[]) {
       const created: ProfileDto = { ...ENGINEER, ...body, id: "01JPROF00000000000000NEW" }
       profiles.push(created)
       return jsonResponse(created, 201)
-    }
-    const prompts = pathname.match(/^\/v1\/profiles\/([^/]+)\/prompts$/)
-    if (prompts) {
-      const profile = profiles.find((one) => one.id === prompts[1])
-      return profile ? jsonResponse(briefings(profile.role)) : jsonResponse({}, 404)
-    }
-    const promptWrite = pathname.match(/^\/v1\/profiles\/[^/]+\/prompts\/([a-z_]+)$/)
-    if (promptWrite && request.method === "PUT") {
-      return jsonResponse({
-        kind: promptWrite[1],
-        content: body?.content ?? "",
-        is_default: false,
-        updated_at: STAMP,
-      })
     }
     const one = pathname.match(/^\/v1\/profiles\/([^/]+)$/)
     if (one && request.method === "DELETE") {
@@ -197,15 +166,6 @@ async function editorFor(name: string): Promise<HTMLElement> {
   return await screen.findByRole("heading", { level: 2, name })
 }
 
-/** Opens one prompt's tab and answers its textarea. */
-async function openPrompt(
-  user: ReturnType<typeof userEvent.setup>,
-  label: string,
-): Promise<HTMLTextAreaElement> {
-  await user.click(await screen.findByRole("tab", { name: new RegExp(`^${label}`) }))
-  return (await screen.findByRole("textbox", { name: label })) as HTMLTextAreaElement
-}
-
 beforeEach(() => {
   requests = []
   stubDaemon([ENGINEER, REVIEWER, PLANNER, PINNED])
@@ -270,7 +230,7 @@ describe("the selection", () => {
     expect(selectedInUrl()).toBeNull()
   })
 
-  it("puts a picked profile in the URL and opens its editor on its prompts", async () => {
+  it("puts a picked profile in the URL and opens its editor", async () => {
     const user = userEvent.setup()
     renderPage()
     await screen.findByRole("link", { name: /^Builder/ })
@@ -280,15 +240,7 @@ describe("the selection", () => {
     expect(await editorFor("Builder")).toBeDefined()
     expect(selectedInUrl()).toBe(ENGINEER.id)
     expect(item("Builder").getAttribute("aria-current")).toBe("page")
-    // The system prompt first, then every briefing the daemon lists for the
-    // role, in its order, named for the screen.
-    await screen.findByRole("tab", { name: "Engineer briefing" })
-    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
-      "System prompt",
-      "Engineer briefing",
-      "Engineer resume",
-      "Changes requested",
-    ])
+    expect(await screen.findByRole("textbox", { name: "System prompt" })).toBeDefined()
   })
 
   it("selects and scrolls to the profile a link asked for", async () => {
@@ -307,7 +259,7 @@ describe("the selection", () => {
     renderPage(paths.profile(REVIEWER.id))
 
     expect(await editorFor("Critic")).toBeDefined()
-    expect(await screen.findByRole("tab", { name: "Reviewer briefing" })).toBeDefined()
+    expect(await screen.findByRole("textbox", { name: "System prompt" })).toBeDefined()
   })
 
   it("walks selections with Back, since each one is a history step", async () => {
@@ -356,8 +308,8 @@ describe("switching with unsaved edits", () => {
     renderPage(paths.profile(ENGINEER.id))
     await editorFor("Builder")
 
-    const briefing = await openPrompt(user, "Engineer briefing")
-    await user.type(briefing, " More.")
+    const systemPrompt = await screen.findByRole("textbox", { name: "System prompt" })
+    await user.type(systemPrompt, " More.")
     await user.click(item("Critic"))
 
     const dialog = await screen.findByRole("dialog", { name: "Discard changes?" })
@@ -369,8 +321,8 @@ describe("switching with unsaved edits", () => {
     expect(selectedInUrl()).toBe(ENGINEER.id)
     expect(screen.getByRole("heading", { level: 2, name: "Builder" })).toBeDefined()
     expect(
-      (screen.getByRole("textbox", { name: "Engineer briefing" }) as HTMLTextAreaElement).value,
-    ).toBe("Stored engineer_briefing. More.")
+      (screen.getByRole("textbox", { name: "System prompt" }) as HTMLTextAreaElement).value,
+    ).toContain(" More.")
     // Nothing was written by either answer.
     expect(requests.filter((one) => one.method !== "GET")).toEqual([])
   })
@@ -380,7 +332,7 @@ describe("switching with unsaved edits", () => {
     renderPage(paths.profile(ENGINEER.id))
     await editorFor("Builder")
 
-    await user.type(await openPrompt(user, "Engineer briefing"), " More.")
+    await user.type(await screen.findByRole("textbox", { name: "System prompt" }), " More.")
     await user.click(item("Critic"))
 
     const dialog = await screen.findByRole("dialog", { name: "Discard changes?" })
@@ -395,7 +347,7 @@ describe("switching with unsaved edits", () => {
     const user = userEvent.setup()
     renderPage(paths.profile(ENGINEER.id))
     await editorFor("Builder")
-    await screen.findByRole("tab", { name: "Engineer briefing" })
+    await screen.findByRole("textbox", { name: "System prompt" })
 
     await user.click(item("Critic"))
 
@@ -427,10 +379,10 @@ describe("creating and deleting", () => {
         role: "reviewer",
       })
     })
-    // The editor opens on the new profile: its prompts are edited there.
+    // The editor opens on the new profile.
     expect(await editorFor("rust-reviewer")).toBeDefined()
     expect(selectedInUrl()).toBe("01JPROF00000000000000NEW")
-    expect(await screen.findByRole("tab", { name: "Reviewer briefing" })).toBeDefined()
+    expect(await screen.findByRole("textbox", { name: "System prompt" })).toBeDefined()
     expect(
       within(screen.getByRole("region", { name: "Reviewer" })).getByRole("link", {
         name: /^rust-reviewer/,
