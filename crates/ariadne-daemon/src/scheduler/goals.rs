@@ -35,13 +35,8 @@ impl super::Scheduler {
                 // stall, which is the only place a goal still in planning has
                 // to say that nothing is happening.
                 for planner in planners {
-                    let template = prompts::template_for(
-                        &self.store,
-                        &planner.profile_id,
-                        PromptKind::PlannerResume,
-                    )
-                    .await;
-                    let nudge = prompts::planner_resume_briefing(&template, &goal);
+                    let template = prompts::template_for(PromptKind::PlannerResume);
+                    let nudge = prompts::planner_resume_briefing(template, &goal);
                     self.check_session_quiet(&planner, (goal.status.clone(), 0), &nudge)
                         .await?;
                 }

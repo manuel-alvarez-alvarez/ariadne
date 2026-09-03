@@ -553,9 +553,8 @@ impl Launcher {
             .await?;
 
         let system = prompts::system_prompt(&profile);
-        let template =
-            prompts::template_for(&self.store, &profile.id, PromptKind::PlannerBriefing).await;
-        let briefing = prompts::planner_briefing(&template, &goal, &repos);
+        let template = prompts::template_for(PromptKind::PlannerBriefing);
+        let briefing = prompts::planner_briefing(template, &goal, &repos);
         self.spawn(&session, PathBuf::from(&repo.path), system, briefing)
             .await?;
         self.store
@@ -599,9 +598,8 @@ impl Launcher {
             deps.push(self.store.get_task(&dep_id).await?);
         }
         let system = prompts::system_prompt(&profile);
-        let template =
-            prompts::template_for(&self.store, &profile.id, PromptKind::EngineerBriefing).await;
-        let briefing = prompts::engineer_briefing(&template, &task, &goal, &repo, &deps);
+        let template = prompts::template_for(PromptKind::EngineerBriefing);
+        let briefing = prompts::engineer_briefing(template, &task, &goal, &repo, &deps);
         self.spawn(&session, worktree, system, briefing).await?;
         self.store
             .get_session(&session.id)
@@ -727,10 +725,9 @@ impl Launcher {
 
         let summary = self.store.review_summary(&task.id).await?;
         let system = prompts::system_prompt(&profile);
-        let template =
-            prompts::template_for(&self.store, &profile.id, PromptKind::ReviewerBriefing).await;
+        let template = prompts::template_for(PromptKind::ReviewerBriefing);
         let briefing =
-            prompts::reviewer_briefing(&template, &task, &goal, &repo, summary.as_deref());
+            prompts::reviewer_briefing(template, &task, &goal, &repo, summary.as_deref());
         self.spawn(&session, worktree, system, briefing).await?;
         self.store
             .get_session(&session.id)

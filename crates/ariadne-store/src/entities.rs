@@ -5,8 +5,8 @@
 use std::str::FromStr;
 
 use ariadne_core::{
-    AgentKind, AttentionReason, GoalStatus, MergeStrategy, PromptKind,
-    ReviewVerdict, Role, SessionStatus, TaskStatus,
+    AgentKind, AttentionReason, GoalStatus, MergeStrategy, ReviewVerdict, Role, SessionStatus,
+    TaskStatus,
 };
 
 use crate::defaults::{default_landing_prompt, default_system_prompt};
@@ -43,7 +43,6 @@ macro_rules! enum_columns {
 enum_columns! {
     Profile { role: Role, agent_kind: [AgentKind] }
     AgentConfig { agent_kind: AgentKind }
-    ProfilePrompt { kind: PromptKind }
     Repository { merge_strategy: MergeStrategy }
     Goal { status: GoalStatus, agent_kind: [AgentKind] }
     Task { status: TaskStatus, agent_kind: [AgentKind] }
@@ -113,22 +112,6 @@ impl AgentConfig {
             .map(|f| f.to_string())
             .collect()
     }
-}
-
-/// One briefing of a profile as it takes effect: the text set on the profile,
-/// or — while nothing is set for that kind — the default the kind ships with.
-#[derive(Debug, Clone)]
-pub struct ProfilePrompt {
-    pub profile_id: String,
-    pub kind: String,
-    /// Template text with `{placeholder}` tokens the daemon fills in.
-    pub content: String,
-    /// Whether `content` is the kind's default rather than a text set on this
-    /// profile.
-    pub is_default: bool,
-    /// When the text set on the profile was last written; `None` while the
-    /// default stands, which nothing here dates.
-    pub updated_at: Option<String>,
 }
 
 /// A git repository registered once, globally, and named by id from there on.

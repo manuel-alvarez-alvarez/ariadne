@@ -106,7 +106,6 @@ impl AppState {
         doctor::report,
         agents::list, agents::update,
         profiles::create, profiles::list, profiles::get, profiles::update, profiles::delete,
-        profiles::list_prompts, profiles::update_prompt, profiles::reset_prompt,
         profiles::reset_system_prompt,
         repositories::create, repositories::list, repositories::get,
         repositories::update, repositories::delete,
@@ -163,15 +162,6 @@ pub fn router(state: AppState) -> Router {
             get(profiles::get)
                 .put(profiles::update)
                 .delete(profiles::delete),
-        )
-        .route("/v1/profiles/{id}/prompts", get(profiles::list_prompts))
-        .route(
-            "/v1/profiles/{id}/prompts/{kind}",
-            put(profiles::update_prompt),
-        )
-        .route(
-            "/v1/profiles/{id}/prompts/{kind}/reset",
-            post(profiles::reset_prompt),
         )
         .route(
             "/v1/profiles/{id}/system-prompt/reset",

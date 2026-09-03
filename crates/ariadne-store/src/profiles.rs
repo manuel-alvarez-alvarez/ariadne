@@ -3,6 +3,7 @@
 use ariadne_core::id::new_id;
 use ariadne_core::{AgentKind, Role};
 
+use crate::defaults::BUILTIN_PROFILES;
 use crate::query::Filtered;
 use crate::{Change, Profile, Result, Store, StoreError, now};
 
@@ -34,8 +35,40 @@ pub struct ProfileUpdate {
 }
 
 impl Store {
-    /// Create a profile on the prompts of its role: nothing of its own is
-    /// stored, so every default it runs on stays the one in the code.
+    /// Seed the built-in profiles into an empty database, on the system
+    /// prompts of their roles, so a rewritten default reaches them without any
+    /// database being touched.
+    ///
+    /// Emptiness is the only trigger: once a database has profiles, deleting
+    /// a built-in stays deleted and an edited prompt stays edited.
+    pub(crate) async fn seed_builtin_profiles(&self) -> Result<()> {
+        let mut tx = self.w().begin().await?;
+        let profiles: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM profiles")
+            .fetch_one(&mut *tx)
+            .await?;
+        if profiles > 0 {
+            return Ok(());
+        }
+        let ts = now();
+        for builtin in &BUILTIN_PROFILES {
+            sqlx::query(
+                "INSERT INTO profiles (id, name, role, agent_kind, model, system_prompt, created_at, updated_at)
+                 VALUES (?, ?, ?, NULL, NULL, NULL, ?, ?)",
+            )
+            .bind(builtin.id)
+            .bind(builtin.name)
+            .bind(builtin.role.as_str())
+            .bind(&ts)
+            .bind(&ts)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Create a profile on the system prompt of its role: nothing of its own
+    /// is stored, so the default it runs on stays the one in the code.
     pub async fn create_profile(&self, new: NewProfile) -> Result<Profile> {
         let id = new_id();
         let ts = now();
@@ -110,6 +143,20 @@ impl Store {
         .await
         .map_err(|e| taken(e, &name))?;
         let profile = self.get_profile(id).await?;
+        self.publish(Change::ProfileUpdated(profile.clone()));
+        Ok(profile)
+    }
+
+    /// Put the profile's system prompt back on the default of its role, by
+    /// dropping the text set on it: what is left is the default itself.
+    pub async fn reset_system_prompt(&self, profile_id: &str) -> Result<Profile> {
+        self.get_profile(profile_id).await?;
+        sqlx::query("UPDATE profiles SET system_prompt = NULL, updated_at = ? WHERE id = ?")
+            .bind(now())
+            .bind(profile_id)
+            .execute(self.w())
+            .await?;
+        let profile = self.get_profile(profile_id).await?;
         self.publish(Change::ProfileUpdated(profile.clone()));
         Ok(profile)
     }

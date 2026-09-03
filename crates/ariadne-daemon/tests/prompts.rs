@@ -1,12 +1,8 @@
-//! The prompts an agent is launched with come from its profile's rows.
+//! The prompts an agent is launched with are Ariadne's own templates.
 //!
-//! Two things have to hold for prompts to be a developer's to edit: what the
-//! database says is what the session gets, and a template edited into nonsense
-//! still starts a session — a broken prompt is a bad briefing, never a task
-//! that cannot get an agent. Saving such a template is refused these days (see
-//! `PromptKind::validate_template`), so the broken one below is put into the
-//! database behind the store's back, the way one written before the check
-//! existed sits there.
+//! One thing has to hold: the built-in template of the kind is what the
+//! session gets, with nothing of the database between the two — a profile
+//! carries a system prompt and no lifecycle text at all.
 //!
 //! And what assembly comes to is pinned here too: the placeholders of a spawn,
 //! a resume and a review round are filled in by hand and compared with what
@@ -20,9 +16,9 @@
 
 mod common;
 
-use ariadne_core::{Actor, PromptKind, Role, SessionStatus, TaskStatus};
+use ariadne_core::{Actor, PromptKind, TaskStatus};
 use ariadne_daemon::agents::prompts;
-use ariadne_store::defaults::default_prompt;
+use ariadne_store::defaults::default_prompt_text;
 
 use common::{Cast, Harness, harness};
 
@@ -47,41 +43,36 @@ fn fill(template: &str, values: &[(&str, &str)]) -> String {
     out
 }
 
-fn default_for(role: Role, kind: PromptKind) -> String {
-    default_prompt(role, kind).unwrap().to_string()
+fn default_for(kind: PromptKind) -> String {
+    default_prompt_text(kind).to_string()
 }
 
-/// The briefing in the database is the briefing the agent is launched with,
+/// The built-in template is the briefing the agent is launched with,
 /// placeholders and all — and nowhere else: a briefing in the tmux command
 /// line is what the plan file exists to prevent, whatever its size.
 #[tokio::test]
-async fn a_spawned_engineer_is_briefed_from_its_profiles_prompt() {
+async fn a_spawned_engineer_is_briefed_from_the_builtin_template() {
     let h = harness().await;
     let cast = seeded(&h).await;
-    h.store
-        .update_profile_prompt(
-            &cast.engineer.id,
-            PromptKind::EngineerBriefing,
-            "Do {task_title} on {branch}, in {worktree_path}.",
-        )
-        .await
-        .unwrap();
 
     let session = h.launcher.spawn_engineer(&cast.task.id).await.unwrap();
-    let worktree = session.worktree_path.clone().unwrap();
-    let briefing = format!(
-        "Do {} on {}, in {worktree}.",
-        cast.task.title, cast.task.branch
+    let task = h.store.get_task(&cast.task.id).await.unwrap();
+    let briefing = prompts::engineer_briefing(
+        prompts::template_for(PromptKind::EngineerBriefing),
+        &task,
+        &cast.goal,
+        &cast.repo,
+        &[],
     );
     let plan = h.spawn_plan(&session.id).expect("a spawn plan");
     assert!(
         plan.argv.iter().any(|arg| arg == &briefing),
-        "the edited briefing, rendered: {:?}",
+        "the built-in briefing, rendered: {:?}",
         plan.argv
     );
     let log = h.tmux_calls().join("\n");
     assert!(
-        !log.contains(&briefing) && !log.contains("Do "),
+        !log.contains(&briefing),
         "the briefing reached the tmux command line: {log}"
     );
 
@@ -98,27 +89,18 @@ async fn a_spawned_engineer_is_briefed_from_its_profiles_prompt() {
     assert_eq!(system, "You are engineer.");
 }
 
-/// A profile nobody edited holds no prompt at all, and is briefed with the
-/// defaults of its role: the code's text is what reaches the agent, without
-/// anything having been copied into the database first — and what reaches it
-/// is the default with every placeholder filled in, exactly.
+/// The code's text is what reaches the agent, without anything having been
+/// copied into the database first — and what reaches it is the built-in
+/// template with every placeholder filled in, exactly.
 #[tokio::test]
 async fn a_spawn_assembles_the_default_briefing_word_for_word() {
     let h = harness().await;
     let cast = seeded(&h).await;
-    assert!(
-        h.store
-            .list_profile_prompts(&cast.engineer.id)
-            .await
-            .unwrap()
-            .iter()
-            .all(|p| p.is_default)
-    );
 
     let session = h.launcher.spawn_engineer(&cast.task.id).await.unwrap();
     let task = h.store.get_task(&cast.task.id).await.unwrap();
     let expected = fill(
-        &default_for(Role::Engineer, PromptKind::EngineerBriefing),
+        &default_for(PromptKind::EngineerBriefing),
         &[
             ("task_title", &task.title),
             ("task_description", &task.description),
@@ -142,7 +124,7 @@ async fn a_spawn_assembles_the_default_briefing_word_for_word() {
     // between the two decorates it.
     assert_eq!(
         prompts::engineer_briefing(
-            &default_for(Role::Engineer, PromptKind::EngineerBriefing),
+            &default_for(PromptKind::EngineerBriefing),
             &task,
             &h.store.get_goal(&task.goal_id).await.unwrap(),
             &cast.repo,
@@ -163,11 +145,11 @@ async fn a_resume_and_a_review_round_assemble_word_for_word() {
 
     assert_eq!(
         prompts::engineer_resume_briefing(
-            &default_for(Role::Engineer, PromptKind::EngineerResume),
+            &default_for(PromptKind::EngineerResume),
             &task,
         ),
         fill(
-            &default_for(Role::Engineer, PromptKind::EngineerResume),
+            &default_for(PromptKind::EngineerResume),
             &[("task_title", &task.title), ("branch", &task.branch)],
         )
     );
@@ -175,12 +157,12 @@ async fn a_resume_and_a_review_round_assemble_word_for_word() {
     let round = task.review_round.to_string();
     assert_eq!(
         prompts::reviewer_resume_briefing(
-            &default_for(Role::Reviewer, PromptKind::ReviewerResume),
+            &default_for(PromptKind::ReviewerResume),
             &task,
             Some(SUMMARY),
         ),
         fill(
-            &default_for(Role::Reviewer, PromptKind::ReviewerResume),
+            &default_for(PromptKind::ReviewerResume),
             &[
                 ("review_round", &round),
                 ("task_title", &task.title),
@@ -192,7 +174,7 @@ async fn a_resume_and_a_review_round_assemble_word_for_word() {
     // A round nobody wrote a summary for still says so in words.
     assert!(
         prompts::reviewer_resume_briefing(
-            &default_for(Role::Reviewer, PromptKind::ReviewerResume),
+            &default_for(PromptKind::ReviewerResume),
             &task,
             None,
         )
@@ -240,7 +222,7 @@ async fn a_reviewer_is_briefed_with_the_summary_review_was_requested_with() {
         .unwrap();
     let reviewed = h.store.get_task(&task.id).await.unwrap();
     let expected = fill(
-        &default_for(Role::Reviewer, PromptKind::ReviewerBriefing),
+        &default_for(PromptKind::ReviewerBriefing),
         &[
             ("task_title", &reviewed.title),
             ("review_round", &reviewed.review_round.to_string()),
@@ -261,53 +243,4 @@ async fn a_reviewer_is_briefed_with_the_summary_review_was_requested_with() {
     // The summary is what the engineer requested review with, undecorated:
     // it is the whole of what the reviewer is told.
     assert!(!expected.contains("Review requested:"));
-}
-
-/// A template that is nonsense by the time it is read is still a briefing: the
-/// unknown token and the brace that never closes travel through verbatim and
-/// the session starts. So does an empty one.
-#[tokio::test]
-async fn a_broken_or_empty_template_still_spawns_the_engineer() {
-    let h = harness().await;
-    let cast = seeded(&h).await;
-    h.plant_prompt(
-        &cast.engineer.id,
-        PromptKind::EngineerBriefing,
-        "# {task_title} {who_even} {unclosed",
-    )
-    .await;
-
-    let session = h.launcher.spawn_engineer(&cast.task.id).await.unwrap();
-    assert_eq!(session.status(), SessionStatus::Running);
-    let plan = h.spawn_plan(&session.id).expect("a spawn plan");
-    let briefing = format!("# {} {{who_even}} {{unclosed", cast.task.title);
-    assert!(
-        plan.argv.iter().any(|arg| arg == &briefing),
-        "what could not be substituted stayed as it was: {:?}",
-        plan.argv
-    );
-
-    h.store
-        .update_profile_prompt(&cast.engineer.id, PromptKind::EngineerBriefing, "")
-        .await
-        .unwrap();
-    let session = h.launcher.spawn_engineer(&cast.task.id).await.unwrap();
-    assert_eq!(session.status(), SessionStatus::Running);
-}
-
-/// A prompt that cannot be read at all — the profile is gone — falls back to
-/// the built-in default rather than failing the caller.
-#[tokio::test]
-async fn a_missing_prompt_falls_back_to_the_default() {
-    let h = harness().await;
-    let template = prompts::template_for(
-        &h.store,
-        "01nosuchprofilexxxxxxxxxxx",
-        PromptKind::EngineerBriefing,
-    )
-    .await;
-    assert_eq!(
-        template,
-        default_for(Role::Engineer, PromptKind::EngineerBriefing)
-    );
 }

@@ -1,10 +1,10 @@
 //! Store integration tests against a temp-file SQLite database.
 
 use ariadne_core::{
-    Actor, AgentKind, AttentionReason, GoalStatus, MergeStrategy, PromptKind,
-    ReviewVerdict, Role, SessionStatus, TaskStatus, TokenUsage,
+    Actor, AgentKind, AttentionReason, GoalStatus, MergeStrategy, ReviewVerdict, Role,
+    SessionStatus, TaskStatus, TokenUsage,
 };
-use ariadne_store::defaults::{default_landing_prompt, default_prompt, default_system_prompt};
+use ariadne_store::defaults::{default_landing_prompt, default_system_prompt};
 use ariadne_store::*;
 
 async fn test_store() -> (Store, tempfile::TempDir) {
@@ -2067,9 +2067,9 @@ async fn goal_cascade_delete_cleans_children() {
     ));
 }
 
-/// A fresh database holds three profiles and not one prompt: what they are
-/// briefed with is the code's, which is what an empty `profile_prompts` and a
-/// NULL `system_prompt` mean.
+/// A fresh database holds three profiles and not one prompt of their own:
+/// what they are briefed with is the code's, which is what a NULL
+/// `system_prompt` means. There is no table for a lifecycle briefing at all.
 #[tokio::test]
 async fn a_fresh_database_is_seeded_with_the_built_in_profiles_on_every_default() {
     let (store, _dir) = test_store().await;
@@ -2095,22 +2095,10 @@ async fn a_fresh_database_is_seeded_with_the_built_in_profiles_on_every_default(
             p.effective_system_prompt().contains("Ariadne"),
             "{name}'s system prompt says what it is the role of"
         );
-        // Exactly the role's prompt kinds, each of them the default itself.
-        let prompts = store.list_profile_prompts(&p.id).await.unwrap();
-        assert_eq!(
-            prompts.iter().map(|p| p.kind()).collect::<Vec<_>>(),
-            PromptKind::for_role(role),
-            "{name} owns the prompts of its role"
-        );
-        for prompt in &prompts {
-            assert_eq!(prompt.content, default_prompt(role, prompt.kind()).unwrap());
-            assert!(prompt.is_default, "{name} stored a {} prompt", prompt.kind);
-            assert!(prompt.updated_at.is_none());
-        }
     }
 
-    // Not one prompt row was written for any of them.
-    assert_eq!(prompt_rows(&_dir).await, 0);
+    // And a lifecycle briefing is stored nowhere: the table is gone.
+    assert!(!has_table(&_dir, "profile_prompts").await);
 
     // Fixed, recognizable ids; the reviewer carries the newer persona.
     let reviewer = store.get_profile_by_name("Reviewer").await.unwrap();
@@ -2139,23 +2127,21 @@ async fn a_fresh_database_is_seeded_with_the_built_in_profiles_on_every_default(
     assert_eq!(engineer.effective_system_prompt(), "custom");
 }
 
-/// How many prompts the database is actually holding, read from the file
-/// itself: what the store answers is the effective prompt, which says nothing
-/// about whether a row is behind it.
-async fn prompt_rows(dir: &tempfile::TempDir) -> i64 {
-    prompt_rows_at(&dir.path().join("test.db")).await
-}
-
-async fn prompt_rows_at(path: &std::path::Path) -> i64 {
+/// Whether the schema holds a table of that name, read from the file itself:
+/// what the store answers says nothing about which tables are behind it.
+async fn has_table(dir: &tempfile::TempDir, name: &str) -> bool {
+    let path = dir.path().join("test.db");
     let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}", path.display()))
         .await
         .unwrap();
-    let rows = sqlx::query_scalar("SELECT COUNT(*) FROM profile_prompts")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let found: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?")
+            .bind(name)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     pool.close().await;
-    rows
+    found > 0
 }
 
 /// Seeding keys off an empty `profiles` table only: deleting a built-in is
@@ -2168,11 +2154,14 @@ async fn built_ins_are_not_recreated_on_reopen() {
     let store = Store::open(&path).await.unwrap();
     let planner = store.get_profile_by_name("Planner").await.unwrap();
     store.delete_profile(&planner.id).await.unwrap();
+    let engineer = store.get_profile_by_name("Engineer").await.unwrap();
     store
-        .update_profile_prompt(
-            &store.get_profile_by_name("Engineer").await.unwrap().id,
-            PromptKind::EngineerBriefing,
-            "mine",
+        .update_profile(
+            &engineer.id,
+            ProfileUpdate {
+                system_prompt: Some("mine".into()),
+                ..Default::default()
+            },
         )
         .await
         .unwrap();
@@ -2184,14 +2173,7 @@ async fn built_ins_are_not_recreated_on_reopen() {
         Err(StoreError::NotFound { .. })
     ));
     let engineer = store.get_profile_by_name("Engineer").await.unwrap();
-    assert_eq!(
-        store
-            .get_profile_prompt(&engineer.id, PromptKind::EngineerBriefing)
-            .await
-            .unwrap()
-            .content,
-        "mine"
-    );
+    assert_eq!(engineer.system_prompt.as_deref(), Some("mine"));
 }
 
 #[tokio::test]
@@ -2199,17 +2181,6 @@ async fn a_new_profile_starts_on_the_role_defaults_and_stores_none_of_them() {
     let (store, _dir) = test_store().await;
     let reviewer = seed_profile(&store, "rev-strict", Role::Reviewer).await;
 
-    let prompts = store.list_profile_prompts(&reviewer.id).await.unwrap();
-    assert_eq!(
-        prompts.iter().map(|p| p.kind()).collect::<Vec<_>>(),
-        PromptKind::for_role(Role::Reviewer)
-    );
-    assert_eq!(
-        prompts[0].content,
-        default_prompt(Role::Reviewer, PromptKind::ReviewerBriefing).unwrap()
-    );
-    assert!(prompts.iter().all(|p| p.is_default));
-    assert_eq!(prompt_rows(&_dir).await, 0);
     // Its system prompt is the one it was created with, not the role default.
     assert_eq!(
         reviewer.system_prompt.as_deref(),
@@ -2236,55 +2207,16 @@ async fn a_new_profile_starts_on_the_role_defaults_and_stores_none_of_them() {
     );
 }
 
-/// Setting a prompt is what writes a row, and resetting is what takes it away
-/// again: what is left over is the default, which nothing stores.
+/// Setting the system prompt is what writes a text, and resetting is what
+/// takes it away again: what is left over is the role default, which nothing
+/// stores.
 #[tokio::test]
-async fn a_prompt_is_stored_only_while_it_is_set_and_a_reset_deletes_it() {
+async fn a_system_prompt_is_stored_only_while_it_is_set_and_a_reset_deletes_it() {
     let (store, _dir) = test_store().await;
     let engineer = store.get_profile_by_name("Engineer").await.unwrap();
+    assert!(engineer.system_prompt.is_none());
 
     let updated = store
-        .update_profile_prompt(&engineer.id, PromptKind::ChangesRequested, "fix it")
-        .await
-        .unwrap();
-    assert_eq!(updated.content, "fix it");
-    assert_eq!(updated.kind(), PromptKind::ChangesRequested);
-    assert!(!updated.is_default);
-    assert!(updated.updated_at.is_some());
-    // One prompt was set, so one row exists.
-    assert_eq!(prompt_rows(&_dir).await, 1);
-    assert_eq!(
-        store
-            .get_profile_prompt(&engineer.id, PromptKind::ChangesRequested)
-            .await
-            .unwrap()
-            .content,
-        "fix it"
-    );
-    // Only the prompt that was written changed.
-    assert_eq!(
-        store
-            .get_profile_prompt(&engineer.id, PromptKind::EngineerBriefing)
-            .await
-            .unwrap()
-            .content,
-        default_prompt(Role::Engineer, PromptKind::EngineerBriefing).unwrap()
-    );
-
-    let reset = store
-        .reset_profile_prompt(&engineer.id, PromptKind::ChangesRequested)
-        .await
-        .unwrap();
-    assert_eq!(
-        reset.content,
-        default_prompt(Role::Engineer, PromptKind::ChangesRequested).unwrap()
-    );
-    assert!(reset.is_default);
-    // The row is gone with it: a default is stored nowhere.
-    assert_eq!(prompt_rows(&_dir).await, 0);
-
-    // The system prompt resets the same way.
-    store
         .update_profile(
             &engineer.id,
             ProfileUpdate {
@@ -2294,126 +2226,23 @@ async fn a_prompt_is_stored_only_while_it_is_set_and_a_reset_deletes_it() {
         )
         .await
         .unwrap();
+    assert_eq!(updated.system_prompt.as_deref(), Some("custom"));
+    assert_eq!(updated.effective_system_prompt(), "custom");
+    assert!(!updated.system_prompt_is_default());
+
     let restored = store.reset_system_prompt(&engineer.id).await.unwrap();
     assert!(restored.system_prompt.is_none());
+    assert!(restored.system_prompt_is_default());
     assert_eq!(
         restored.effective_system_prompt(),
         default_system_prompt(Role::Engineer)
     );
-}
 
-/// A briefing may drop placeholders, keep braces that are only braces, and say
-/// nothing at all — but a token nothing will ever substitute is refused, on
-/// both write paths, with the offender and the allowed set in the message.
-#[tokio::test]
-async fn a_template_naming_a_placeholder_its_kind_cannot_fill_in_is_refused() {
-    let (store, _dir) = test_store().await;
-    let engineer = store.get_profile_by_name("Engineer").await.unwrap();
-
-    let Err(StoreError::Invalid(message)) = store
-        .update_profile_prompt(
-            &engineer.id,
-            PromptKind::EngineerBriefing,
-            "# {task_titel}\n\n{task_description}",
-        )
-        .await
-    else {
-        panic!("a typo'd placeholder was stored");
-    };
-    assert!(
-        message.contains("{task_titel}") && message.contains("{task_title}"),
-        "unhelpful message: {message}"
-    );
-    // ...and nothing was written.
-    assert_eq!(
-        store
-            .get_profile_prompt(&engineer.id, PromptKind::EngineerBriefing)
-            .await
-            .unwrap()
-            .content,
-        default_prompt(Role::Engineer, PromptKind::EngineerBriefing).unwrap()
-    );
-
-    // What renders as itself still saves: literal braces, JSON, no
-    // placeholders at all.
-    let engineer = store.get_profile_by_name("Engineer").await.unwrap();
-    for content in [
-        "Pick {task_title} up on {branch}, then answer {\"resumed\": true}.",
-        "Do it yourself.",
-        "{unclosed and {branch}",
-    ] {
-        store
-            .update_profile_prompt(&engineer.id, PromptKind::EngineerResume, content)
-            .await
-            .unwrap();
-    }
-}
-
-#[tokio::test]
-async fn prompt_kinds_are_checked_against_the_profile_role() {
-    let (store, _dir) = test_store().await;
-    let engineer = store.get_profile_by_name("Engineer").await.unwrap();
-
-    // A kind of another role is rejected on every access path.
+    // An unknown profile is a proper error, not a panic.
     assert!(matches!(
         store
-            .get_profile_prompt(&engineer.id, PromptKind::ReviewerResume)
+            .reset_system_prompt("01ARZ3NDEKTSV4RRFFQ69G5FAV")
             .await,
-        Err(StoreError::Invalid(_))
-    ));
-    assert!(matches!(
-        store
-            .update_profile_prompt(&engineer.id, PromptKind::PlannerBriefing, "nope")
-            .await,
-        Err(StoreError::Invalid(_))
-    ));
-    assert!(matches!(
-        store
-            .reset_profile_prompt(&engineer.id, PromptKind::PlannerBriefing)
-            .await,
-        Err(StoreError::Invalid(_))
-    ));
-    // ...and nothing was written.
-    assert_eq!(
-        store
-            .list_profile_prompts(&engineer.id)
-            .await
-            .unwrap()
-            .len(),
-        PromptKind::for_role(Role::Engineer).len()
-    );
-
-    // Unknown profiles and unknown kinds are proper errors, not panics.
-    assert!(matches!(
-        store
-            .get_profile_prompt("01ARZ3NDEKTSV4RRFFQ69G5FAV", PromptKind::EngineerBriefing)
-            .await,
-        Err(StoreError::NotFound { .. })
-    ));
-    assert!(matches!(
-        parse_prompt_kind("engineer_playbook"),
-        Err(StoreError::Invalid(_))
-    ));
-    assert_eq!(
-        parse_prompt_kind("engineer_briefing").unwrap(),
-        PromptKind::EngineerBriefing
-    );
-}
-
-/// The delete itself is the assertion: foreign keys are on, so without
-/// `ON DELETE CASCADE` the seeded prompt rows would make it fail.
-#[tokio::test]
-async fn deleting_a_profile_takes_its_prompts_with_it() {
-    let (store, _dir) = test_store().await;
-    let profile = seed_profile(&store, "planner-x", Role::Planner).await;
-    assert_eq!(
-        store.list_profile_prompts(&profile.id).await.unwrap().len(),
-        PromptKind::for_role(Role::Planner).len()
-    );
-
-    store.delete_profile(&profile.id).await.unwrap();
-    assert!(matches!(
-        store.list_profile_prompts(&profile.id).await,
         Err(StoreError::NotFound { .. })
     ));
 }

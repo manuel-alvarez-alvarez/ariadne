@@ -8,7 +8,7 @@ use clap::FromArgMatches;
 use ariadne_core::{AgentKind, GoalStatus, MergeStrategy, Role, SessionStatus, TaskStatus};
 
 use crate::commands::models::ModelsCommand;
-use crate::commands::profile::{PromptAssignment, PromptCommand};
+use crate::commands::profile::PromptCommand;
 use crate::commands::repo::RepoPromptCommand;
 use crate::output::ColorChoice;
 
@@ -112,7 +112,6 @@ const LEAVES: &[(&str, bool)] = &[
     ("profile prompt get", true),
     ("profile prompt reset", true),
     ("profile prompt set", true),
-    ("profile prompts", true),
     ("profile rm", true),
     ("profile update", true),
     ("repo add", true),
@@ -420,31 +419,6 @@ fn several_statuses_ride_on_one_flag() {
         panic!("session ls");
     };
     assert_eq!(statuses, [SessionStatus::Idle, SessionStatus::Exited]);
-}
-
-/// Prompt kinds go the same way, on the argument as on the flag: they are
-/// parsed by hand rather than by clap, and the hand-written parser has to
-/// take the two spellings too.
-#[test]
-fn a_prompt_kind_is_spelled_in_kebab_or_in_snake() {
-    let got = |spelling: &str| {
-        let Command::Profile {
-            command:
-                ProfileCommand::Prompt {
-                    command: PromptCommand::Get { kind, .. },
-                },
-        } = parse(&["ariadne", "profile", "prompt", "get", "Engineer", spelling]).command
-        else {
-            panic!("profile prompt get");
-        };
-        kind
-    };
-    assert_eq!(got("engineer-briefing"), got("engineer_briefing"));
-    assert_eq!(got("engineer-briefing").as_str(), "engineer_briefing");
-    assert_eq!(got("system").as_str(), "system");
-
-    let (texts, _) = create_flags(&["--prompt", "changes-requested=Fix it"]);
-    assert_eq!(pairs(texts), ["changes_requested=Fix it"]);
 }
 
 /// A value that is neither spelling is refused where it was typed, quoted as
@@ -1075,46 +1049,73 @@ fn an_agent_flag_that_looks_like_a_flag_is_taken_as_it_is() {
     assert_eq!(flags, ["--dangerously-skip-permissions", "--verbose"]);
 }
 
-/// `profile prompt reset` has to be told what to reset: one kind, or
-/// `--all`, and never both at once.
+/// `profile prompt` is about the system prompt and nothing else: each of its
+/// three lines takes the profile, names `system` or leaves it out, and
+/// refuses a briefing — which is Ariadne's own text now. `reset` takes the
+/// confirmation flag with it.
 #[test]
-fn resetting_a_prompt_takes_a_kind_or_all_but_not_both() {
-    let reset = |args: &[&str]| {
-        let mut argv = vec!["ariadne", "profile", "prompt", "reset", "Engineer"];
-        argv.extend_from_slice(args);
-        try_parse(&argv).is_ok()
+fn a_prompt_line_takes_the_profile_and_the_system_prompt() {
+    let profile = |command: PromptCommand| match command {
+        PromptCommand::Get { id, .. }
+        | PromptCommand::Set { id, .. }
+        | PromptCommand::Reset { id, .. } => id,
     };
-    assert!(!reset(&[]), "neither");
-    assert!(reset(&["system"]), "a kind");
-    assert!(reset(&["--all"]), "--all");
-    assert!(!reset(&["system", "--all"]), "both");
+    for verb in ["get", "set", "reset"] {
+        for argv in [
+            vec!["ariadne", "profile", "prompt", verb, "Engineer"],
+            vec!["ariadne", "profile", "prompt", verb, "Engineer", "system"],
+        ] {
+            let Command::Profile {
+                command: ProfileCommand::Prompt { command },
+            } = parse(&argv).command
+            else {
+                panic!("profile prompt {verb}");
+            };
+            assert_eq!(profile(command), "Engineer");
+        }
+        let err = try_parse(&[
+            "ariadne",
+            "profile",
+            "prompt",
+            verb,
+            "Engineer",
+            "engineer-briefing",
+        ])
+        .map(|_| ())
+        .expect_err("a briefing")
+        .to_string();
+        assert!(err.contains("engineer-briefing is no prompt"), "{err}");
+    }
+
+    let Command::Profile {
+        command:
+            ProfileCommand::Prompt {
+                command: PromptCommand::Reset { yes, .. },
+            },
+    } = parse(&["ariadne", "profile", "prompt", "reset", "Engineer", "-y"]).command
+    else {
+        panic!("profile prompt reset");
+    };
+    assert!(yes);
 }
 
-/// The prompt flags name the kind they set, so one line can seed the
-/// system prompt and a briefing at once, from text and from a file — on
-/// `profile update` exactly as on `profile create`. A kind no role owns
-/// never reaches the daemon, on either flag.
+/// The system prompt is given as text or as a file, on `profile update`
+/// exactly as on `profile create`, and never as both at once.
 #[test]
-fn a_prompt_flag_names_the_kind_it_sets() {
-    let (texts, files) = create_flags(&[
-        "--prompt",
-        "system=You are...",
-        "--prompt",
-        "changes_requested=Fix it",
-        "--prompt-file",
-        "engineer_briefing=/tmp/b.md",
-    ]);
-    assert_eq!(
-        pairs(texts),
-        ["system=You are...", "changes_requested=Fix it"]
-    );
-    assert_eq!(pairs(files), ["engineer_briefing=/tmp/b.md"]);
+fn a_profile_takes_its_system_prompt_as_text_or_as_a_file() {
+    let (text, file) = create_flags(&["--system-prompt", "You are..."]);
+    assert_eq!(text.as_deref(), Some("You are..."));
+    assert_eq!(file, None);
+
+    let (text, file) = create_flags(&["--system-prompt-file", "/tmp/b.md"]);
+    assert_eq!(text, None);
+    assert_eq!(file, Some(PathBuf::from("/tmp/b.md")));
 
     let Command::Profile {
         command:
             ProfileCommand::Update {
-                prompts,
-                prompt_files,
+                system_prompt,
+                system_prompt_file,
                 ..
             },
     } = parse(&[
@@ -1122,57 +1123,57 @@ fn a_prompt_flag_names_the_kind_it_sets() {
         "profile",
         "update",
         "Engineer",
-        "--prompt",
-        "system=You are...",
-        "--prompt-file",
-        "changes_requested=/tmp/c.md",
+        "--system-prompt-file",
+        "/tmp/c.md",
     ])
     .command
     else {
         panic!("profile update");
     };
-    assert_eq!(pairs(prompts), ["system=You are..."]);
-    assert_eq!(pairs(prompt_files), ["changes_requested=/tmp/c.md"]);
+    assert_eq!(system_prompt, None);
+    assert_eq!(system_prompt_file, Some(PathBuf::from("/tmp/c.md")));
 
-    for flag in ["--prompt", "--prompt-file"] {
-        let err = try_create(&[flag, "briefing=x"])
-            .expect_err("unknown kind")
-            .to_string();
-        assert!(err.contains("unknown prompt kind: briefing"), "{err}");
-        assert!(err.contains("system"), "{err}");
-    }
+    // One prompt, one source: the two flags never travel together.
+    assert!(
+        try_create(&[
+            "--system-prompt",
+            "You are...",
+            "--system-prompt-file",
+            "/tmp/b.md"
+        ])
+        .is_err(),
+        "both at once"
+    );
+    assert!(
+        try_parse(&[
+            "ariadne",
+            "profile",
+            "update",
+            "Engineer",
+            "--system-prompt",
+            "You are...",
+            "--system-prompt-file",
+            "/tmp/b.md",
+        ])
+        .is_err(),
+        "both at once on an update"
+    );
 }
 
-/// The old bare `--prompt <text>` is gone: a value with no kind is a
-/// usage error, and the message says how to spell what was meant.
-#[test]
-fn a_prompt_without_a_kind_is_a_usage_error() {
-    let err = try_create(&["--prompt", "You are..."])
-        .expect_err("no kind")
-        .to_string();
-    assert!(err.contains("missing <kind>="), "{err}");
-    assert!(err.contains("write system=<text>"), "{err}");
-    assert!(err.contains("engineer-briefing"), "{err}");
-    let err = try_create(&["--prompt-file", "/tmp/b.md"])
-        .expect_err("no kind")
-        .to_string();
-    assert!(err.contains("write system=<path>"), "{err}");
-}
-
-/// The prompt flags of a `profile create` line, as clap parsed them.
-fn create_flags(args: &[&str]) -> (Vec<PromptAssignment>, Vec<PromptAssignment>) {
+/// The system prompt flags of a `profile create` line, as clap parsed them.
+fn create_flags(args: &[&str]) -> (Option<String>, Option<PathBuf>) {
     let Command::Profile {
         command:
             ProfileCommand::Create {
-                prompts,
-                prompt_files,
+                system_prompt,
+                system_prompt_file,
                 ..
             },
     } = parse(&create_argv(args)).command
     else {
         panic!("profile create");
     };
-    (prompts, prompt_files)
+    (system_prompt, system_prompt_file)
 }
 
 fn try_create(args: &[&str]) -> Result<(), clap::Error> {
@@ -1186,13 +1187,6 @@ fn create_argv<'a>(args: &[&'a str]) -> Vec<&'a str> {
     ];
     argv.extend_from_slice(args);
     argv
-}
-
-/// Prompt flags back as `<kind>=<value>`, the way they were typed.
-fn pairs(args: Vec<PromptAssignment>) -> Vec<String> {
-    args.into_iter()
-        .map(|a| format!("{}={}", a.kind.as_str(), a.value))
-        .collect()
 }
 
 /// The daemon group is about one home, so `--home` is the group's: it reaches

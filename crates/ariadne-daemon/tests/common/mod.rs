@@ -1173,32 +1173,6 @@ impl Harness {
         query.bind(&session.id).execute(&self.db).await.unwrap();
     }
 
-    /// Store a prompt template the store itself would refuse, straight into
-    /// the row.
-    ///
-    /// Placeholders are validated when a prompt is saved, never when one is
-    /// rendered, so a database can still hold a briefing naming a token
-    /// nothing fills in: edited by hand, restored from a backup, or written
-    /// before the check existed.
-    pub async fn plant_prompt(
-        &self,
-        profile_id: &str,
-        kind: ariadne_core::PromptKind,
-        content: &str,
-    ) {
-        sqlx::query(
-            "INSERT INTO profile_prompts (profile_id, kind, content, updated_at)
-             VALUES (?, ?, ?, 't')
-             ON CONFLICT (profile_id, kind) DO UPDATE SET content = excluded.content",
-        )
-        .bind(profile_id)
-        .bind(kind.as_str())
-        .bind(content)
-        .execute(&self.db)
-        .await
-        .unwrap();
-    }
-
     /// A raw statement against the database the store is on, for the rows a
     /// test has to write behind its back.
     pub fn db(&self) -> &sqlx::SqlitePool {

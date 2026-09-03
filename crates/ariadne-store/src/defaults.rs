@@ -1,12 +1,14 @@
 //! Built-in default prompts.
 //!
-//! The one place a default text lives. A profile runs on these constants until
-//! somebody sets a prompt of its own, and
-//! [`Store::reset_profile_prompt`](crate::Store::reset_profile_prompt) puts it
-//! back on them by dropping what was set — nothing is ever copied into the
-//! database, so rewriting a text here reaches every profile that never edited
-//! it. A repository's landing briefing works the same way, off its merge
-//! strategy rather than a role ([`default_landing_prompt`]).
+//! The one place a default text lives. A lifecycle briefing is read from
+//! these constants on every launch and every resume, and no profile holds one
+//! of its own. A profile's system prompt runs on them too until somebody sets
+//! a text of its own, and
+//! [`Store::reset_system_prompt`](crate::Store::reset_system_prompt) puts it
+//! back by dropping what was set — nothing is ever copied into the database,
+//! so rewriting a text here reaches every profile that never edited it. A
+//! repository's landing briefing works the same way, off its merge strategy
+//! rather than a role ([`default_landing_prompt`]).
 //!
 //! Each rule is written once, in the layer it belongs to. A system prompt
 //! states what a role owes, from its first read to the call that ends its
@@ -38,7 +40,7 @@
 use ariadne_core::{MergeStrategy, PromptKind, Role};
 
 /// A profile Ariadne seeds into an empty database: one per role, on the
-/// auto-resolved agent CLI (no agent kind, no model) and on every default
+/// auto-resolved agent CLI (no agent kind, no model) and on the default system
 /// prompt of its role. The ids are fixed so they stay recognizable; deleting a
 /// built-in is allowed and permanent.
 pub struct BuiltinProfile {
@@ -74,14 +76,8 @@ pub fn default_system_prompt(role: Role) -> &'static str {
     }
 }
 
-/// The default text of `kind`, or `None` when a profile of `role` does not own
-/// that kind of prompt.
-pub fn default_prompt(role: Role, kind: PromptKind) -> Option<&'static str> {
-    kind.owned_by(role).then(|| default_prompt_text(kind))
-}
-
-/// The default text of `kind`, whichever role is reading it: what every
-/// profile that owns the kind is briefed with until one of its own is set.
+/// The built-in text of `kind`: what every session of that lifecycle step is
+/// briefed with, the same for every profile.
 pub fn default_prompt_text(kind: PromptKind) -> &'static str {
     match kind {
         PromptKind::PlannerBriefing => PLANNER_BRIEFING,
@@ -771,9 +767,9 @@ mod tests {
         }
     }
 
-    /// The constants are the templates every profile runs on, so they are
-    /// also the ones a save-time check may never refuse: a default that fails
-    /// validation would be a profile nobody can edit back to its own default.
+    /// The constants are the templates every session runs on, so the
+    /// placeholders they name are the ones the assemblers fill in: a token
+    /// nothing substitutes would reach an agent as literal text.
     #[test]
     fn every_default_names_only_placeholders_its_kind_can_fill_in() {
         for kind in PromptKind::ALL {

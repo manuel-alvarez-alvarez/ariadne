@@ -21,9 +21,9 @@ use serde::de::DeserializeOwned;
 use ariadne_api::agents::{AgentConfigDto, UpdateAgentConfigRequest};
 use ariadne_api::doctor::DaemonReportDto;
 use ariadne_api::error::ErrorBody;
-use ariadne_api::profiles::{ProfileDto, ProfilePromptDto, UpdateProfilePromptRequest};
+use ariadne_api::profiles::ProfileDto;
 use ariadne_api::{HealthResponse, VersionResponse};
-use ariadne_core::{AgentKind, PromptKind};
+use ariadne_core::AgentKind;
 
 pub mod endpoint;
 pub mod sse;
@@ -275,46 +275,6 @@ impl Client {
             &format!("/v1/agents/{}", kind.as_str()),
             &UpdateAgentConfigRequest { extra_flags },
         )
-        .await
-    }
-
-    /// A profile's briefing prompts, in briefing order, each as it takes
-    /// effect. `profile` is an id or a unique name, as everywhere under
-    /// `/v1/profiles`.
-    pub async fn list_profile_prompts(
-        &self,
-        profile: &str,
-    ) -> Result<Vec<ProfilePromptDto>, ClientError> {
-        self.get_json(&format!("/v1/profiles/{profile}/prompts"))
-            .await
-    }
-
-    /// Set the text of one prompt, which is what makes it the profile's own.
-    pub async fn update_profile_prompt(
-        &self,
-        profile: &str,
-        kind: PromptKind,
-        content: impl Into<String>,
-    ) -> Result<ProfilePromptDto, ClientError> {
-        self.put_json(
-            &format!("/v1/profiles/{profile}/prompts/{}", kind.as_str()),
-            &UpdateProfilePromptRequest {
-                content: content.into(),
-            },
-        )
-        .await
-    }
-
-    /// Put one prompt back on the default of its kind.
-    pub async fn reset_profile_prompt(
-        &self,
-        profile: &str,
-        kind: PromptKind,
-    ) -> Result<ProfilePromptDto, ClientError> {
-        self.post_empty(&format!(
-            "/v1/profiles/{profile}/prompts/{}/reset",
-            kind.as_str()
-        ))
         .await
     }
 

@@ -9,7 +9,7 @@
 use ariadne_api::agents::AgentConfigDto;
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::goals::{GoalDto, GoalUsageDto};
-use ariadne_api::profiles::{ProfileDto, ProfilePromptDto};
+use ariadne_api::profiles::ProfileDto;
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::reviews::ReviewDto;
 use ariadne_api::sessions::SessionDto;
@@ -60,11 +60,6 @@ dto! {
         default_flags: c.default_flags(),
         extra_flags: c.extra_flags(),
         ..
-    }
-
-    pub fn profile_prompt_dto(p: store::ProfilePrompt) -> ProfilePromptDto {
-        kind: p.kind(),
-        .. content, is_default, updated_at
     }
 
     pub fn repository_dto(r: store::Repository) -> RepositoryDto {

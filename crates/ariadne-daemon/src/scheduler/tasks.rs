@@ -183,11 +183,9 @@ impl super::Scheduler {
                     // the verdict the round is waiting on and the diff that
                     // may have moved under it are what it is told whether its
                     // session is being started again or merely nudged.
-                    let template =
-                        prompts::template_for(&self.store, &profile_id, PromptKind::ReviewerResume)
-                            .await;
+                    let template = prompts::template_for(PromptKind::ReviewerResume);
                     let resume =
-                        prompts::reviewer_resume_briefing(&template, &task, summary.as_deref());
+                        prompts::reviewer_resume_briefing(template, &task, summary.as_deref());
                     // A reviewer with no verdict yet is the round's only
                     // reason to still be open, so an idle one is watched the
                     // same way an engineer is. Reviewers that already voted
@@ -251,16 +249,11 @@ impl super::Scheduler {
                     return Ok(());
                 }
                 info!(task = %task.id, "resuming engineer with review feedback");
-                let template = prompts::template_for(
-                    &self.store,
-                    &task.engineer_profile_id,
-                    PromptKind::ChangesRequested,
-                )
-                .await;
+                let template = prompts::template_for(PromptKind::ChangesRequested);
                 self.launcher
                     .resume_engineer(
                         &task.id,
-                        &prompts::changes_requested_briefing(&template, &feedback),
+                        &prompts::changes_requested_briefing(template, &feedback),
                     )
                     .await?;
                 self.spawn_failures.remove(&task.id);
@@ -592,13 +585,8 @@ impl super::Scheduler {
                 &repo,
             ));
         }
-        let template = prompts::template_for(
-            &self.store,
-            &task.engineer_profile_id,
-            PromptKind::EngineerResume,
-        )
-        .await;
-        Ok(prompts::engineer_resume_briefing(&template, task))
+        let template = prompts::template_for(PromptKind::EngineerResume);
+        Ok(prompts::engineer_resume_briefing(template, task))
     }
 
     /// Raise `disconnected` on the engineer session that was last on this

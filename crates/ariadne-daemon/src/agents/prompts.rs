@@ -1,47 +1,32 @@
-//! Prompt assembly from the database.
+//! Prompt assembly.
 //!
-//! Every briefing an agent is started or resumed on belongs to its profile,
-//! and either layer may be the default of the code — which is what a profile
-//! nobody edited runs on, without anything having been copied into the
-//! database first.
+//! Every briefing an agent is started or resumed on is Ariadne's own: the
+//! template of its kind is a constant of the code ([`default_prompt_text`]),
+//! so a reworded briefing reaches every session at once and no profile holds
+//! a lifecycle text of its own. A profile says what its agent runs as — its
+//! system prompt — and nothing of the lifecycle around it.
 //!
-//! Those templates are editable, so they are also breakable. Rendering is
-//! lenient by construction: an unknown `{token}`, a brace that never closes,
-//! an empty template — all of them render to *something*, and nothing here
-//! returns an error. A profile with a mangled briefing gets a mangled
-//! briefing, never a session that refuses to start. A `{token}` nothing here
-//! fills in is caught where a template is *saved* instead — see
-//! [`PromptKind::validate_template`] and
-//! [`MergeStrategy::validate_landing_template`](ariadne_core::MergeStrategy::validate_landing_template),
-//! whose allowed names are the ones the briefings below pass.
+//! Rendering is lenient by construction: an unknown `{token}`, a brace that
+//! never closes, an empty template — all of them render to *something*, and
+//! nothing here returns an error. A mangled briefing is a bad briefing, never
+//! a session that refuses to start. A `{token}` nothing here fills in is
+//! caught where a template is *saved* instead — see
+//! [`MergeStrategy::validate_landing_template`](ariadne_core::MergeStrategy::validate_landing_template)
+//! for the one text that is still written by hand, whose allowed names are
+//! the ones the landing briefing below passes.
 //!
-//! One briefing is not a profile's: the landing procedure belongs to the
+//! One briefing is not a constant: the landing procedure belongs to the
 //! repository the task lands in (`Repository::landing_prompt_text`), since
 //! how a change reaches a base branch is the repository's to say.
 
 use ariadne_core::PromptKind;
 use ariadne_store::defaults::default_prompt_text;
-use ariadne_store::{Goal, Profile, Repository, Store, Task};
+use ariadne_store::{Goal, Profile, Repository, Task};
 
-/// The text `kind` is rendered from: the one set on the profile, or the
-/// default of the kind, which is what the store answers while nothing is set.
-///
-/// A prompt we cannot read at all — a profile that has gone — is never a
-/// reason to leave an agent unstarted, so the failure is logged and answered
-/// with the default rather than returned.
-pub async fn template_for(store: &Store, profile_id: &str, kind: PromptKind) -> String {
-    match store.get_profile_prompt(profile_id, kind).await {
-        Ok(prompt) => prompt.content,
-        Err(e) => {
-            tracing::warn!(
-                profile = %profile_id,
-                kind = kind.as_str(),
-                error = %e,
-                "this profile's prompt could not be read; using the built-in default"
-            );
-            default_prompt_text(kind).into()
-        }
-    }
+/// The template `kind` is rendered from: the built-in text of that kind,
+/// which every launch and every resume reads straight from the code.
+pub fn template_for(kind: PromptKind) -> &'static str {
+    default_prompt_text(kind)
 }
 
 /// Substitute `{name}` tokens in `template` from `values`.
@@ -417,11 +402,10 @@ mod tests {
     type Rendering<'a> = (PromptKind, String, Vec<(&'a str, &'a str)>);
 
     /// Every default briefing is its own template with this task's values put
-    /// in: what an untouched profile briefs its agent with is the text the
-    /// store ships, placeholder for placeholder, so a template edited by
-    /// mistake is caught here rather than in a live session. The prose itself
-    /// is the store's to state — spelling it out again here would only pin a
-    /// copy of it.
+    /// in: what a session is briefed with is the text the store ships,
+    /// placeholder for placeholder, so a template edited by mistake is caught
+    /// here rather than in a live session. The prose itself is the store's to
+    /// state — spelling it out again here would only pin a copy of it.
     #[test]
     fn every_default_briefing_is_its_template_with_the_values_put_in() {
         let (task, goal, repo) = (task(), goal(), repo());

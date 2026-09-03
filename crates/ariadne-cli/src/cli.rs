@@ -56,7 +56,9 @@ Examples:
   ariadne profile ls --role reviewer
   ariadne profile create --name Architect --role planner --model codex:gpt-5.3-codex
   ariadne profile update Reviewer --model default
-  ariadne profile prompt get Engineer engineer_briefing > briefing.md
+  ariadne profile prompt get Engineer system > system.md  # pipe it out, edit, pipe it back
+  ariadne profile prompt set Engineer system --file system.md
+  ariadne profile prompt reset Engineer system            # back to the role's default
 ";
 
 const REPO_EXAMPLES: &str = "\
@@ -514,7 +516,6 @@ const LISTINGS: &[&str] = &[
     "goal ls",
     "models ls",
     "profile ls",
-    "profile prompts",
     "repo ls",
     "session ls",
     "task ls",

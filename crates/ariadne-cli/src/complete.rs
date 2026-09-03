@@ -11,14 +11,13 @@
 //! itself the query says so; where it takes one status and the verb wants
 //! several, the narrowing happens here.
 
-use std::ffi::OsStr;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use clap_complete::engine::{CompletionCandidate, PathCompleter, ValueCompleter};
+use clap_complete::engine::CompletionCandidate;
 use serde_json::Value;
 
 use ariadne_client::{Client, endpoint};
@@ -394,67 +393,10 @@ pub fn agent_kinds() -> Vec<CompletionCandidate> {
         .collect()
 }
 
-/// Prompt kinds for `profile prompt get|set|reset`, plus "system".
-///
-/// Every kind of every role: which ones a profile actually owns depends on the
-/// profile named earlier on the line, and the command says so itself when the
-/// two do not match.
+/// The prompt kind of `profile prompt get|set|reset`: `system`, the one
+/// prompt a profile owns.
 pub fn prompt_kinds() -> Vec<CompletionCandidate> {
-    let mut out = vec![
-        CompletionCandidate::new("system").help(Some("the profile's own system prompt".into())),
-    ];
-    out.extend(ariadne_core::PromptKind::ALL.into_iter().map(|kind| {
-        let owners = kind
-            .roles()
-            .iter()
-            .map(|role| role.as_str())
-            .collect::<Vec<_>>()
-            .join("/");
-        // Offered in the spelling the help lists, which `parse_prompt_arg`
-        // reads back alongside the daemon's own.
-        candidate(
-            &kind.as_str().replace('_', "-"),
-            format!("{owners} profiles"),
-        )
-    }));
-    out
-}
-
-/// `<kind>=` for `profile create|update --prompt`: only the kind half can be
-/// completed — what follows the `=` is the caller's own prose.
-pub fn prompt_assignment(current: &OsStr) -> Vec<CompletionCandidate> {
-    let current = current.to_string_lossy();
-    match current.contains('=') {
-        true => Vec::new(),
-        false => assignment_kinds(&current),
-    }
-}
-
-/// `<kind>=<path>` for `profile create|update --prompt-file`: the kind, and
-/// then the file it reads from, completed as a path.
-pub fn prompt_file_assignment(current: &OsStr) -> Vec<CompletionCandidate> {
-    let current = current.to_string_lossy();
-    match current.split_once('=') {
-        Some((kind, path)) => PathCompleter::file()
-            .complete(OsStr::new(path))
-            .into_iter()
-            .map(|c| c.add_prefix(format!("{kind}=")))
-            .collect(),
-        None => assignment_kinds(&current),
-    }
-}
-
-/// The `<kind>=` half of an assignment, filtered by what is typed so far:
-/// unlike candidate lists, a completer's answers reach the shell as they are.
-fn assignment_kinds(current: &str) -> Vec<CompletionCandidate> {
-    prompt_kinds()
-        .into_iter()
-        .map(|c| {
-            let value = format!("{}=", c.get_value().to_string_lossy());
-            CompletionCandidate::new(value).help(c.get_help().cloned())
-        })
-        .filter(|c| c.get_value().to_string_lossy().starts_with(current))
-        .collect()
+    vec![CompletionCandidate::new("system").help(Some("the profile's own system prompt".into()))]
 }
 
 // ---- models --------------------------------------------------------------

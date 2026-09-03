@@ -121,10 +121,10 @@ impl MergeStrategy {
     }
 }
 
-/// A prompt a profile owns beside its system prompt: one of the texts an
-/// agent of that role is started, resumed or nudged with. Every briefing a
-/// profile carries is one of these, and each kind belongs to the role that
-/// receives it (see [`PromptKind::roles`]).
+/// A lifecycle briefing of Ariadne's own: one of the texts an agent is
+/// started, resumed or nudged with. Each kind belongs to the role that
+/// receives it (see [`PromptKind::roles`]), and its text is a constant of the
+/// code — no profile carries one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(
@@ -163,7 +163,7 @@ wire_enum! { PromptKind, "prompt kind", [
 ]}
 
 impl PromptKind {
-    /// The roles whose profiles own this prompt.
+    /// The roles briefed with this prompt.
     pub fn roles(&self) -> &'static [Role] {
         match self {
             PromptKind::PlannerBriefing | PromptKind::PlannerResume => &[Role::Planner],
@@ -174,12 +174,7 @@ impl PromptKind {
         }
     }
 
-    /// Whether a profile of `role` owns this prompt.
-    pub fn owned_by(&self, role: Role) -> bool {
-        self.roles().contains(&role)
-    }
-
-    /// The prompts a profile of `role` owns, in briefing order.
+    /// The prompts a session of `role` is briefed with, in briefing order.
     pub fn for_role(role: Role) -> &'static [PromptKind] {
         match role {
             Role::Planner => &[PromptKind::PlannerBriefing, PromptKind::PlannerResume],
@@ -249,8 +244,9 @@ impl PromptKind {
     ///
     /// Rendering is lenient by design — an unknown `{token}` reaches the agent
     /// as literal text rather than failing its spawn — so a typo like
-    /// `{task_titel}` is invisible until someone reads a briefing. Saving is
-    /// where it is caught instead, and only there.
+    /// `{task_titel}` is invisible until someone reads a briefing. This is
+    /// what holds the built-in templates to the values their assembler fills
+    /// in.
     ///
     /// Only what rendering would treat as a placeholder is checked, and of
     /// that only plain identifiers: an unclosed brace, a `{}` and a JSON
@@ -595,10 +591,10 @@ wire_enum! { ReviewVerdict, "review verdict", [
 mod tests {
     use super::*;
 
-    /// Every kind is owned by at least one role, is listed among that role's
+    /// Every kind briefs at least one role, is listed among that role's
     /// prompts, and is reachable from `ALL` by the name it is stored under:
     /// the three lists are one set read three ways, and a kind missing from
-    /// any of them is a prompt nobody can edit.
+    /// any of them is a briefing nothing can render.
     #[test]
     fn every_kind_is_owned_listed_and_named() {
         use std::str::FromStr;
@@ -607,7 +603,6 @@ mod tests {
             let roles = kind.roles();
             assert!(!roles.is_empty(), "{} belongs to no role", kind.as_str());
             for role in roles {
-                assert!(kind.owned_by(*role));
                 assert!(
                     PromptKind::for_role(*role).contains(&kind),
                     "{} is not among the {} prompts",
@@ -616,7 +611,6 @@ mod tests {
                 );
             }
             for role in Role::ALL.into_iter().filter(|r| !roles.contains(r)) {
-                assert!(!kind.owned_by(role));
                 assert!(!PromptKind::for_role(role).contains(&kind));
             }
             assert_eq!(PromptKind::from_str(kind.as_str()), Ok(kind));

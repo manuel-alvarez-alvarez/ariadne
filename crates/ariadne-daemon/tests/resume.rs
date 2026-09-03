@@ -417,15 +417,15 @@ async fn a_reviewer_reuses_its_session_across_review_rounds() {
     let task = next_round(&h, &task).await;
     assert_eq!(task.review_round, 2);
 
-    // The briefing is the reviewer profile's own template, rendered — the same
-    // path the scheduler takes.
-    let template = prompts::template_for(&h.store, &reviewer, PromptKind::ReviewerResume).await;
+    // The briefing is the built-in resume template, rendered — the same path
+    // the scheduler takes.
+    let template = prompts::template_for(PromptKind::ReviewerResume);
     let second = h
         .launcher
         .resume_reviewer(
             &task.id,
             &reviewer,
-            &prompts::reviewer_resume_briefing(&template, &task, Some("I rewrote the thing.")),
+            &prompts::reviewer_resume_briefing(template, &task, Some("I rewrote the thing.")),
         )
         .await
         .unwrap();

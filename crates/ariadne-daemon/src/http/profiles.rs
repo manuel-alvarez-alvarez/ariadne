@@ -5,13 +5,12 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 
 use ariadne_api::profiles::{
-    CreateProfileRequest, ProfileDto, ProfileListQuery, ProfilePromptDto,
-    UpdateProfilePromptRequest, UpdateProfileRequest,
+    CreateProfileRequest, ProfileDto, ProfileListQuery, UpdateProfileRequest,
 };
-use ariadne_store::{NewProfile, ProfileUpdate, Store, parse_prompt_kind};
+use ariadne_store::{NewProfile, ProfileUpdate, Store};
 
 use super::AppState;
-use super::convert::{profile_dto, profile_prompt_dto};
+use super::convert::profile_dto;
 use super::error::ApiResult;
 use super::pins::{self, Repin, Standing};
 
@@ -23,8 +22,8 @@ async fn resolve(store: &Store, spec: &str) -> ApiResult<String> {
 
 /// Create a profile.
 ///
-/// It starts on the prompts of its role, every one of them the default: a
-/// briefing is given to it afterwards, one `PUT` per kind.
+/// It starts on the system prompt of its role, and it owns no other prompt:
+/// the briefings that start, resume and nudge a session are Ariadne's own.
 #[utoipa::path(post, path = "/v1/profiles", tag = "profiles",
     request_body = CreateProfileRequest,
     responses(
@@ -145,72 +144,6 @@ pub async fn delete(
     let id = resolve(&state.store, &id).await?;
     state.store.delete_profile(&id).await?;
     Ok(StatusCode::NO_CONTENT)
-}
-
-/// The profile's briefing prompts, in briefing order: each one as it takes
-/// effect, saying whether that is the default of its kind or a text set here.
-#[utoipa::path(get, path = "/v1/profiles/{id}/prompts", tag = "profiles",
-    params(("id" = String, Path, description = "profile id or name")),
-    responses((status = 200, body = [ProfilePromptDto]), (status = 404)))]
-pub async fn list_prompts(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> ApiResult<Json<Vec<ProfilePromptDto>>> {
-    let id = resolve(&state.store, &id).await?;
-    let prompts = state.store.list_profile_prompts(&id).await?;
-    Ok(Json(prompts.into_iter().map(profile_prompt_dto).collect()))
-}
-
-/// Set the text of one prompt, which is what makes it the profile's own. A
-/// template may drop every `{placeholder}` of its kind, but not name one the
-/// kind has no value for: that token would reach the agent as literal text, so
-/// it is refused here.
-#[utoipa::path(put, path = "/v1/profiles/{id}/prompts/{kind}", tag = "profiles",
-    request_body = UpdateProfilePromptRequest,
-    params(
-        ("id" = String, Path, description = "profile id or name"),
-        ("kind" = String, Path, description = "prompt kind, e.g. engineer_briefing"),
-    ),
-    responses(
-        (status = 200, body = ProfilePromptDto),
-        (status = 400, description = "unknown kind, a kind the profile's role does not own, \
-                                      or a placeholder the kind cannot fill in"),
-        (status = 404)
-    ))]
-pub async fn update_prompt(
-    State(state): State<AppState>,
-    Path((id, kind)): Path<(String, String)>,
-    Json(req): Json<UpdateProfilePromptRequest>,
-) -> ApiResult<Json<ProfilePromptDto>> {
-    let id = resolve(&state.store, &id).await?;
-    let kind = parse_prompt_kind(&kind)?;
-    let prompt = state
-        .store
-        .update_profile_prompt(&id, kind, &req.content)
-        .await?;
-    Ok(Json(profile_prompt_dto(prompt)))
-}
-
-/// Put one prompt back on the default of its kind, dropping the text set on
-/// the profile.
-#[utoipa::path(post, path = "/v1/profiles/{id}/prompts/{kind}/reset", tag = "profiles",
-    params(
-        ("id" = String, Path, description = "profile id or name"),
-        ("kind" = String, Path, description = "prompt kind, e.g. engineer_briefing"),
-    ),
-    responses(
-        (status = 200, body = ProfilePromptDto),
-        (status = 400, description = "unknown kind, or a kind the profile's role does not own"),
-        (status = 404)
-    ))]
-pub async fn reset_prompt(
-    State(state): State<AppState>,
-    Path((id, kind)): Path<(String, String)>,
-) -> ApiResult<Json<ProfilePromptDto>> {
-    let id = resolve(&state.store, &id).await?;
-    let kind = parse_prompt_kind(&kind)?;
-    let prompt = state.store.reset_profile_prompt(&id, kind).await?;
-    Ok(Json(profile_prompt_dto(prompt)))
 }
 
 /// Put the profile's system prompt back on the default of its role.

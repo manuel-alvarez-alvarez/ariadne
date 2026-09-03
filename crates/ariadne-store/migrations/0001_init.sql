@@ -1,8 +1,9 @@
 -- Ariadne initial schema, and the only migration: what came before it was 29
 -- files, most of them prompt text, and none of that history says anything a
--- fresh database needs. Prompts are overrides now (`profile_prompts` holds a
--- row only where somebody wrote one), so a reworded default never touches the
--- database again and this file never has to grow a successor for one.
+-- fresh database needs. A lifecycle briefing is Ariadne's own constant and a
+-- system prompt is an override (`profiles.system_prompt` holds a text only
+-- where somebody wrote one), so a reworded default never touches the database
+-- again and this file never has to grow a successor for one.
 --
 -- Schema only: the built-in profiles and the per-agent launch flags are seeded
 -- from Rust constants after the migrations run (`seed_builtin_profiles`,
@@ -11,7 +12,9 @@
 -- Ids are lowercase ULIDs (TEXT, 26 chars); timestamps are ISO-8601 UTC TEXT.
 
 -- Who an agent session runs as: its role, the CLI and model it is launched
--- with, and the system prompt it is briefed with.
+-- with, and the system prompt it is briefed with. The briefings that start,
+-- resume and nudge a session belong to no profile: they are built into
+-- Ariadne (`ariadne_store::defaults`) and read from there on every launch.
 --
 -- NULL `system_prompt` is the default of the role (see `ariadne_store::
 -- defaults`); text is what its user wrote instead, which is also what a reset
@@ -33,18 +36,6 @@ CREATE TABLE profiles (
     system_prompt TEXT,
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL
-);
-
--- The briefings a profile owns beside its system prompt, one row per kind it
--- was given text of its own for. Which kinds are valid for which role is
--- enforced in Rust (`ariadne_core::PromptKind`), not here, so the set can grow
--- without a migration — and a kind with no row is briefed with its default.
-CREATE TABLE profile_prompts (
-    profile_id TEXT NOT NULL REFERENCES profiles (id) ON DELETE CASCADE,
-    kind       TEXT NOT NULL,
-    content    TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    PRIMARY KEY (profile_id, kind)
 );
 
 -- Per-agent-kind launch configuration: how an agent CLI is allowed to run is
