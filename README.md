@@ -79,13 +79,16 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
 6. The task never leaves the engineer that wrote it: it keeps its session and
    its worktree, and is briefed to land the change with the repository's
    **landing briefing** — the whole procedure, which the engineer then runs.
-   That briefing is the repository's own: it is prefilled from the repository's
-   **merge strategy** (`ariadne repo add --merge-strategy`, default `direct`),
-   can be set at registration or rewritten after (`--landing-prompt`,
-   `--landing-prompt-file`, and `ariadne repo prompt get|set|reset` for a
-   repository that already exists), and is put back on the strategy's default
-   by clearing it (`repo update --reset-landing-prompt`, or `repo prompt
-   reset`). What the two strategies ship is:
+   Profiles own only their system prompts. Ariadne supplies the built-in
+   lifecycle prompts for planning, engineering and review sessions.
+   The landing briefing is a repository field: it is prefilled from the
+   repository's selected **merge strategy** (`ariadne repo add
+   --merge-strategy`, default `direct`), can be replaced with custom text, and
+   can be edited after registration (`--landing-prompt`,
+   `--landing-prompt-file`, and `ariadne repo prompt get|set|reset`). It is put
+   back on the strategy's default by clearing it (`repo update
+   --reset-landing-prompt`, or `repo prompt reset`). What the two strategies
+   prefill is:
    - **`direct`** — rebase onto the base, squash into one commit with a
      conventional subject, fast-forward the base branch in the primary
      checkout, push it where there is a remote, then `mark_merged`. The daemon
@@ -268,9 +271,16 @@ ariadne repo add ~/projects/api --description "the public API"
 ariadne goal create --title "Add rate limiting" --repo ~/projects/api
 ariadne goal attach <goal-id>
 
-# the landing briefing an approved task's engineer runs it with: prefilled
-# from --merge-strategy, rewritten per repository at registration or after
-ariadne repo add ~/projects/ui --merge-strategy pull-request \
+# only a profile's system prompt is editable; lifecycle prompts come from Ariadne
+ariadne profile prompt get Engineer system > system.md
+ariadne profile prompt set Engineer system --file system.md
+ariadne profile prompt reset Engineer system
+
+# the repository landing briefing is prefilled from --merge-strategy, or can
+# use custom text; edit it after registration with repo prompt
+ariadne repo add ~/projects/ui --merge-strategy direct \
+    --landing-prompt "Rebase, squash and fast-forward the base branch."
+ariadne repo add ~/projects/web --merge-strategy pull-request \
     --landing-prompt-file landing.md
 ariadne repo prompt get <repo-id> > landing.md   # pipe it out, edit, pipe it back
 ariadne repo prompt set <repo-id> --file landing.md
