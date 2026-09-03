@@ -90,7 +90,6 @@ async fn http_mutation_emits_a_fat_event() {
             serde_json::json!({
                 "name": "rust-engineer",
                 "role": "engineer",
-                "agent_kind": "claude_code",
                 "system_prompt": "You write Rust.",
             }),
         ))

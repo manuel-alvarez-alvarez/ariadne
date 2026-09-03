@@ -7,8 +7,8 @@
 //! base branch the repository holds — including after that base branch moves.
 //!
 //! No tmux and no agent CLI: `tmux` is a stub that answers "no session" and
-//! records what it was told, and the profiles are pinned to an agent kind so
-//! that nothing here looks for a coding-agent CLI on `PATH`. `git` is real.
+//! records what it was told, and the profiles are pinned to a model so that
+//! nothing here looks for a coding-agent CLI on `PATH`. `git` is real.
 
 mod common;
 
@@ -25,13 +25,13 @@ use ariadne_store::defaults::BUILTIN_PROFILES;
 
 use common::{Harness, delete, harness, post_json, put_json, sh};
 
-/// A daemon whose seeded profiles are pinned to an agent kind.
+/// A daemon whose seeded profiles are pinned to a model.
 ///
 /// They are seeded on "auto", which at spawn time means "the first
 /// coding-agent CLI on `PATH`" — and where there is none, as on every CI
 /// runner, spawning fails outright. What is under test here is the worktree a
-/// spawn cuts, not the agent it starts, so the kind is pinned and never looked
-/// up.
+/// spawn cuts, not the agent it starts, so the model is pinned and never
+/// looked up.
 async fn pinned_harness() -> Harness {
     let h = harness().await;
     for builtin in BUILTIN_PROFILES {
@@ -39,7 +39,7 @@ async fn pinned_harness() -> Harness {
             .json(
                 put_json(
                     &format!("/v1/profiles/{}", builtin.id),
-                    serde_json::json!({"agent_kind": AgentKind::ClaudeCode.as_str()}),
+                    serde_json::json!({"model": AgentKind::ClaudeCode.as_str()}),
                 ),
                 StatusCode::OK,
             )
