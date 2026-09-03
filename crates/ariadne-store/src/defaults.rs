@@ -277,8 +277,9 @@ Approved. Squash {branch} onto {base_branch} in {repo_path}. `<remote>` is what 
 ///
 /// Waiting happens inside this session, in a poll and sleep loop, and the
 /// sleep is capped at five minutes for the daemon's sake: a session that has
-/// reported nothing for 900 s is flagged as stalled and the relaunch follows
-/// at 2700 s, while every poll counts as activity.
+/// reported nothing for `QUIET_FLAG_SECS` is flagged as stalled and the
+/// relaunch follows at `QUIET_RELAUNCH_SECS` — 600 s and 1800 s — while every
+/// poll counts as activity.
 const LANDING_PULL_REQUEST: &str = r#"# Land task: {task_title}
 
 Approved. Publish {branch} against {base_branch}. `<remote>` is what `git -C {repo_path} remote -v` names. github.com takes `gh`, GitLab `glab`. Neither, or `auth status` shows no account: `fail_task` with the failed check.
@@ -323,8 +324,8 @@ Commit it on {base_branch} in {repo_path}, your cwd. `<remote>` is what `git rem
 ///
 /// The waiting is a poll and sleep loop, and the sleep is capped at five
 /// minutes for the daemon's sake, as the engineer's is: a session that has
-/// reported nothing for 900 s is flagged as stalled, while every poll counts
-/// as activity.
+/// reported nothing for `QUIET_FLAG_SECS` (600 s) is flagged as stalled, while
+/// every poll counts as activity.
 const SPEC_LANDING_PULL_REQUEST: &str = r#"## Land the spec
 
 Publish it against {base_branch} from {repo_path}, your cwd. `<remote>` is what `git remote -v` names. github.com takes `gh`, GitLab `glab`. Neither: ask the user how to land it.
