@@ -41,10 +41,14 @@ Out: the daemon endpoints themselves (012).
 7. The Tauri shell is deliberately empty — no commands — and `ui/src-tauri` is
    excluded from the cargo workspace, so a workspace build never builds the
    app.
-8. The primary surface is the macOS Tauri window (WebKit): a layout change is
+8. On Linux, the shell sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` before the
+   webview starts, unless the user already set it. WebKitGTK's DMA-BUF
+   renderer aborts with `EGL_BAD_PARAMETER` on some systems; this stops that
+   abort. macOS is unaffected.
+9. The primary surface is the macOS Tauri window (WebKit): a layout change is
    verified there, not only in a browser.
-9. The app is checked by `npm test`, `npm run typecheck`, `npm run lint` and
-   `npm run check:unused` before a commit.
+10. The app is checked by `npm test`, `npm run typecheck`, `npm run lint` and
+    `npm run check:unused` before a commit.
 
 ## Acceptance criteria
 
