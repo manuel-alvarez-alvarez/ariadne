@@ -16,7 +16,7 @@ use ariadne_core::{AttentionReason, Seat, SessionStatus};
 use super::attention::reason_label;
 use super::follow::{self, Ending, Next};
 use super::resolve::{self, Kind};
-use super::{ProfileNames, Subject, confirm, one_of, query_path};
+use super::{Subject, confirm, one_of, query_path};
 use crate::cli::values::Spelling;
 use crate::output::{
     Column, Format, Kv, UNCAPPED, age, at, col, dash, moment, note, ok_id_line, pager, print,
@@ -210,8 +210,7 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
         SessionCommand::Inspect { id } => {
             let id = resolve::id(client, Kind::Session, &id).await?;
             let s: SessionDto = client.get_json(&session_path(&id)).await?;
-            let profiles = ProfileNames::for_format(client, format).await;
-            print(format, &s, || print_kv(&inspect_pairs(&s, &profiles)))?;
+            print(format, &s, || print_kv(&inspect_pairs(&s)))?;
         }
         SessionCommand::Send {
             id,
@@ -403,9 +402,9 @@ fn visible(
 }
 
 /// The goal and task titles behind a table's sessions: which piece of work
-/// each agent was run for, which the ids cannot say. One list call each, the
-/// way [`ProfileNames`] resolves profile names, and a title is a courtesy — a
-/// daemon that will not answer leaves the ids in place.
+/// each agent was run for, which the ids cannot say. One list call each, and a
+/// title is a courtesy — a daemon that will not answer leaves the ids in
+/// place.
 #[derive(Default)]
 struct SessionContext {
     goals: HashMap<String, String>,
@@ -452,16 +451,16 @@ fn attention_label(reason: Option<AttentionReason>) -> String {
 /// The key/value pairs `session inspect` prints, in the order it prints them
 /// — pulled out of the `Inspect` arm so the block's own content is testable
 /// without a daemon behind it.
-fn inspect_pairs(s: &SessionDto, profiles: &ProfileNames) -> Vec<(&'static str, Kv)> {
+fn inspect_pairs(s: &SessionDto) -> Vec<(&'static str, Kv)> {
     vec![
         ("id", Kv::id(s.id.clone())),
         ("goal", Kv::id(s.goal_id.clone())),
         ("task", Kv::id(dash(s.task_id.as_deref()))),
         ("seat", s.seat.as_str().into()),
-        ("profile", profiles.label(&s.profile_id).into()),
+        ("agent id", Kv::id(dash(s.task_agent_id.as_deref()))),
         ("agent", s.agent_kind.as_str().into()),
         // Recorded at launch, so it is what this session runs on even if the
-        // profile has moved on since.
+        // agent has been re-pinned since.
         (
             "model",
             s.model.clone().unwrap_or_else(|| "default".into()).into(),
@@ -678,7 +677,7 @@ mod tests {
             attention_reason: Some(AttentionReason::WaitingInput),
             ..session("01SESS", "01GOAL", Some("01TASK"))
         };
-        let pairs = inspect_pairs(&s, &ProfileNames::default());
+        let pairs = inspect_pairs(&s);
 
         let coloured = kv_block(
             &pairs,

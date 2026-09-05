@@ -13,7 +13,9 @@ pub struct SessionDto {
     /// None = orchestrator session.
     pub task_id: Option<String>,
     pub seat: Seat,
-    pub profile_id: String,
+    /// The staffed agent this session runs; None for an orchestrator,
+    /// which no task staffs.
+    pub task_agent_id: Option<String>,
     pub agent_kind: AgentKind,
     /// Model requested at launch; null = the agent CLI's default.
     pub model: Option<String>,

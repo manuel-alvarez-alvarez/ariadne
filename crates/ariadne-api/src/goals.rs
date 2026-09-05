@@ -16,14 +16,10 @@ pub struct GoalDto {
     /// None = unbounded.
     pub max_tasks: Option<i64>,
     pub required_approvals: i64,
-    pub orchestrator_profile_id: String,
     /// What the orchestrator runs on, `<agent_kind>[:<model>]`: the agent CLI
     /// and, after a `:`, the model of it (`codex`,
-    /// `claude_code:claude-opus-5`). Pinned when the goal was created, from
-    /// the model chosen for it or, where none was, from the orchestrator
-    /// profile — editing the profile afterwards leaves it alone. None = auto:
-    /// the first installed CLI, resolved at spawn time, on its own default
-    /// model.
+    /// `claude_code:claude-opus-5`). None = auto: the first installed CLI,
+    /// resolved at spawn time, on its own default model.
     #[schema(example = "claude_code:claude-opus-5")]
     pub model: Option<String>,
     /// The reasoning effort that model is run at, pinned like `model`. None =
@@ -40,7 +36,7 @@ pub struct GoalDto {
 }
 
 /// What a goal cost, by the seat that spent it. Grouped by seat rather than
-/// by profile: a goal's authors are as many as it has tasks, and what is
+/// by agent: a goal's authors are as many as it has tasks, and what is
 /// read at this height is where the tokens went, not which agent went there.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
 pub struct GoalUsageDto {
@@ -69,8 +65,6 @@ pub struct CreateGoalRequest {
     pub description: String,
     /// Ids of registered repositories (`POST /v1/repositories`); at least one.
     pub repository_ids: Vec<String>,
-    /// Orchestrator profile id or unique name.
-    pub orchestrator_profile: String,
     /// Max tasks the orchestrator may create (default: unbounded).
     pub max_tasks: Option<i64>,
     /// Approvals required to merge a task (default 1).
@@ -80,16 +74,15 @@ pub struct CreateGoalRequest {
     /// `opencode:ollama/llama3:8b`. The model half is free text, handed to
     /// that CLI as typed; an agent CLI on its own runs it on its own default
     /// model, and a string naming no agent CLI is refused. Omitted (or
-    /// "default") = the orchestrator profile's own model, as it stands now.
+    /// "default") = auto: the first installed CLI, on its own default model.
     #[serde(default)]
     #[schema(example = "codex:gpt-5.3-codex")]
     pub model: Option<String>,
     /// The reasoning effort to run that model at, one of the efforts `GET
     /// /v1/models` lists for it; anything else is refused. Omitted (or
-    /// "default") = whatever the agent CLI runs the model at, and where
-    /// `model` is omitted too, the orchestrator profile's own effort. Named
-    /// where `model` is omitted, the goal takes the orchestrator profile's
-    /// own model at this effort.
+    /// "default") = whatever the agent CLI runs the model at. An effort is
+    /// run at a model, so an effort written where `model` names none is
+    /// refused.
     #[serde(default)]
     #[schema(example = "high")]
     pub effort: Option<String>,

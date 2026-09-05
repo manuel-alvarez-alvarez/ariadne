@@ -182,9 +182,14 @@ async fn seed_task(store: &Store, goal: &Goal, repo: &Repository, deps: Vec<Stri
             repo_id: repo.id.clone(),
             title: "task".into(),
             description: "do things".into(),
-            author_profile_id: eng.id,
-            pin: None,
-            reviewers: vec![ReviewerSlot::of(rev.id)],
+            agents: vec![
+                NewTaskAgent {
+                    ..NewTaskAgent::new(Seat::Author, ["coding"])
+                },
+                NewTaskAgent {
+                    ..NewTaskAgent::new(Seat::Reviewer, ["code-review"])
+                },
+            ],
             depends_on: deps,
         })
         .await
@@ -679,9 +684,14 @@ async fn a_goal_needs_repositories_that_exist() {
                 repo_id: unrelated.id,
                 title: "task".into(),
                 description: "do things".into(),
-                author_profile_id: eng.id,
-                pin: None,
-                reviewers: vec![ReviewerSlot::of(rev.id)],
+                agents: vec![
+                    NewTaskAgent {
+                        ..NewTaskAgent::new(Seat::Author, ["coding"])
+                    },
+                    NewTaskAgent {
+                        ..NewTaskAgent::new(Seat::Reviewer, ["code-review"])
+                    },
+                ],
                 depends_on: vec![],
             })
             .await,
@@ -722,9 +732,14 @@ async fn task_branch_is_named_after_the_title() {
             repo_id: w.repo.id.clone(),
             title: "Fix the landing briefing: real fetch/rebase".into(),
             description: "d".into(),
-            author_profile_id: eng.id,
-            pin: None,
-            reviewers: vec![ReviewerSlot::of(rev.id)],
+            agents: vec![
+                NewTaskAgent {
+                    ..NewTaskAgent::new(Seat::Author, ["coding"])
+                },
+                NewTaskAgent {
+                    ..NewTaskAgent::new(Seat::Reviewer, ["code-review"])
+                },
+            ],
             depends_on: vec![],
         })
         .await
@@ -809,9 +824,14 @@ async fn max_tasks_is_enforced() {
             repo_id: repo.id.clone(),
             title: "too many".into(),
             description: "".into(),
-            author_profile_id: eng.id,
-            pin: None,
-            reviewers: vec![ReviewerSlot::of(rev.id)],
+            agents: vec![
+                NewTaskAgent {
+                    ..NewTaskAgent::new(Seat::Author, ["coding"])
+                },
+                NewTaskAgent {
+                    ..NewTaskAgent::new(Seat::Reviewer, ["code-review"])
+                },
+            ],
             depends_on: vec![],
         })
         .await;
@@ -2308,9 +2328,14 @@ async fn creation_pins_the_agent_and_model_of_every_profile() {
             repo_id: repo.id.clone(),
             title: "task".into(),
             description: "do things".into(),
-            author_profile_id: author.id.clone(),
-            pin: None,
-            reviewers: vec![ReviewerSlot::of(reviewer.id.clone())],
+            agents: vec![
+                NewTaskAgent {
+                    ..NewTaskAgent::new(Seat::Author, ["coding"])
+                },
+                NewTaskAgent {
+                    ..NewTaskAgent::new(Seat::Reviewer, ["code-review"])
+                },
+            ],
             depends_on: vec![],
         })
         .await
@@ -2381,9 +2406,14 @@ async fn auto_and_default_are_pinned_as_such() {
             repo_id: repo.id.clone(),
             title: "task".into(),
             description: "do things".into(),
-            author_profile_id: author.id.clone(),
-            pin: None,
-            reviewers: vec![ReviewerSlot::of(reviewer.id.clone())],
+            agents: vec![
+                NewTaskAgent {
+                    ..NewTaskAgent::new(Seat::Author, ["coding"])
+                },
+                NewTaskAgent {
+                    ..NewTaskAgent::new(Seat::Reviewer, ["code-review"])
+                },
+            ],
             depends_on: vec![],
         })
         .await
@@ -2450,9 +2480,14 @@ async fn reassigned_reviewers_pin_the_profile_they_are_assigned_from() {
             repo_id: repo.id.clone(),
             title: "task".into(),
             description: "do things".into(),
-            author_profile_id: author.id.clone(),
-            pin: None,
-            reviewers: vec![ReviewerSlot::of(first.id.clone())],
+            agents: vec![
+                NewTaskAgent {
+                    ..NewTaskAgent::new(Seat::Author, ["coding"])
+                },
+                NewTaskAgent {
+                    ..NewTaskAgent::new(Seat::Reviewer, ["code-review"])
+                },
+            ],
             depends_on: vec![],
         })
         .await
@@ -2667,9 +2702,14 @@ async fn a_task_pin_can_be_moved_and_cleared_back_to_the_profiles() {
             repo_id: repo.id.clone(),
             title: "task".into(),
             description: "do things".into(),
-            author_profile_id: author.id.clone(),
-            pin: None,
-            reviewers: vec![ReviewerSlot::of(&reviewer.id)],
+            agents: vec![
+                NewTaskAgent {
+                    ..NewTaskAgent::new(Seat::Author, ["coding"])
+                },
+                NewTaskAgent {
+                    ..NewTaskAgent::new(Seat::Reviewer, ["code-review"])
+                },
+            ],
             depends_on: vec![],
         })
         .await
@@ -2884,17 +2924,12 @@ async fn creation_pins_the_effort_beside_the_model() {
             repo_id: repo.id.clone(),
             title: "task".into(),
             description: "do things".into(),
-            author_profile_id: author.id.clone(),
-            pin: None,
-            reviewers: vec![
-                ReviewerSlot::of(&inherits.id),
-                ReviewerSlot {
-                    profile_id: chosen.id.clone(),
-                    pin: Some(AgentPin {
-                        agent_kind: AgentKind::Codex,
-                        model: Some("gpt-5.6-luna".into()),
-                        effort: Some("max".into()),
-                    }),
+            agents: vec![
+                NewTaskAgent {
+                    ..NewTaskAgent::new(Seat::Author, ["coding"])
+                },
+                NewTaskAgent {
+                    ..NewTaskAgent::new(Seat::Reviewer, ["code-review"])
                 },
             ],
             depends_on: vec![],
@@ -3107,10 +3142,16 @@ async fn an_override_takes_the_profiles_effort_only_on_the_profiles_model() {
                 repo_id: repo.id.clone(),
                 title: case.into(),
                 description: "do things".into(),
-                author_profile_id: author.id.clone(),
-                pin: pin.clone(),
-                reviewers: vec![ReviewerSlot {
-                    profile_id: reviewer.id.clone(),
+                agents: vec![
+                    NewTaskAgent {
+                    pin: pin.clone(),
+                        ..NewTaskAgent::new(Seat::Author, ["coding"])
+                    },
+                    NewTaskAgent {
+                    pin: pin.clone(),
+                        ..NewTaskAgent::new(Seat::Reviewer, ["code-review"])
+                    },
+                ],
                     pin: pin.clone(),
                 }],
                 depends_on: vec![],

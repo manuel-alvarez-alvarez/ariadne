@@ -19,9 +19,11 @@
 //! repository the task lands in (`Repository::landing_prompt_text`), since
 //! how a change reaches a base branch is the repository's to say.
 
-use ariadne_core::{MergeStrategy, PromptKind};
-use ariadne_store::defaults::{default_prompt_text, default_spec_landing_prompt};
-use ariadne_store::{Goal, Profile, Repository, Task};
+use ariadne_core::{MergeStrategy, PromptKind, Seat};
+use ariadne_store::defaults::{
+    default_prompt_text, default_spec_landing_prompt, default_system_prompt,
+};
+use ariadne_store::{Goal, Repository, Skill, Task};
 
 /// The template `kind` is rendered from: the built-in text of that kind,
 /// which every launch and every resume reads straight from the code.
@@ -68,9 +70,25 @@ pub fn render(template: &str, values: &[(&str, &str)]) -> String {
 
 /// System layer: the profile's prompt, as the profile has it — the one set on
 /// it, or the default of its seat.
-pub fn system_prompt(profile: &Profile) -> String {
-    profile.effective_system_prompt().trim().to_string()
+pub fn system_prompt(seat: Seat, skills: &[Skill]) -> String {
+    let mut prompt = default_system_prompt(seat).trim().to_string();
+    if skills.is_empty() {
+        return prompt;
+    }
+    prompt.push_str(SKILLS_HEADER);
+    for skill in skills {
+        prompt.push_str(&format!("\n- {}: {}", skill.name, skill.summary()));
+    }
+    prompt
 }
+
+/// What the index of an agent's skills opens with.
+///
+/// The index carries one line per skill and no more: the document itself is
+/// on disk beside the session, and the agent reads it when it needs it. That
+/// is what the agent CLIs do with a skill of their own, and it is why a broad
+/// set of skills costs an agent a few lines rather than a few pages.
+const SKILLS_HEADER: &str = "\n\nYour skills:";
 
 /// Initial prompt for an orchestrator session.
 ///
@@ -280,7 +298,6 @@ mod tests {
             status: "planning".into(),
             max_tasks: Some(4),
             required_approvals: 2,
-            orchestrator_profile_id: "01orchestratorxxxxxxxxxxxxxxxxx".into(),
             agent_kind: None,
             model: None,
             effort: None,
@@ -308,12 +325,8 @@ mod tests {
             goal_id: "01goalxxxxxxxxxxxxxxxxxxxx".into(),
             repo_id: "01repoxxxxxxxxxxxxxxxxxxxx".into(),
             title: "Render prompts from the database".into(),
-            description: "Read them from `profile_prompts`.".into(),
+            description: "Read them from the store.".into(),
             status: "in_progress".into(),
-            author_profile_id: "01authorxxxxxxxxxxxxxxxx".into(),
-            agent_kind: None,
-            model: None,
-            effort: None,
             branch: "render-prompts-from-the-database-xxxxxx".into(),
             worktree_path: Some("/worktrees/task-eng".into()),
             review_round: 3,

@@ -268,40 +268,17 @@ fn attach_order(
     out
 }
 
-// ---- profiles, repositories ----------------------------------------------
+// ---- skills, repositories ------------------------------------------------
 
-fn profiles(seat: Option<&str>) -> Vec<CompletionCandidate> {
-    let path = match seat {
-        Some(r) => format!("/v1/profiles?seat={r}"),
-        None => "/v1/profiles".to_string(),
-    };
-    fetch(&path)
+/// Skill names, with the line each one says about itself as the help.
+///
+/// The summary is what tells a reader which skill they want: an agent is its
+/// skills, so a bare list of names would leave the choice to guesswork.
+pub fn skill_names() -> Vec<CompletionCandidate> {
+    fetch("/v1/skills")
         .iter()
-        .map(|p| {
-            let model = p.get("model").and_then(|m| m.as_str()).unwrap_or("auto");
-            candidate(s(p, "name"), format!("{} ({model})", s(p, "seat")))
-        })
+        .map(|k| candidate(s(k, "name"), s(k, "summary").to_string()))
         .collect()
-}
-
-/// Profile names, any seat (profile subcommands).
-pub fn profile_names() -> Vec<CompletionCandidate> {
-    profiles(None)
-}
-
-/// Orchestrator profile names (`goal create --orchestrator`).
-pub fn orchestrator_profiles() -> Vec<CompletionCandidate> {
-    profiles(Some("orchestrator"))
-}
-
-/// Author profile names (`task create --author`).
-pub fn author_profiles() -> Vec<CompletionCandidate> {
-    profiles(Some("author"))
-}
-
-/// Reviewer profile names (`task create|update --reviewer`).
-pub fn reviewer_profiles() -> Vec<CompletionCandidate> {
-    profiles(Some("reviewer"))
 }
 
 /// Registered repository ids (repo subcommands, `goal create --repo`).

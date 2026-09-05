@@ -44,8 +44,8 @@ use ariadne_daemon::log::LogBuffer;
 use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_daemon::tmux::{TmuxManager, session_name};
 use ariadne_store::{
-    AgentSession, Goal, NewAgentEvent, NewGoal, NewProfile, NewRepository, NewSession,
-    NewTask, Profile, Repository, ReviewerSlot, SessionFilter, Store, Task,
+    AgentPin, AgentSession, Goal, NewAgentEvent, NewGoal, NewRepository, NewSession, NewTask,
+    NewTaskAgent, Repository, SessionFilter, Store, Task, TaskAgent,
 };
 
 /// How long a test waits for something the daemon does off the request path —
@@ -376,7 +376,7 @@ fn stub_script(dir: &Path) -> String {
 // -- the stub tmux, from the test's side ------------------------------------
 
 impl Harness {
-    fn at(&self, name: &str) -> PathBuf {
+    pub fn at(&self, name: &str) -> PathBuf {
         self.dir.path().join(name)
     }
 
@@ -579,43 +579,20 @@ fn target_of(call: &str) -> Option<String> {
 
 // -- seeding ----------------------------------------------------------------
 
-/// The people of one goal with one task, and the repository behind it: every
+/// The agents of one goal with one task, and the repository behind it: every
 /// agent that can be spawned for it.
+///
+/// The orchestrator is not among them: a goal has exactly one, it is the one
+/// agent type Ariadne defines, and nothing staffs it.
 pub struct Cast {
     pub goal: Goal,
     pub task: Task,
     pub repo: Repository,
-    pub orchestrator: Profile,
-    pub author: Profile,
-    pub reviewer: Profile,
+    pub author: TaskAgent,
+    pub reviewer: TaskAgent,
 }
 
 impl Harness {
-    pub async fn profile(&self, name: &str, seat: Seat) -> Profile {
-        self.profile_on(name, seat, Some(AgentKind::ClaudeCode), None)
-            .await
-    }
-
-    pub async fn profile_on(
-        &self,
-        name: &str,
-        seat: Seat,
-        agent_kind: Option<AgentKind>,
-        model: Option<&str>,
-    ) -> Profile {
-        self.store
-            .create_profile(NewProfile {
-                name: name.into(),
-                seat,
-                agent_kind,
-                model: model.map(str::to_string),
-                effort: None,
-                system_prompt: Some(format!("You are {name}.")),
-            })
-            .await
-            .unwrap()
-    }
-
     /// A toy git repo under the harness directory: `main` at one commit, and a
     /// `next` branch one commit ahead of it, checked out on `main`.
     pub fn git_repo(&self, name: &str) -> PathBuf {
@@ -648,51 +625,60 @@ impl Harness {
     }
 
     /// A goal still in planning, on a repository of its own.
-    pub async fn goal(&self, orchestrator: &Profile) -> (Goal, Repository) {
-        self.goal_needing(orchestrator, 1).await
+    pub async fn goal(&self) -> (Goal, Repository) {
+        self.goal_needing(1).await
     }
 
     /// The same, for a goal that wants `approvals` of them: a round that one
     /// verdict does not close is where a reviewer sits with its work done.
-    async fn goal_needing(&self, orchestrator: &Profile, approvals: i64) -> (Goal, Repository) {
+    async fn goal_needing(&self, approvals: i64) -> (Goal, Repository) {
         let repo = self.repository(&self.at("repo")).await;
-        let goal = self.goal_on(orchestrator, &repo, approvals).await;
+        let goal = self.goal_on(&repo, approvals, None).await;
         (goal, repo)
     }
 
-    pub async fn goal_on(&self, orchestrator: &Profile, repo: &Repository, approvals: i64) -> Goal {
+    pub async fn goal_on(
+        &self,
+        repo: &Repository,
+        approvals: i64,
+        pin: Option<AgentPin>,
+    ) -> Goal {
         self.store
             .create_goal(NewGoal {
                 title: "Ship the UI".into(),
                 description: "desc".into(),
-                orchestrator_profile_id: orchestrator.id.clone(),
                 max_tasks: None,
                 required_approvals: approvals,
                 repository_ids: vec![repo.id.clone()],
-                pin: None,
+                pin,
             })
             .await
             .unwrap()
     }
 
-    /// A task on a goal, with the agents given.
+    /// A task on a goal, staffed with one author and the reviewers given, all
+    /// on the same pin.
     pub async fn task_on(
         &self,
         goal: &Goal,
         repo: &Repository,
         title: &str,
-        author: &Profile,
-        reviewers: &[&Profile],
+        reviewers: usize,
+        pin: Option<AgentPin>,
     ) -> Task {
+        let agent = |seat: Seat, skills: &[&str]| NewTaskAgent {
+            pin: pin.clone(),
+            ..NewTaskAgent::new(seat, skills.to_vec())
+        };
+        let mut agents = vec![agent(Seat::Author, &["coding"])];
+        agents.extend((0..reviewers).map(|_| agent(Seat::Reviewer, &["code-review"])));
         self.store
             .create_task(NewTask {
                 goal_id: goal.id.clone(),
                 repo_id: repo.id.clone(),
                 title: title.into(),
                 description: "do things".into(),
-                author_profile_id: author.id.clone(),
-                pin: None,
-                reviewers: reviewers.iter().map(|p| ReviewerSlot::of(&p.id)).collect(),
+                agents,
                 depends_on: vec![],
             })
             .await
@@ -701,21 +687,19 @@ impl Harness {
 
     /// A goal still in planning, with a repository behind it and nothing else:
     /// no task, so nothing but the orchestrator is under reconciliation.
-    pub async fn planning_goal(&self) -> (Goal, Profile) {
-        let orchestrator = self.profile("orchestrator", Seat::Orchestrator).await;
-        let (goal, _repo) = self.goal(&orchestrator).await;
-        (goal, orchestrator)
+    pub async fn planning_goal(&self) -> Goal {
+        let (goal, _repo) = self.goal().await;
+        goal
     }
 
-    /// A goal in planning with one task on it, and the three profiles behind
-    /// it: the shape most tests start from.
+    /// A goal in planning with one task on it, and the agents staffed on that
+    /// task: the shape most tests start from.
     pub async fn cast(&self) -> Cast {
         self.cast_needing(1).await
     }
 
-    /// The same on another agent CLI, or on a model: what a task and its
-    /// reviewer slots are pinned to is what their profiles were on at the
-    /// moment the task was created.
+    /// The same on another agent CLI, or on a model: what a goal and a task's
+    /// agents run on is what they were pinned to when they were created.
     pub async fn cast_on(&self, agent_kind: AgentKind) -> Cast {
         self.cast_pinned(Some(agent_kind), None, 1).await
     }
@@ -731,46 +715,45 @@ impl Harness {
         model: Option<&str>,
         approvals: i64,
     ) -> Cast {
-        let orchestrator = self
-            .profile_on("orchestrator", Seat::Orchestrator, agent_kind, model)
-            .await;
-        let author = self
-            .profile_on("author", Seat::Author, agent_kind, model)
-            .await;
+        let pin = agent_kind.map(|agent_kind| AgentPin {
+            agent_kind,
+            model: model.map(str::to_string),
+            effort: None,
+        });
+        let repo = self.repository(&self.at("repo")).await;
+        let goal = self.goal_on(&repo, approvals, pin.clone()).await;
+        let task = self.task_on(&goal, &repo, "task", 1, pin).await;
+        let author = self.store.task_author(&task.id).await.unwrap();
         let reviewer = self
-            .profile_on("reviewer", Seat::Reviewer, agent_kind, model)
-            .await;
-        let (goal, repo) = self.goal_needing(&orchestrator, approvals).await;
-        let task = self
-            .task_on(&goal, &repo, "task", &author, &[&reviewer])
-            .await;
+            .store
+            .list_task_reviewers(&task.id)
+            .await
+            .unwrap()
+            .remove(0);
         Cast {
             goal,
             task,
             repo,
-            orchestrator,
             author,
             reviewer,
         }
     }
 
-    /// Point a profile at another agent CLI and another model, which is what a
-    /// `PUT /v1/profiles/{id}` from the UI amounts to.
-    pub async fn move_profile(
+    /// Move a staffed agent onto another agent CLI and another model, which is
+    /// what a `PATCH /v1/tasks/{id}` from the UI amounts to.
+    pub async fn move_agent(
         &self,
-        profile_id: &str,
+        agent_id: &str,
         agent_kind: Option<AgentKind>,
         model: Option<&str>,
     ) {
+        let pin = agent_kind.map(|agent_kind| AgentPin {
+            agent_kind,
+            model: model.map(str::to_string),
+            effort: None,
+        });
         self.store
-            .update_profile(
-                profile_id,
-                ariadne_store::ProfileUpdate {
-                    agent_kind: Some(agent_kind),
-                    model: Some(model.map(str::to_string)),
-                    ..Default::default()
-                },
-            )
+            .set_agent_pin(agent_id, pin.as_ref())
             .await
             .unwrap();
     }
@@ -807,16 +790,15 @@ impl Harness {
         goal: &Goal,
         task: Option<&Task>,
         seat: Seat,
-        profile_id: &str,
+        agent_id: &str,
     ) -> AgentSession {
         let tmux = session_name(
             &goal.id,
             task.map(|t| t.id.as_str()),
             seat.as_str(),
-            Some(&profile_id[profile_id.len() - 4..]),
+            Some(&agent_id[agent_id.len() - 4..]),
         );
-        self.session_named(goal, task, seat, profile_id, &tmux)
-            .await
+        self.session_named(goal, task, seat, agent_id, &tmux).await
     }
 
     /// An orchestrator session on a goal of its own, bound to the tmux session
@@ -824,15 +806,30 @@ impl Harness {
     pub async fn lone_session(&self, tmux_name: &str) -> AgentSession {
         // Everything named after the pane, so that a test wanting two of them
         // gets two of each rather than a conflict on the second.
-        let orchestrator = self
-            .profile(&format!("orchestrator-{tmux_name}"), Seat::Orchestrator)
-            .await;
         let repo = self
             .repository(&self.at(&format!("repo-{tmux_name}")))
             .await;
-        let goal = self.goal_on(&orchestrator, &repo, 1).await;
-        self.session_named(&goal, None, Seat::Orchestrator, &orchestrator.id, tmux_name)
-            .await
+        let goal = self.goal_on(&repo, 1, None).await;
+        // An orchestrator is staffed on no task, so its session carries no
+        // agent: the pane name is what tells this one apart.
+        self.orchestrator_session(&goal, tmux_name).await
+    }
+
+    /// An orchestrator session on `goal`, in the pane named `tmux_session`.
+    pub async fn orchestrator_session(
+        &self,
+        goal: &Goal,
+        tmux_session: &str,
+    ) -> AgentSession {
+        self.new_session(
+            goal,
+            None,
+            Seat::Orchestrator,
+            None,
+            tmux_session,
+            AgentKind::ClaudeCode,
+        )
+        .await
     }
 
     /// The same on another agent CLI: the ingestion path an agent's events take
@@ -842,16 +839,16 @@ impl Harness {
         goal: &Goal,
         task: Option<&Task>,
         seat: Seat,
-        profile_id: &str,
+        agent_id: &str,
         agent_kind: AgentKind,
     ) -> AgentSession {
         let tmux = session_name(
             &goal.id,
             task.map(|t| t.id.as_str()),
             seat.as_str(),
-            Some(&profile_id[profile_id.len() - 4..]),
+            Some(&agent_id[agent_id.len() - 4..]),
         );
-        self.new_session(goal, task, seat, profile_id, &tmux, agent_kind)
+        self.new_session(goal, task, seat, Some(agent_id), &tmux, agent_kind)
             .await
     }
 
@@ -860,14 +857,14 @@ impl Harness {
         goal: &Goal,
         task: Option<&Task>,
         seat: Seat,
-        profile_id: &str,
+        agent_id: &str,
         tmux_session: &str,
     ) -> AgentSession {
         self.new_session(
             goal,
             task,
             seat,
-            profile_id,
+            Some(agent_id),
             tmux_session,
             AgentKind::ClaudeCode,
         )
@@ -879,21 +876,21 @@ impl Harness {
         goal: &Goal,
         task: Option<&Task>,
         seat: Seat,
-        profile_id: &str,
+        agent_id: Option<&str>,
         tmux_session: &str,
         agent_kind: AgentKind,
     ) -> AgentSession {
         // A tree of its own per session, really there: what a resume comes
         // back in, and what a test can take away to see what happens when it
         // is not.
-        let worktree = self.worktree_of(profile_id);
+        let worktree = self.worktree_of(agent_id.unwrap_or(&goal.id));
         std::fs::create_dir_all(&worktree).unwrap();
         self.store
             .create_session(NewSession {
                 goal_id: goal.id.clone(),
                 task_id: task.map(|t| t.id.clone()),
                 seat,
-                profile_id: profile_id.to_string(),
+                task_agent_id: agent_id.map(str::to_string),
                 agent_kind,
                 model: None,
                 effort: None,
@@ -905,8 +902,8 @@ impl Harness {
             .unwrap()
     }
 
-    fn worktree_of(&self, profile_id: &str) -> PathBuf {
-        self.at(&format!("wt-{}", &profile_id[profile_id.len() - 4..]))
+    fn worktree_of(&self, id: &str) -> PathBuf {
+        self.at(&format!("wt-{}", &id[id.len() - 4..]))
     }
 
     /// A session that has already run once and ended: the agent id a resume

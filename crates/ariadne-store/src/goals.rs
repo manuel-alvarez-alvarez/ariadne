@@ -3,23 +3,19 @@
 use ariadne_core::GoalStatus;
 use ariadne_core::id::new_id;
 
-use crate::{
-    AgentPin, Change, Goal, Profile, Repository, Result, Store, StoreError, not_found, now,
-};
+use crate::{AgentPin, Change, Goal, Repository, Result, Store, StoreError, not_found, now};
 
 #[derive(Debug, Clone)]
 pub struct NewGoal {
     pub title: String,
     pub description: String,
-    pub orchestrator_profile_id: String,
     pub max_tasks: Option<i64>,
     pub required_approvals: i64,
     /// Ids of registered repositories the goal works in; each must exist.
     /// The goal reads them live, so editing one moves the goal with it.
     pub repository_ids: Vec<String>,
-    /// What the orchestrator is pinned to run on. None = the orchestrator
-    /// profile's own agent, model and effort, which is what every goal took
-    /// before models could be chosen per goal.
+    /// What this goal's orchestrator runs on. None = auto CLI, that CLI's
+    /// default model, and whatever it runs the model at.
     pub pin: Option<AgentPin>,
 }
 
@@ -45,26 +41,17 @@ impl Store {
         let id = new_id();
         let ts = now();
         let mut tx = self.w().begin().await?;
-        // The orchestrator's agent, model and effort are copied onto the goal
-        // here and never re-read: editing the profile later must not move a
-        // goal that is already being planned. A goal created with a model of
-        // its own is pinned to that instead, and to the agent CLI that runs
-        // it.
-        let orchestrator: Profile =
-            Self::fetch_by_in_tx(&mut tx, "profile", "profiles", &new.orchestrator_profile_id).await?;
-        let (agent_kind, model, effort) = AgentPin::or_profile(new.pin.as_ref(), &orchestrator);
+        let (agent_kind, model, effort) = AgentPin::columns(new.pin.as_ref());
         sqlx::query(
             "INSERT INTO goals (id, title, description, status, max_tasks, required_approvals,
-                                orchestrator_profile_id, agent_kind, model, effort,
-                                created_at, updated_at)
-             VALUES (?, ?, ?, 'planning', ?, ?, ?, ?, ?, ?, ?, ?)",
+                                agent_kind, model, effort, created_at, updated_at)
+             VALUES (?, ?, ?, 'planning', ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&new.title)
         .bind(&new.description)
         .bind(new.max_tasks)
         .bind(new.required_approvals)
-        .bind(&new.orchestrator_profile_id)
         .bind(&agent_kind)
         .bind(&model)
         .bind(&effort)

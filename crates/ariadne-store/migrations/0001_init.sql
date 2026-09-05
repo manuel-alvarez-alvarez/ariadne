@@ -1,41 +1,36 @@
 -- Ariadne initial schema, and the only migration: what came before it was 29
 -- files, most of them prompt text, and none of that history says anything a
 -- fresh database needs. A lifecycle briefing is Ariadne's own constant and a
--- system prompt is an override (`profiles.system_prompt` holds a text only
--- where somebody wrote one), so a reworded default never touches the database
--- again and this file never has to grow a successor for one.
+-- skill document is an override (`skills.document` holds a text only where
+-- somebody wrote one), so a reworded default never touches the database again
+-- and this file never has to grow a successor for one.
 --
--- Schema only: the built-in profiles and the per-agent launch flags are seeded
--- from Rust constants after the migrations run (`seed_builtin_profiles`,
+-- Schema only: the built-in skills and the per-agent launch flags are seeded
+-- from Rust constants after the migrations run (`seed_builtin_skills`,
 -- `seed_agent_configs`), so a default can change without a migration.
 --
 -- Ids are lowercase ULIDs (TEXT, 26 chars); timestamps are ISO-8601 UTC TEXT.
 
--- Who an agent session runs as: its seat, the CLI and model it is launched
--- with, and the system prompt it is briefed with. The briefings that start,
--- resume and nudge a session belong to no profile: they are built into
--- Ariadne (`ariadne_store::defaults`) and read from there on every launch.
+-- A skill: one document that tells a generic agent how to do one kind of
+-- work. Ariadne defines exactly one agent type, the orchestrator; every other
+-- agent is generic and becomes what its task needs by loading skills.
 --
--- NULL `system_prompt` is the default of the seat (see `ariadne_store::
--- defaults`); text is what its user wrote instead, which is also what a reset
--- goes back to by clearing.
-CREATE TABLE profiles (
-    id            TEXT PRIMARY KEY,
-    name          TEXT NOT NULL UNIQUE,
-    seat          TEXT NOT NULL CHECK (seat IN ('orchestrator', 'author', 'reviewer')),
-    -- NULL = auto: resolved at spawn time to the first installed agent CLI
-    -- (claude_code, then codex, then opencode).
-    agent_kind    TEXT CHECK (agent_kind IN ('claude_code', 'codex', 'opencode')),
-    -- NULL = the agent CLI's own default.
-    model         TEXT,
-    -- NULL = whatever the agent CLI runs that model at on its own; otherwise
-    -- one of the efforts the model accepts, checked against the catalog
-    -- (`GET /v1/models`) when it is written.
-    effort        TEXT,
-    -- NULL = the default system prompt of `seat`.
-    system_prompt TEXT,
-    created_at    TEXT NOT NULL,
-    updated_at    TEXT NOT NULL
+-- `document` is the whole SKILL.md — YAML frontmatter naming the skill and
+-- describing it, then the body — in the format Claude Code and Codex both
+-- read, so one text serves every agent CLI.
+--
+-- NULL `document` means a built-in still on the text Ariadne ships
+-- (`ariadne_store::defaults`), which is what a reset goes back to by clearing
+-- the column, and why rewording a shipped skill reaches every database without
+-- touching a row. A skill the user wrote has nowhere to fall back to, so it
+-- must carry its own text.
+CREATE TABLE skills (
+    name       TEXT PRIMARY KEY,                -- kebab-case; how an agent loads it
+    document   TEXT,                            -- NULL = the shipped default of `name`
+    builtin    INTEGER NOT NULL DEFAULT 0 CHECK (builtin IN (0, 1)),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK (builtin = 1 OR document IS NOT NULL)
 );
 
 -- Per-agent-kind launch configuration: how an agent CLI is allowed to run is
@@ -71,17 +66,13 @@ CREATE TABLE repositories (
     UNIQUE (path, base_branch)
 );
 
--- The agent, model and effort columns on `goals`, `tasks` and
--- `task_reviewers` are pins: creation snapshots them off the profile it names,
--- and the row is what the launcher reads from there on, so a profile edit only
--- reaches work created after it. All three NULLs are meaningful — NULL
--- agent_kind means auto, NULL model means the CLI's own default, NULL effort
--- means whatever that CLI runs the model at — exactly as on `profiles`. An
--- effort is snapshotted off the profile only where the model is the profile's
--- too: an override that moves the row to another model runs it at that CLI's
--- own default, since the profile's effort may not exist on the new model. The
--- system prompt is deliberately not pinned: rewording a briefing is meant to
--- reach running work.
+-- The agent, model and effort columns on `goals` and `task_agents` are pins:
+-- the orchestrator sizes each agent it staffs and writes the answer here, and
+-- the row is what the launcher reads from there on. All three NULLs are
+-- meaningful — NULL agent_kind means auto (resolved at spawn time to the first
+-- installed CLI), NULL model means that CLI's own default, NULL effort means
+-- whatever the CLI runs the model at. The user's later choice overwrites them,
+-- while the task has not started.
 CREATE TABLE goals (
     id                  TEXT PRIMARY KEY,
     title               TEXT NOT NULL,
@@ -90,7 +81,6 @@ CREATE TABLE goals (
                         CHECK (status IN ('planning', 'active', 'completed', 'cancelled')),
     max_tasks           INTEGER,                -- NULL = unbounded
     required_approvals  INTEGER NOT NULL DEFAULT 1 CHECK (required_approvals >= 1),
-    orchestrator_profile_id  TEXT NOT NULL REFERENCES profiles (id),
     created_at          TEXT NOT NULL,
     updated_at          TEXT NOT NULL,
     agent_kind          TEXT
@@ -118,10 +108,6 @@ CREATE TABLE tasks (
                         CHECK (status IN ('pending', 'ready', 'in_progress', 'under_review',
                                           'changes_requested', 'approved', 'finished',
                                           'cancelled', 'failed')),
-    author_profile_id TEXT NOT NULL REFERENCES profiles (id),
-    agent_kind          TEXT CHECK (agent_kind IN ('claude_code', 'codex', 'opencode')),
-    model               TEXT,
-    effort              TEXT,
     branch              TEXT NOT NULL,
     worktree_path       TEXT,
     review_round        INTEGER NOT NULL DEFAULT 0,
@@ -135,15 +121,36 @@ CREATE TABLE tasks (
 CREATE INDEX idx_tasks_goal ON tasks (goal_id);
 CREATE INDEX idx_tasks_status ON tasks (status);
 
-CREATE TABLE task_reviewers (
+-- The agents staffed on a task. An agent has no identity of its own: it is an
+-- agent CLI, a model, an effort, a brief and a set of skills, and its seat
+-- says only where it sits — the one author that carries the task from its
+-- first commit to the end, or one of the reviewers that vote on it.
+--
+-- `ordinal` is the order the orchestrator listed them in. There is exactly one
+-- author per task (the partial index below), because the task never leaves it.
+CREATE TABLE task_agents (
+    id         TEXT PRIMARY KEY,
     task_id    TEXT NOT NULL REFERENCES tasks (id) ON DELETE CASCADE,
-    profile_id TEXT NOT NULL REFERENCES profiles (id),
-    position   INTEGER NOT NULL,
+    seat       TEXT NOT NULL CHECK (seat IN ('author', 'reviewer')),
+    ordinal    INTEGER NOT NULL,
     agent_kind TEXT
                CHECK (agent_kind IN ('claude_code', 'codex', 'opencode')),
     model      TEXT,
     effort     TEXT,
-    PRIMARY KEY (task_id, profile_id)
+    -- What this agent is told beyond the task itself, where the orchestrator
+    -- has something to add. NULL = the task is the whole of it.
+    brief      TEXT,
+    UNIQUE (task_id, seat, ordinal)
+);
+CREATE INDEX idx_task_agents_task ON task_agents (task_id);
+CREATE UNIQUE INDEX idx_task_one_author ON task_agents (task_id) WHERE seat = 'author';
+
+-- The skills an agent loads, in the order they are listed to it.
+CREATE TABLE task_agent_skills (
+    agent_id   TEXT NOT NULL REFERENCES task_agents (id) ON DELETE CASCADE,
+    skill_name TEXT NOT NULL REFERENCES skills (name),
+    ordinal    INTEGER NOT NULL,
+    PRIMARY KEY (agent_id, skill_name)
 );
 
 CREATE TABLE task_dependencies (
@@ -176,7 +183,10 @@ CREATE TABLE agent_sessions (
     goal_id             TEXT NOT NULL REFERENCES goals (id) ON DELETE CASCADE,
     task_id             TEXT REFERENCES tasks (id) ON DELETE CASCADE,  -- NULL = orchestrator
     seat                TEXT NOT NULL CHECK (seat IN ('orchestrator', 'author', 'reviewer')),
-    profile_id          TEXT NOT NULL REFERENCES profiles (id),
+    -- Which staffed agent this session runs; NULL for an orchestrator,
+    -- which is the one agent type Ariadne defines rather than one a task
+    -- staffs.
+    task_agent_id       TEXT REFERENCES task_agents (id) ON DELETE CASCADE,
     agent_kind          TEXT NOT NULL CHECK (agent_kind IN ('claude_code', 'codex', 'opencode')),
     internal_session_id TEXT,                   -- claude session uuid / codex thread_id / opencode session id
     tmux_session        TEXT NOT NULL,
@@ -236,12 +246,12 @@ CREATE TABLE reviews (
     id                  TEXT PRIMARY KEY,
     task_id             TEXT NOT NULL REFERENCES tasks (id) ON DELETE CASCADE,
     round               INTEGER NOT NULL,
-    reviewer_profile_id TEXT NOT NULL REFERENCES profiles (id),
+    reviewer_agent_id   TEXT NOT NULL REFERENCES task_agents (id) ON DELETE CASCADE,
     session_id          TEXT REFERENCES agent_sessions (id),
     verdict             TEXT NOT NULL CHECK (verdict IN ('approve', 'request_changes')),
     body                TEXT,
     created_at          TEXT NOT NULL,
-    UNIQUE (task_id, round, reviewer_profile_id)
+    UNIQUE (task_id, round, reviewer_agent_id)
 );
 CREATE INDEX idx_reviews_task ON reviews (task_id, round);
 

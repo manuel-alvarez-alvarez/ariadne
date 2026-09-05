@@ -25,7 +25,7 @@ use axum::http::StatusCode;
 use ariadne_api::reviews::ReviewDto;
 use ariadne_api::tasks::TaskDto;
 use ariadne_core::{Actor, AttentionReason, MergeStrategy, ReviewVerdict, Seat, TaskStatus};
-use ariadne_store::{AgentSession, NewReview, RepositoryUpdate, Repository, ReviewerSlot, Task};
+use ariadne_store::{AgentSession, NewReview, RepositoryUpdate, Repository, NewTaskAgent, Task};
 
 use common::{Cast, Harness, as_session, eventually, get, harness, sh};
 
@@ -77,7 +77,7 @@ async fn approve(h: &Harness, task: &Task, reviewer: &str) {
         .create_review(NewReview {
             task_id: task.id.clone(),
             round: task.review_round,
-            reviewer_profile_id: reviewer.to_string(),
+            reviewer_agent_id: reviewer.to_string(),
             session_id: None,
             verdict: ReviewVerdict::Approve,
             body: Some("looks right".into()),
@@ -164,9 +164,14 @@ async fn an_approved_task_is_landed_by_its_own_author() {
             repo_id: cast.repo.id.clone(),
             title: "Use what the first one built".into(),
             description: "do things".into(),
-            author_profile_id: cast.author.id.clone(),
-            pin: None,
-            reviewers: vec![ReviewerSlot::of(&cast.reviewer.id)],
+            agents: vec![
+                NewTaskAgent {
+                    ..NewTaskAgent::new(Seat::Author, ["coding"])
+                },
+                NewTaskAgent {
+                    ..NewTaskAgent::new(Seat::Reviewer, ["code-review"])
+                },
+            ],
             depends_on: vec![task.id.clone()],
         })
         .await
@@ -373,7 +378,7 @@ async fn a_revision_of_a_published_request_goes_back_to_the_reviewers() {
         .create_review(NewReview {
             task_id: task.id.clone(),
             round: revised.review_round,
-            reviewer_profile_id: cast.reviewer.id.clone(),
+            reviewer_agent_id: cast.reviewer.id.clone(),
             session_id: None,
             verdict: ReviewVerdict::Approve,
             body: Some("the answers read right".into()),
@@ -394,7 +399,7 @@ async fn a_revision_of_a_published_request_goes_back_to_the_reviewers() {
     assert!(
         reviews
             .iter()
-            .all(|r| r.reviewer_profile_id == cast.reviewer.id)
+            .all(|r| r.reviewer_agent_id == cast.reviewer.id)
     );
 }
 

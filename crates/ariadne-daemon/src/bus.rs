@@ -19,7 +19,7 @@ use ariadne_api::stream::{DeletedDto, DomainEvent, TaskUpdatedDto};
 use ariadne_store::{AgentSession, Change, Goal, Result, Store, Task};
 
 use crate::http::convert::{
-    event_dto, goal_dto_of, profile_dto, repository_dto, review_dto, session_dto_of, task_dto_of,
+    event_dto, goal_dto_of, skill_dto, repository_dto, review_dto, session_dto_of, task_dto_of,
     transition_dto,
 };
 
@@ -165,13 +165,11 @@ async fn fatten(store: &Store, change: Change) -> Result<BusEvent> {
                 event: DomainEvent::AgentEvent(event_dto(agent_event)),
             }
         }
-        Change::ProfileCreated(profile) => {
-            unscoped(DomainEvent::ProfileCreated(profile_dto(profile)))
+        Change::SkillCreated(skill) => unscoped(DomainEvent::SkillCreated(skill_dto(skill))),
+        Change::SkillUpdated(skill) => unscoped(DomainEvent::SkillUpdated(skill_dto(skill))),
+        Change::SkillDeleted(name) => {
+            unscoped(DomainEvent::SkillDeleted(DeletedDto { id: name }))
         }
-        Change::ProfileUpdated(profile) => {
-            unscoped(DomainEvent::ProfileUpdated(profile_dto(profile)))
-        }
-        Change::ProfileDeleted(id) => unscoped(DomainEvent::ProfileDeleted(DeletedDto { id })),
         Change::RepositoryCreated(repo) => {
             unscoped(DomainEvent::RepositoryCreated(repository_dto(repo)))
         }

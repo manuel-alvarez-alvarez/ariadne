@@ -14,7 +14,7 @@ pub mod follow;
 pub mod goal;
 pub mod mcp;
 pub mod models;
-pub mod profile;
+pub mod skill;
 pub mod repo;
 pub mod resolve;
 pub mod session;
@@ -28,7 +28,6 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use serde_json::json;
 
-use ariadne_api::profiles::ProfileDto;
 use ariadne_client::{Client, endpoint};
 use ariadne_core::models::ModelRef;
 use ariadne_core::probe;
@@ -161,64 +160,29 @@ pub fn one_of<T: Copy>(statuses: &[T]) -> Option<T> {
     }
 }
 
-/// Profile ids paired with the names they are known by.
+/// How one staffed agent is named to a reader: an agent has no name of its
+/// own, so it is named by the skills it carries.
 ///
-/// Profiles are name-addressable everywhere else in the CLI, so an inspect
-/// block that prints a bare ULID names nobody.
-#[derive(Default)]
-pub struct ProfileNames(std::collections::HashMap<String, String>);
-
-impl ProfileNames {
-    /// One list call for the whole block. A name is a courtesy: a daemon that
-    /// will not answer leaves the ids bare rather than failing the inspect.
-    pub async fn fetch(client: &Client) -> Self {
-        let profiles: Vec<ProfileDto> = client.get_json("/v1/profiles").await.unwrap_or_default();
-        Self(profiles.into_iter().map(|p| (p.id, p.name)).collect())
+/// An agent on `coding` and `testing` reads as exactly that, which is more
+/// than a name would have said. One with no skills is a generic agent with
+/// nothing but its task, and says so.
+pub fn agent_label(skills: &[String]) -> String {
+    match skills.is_empty() {
+        true => "no skills".to_string(),
+        false => skills.join(", "),
     }
+}
 
-    /// The same map, built from pairs rather than from the daemon: what a
-    /// unit test over a block that names profiles needs, since there is no
-    /// daemon behind it.
-    #[cfg(test)]
-    pub fn from_pairs<I: IntoIterator<Item = (String, String)>>(pairs: I) -> Self {
-        Self(pairs.into_iter().collect())
-    }
-
-    /// The names for a block that is about to be rendered, or nothing to look
-    /// up: `--format json` prints the daemon's payload, where ids are ids.
-    pub async fn for_format(client: &Client, format: Format) -> Self {
-        match format {
-            Format::Table => Self::fetch(client).await,
-            Format::Json => Self::default(),
-        }
-    }
-
-    /// `Name (id)`, or the bare id when no profile answers to it.
-    pub fn label(&self, id: &str) -> String {
-        match self.0.get(id) {
-            Some(name) => format!("{name} ({id})"),
-            None => id.to_string(),
-        }
-    }
-
-    /// `Name (id) · model @ effort`: the mention, plus the two strings that
-    /// say what the agent behind it runs on and how deeply it reasons there.
-    ///
-    /// A profile is editable and a pin is not, so the two drift: what a
-    /// task's author, a task's reviewer or a goal's orchestrator runs on is
-    /// the snapshot taken when it was assigned, not what the profile says
-    /// today — and where nothing was pinned, whatever the profile says at
-    /// spawn time, which is what "the profile's own" stands for.
-    ///
-    /// An effort that was never pinned says nothing at all rather than a word
-    /// for it: the model is then run at whatever its agent CLI runs it at, and
-    /// a `@` with a guess after it would read as a choice somebody made.
-    pub fn pinned_label(&self, id: &str, model: Option<&str>, effort: Option<&str>) -> String {
-        let pin = model.unwrap_or("the profile's own");
-        match effort {
-            Some(effort) => format!("{} · {pin} @ {effort}", self.label(id)),
-            None => format!("{} · {pin}", self.label(id)),
-        }
+/// `skills · model @ effort`: what an agent knows, and what it runs on.
+///
+/// An effort that was never pinned says nothing at all rather than a word for
+/// it: the model is then run at whatever its agent CLI runs it at, and a `@`
+/// with a guess after it would read as a choice somebody made.
+pub fn agent_pin_label(skills: &[String], model: Option<&str>, effort: Option<&str>) -> String {
+    let pin = model.unwrap_or("auto");
+    match effort {
+        Some(effort) => format!("{} · {pin} @ {effort}", agent_label(skills)),
+        None => format!("{} · {pin}", agent_label(skills)),
     }
 }
 
@@ -261,9 +225,9 @@ pub fn query_path(base: &str, query: &impl serde::Serialize) -> Result<String> {
 }
 
 /// The word every `--model` that takes one writes for "pin nothing at all",
-/// which is also how the daemon reads it: `task update --model default` runs
-/// the author on whatever its profile is on, and `profile update --model
-/// default` puts the profile itself back on auto.
+/// which is also how the daemon reads it: `task update --model default` puts
+/// the task's author back on auto — the first installed CLI at spawn time, on
+/// its own default model.
 pub const DEFAULT: &str = "default";
 
 /// One `--model <agent>[:<model>]` off the command line, as the daemon spells
@@ -325,10 +289,10 @@ pub fn pinned(model: Option<&str>) -> Option<ModelRef> {
 
 /// One caller-typed value as a single path segment.
 ///
-/// Profiles answer to their name as well as their id, and a name is free text
-/// — a profile named `My Reviewer` has a space in it, and a space is not a
-/// character a URI may carry: `ariadne profile inspect "My Reviewer"` used
-/// to reach the client with it raw and panic on the URI it could not build.
+/// A skill answers to its name, and a name written by a user is free text —
+/// a space is not a character a URI may carry, and `ariadne skill inspect "my
+/// skill"` used to reach the client with it raw and panic on the URI it could
+/// not build.
 /// Everything outside the unreserved set (RFC 3986 §2.3) is escaped rather
 /// than only what is known to hurt, and `/` with it: the value is one
 /// whole segment, so a slash inside it is data, never structure.

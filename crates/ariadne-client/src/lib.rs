@@ -21,7 +21,7 @@ use serde::de::DeserializeOwned;
 use ariadne_api::agents::{AgentConfigDto, UpdateAgentConfigRequest};
 use ariadne_api::doctor::DaemonReportDto;
 use ariadne_api::error::ErrorBody;
-use ariadne_api::profiles::ProfileDto;
+use ariadne_api::skills::SkillDto;
 use ariadne_api::{HealthResponse, VersionResponse};
 use ariadne_core::AgentKind;
 
@@ -278,9 +278,9 @@ impl Client {
         .await
     }
 
-    /// Put a profile's system prompt back on the default of its seat.
-    pub async fn reset_system_prompt(&self, profile: &str) -> Result<ProfileDto, ClientError> {
-        self.post_empty(&format!("/v1/profiles/{profile}/system-prompt/reset"))
+    /// Put a built-in skill back on the document Ariadne ships.
+    pub async fn reset_skill(&self, skill: &str) -> Result<SkillDto, ClientError> {
+        self.post_empty(&format!("/v1/skills/{skill}/document/reset"))
             .await
     }
 

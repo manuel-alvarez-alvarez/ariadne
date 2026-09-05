@@ -11,11 +11,12 @@ pub mod defaults;
 mod entities;
 mod events;
 mod goals;
-mod profiles;
 mod query;
 mod repositories;
 mod reviews;
 mod sessions;
+mod skills;
+mod task_agents;
 mod tasks;
 mod usage;
 
@@ -23,12 +24,13 @@ pub use change::Change;
 pub use entities::*;
 pub use events::{EventFilter, NewAgentEvent};
 pub use goals::NewGoal;
-pub use profiles::{NewProfile, ProfileUpdate};
 pub use repositories::{NewRepository, RepositoryUpdate};
 pub use reviews::NewReview;
 pub use sessions::{NewSession, SessionFilter};
-pub use tasks::{NewTask, ReviewerSlot, TaskFilter, TaskUpdate};
-pub use usage::{ProfileUsage, SeatUsage};
+pub use skills::NewSkill;
+pub use task_agents::NewTaskAgent;
+pub use tasks::{NewTask, TaskFilter, TaskUpdate};
+pub use usage::{AgentUsage, SeatUsage};
 
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
@@ -192,7 +194,7 @@ impl Store {
             read,
             changes: Arc::default(),
         };
-        store.seed_builtin_profiles().await?;
+        store.seed_builtin_skills().await?;
         store.seed_agent_configs().await?;
         Ok(store)
     }

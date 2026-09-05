@@ -9,7 +9,7 @@ use ariadne_core::{
     TaskStatus,
 };
 
-use crate::defaults::{default_landing_prompt, default_system_prompt};
+use crate::defaults::{default_landing_prompt, default_skill_document, skill_summary};
 
 /// The typed reading of a TEXT column that holds a core enum. The accessor
 /// and the column share a name; brackets mark a nullable column, which reads
@@ -41,12 +41,11 @@ macro_rules! enum_columns {
 }
 
 enum_columns! {
-    Profile { seat: Seat, agent_kind: [AgentKind] }
     AgentConfig { agent_kind: AgentKind }
     Repository { merge_strategy: MergeStrategy }
     Goal { status: GoalStatus, agent_kind: [AgentKind] }
-    Task { status: TaskStatus, agent_kind: [AgentKind] }
-    TaskReviewer { agent_kind: [AgentKind] }
+    Task { status: TaskStatus }
+    TaskAgent { seat: Seat, agent_kind: [AgentKind] }
     AgentSession {
         seat: Seat,
         agent_kind: AgentKind,
@@ -56,41 +55,60 @@ enum_columns! {
     Review { verdict: ReviewVerdict }
 }
 
+/// A skill: one document that tells a generic agent how to do one kind of
+/// work. Its name is its identity — an agent loads it by name — and the
+/// document is the whole `SKILL.md`, frontmatter included.
+///
+/// A `NULL` document is a built-in still on the text Ariadne ships, which is
+/// why rewording a shipped skill reaches every database without a migration.
+/// A skill the user wrote has no default behind it and carries its own text.
 #[derive(Debug, Clone, sqlx::FromRow)]
-pub struct Profile {
-    pub id: String,
+pub struct Skill {
     pub name: String,
-    pub seat: String,
-    /// NULL = auto-resolve at spawn time (first installed agent CLI).
-    pub agent_kind: Option<String>,
-    pub model: Option<String>,
-    /// The reasoning effort this profile's model is run at. None = whatever
-    /// the agent CLI runs it at on its own.
-    pub effort: Option<String>,
-    /// The system prompt set on this profile, or NULL while it runs on the
-    /// default of its seat. Read through [`Profile::effective_system_prompt`],
-    /// which is what the agent is spawned with.
-    pub system_prompt: Option<String>,
+    /// The document set on this skill, or NULL while a built-in runs on the
+    /// text Ariadne ships. Read through [`Skill::document_text`].
+    pub document: Option<String>,
+    pub builtin: i64,
     pub created_at: String,
     pub updated_at: String,
 }
 
-impl Profile {
-    /// The system prompt this profile is spawned with: the one set on it, or
-    /// the default of its seat.
-    pub fn effective_system_prompt(&self) -> &str {
-        self.system_prompt
-            .as_deref()
-            .unwrap_or_else(|| default_system_prompt(self.seat()))
+impl Skill {
+    /// Whether Ariadne ships this skill, and so whether it has a default to
+    /// be reset to and refuses deletion.
+    pub fn is_builtin(&self) -> bool {
+        self.builtin != 0
     }
-    /// Whether [`Profile::effective_system_prompt`] is that seat default rather
-    /// than a text set on this profile.
-    pub fn system_prompt_is_default(&self) -> bool {
-        self.system_prompt.is_none()
+
+    /// The document an agent loading this skill reads: the one set on it, or
+    /// the text Ariadne ships under its name.
+    ///
+    /// The empty string is unreachable through the store — the schema refuses
+    /// a non-built-in with no document, and a built-in always has one to fall
+    /// back on — and is here so that a row written by a future build that this
+    /// one no longer ships reads as an empty skill rather than a panic.
+    pub fn document_text(&self) -> &str {
+        self.document
+            .as_deref()
+            .or_else(|| default_skill_document(&self.name))
+            .unwrap_or("")
+    }
+
+    /// Whether [`Skill::document_text`] is the shipped text rather than one
+    /// somebody wrote.
+    pub fn document_is_default(&self) -> bool {
+        self.document.is_none()
+    }
+
+    /// The one line the index in an agent's system prompt carries: the
+    /// `description` of the document's frontmatter, or the name where the
+    /// document names none.
+    pub fn summary(&self) -> &str {
+        skill_summary(self.document_text()).unwrap_or(&self.name)
     }
 }
 
-/// How one agent CLI is launched, shared by every profile that runs on it.
+/// How one agent CLI is launched, shared by every agent that runs on it.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct AgentConfig {
     pub agent_kind: String,
@@ -150,15 +168,14 @@ impl Repository {
     }
 }
 
-/// The agent CLI, and optionally the model and the effort, a goal, a task or a
-/// reviewer slot is pinned to because the user chose them, rather than because
-/// its profile was on them.
+/// The agent CLI, and optionally the model and the effort, that a goal's
+/// orchestrator or one of a task's agents runs on.
 ///
 /// The agent is the choice: a pin with no model runs that CLI on its own
 /// default, and a pin with no effort runs the model at whatever the CLI runs
-/// it at. Which choice it is belongs to whoever took the request — the store
-/// is handed a pin already resolved, and writes it exactly where the profile's
-/// own pins would have gone.
+/// it at. There is nothing behind a pin to fall back to: what the
+/// orchestrator sized the agent at, or what the user chose instead, is the
+/// whole of the answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentPin {
     pub agent_kind: AgentKind,
@@ -169,34 +186,20 @@ pub struct AgentPin {
 }
 
 impl AgentPin {
-    /// The `(agent_kind, model, effort)` a row is written with.
-    ///
-    /// The model is the override's where the caller gave one, and `profile`'s
-    /// own where it did not. The effort is the override's, or else the
-    /// profile's — but only where the model is the profile's too: an override
-    /// that moves the row onto another model and names no effort runs at that
-    /// CLI's own default, since the effort the profile was on may not exist on
-    /// the model it was moved to.
-    pub(crate) fn or_profile(
+    /// The `(agent_kind, model, effort)` a row is written with: the pin's own
+    /// where there is one, and all-auto where there is none — auto CLI, the
+    /// CLI's default model, and whatever it runs that model at.
+    pub(crate) fn columns(
         pin: Option<&AgentPin>,
-        profile: &Profile,
     ) -> (Option<String>, Option<String>, Option<String>) {
-        let Some(pin) = pin else {
-            return (
-                profile.agent_kind.clone(),
-                profile.model.clone(),
-                profile.effort.clone(),
-            );
-        };
-        let agent_kind = pin.agent_kind.as_str().to_string();
-        let on_the_profiles_model = profile.agent_kind.as_deref() == Some(agent_kind.as_str())
-            && profile.model == pin.model;
-        let inherited = match on_the_profiles_model {
-            true => profile.effort.clone(),
-            false => None,
-        };
-        let effort = pin.effort.clone().or(inherited);
-        (Some(agent_kind), pin.model.clone(), effort)
+        match pin {
+            Some(pin) => (
+                Some(pin.agent_kind.as_str().to_string()),
+                pin.model.clone(),
+                pin.effort.clone(),
+            ),
+            None => (None, None, None),
+        }
     }
 }
 
@@ -208,16 +211,13 @@ pub struct Goal {
     pub status: String,
     pub max_tasks: Option<i64>,
     pub required_approvals: i64,
-    pub orchestrator_profile_id: String,
-    /// Agent CLI the orchestrator of this goal runs on, snapshotted from the
-    /// profile when the goal was created. None = auto. Editing the profile
-    /// afterwards leaves it alone.
+    /// Agent CLI this goal's orchestrator runs on. None = auto, resolved at
+    /// spawn time to the first installed CLI.
     pub agent_kind: Option<String>,
-    /// Model the orchestrator of this goal runs on, snapshotted like
-    /// `agent_kind`. None = the agent CLI's own default.
+    /// Model this goal's orchestrator runs on. None = the agent CLI's own
+    /// default.
     pub model: Option<String>,
-    /// Effort that model is run at, snapshotted like `model`. None = whatever
-    /// the agent CLI runs it at.
+    /// Effort that model is run at. None = whatever the agent CLI runs it at.
     pub effort: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -231,17 +231,6 @@ pub struct Task {
     pub title: String,
     pub description: String,
     pub status: String,
-    pub author_profile_id: String,
-    /// Agent CLI the author of this task runs on, snapshotted from the
-    /// profile when the task was created. None = auto. Editing the profile
-    /// afterwards leaves it alone.
-    pub agent_kind: Option<String>,
-    /// Model the author of this task runs on, snapshotted like
-    /// `agent_kind`. None = the agent CLI's own default.
-    pub model: Option<String>,
-    /// Effort that model is run at, snapshotted like `model`. None = whatever
-    /// the agent CLI runs it at.
-    pub effort: Option<String>,
     pub branch: String,
     pub worktree_path: Option<String>,
     pub review_round: i64,
@@ -260,23 +249,29 @@ impl Task {
     }
 }
 
-/// One reviewer slot of a task: which profile reviews it, in which order, and
-/// what that reviewer was pinned to when the slot was created.
+/// One agent staffed on a task: where it sits, what it runs on, what it was
+/// told, and — through [`crate::Store::agent_skills`] — what it knows.
+///
+/// The agent has no identity of its own. `seat` says only whether it authors
+/// the task or reviews it, which is what the state machine and the launcher
+/// need; everything about the work itself comes from its skills.
 #[derive(Debug, Clone, sqlx::FromRow)]
-pub struct TaskReviewer {
+pub struct TaskAgent {
+    pub id: String,
     pub task_id: String,
-    pub profile_id: String,
-    /// Orchestrator-assigned order, 0-based.
-    pub position: i64,
-    /// Agent CLI this reviewer runs on, snapshotted from the profile when the
-    /// slot was created. None = auto.
+    /// `author` or `reviewer`; never `orchestrator`, which belongs to a goal.
+    pub seat: String,
+    /// The order the orchestrator listed this agent in, 0-based within a seat.
+    pub ordinal: i64,
+    /// Agent CLI this agent runs on. None = auto.
     pub agent_kind: Option<String>,
-    /// Model this reviewer runs on, snapshotted like `agent_kind`.
-    /// None = the agent CLI's own default.
+    /// Model it runs on. None = the agent CLI's own default.
     pub model: Option<String>,
-    /// Effort that model is run at, snapshotted like `model`. None = whatever
-    /// the agent CLI runs it at.
+    /// Effort that model is run at. None = whatever the CLI runs it at.
     pub effort: Option<String>,
+    /// What the orchestrator told this agent beyond the task itself, where it
+    /// had anything to add. None = the task is the whole of it.
+    pub brief: Option<String>,
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -285,12 +280,14 @@ pub struct AgentSession {
     pub goal_id: String,
     pub task_id: Option<String>,
     pub seat: String,
-    pub profile_id: String,
+    /// The staffed agent this session runs, or None for an orchestrator,
+    /// which no task staffs.
+    pub task_agent_id: Option<String>,
     pub agent_kind: String,
     /// Model this session runs on. None = the CLI's own default. Taken from
-    /// the pin its seat carries — the task, the reviewer slot, the goal — when
-    /// the session is created and never rewritten, so neither a profile edit
-    /// nor a resume moves a running conversation onto another model.
+    /// the pin its seat carries — the goal for an orchestrator, the staffed
+    /// agent otherwise — when the session is created, and never rewritten, so
+    /// no later edit moves a running conversation onto another model.
     pub model: Option<String>,
     /// Effort this session's model is run at, copied off the same pin as
     /// `model` and never rewritten either. None = the CLI's own.
@@ -330,8 +327,8 @@ pub struct Review {
     pub id: String,
     pub task_id: String,
     pub round: i64,
-    /// The reviewer of the round whose verdict this is.
-    pub reviewer_profile_id: String,
+    /// The task agent whose verdict this is.
+    pub reviewer_agent_id: String,
     pub session_id: Option<String>,
     pub verdict: String,
     pub body: Option<String>,

@@ -7,7 +7,7 @@
 //! base branch the repository holds — including after that base branch moves.
 //!
 //! No tmux and no agent CLI: `tmux` is a stub that answers "no session" and
-//! records what it was told, and the profiles are pinned to a model so that
+//! records what it was told, and every agent is pinned to a CLI so that
 //! nothing here looks for a coding-agent CLI on `PATH`. `git` is real.
 
 mod common;
@@ -17,35 +17,25 @@ use std::path::{Path, PathBuf};
 use axum::http::StatusCode;
 
 use ariadne_api::goals::GoalDto;
-use ariadne_api::profiles::ProfileDto;
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::tasks::TaskDto;
 use ariadne_core::AgentKind;
-use ariadne_store::defaults::BUILTIN_PROFILES;
 
 use common::{Harness, delete, harness, post_json, put_json, sh};
 
-/// A daemon whose seeded profiles are pinned to a model.
+/// The pin every goal and every agent here is created with.
 ///
-/// They are seeded on "auto", which at spawn time means "the first
+/// Left out, they are on "auto", which at spawn time means "the first
 /// coding-agent CLI on `PATH`" — and where there is none, as on every CI
 /// runner, spawning fails outright. What is under test here is the worktree a
-/// spawn cuts, not the agent it starts, so the model is pinned and never
-/// looked up.
+/// spawn cuts, not the agent it starts, so the CLI is named and never looked
+/// up.
+fn pinned() -> &'static str {
+    AgentKind::ClaudeCode.as_str()
+}
+
 async fn pinned_harness() -> Harness {
-    let h = harness().await;
-    for builtin in BUILTIN_PROFILES {
-        let _: ProfileDto = h
-            .json(
-                put_json(
-                    &format!("/v1/profiles/{}", builtin.id),
-                    serde_json::json!({"model": AgentKind::ClaudeCode.as_str()}),
-                ),
-                StatusCode::OK,
-            )
-            .await;
-    }
-    h
+    harness().await
 }
 
 async fn register(h: &Harness, path: &Path, base_branch: &str) -> RepositoryDto {
@@ -65,7 +55,7 @@ async fn goal_on(h: &Harness, repository_ids: Vec<&str>) -> GoalDto {
         post_json(
             "/v1/goals",
             serde_json::json!({"title": "Ship it", "repository_ids": repository_ids,
-                               "orchestrator_profile": "Orchestrator"}),
+                               "model": pinned()}),
         ),
         StatusCode::CREATED,
     )
@@ -76,8 +66,9 @@ async fn task_in(h: &Harness, goal: &GoalDto) -> TaskDto {
     h.json(
         post_json(
             &format!("/v1/goals/{}/tasks", goal.id),
-            serde_json::json!({"title": "Do the thing", "author_profile": "Author",
-                               "reviewers": [{"profile": "Reviewer"}]}),
+            serde_json::json!({"title": "Do the thing", "agents": [
+                {"seat": "author", "skills": ["coding"], "model": pinned()},
+                {"seat": "reviewer", "skills": ["code-review"], "model": pinned()}]}),
         ),
         StatusCode::CREATED,
     )
@@ -186,7 +177,7 @@ async fn a_goal_cannot_be_created_on_an_unknown_repository() {
         .error(
             post_json(
                 "/v1/goals",
-                serde_json::json!({"title": "Ship it", "orchestrator_profile": "Orchestrator",
+                serde_json::json!({"title": "Ship it", "model": pinned(),
                                    "repository_ids": [registered.id, "01nosuchrepository"]}),
             ),
             StatusCode::NOT_FOUND,
@@ -202,7 +193,7 @@ async fn a_goal_cannot_be_created_on_an_unknown_repository() {
     h.error(
         post_json(
             "/v1/goals",
-            serde_json::json!({"title": "Ship it", "orchestrator_profile": "Orchestrator",
+            serde_json::json!({"title": "Ship it", "model": pinned(),
                                "repository_ids": []}),
         ),
         StatusCode::BAD_REQUEST,

@@ -6,7 +6,7 @@ use serde::Deserialize;
 use utoipa::IntoParams;
 
 use ariadne_api::goals::{CreateGoalRequest, FinalizePlanRequest, GoalDto};
-use ariadne_core::{GoalStatus, Seat};
+use ariadne_core::GoalStatus;
 use ariadne_store::{Goal, NewGoal, SessionFilter, Store, TaskFilter};
 
 use super::AppState;
@@ -63,30 +63,21 @@ pub async fn create(
         return Err(ApiError::bad_request("a goal needs at least one repo"));
     }
     // Refused before anything is looked up: a model that names no agent CLI is
-    // a fact about the request, not about the profiles it names. The effort
-    // beside it is checked below, since an effort written on its own is run at
-    // whatever the orchestrator profile is on.
+    // a fact about the request rather than about anything it refers to.
     pins::readable(req.model.as_deref())?;
 
-    let orchestrator = state.store.resolve_profile(&req.orchestrator_profile).await?;
-    if orchestrator.seat() != Seat::Orchestrator {
-        return Err(ApiError::bad_request(format!(
-            "profile {} has seat {}, expected orchestrator",
-            orchestrator.name, orchestrator.seat
-        )));
-    }
     // Resolved here as well as in the store, so an unknown id is a 404 about
     // the repository rather than a goal that half-exists.
     for id in &req.repository_ids {
         state.store.get_repository(id).await?;
     }
+    // A goal chooses the same way everything else does, and its "nothing
+    // chosen" is auto: no agent CLI, and so no model of one either — which is
+    // also no model an effort of its own could be run at.
     let pin = pins::chosen(
         req.model.as_deref(),
         req.effort.as_deref(),
-        Standing {
-            agent_kind: orchestrator.agent_kind(),
-            model: orchestrator.model.as_deref(),
-        },
+        Standing::auto(),
     )
     .await?;
 
@@ -95,7 +86,6 @@ pub async fn create(
         .create_goal(NewGoal {
             title: req.title,
             description: req.description,
-            orchestrator_profile_id: orchestrator.id,
             max_tasks: req.max_tasks,
             required_approvals: req.required_approvals.unwrap_or(1),
             repository_ids: req.repository_ids,

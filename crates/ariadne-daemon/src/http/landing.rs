@@ -180,26 +180,28 @@ pub async fn post_review(
 
     // Reviewer identity: from the session, or explicit for user-submitted
     // reviews.
-    let reviewer_profile_id = match (&ctx.session, &req.reviewer_profile) {
+    let reviewer_agent_id = match (&ctx.session, &req.reviewer_agent_id) {
         (Some(session), _) => {
             if session.seat() != Seat::Reviewer {
                 return Err(ApiError::forbidden(
                     "only reviewer sessions may submit reviews",
                 ));
             }
-            session.profile_id.clone()
+            session.task_agent_id.clone().ok_or_else(|| {
+                ApiError::forbidden("this reviewer session is staffed on no agent")
+            })?
         }
-        (None, Some(spec)) => state.store.resolve_profile(spec).await?.id,
+        (None, Some(agent_id)) => agent_id.clone(),
         (None, None) => {
             return Err(ApiError::bad_request(
-                "reviewer_profile is required for user-submitted reviews",
+                "reviewer_agent_id is required for user-submitted reviews",
             ));
         }
     };
-    let assigned = state.store.list_task_reviewers(&id).await?;
-    if !assigned.contains(&reviewer_profile_id) {
+    let staffed = state.store.list_task_reviewers(&id).await?;
+    if !staffed.iter().any(|a| a.id == reviewer_agent_id) {
         return Err(ApiError::forbidden(format!(
-            "profile {reviewer_profile_id} is not an assigned reviewer of task {id}"
+            "agent {reviewer_agent_id} is not a reviewer of task {id}"
         )));
     }
 
@@ -208,7 +210,7 @@ pub async fn post_review(
         .create_review(NewReview {
             task_id: id.clone(),
             round: task.review_round,
-            reviewer_profile_id,
+            reviewer_agent_id,
             session_id: ctx.session.map(|s| s.id),
             verdict: req.verdict,
             body: req.body,

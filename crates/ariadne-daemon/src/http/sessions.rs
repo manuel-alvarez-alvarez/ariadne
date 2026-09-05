@@ -246,8 +246,8 @@ pub struct DebugSpawnRequest {
     pub seat: ariadne_core::Seat,
     pub goal_id: Option<String>,
     pub task_id: Option<String>,
-    /// Reviewer profile (id or name) when seat = reviewer.
-    pub profile: Option<String>,
+    /// Id of the reviewing task agent when seat = reviewer.
+    pub agent_id: Option<String>,
 }
 
 /// Manually spawn an agent session (debug/testing path until the scheduler
@@ -275,11 +275,10 @@ pub async fn debug_spawn(
             let task = req
                 .task_id
                 .ok_or_else(|| ApiError::bad_request("task_id required"))?;
-            let spec = req
-                .profile
-                .ok_or_else(|| ApiError::bad_request("profile required"))?;
-            let profile = state.store.resolve_profile(&spec).await?;
-            launcher.spawn_reviewer(&task, &profile.id).await
+            let agent_id = req
+                .agent_id
+                .ok_or_else(|| ApiError::bad_request("agent_id required"))?;
+            launcher.spawn_reviewer(&task, &agent_id).await
         }
     }
     .map_err(|e| ApiError::conflict(e.to_string()))?;

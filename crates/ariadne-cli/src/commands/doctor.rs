@@ -9,7 +9,7 @@
 //! the daemon is what spawns sessions. A daemon started by launchd or systemd
 //! carries the PATH its service file was written with, so an agent CLI
 //! installed after the install can be perfectly present here and invisible
-//! there — which looks, from the outside, like a profile that will not run.
+//! there — which looks, from the outside, like an agent that will not run.
 
 mod agents;
 mod checks;
@@ -21,7 +21,6 @@ use anyhow::Result;
 use serde::Serialize;
 
 use ariadne_api::doctor::{BinaryDto, DaemonReportDto};
-use ariadne_api::profiles::ProfileDto;
 use ariadne_client::{Client, endpoint};
 use ariadne_core::AgentKind;
 
@@ -255,22 +254,20 @@ async fn examine(client: &Client) -> Report {
     let health = client.health().await;
     let reachable = health.is_ok();
     // Everything here only exists for a daemon that answered at all.
-    let (version, daemon, profiles, flags) = match reachable {
+    let (version, daemon, flags) = match reachable {
         true => {
-            let (version, daemon, profiles, flags) = tokio::join!(
+            let (version, daemon, flags) = tokio::join!(
                 client.version(),
                 client.daemon_report(),
-                client.get_json::<Vec<ProfileDto>>("/v1/profiles"),
                 client.list_agent_configs(),
             );
             (
                 version.ok().map(|v| v.version),
                 daemon.ok(),
-                profiles.unwrap_or_default(),
                 flags.unwrap_or_default(),
             )
         }
-        false => (None, None, Vec::new(), Vec::new()),
+        false => (None, None, Vec::new()),
     };
     let available = Availability::new(daemon.as_ref(), &agents);
 
@@ -284,21 +281,7 @@ async fn examine(client: &Client) -> Report {
                 checks::daemon(client, &health, version, home.as_deref()).await,
             ),
             Section::new("tools", checks::tools(&[tmux, git], &[gh, glab])),
-            Section::new(
-                "agents",
-                agents::agents(&agents, &flags, &available, &profiles),
-            ),
-            Section::new(
-                "profiles",
-                match reachable {
-                    true => agents::profiles(&profiles, &available),
-                    // Nothing was listed, which is not the same as no profiles.
-                    false => vec![Check::warn(
-                        "profiles",
-                        "not checked — the daemon did not answer",
-                    )],
-                },
-            ),
+            Section::new("agents", agents::agents(&agents, &flags, &available)),
             Section::new(
                 "daemon environment",
                 agents::daemon_environment(daemon.as_ref(), &available),

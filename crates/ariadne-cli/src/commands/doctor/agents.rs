@@ -10,13 +10,11 @@ use std::path::PathBuf;
 
 use ariadne_api::agents::AgentConfigDto;
 use ariadne_api::doctor::{BinaryDto, DaemonReportDto};
-use ariadne_api::profiles::ProfileDto;
 use ariadne_core::AgentKind;
 
 use super::checks::{HERE, THERE, describe, forge_check, required_tool};
 use super::{Availability, Check, Status};
 use crate::codex_trust::{self, Trust};
-use crate::commands::pinned;
 
 /// Re-run the installer so the service picks up what your PATH already has.
 const REINSTALL: &str = "re-run scripts/install.sh so the service picks";
@@ -27,7 +25,6 @@ pub fn agents(
     agents: &[BinaryDto],
     flags: &[AgentConfigDto],
     available: &Availability,
-    profiles: &[ProfileDto],
 ) -> Vec<Check> {
     let launched_with = |kind: AgentKind| {
         flags
@@ -39,9 +36,9 @@ pub fn agents(
             })
             .unwrap_or_default()
     };
-    // Only one agent is needed to run sessions, so a missing one is only a
-    // failure for the profiles that name it — which the profiles section
-    // reports, by name.
+    // Only one agent is needed to run sessions, so a missing one is a warning
+    // rather than a failure: it matters only to work pinned to it, and what a
+    // goal or a task is pinned to is read on the goal or the task.
     let mut checks: Vec<Check> = AgentKind::ALL
         .iter()
         .zip(agents)
@@ -51,16 +48,13 @@ pub fn agents(
                 format!("{}{}", describe(local, HERE), launched_with(*kind)),
             ),
             None => Check::warn(kind.as_str(), describe(local, HERE))
-                .hint("not needed unless a profile runs on it"),
+                .hint("not needed unless a goal or a task is pinned to it"),
         })
         .collect();
 
     if available.has(AgentKind::Codex) {
         let home = codex_trust::codex_home().unwrap_or_else(|| PathBuf::from(".codex"));
-        let runs_codex = profiles
-            .iter()
-            .any(|p| runs_on(p) == Some(AgentKind::Codex));
-        checks.push(codex_hooks(&Trust::read(&home), runs_codex));
+        checks.push(codex_hooks(&Trust::read(&home)));
     }
 
     if available.effective().is_empty() {
@@ -85,9 +79,10 @@ pub fn agents(
 /// ([`crate::codex_trust`]): the difference between a codex session that runs
 /// and one that sits on the "Hooks need review" prompt.
 ///
-/// A failure for anyone with a profile on codex, since none of them can spawn;
-/// a warning otherwise, where it is one command's worth of tidying.
-fn codex_hooks(trust: &Trust, runs_codex: bool) -> Check {
+/// A warning rather than a failure: codex is installed, so some work may be
+/// pinned to it, but nothing here knows whether any is — an agent's CLI is
+/// chosen per goal and per task, and there is no list of them to consult.
+fn codex_hooks(trust: &Trust) -> Check {
     let total = ariadne_core::codex_hooks::EVENTS.len();
     let config = trust.config.display();
     if trust.is_complete() {
@@ -107,11 +102,7 @@ fn codex_hooks(trust: &Trust, runs_codex: bool) -> Check {
     } else {
         format!("codex has no config at {config}, so nothing is trusted")
     };
-    let status = match runs_codex {
-        true => Status::Fail,
-        false => Status::Warn,
-    };
-    Check::new("codex hooks", status, detail).hint(match trust.is_stale() {
+    Check::new("codex hooks", Status::Warn, detail).hint(match trust.is_stale() {
         // The upgrade case: everything else looks right, which is exactly
         // why it needs saying.
         true => concat!(
@@ -126,81 +117,6 @@ fn codex_hooks(trust: &Trust, runs_codex: bool) -> Check {
     })
 }
 
-/// Every profile's agent, checked against what can actually be launched.
-///
-/// A profile pinned to an agent kind cannot spawn anything without that
-/// binary, so a missing one is a failure naming both the profile and the
-/// binary. An `auto` profile resolves to whatever is installed at spawn time
-/// and only fails when nothing at all is.
-pub fn profiles(profiles: &[ProfileDto], available: &Availability) -> Vec<Check> {
-    if profiles.is_empty() {
-        return vec![Check::ok("profiles", "none defined")];
-    }
-    let named = |kind: Option<AgentKind>| -> Vec<&str> {
-        profiles
-            .iter()
-            .filter(|p| runs_on(p) == kind)
-            .map(|p| p.name.as_str())
-            .collect()
-    };
-
-    // In `AgentKind::ALL` order, and only for the kinds some profile names.
-    let mut checks: Vec<Check> = AgentKind::ALL
-        .into_iter()
-        .filter(|kind| !named(Some(*kind)).is_empty())
-        .map(|kind| {
-            let (binary, names) = (kind.binary(), named(Some(kind)).join(", "));
-            if available.has(kind) {
-                return Check::ok(kind.as_str(), format!("{binary} available — {names}"));
-            }
-            Check::fail(
-                kind.as_str(),
-                format!(
-                    "{binary} is not on {} — these profiles cannot spawn sessions: {names}",
-                    available.viewpoint()
-                ),
-            )
-            .hint(match available.only_on_client(kind) {
-                // The classic stale-service-PATH shape: present here, absent
-                // in the process that would launch it.
-                true => {
-                    format!("{binary} is on your PATH but not the daemon's — {REINSTALL} it up")
-                }
-                false => {
-                    format!("install {binary}, or point those profiles at an installed agent")
-                }
-            })
-        })
-        .collect();
-
-    let auto = named(None);
-    if !auto.is_empty() {
-        let names = auto.join(", ");
-        checks.push(match available.effective().first() {
-            Some(kind) => Check::ok("auto", format!("resolves to {} — {names}", kind.as_str())),
-            None => Check::fail(
-                "auto",
-                format!(
-                    "no agent CLI on {} — these profiles cannot spawn sessions: {names}",
-                    available.viewpoint()
-                ),
-            )
-            .hint(match available.stale_service_path() {
-                true => format!(
-                    "the agents are on your PATH but not the daemon's — {REINSTALL} them up"
-                ),
-                false => "install claude, codex or opencode".to_string(),
-            }),
-        });
-    }
-    checks
-}
-
-/// The agent CLI a profile runs on, out of the one string that carries the
-/// CLI and the model of it; None = auto, resolved at spawn time.
-fn runs_on(profile: &ProfileDto) -> Option<AgentKind> {
-    pinned(profile.model.as_deref()).map(|p| p.agent_kind)
-}
 
 /// The daemon's own environment, or the absence of one.
 pub fn daemon_environment(
@@ -235,7 +151,7 @@ pub fn daemon_environment(
             )
             .hint("the service PATH is fixed at install time — re-run scripts/install.sh"),
             (false, false) => Check::warn(name, describe(binary, THERE))
-                .hint("not needed unless a profile runs on it"),
+                .hint("not needed unless a goal or a task is pinned to it"),
         }
     }));
 

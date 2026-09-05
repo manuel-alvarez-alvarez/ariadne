@@ -102,24 +102,23 @@ async fn http_mutation_emits_a_fat_event() {
 
     let (status, _) = h
         .send(post_json(
-            "/v1/profiles",
+            "/v1/skills",
             serde_json::json!({
-                "name": "rust-author",
-                "seat": "author",
-                "system_prompt": "You write Rust.",
+                "name": "api-design",
+                "document": "---\nname: api-design\ndescription: shape an API\n---\n",
             }),
         ))
         .await;
     assert_eq!(status, StatusCode::CREATED);
 
-    let event = next_event(&mut rx, |e| e.event.kind() == "profile_created").await;
-    let DomainEvent::ProfileCreated(profile) = event.event else {
+    let event = next_event(&mut rx, |e| e.event.kind() == "skill_created").await;
+    let DomainEvent::SkillCreated(skill) = event.event else {
         unreachable!("matched on kind above");
     };
-    // Fat payload: the whole DTO, not just an id to refetch.
-    assert_eq!(profile.name, "rust-author");
-    assert_eq!(profile.seat, Seat::Author);
-    assert_eq!(profile.system_prompt, "You write Rust.");
+    // Fat payload: the whole DTO, not just a name to refetch.
+    assert_eq!(skill.name, "api-design");
+    assert_eq!(skill.summary, "shape an API");
+    assert!(!skill.builtin);
 }
 
 #[tokio::test]
@@ -203,14 +202,14 @@ async fn sse_stream_opens_with_a_heartbeat() {
 
     // And the domain events still follow it.
     h.bus.publish(BusEvent {
-        event: DomainEvent::ProfileDeleted(DeletedDto {
-            id: "profile-gone".into(),
+        event: DomainEvent::SkillDeleted(DeletedDto {
+            id: "skill-gone".into(),
         }),
         goal_id: None,
         task_id: None,
     });
-    let payload = expect_sse(&mut body, "profile_deleted").await;
-    assert_eq!(payload["id"], "profile-gone");
+    let payload = expect_sse(&mut body, "skill_deleted").await;
+    assert_eq!(payload["id"], "skill-gone");
 }
 
 #[tokio::test]
@@ -234,7 +233,10 @@ async fn sse_stream_frames_events_and_honours_its_filters() {
     expect_sse(&mut body, "heartbeat").await;
 
     // Out of scope for this goal: must not reach the stream.
-    h.profile("unrelated", Seat::Author).await;
+    h.store
+        .set_skill_document("coding", "---\nname: coding\ndescription: ours\n---\n")
+        .await
+        .unwrap();
     // In scope: a task transition.
     h.store
         .transition_task(&cast.task.id, TaskStatus::Ready, Actor::Daemon, None, None)
@@ -307,8 +309,8 @@ async fn sse_stream_signals_resync_and_closes_when_a_client_lags() {
     // Nothing reads the body yet, so these pile up in the subscriber's buffer.
     for i in 0..8 {
         bus.publish(BusEvent {
-            event: DomainEvent::ProfileDeleted(DeletedDto {
-                id: format!("profile-{i}"),
+            event: DomainEvent::SkillDeleted(DeletedDto {
+                id: format!("skill-{i}"),
             }),
             goal_id: None,
             task_id: None,
@@ -350,7 +352,7 @@ async fn cors_allows_preflight_and_cross_origin_calls() {
 
     let preflight = Request::builder()
         .method(Method::OPTIONS)
-        .uri("/v1/profiles")
+        .uri("/v1/skills")
         .header(header::ORIGIN, "tauri://localhost")
         .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
         .header(header::ACCESS_CONTROL_REQUEST_HEADERS, "content-type")
@@ -886,7 +888,7 @@ async fn a_pending_question_holds_the_strip_until_it_is_answered() {
     // the work the user is waiting on.
     let cast = h.cast().await;
     let session = h
-        .session(&cast.goal, None, Seat::Orchestrator, &cast.orchestrator.id)
+        .orchestrator_session(&cast.goal, "orc")
         .await;
 
     // The `pre_tool_use` of the call is the first and only word of the ask.
@@ -988,7 +990,7 @@ async fn a_question_from_an_orchestrator_past_planning_raises_nothing() {
     // `active_cast` finalizes the plan: the goal is already active.
     let cast = h.active_cast().await;
     let session = h
-        .session(&cast.goal, None, Seat::Orchestrator, &cast.orchestrator.id)
+        .orchestrator_session(&cast.goal, "orc")
         .await;
 
     h.ingest(&session, "pre_tool_use", tool_call("AskUserQuestion"))
@@ -1058,7 +1060,7 @@ async fn a_reviewer_that_already_voted_raises_no_attention() {
         .create_review(NewReview {
             task_id: task.id.clone(),
             round: task.review_round,
-            reviewer_profile_id: cast.reviewer.id.clone(),
+            reviewer_agent_id: cast.reviewer.id.clone(),
             session_id: Some(session.id.clone()),
             verdict: ReviewVerdict::Approve,
             body: None,
@@ -1093,7 +1095,7 @@ async fn an_orchestrator_past_the_approval_raises_no_attention() {
     // `active_cast` finalizes the plan: the goal is already active.
     let cast = h.active_cast().await;
     let session = h
-        .session(&cast.goal, None, Seat::Orchestrator, &cast.orchestrator.id)
+        .orchestrator_session(&cast.goal, "orc")
         .await;
 
     h.ingest(&session, "notification", permission_prompt()).await;
@@ -1155,7 +1157,7 @@ async fn reported_usage_rolls_up_to_the_task_and_the_goal() {
         .session(&cast.goal, Some(&cast.task), Seat::Reviewer, &cast.reviewer.id)
         .await;
     let orchestrator = h
-        .session(&cast.goal, None, Seat::Orchestrator, &cast.orchestrator.id)
+        .orchestrator_session(&cast.goal, "orc")
         .await;
     let mut rx = h.bus.subscribe();
 
@@ -1202,8 +1204,8 @@ async fn reported_usage_rolls_up_to_the_task_and_the_goal() {
     assert_eq!(task.usage.author, tokens(160, 120, 35));
     let reviewers = &task.usage.reviewers;
     assert_eq!(reviewers.len(), 1);
-    assert_eq!(reviewers[0].profile_id, cast.reviewer.id);
-    assert_eq!(reviewers[0].profile_name.as_deref(), Some("reviewer"));
+    assert_eq!(reviewers[0].agent_id, cast.reviewer.id);
+    assert_eq!(reviewers[0].skills, vec!["code-review".to_string()]);
     assert_eq!(reviewers[0].usage, tokens(20, 10, 4));
     assert_eq!(
         task.usage.total,

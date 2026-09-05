@@ -13,7 +13,7 @@ use ariadne_core::GoalStatus;
 
 use super::query_path;
 use super::resolve::{self, Kind};
-use super::{ProfileNames, Subject, confirm, parse_effort, parse_model};
+use super::{Subject, confirm, parse_effort, parse_model};
 use crate::cli::values::Spelling;
 use crate::output::{
     Column, Format, Kv, UNCAPPED, age, col, moment, ok_id_line, print, print_kv, print_list,
@@ -78,14 +78,10 @@ pub enum GoalCommand {
         /// (`ariadne repo add`); repeatable
         #[arg(long = "repo", required = true, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::repo_ids))]
         repos: Vec<String>,
-        /// Orchestrator profile id or name (default: the built-in
-        /// Orchestrator profile)
-        #[arg(long, default_value = "Orchestrator", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::orchestrator_profiles))]
-        orchestrator: String,
         /// What the orchestrator runs on: AGENT[:MODEL] — an agent CLI
         /// (claude_code | codex | opencode) on its own default model, or one
         /// model of it after the colon (codex:gpt-5.3-codex). Default: the
-        /// orchestrator profile's own
+        /// first installed CLI, on its own default model
         #[arg(long, value_name = "MODEL", value_parser = parse_model, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
         model: Option<String>,
         /// The reasoning effort that model is run at: one of the efforts
@@ -155,13 +151,11 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
             title,
             description,
             repos,
-            orchestrator,
             model,
             effort,
             approvals,
             max_tasks,
         } => {
-            let orchestrator = resolve::Profiles::new(client).id(&orchestrator).await?;
             let goal: GoalDto = client
                 .post_json(
                     "/v1/goals",
@@ -169,7 +163,6 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                         title,
                         description,
                         repository_ids: resolve_repositories(client, &repos).await?,
-                        orchestrator_profile: orchestrator,
                         max_tasks,
                         required_approvals: approvals,
                         model,
@@ -215,7 +208,6 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
         GoalCommand::Inspect { id } => {
             let id = resolve::id(client, Kind::Goal, &id).await?;
             let g: GoalDto = client.get_json(&goal_path(&id)).await?;
-            let profiles = ProfileNames::for_format(client, format).await;
             print(format, &g, || {
                 print_kv(&[
                     ("id", Kv::id(g.id.clone())),
@@ -223,13 +215,7 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                     ("status", Kv::status(g.status.as_str())),
                     (
                         "orchestrator",
-                        profiles
-                            .pinned_label(
-                                &g.orchestrator_profile_id,
-                                g.model.as_deref(),
-                                g.effort.as_deref(),
-                            )
-                            .into(),
+                        pin_label(g.model.as_deref(), g.effort.as_deref()).into(),
                     ),
                     ("approvals", g.required_approvals.to_string().into()),
                     (
@@ -632,5 +618,19 @@ mod tests {
         let err = pick_repository(&repos(), "/home/me/ui").unwrap_err();
         assert!(err.to_string().contains("01REPOUINEXT"), "{err}");
         assert!(err.to_string().contains("by id"), "{err}");
+    }
+}
+
+/// What a goal's orchestrator runs on: the model, and the effort where one was
+/// pinned.
+///
+/// An effort that was never pinned says nothing at all: the model is run at
+/// whatever its agent CLI runs it at, and a `@` with a guess after it would
+/// read as a choice somebody made.
+fn pin_label(model: Option<&str>, effort: Option<&str>) -> String {
+    let pin = model.unwrap_or("auto");
+    match effort {
+        Some(effort) => format!("{pin} @ {effort}"),
+        None => pin.to_string(),
     }
 }

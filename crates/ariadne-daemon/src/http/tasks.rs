@@ -5,11 +5,11 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 
 use ariadne_api::tasks::{
-    CreateTaskRequest, ReviewerAssignment, TaskDto, TaskListQuery, TaskTransitionDto,
+    AgentAssignment, CreateTaskRequest, TaskDto, TaskListQuery, TaskTransitionDto,
     TransitionRequest, UpdateTaskRequest,
 };
 use ariadne_core::{Actor, Seat, TaskStatus};
-use ariadne_store::{NewTask, Profile, ReviewerSlot, Store, Task, TaskFilter, TaskUpdate};
+use ariadne_store::{NewTask, NewTaskAgent, Task, TaskFilter, TaskUpdate};
 
 use super::AppState;
 use super::convert::{task_dto_of, transition_dto};
@@ -18,55 +18,38 @@ use super::landing;
 use super::pins::{self, Repin, Standing};
 use super::caller::{CallCtx, call_ctx, ensure_task_scope};
 
-/// Resolve one profile id-or-name, checking it has `seat`: the shape every
-/// profile assignment takes.
+/// The agents an assignment list asks for, in the order it names them.
 ///
-/// The profile itself rather than its id, because what it is pinned to is what
-/// an effort written with no model beside it is run at.
-async fn resolve_profile(store: &Store, spec: &str, seat: Seat) -> ApiResult<Profile> {
-    let p = store.resolve_profile(spec).await?;
-    if p.seat() != seat {
-        return Err(ApiError::bad_request(format!(
-            "profile {} has seat {}, expected {}",
-            p.name,
-            p.seat,
-            seat.as_str()
-        )));
-    }
-    Ok(p)
-}
-
-/// What a profile is pinned to, as the fallback an effort of its own is
-/// checked against and pinned to.
-fn standing(profile: &Profile) -> Standing<'_> {
-    Standing {
-        agent_kind: profile.agent_kind(),
-        model: profile.model.as_deref(),
-    }
-}
-
-/// The reviewer slots an assignment list asks for, in the order it names them:
-/// each profile resolved as any other, each slot carrying the model and effort
-/// chosen for it or, where none was, nothing — which is the store's cue to pin
-/// the profile's own.
-async fn resolve_reviewers(
-    store: &Store,
-    assignments: &[ReviewerAssignment],
-) -> ApiResult<Vec<ReviewerSlot>> {
-    let mut slots = Vec::with_capacity(assignments.len());
+/// An agent has nothing behind it to fall back to, so "nothing chosen" is
+/// auto: no agent CLI, and so no model of one either — which is also no model
+/// an effort of its own could be run at.
+async fn resolve_agents(assignments: &[AgentAssignment]) -> ApiResult<Vec<NewTaskAgent>> {
+    let mut agents = Vec::with_capacity(assignments.len());
     for assignment in assignments {
-        let profile = resolve_profile(store, &assignment.profile, Seat::Reviewer).await?;
-        slots.push(ReviewerSlot {
+        agents.push(NewTaskAgent {
+            seat: assignment.seat,
+            skills: assignment.skills.clone(),
             pin: pins::chosen(
                 assignment.model.as_deref(),
                 assignment.effort.as_deref(),
-                standing(&profile),
+                Standing::auto(),
             )
             .await?,
-            profile_id: profile.id,
+            brief: assignment.brief.clone(),
         });
     }
-    Ok(slots)
+    Ok(agents)
+}
+
+/// The reviewers of an assignment list, refusing an author among them: the
+/// author of a task is the one agent an edit cannot replace.
+async fn resolve_reviewers(assignments: &[AgentAssignment]) -> ApiResult<Vec<NewTaskAgent>> {
+    if assignments.iter().any(|a| a.seat != Seat::Reviewer) {
+        return Err(ApiError::bad_request(
+            "only reviewers can be re-staffed; a task keeps the author it started with",
+        ));
+    }
+    resolve_agents(assignments).await
 }
 
 /// Create a task in a goal (orchestrator via MCP, or the user).
@@ -111,14 +94,7 @@ pub async fn create(
         }
     };
 
-    let author = resolve_profile(&state.store, &req.author_profile, Seat::Author).await?;
-    let reviewers = resolve_reviewers(&state.store, &req.reviewers).await?;
-    let pin = pins::chosen(
-        req.model.as_deref(),
-        req.effort.as_deref(),
-        standing(&author),
-    )
-    .await?;
+    let agents = resolve_agents(&req.agents).await?;
 
     let task = state
         .store
@@ -127,9 +103,7 @@ pub async fn create(
             repo_id,
             title: req.title,
             description: req.description,
-            author_profile_id: author.id,
-            pin,
-            reviewers,
+            agents,
             depends_on: req.depends_on,
         })
         .await?;
@@ -189,24 +163,24 @@ pub async fn update(
         ));
     }
     let reviewers = match &req.reviewers {
-        Some(assignments) => Some(resolve_reviewers(&state.store, assignments).await?),
+        Some(assignments) => Some(resolve_reviewers(assignments).await?),
         None => None,
     };
-    // What the task is pinned to now: an effort written on its own is run at
+    // What the author is pinned to now: an effort written on its own is run at
     // that model, and moves without disturbing it.
-    let current = state.store.get_task(&id).await?;
+    let author = state.store.task_author(&id).await?;
     let (pin, effort) = match pins::rechosen(
         req.model.as_deref(),
         req.effort.as_deref(),
         Standing {
-            agent_kind: current.agent_kind(),
-            model: current.model.as_deref(),
+            agent_kind: author.agent_kind(),
+            model: author.model.as_deref(),
         },
     )
     .await?
     {
         Repin::Untouched => (None, None),
-        Repin::Profile => (Some(None), None),
+        Repin::Auto => (Some(None), None),
         Repin::To(pin) => (Some(Some(pin)), None),
         Repin::Effort(effort) => (None, Some(effort)),
     };

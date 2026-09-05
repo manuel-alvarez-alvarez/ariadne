@@ -45,7 +45,7 @@ use ariadne_daemon::scheduler::{
     QUIET_RELAUNCH_SECS as RELAUNCH_SECS, START_GRACE_SECS, SchedEvent,
 };
 use ariadne_store::{
-    AgentSession, Goal, NewReview, ReviewerSlot, SessionFilter, Task,
+    AgentSession, Goal, NewReview, NewTaskAgent, SessionFilter, Task,
 };
 
 use common::{Harness, eventually, harness};
@@ -125,9 +125,14 @@ impl World {
                 repo_id: repo.id,
                 title: title.into(),
                 description: "do things".into(),
-                author_profile_id: self.author.clone(),
-                pin: None,
-                reviewers: vec![ReviewerSlot::of(&self.reviewer)],
+                agents: vec![
+                    NewTaskAgent {
+                        ..NewTaskAgent::new(Seat::Author, ["coding"])
+                    },
+                    NewTaskAgent {
+                        ..NewTaskAgent::new(Seat::Reviewer, ["code-review"])
+                    },
+                ],
                 depends_on: vec![],
             })
             .await
@@ -187,8 +192,8 @@ const RESUME: &str = r#"Continue "task" on"#;
 #[tokio::test]
 async fn an_orchestrator_idle_past_the_threshold_is_raised_on_its_session() {
     let h = harness().await;
-    let (goal, orchestrator) = h.planning_goal().await;
-    let session = h.session(&goal, None, Seat::Orchestrator, &orchestrator.id).await;
+    let goal = h.planning_goal().await;
+    let session = h.orchestrator_session(&goal, "orc").await;
     h.pane_exists(&session);
     h.idle_for(&session, NUDGE_SECS + 60).await;
 
@@ -562,17 +567,17 @@ async fn an_agent_that_reported_an_error_is_left_alone() {
 #[tokio::test]
 async fn a_vanished_pane_with_work_still_active_is_flagged_disconnected() {
     let h = harness().cannot_spawn().await;
-    let (goal, orchestrator) = h.planning_goal().await;
+    let goal = h.planning_goal().await;
     // Launched and running in the database, gone as far as tmux is concerned:
     // never added to the stub's list of panes. Launched rather than merely
     // written, since a row whose start is still in front of it has no pane yet
     // for reasons that are nobody's alarm — which is the grace window's own
     // test below.
-    let session = h.session(&goal, None, Seat::Orchestrator, &orchestrator.id).await;
+    let session = h.orchestrator_session(&goal, "orc").await;
     h.launched_ago(&session, 60).await;
     // And a second one that was sitting on a dialog that died with it.
     let on_a_prompt = h
-        .session_named(&goal, None, Seat::Orchestrator, &orchestrator.id, "vanished-prompt")
+        .orchestrator_session(&goal, "vanished-prompt")
         .await;
     h.launched_ago(&on_a_prompt, 60).await;
     h.raise(&on_a_prompt, AttentionReason::WaitingPermission).await;
@@ -652,7 +657,7 @@ async fn a_vanished_pane_nobody_is_waiting_on_is_not_raised() {
         .create_review(NewReview {
             task_id: under_review.id.clone(),
             round: under_review.review_round,
-            reviewer_profile_id: w.reviewer.clone(),
+            reviewer_agent_id: w.reviewer.clone(),
             session_id: Some(voted.id.clone()),
             verdict: ReviewVerdict::Approve,
             body: None,
@@ -710,10 +715,10 @@ async fn a_vanished_pane_nobody_is_waiting_on_is_not_raised() {
 #[tokio::test]
 async fn a_superseded_session_drops_its_attention_when_the_replacement_starts() {
     let h = harness().await;
-    let (goal, orchestrator) = h.planning_goal().await;
+    let goal = h.planning_goal().await;
     // The orchestrator cwd has to exist for the spawn to get off the ground.
     std::fs::create_dir_all(h.dir.path().join("repo")).unwrap();
-    let session = h.session(&goal, None, Seat::Orchestrator, &orchestrator.id).await;
+    let session = h.orchestrator_session(&goal, "orc").await;
     h.set_status(&session, SessionStatus::Exited).await;
     h.raise(&session, AttentionReason::Disconnected).await;
 
@@ -860,7 +865,7 @@ async fn a_prompt_flag_does_not_outlive_the_session_it_was_raised_on() {
     let h = harness().await;
     let cast = h.cast().await;
     let orchestrator_session = h
-        .session(&cast.goal, None, Seat::Orchestrator, &cast.orchestrator.id)
+        .orchestrator_session(&cast.goal, "orc")
         .await;
     assert_eq!(
         retire_on(&h, &orchestrator_session, AttentionReason::WaitingInput).await,
@@ -874,13 +879,7 @@ async fn a_prompt_flag_does_not_outlive_the_session_it_was_raised_on() {
         .session(&goal, Some(&cast.task), Seat::Author, &cast.author.id)
         .await;
     let review = h
-        .task_on(
-            &goal,
-            &cast.repo,
-            "under review",
-            &cast.author,
-            &[&cast.reviewer],
-        )
+        .task_on(&goal, &cast.repo, "under review", 1, None)
         .await;
     h.advance(&review, TaskStatus::UnderReview).await;
     let reviewer_session = h
@@ -905,7 +904,7 @@ async fn a_prompt_flag_does_not_outlive_the_session_it_was_raised_on() {
 #[tokio::test]
 async fn a_stale_prompt_flag_from_before_the_daemon_started_is_swept_up() {
     let h = harness().cannot_spawn().await;
-    let (goal, orchestrator) = h.planning_goal().await;
+    let goal = h.planning_goal().await;
 
     // Written the way an older daemon left them: ended, and still saying they
     // are waiting on somebody.
@@ -915,7 +914,7 @@ async fn a_stale_prompt_flag_from_before_the_daemon_started_is_swept_up() {
         AttentionReason::AgentError,
         AttentionReason::Stalled,
     ] {
-        let session = h.session(&goal, None, Seat::Orchestrator, &orchestrator.id).await;
+        let session = h.orchestrator_session(&goal, "orc").await;
         h.set_status(&session, SessionStatus::Exited).await;
         h.stale_attention(&session, reason).await;
         sessions.push(session);
@@ -1004,14 +1003,14 @@ async fn a_starting_session_is_swept_only_once_its_grace_window_has_run_out() {
 #[tokio::test]
 async fn a_session_that_outlived_its_completed_goal_is_killed() {
     let h = harness().await;
-    let (goal, orchestrator) = h.planning_goal().await;
+    let goal = h.planning_goal().await;
     h.store
         .set_goal_status(&goal.id, GoalStatus::Completed)
         .await
         .unwrap();
     // Live under a goal that was already finished, which is what a revive
     // racing the completion leaves behind.
-    let session = h.session(&goal, None, Seat::Orchestrator, &orchestrator.id).await;
+    let session = h.orchestrator_session(&goal, "orc").await;
     h.pane_exists(&session);
 
     let sched = Sched(scheduler::start(
@@ -1107,7 +1106,7 @@ async fn an_orchestrator_that_can_never_be_started_gives_up_with_one_alarm() {
     }
 
     let h = harness().cannot_spawn().await;
-    let (goal, _orchestrator) = h.planning_goal().await;
+    let goal = h.planning_goal().await;
     // The orchestrator's cwd has to exist for an attempt to get as far as the
     // launch it cannot perform — and for the user's resume to get that far
     // too.
@@ -1530,7 +1529,7 @@ async fn an_idle_orchestrator_is_let_go_once_the_goal_leaves_planning() {
     // The orchestrator's own cwd, which a revive needs to be there.
     std::fs::create_dir_all(w.dir.path().join("repo")).unwrap();
     let orchestrator = w
-        .session(&w.goal, None, Seat::Orchestrator, &w.goal.orchestrator_profile_id)
+        .orchestrator_session(&w.goal, "orc")
         .await;
     w.pane_exists(&orchestrator);
     w.store

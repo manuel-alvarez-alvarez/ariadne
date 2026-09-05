@@ -46,7 +46,7 @@ pub async fn work_is_active(store: &Store, session: &AgentSession) -> bool {
                 .is_ok_and(|reviews| {
                     !reviews
                         .iter()
-                        .any(|r| r.reviewer_profile_id == session.profile_id)
+                        .any(|r| Some(&r.reviewer_agent_id) == session.task_agent_id.as_ref())
                 }),
             _ => false,
         },

@@ -377,11 +377,11 @@ fn domain_line(event: &DomainEvent) -> Line {
         },
         DomainEvent::SessionCreated(s) | DomainEvent::SessionUpdated(s) => session_line(kind, s),
         DomainEvent::AgentEvent(e) => agent_line(e),
-        DomainEvent::ProfileCreated(p) | DomainEvent::ProfileUpdated(p) => Line {
+        DomainEvent::SkillCreated(k) | DomainEvent::SkillUpdated(k) => Line {
             at: now(),
             kind,
-            subject: p.id.clone(),
-            detail: format!("{} ({})", p.name, p.seat.as_str()),
+            subject: k.name.clone(),
+            detail: k.summary.clone(),
             session: None,
             status: None,
         },
@@ -394,7 +394,7 @@ fn domain_line(event: &DomainEvent) -> Line {
             status: None,
         },
         DomainEvent::GoalDeleted(DeletedDto { id })
-        | DomainEvent::ProfileDeleted(DeletedDto { id })
+        | DomainEvent::SkillDeleted(DeletedDto { id })
         | DomainEvent::RepositoryDeleted(DeletedDto { id }) => Line {
             at: now(),
             kind,

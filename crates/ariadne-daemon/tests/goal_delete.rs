@@ -65,15 +65,11 @@ async fn cancel(h: &Harness, goal: &GoalDto) -> GoalDto {
 
 /// A live session on a goal, with a pane the stub tmux answers for.
 async fn live_session(h: &Harness, goal: &GoalDto) -> AgentSession {
-    let orchestrator = h.profile("leftover orchestrator", Seat::Orchestrator).await;
     let goal = h.store.get_goal(&goal.id).await.unwrap();
     let session = h
-        .session_named(
+        .orchestrator_session(
             &goal,
-            None,
-            Seat::Orchestrator,
-            &orchestrator.id,
-            &ariadne_daemon::tmux::session_name(&goal.id, None, "pla", None),
+            &ariadne_daemon::tmux::session_name(&goal.id, None, "orc", None),
         )
         .await;
     h.pane_exists(&session);

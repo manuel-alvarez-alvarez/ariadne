@@ -31,7 +31,8 @@ pub struct NewSession {
     pub goal_id: String,
     pub task_id: Option<String>,
     pub seat: Seat,
-    pub profile_id: String,
+    /// The staffed agent this session runs; None for an orchestrator.
+    pub task_agent_id: Option<String>,
     pub agent_kind: AgentKind,
     /// Model to launch with; None = the agent CLI's own default.
     pub model: Option<String>,
@@ -60,7 +61,7 @@ impl Store {
     pub async fn create_session(&self, new: NewSession) -> Result<AgentSession> {
         let id = new_id();
         sqlx::query(
-            "INSERT INTO agent_sessions (id, goal_id, task_id, seat, profile_id, agent_kind, model,
+            "INSERT INTO agent_sessions (id, goal_id, task_id, seat, task_agent_id, agent_kind, model,
                                          effort, tmux_session, worktree_path, review_round, status,
                                          created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?)",
@@ -69,7 +70,7 @@ impl Store {
         .bind(&new.goal_id)
         .bind(&new.task_id)
         .bind(new.seat.as_str())
-        .bind(&new.profile_id)
+        .bind(&new.task_agent_id)
         .bind(new.agent_kind.as_str())
         .bind(&new.model)
         .bind(&new.effort)

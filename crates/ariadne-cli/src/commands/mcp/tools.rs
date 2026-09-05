@@ -16,10 +16,10 @@ use rmcp::{ErrorData as McpError, schemars, tool, tool_router};
 use ariadne_api::goals::FinalizePlanRequest;
 use ariadne_api::reviews::CreateReviewRequest;
 use ariadne_api::tasks::{
-    CreateTaskRequest, RecordPullRequestRequest, ReviewerAssignment, TransitionRequest,
+    AgentAssignment, CreateTaskRequest, RecordPullRequestRequest, TransitionRequest,
     UpdateTaskRequest,
 };
-use ariadne_core::{ReviewVerdict, TaskStatus};
+use ariadne_core::{ReviewVerdict, Seat, TaskStatus};
 
 use super::{AriadneMcp, json_result, to_mcp_err};
 
@@ -36,19 +36,23 @@ pub struct TaskIdOpt {
     pub task_id: Option<String>,
 }
 
-/// One reviewer of a task, as an orchestrator names it: the profile that
-/// reviews, and the model and effort this task is worth.
+/// One agent an orchestrator staffs on a task: the skills it loads, and the
+/// model and effort this task is worth.
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
-pub struct ReviewerReq {
-    /// Reviewer profile id or name.
-    pub profile: String,
+pub struct AgentReq {
+    /// The names of the skills this agent loads, from `list_skills`. They are
+    /// the whole of what it can do.
+    pub skills: Vec<String>,
     /// What it runs on, `<agent_kind>[:<model>]` as `list_models` spells it.
-    /// Omit it for the model of the profile.
+    /// Omit it for the first installed agent CLI.
     pub model: Option<String>,
     /// An `efforts[].id` `list_models` lists for that model. Omit it for the
     /// default effort.
     pub effort: Option<String>,
+    /// What to tell this agent beyond the task. Omit it where the task says
+    /// everything.
+    pub brief: Option<String>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -56,16 +60,10 @@ pub struct ReviewerReq {
 pub struct CreateTaskReq {
     pub title: String,
     pub description: String,
-    /// Author profile id or name. It owns the task.
-    pub author_profile: String,
-    /// What the author runs on, `<agent_kind>[:<model>]` as `list_models`
-    /// spells it. Omit it for the model of the profile.
-    pub author_model: Option<String>,
-    /// An `efforts[].id` `list_models` lists for that model. Omit it for the
-    /// default effort.
-    pub author_effort: Option<String>,
-    /// The reviewers of the task, in review order. Name at least one.
-    pub reviewers: Vec<ReviewerReq>,
+    /// The one agent that writes the task. It owns the task to the end.
+    pub author: AgentReq,
+    /// The agents that review the task, in review order. Staff at least one.
+    pub reviewers: Vec<AgentReq>,
     /// Ids of the tasks that must merge before this one starts.
     pub depends_on: Option<Vec<String>>,
     /// Repository id. Pass it only where the goal works in several.
@@ -78,14 +76,14 @@ pub struct UpdateTaskReq {
     pub task_id: String,
     pub title: Option<String>,
     pub description: Option<String>,
-    /// What the author runs on. `default` puts the slot back on the model
-    /// of the profile.
+    /// What the author runs on. `default` puts it back on the first
+    /// installed agent CLI.
     pub author_model: Option<String>,
     /// An `efforts[].id` for that model. `default` puts it back on the
     /// default effort.
     pub author_effort: Option<String>,
     /// The reviewers, in review order. This list replaces the whole list.
-    pub reviewers: Option<Vec<ReviewerReq>>,
+    pub reviewers: Option<Vec<AgentReq>>,
     /// The ids of the tasks that must merge first. This list replaces the
     /// whole list.
     pub depends_on: Option<Vec<String>>,
@@ -157,13 +155,15 @@ pub struct SubmitVerdictReq {
 
 // ---------- helpers ----------
 
-/// The reviewer slot an orchestrator named, as the API takes it: the profile,
-/// and the pin it is to be cut at.
-fn assignment(reviewer: ReviewerReq) -> ReviewerAssignment {
-    ReviewerAssignment {
-        profile: reviewer.profile,
-        model: reviewer.model,
-        effort: reviewer.effort,
+/// One agent an orchestrator staffed, as the API takes it: where it sits,
+/// what it knows, and the pin it runs at.
+fn assignment(seat: Seat, agent: AgentReq) -> AgentAssignment {
+    AgentAssignment {
+        seat,
+        skills: agent.skills,
+        model: agent.model,
+        effort: agent.effort,
+        brief: agent.brief,
     }
 }
 
@@ -198,14 +198,14 @@ fn review_request(verdict: Verdict, body: Option<String>) -> Result<CreateReview
     Ok(CreateReviewRequest {
         verdict,
         body,
-        reviewer_profile: None,
+        reviewer_agent_id: None,
     })
 }
 
 #[tool_router(vis = "pub(super)")]
 impl AriadneMcp {
     #[tool(
-        description = "Read a task: the status, the branch, the dependencies, and the profile names of the author, the reviewers and the orchestrator."
+        description = "Read a task: the status, the branch, the dependencies, and the agents staffed on it with the skills each one loads."
     )]
     async fn get_task(
         &self,
@@ -217,7 +217,7 @@ impl AriadneMcp {
     // ---- orchestrator ----
 
     #[tool(
-        description = "Create one task in the goal. Name one author profile and at least one reviewer profile. Give each slot the model and the effort this task deserves out of `list_models`. Omit them, and the slot runs the model of its profile. The user can change a slot until the task starts."
+        description = "Create one task in the goal. Staff one author and at least one reviewer. Give each agent the skills its work needs, from `list_skills`, and the model and the effort this task deserves, from `list_models`. The user can change an agent until the task starts."
     )]
     async fn create_task(
         &self,
@@ -228,17 +228,20 @@ impl AriadneMcp {
             title: req.title,
             description: req.description,
             repo_id: req.repo_id,
-            author_profile: req.author_profile,
-            model: req.author_model,
-            effort: req.author_effort,
-            reviewers: req.reviewers.into_iter().map(assignment).collect(),
+            agents: std::iter::once(assignment(Seat::Author, req.author))
+                .chain(
+                    req.reviewers
+                        .into_iter()
+                        .map(|r| assignment(Seat::Reviewer, r)),
+                )
+                .collect(),
             depends_on: req.depends_on.unwrap_or_default(),
         };
         json_result(self.post(&path, &body).await?)
     }
 
     #[tool(
-        description = "Edit a task that has not started: the title, the description, the reviewers, the dependencies, or the model and effort of a slot. `reviewers` replaces the whole list. `default` puts a slot back on the model of its profile."
+        description = "Edit a task that has not started: the title, the description, the reviewers, the dependencies, or the model and effort of the author. `reviewers` replaces the whole list. `default` puts the author back on the first installed agent CLI."
     )]
     async fn update_task(
         &self,
@@ -249,9 +252,12 @@ impl AriadneMcp {
             description: req.description,
             model: req.author_model,
             effort: req.author_effort,
-            reviewers: req
-                .reviewers
-                .map(|reviewers| reviewers.into_iter().map(assignment).collect()),
+            reviewers: req.reviewers.map(|reviewers| {
+                reviewers
+                    .into_iter()
+                    .map(|r| assignment(Seat::Reviewer, r))
+                    .collect()
+            }),
             depends_on: req.depends_on,
         };
         let path = format!("/v1/tasks/{}", req.task_id);
@@ -273,17 +279,13 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "List the agent profiles a task can name. Each entry gives the name, the model, the effort and the system prompt that say what it is for."
+        description = "List the skills an agent can load. Each entry gives the name and one line saying what that skill is for. Give an agent the skills its work needs and no more."
     )]
-    async fn list_profiles(
+    async fn list_skills(
         &self,
-        Parameters(req): Parameters<ListProfilesReq>,
+        Parameters(_): Parameters<Empty>,
     ) -> Result<CallToolResult, McpError> {
-        let path = match req.seat {
-            Some(seat) => format!("/v1/profiles?seat={seat}"),
-            None => "/v1/profiles".to_string(),
-        };
-        json_result(self.get(&path).await?)
+        json_result(self.get("/v1/skills").await?)
     }
 
     #[tool(

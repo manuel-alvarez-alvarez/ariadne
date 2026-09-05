@@ -135,7 +135,7 @@ async fn a_reviewers_pin_outlives_a_profile_edit() {
 
     // The profile moves to another agent and another model while the session
     // is alive. The row is not rewritten behind it.
-    h.move_profile(
+    h.move_agent(
         &reviewer, Some(AgentKind::Codex), Some("sonnet"))
         .await;
     assert_eq!(
@@ -189,16 +189,12 @@ async fn a_reviewers_pin_outlives_a_profile_edit() {
 /// the work and every resume that carries it through review run on the model
 /// the task was created with.
 #[tokio::test]
-async fn an_authors_pin_outlives_a_profile_edit() {
+async fn a_resumed_author_stays_on_the_model_its_session_started_on() {
     let h = harness().await;
     let cast = under_review(&h, Some("opus")).await;
     let task = cast.task.clone();
-    h.move_profile(
-        &task.author_profile_id,
-        Some(AgentKind::Codex),
-        Some("sonnet"),
-    )
-    .await;
+    h.move_agent(&cast.author.id, Some(AgentKind::Codex), Some("sonnet"))
+        .await;
 
     let first = h.launcher.spawn_author(&task.id).await.unwrap();
     assert_eq!(first.agent_kind(), AgentKind::ClaudeCode);
@@ -215,28 +211,32 @@ async fn an_authors_pin_outlives_a_profile_edit() {
     let argv = argv_of(&h, &resumed.id);
     assert!(
         argv.contains("--model opus"),
-        "the resume re-read the profile: {argv}"
+        "the resume re-read the agent's pin: {argv}"
     );
 }
 
-/// And for the orchestrator, whose pin is the goal's: a respawn after the
-/// profile moved still plans on the agent and model the goal was created
-/// with.
+/// And for the orchestrator, whose pin is the goal's: a respawn plans on the
+/// agent and model the goal was created with, whatever happened in between.
 #[tokio::test]
 async fn an_orchestrator_respawn_stays_on_the_goals_pin() {
     let h = harness().await;
-    let orchestrator = h
-        .profile_on("orchestrator", Seat::Orchestrator, Some(AgentKind::ClaudeCode), Some("opus"))
+    let repo = h.repository(&h.at("repo")).await;
+    let goal = h
+        .goal_on(
+            &repo,
+            1,
+            Some(ariadne_store::AgentPin {
+                agent_kind: AgentKind::ClaudeCode,
+                model: Some("opus".into()),
+                effort: None,
+            }),
+        )
         .await;
-    let (goal, _repo) = h.goal(&orchestrator).await;
-    let (goal, orchestrator) = (goal.id, orchestrator.id);
+    let goal = goal.id;
 
     let first = h.launcher.spawn_orchestrator(&goal).await.unwrap();
     assert_eq!(first.model.as_deref(), Some("opus"));
 
-    h.move_profile(
-        &orchestrator, Some(AgentKind::Codex), Some("sonnet"))
-        .await;
     h.launcher.kill_session(&first.id).await.unwrap();
 
     let second = h.launcher.spawn_orchestrator(&goal).await.unwrap();
@@ -300,8 +300,7 @@ async fn every_launch_of_a_session_reports_under_a_new_id() {
 #[tokio::test]
 async fn a_pane_left_behind_is_taken_rather_than_spawned_around() {
     let h = harness().await;
-    let orchestrator = h.profile("orchestrator", Seat::Orchestrator).await;
-    let (goal, _repo) = h.goal(&orchestrator).await;
+    let (goal, _repo) = h.goal().await;
 
     let first = h.launcher.spawn_orchestrator(&goal.id).await.unwrap();
     // The agent is in its pane; the row under it is not — the database and
@@ -331,7 +330,7 @@ async fn a_pin_of_no_model_stays_the_agents_own_default() {
     let h = harness().await;
     let cast = under_review(&h, None).await;
     let (task, reviewer) = (cast.task.clone(), cast.reviewer.id.clone());
-    h.move_profile(&reviewer, Some(AgentKind::ClaudeCode), Some("sonnet"))
+    h.move_agent(&reviewer, Some(AgentKind::ClaudeCode), Some("sonnet"))
         .await;
 
     let session = h
@@ -637,12 +636,8 @@ async fn reviving_a_session_revives_it_in_place() {
     let session = h.launcher.spawn_author(&task.id).await.unwrap();
     h.launcher.kill_session(&session.id).await.unwrap();
 
-    h.move_profile(
-        &task.author_profile_id,
-        Some(AgentKind::Codex),
-        Some("sonnet"),
-    )
-    .await;
+    h.move_agent(&cast.author.id, Some(AgentKind::Codex), Some("sonnet"))
+        .await;
 
     let revived = h.launcher.revive_session(&session.id, None).await.unwrap();
     assert_eq!(revived.id, session.id, "the same session, revived");

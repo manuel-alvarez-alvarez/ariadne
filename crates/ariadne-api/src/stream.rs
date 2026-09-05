@@ -13,7 +13,7 @@ use utoipa::{IntoParams, ToSchema};
 
 use crate::events::AgentEventDto;
 use crate::goals::GoalDto;
-use crate::profiles::ProfileDto;
+use crate::skills::SkillDto;
 use crate::repositories::RepositoryDto;
 use crate::reviews::ReviewDto;
 use crate::sessions::SessionDto;
@@ -98,9 +98,9 @@ pub enum DomainEvent {
     SessionUpdated(SessionDto),
     /// A raw agent event reported by a hook.
     AgentEvent(AgentEventDto),
-    ProfileCreated(ProfileDto),
-    ProfileUpdated(ProfileDto),
-    ProfileDeleted(DeletedDto),
+    SkillCreated(SkillDto),
+    SkillUpdated(SkillDto),
+    SkillDeleted(DeletedDto),
     RepositoryCreated(RepositoryDto),
     RepositoryUpdated(RepositoryDto),
     RepositoryDeleted(DeletedDto),
@@ -120,9 +120,9 @@ impl DomainEvent {
             Self::SessionCreated(_) => "session_created",
             Self::SessionUpdated(_) => "session_updated",
             Self::AgentEvent(_) => "agent_event",
-            Self::ProfileCreated(_) => "profile_created",
-            Self::ProfileUpdated(_) => "profile_updated",
-            Self::ProfileDeleted(_) => "profile_deleted",
+            Self::SkillCreated(_) => "skill_created",
+            Self::SkillUpdated(_) => "skill_updated",
+            Self::SkillDeleted(_) => "skill_deleted",
             Self::RepositoryCreated(_) => "repository_created",
             Self::RepositoryUpdated(_) => "repository_updated",
             Self::RepositoryDeleted(_) => "repository_deleted",
@@ -144,8 +144,8 @@ impl DomainEvent {
             Self::ReviewCreated(r) => json(r),
             Self::SessionCreated(s) | Self::SessionUpdated(s) => json(s),
             Self::AgentEvent(e) => json(e),
-            Self::ProfileCreated(p) | Self::ProfileUpdated(p) => json(p),
-            Self::ProfileDeleted(d) => json(d),
+            Self::SkillCreated(s) | Self::SkillUpdated(s) => json(s),
+            Self::SkillDeleted(d) => json(d),
             Self::RepositoryCreated(r) | Self::RepositoryUpdated(r) => json(r),
             Self::RepositoryDeleted(d) => json(d),
         }

@@ -49,7 +49,7 @@ pub struct Standing<'a> {
 }
 
 impl Standing<'_> {
-    /// Nothing to fall back on: a profile being created is on auto until it is
+    /// Nothing to fall back on: a row being created is on auto until it is
     /// spawned, so there is no model an effort of its own could run at.
     pub fn auto() -> Self {
         Self {
@@ -64,8 +64,9 @@ impl Standing<'_> {
 pub enum Repin {
     /// The request said nothing about it: the row keeps the pin it has.
     Untouched,
-    /// Back to the profile's own agent, model and effort as they stand now.
-    Profile,
+    /// Back to auto: the first installed CLI at spawn time, on its own
+    /// default model, at whatever it runs that model at.
+    Auto,
     /// Onto this agent, model and effort.
     To(AgentPin),
     /// The agent and model stay where they are and only the effort moves:
@@ -89,9 +90,9 @@ pub async fn chosen(
              or leave the field out to choose nothing at all",
         )),
         Some(model) if !CLEAR.contains(&model) => Ok(Some(pin(model, named(effort)).await?)),
-        // No model chosen, so the row takes the profile's — at the effort it
-        // was given, where it was given one, and at the profile's own where it
-        // was not.
+        // No model chosen, so the row is on auto — at the effort it was
+        // given, where it was given one, and at the CLI's own where it was
+        // not.
         _ => match named(effort) {
             None => Ok(None),
             Some(effort) => Ok(Some(at_standing(standing, effort).await?)),
@@ -108,12 +109,11 @@ pub async fn rechosen(
 ) -> ApiResult<Repin> {
     match model {
         Some(model) if !CLEAR.contains(&model) => Ok(Repin::To(pin(model, named(effort)).await?)),
-        // Handing the model back hands back the profile's effort with it:
-        // which model that is, is the store's to read, so an effort named
-        // beside it has nothing here to be checked against.
+        // Handing the model back puts the row on auto, so there is no model
+        // left for an effort named beside it to be checked against.
         Some(_) => {
             no_effort_alone(effort)?;
-            Ok(Repin::Profile)
+            Ok(Repin::Auto)
         }
         None => match effort {
             None => Ok(Repin::Untouched),

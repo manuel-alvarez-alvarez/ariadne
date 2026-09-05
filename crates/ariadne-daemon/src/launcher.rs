@@ -17,7 +17,7 @@ use ariadne_core::{
     AgentKind, AttentionReason, PromptKind, Seat, SessionStatus, TaskStatus, probe,
 };
 use ariadne_store::{
-    AgentSession, NewSession, Profile, Repository, SessionFilter, Store, Task, TaskFilter,
+    AgentSession, NewSession, Repository, SessionFilter, Store, Task, TaskAgent, TaskFilter,
 };
 
 use crate::agents::{SpawnCtx, SpawnPlan, adapter_for, detect_first_available, prompts};
@@ -126,7 +126,7 @@ impl Launcher {
     }
 
     /// Refuse to double-spawn: one live session per (task, seat) —
-    /// per (task, seat, profile) for reviewers.
+    /// per (task, seat, agent) for reviewers.
     ///
     /// A pane tmux will not answer for counts as live. This is the last guard
     /// before a second agent starts working on somebody else's task, and the
@@ -138,7 +138,7 @@ impl Launcher {
         goal_id: &str,
         task_id: Option<&str>,
         seat: Seat,
-        profile_id: Option<&str>,
+        agent_id: Option<&str>,
     ) -> Result<()> {
         let live = self
             .store
@@ -151,7 +151,8 @@ impl Launcher {
             .await?;
         for s in live {
             if s.seat() == seat
-                && (seat != Seat::Reviewer || profile_id.is_none_or(|p| p == s.profile_id))
+                && (seat != Seat::Reviewer
+                    || agent_id.is_none_or(|a| Some(a) == s.task_agent_id.as_deref()))
                 && self.tmux.has_session_or_unknown(&s.tmux_session).await
             {
                 return Err(anyhow!(
@@ -476,14 +477,13 @@ impl Launcher {
     ///
     /// Codex and opencode report theirs from a hook, so a session that never
     /// got going may have none, and that is nothing to resume — the caller
-    /// spawns afresh instead. `profile_id` tells a task's reviewers apart,
-    /// which is the only thing that does; every other seat has one session per
-    /// task.
+    /// spawns afresh instead. `agent_id` tells a task's reviewers apart, which
+    /// is the only thing that does; every other seat has one session per task.
     async fn resumable_session(
         &self,
         task_id: &str,
         seat: Seat,
-        profile_id: Option<&str>,
+        agent_id: Option<&str>,
     ) -> Result<Option<(AgentSession, String)>> {
         let found = self
             .store
@@ -496,7 +496,7 @@ impl Launcher {
             .rev()
             .find(|s| {
                 s.seat() == seat
-                    && profile_id.is_none_or(|wanted| s.profile_id == wanted)
+                    && agent_id.is_none_or(|wanted| s.task_agent_id.as_deref() == Some(wanted))
                     && s.internal_session_id.is_some()
             });
         Ok(found.map(|session| {
@@ -514,13 +514,17 @@ impl Launcher {
     async fn launch_resumed(
         &self,
         session: &AgentSession,
-        profile: &Profile,
+        agent: Option<&TaskAgent>,
         cwd: PathBuf,
         internal: &str,
         instruction: &str,
     ) -> Result<AgentSession> {
+        let system = match agent {
+            Some(agent) => self.agent_system_prompt(agent).await?,
+            None => prompts::system_prompt(session.seat(), &[]),
+        };
         let ctx = self
-            .spawn_ctx(session, cwd, prompts::system_prompt(profile), String::new())
+            .spawn_ctx(session, cwd, system, String::new())
             .await?;
         let plan = adapter_for(session.agent_kind()).plan_resume(&ctx, internal, instruction)?;
         self.launch(session, plan, &ctx.launch_id).await?;
@@ -558,7 +562,8 @@ impl Launcher {
             if previous.id != session.id
                 && previous.task_id == session.task_id
                 && previous.seat() == session.seat()
-                && (previous.seat() != Seat::Reviewer || previous.profile_id == session.profile_id)
+                && (previous.seat() != Seat::Reviewer
+                    || previous.task_agent_id == session.task_agent_id)
                 && previous.attention_reason().is_some()
             {
                 tracing::info!(
@@ -571,12 +576,22 @@ impl Launcher {
         }
     }
 
+    /// The system prompt an agent is spawned with: what its seat owes, then
+    /// the index of the skills it loads.
+    ///
+    /// The index is built here rather than stored, so a skill reworded since
+    /// the task was staffed reaches the next launch of the agent that loads
+    /// it — the same way every other default text does.
+    async fn agent_system_prompt(&self, agent: &TaskAgent) -> Result<String> {
+        let skills = self.store.agent_skills(&agent.id).await?;
+        Ok(prompts::system_prompt(agent.seat(), &skills))
+    }
+
     /// Spawn the orchestrator for a goal (cwd = first repo).
     pub async fn spawn_orchestrator(&self, goal_id: &str) -> Result<AgentSession> {
         let goal = self.store.get_goal(goal_id).await?;
         let repos = self.store.list_goal_repositories(goal_id).await?;
         let repo = repos.first().context("goal has no repos")?;
-        let profile = self.store.get_profile(&goal.orchestrator_profile_id).await?;
         self.assert_no_live_session(goal_id, None, Seat::Orchestrator, None)
             .await?;
         let tmux_session = session_name(&goal.id, None, "orchestrator", None);
@@ -588,7 +603,7 @@ impl Launcher {
                 goal_id: goal.id.clone(),
                 task_id: None,
                 seat: Seat::Orchestrator,
-                profile_id: profile.id.clone(),
+                task_agent_id: None,
                 agent_kind: self
                     .resolve_agent_kind(goal.agent_kind(), &format!("goal {}", goal.id))?,
                 model: goal.model.clone(),
@@ -599,7 +614,7 @@ impl Launcher {
             })
             .await?;
 
-        let system = prompts::system_prompt(&profile);
+        let system = prompts::system_prompt(Seat::Orchestrator, &[]);
         let template = prompts::template_for(PromptKind::OrchestratorBriefing);
         let briefing = prompts::orchestrator_briefing(template, &goal, &repos);
         self.spawn(&session, PathBuf::from(&repo.path), system, briefing)
@@ -615,7 +630,7 @@ impl Launcher {
         let task = self.store.get_task(task_id).await?;
         let goal = self.store.get_goal(&task.goal_id).await?;
         let repo = self.store.get_repository(&task.repo_id).await?;
-        let profile = self.store.get_profile(&task.author_profile_id).await?;
+        let author = self.store.task_author(task_id).await?;
         self.assert_no_live_session(&goal.id, Some(task_id), Seat::Author, None)
             .await?;
         let tmux_session = session_name(&goal.id, Some(&task.id), "author", None);
@@ -629,11 +644,11 @@ impl Launcher {
                 goal_id: goal.id.clone(),
                 task_id: Some(task.id.clone()),
                 seat: Seat::Author,
-                profile_id: profile.id.clone(),
+                task_agent_id: Some(author.id.clone()),
                 agent_kind: self
-                    .resolve_agent_kind(task.agent_kind(), &format!("task {}", task.id))?,
-                model: task.model.clone(),
-                effort: task.effort.clone(),
+                    .resolve_agent_kind(author.agent_kind(), &format!("task {}", task.id))?,
+                model: author.model.clone(),
+                effort: author.effort.clone(),
                 tmux_session,
                 worktree_path: Some(worktree.display().to_string()),
                 review_round: None,
@@ -646,7 +661,7 @@ impl Launcher {
         for dep_id in self.store.list_task_dependencies(&task.id).await? {
             deps.push(self.store.get_task(&dep_id).await?);
         }
-        let system = prompts::system_prompt(&profile);
+        let system = self.agent_system_prompt(&author).await?;
         let template = prompts::template_for(PromptKind::AuthorBriefing);
         let briefing = prompts::author_briefing(template, &task, &goal, &repo, &deps);
         self.spawn(&session, worktree, system, briefing).await?;
@@ -700,12 +715,12 @@ impl Launcher {
     /// The reviewer's detached worktree, pinned at the branch tip: created on
     /// the first round, re-pointed at the tip on every later one — the same
     /// worktree serves the whole review, as the same session does.
-    async fn reviewer_worktree(&self, task: &Task, profile_id: &str) -> Result<PathBuf> {
+    async fn reviewer_worktree(&self, task: &Task, agent_id: &str) -> Result<PathBuf> {
         let worktree = self
             .cfg
             .worktree_root
             .join(tail(&task.goal_id))
-            .join(format!("{}-rev-{}", tail(&task.id), tail(profile_id)));
+            .join(format!("{}-rev-{}", tail(&task.id), tail(agent_id)));
         if worktree.exists() {
             // New round: refresh to the current branch tip.
             self.git.checkout_detached(&worktree, &task.branch).await?;
@@ -724,50 +739,43 @@ impl Launcher {
     /// The session is not tied to the round it starts in: later rounds resume
     /// this very session (see [`Launcher::resume_reviewer`]), so its name says
     /// which reviewer of which task it is and nothing about when it began.
-    pub async fn spawn_reviewer(&self, task_id: &str, profile_id: &str) -> Result<AgentSession> {
+    pub async fn spawn_reviewer(&self, task_id: &str, agent_id: &str) -> Result<AgentSession> {
         let task = self.store.get_task(task_id).await?;
         let goal = self.store.get_goal(&task.goal_id).await?;
         let repo = self.store.get_repository(&task.repo_id).await?;
-        let profile = self.store.get_profile(profile_id).await?;
-        // The reviewer's slot on the task: both the proof that this profile
-        // reviews it at all, and the agent and model it was assigned with.
-        let slot = self
+        // The agent has to be one this task staffs as a reviewer: that is both
+        // the proof it reviews the task at all, and where its pin comes from.
+        let reviewer = self
             .store
-            .list_task_reviewer_pins(task_id)
+            .list_task_reviewers(task_id)
             .await?
             .into_iter()
-            .find(|r| r.profile_id == profile.id)
-            .ok_or_else(|| {
-                anyhow!(
-                    "profile {} is not a reviewer of task {}",
-                    profile.id,
-                    task_id
-                )
-            })?;
-        self.assert_no_live_session(&goal.id, Some(task_id), Seat::Reviewer, Some(&profile.id))
+            .find(|r| r.id == agent_id)
+            .ok_or_else(|| anyhow!("agent {agent_id} is not a reviewer of task {task_id}"))?;
+        self.assert_no_live_session(&goal.id, Some(task_id), Seat::Reviewer, Some(&reviewer.id))
             .await?;
         let tmux_session = session_name(
             &goal.id,
             Some(&task.id),
             "reviewer",
-            Some(tail(&profile.id)),
+            Some(tail(&reviewer.id)),
         );
         self.claim_pane(&tmux_session).await?;
 
-        let worktree = self.reviewer_worktree(&task, &profile.id).await?;
+        let worktree = self.reviewer_worktree(&task, &reviewer.id).await?;
         let session = self
             .store
             .create_session(NewSession {
                 goal_id: goal.id.clone(),
                 task_id: Some(task.id.clone()),
                 seat: Seat::Reviewer,
-                profile_id: profile.id.clone(),
+                task_agent_id: Some(reviewer.id.clone()),
                 agent_kind: self.resolve_agent_kind(
-                    slot.agent_kind(),
-                    &format!("reviewer {} of task {}", profile.id, task.id),
+                    reviewer.agent_kind(),
+                    &format!("reviewer {} of task {}", reviewer.id, task.id),
                 )?,
-                model: slot.model.clone(),
-                effort: slot.effort.clone(),
+                model: reviewer.model.clone(),
+                effort: reviewer.effort.clone(),
                 tmux_session,
                 worktree_path: Some(worktree.display().to_string()),
                 review_round: Some(task.review_round),
@@ -775,7 +783,7 @@ impl Launcher {
             .await?;
 
         let summary = self.store.review_summary(&task.id).await?;
-        let system = prompts::system_prompt(&profile);
+        let system = self.agent_system_prompt(&reviewer).await?;
         let template = prompts::template_for(PromptKind::ReviewerBriefing);
         let briefing =
             prompts::reviewer_briefing(template, &task, &goal, &repo, summary.as_deref());
@@ -798,20 +806,20 @@ impl Launcher {
     pub async fn resume_reviewer(
         &self,
         task_id: &str,
-        profile_id: &str,
+        agent_id: &str,
         instruction: &str,
     ) -> Result<AgentSession> {
         let task = self.store.get_task(task_id).await?;
-        let profile = self.store.get_profile(profile_id).await?;
+        let reviewer = self.store.get_task_agent(agent_id).await?;
 
         let Some((previous, internal)) = self
-            .resumable_session(&task.id, Seat::Reviewer, Some(&profile.id))
+            .resumable_session(&task.id, Seat::Reviewer, Some(&reviewer.id))
             .await?
         else {
-            return self.spawn_reviewer(task_id, profile_id).await;
+            return self.spawn_reviewer(task_id, agent_id).await;
         };
 
-        let worktree = self.reviewer_worktree(&task, &profile.id).await?;
+        let worktree = self.reviewer_worktree(&task, &reviewer.id).await?;
         if self.tmux.has_session(&previous.tmux_session).await {
             self.tmux.kill_session(&previous.tmux_session).await.ok();
         }
@@ -824,7 +832,7 @@ impl Launcher {
             )
             .await?;
 
-        self.launch_resumed(&session, &profile, worktree, &internal, instruction)
+        self.launch_resumed(&session, Some(&reviewer), worktree, &internal, instruction)
             .await
     }
 
@@ -834,7 +842,7 @@ impl Launcher {
     /// than one per round (spawn afresh if there is nothing to resume).
     pub async fn resume_author(&self, task_id: &str, instruction: &str) -> Result<AgentSession> {
         let task = self.store.get_task(task_id).await?;
-        let profile = self.store.get_profile(&task.author_profile_id).await?;
+        let author = self.store.task_author(task_id).await?;
 
         let Some((previous, internal)) = self
             .resumable_session(&task.id, Seat::Author, None)
@@ -863,7 +871,7 @@ impl Launcher {
             .restart_session(&previous.id, Some(&worktree.display().to_string()), None)
             .await?;
 
-        self.launch_resumed(&session, &profile, worktree, &internal, instruction)
+        self.launch_resumed(&session, Some(&author), worktree, &internal, instruction)
             .await
     }
 
@@ -909,7 +917,10 @@ impl Launcher {
                 previous.id
             )
         })?;
-        let profile = self.store.get_profile(&previous.profile_id).await?;
+        let agent = match &previous.task_agent_id {
+            Some(id) => Some(self.store.get_task_agent(id).await?),
+            None => None,
+        };
         let seat = previous.seat();
 
         let cwd = match seat {
@@ -938,7 +949,7 @@ impl Launcher {
         let session = self.store.restart_session(&previous.id, None, None).await?;
         self.launch_resumed(
             &session,
-            &profile,
+            agent.as_ref(),
             cwd,
             &internal,
             instruction.unwrap_or(""),

@@ -143,17 +143,18 @@ impl super::Scheduler {
                 // the briefing it is woken with.
                 let verdict_by: std::collections::HashSet<_> = reviews
                     .iter()
-                    .map(|r| r.reviewer_profile_id.clone())
+                    .map(|r| r.reviewer_agent_id.clone())
                     .collect();
                 let pending: Vec<String> = reviewers
                     .into_iter()
-                    .filter(|p| !verdict_by.contains(p))
+                    .map(|r| r.id)
+                    .filter(|id| !verdict_by.contains(id))
                     .collect();
                 if pending.is_empty() {
                     return Ok(());
                 }
                 let summary = self.store.review_summary(&task.id).await?;
-                for profile_id in pending {
+                for agent_id in pending {
                     let live = self
                         .store
                         .list_sessions(SessionFilter {
@@ -168,7 +169,7 @@ impl super::Scheduler {
                     let mut running = None;
                     for s in &live {
                         if s.seat() == Seat::Reviewer
-                            && s.profile_id == profile_id
+                            && s.task_agent_id.as_deref() == Some(agent_id.as_str())
                             && self
                                 .launcher
                                 .tmux
@@ -201,7 +202,10 @@ impl super::Scheduler {
                         .await?;
                     } else if let Some(compacting) = live
                         .iter()
-                        .find(|s| s.profile_id == profile_id && self.compaction_in_flight(s))
+                        .find(|s| {
+                            s.task_agent_id.as_deref() == Some(agent_id.as_str())
+                                && self.compaction_in_flight(s)
+                        })
                     {
                         // Its earlier session is still compacting the last
                         // round: relaunching it now would kill the pane
@@ -209,11 +213,11 @@ impl super::Scheduler {
                         // the compaction ends.
                         info!(task = %task.id, session = %compacting.id, "the reviewer is compacting its conversation; its next round starts after it");
                     } else {
-                        info!(task = %task.id, reviewer = %profile_id, round = task.review_round, "starting reviewer");
+                        info!(task = %task.id, reviewer = %agent_id, round = task.review_round, "starting reviewer");
                         // Resumes the reviewer's earlier session when there is
                         // one, spawns a first for it otherwise.
                         self.launcher
-                            .resume_reviewer(&task.id, &profile_id, &resume)
+                            .resume_reviewer(&task.id, &agent_id, &resume)
                             .await?;
                         self.spawn_failures.remove(&task.id);
                     }
@@ -224,17 +228,29 @@ impl super::Scheduler {
                     .store
                     .list_reviews(&task.id, Some(task.review_round))
                     .await?;
-                // Who asked, as the author reads it: the reviewer's own name
-                // and seat, with the id as the fallback for a profile that has
-                // since been deleted.
+                // Who asked, as the author reads it. An agent has no name of
+                // its own, so it is named by the skills it reviewed with, and
+                // by its id where it is staffed no longer.
                 let mut feedback: Vec<(String, String)> = Vec::new();
                 for review in reviews
                     .iter()
                     .filter(|r| r.verdict() == ReviewVerdict::RequestChanges)
                 {
-                    let who = match self.store.get_profile(&review.reviewer_profile_id).await {
-                        Ok(profile) => format!("{} ({})", profile.name, profile.seat),
-                        Err(_) => format!("reviewer {}", review.reviewer_profile_id),
+                    let skills = self
+                        .store
+                        .agent_skills(&review.reviewer_agent_id)
+                        .await
+                        .unwrap_or_default();
+                    let who = match skills.is_empty() {
+                        false => format!(
+                            "reviewer ({})",
+                            skills
+                                .iter()
+                                .map(|s| s.name.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ),
+                        true => format!("reviewer {}", review.reviewer_agent_id),
                     };
                     feedback.push((
                         who,

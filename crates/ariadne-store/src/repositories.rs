@@ -3,7 +3,7 @@
 use ariadne_core::MergeStrategy;
 use ariadne_core::id::new_id;
 
-use crate::profiles::plural_list;
+use crate::skills::plural_list;
 use crate::{Change, Repository, Result, Store, StoreError, now};
 
 #[derive(Debug, Clone)]
@@ -112,7 +112,7 @@ impl Store {
     }
 
     /// Delete a repository; fails with `Conflict` while a goal or a task
-    /// still references it, naming which, as [`Store::delete_profile`] does.
+    /// still references it, naming which, as [`Store::delete_skill`] does.
     pub async fn delete_repository(&self, id: &str) -> Result<()> {
         self.get_repository(id).await?;
         let (goals, tasks): (i64, i64) = sqlx::query_as(
@@ -142,7 +142,7 @@ impl Store {
 /// default in force.
 ///
 /// A text is refused here rather than at landing time for the same reason a
-/// profile's briefing is (see [`crate::prompts`]): rendering would carry a
+/// agent's briefing is (see [`crate::prompts`]): rendering would carry a
 /// `{token}` nothing fills in through to the agent as it stands, and the save
 /// is the last moment anyone is looking.
 fn landing_prompt(given: Option<String>) -> Result<Option<String>> {

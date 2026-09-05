@@ -4,11 +4,11 @@
 use std::collections::{HashMap, HashSet};
 
 use ariadne_core::id::new_id;
-use ariadne_core::{Actor, AttentionReason, TaskStatus, check_transition};
+use ariadne_core::{Actor, AttentionReason, Seat, TaskStatus, check_transition};
 
 use crate::query::Filtered;
 use crate::{
-    AgentPin, Change, Profile, Result, Store, StoreError, Task, TaskReviewer, TaskTransition,
+    AgentPin, Change, NewTaskAgent, Result, Store, StoreError, Task, TaskAgent, TaskTransition,
     not_found, now,
 };
 
@@ -18,33 +18,10 @@ pub struct NewTask {
     pub repo_id: String,
     pub title: String,
     pub description: String,
-    pub author_profile_id: String,
-    /// What the author is pinned to run on. None = the author profile's
-    /// own agent, model and effort.
-    pub pin: Option<AgentPin>,
-    /// The reviewer slots to cut, in review order; at least one.
-    pub reviewers: Vec<ReviewerSlot>,
+    /// The agents to staff: exactly one author, then the reviewers in review
+    /// order. What each one can do is the skills it carries.
+    pub agents: Vec<NewTaskAgent>,
     pub depends_on: Vec<String>,
-}
-
-/// One reviewer slot to write: which profile reviews, and what it is pinned to
-/// run on — its own override, or, as None, the profile's agent, model and
-/// effort as they stand when the slot is cut.
-#[derive(Debug, Clone)]
-pub struct ReviewerSlot {
-    pub profile_id: String,
-    pub pin: Option<AgentPin>,
-}
-
-impl ReviewerSlot {
-    /// A slot on whatever its profile is on: what every reviewer took before
-    /// models could be chosen per slot.
-    pub fn of(profile_id: impl Into<String>) -> Self {
-        Self {
-            profile_id: profile_id.into(),
-            pin: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -52,17 +29,16 @@ pub struct TaskUpdate {
     pub title: Option<String>,
     pub description: Option<String>,
     /// What the author runs on: `Some(Some(pin))` moves it there,
-    /// `Some(None)` puts it back on the author profile's agent, model and
-    /// effort as they stand now, None leaves the task's pins alone.
+    /// `Some(None)` puts it back on auto, None leaves it alone.
     pub pin: Option<Option<AgentPin>>,
     /// The effort alone, for an edit that leaves the model where it is:
     /// `Some(Some(effort))` runs the pinned model at it, `Some(None)` runs it
     /// at whatever the CLI runs it at, None says nothing. Read only where
     /// `pin` says nothing — a pin that moves carries its own effort.
     pub effort: Option<Option<String>>,
-    /// The whole reviewer list, replaced: each slot is cut afresh and pinned
-    /// to its own override, or to its profile's as it stands now.
-    pub reviewers: Option<Vec<ReviewerSlot>>,
+    /// The whole reviewer list, replaced: every reviewer is staffed afresh,
+    /// with the skills and the pin the caller gave it.
+    pub reviewers: Option<Vec<NewTaskAgent>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -144,15 +120,11 @@ fn slug(title: &str) -> String {
 }
 
 impl Store {
-    /// Create a task in `pending`. Enforces the goal's `max_tasks`, validates
-    /// reviewers are non-empty and deps belong to the same goal and are
-    /// acyclic.
+    /// Create a task in `pending`. Enforces the goal's `max_tasks`, checks
+    /// the staffing, and checks that the dependencies belong to the same goal
+    /// and are acyclic.
     pub async fn create_task(&self, new: NewTask) -> Result<Task> {
-        if new.reviewers.is_empty() {
-            return Err(StoreError::Invalid(
-                "a task needs at least one reviewer".into(),
-            ));
-        }
+        check_staffing(&new.agents)?;
         let goal = self.get_goal(&new.goal_id).await?;
         let repo = self.get_repository(&new.repo_id).await?;
         if !self
@@ -186,36 +158,23 @@ impl Store {
             }
         }
 
-        // The author's agent, model and effort are copied onto the task here
-        // and never re-read: editing the profile later must not move a task
-        // that is already defined, let alone one mid-flight. A task created
-        // with a model of its own is pinned to that instead.
-        let author: Profile =
-            Self::fetch_by_in_tx(&mut tx, "profile", "profiles", &new.author_profile_id).await?;
-        let (agent_kind, model, effort) = AgentPin::or_profile(new.pin.as_ref(), &author);
-
         sqlx::query(
-            "INSERT INTO tasks (id, goal_id, repo_id, title, description, status,
-                                author_profile_id, agent_kind, model, effort, branch,
+            "INSERT INTO tasks (id, goal_id, repo_id, title, description, status, branch,
                                 created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)",
         )
         .bind(&id)
         .bind(&goal.id)
         .bind(&repo.id)
         .bind(&new.title)
         .bind(&new.description)
-        .bind(&new.author_profile_id)
-        .bind(&agent_kind)
-        .bind(&model)
-        .bind(&effort)
         .bind(&branch)
         .bind(&ts)
         .bind(&ts)
         .execute(&mut *tx)
         .await?;
 
-        Self::insert_reviewers(&mut tx, &id, &new.reviewers).await?;
+        Self::staff_agents_in_tx(&mut tx, &id, &new.agents).await?;
 
         if !new.depends_on.is_empty() {
             Self::insert_dependencies(&mut tx, &goal.id, &id, &new.depends_on).await?;
@@ -358,52 +317,54 @@ impl Store {
         }
         let title = update.title.unwrap_or(task.title);
         let description = update.description.unwrap_or(task.description);
-        // A pin the caller did not touch stays exactly as it was written;
-        // clearing one reads the author profile again, so what comes back is
-        // what that profile is on now rather than what it was on at creation.
+        sqlx::query("UPDATE tasks SET title = ?, description = ?, updated_at = ? WHERE id = ?")
+            .bind(&title)
+            .bind(&description)
+            .bind(now())
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        // The pins live on the author, which is the agent the task's own
+        // `--model` and `--effort` have always meant.
+        let author: TaskAgent =
+            sqlx::query_as("SELECT * FROM task_agents WHERE task_id = ? AND seat = 'author'")
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await?
+                .ok_or_else(|| not_found("author", id))?;
         let (agent_kind, model, effort) = match &update.pin {
             // The model stands, so an effort of its own moves alone: what it
-            // is run at is the model the task is already pinned to.
+            // is run at is the model the author is already pinned to.
             None => (
-                task.agent_kind.clone(),
-                task.model.clone(),
-                update.effort.clone().unwrap_or_else(|| task.effort.clone()),
+                author.agent_kind.clone(),
+                author.model.clone(),
+                update
+                    .effort
+                    .clone()
+                    .unwrap_or_else(|| author.effort.clone()),
             ),
-            Some(pin) => {
-                let author: Profile =
-                    Self::fetch_by_in_tx(&mut tx, "profile", "profiles", &task.author_profile_id)
-                        .await?;
-                AgentPin::or_profile(pin.as_ref(), &author)
-            }
+            Some(pin) => AgentPin::columns(pin.as_ref()),
         };
-        sqlx::query(
-            "UPDATE tasks SET title = ?, description = ?, agent_kind = ?, model = ?, effort = ?,
-                              updated_at = ?
-             WHERE id = ?",
-        )
-        .bind(&title)
-        .bind(&description)
-        .bind(&agent_kind)
-        .bind(&model)
-        .bind(&effort)
-        .bind(now())
-        .bind(id)
-        .execute(&mut *tx)
-        .await?;
+        sqlx::query("UPDATE task_agents SET agent_kind = ?, model = ?, effort = ? WHERE id = ?")
+            .bind(&agent_kind)
+            .bind(&model)
+            .bind(&effort)
+            .bind(&author.id)
+            .execute(&mut *tx)
+            .await?;
         if let Some(reviewers) = update.reviewers {
             if reviewers.is_empty() {
                 return Err(StoreError::Invalid(
                     "a task needs at least one reviewer".into(),
                 ));
             }
-            sqlx::query("DELETE FROM task_reviewers WHERE task_id = ?")
+            sqlx::query("DELETE FROM task_agents WHERE task_id = ? AND seat = 'reviewer'")
                 .bind(id)
                 .execute(&mut *tx)
                 .await?;
-            // Reassigning reviewers writes new slots, so each one takes its
-            // own override or pins the profile as it stands now, the same way
-            // creation does.
-            Self::insert_reviewers(&mut tx, id, &reviewers).await?;
+            // Reassigning reviewers staffs them afresh, each with the skills
+            // and the pin the caller gave it, the same way creation does.
+            Self::staff_agents_in_tx(&mut tx, id, &reviewers).await?;
         }
         tx.commit().await?;
         let task = self.get_task(id).await?;
@@ -563,58 +524,6 @@ impl Store {
         .fetch_optional(self.r())
         .await?
         .flatten())
-    }
-
-    /// Reviewer profile ids in orchestrator-assigned order.
-    pub async fn list_task_reviewers(&self, task_id: &str) -> Result<Vec<String>> {
-        Ok(sqlx::query_scalar(
-            "SELECT profile_id FROM task_reviewers WHERE task_id = ? ORDER BY position",
-        )
-        .bind(task_id)
-        .fetch_all(self.r())
-        .await?)
-    }
-
-    /// The reviewer slots themselves, in the same order, each carrying the
-    /// agent and model it was pinned to when it was assigned.
-    pub async fn list_task_reviewer_pins(&self, task_id: &str) -> Result<Vec<TaskReviewer>> {
-        Ok(sqlx::query_as::<_, TaskReviewer>(
-            "SELECT * FROM task_reviewers WHERE task_id = ? ORDER BY position",
-        )
-        .bind(task_id)
-        .fetch_all(self.r())
-        .await?)
-    }
-
-    /// Write one slot per reviewer, in the order given, pinning each slot to
-    /// the model it was assigned or, where it was assigned none, to its
-    /// profile's agent and model. The profiles are read inside the transaction
-    /// that writes the slots, so an edit in between cannot land half-applied
-    /// across them.
-    async fn insert_reviewers(
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-        task_id: &str,
-        reviewers: &[ReviewerSlot],
-    ) -> Result<()> {
-        for (position, reviewer) in reviewers.iter().enumerate() {
-            let profile: Profile =
-                Self::fetch_by_in_tx(tx, "profile", "profiles", &reviewer.profile_id).await?;
-            let (agent_kind, model, effort) = AgentPin::or_profile(reviewer.pin.as_ref(), &profile);
-            sqlx::query(
-                "INSERT INTO task_reviewers (task_id, profile_id, position, agent_kind, model,
-                                             effort)
-                 VALUES (?, ?, ?, ?, ?, ?)",
-            )
-            .bind(task_id)
-            .bind(&profile.id)
-            .bind(position as i64)
-            .bind(&agent_kind)
-            .bind(&model)
-            .bind(&effort)
-            .execute(&mut **tx)
-            .await?;
-        }
-        Ok(())
     }
 
     pub async fn list_task_dependencies(&self, task_id: &str) -> Result<Vec<String>> {
@@ -861,5 +770,21 @@ mod tests {
                 "git rejected {branch:?} from title {title:?}"
             );
         }
+    }
+}
+
+/// A task takes exactly one author and at least one reviewer: the author
+/// carries it from its first commit to the end, and an approval is what lets
+/// it finish.
+fn check_staffing(agents: &[NewTaskAgent]) -> Result<()> {
+    let count = |seat: Seat| agents.iter().filter(|a| a.seat == seat).count();
+    match (count(Seat::Author), count(Seat::Reviewer)) {
+        (1, 0) => Err(StoreError::Invalid(
+            "a task needs at least one reviewer".into(),
+        )),
+        (1, _) => Ok(()),
+        (authors, _) => Err(StoreError::Invalid(format!(
+            "a task takes exactly one author, not {authors}"
+        ))),
     }
 }

@@ -1,26 +1,28 @@
-//! Built-in default prompts.
+//! Built-in default texts: the lifecycle prompts, and the skills Ariadne
+//! ships.
 //!
-//! The one place a default text lives. A lifecycle briefing is read from
-//! these constants on every launch and every resume, and no profile holds one
-//! of its own. A profile's system prompt runs on them too until somebody sets
-//! a text of its own, and
-//! [`Store::reset_system_prompt`](crate::Store::reset_system_prompt) puts it
-//! back by dropping what was set — nothing is ever copied into the database,
-//! so rewriting a text here reaches every profile that never edited it. A
-//! repository's landing briefing works the same way, off its merge strategy
-//! rather than a seat ([`default_landing_prompt`]).
+//! The one place a default text lives. A lifecycle briefing is read from these
+//! constants on every launch and every resume, and no row holds one of its
+//! own. A skill is stored with a `NULL` document while it runs on the text
+//! here, and a reset drops what was written over it rather than copying a
+//! default in. A repository's landing briefing works the same way, off its
+//! merge strategy ([`default_landing_prompt`]). Because nothing is ever copied
+//! into the database, rewording a text here reaches every database that never
+//! edited it.
 //!
 //! Each rule is written once, in the layer it belongs to. A system prompt
 //! states what a seat owes, from its first read to the call that ends its
-//! turn. A briefing template carries the values of one goal, task or round and
-//! whatever is only true of this moment — a new round's feedback, the landing
-//! procedure — and nothing of the playbook that already reached the agent. A
-//! resume is a nudge: where the work stands and what ends it. What every
-//! session is told alike — that Ariadne is reached through its MCP tools, whom
-//! a question reaches, and how few turns to take — is the MCP server's
-//! `instructions`, which every session already receives, and appears in no
-//! prompt here. What each seat does when it cannot go on is one line of its
-//! own: the orchestrator asks the user, the author gives the task up, the
+//! turn, and says nothing about the work itself — what an agent can do comes
+//! from its skills. A skill states how one kind of work is done, and nothing
+//! about Ariadne. A briefing template carries the values of one goal, task or
+//! round and whatever is only true of this moment — a new round's feedback,
+//! the landing procedure — and nothing of the playbook that already reached
+//! the agent. A resume is a nudge: where the work stands and what ends it.
+//! What every session is told alike — that Ariadne is reached through its MCP
+//! tools, whom a question reaches, and how few turns to take — is the MCP
+//! server's `instructions`, which every session already receives, and appears
+//! in no prompt here. What each seat does when it cannot go on is one line of
+//! its own: the orchestrator asks the user, the author gives the task up, the
 //! reviewer asks for changes.
 //!
 //! Every text here is written in ASD-STE100 Simplified Technical English: one
@@ -33,41 +35,103 @@
 //! rule holds for every seat, and for every word an agent writes, is the MCP
 //! server's session rules to say, so `STE` is all a text here spells.
 //!
-//! The texts are kept small on purpose, and `size_caps_hold` below is what
-//! keeps them that way; `every_default_text_is_simplified_technical_english`
-//! is what keeps the sentences short.
+//! The texts are kept small on purpose. `size_caps_hold` keeps the lifecycle
+//! prompts small, `skill_size_caps_hold` keeps the skills small, and
+//! `every_default_text_is_simplified_technical_english` keeps the sentences
+//! short across both.
 
 use ariadne_core::{MergeStrategy, PromptKind, Seat};
 
-/// A profile Ariadne seeds into an empty database: one per seat, on the
-/// auto-resolved agent CLI (no agent kind, no model) and on the default system
-/// prompt of its seat. The ids are fixed so they stay recognizable; deleting a
-/// built-in is allowed and permanent.
-pub struct BuiltinProfile {
-    pub id: &'static str,
+/// A skill Ariadne ships: one document that tells a generic agent how to do
+/// one kind of work.
+///
+/// The document is the whole `SKILL.md` — YAML frontmatter naming the skill
+/// and describing it, then the body — in the format Claude Code and Codex both
+/// read, so one text serves every agent CLI. It lives beside this crate under
+/// `skills/<name>/SKILL.md` and is compiled in, which is what lets a rewritten
+/// skill reach every database without a migration.
+pub struct BuiltinSkill {
     pub name: &'static str,
-    pub seat: Seat,
+    pub document: &'static str,
 }
 
-pub const BUILTIN_PROFILES: [BuiltinProfile; 3] = [
-    BuiltinProfile {
-        id: "00000000000000000000000001",
-        name: "Orchestrator",
-        seat: Seat::Orchestrator,
-    },
-    BuiltinProfile {
-        id: "00000000000000000000000002",
-        name: "Author",
-        seat: Seat::Author,
-    },
-    BuiltinProfile {
-        id: "00000000000000000000000003",
-        name: "Reviewer",
-        seat: Seat::Reviewer,
-    },
+/// The skills a fresh database is seeded with, grouped by what they are for:
+/// producing work, reviewing it, and operating what it produced.
+///
+/// The catalog is the whole of what an agent can be, so adding a skill here is
+/// adding a kind of work Ariadne knows how to staff.
+pub const BUILTIN_SKILLS: [BuiltinSkill; 16] = [
+    // Producing.
+    builtin("spec-writing", include_str!("../skills/spec-writing/SKILL.md")),
+    builtin("coding", include_str!("../skills/coding/SKILL.md")),
+    builtin("debugging", include_str!("../skills/debugging/SKILL.md")),
+    builtin("refactoring", include_str!("../skills/refactoring/SKILL.md")),
+    builtin("testing", include_str!("../skills/testing/SKILL.md")),
+    builtin(
+        "documentation",
+        include_str!("../skills/documentation/SKILL.md"),
+    ),
+    builtin("research", include_str!("../skills/research/SKILL.md")),
+    // Reviewing.
+    builtin("code-review", include_str!("../skills/code-review/SKILL.md")),
+    builtin("spec-review", include_str!("../skills/spec-review/SKILL.md")),
+    builtin(
+        "security-review",
+        include_str!("../skills/security-review/SKILL.md"),
+    ),
+    builtin(
+        "performance-review",
+        include_str!("../skills/performance-review/SKILL.md"),
+    ),
+    builtin(
+        "architecture-review",
+        include_str!("../skills/architecture-review/SKILL.md"),
+    ),
+    // Operating.
+    builtin("release", include_str!("../skills/release/SKILL.md")),
+    builtin(
+        "dependency-upgrade",
+        include_str!("../skills/dependency-upgrade/SKILL.md"),
+    ),
+    builtin("migration", include_str!("../skills/migration/SKILL.md")),
+    builtin("triage", include_str!("../skills/triage/SKILL.md")),
 ];
 
-/// The system prompt a profile of `seat` runs on while it has none of its own.
+const fn builtin(name: &'static str, document: &'static str) -> BuiltinSkill {
+    BuiltinSkill { name, document }
+}
+
+/// The document Ariadne ships under `name`, or `None` where it ships none —
+/// which is every skill the user wrote, and those carry their own text.
+pub fn default_skill_document(name: &str) -> Option<&'static str> {
+    BUILTIN_SKILLS
+        .iter()
+        .find(|s| s.name == name)
+        .map(|s| s.document)
+}
+
+/// The one-line `description` of a `SKILL.md`, which is what the index in an
+/// agent's system prompt carries and what a listing shows.
+///
+/// Read off the YAML frontmatter rather than stored beside it, so a rewritten
+/// document cannot disagree with the summary of itself. A document with no
+/// frontmatter, or none naming a description, has no summary; the caller says
+/// what to show instead.
+pub fn skill_summary(document: &str) -> Option<&str> {
+    let rest = document.strip_prefix("---\n")?;
+    let end = rest.find("\n---")?;
+    rest[..end]
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("description:"))
+        .map(str::trim)
+        .filter(|summary| !summary.is_empty())
+}
+
+/// The system prompt an agent in `seat` is spawned with.
+///
+/// It says what the seat owes and nothing about the work itself: what an
+/// agent can do comes from the skills it loads, so this text is Ariadne's own
+/// and no row overrides it.
 pub fn default_system_prompt(seat: Seat) -> &'static str {
     match seat {
         Seat::Orchestrator => ORCHESTRATOR_SYSTEM_PROMPT,
@@ -77,7 +141,7 @@ pub fn default_system_prompt(seat: Seat) -> &'static str {
 }
 
 /// The built-in text of `kind`: what every session of that lifecycle step is
-/// briefed with, the same for every profile.
+/// briefed with, the same for every agent.
 pub fn default_prompt_text(kind: PromptKind) -> &'static str {
     match kind {
         PromptKind::OrchestratorBriefing => ORCHESTRATOR_BRIEFING,
@@ -154,20 +218,21 @@ const ORCHESTRATOR_SYSTEM_PROMPT: &str = r#"You plan an Ariadne goal into an app
 4. Revise the spec after each answer. Ask again until the user writes an explicit yes. Create no task before it.
 5. Find the folder the repository keeps specs or docs in. Follow the format of the specs there. Where the repository has none, agree a path and a format with the user.
 6. Land the spec with the landing procedure in your briefing. Create no task before it merges.
-7. Call `create_task` per task: small, mergeable alone, one repository. Write the ticket in STE: context, what to do, what not to touch, acceptance criteria. Name the merged spec path in each ticket. Name an author and one or more reviewers from `list_profiles`. Add `depends_on` only for a real dependency. The rest run together: keep them off the same code.
-8. Size each slot from `list_models`: shape from `best_for` and `avoid_for`, risk from `cost`, routine from `speed`, effort from its description. Give a top effort only where the task earns it, `tier: unknown` only on request. Keep a reviewer under its author. Else the profile's own.
-9. Call `finalize_plan` once you write the whole plan. It starts every task and ends planning. Call it no earlier."#;
+7. Call `create_task` per task: small, mergeable alone, one repository. Write the ticket in STE: context, what to do, what not to touch, acceptance criteria. Name the spec path in each ticket. Add `depends_on` only for a real dependency. The rest run together: keep them off the same code.
+8. Staff each task: one author, one or more reviewers. Give each agent the skills its work needs (`list_skills`). It knows only its task and its skills.
+9. Size each agent from `list_models`: shape from `best_for` and `avoid_for`, risk from `cost`, routine from `speed`, effort from its description. Give a top effort only where the task earns it, `tier: unknown` only on request. Keep a reviewer under its author.
+10. Call `finalize_plan` once you write the whole plan. It starts every task and ends planning. Call it no earlier."#;
 
 /// Author persona and playbook: what it may touch, what it writes, and the
 /// one place `request_review` is explained. Landing is its own too, but the
 /// procedure belongs to the briefing that knows which repository this is.
-const AUTHOR_SYSTEM_PROMPT: &str = r#"You own one Ariadne task, from its first commit to its merge. Work only in your worktree, on your task branch. Commit nothing generated or unrelated.
+const AUTHOR_SYSTEM_PROMPT: &str = r#"You own one Ariadne task, from its first commit to the end. Work only in your worktree, on your task branch. Commit nothing generated or unrelated.
 
 1. Read the task and its acceptance criteria. Where you cannot do it as written, call `fail_task` with the reason in STE.
 2. Implement that task and no more. Refactor nothing on the way. Obey the repository's conventions: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`. Make small commits, their text in STE. Keep tests and linters green. Add the tests the task asks for.
 3. Write no authorship trailer, no tool trailer, no mention of Ariadne. Leave signing to git.
 4. Call `request_review` with one short summary in STE: what changed, why, how you verified it. Apply every verdict on the same branch and call it again. Where you disagree, say why in that summary.
-5. Enough approvals, and Ariadne briefs you to land it."#;
+5. Enough approvals, and Ariadne briefs you to end the task."#;
 
 /// Reviewer persona and playbook, and the one place the verdict rule is
 /// stated: one per round, through `submit_verdict`.
@@ -463,6 +528,14 @@ mod tests {
             .collect()
     }
 
+    /// Every shipped skill, named the way a failure names it.
+    fn all_skills() -> Vec<(String, &'static str)> {
+        BUILTIN_SKILLS
+            .iter()
+            .map(|s| (format!("{} skill", s.name), s.document))
+            .collect()
+    }
+
     /// How a strategy's landing briefing is named in a failure.
     fn landing_name(strategy: MergeStrategy) -> String {
         format!("{} landing briefing", strategy.as_str())
@@ -559,9 +632,12 @@ mod tests {
 
         // A cap per seat, not one for the three: the orchestrator alone
         // carries the spec conversation, and the two that never grew stay
-        // where they were.
+        // where they were. It was raised from 1500 to 1600 when staffing
+        // arrived: the orchestrator now picks the skills of every agent it
+        // creates, which is a step of the playbook and not a rewording of
+        // one.
         let system_cap = |seat: Seat| match seat {
-            Seat::Orchestrator => 1500,
+            Seat::Orchestrator => 1600,
             Seat::Author | Seat::Reviewer => 950,
         };
         let cap = |kind: PromptKind| match kind {
@@ -690,7 +766,7 @@ mod tests {
     /// in, and what a rewrite of one is read against.
     #[test]
     fn every_default_text_is_simplified_technical_english() {
-        for (name, text) in all_defaults() {
+        for (name, text) in all_defaults().into_iter().chain(all_skills()) {
             for sentence in ste::sentences(text) {
                 let words = sentence.split_whitespace().count();
                 assert!(
@@ -736,7 +812,7 @@ mod tests {
     fn a_seat_rule_is_stated_in_its_own_prompt_alone() {
         for (owner, rule) in [
             (Seat::Reviewer, "It is the verdict, and nothing else counts"),
-            (Seat::Author, "Ariadne briefs you to land it"),
+            (Seat::Author, "Ariadne briefs you to end the task"),
             (Seat::Orchestrator, "It starts every task and ends planning"),
         ] {
             for seat in Seat::ALL {
@@ -976,7 +1052,7 @@ mod tests {
             "Land the spec with the landing procedure in your briefing.",
             "Create no task before it merges.",
             "Call `create_task` per task",
-            "Name the merged spec path in each ticket.",
+            "Name the spec path in each ticket.",
             "`finalize_plan`",
         ] {
             let found = prompt[at..]
@@ -1121,18 +1197,69 @@ mod tests {
         }
     }
 
-    /// Three seats, three built-in profiles: one for each, and the ids stay
-    /// what they have always been.
+    /// The catalog is the whole of what an agent can be, so it is read here
+    /// as a catalog: every skill is named once, its name is the one its own
+    /// frontmatter gives, and every skill says in one line what it is for.
     #[test]
-    fn one_builtin_profile_is_seeded_per_seat() {
-        assert_eq!(BUILTIN_PROFILES.len(), Seat::ALL.len());
-        for seat in Seat::ALL {
-            assert_eq!(
-                BUILTIN_PROFILES.iter().filter(|b| b.seat == seat).count(),
-                1,
-                "one {} is seeded",
-                seat.as_str()
+    fn every_shipped_skill_is_named_once_and_describes_itself() {
+        let mut names: Vec<&str> = BUILTIN_SKILLS.iter().map(|s| s.name).collect();
+        let listed = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), listed, "a skill is listed twice");
+
+        for skill in &BUILTIN_SKILLS {
+            assert!(
+                skill.name.chars().all(|c| c.is_ascii_lowercase() || c == '-'),
+                "{} is not kebab-case",
+                skill.name
+            );
+            let front = skill
+                .document
+                .strip_prefix("---\n")
+                .and_then(|rest| rest.split_once("\n---"))
+                .map(|(front, _)| front)
+                .unwrap_or_else(|| panic!("{} has no frontmatter", skill.name));
+            assert!(
+                front.contains(&format!("name: {}", skill.name)),
+                "{} names itself something else in its frontmatter",
+                skill.name
+            );
+            let summary = skill_summary(skill.document)
+                .unwrap_or_else(|| panic!("{} describes itself nowhere", skill.name));
+            assert!(
+                !summary.is_empty() && summary.len() <= 140,
+                "the {} summary is {} characters; the index carries one line",
+                skill.name,
+                summary.len()
             );
         }
+    }
+
+    /// A skill is read on demand rather than on every launch, so it is capped
+    /// on its own rather than against the briefings' total. The caps are still
+    /// what a rewrite fits in: moving one is a decision, not a way round a
+    /// failing assertion.
+    #[test]
+    fn skill_size_caps_hold() {
+        const PER_SKILL: usize = 1800;
+        const TOTAL: usize = 20_000;
+
+        for skill in &BUILTIN_SKILLS {
+            println!("{:5}  {}", skill.document.len(), skill.name);
+        }
+        for skill in &BUILTIN_SKILLS {
+            assert!(
+                skill.document.len() <= PER_SKILL,
+                "the {} skill is {} characters, over its {PER_SKILL}",
+                skill.name,
+                skill.document.len()
+            );
+        }
+        let total: usize = BUILTIN_SKILLS.iter().map(|s| s.document.len()).sum();
+        assert!(
+            total <= TOTAL,
+            "the skills total {total} characters, over {TOTAL}"
+        );
     }
 }

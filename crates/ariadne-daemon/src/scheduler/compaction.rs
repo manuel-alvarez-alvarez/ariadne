@@ -445,7 +445,7 @@ mod tests {
             goal_id: "01goal".into(),
             task_id: Some("01task".into()),
             seat: "author".into(),
-            profile_id: "01profile".into(),
+            task_agent_id: None,
             agent_kind: "claude_code".into(),
             model: None,
             effort: None,

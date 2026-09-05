@@ -11,7 +11,7 @@ pub struct NewReview {
     pub task_id: String,
     pub round: i64,
     /// The reviewer of the round whose verdict this is.
-    pub reviewer_profile_id: String,
+    pub reviewer_agent_id: String,
     pub session_id: Option<String>,
     pub verdict: ReviewVerdict,
     pub body: Option<String>,
@@ -38,13 +38,13 @@ impl Store {
     ) -> Result<Review> {
         let id = new_id();
         sqlx::query(
-            "INSERT INTO reviews (id, task_id, round, reviewer_profile_id, session_id, verdict, body, created_at)
+            "INSERT INTO reviews (id, task_id, round, reviewer_agent_id, session_id, verdict, body, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&new.task_id)
         .bind(new.round)
-        .bind(&new.reviewer_profile_id)
+        .bind(&new.reviewer_agent_id)
         .bind(&new.session_id)
         .bind(new.verdict.as_str())
         .bind(&new.body)
@@ -55,7 +55,7 @@ impl Store {
             sqlx::Error::Database(ref db) if db.is_unique_violation() => {
                 StoreError::Conflict(format!(
                     "reviewer {} already submitted a verdict for round {} of task {}",
-                    new.reviewer_profile_id, new.round, new.task_id
+                    new.reviewer_agent_id, new.round, new.task_id
                 ))
             }
             other => StoreError::Db(other),

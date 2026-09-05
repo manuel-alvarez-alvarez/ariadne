@@ -104,7 +104,7 @@ impl World {
             .create_review(NewReview {
                 task_id: self.task.id.clone(),
                 round,
-                reviewer_profile_id: self.reviewer.clone(),
+                reviewer_agent_id: self.reviewer.clone(),
                 session_id: Some(session.id.clone()),
                 verdict,
                 body: Some("Looks fine.".into()),
@@ -329,9 +329,9 @@ async fn a_reviewer_that_voted_is_ended_only_once_its_compaction_is_done() {
 #[tokio::test]
 async fn a_plan_finalized_owes_the_orchestrator_a_compaction_before_it_is_let_go() {
     let h = harness().await;
-    let (goal, orchestrator_profile) = h.planning_goal().await;
+    let goal = h.planning_goal().await;
     let orchestrator = h
-        .session(&goal, None, Seat::Orchestrator, &orchestrator_profile.id)
+        .orchestrator_session(&goal, "orc")
         .await;
     h.pane_exists(&orchestrator);
     h.set_status(&orchestrator, SessionStatus::Idle).await;
@@ -376,17 +376,10 @@ async fn a_session_mid_turn_owes_the_compaction_and_is_not_typed_into() {
     w.advance(&w.task, TaskStatus::UnderReview).await;
 
     let repo = w.store.list_goal_repositories(&w.goal.id).await.unwrap()[0].clone();
-    let control_task = w
-        .task_on(
-            &w.goal,
-            &repo,
-            "control",
-            &w.store.get_profile(&w.author).await.unwrap(),
-            &[&w.store.get_profile(&w.reviewer).await.unwrap()],
-        )
-        .await;
+    let control_task = w.task_on(&w.goal, &repo, "control", 1, None).await;
+    let control_author = w.store.task_author(&control_task.id).await.unwrap();
     let control = w
-        .session(&w.goal, Some(&control_task), Seat::Author, &w.author)
+        .session(&w.goal, Some(&control_task), Seat::Author, &control_author.id)
         .await;
     w.pane_exists(&control);
     w.set_status(&control, SessionStatus::Idle).await;
@@ -534,7 +527,7 @@ async fn a_compaction_reported_done_before_its_delivery_settles_is_over() {
         .create_review(NewReview {
             task_id: w.task.id.clone(),
             round,
-            reviewer_profile_id: w.reviewer.clone(),
+            reviewer_agent_id: w.reviewer.clone(),
             session_id: None,
             verdict: ReviewVerdict::RequestChanges,
             body: Some("Rename the flag.".into()),
@@ -595,7 +588,7 @@ async fn a_resume_due_during_a_compaction_goes_out_after_it() {
         .create_review(NewReview {
             task_id: w.task.id.clone(),
             round,
-            reviewer_profile_id: w.reviewer.clone(),
+            reviewer_agent_id: w.reviewer.clone(),
             session_id: None,
             verdict: ReviewVerdict::RequestChanges,
             body: Some("Rename the flag.".into()),

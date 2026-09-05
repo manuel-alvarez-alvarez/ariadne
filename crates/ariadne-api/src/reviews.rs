@@ -9,8 +9,8 @@ pub struct ReviewDto {
     pub id: String,
     pub task_id: String,
     pub round: i64,
-    /// The reviewer of the round whose verdict this is.
-    pub reviewer_profile_id: String,
+    /// The task agent whose verdict this is.
+    pub reviewer_agent_id: String,
     pub session_id: Option<String>,
     pub verdict: ReviewVerdict,
     pub body: Option<String>,
@@ -22,7 +22,7 @@ pub struct ReviewDto {
 pub struct CreateReviewRequest {
     pub verdict: ReviewVerdict,
     pub body: Option<String>,
-    /// Reviewer profile id or name. Derived from the session context when the
-    /// call comes from an agent; required for user-submitted reviews.
-    pub reviewer_profile: Option<String>,
+    /// Id of the reviewing task agent. Derived from the session context when
+    /// the call comes from an agent; required for user-submitted reviews.
+    pub reviewer_agent_id: Option<String>,
 }

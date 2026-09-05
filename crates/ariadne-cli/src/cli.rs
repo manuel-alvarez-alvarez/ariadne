@@ -10,7 +10,7 @@ use crate::commands::agent::AgentCommand;
 use crate::commands::completions::CompletionsCommand;
 use crate::commands::goal::GoalCommand;
 use crate::commands::models::ModelsCommand;
-use crate::commands::profile::ProfileCommand;
+use crate::commands::skill::SkillCommand;
 use crate::commands::repo::RepoCommand;
 use crate::commands::session::SessionCommand;
 use crate::commands::task::TaskCommand;
@@ -301,16 +301,16 @@ pub enum Command {
         #[command(subcommand)]
         command: ModelsCommand,
     },
-    /// Manage agent profiles
+    /// Manage agent skills
     ///
     /// A profile is one agent as it is spawned: the seat it plays, what it
     /// runs on, and the prompts it is briefed and resumed with. Goals and
     /// tasks are assigned to profiles by name, and a change here reaches
     /// every session started after it.
     #[command(after_help = PROFILE_EXAMPLES)]
-    Profile {
+    Skill {
         #[command(subcommand)]
-        command: ProfileCommand,
+        command: SkillCommand,
     },
     /// Manage repositories
     ///

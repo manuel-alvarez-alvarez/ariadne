@@ -18,7 +18,7 @@ use std::ops::Deref;
 
 use ariadne_core::{Actor, Seat, TaskStatus};
 use ariadne_daemon::scheduler::{self, SchedEvent};
-use ariadne_store::{Goal, NewTask, ReviewerSlot, Task};
+use ariadne_store::{Goal, NewTask, NewTaskAgent, Task};
 
 use common::{Harness, TIMEOUT, eventually, harness, post};
 
@@ -45,12 +45,9 @@ impl World {
     }
 
     async fn on(h: Harness) -> World {
-        let orchestrator = h.profile("orchestrator", Seat::Orchestrator).await;
-        let author = h.profile("author", Seat::Author).await;
-        let reviewer = h.profile("reviewer", Seat::Reviewer).await;
-        let (goal, repo) = h.goal(&orchestrator).await;
+        let (goal, repo) = h.goal().await;
         let first = h
-            .task_on(&goal, &repo, "Build the engine", &author, &[&reviewer])
+            .task_on(&goal, &repo, "Build the engine", 1, None)
             .await;
         let second = h
             .store
@@ -59,9 +56,14 @@ impl World {
                 repo_id: repo.id.clone(),
                 title: "Drive what the engine built".into(),
                 description: "do things".into(),
-                author_profile_id: author.id.clone(),
-                pin: None,
-                reviewers: vec![ReviewerSlot::of(&reviewer.id)],
+                agents: vec![
+                    NewTaskAgent {
+                        ..NewTaskAgent::new(Seat::Author, ["coding"])
+                    },
+                    NewTaskAgent {
+                        ..NewTaskAgent::new(Seat::Reviewer, ["code-review"])
+                    },
+                ],
                 depends_on: vec![first.id.clone()],
             })
             .await

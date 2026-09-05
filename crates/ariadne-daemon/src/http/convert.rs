@@ -9,16 +9,16 @@
 use ariadne_api::agents::AgentConfigDto;
 use ariadne_api::events::AgentEventDto;
 use ariadne_api::goals::{GoalDto, GoalUsageDto};
-use ariadne_api::profiles::ProfileDto;
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::reviews::ReviewDto;
 use ariadne_api::sessions::SessionDto;
+use ariadne_api::skills::SkillDto;
 use ariadne_api::tasks::{
-    ProfileUsageDto, TaskDto, TaskReviewerDto, TaskTransitionDto, TaskUsageDto,
+    AgentUsageDto, TaskAgentDto, TaskDto, TaskTransitionDto, TaskUsageDto,
 };
 use ariadne_api::usage::TokenUsageDto;
 use ariadne_core::{Seat, TokenUsage};
-use ariadne_store::{self as store, ProfileUsage, Store, StoreError};
+use ariadne_store::{self as store, AgentUsage, Store, StoreError};
 
 use super::pins::spelled;
 
@@ -47,12 +47,12 @@ macro_rules! dto {
 }
 
 dto! {
-    pub fn profile_dto(p: store::Profile) -> ProfileDto {
-        seat: p.seat(),
-        model: spelled(p.agent_kind(), p.model.as_deref()),
-        system_prompt: p.effective_system_prompt().to_string(),
-        system_prompt_is_default: p.system_prompt_is_default(),
-        .. id, name, effort, created_at, updated_at
+    pub fn skill_dto(s: store::Skill) -> SkillDto {
+        summary: s.summary().to_string(),
+        document: s.document_text().to_string(),
+        document_is_default: s.document_is_default(),
+        builtin: s.is_builtin(),
+        .. name, created_at, updated_at
     }
 
     pub fn agent_config_dto(c: store::AgentConfig) -> AgentConfigDto {
@@ -80,44 +80,40 @@ dto! {
         model: spelled(g.agent_kind(), g.model.as_deref()),
         repos: repos.into_iter().map(repository_dto).collect(),
         usage: usage,
-        .. id, title, description, max_tasks, required_approvals,
-           orchestrator_profile_id, effort, created_at, updated_at
+        .. id, title, description, max_tasks, required_approvals, effort,
+           created_at, updated_at
     }
 
-    /// `name` is the reviewer profile's name, which the caller loads.
-    fn task_reviewer_dto(r: store::TaskReviewer, name: Option<String>) -> TaskReviewerDto {
-        model: spelled(r.agent_kind(), r.model.as_deref()),
-        profile_name: name,
-        .. profile_id, effort
+    /// `skills` is the agent's skill names in load order, which the caller
+    /// loads beside the row.
+    fn task_agent_dto(a: store::TaskAgent, skills: Vec<String>) -> TaskAgentDto {
+        seat: a.seat(),
+        model: spelled(a.agent_kind(), a.model.as_deref()),
+        skills: skills,
+        .. id, effort, brief
     }
 
-    /// The names come from the caller, which loads them: the author's, the
-    /// orchestrator's of the task's goal, and one per reviewer slot in slot
-    /// order. So does `reason`, which only an ended task has.
+    /// The agents come from the caller, which loads them with their skills,
+    /// author first and the reviewers in review order. So does `reason`,
+    /// which only an ended task has.
     fn task_dto(
         t: store::Task,
-        reviewers: Vec<(store::TaskReviewer, Option<String>)>,
+        agents: Vec<(store::TaskAgent, Vec<String>)>,
         depends_on: Vec<String>,
-        author_profile_name: Option<String>,
-        orchestrator_profile_name: Option<String>,
         usage: TaskUsageDto,
         reason: Option<String>,
     ) -> TaskDto {
         status: t.status(),
         stalled: t.is_stalled(),
-        model: spelled(t.agent_kind(), t.model.as_deref()),
-        reviewers: reviewers
+        agents: agents
             .into_iter()
-            .map(|(r, name)| task_reviewer_dto(r, name))
+            .map(|(a, skills)| task_agent_dto(a, skills))
             .collect(),
         depends_on: depends_on,
-        author_profile_name: author_profile_name,
-        orchestrator_profile_name: orchestrator_profile_name,
         usage: usage,
         reason: reason,
-        .. id, goal_id, repo_id, title, description, author_profile_id,
-           effort, branch, worktree_path, review_round, merge_commit, pr_url,
-           created_at, updated_at
+        .. id, goal_id, repo_id, title, description, branch, worktree_path,
+           review_round, merge_commit, pr_url, created_at, updated_at
     }
 
     pub fn transition_dto(t: store::TaskTransition) -> TaskTransitionDto {
@@ -126,7 +122,7 @@ dto! {
 
     pub fn review_dto(r: store::Review) -> ReviewDto {
         verdict: r.verdict(),
-        .. id, task_id, round, reviewer_profile_id, session_id, body, created_at
+        .. id, task_id, round, reviewer_agent_id, session_id, body, created_at
     }
 
     /// `usage` is what this session has spent, which the caller loads.
@@ -136,7 +132,7 @@ dto! {
         status: s.status(),
         attention_reason: s.attention_reason(),
         usage: usage,
-        .. id, goal_id, task_id, profile_id, model, effort, internal_session_id,
+        .. id, goal_id, task_id, task_agent_id, model, effort, internal_session_id,
            tmux_session, worktree_path, review_round, attention_since,
            last_activity_at, created_at, ended_at
     }
@@ -147,36 +143,34 @@ dto! {
     }
 }
 
-/// The name a task names one profile by, or None where the profile is gone —
-/// which a profile a task names cannot be, the store refusing to delete one
-/// anything references, so this leaves a task readable rather than failing
-/// the read.
-async fn profile_name(store: &Store, id: &str) -> Option<String> {
-    store.get_profile(id).await.ok().map(|p| p.name)
+/// The names of the skills an agent loads, in the order they reach it.
+///
+/// An agent has no name of its own, so this is what a reader identifies it
+/// by: an agent on `coding` and `testing` is read as exactly that.
+async fn agent_skills(store: &Store, agent_id: &str) -> Vec<String> {
+    store
+        .agent_skills(agent_id)
+        .await
+        .map(|skills| skills.into_iter().map(|s| s.name).collect())
+        .unwrap_or_default()
 }
 
-/// [`task_dto`] with everything it needs loaded from the store: the reviewer
-/// slots, the dependencies, and the profile names the task's participants are
-/// known by — the author's, every reviewer's, and the orchestrator's of its
-/// goal.
+/// [`task_dto`] with everything it needs loaded from the store: the agents
+/// staffed on the task with the skills each one loads, the dependencies, and
+/// what has been spent.
 ///
-/// A name beside every id is what a task is read for: no prompt can teach an
-/// agent to read an id.
+/// The skills beside every agent are what a task is read for: an agent is its
+/// skills, and no prompt can teach a reader to read an id.
 pub async fn task_dto_of(store: &Store, task: store::Task) -> Result<TaskDto, StoreError> {
-    let mut reviewers = Vec::new();
-    for pin in store.list_task_reviewer_pins(&task.id).await? {
-        let name = profile_name(store, &pin.profile_id).await;
-        reviewers.push((pin, name));
+    let mut agents = Vec::new();
+    for agent in store.list_task_agents(&task.id).await? {
+        let skills = agent_skills(store, &agent.id).await;
+        agents.push((agent, skills));
     }
     let depends_on = store.list_task_dependencies(&task.id).await?;
-    let author = profile_name(store, &task.author_profile_id).await;
-    let orchestrator_id = store.get_goal(&task.goal_id).await?.orchestrator_profile_id;
-    let orchestrator = profile_name(store, &orchestrator_id).await;
-    let usage = task_usage(store, &task.id, &reviewers).await?;
+    let usage = task_usage(store, &task.id, &agents).await?;
     let reason = store.ended_reason(&task).await?;
-    Ok(task_dto(
-        task, reviewers, depends_on, author, orchestrator, usage, reason,
-    ))
+    Ok(task_dto(task, agents, depends_on, usage, reason))
 }
 
 /// [`session_dto`] with what the session has spent loaded from the store.
@@ -196,19 +190,18 @@ pub async fn goal_dto_of(store: &Store, goal: store::Goal) -> Result<GoalDto, St
     Ok(goal_dto(goal, repos, usage))
 }
 
-/// What a task has spent, arranged the way it is read: the author's own,
-/// one entry per reviewer profile in slot order, and the total of every
-/// session on the task.
+/// What a task has spent, arranged the way it is read: the author's own, one
+/// entry per reviewer in review order, and the total of every session on the
+/// task.
 ///
-/// The author's is every author-seat session, not only the profile the
-/// task names today — a task moved to another author keeps what the first
-/// one spent, and a total that did not count it would not add up. A reviewer
-/// no longer holding a slot is listed after those that do, for the same
-/// reason.
+/// The author's is every author-seat session, not only the agent the task is
+/// staffed with today — a task re-staffed keeps what the first author spent,
+/// and a total that did not count it would not add up. A reviewer no longer
+/// staffed is listed after those that are, for the same reason.
 async fn task_usage(
     store: &Store,
     task_id: &str,
-    reviewers: &[(store::TaskReviewer, Option<String>)],
+    agents: &[(store::TaskAgent, Vec<String>)],
 ) -> Result<TaskUsageDto, StoreError> {
     let spent = store.task_usage(task_id).await?;
     let total: TokenUsage = spent.iter().map(|p| p.usage).sum();
@@ -217,23 +210,23 @@ async fn task_usage(
         .filter(|p| p.seat == Seat::Author)
         .map(|p| p.usage)
         .sum();
-    let mut left: Vec<&ProfileUsage> = spent.iter().filter(|p| p.seat == Seat::Reviewer).collect();
+    let mut left: Vec<&AgentUsage> = spent.iter().filter(|p| p.seat == Seat::Reviewer).collect();
 
     let mut listed = Vec::new();
-    for (slot, name) in reviewers {
-        if let Some(at) = left.iter().position(|p| p.profile_id == slot.profile_id) {
+    for (agent, skills) in agents.iter().filter(|(a, _)| a.seat() == Seat::Reviewer) {
+        if let Some(at) = left.iter().position(|p| p.agent_id == agent.id) {
             let spent = left.remove(at);
-            listed.push(ProfileUsageDto {
-                profile_id: spent.profile_id.clone(),
-                profile_name: name.clone(),
+            listed.push(AgentUsageDto {
+                agent_id: spent.agent_id.clone(),
+                skills: skills.clone(),
                 usage: spent.usage.into(),
             });
         }
     }
     for spent in left {
-        listed.push(ProfileUsageDto {
-            profile_id: spent.profile_id.clone(),
-            profile_name: profile_name(store, &spent.profile_id).await,
+        listed.push(AgentUsageDto {
+            agent_id: spent.agent_id.clone(),
+            skills: agent_skills(store, &spent.agent_id).await,
             usage: spent.usage.into(),
         });
     }

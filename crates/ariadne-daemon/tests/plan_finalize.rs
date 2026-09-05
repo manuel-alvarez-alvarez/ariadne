@@ -33,7 +33,7 @@ fn finalize_uri(cast: &Cast) -> String {
 /// A live orchestrator session on the goal, which is what an orchestrator's
 /// calls come in as.
 async fn orchestrator_session(h: &Harness, cast: &Cast) -> ariadne_store::AgentSession {
-    h.session(&cast.goal, None, Seat::Orchestrator, &cast.orchestrator.id)
+    h.orchestrator_session(&cast.goal, "orc")
         .await
 }
 
@@ -100,9 +100,8 @@ async fn only_the_orchestrator_may_finalize_the_plan() {
 #[tokio::test]
 async fn a_plan_with_no_tasks_cannot_be_finalized() {
     let h = harness().await;
-    let orchestrator = h.profile("orchestrator", Seat::Orchestrator).await;
-    let (goal, _repo) = h.goal(&orchestrator).await;
-    let session = h.session(&goal, None, Seat::Orchestrator, &orchestrator.id).await;
+    let (goal, _repo) = h.goal().await;
+    let session = h.orchestrator_session(&goal, "orc").await;
 
     let envelope: ErrorBody = h
         .json(

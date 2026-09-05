@@ -1,78 +1,105 @@
 //! What a `task create` or `task update` line means before it is sent.
 //!
 //! Both are refused here rather than by the daemon where the answer is already
-//! known: an update with nothing in it, a `--reviewer` whose model is missing
-//! or names no agent CLI Ariadne runs, a `--reviewer` whose `@` is followed by
-//! no effort, and a `--repo` that names none of the goal's repositories.
+//! known: an update with nothing in it, an agent with no skills, one whose
+//! model is missing or names no agent CLI Ariadne runs, one whose `@` is
+//! followed by no effort, and a `--repo` that names none of the goal's
+//! repositories.
 
 use anyhow::{Result, bail};
 
 use ariadne_api::goals::GoalDto;
 use ariadne_api::repositories::RepositoryDto;
-use ariadne_api::tasks::{ReviewerAssignment, UpdateTaskRequest};
+use ariadne_api::tasks::{AgentAssignment, UpdateTaskRequest};
 use ariadne_client::Client;
+
+use ariadne_core::Seat;
 
 use crate::commands::{parse_effort, parse_model, resolve};
 
-/// One `--reviewer PROFILE[=MODEL][@EFFORT]`: who reviews, and — after an `=`
-/// — what that reviewer runs on instead of what its profile is on, in the one
-/// spelling a model is chosen by, `<agent_kind>[:<model>]`, and — after an `@`
-/// — the effort that model is reasoned at.
+/// One `--author` or `--reviewer` argument, `SKILLS[=MODEL][@EFFORT]`: what
+/// the agent knows, and — after an `=` — what it runs on, in the one spelling
+/// a model is chosen by, `<agent_kind>[:<model>]`, and — after an `@` — the
+/// effort that model is reasoned at.
+///
+/// The skills are comma-separated and in the order they reach the agent:
+/// `--author coding,testing` is an agent that codes and tests, and that is the
+/// whole of what it is. A name no skill answers to is the daemon's to refuse,
+/// which is where the list of them lives.
 ///
 /// The `=` splits first and the last `@` after it splits the effort off, and
 /// nothing else splits at all: an opencode id carries `/` and `:` of its own,
-/// so `Reviewer=opencode:ollama/llama3:8b` reaches the request as that one id,
-/// tag and all, and `Reviewer=opencode:ollama/llama3:8b@thinking` is the same
-/// id run at `thinking`. An `@` with no `=` before it is a profile on its own
-/// model at an effort of its own: `Reviewer@high`.
+/// so `code-review=opencode:ollama/llama3:8b` reaches the request as that one
+/// id, tag and all. An `@` with no `=` before it is an agent on auto at an
+/// effort of its own: `code-review@high`.
 ///
 /// What is after the `=` is the same string `--model` takes, and it is refused
 /// here in the same words; what is after the `@` is only checked for being
 /// something, since which efforts a model takes is the daemon's to know.
-pub fn parse_reviewer(s: &str) -> Result<ReviewerAssignment, String> {
-    let (profile, model) = match s.split_once('=') {
+fn parse_agent(seat: Seat, s: &str) -> Result<AgentAssignment, String> {
+    let (skills, model) = match s.split_once('=') {
         None => (s, None),
-        Some((profile, model)) => (profile, Some(model)),
+        Some((skills, model)) => (skills, Some(model)),
     };
-    // The effort is cut off whichever half ends the string, so a profile with
-    // no model of its own can still be run deeper: `Reviewer@high`.
-    let (profile, model, effort) = match model {
+    // The effort is cut off whichever half ends the string, so an agent with
+    // no model of its own can still be run deeper: `code-review@high`.
+    let (skills, model, effort) = match model {
         Some(model) => {
             let (model, effort) = split_effort(model);
-            (profile, Some(model), effort)
+            (skills, Some(model), effort)
         }
         None => {
-            let (profile, effort) = split_effort(profile);
-            (profile, None, effort)
+            let (skills, effort) = split_effort(skills);
+            (skills, None, effort)
         }
     };
-    if profile.is_empty() {
-        return Err(format!("no profile in \"{s}\" — {}", accepted()));
+    let skills: Vec<String> = skills
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .collect();
+    if skills.is_empty() {
+        return Err(format!("no skills in \"{s}\" — {}", accepted()));
     }
     let effort = match effort {
         Some(effort) => Some(parse_effort(effort).map_err(|e| format!("in \"{s}\": {e}"))?),
         None => None,
     };
     let Some(model) = model else {
-        return Ok(ReviewerAssignment {
-            profile: profile.to_string(),
+        return Ok(AgentAssignment {
+            seat,
+            skills,
             model: None,
             effort,
+            brief: None,
         });
     };
     if model.is_empty() {
         return Err(format!(
-            "no model after the = in \"{s}\" — {}, or {profile} on its own to run \
-             it on whatever its profile is on",
+            "no model after the = in \"{s}\" — {}, or the skills on their own to \
+             run the agent on the first installed CLI",
             accepted()
         ));
     }
     let model = parse_model(model).map_err(|e| format!("in \"{s}\": {e}"))?;
-    Ok(ReviewerAssignment {
-        profile: profile.to_string(),
+    Ok(AgentAssignment {
+        seat,
+        skills,
         model: Some(model),
         effort,
+        brief: None,
     })
+}
+
+/// One `--author SKILLS[=MODEL][@EFFORT]`.
+pub fn parse_author(s: &str) -> Result<AgentAssignment, String> {
+    parse_agent(Seat::Author, s)
+}
+
+/// One `--reviewer SKILLS[=MODEL][@EFFORT]`, in review order.
+pub fn parse_reviewer(s: &str) -> Result<AgentAssignment, String> {
+    parse_agent(Seat::Reviewer, s)
 }
 
 /// One half of a slot with its effort taken off: the **last** `@` splits, so
@@ -85,13 +112,13 @@ fn split_effort(half: &str) -> (&str, Option<&str>) {
     }
 }
 
-/// What a `--reviewer` missing one of its halves is told it may write: the
+/// What an agent argument missing one of its halves is told it may write: the
 /// four forms, and the spelling each half is in.
 fn accepted() -> String {
-    "write PROFILE, PROFILE=MODEL, PROFILE@EFFORT or PROFILE=MODEL@EFFORT, \
-     where MODEL is an agent CLI (claude_code, codex, opencode) and, after a \
-     colon, one model of it, and EFFORT is one of the efforts `ariadne models \
-     ls` lists for that model"
+    "write SKILLS, SKILLS=MODEL, SKILLS@EFFORT or SKILLS=MODEL@EFFORT, where \
+     SKILLS is one or more skill names separated by commas, MODEL is an agent \
+     CLI (claude_code, codex, opencode) and, after a colon, one model of it, \
+     and EFFORT is one of the efforts `ariadne models ls` lists for that model"
         .to_string()
 }
 
@@ -106,7 +133,7 @@ pub fn update_request(
     description: Option<String>,
     model: Option<String>,
     effort: Option<String>,
-    reviewers: Vec<ReviewerAssignment>,
+    reviewers: Vec<AgentAssignment>,
     depends_on: Vec<String>,
     clear_depends_on: bool,
 ) -> Result<UpdateTaskRequest> {
@@ -114,8 +141,7 @@ pub fn update_request(
         title,
         description,
         // Whatever was typed, in the daemon's own spelling — `default`
-        // included, which is its word for handing the pins back to the
-        // author profile's own.
+        // included, which is its word for putting the author back on auto.
         model,
         // The same three answers the model has, about how deeply it reasons:
         // nothing said, `default` for the CLI's own, or one effort of it.
@@ -142,25 +168,6 @@ pub fn update_request(
         );
     }
     Ok(req)
-}
-
-/// Reviewer assignments as the daemon should receive them: the profile half
-/// resolved the way every other profile argument is, and what follows the `=`
-/// and the `@` — the model that reviewer runs on, and the effort it runs at —
-/// carried through untouched.
-pub async fn resolved_reviewers(
-    profiles: &mut resolve::Profiles<'_>,
-    reviewers: Vec<ReviewerAssignment>,
-) -> Result<Vec<ReviewerAssignment>> {
-    let mut out = Vec::with_capacity(reviewers.len());
-    for reviewer in reviewers {
-        out.push(ReviewerAssignment {
-            profile: profiles.id(&reviewer.profile).await?,
-            model: reviewer.model,
-            effort: reviewer.effort,
-        });
-    }
-    Ok(out)
 }
 
 /// A `--repo` argument as the repo id the API wants.

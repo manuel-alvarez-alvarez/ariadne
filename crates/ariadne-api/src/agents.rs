@@ -4,7 +4,7 @@ use ariadne_core::AgentKind;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-/// How one agent CLI is launched, shared by every profile that runs on it.
+/// How one agent CLI is launched, shared by every agent that runs on it.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct AgentConfigDto {
     pub agent_kind: AgentKind,

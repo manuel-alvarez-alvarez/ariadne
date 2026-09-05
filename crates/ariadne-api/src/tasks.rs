@@ -1,6 +1,6 @@
 //! Task DTOs.
 
-use ariadne_core::TaskStatus;
+use ariadne_core::{Seat, TaskStatus};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -15,27 +15,9 @@ pub struct TaskDto {
     pub title: String,
     pub description: String,
     pub status: TaskStatus,
-    pub author_profile_id: String,
-    /// Name of the author's profile; None only if that profile is gone.
-    pub author_profile_name: Option<String>,
-    /// Name of the orchestrator profile of the task's goal, which wrote the
-    /// task without being a field of it.
-    pub orchestrator_profile_name: Option<String>,
-    /// What the author runs on, `<agent_kind>[:<model>]`: the agent CLI and,
-    /// after a `:`, the model of it (`codex`, `claude_code:claude-opus-5`).
-    /// Pinned when the task was created, from the model chosen for it at
-    /// creation or on an edit or, where none was, from the author profile —
-    /// editing the profile afterwards leaves it alone. None = auto: the first
-    /// installed CLI, resolved at spawn time, on its own default model.
-    #[schema(example = "claude_code:claude-opus-5")]
-    pub model: Option<String>,
-    /// The reasoning effort that model is run at, pinned like `model`. None =
-    /// whatever the agent CLI runs it at on its own.
-    #[schema(example = "xhigh")]
-    pub effort: Option<String>,
-    /// Reviewer slots in orchestrator-assigned order, each carrying its own
-    /// pin.
-    pub reviewers: Vec<TaskReviewerDto>,
+    /// The agents staffed on the task: the author first, then the reviewers
+    /// in review order. What each one can do is the skills it carries.
+    pub agents: Vec<TaskAgentDto>,
     /// Ids of tasks that must merge before this one starts.
     pub depends_on: Vec<String>,
     pub branch: String,
@@ -66,77 +48,96 @@ pub struct TaskUsageDto {
     pub total: TokenUsageDto,
     /// The author's own, across every run of it.
     pub author: TokenUsageDto,
-    /// One entry per reviewer profile that has a session on the task, every
-    /// review round of it summed, ordered like `reviewers`. A reviewer whose
-    /// session has yet to report anything is listed with zeros; one that has
-    /// never been spawned is not listed at all.
-    pub reviewers: Vec<ProfileUsageDto>,
+    /// One entry per reviewer that has a session on the task, every review
+    /// round of it summed, in review order. A reviewer whose session has yet
+    /// to report anything is listed with zeros; one that has never been
+    /// spawned is not listed at all.
+    pub reviewers: Vec<AgentUsageDto>,
 }
 
-/// What one profile spent on a task, named the way a reader addresses it.
+/// What one staffed agent spent on a task, named the way a reader addresses
+/// it: an agent has no name of its own, so its skills are what identify it.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct ProfileUsageDto {
-    pub profile_id: String,
-    /// The profile's name; None only if that profile is gone.
-    pub profile_name: Option<String>,
+pub struct AgentUsageDto {
+    pub agent_id: String,
+    /// The skills the agent loads; empty only if the agent is gone.
+    pub skills: Vec<String>,
     pub usage: TokenUsageDto,
 }
 
-/// One reviewer slot of a task: which profile reviews it, and what that
-/// reviewer was pinned to run on when the slot was assigned — the profile's
-/// own model, or the one chosen for the slot. Pinned the same way the author
-/// is, and read the same way: what a reviewer of this task runs on, not what
-/// its profile says today.
+/// One agent staffed on a task: where it sits, what it knows, and what it
+/// runs on.
+///
+/// The agent has no identity of its own. `seat` says only whether it authors
+/// the task or reviews it; the skills are what it can do. What it runs on was
+/// sized by the orchestrator when it staffed the task, or chosen by the user
+/// since — either way it is what this agent runs on, and nothing behind it
+/// changes that.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct TaskReviewerDto {
-    pub profile_id: String,
-    /// Name of the reviewer's profile; None
-    /// only if that profile is gone.
-    pub profile_name: Option<String>,
-    /// What this reviewer runs on, `<agent_kind>[:<model>]`. None = auto: the
+pub struct TaskAgentDto {
+    pub id: String,
+    /// `author` or `reviewer`.
+    pub seat: Seat,
+    /// The skills this agent loads, in the order they reach it.
+    #[schema(example = json!(["coding", "testing"]))]
+    pub skills: Vec<String>,
+    /// What this agent runs on, `<agent_kind>[:<model>]`. None = auto: the
     /// first installed CLI, resolved at spawn time, on its own default model.
     #[schema(example = "codex:o3")]
     pub model: Option<String>,
-    /// The reasoning effort that model is run at, pinned like `model`. None =
-    /// whatever the agent CLI runs it at on its own.
+    /// The reasoning effort that model is run at. None = whatever the agent
+    /// CLI runs it at on its own.
     #[schema(example = "high")]
     pub effort: Option<String>,
+    /// What the orchestrator told this agent beyond the task itself. None =
+    /// the task is the whole of it.
+    pub brief: Option<String>,
 }
 
-/// One reviewer of a task: the profile that reviews, and what it is to run on.
+/// One agent to staff on a task: where it sits, the skills it loads, and what
+/// it is to run on.
 ///
 /// The model is written `<agent_kind>[:<model>]`: the agent CLI on its own
 /// runs it on its own default model, an agent with a model after the `:` pins
 /// both, and a string naming no agent CLI is refused — nothing here derives
-/// one from the other. Omitted, the slot takes the profile's own model as it
-/// stands when the slot is assigned.
+/// one from the other. Omitted, the agent runs on the first installed CLI at
+/// spawn time, on that CLI's own default model.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
-pub struct ReviewerAssignment {
-    /// Reviewer profile id or unique name.
-    pub profile: String,
-    /// What this reviewer runs on, `<agent_kind>[:<model>]`; omitted (or
-    /// "default") = the profile's own.
+pub struct AgentAssignment {
+    /// `author` or `reviewer`. A task takes exactly one author.
+    pub seat: Seat,
+    /// The names of the skills this agent loads, in the order they reach it.
+    /// A name no skill answers to is refused.
+    #[serde(default)]
+    #[schema(example = json!(["coding", "testing"]))]
+    pub skills: Vec<String>,
+    /// What this agent runs on, `<agent_kind>[:<model>]`; omitted (or
+    /// "default") = auto.
     #[serde(default)]
     #[schema(example = "codex:o3")]
     pub model: Option<String>,
     /// The reasoning effort to run that model at, one of the efforts
     /// `GET /v1/models` lists for it; anything else is refused. Omitted (or
-    /// "default") = whatever the agent CLI runs the model at, and where
-    /// `model` is omitted too, the profile's own effort. Named where `model`
-    /// is omitted, the slot takes the profile's own model at this effort.
+    /// "default") = whatever the agent CLI runs the model at.
     #[serde(default)]
     #[schema(example = "high")]
     pub effort: Option<String>,
+    /// What to tell this agent beyond the task itself. Omitted = the task is
+    /// the whole of it.
+    #[serde(default)]
+    pub brief: Option<String>,
 }
 
-impl ReviewerAssignment {
-    /// A reviewer on whatever its profile is on.
-    pub fn of(profile: impl Into<String>) -> Self {
+impl AgentAssignment {
+    /// An agent in `seat` on the named skills, on auto.
+    pub fn new(seat: Seat, skills: impl IntoIterator<Item = impl Into<String>>) -> Self {
         Self {
-            profile: profile.into(),
+            seat,
+            skills: skills.into_iter().map(Into::into).collect(),
             model: None,
             effort: None,
+            brief: None,
         }
     }
 }
@@ -150,21 +151,9 @@ pub struct CreateTaskRequest {
     /// Id of one of the goal's repositories; may be omitted when the goal
     /// works in exactly one.
     pub repo_id: Option<String>,
-    /// Author profile id or unique name.
-    pub author_profile: String,
-    /// What the author runs on, `<agent_kind>[:<model>]`; omitted (or
-    /// "default") = the author profile's own model. Resolved the way
-    /// [`ReviewerAssignment::model`] is.
-    #[serde(default)]
-    #[schema(example = "codex:gpt-5.3-codex")]
-    pub model: Option<String>,
-    /// The reasoning effort to run that model at, resolved and refused the
-    /// way [`ReviewerAssignment::effort`] is.
-    #[serde(default)]
-    #[schema(example = "xhigh")]
-    pub effort: Option<String>,
-    /// The reviewers of the task, in review order. At least one.
-    pub reviewers: Vec<ReviewerAssignment>,
+    /// The agents to staff: exactly one author, then the reviewers in review
+    /// order, at least one.
+    pub agents: Vec<AgentAssignment>,
     /// Task ids this task depends on.
     #[serde(default)]
     pub depends_on: Vec<String>,
@@ -177,10 +166,8 @@ pub struct UpdateTaskRequest {
     pub title: Option<String>,
     pub description: Option<String>,
     /// What the author runs on, `<agent_kind>[:<model>]`: absent leaves the
-    /// task's pins alone, "default" (or the empty string) puts them back on
-    /// the author profile's own model as it stands now, and anything else
-    /// pins what it spells. The same clearing word
-    /// [`crate::profiles::UpdateProfileRequest::model`] takes.
+    /// author's pins alone, "default" (or the empty string) puts them back on
+    /// auto, and anything else pins what it spells.
     #[schema(example = "codex:gpt-5.3-codex")]
     pub model: Option<String>,
     /// The reasoning effort to run the model at: absent leaves it alone,
@@ -192,9 +179,9 @@ pub struct UpdateTaskRequest {
     /// belonged to the model that was left behind.
     #[schema(example = "xhigh")]
     pub effort: Option<String>,
-    /// The whole reviewer list, replaced: each slot is cut afresh and pinned
-    /// to the model it names or, where it names none, to its profile's.
-    pub reviewers: Option<Vec<ReviewerAssignment>>,
+    /// The whole reviewer list, replaced: every reviewer is staffed afresh,
+    /// with the skills and the model it names.
+    pub reviewers: Option<Vec<AgentAssignment>>,
     pub depends_on: Option<Vec<String>>,
 }
 

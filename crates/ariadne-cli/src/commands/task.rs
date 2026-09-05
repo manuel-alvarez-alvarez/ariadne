@@ -9,16 +9,16 @@ use serde_json::json;
 use ariadne_api::reviews::ReviewDto;
 use ariadne_api::stream::EventStreamQuery;
 use ariadne_api::tasks::{
-    CreateTaskRequest, ReviewerAssignment, TaskDto, TaskListQuery, TaskTransitionDto,
+    AgentAssignment, CreateTaskRequest, TaskDto, TaskListQuery, TaskTransitionDto,
 };
 use ariadne_api::usage::TokenUsageDto;
 use ariadne_client::{Client, SseEvent};
-use ariadne_core::TaskStatus;
+use ariadne_core::{Seat, TaskStatus};
 
 use super::follow;
 use super::resolve::{self, Kind};
 use super::{
-    ProfileNames, Subject, confirm, one_of, parse_effort, parse_effort_or_default, parse_model,
+    Subject, agent_label, agent_pin_label, confirm, one_of, parse_effort_or_default,
     parse_model_or_default, query_path,
 };
 use crate::cli::values::Spelling;
@@ -26,7 +26,7 @@ use crate::output::{
     Column, Format, Kv, UNCAPPED, age, col, dash, local_time, moment, note, ok_id_line, pager,
     print, print_json, print_kv, print_list, status_line, usage_block, usage_cell, view, yes_no,
 };
-use edit::{parse_reviewer, resolve_repo, resolved_reviewers, update_request};
+use edit::{parse_author, parse_reviewer, resolve_repo, update_request};
 
 /// Columns of `task ls`. Titles and branches are the long ones: a task whose
 /// title runs to a paragraph would otherwise push status and round off-screen.
@@ -106,26 +106,15 @@ pub enum TaskCommand {
         /// Task description: the brief the author works from
         #[arg(short = 'd', long, default_value = "", hide_default_value = true)]
         description: String,
-        /// Author profile id or name that owns the task
-        #[arg(long, default_value = "Author", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::author_profiles))]
-        author: String,
-        /// What the author runs on: AGENT[:MODEL] — an agent CLI
-        /// (claude_code | codex | opencode) on its own default model, or one
-        /// model of it after the colon (codex:gpt-5.3-codex). Default: the
-        /// author profile's own
-        #[arg(long, value_name = "MODEL", value_parser = parse_model, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
-        model: Option<String>,
-        /// The reasoning effort that model is run at: one of the efforts
-        /// `ariadne models ls` lists for it. Default: whatever the agent CLI
-        /// runs it at
-        #[arg(long, value_name = "EFFORT", value_parser = parse_effort, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::efforts))]
-        effort: Option<String>,
-        /// Reviewer profile id or name, in review order; repeatable. Add
-        /// `=MODEL` to run that reviewer on something other than its profile's
-        /// own and `@EFFORT` to say how deeply it reasons there
-        /// (`--reviewer Reviewer=codex:gpt-5.6-sol@xhigh`)
-        #[arg(long = "reviewer", value_name = "PROFILE[=MODEL][@EFFORT]", default_value = "Reviewer", value_parser = parse_reviewer, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::reviewer_profiles))]
-        reviewers: Vec<ReviewerAssignment>,
+        /// The author's skills, comma-separated, and what it runs on: add
+        /// `=MODEL` to pick the agent CLI and model, and `@EFFORT` to say how
+        /// deeply it reasons there (`--author coding,testing=codex@xhigh`)
+        #[arg(long, value_name = "SKILLS[=MODEL][@EFFORT]", default_value = "coding", value_parser = parse_author)]
+        author: AgentAssignment,
+        /// One reviewer's skills, in review order; repeatable. Spelled the
+        /// same way as `--author` (`--reviewer code-review=codex@xhigh`)
+        #[arg(long = "reviewer", value_name = "SKILLS[=MODEL][@EFFORT]", default_value = "code-review", value_parser = parse_reviewer)]
+        reviewers: Vec<AgentAssignment>,
         /// Id of a task that must merge before this one starts; repeatable
         #[arg(long = "depends-on", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
         depends_on: Vec<String>,
@@ -163,11 +152,11 @@ pub enum TaskCommand {
         /// the agent CLI runs it at
         #[arg(long, value_name = "EFFORT|default", value_parser = parse_effort_or_default, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::efforts_or_default))]
         effort: Option<String>,
-        /// Reviewer profile id or name, optionally `=MODEL` and `@EFFORT`, in
+        /// One reviewer's skills, optionally `=MODEL` and `@EFFORT`, in
         /// review order; repeatable, and replaces the task's reviewers rather
         /// than adding to them
-        #[arg(long = "reviewer", value_name = "PROFILE[=MODEL][@EFFORT]", value_parser = parse_reviewer, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::reviewer_profiles))]
-        reviewers: Vec<ReviewerAssignment>,
+        #[arg(long = "reviewer", value_name = "SKILLS[=MODEL][@EFFORT]", value_parser = parse_reviewer)]
+        reviewers: Vec<AgentAssignment>,
         /// Id of a task that must merge first; repeatable, and replaces the
         /// task's dependencies rather than adding to them
         #[arg(long = "depends-on", conflicts_with = "clear_depends_on", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
@@ -263,17 +252,16 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             title,
             description,
             author,
-            model,
-            effort,
             reviewers,
             depends_on,
             repo,
         } => {
             let goal = resolve::id(client, Kind::Goal, &goal).await?;
             let depends_on = resolve::ids(client, Kind::Task, &depends_on).await?;
-            let mut profiles = resolve::Profiles::new(client);
-            let author = profiles.id(&author).await?;
-            let reviewers = resolved_reviewers(&mut profiles, reviewers).await?;
+            // The author first, then the reviewers in review order: that is
+            // the order the daemon reads a staffing in.
+            let mut agents = vec![author];
+            agents.extend(reviewers);
             let repo_id = match repo {
                 Some(spec) => Some(resolve_repo(client, &goal, &spec).await?),
                 None => None,
@@ -285,10 +273,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                         title,
                         description,
                         repo_id,
-                        author_profile: author,
-                        model,
-                        effort,
-                        reviewers,
+                        agents,
                         depends_on,
                     },
                 )
@@ -307,8 +292,6 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
         } => {
             let id = resolve::id(client, Kind::Task, &id).await?;
             let depends_on = resolve::ids(client, Kind::Task, &depends_on).await?;
-            let reviewers =
-                resolved_reviewers(&mut resolve::Profiles::new(client), reviewers).await?;
             let body = update_request(
                 title,
                 description,
@@ -332,14 +315,15 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
         TaskCommand::Inspect { id } => {
             let id = resolve::id(client, Kind::Task, &id).await?;
             let t: TaskDto = client.get_json(&task_path(&id)).await?;
-            let profiles = ProfileNames::for_format(client, format).await;
-            print(format, &t, || print_kv(&inspect_pairs(&t, &profiles)))?;
+            print(format, &t, || print_kv(&inspect_pairs(&t)))?;
         }
         TaskCommand::Reviews { id } => {
             let id = resolve::id(client, Kind::Task, &id).await?;
             let reviews: Vec<ReviewDto> =
                 client.get_json(&format!("/v1/tasks/{id}/reviews")).await?;
-            let profiles = ProfileNames::for_format(client, format).await;
+            // The reviewers of the task, so a verdict can be read as the
+            // skills that gave it rather than as an id.
+            let t: TaskDto = client.get_json(&task_path(&id)).await?;
             print_list(
                 format,
                 &reviews,
@@ -347,7 +331,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                 |r| {
                     vec![
                         r.round.to_string(),
-                        profiles.label(&r.reviewer_profile_id),
+                        reviewer_label(&t, &r.reviewer_agent_id),
                         r.verdict.as_str().into(),
                         r.body.clone().unwrap_or_else(|| "-".into()),
                     ]
@@ -535,7 +519,7 @@ fn visible(tasks: Vec<TaskDto>, all: bool, statuses: &[TaskStatus]) -> Vec<TaskD
 /// The key/value pairs `task inspect` prints, in the order it prints them —
 /// pulled out of the `Inspect` arm so the block's own content is testable
 /// without a daemon behind it.
-fn inspect_pairs(t: &TaskDto, profiles: &ProfileNames) -> Vec<(&'static str, Kv)> {
+fn inspect_pairs(t: &TaskDto) -> Vec<(&'static str, Kv)> {
     vec![
         ("id", Kv::id(t.id.clone())),
         ("goal", Kv::id(t.goal_id.clone())),
@@ -543,23 +527,20 @@ fn inspect_pairs(t: &TaskDto, profiles: &ProfileNames) -> Vec<(&'static str, Kv)
         ("status", Kv::status(t.status.as_str())),
         (
             "author",
-            profiles
-                .pinned_label(
-                    &t.author_profile_id,
-                    t.model.as_deref(),
-                    t.effort.as_deref(),
-                )
-                .into(),
+            match t.agents.iter().find(|a| a.seat == Seat::Author) {
+                Some(a) => agent_pin_label(&a.skills, a.model.as_deref(), a.effort.as_deref()),
+                None => "-".to_string(),
+            }
+            .into(),
         ),
         (
             "reviewers",
-            // One reviewer per line: each is a mention and the two facts
-            // after it, and the review order is what the column reads down.
-            t.reviewers
+            // One reviewer per line: each is its skills and the two facts
+            // after them, and the review order is what the column reads down.
+            t.agents
                 .iter()
-                .map(|r| {
-                    profiles.pinned_label(&r.profile_id, r.model.as_deref(), r.effort.as_deref())
-                })
+                .filter(|a| a.seat == Seat::Reviewer)
+                .map(|a| agent_pin_label(&a.skills, a.model.as_deref(), a.effort.as_deref()))
                 .collect::<Vec<_>>()
                 .join(INDENT)
                 .into(),
@@ -591,50 +572,41 @@ fn inspect_pairs(t: &TaskDto, profiles: &ProfileNames) -> Vec<(&'static str, Kv)
 /// What the task cost, spender by spender: the total first, then the
 /// author and each reviewer under it, named by their profiles.
 ///
-/// Every reviewer slot of the task gets a line, whether or not it has spent
+/// Every reviewer of the task gets a line, whether or not it has spent
 /// anything: a reviewer missing from the block would read as one the task
-/// does not have, and `0` is a fact where a gap is a question. A profile that
-/// spent on the task without holding a slot any more is listed after them, so
-/// the lines still add up to the total.
+/// does not have, and `0` is a fact where a gap is a question. An agent that
+/// spent on the task and is staffed no longer is listed after them, so the
+/// lines still add up to the total.
 fn usage_lines(t: &TaskDto) -> String {
+    let staffed: Vec<_> = t
+        .agents
+        .iter()
+        .filter(|a| a.seat == Seat::Reviewer)
+        .collect();
     let mut agents: Vec<(String, TokenUsageDto)> = vec![("author".into(), t.usage.author)];
-    for r in &t.reviewers {
-        let spent = spent_by(t, &r.profile_id).unwrap_or_default();
-        agents.push((
-            profile_label(r.profile_name.as_deref(), &r.profile_id),
-            spent,
-        ));
+    for r in &staffed {
+        let spent = spent_by(t, &r.id).unwrap_or_default();
+        agents.push((agent_label(&r.skills), spent));
     }
     agents.extend(
         t.usage
             .reviewers
             .iter()
-            .filter(|u| !t.reviewers.iter().any(|r| r.profile_id == u.profile_id))
-            .map(|u| {
-                (
-                    profile_label(u.profile_name.as_deref(), &u.profile_id),
-                    u.usage,
-                )
-            }),
+            .filter(|u| !staffed.iter().any(|r| r.id == u.agent_id))
+            .map(|u| (agent_label(&u.skills), u.usage)),
     );
 
     usage_block(&t.usage.total, &agents, INDENT)
 }
 
 /// What one reviewer profile spent on the task, if the daemon reported it at
-/// all — a slot whose reviewer has never been spawned has no entry.
-fn spent_by(t: &TaskDto, profile_id: &str) -> Option<TokenUsageDto> {
+/// all — a reviewer that has never been spawned has no entry.
+fn spent_by(t: &TaskDto, agent_id: &str) -> Option<TokenUsageDto> {
     t.usage
         .reviewers
         .iter()
-        .find(|u| u.profile_id == profile_id)
+        .find(|u| u.agent_id == agent_id)
         .map(|u| u.usage)
-}
-
-/// A profile as this block names it: its name, or its id where the daemon
-/// would not name it — the way every other mention of a profile falls back.
-fn profile_label(name: Option<&str>, profile_id: &str) -> String {
-    name.unwrap_or(profile_id).to_string()
 }
 
 /// What `task cancel` asks before the work is thrown away: cancelling is
@@ -884,5 +856,14 @@ mod tests {
             "-",
             "and a task nobody published says nothing"
         );
+    }
+}
+
+/// How a verdict names the agent that gave it: the skills that agent reviewed
+/// with, and the id where the task no longer staffs it.
+fn reviewer_label(task: &TaskDto, agent_id: &str) -> String {
+    match task.agents.iter().find(|a| a.id == agent_id) {
+        Some(agent) => agent_label(&agent.skills),
+        None => agent_id.to_string(),
     }
 }

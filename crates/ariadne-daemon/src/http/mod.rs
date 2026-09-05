@@ -12,7 +12,7 @@ mod landing;
 mod logs;
 mod pane;
 mod pins;
-mod profiles;
+mod skills;
 mod repositories;
 mod session_logs;
 mod sessions;
@@ -105,8 +105,8 @@ impl AppState {
         version,
         doctor::report,
         agents::list, agents::update,
-        profiles::create, profiles::list, profiles::get, profiles::update, profiles::delete,
-        profiles::reset_system_prompt,
+        skills::create, skills::list, skills::get, skills::update, skills::delete,
+        skills::reset_document,
         repositories::create, repositories::list, repositories::get,
         repositories::update, repositories::delete,
         repositories::list_merge_strategies,
@@ -134,7 +134,7 @@ impl AppState {
     tags(
         (name = "system", description = "Daemon health and metadata"),
         (name = "agents", description = "Per-agent-CLI launch configuration"),
-        (name = "profiles", description = "Agent profiles (seat + system prompt + agent CLI)"),
+        (name = "skills", description = "The documents an agent loads to do one kind of work"),
         (name = "repositories", description = "Git repositories registered with the daemon"),
         (name = "goals", description = "Goals and their plans"),
         (name = "tasks", description = "Tasks, transitions, reviews"),
@@ -155,17 +155,15 @@ pub fn router(state: AppState) -> Router {
         // agents
         .route("/v1/agents", get(agents::list))
         .route("/v1/agents/{kind}", put(agents::update))
-        // profiles
-        .route("/v1/profiles", post(profiles::create).get(profiles::list))
+        // skills
+        .route("/v1/skills", post(skills::create).get(skills::list))
         .route(
-            "/v1/profiles/{id}",
-            get(profiles::get)
-                .put(profiles::update)
-                .delete(profiles::delete),
+            "/v1/skills/{name}",
+            get(skills::get).put(skills::update).delete(skills::delete),
         )
         .route(
-            "/v1/profiles/{id}/system-prompt/reset",
-            post(profiles::reset_system_prompt),
+            "/v1/skills/{name}/document/reset",
+            post(skills::reset_document),
         )
         // repositories
         .route(

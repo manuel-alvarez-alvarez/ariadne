@@ -2,7 +2,7 @@
 //!
 //! One row per [`AgentKind`], seeded from the built-in defaults and edited
 //! from there. Every spawn and resume reads its flags here, so turning a
-//! permission bypass off takes effect on the next launch of any profile
+//! permission bypass off takes effect on the next launch of any agent
 //! running on that agent.
 
 use ariadne_core::AgentKind;
