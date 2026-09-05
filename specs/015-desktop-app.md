@@ -1,7 +1,7 @@
 ---
 id: desktop-app
 status: current
-updated: 2026-09-04
+updated: 2026-09-05
 areas: [ui]
 commits: [f37dfd7b, 31bb7611, 10908591, b150ce44]
 tests:
@@ -45,9 +45,14 @@ Out: the daemon endpoints themselves (012).
    webview starts, unless the user already set it. WebKitGTK's DMA-BUF
    renderer aborts with `EGL_BAD_PARAMETER` on some systems; this stops that
    abort. macOS is unaffected.
-9. The primary surface is the macOS Tauri window (WebKit): a layout change is
-   verified there, not only in a browser.
-10. The app is checked by `npm test`, `npm run typecheck`, `npm run lint` and
+9. On Linux the shell also tells GTK its own application id (`enableGTKAppId`,
+   so the identifier `dev.ariadne.ui` becomes the window's), which is how a
+   desktop shell matches the window on screen to the entry the installer
+   wrote for it (016) — and therefore how the window gets the app's icon
+   rather than a generic one.
+10. The primary surface is the macOS Tauri window (WebKit): a layout change is
+    verified there, not only in a browser.
+11. The app is checked by `npm test`, `npm run typecheck`, `npm run lint` and
     `npm run check:unused` before a commit.
 
 ## Acceptance criteria

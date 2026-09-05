@@ -1,7 +1,7 @@
 ---
 id: install-service-and-release
 status: current
-updated: 2026-09-04
+updated: 2026-09-05
 areas: [install, scripts, store]
 commits: [affda30b, 7ac6b2e3, 60905e41, b0ab8333, 1bbd6251]
 tests:
@@ -32,7 +32,10 @@ Out: what the daemon does once running (009, 012).
    `~/.local/share/applications/dev.ariadne.ui.desktop` entry and an icon
    under `~/.local/share/icons/hicolor`, taken from the AppImage
    (`--appimage-extract`, which needs no FUSE) or, for a source build, from
-   `ui/src-tauri/icons/`.
+   `ui/src-tauri/icons/`. The entry names the window it belongs to
+   (`StartupWMClass`, the installed app's own basename), without which the
+   icon is right in the app grid and generic in the dash — the grid reads the
+   entry, the dash has only the window (015).
 2. It is idempotent: safe to re-run after an upgrade or a config change, every
    step replacing what a previous run installed. What was installed where is
    recorded in `~/.ariadne/install.env`, which `uninstall.sh` reads.

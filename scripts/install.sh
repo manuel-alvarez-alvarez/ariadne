@@ -233,8 +233,18 @@ icon_size() {
 # $1 installed as its icon under the hicolor theme. $1 may be empty or
 # missing - the entry still works, just with no icon. Sets ARIADNE_DESKTOP_ICON
 # to where the icon landed, or "" if none was installed.
+#
+# StartupWMClass is what ties the running window back to this entry, and
+# without it the icon is right in the app grid - which reads the entry - and a
+# generic cog in the dash, which has only the window to go on. GTK takes the
+# window's class from the program name, which for us is the basename of the
+# installed app, so that is what the shell will be looking up. The app also
+# tells GTK its own id (`enableGTKAppId` in ui/src-tauri/tauri.conf.json),
+# which matches this file by name on Wayland; the two cover the sessions
+# between them.
 install_desktop_entry() {
-    local icon_src="$1" size
+    local icon_src="$1" size wm_class
+    wm_class="$(basename "$APP_PATH")"
     mkdir -p "$(dirname "$ARIADNE_DESKTOP_ENTRY")"
     cat > "$ARIADNE_DESKTOP_ENTRY" <<EOF
 [Desktop Entry]
@@ -246,6 +256,7 @@ Exec="$APP_PATH" %U
 Icon=$ARIADNE_DESKTOP_ID
 Terminal=false
 Categories=Development;
+StartupWMClass=$wm_class
 EOF
 
     ARIADNE_DESKTOP_ICON=""
