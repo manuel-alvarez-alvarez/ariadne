@@ -100,9 +100,10 @@ Out: the CLI that consumes this (014) and the desktop app that consumes it
 - Usage rolls up to the task and the goal
   (`events.rs::reported_usage_rolls_up_to_the_task_and_the_goal`,
   `store.rs::a_tasks_usage_groups_every_round_of_a_reviewer_together`,
-  `::a_goals_usage_is_grouped_by_role_and_counts_its_planner`), a source
-  replaces its own totals (`::a_source_replaces_its_own_totals_and_sources_add_up`),
-  and usage goes with its session (`::usage_goes_when_the_session_it_belonged_to_does`).
+  `::a_goals_usage_is_grouped_by_role_and_counts_its_orchestrator`), a source
+  replaces its own totals
+  (`::a_source_replaces_its_own_totals_and_sources_add_up`), and usage goes
+  with its session (`::usage_goes_when_the_session_it_belonged_to_does`).
 - The log snapshot, tail, eviction and stream behave
   (`logs.rs::the_snapshot_returns_captured_lines_in_order`,
   `::tail_limits_the_snapshot_to_the_last_n_lines`,

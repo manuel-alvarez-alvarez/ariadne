@@ -151,7 +151,7 @@ pub fn status(word: &str) -> (Style, Option<char>) {
         "changes_requested" => (ORANGE, Some(RUNNING)),
         // Approved is still being landed; merged is the end of it.
         "approved" => (green(), Some(RUNNING)),
-        "merged" | "completed" => (green(), Some(DONE)),
+        "finished" | "completed" => (green(), Some(DONE)),
         // A session that exited did its work and stopped: done, not failed.
         "exited" => (grey(), Some(DONE)),
         "failed" | "cancelled" => (red(), Some(FAILED)),
@@ -276,7 +276,7 @@ mod tests {
         assert_eq!(glyph("under_review"), Some(RUNNING));
         assert_eq!(glyph("changes_requested"), Some(RUNNING));
         assert_eq!(glyph("approved"), Some(RUNNING));
-        assert_eq!(glyph("merged"), Some(DONE));
+        assert_eq!(glyph("finished"), Some(DONE));
         assert_eq!(glyph("completed"), Some(DONE));
         assert_eq!(glyph("exited"), Some(DONE));
         assert_eq!(glyph("failed"), Some(FAILED));
@@ -346,7 +346,7 @@ mod tests {
         assert_eq!(status("under_review").0, yellow());
         assert_eq!(status("changes_requested").0, ORANGE);
         assert_eq!(status("approved").0, green());
-        assert_eq!(status("merged").0, green());
+        assert_eq!(status("finished").0, green());
         assert_eq!(status("failed").0, red());
         assert_eq!(status("cancelled").0, red());
         assert_eq!(

@@ -46,7 +46,7 @@ pub enum RepoCommand {
         /// onto it, or published as a pull/merge request for a human to merge
         #[arg(long, value_parser = Spelling::<MergeStrategy>::new(), default_value = "direct")]
         merge_strategy: MergeStrategy,
-        /// The landing briefing this repository hands its engineer, as text
+        /// The landing briefing this repository hands its author, as text
         /// on the line. Omit for the default of --merge-strategy
         #[arg(long, value_name = "TEXT", conflicts_with = "landing_prompt_file")]
         landing_prompt: Option<String>,

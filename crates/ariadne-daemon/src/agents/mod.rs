@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-use ariadne_core::{AgentKind, Role};
+use ariadne_core::{AgentKind, Seat};
 
 /// Everything an adapter needs to plan a spawn. Prompt assembly happens in
 /// the launcher; adapters only deal with delivery mechanics.
@@ -24,10 +24,11 @@ pub struct SpawnCtx {
     pub launch_id: String,
     pub goal_id: String,
     pub task_id: Option<String>,
-    pub role: Role,
+    pub seat: Seat,
     /// Per-session directory for generated files (`~/.ariadne/run/<id>/`).
     pub run_dir: PathBuf,
-    /// Where the agent process runs: worktree (engineer/reviewer) or repo (planner).
+    /// Where the agent process runs: worktree (author/reviewer) or repo
+    /// (orchestrator).
     pub cwd: PathBuf,
     pub socket_path: PathBuf,
     /// Path or name of the `ariadne` CLI binary (hooks + MCP entry point).
@@ -75,10 +76,10 @@ pub trait AgentAdapter: Send + Sync {
         instruction: &str,
     ) -> Result<SpawnPlan>;
     /// What the daemon types into this CLI's composer to have it compact its
-    /// conversation, with the focus of `role` where the CLI takes one
+    /// conversation, with the focus of `seat` where the CLI takes one
     /// ([`compaction_focus`]); `None` for a CLI whose compaction cannot be
     /// started from outside.
-    fn compaction_command(&self, role: Role) -> Option<String>;
+    fn compaction_command(&self, seat: Seat) -> Option<String>;
     /// Whether an event this CLI reported — `kind` as `ariadne agent-event`
     /// spells it, with its payload — says a compaction has just finished.
     /// Whatever started it: one the daemon asked for, one the user typed, or
@@ -86,20 +87,20 @@ pub trait AgentAdapter: Send + Sync {
     fn compaction_done(&self, kind: &str, payload: &serde_json::Value) -> bool;
 }
 
-/// What a compaction is told to keep, per role, for the CLIs that take a
+/// What a compaction is told to keep, per seat, for the CLIs that take a
 /// focus beside the command.
 ///
 /// Simplified Technical English: short imperative sentences, one instruction
 /// each, so the summary that comes out carries what the next resume of this
-/// role has to know and nothing it does not.
-pub fn compaction_focus(role: Role) -> &'static str {
-    match role {
-        Role::Engineer => {
+/// seat has to know and nothing it does not.
+pub fn compaction_focus(seat: Seat) -> &'static str {
+    match seat {
+        Seat::Author => {
             "Keep the task and the branch. Keep what changed and why. \
              Keep how you verified it. Keep the open review points."
         }
-        Role::Reviewer => "Keep what you checked. Keep each finding of each verdict you gave.",
-        Role::Planner => "Keep the goal. Keep the decisions. Keep the tasks you created.",
+        Seat::Reviewer => "Keep what you checked. Keep each finding of each verdict you gave.",
+        Seat::Orchestrator => "Keep the goal. Keep the decisions. Keep the tasks you created.",
     }
 }
 
@@ -135,7 +136,7 @@ pub fn base_env(ctx: &SpawnCtx) -> Vec<(String, String)> {
         ("ARIADNE_SESSION_ID".into(), ctx.session_id.clone()),
         ("ARIADNE_LAUNCH_ID".into(), ctx.launch_id.clone()),
         ("ARIADNE_GOAL_ID".into(), ctx.goal_id.clone()),
-        ("ARIADNE_ROLE".into(), ctx.role.as_str().to_string()),
+        ("ARIADNE_SEAT".into(), ctx.seat.as_str().to_string()),
         (
             "ARIADNE_SOCKET".into(),
             ctx.socket_path.display().to_string(),
@@ -159,7 +160,7 @@ pub fn env_json(ctx: &SpawnCtx) -> serde_json::Map<String, serde_json::Value> {
 mod tests {
     use super::{adapter_for, compaction_focus};
 
-    use ariadne_core::{AgentKind, Role};
+    use ariadne_core::{AgentKind, Seat};
     use serde_json::json;
 
     /// Every CLI can be told to compact from its composer, and only Claude
@@ -167,14 +168,14 @@ mod tests {
     /// `/compact` bare and are handed nothing else.
     #[test]
     fn every_cli_has_a_compaction_command_and_only_claude_takes_a_focus() {
-        for role in [Role::Planner, Role::Engineer, Role::Reviewer] {
+        for seat in [Seat::Orchestrator, Seat::Author, Seat::Reviewer] {
             let claude = adapter_for(AgentKind::ClaudeCode)
-                .compaction_command(role)
+                .compaction_command(seat)
                 .unwrap();
             assert_eq!(
                 claude,
-                format!("/compact {}", compaction_focus(role)),
-                "{role:?}"
+                format!("/compact {}", compaction_focus(seat)),
+                "{seat:?}"
             );
             assert!(
                 !claude.contains('\n'),
@@ -182,9 +183,9 @@ mod tests {
             );
             for kind in [AgentKind::Codex, AgentKind::Opencode] {
                 assert_eq!(
-                    adapter_for(kind).compaction_command(role).as_deref(),
+                    adapter_for(kind).compaction_command(seat).as_deref(),
                     Some("/compact"),
-                    "{kind:?} {role:?}"
+                    "{kind:?} {seat:?}"
                 );
             }
         }
@@ -194,19 +195,19 @@ mod tests {
     /// sentences, each one an instruction of its own.
     #[test]
     fn the_focus_texts_are_short_imperative_sentences() {
-        for role in [Role::Planner, Role::Engineer, Role::Reviewer] {
-            for sentence in compaction_focus(role)
+        for seat in [Seat::Orchestrator, Seat::Author, Seat::Reviewer] {
+            for sentence in compaction_focus(seat)
                 .split('.')
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
             {
                 assert!(
                     sentence.starts_with("Keep"),
-                    "{role:?}: {sentence:?} does not start with an imperative"
+                    "{seat:?}: {sentence:?} does not start with an imperative"
                 );
                 assert!(
                     sentence.split_whitespace().count() <= 20,
-                    "{role:?}: {sentence:?} is longer than a Simplified Technical English sentence"
+                    "{seat:?}: {sentence:?} is longer than a Simplified Technical English sentence"
                 );
             }
         }

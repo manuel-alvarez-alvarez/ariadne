@@ -37,7 +37,7 @@ watchdog's own timeline (009).
 4. Paying it means typing the CLI's own `/compact` into the pane, through the
    same confirmed delivery a nudge takes (008), and only into a pane that is
    free: the turn ended, nothing being typed, no dialog waiting on a person.
-   Claude Code, which takes an argument, is given a per-role focus saying what
+   Claude Code, which takes an argument, is given a per-seat focus saying what
    to keep.
 5. While a compaction is in flight the pane is left alone: nothing is typed
    into it and nothing kills it. A review's feedback, a landing briefing, a
@@ -52,7 +52,7 @@ watchdog's own timeline (009).
    (`COMPACTION_OWED_FOR_SECS`, 600 s): anything else is written off and the
    work goes on.
 8. A session that owes a compaction is not ended until the debt is paid — an
-   idle planner past `finalize_plan` and a reviewer that has voted are both
+   idle orchestrator past `finalize_plan` and a reviewer that has voted are both
    kept up for it.
 9. Each compaction is written to the session's event log as the daemon's own
    `compaction` event, and one that ended any other way as `compaction_failed`
@@ -62,10 +62,10 @@ watchdog's own timeline (009).
 ## Acceptance criteria
 
 - Each hand-off owes its session a compaction
-  (`compaction.rs::a_review_requested_owes_the_engineer_a_compaction`,
+  (`compaction.rs::a_review_requested_owes_the_author_a_compaction`,
   `::a_verdict_given_owes_the_reviewer_a_compaction`,
-  `::a_plan_finalized_owes_the_planner_a_compaction_before_it_is_let_go`), and
-  is paid once however many passes see it
+  `::a_plan_finalized_owes_the_orchestrator_a_compaction_before_it_is_let_go`),
+  and is paid once however many passes see it
   (`::a_hand_off_is_paid_once_however_many_passes_see_it`).
 - A session mid-turn or waiting on a person owes the debt but is not typed into
   (`compaction.rs::a_session_mid_turn_owes_the_compaction_and_is_not_typed_into`,

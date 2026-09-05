@@ -16,7 +16,7 @@ mod common;
 use std::path::Path;
 use std::time::Duration;
 
-use ariadne_core::{AgentKind, AttentionReason, Role};
+use ariadne_core::{AgentKind, AttentionReason, Seat};
 use ariadne_daemon::tmux::{TmuxManager, TmuxSpawn};
 use ariadne_store::{AgentSession, Task};
 
@@ -156,18 +156,18 @@ async fn stub_harness() -> Harness {
     harness().typed_input_window(Duration::from_secs(2)).await
 }
 
-/// An engineer session on an OpenCode agent, already run once: it has the
+/// An author session on an OpenCode agent, already run once: it has the
 /// internal session id a resume goes back to, and a worktree to be resumed in.
 /// OpenCode is the kind whose resume instruction cannot ride the argv, so it
 /// is the one typed into the pane.
-async fn opencode_engineer(h: &Harness) -> (Task, AgentSession) {
+async fn opencode_author(h: &Harness) -> (Task, AgentSession) {
     let cast = h.cast_on(AgentKind::Opencode).await;
     let session = h
         .session_on(
             &cast.goal,
             Some(&cast.task),
-            Role::Engineer,
-            &cast.engineer.id,
+            Seat::Author,
+            &cast.author.id,
             AgentKind::Opencode,
         )
         .await;
@@ -191,13 +191,13 @@ async fn raised(h: &Harness, session: &AgentSession) {
 #[tokio::test]
 async fn a_resume_instruction_that_stays_in_the_composer_raises_the_session() {
     let h = stub_harness().await;
-    let (task, session) = opencode_engineer(&h).await;
+    let (task, session) = opencode_author(&h).await;
     // Whatever is pressed, the pane keeps showing the instruction where it was
     // pasted.
     h.composer_keeps(INSTRUCTION);
 
     h.launcher
-        .resume_engineer(&task.id, INSTRUCTION)
+        .resume_author(&task.id, INSTRUCTION)
         .await
         .unwrap();
 
@@ -218,12 +218,12 @@ async fn a_resume_instruction_that_stays_in_the_composer_raises_the_session() {
 #[tokio::test]
 async fn a_pane_that_never_draws_raises_the_session_when_the_window_runs_out() {
     let h = stub_harness().await;
-    let (task, session) = opencode_engineer(&h).await;
+    let (task, session) = opencode_author(&h).await;
     // No composer written at all: every look at the pane comes back empty,
     // which is what a TUI that never started looks like.
 
     h.launcher
-        .resume_engineer(&task.id, INSTRUCTION)
+        .resume_author(&task.id, INSTRUCTION)
         .await
         .unwrap();
 

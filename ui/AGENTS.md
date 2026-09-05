@@ -231,8 +231,8 @@ on whatever screen it was opened over. Two notes on the matching, both in
 
 - ulids live in an entry's `keywords`, matched literally, never fuzzily: 26
   characters of random letters answer to almost any subsequence query, so
-  leaving them in the scored text let `planner` find a task called "Keyboard
-  support";
+  leaving them in the scored text let `orchestrator` find a task called
+  "Keyboard support";
 - cmdk sorts the rows *inside* a group and leaves the groups where they were
   written, so the palette orders the groups itself, by their best match.
 

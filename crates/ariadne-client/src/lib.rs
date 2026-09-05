@@ -155,7 +155,7 @@ pub struct Client {
     transport: Transport,
     endpoint: String,
     /// When set, sent as `X-Ariadne-Session` so the daemon can derive the
-    /// caller's role/task scope (agent-originated calls).
+    /// caller's seat/task scope (agent-originated calls).
     session_id: Option<String>,
 }
 
@@ -278,7 +278,7 @@ impl Client {
         .await
     }
 
-    /// Put a profile's system prompt back on the default of its role.
+    /// Put a profile's system prompt back on the default of its seat.
     pub async fn reset_system_prompt(&self, profile: &str) -> Result<ProfileDto, ClientError> {
         self.post_empty(&format!("/v1/profiles/{profile}/system-prompt/reset"))
             .await

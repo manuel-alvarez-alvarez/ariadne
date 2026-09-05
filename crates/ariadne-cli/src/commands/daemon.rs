@@ -653,7 +653,7 @@ mod tests {
     #[test]
     fn two_records_stamped_in_the_same_tick_are_both_shown() {
         let tick = "2026-08-29T02:00:00.000001Z";
-        let (first, second) = (log(tick, "listening"), log(tick, "spawning planner"));
+        let (first, second) = (log(tick, "listening"), log(tick, "spawning orchestrator"));
         let shown = shown(std::slice::from_ref(&first));
         assert_eq!(
             shown.boundary(&[first, second]),
@@ -697,7 +697,7 @@ mod tests {
     fn the_longest_run_that_lines_up_decides_the_boundary() {
         let (beat, work) = (
             log("2026-08-29T02:00:00Z", "sweeping sessions"),
-            log("2026-08-29T02:00:01Z", "spawning planner"),
+            log("2026-08-29T02:00:01Z", "spawning orchestrator"),
         );
         let buffer = [
             beat.clone(),
@@ -780,13 +780,13 @@ mod tests {
     fn a_log_line_is_plain_off_and_painted_on() {
         let error = LogLineDto {
             level: "ERROR".into(),
-            ..log("2026-08-29T02:00:00Z", "planner crashed")
+            ..log("2026-08-29T02:00:00Z", "orchestrator crashed")
         };
         let plain = log_line(&error, false);
         assert_eq!(
             plain,
             format!(
-                "{}  ERROR  ariadned  planner crashed",
+                "{}  ERROR  ariadned  orchestrator crashed",
                 local_time("2026-08-29T02:00:00Z")
             )
         );
@@ -801,7 +801,7 @@ mod tests {
             painted.contains(&style::paint(true, style::META, "ariadned")),
             "{painted}"
         );
-        assert!(painted.ends_with("planner crashed"), "{painted}");
+        assert!(painted.ends_with("orchestrator crashed"), "{painted}");
 
         let debug = LogLineDto {
             level: "DEBUG".into(),

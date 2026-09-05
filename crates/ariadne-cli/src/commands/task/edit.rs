@@ -115,7 +115,7 @@ pub fn update_request(
         description,
         // Whatever was typed, in the daemon's own spelling — `default`
         // included, which is its word for handing the pins back to the
-        // engineer profile's own.
+        // author profile's own.
         model,
         // The same three answers the model has, about how deeply it reasons:
         // nothing said, `default` for the CLI's own, or one effort of it.
@@ -410,7 +410,7 @@ mod tests {
         assert_eq!(req.depends_on.as_deref(), Some([].as_slice()));
     }
 
-    /// What the engineer runs on is three answers, and the one field carries
+    /// What the author runs on is three answers, and the one field carries
     /// each of them: nothing said at all, back to the profile's own, or an
     /// agent CLI — with a model of it after the `:` where one was named.
     #[test]

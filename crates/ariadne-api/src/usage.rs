@@ -1,8 +1,8 @@
 //! Token-usage DTOs: the counters every entity that spends tokens is read
 //! with.
 //!
-//! One shape, wherever it appears — a session's own, a task's engineer and
-//! reviewers, a goal's roles — so a reader that can render one can render all
+//! One shape, wherever it appears — a session's own, a task's author and
+//! reviewers, a goal's seats — so a reader that can render one can render all
 //! of them.
 
 use ariadne_core::TokenUsage;

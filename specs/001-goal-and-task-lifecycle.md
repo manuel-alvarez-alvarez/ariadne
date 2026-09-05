@@ -30,31 +30,31 @@ Out: how each state is *worked* — planning (003), engineering and review
 
 1. A goal is `planning`, `active`, `completed` or `cancelled`. `completed`
    and `cancelled` are terminal.
-2. A goal opens in `planning` with one planner session and nothing else
+2. A goal opens in `planning` with one orchestrator session and nothing else
    running. `finalize_plan` is what moves it to `active` and starts every
    task at once (003).
 3. A goal is `completed` when every task it holds has landed, and
    `cancelled` when the user cancels it. Cancelling records the reason on
    every task it takes with it.
 4. A task is `pending`, `ready`, `in_progress`, `under_review`,
-   `changes_requested`, `approved`, `merged`, `cancelled` or `failed`.
-   `merged` and `cancelled` are terminal; `failed` is retryable by the user.
+   `changes_requested`, `approved`, `finished`, `cancelled` or `failed`.
+   `finished` and `cancelled` are terminal; `failed` is retryable by the user.
 5. Every status change is checked against one transition table
    (`ariadne_core::state_machine`), which names both the move and the actor
-   allowed to make it — `planner`, `engineer`, `reviewer`, `daemon`, `user`.
+   allowed to make it — `orchestrator`, `author`, `reviewer`, `daemon`, `user`.
    The legal moves are:
-   - `pending → ready` (daemon), when every dependency has merged
-   - `ready → pending` (planner, daemon), when dependencies are added back
-   - `ready → in_progress` (daemon), when the engineer session starts
-   - `in_progress → under_review` (engineer), through `request_review`
+   - `pending → ready` (daemon), when every dependency has finished
+   - `ready → pending` (orchestrator, daemon), when dependencies are added back
+   - `ready → in_progress` (daemon), when the author session starts
+   - `in_progress → under_review` (author), through `request_review`
    - `under_review → changes_requested` (daemon), on a change request
    - `under_review → approved` (daemon), on enough approvals
-   - `changes_requested → in_progress` (daemon), when the engineer resumes
-   - `approved → merged` (engineer), through `mark_merged`
-   - `approved → under_review` (engineer), when a published request is revised
+   - `changes_requested → in_progress` (daemon), when the author resumes
+   - `approved → finished` (author), through `finish_task`
+   - `approved → under_review` (author), when a published request is revised
    - `failed → ready` (user), which is a retry
 6. Two blanket rules sit above that table: only the **user** cancels a task,
-   and only the **daemon** or the task's own **engineer** fails one. Neither
+   and only the **daemon** or the task's own **author** fails one. Neither
    applies to a task that has already ended.
 7. A refused transition is answered with a sentence naming what would have
    worked, in the API's own status vocabulary, not with a type name.
@@ -78,7 +78,7 @@ Out: how each state is *worked* — planning (003), engineering and review
   (`state_machine.rs::exhaustive_transition_table`).
 - An illegal transition leaves no audit row
   (`store.rs::illegal_transitions_are_rejected_and_unaudited`).
-- A task walks `pending → … → merged` through the store
+- A task walks `pending → … → finished` through the store
   (`store.rs::task_happy_path_to_merged`).
 - Dependencies gate a task and cycles are refused
   (`store.rs::dependencies_gate_and_reject_cycles`); adding them to a ready
@@ -91,8 +91,8 @@ Out: how each state is *worked* — planning (003), engineering and review
   (`::a_task_retried_after_its_dependency_landed_is_not_failed_again`).
 - Cancelling a goal leaves every task cancelled and none failed
   (`scheduler_dependencies.rs::cancelling_the_goal_leaves_every_task_cancelled_and_none_failed`).
-- An engineer fails its own task with the reason on it, and a reviewer may not
-  (`task_failure.rs::an_engineer_fails_its_own_task_with_the_reason_on_it`,
+- An author fails its own task with the reason on it, and a reviewer may not
+  (`task_failure.rs::an_author_fails_its_own_task_with_the_reason_on_it`,
   `::a_reviewer_may_not_fail_the_task_it_is_reviewing`).
 - `max_tasks` is enforced (`store.rs::max_tasks_is_enforced`).
 - An unfinished goal is refused deletion and keeps everything

@@ -590,7 +590,7 @@ mod tests {
             vec![
                 "01ID".into(),
                 "Revisor Estrícto".into(),
-                "merged".into(),
+                "finished".into(),
                 "3h".into(),
                 "0".into(),
                 "↑1.2M 89% ↓45k".into(),
@@ -599,7 +599,7 @@ mod tests {
             vec![
                 "01ID".into(),
                 "plain".into(),
-                "merged".into(),
+                "finished".into(),
                 "3h".into(),
                 "0".into(),
                 "↑0 0% ↓0".into(),

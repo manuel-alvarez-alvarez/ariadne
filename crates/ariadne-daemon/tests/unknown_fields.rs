@@ -10,7 +10,7 @@ mod common;
 use axum::http::StatusCode;
 
 use ariadne_api::profiles::ProfileDto;
-use ariadne_core::Role;
+use ariadne_core::Seat;
 
 use common::{harness, put_json};
 
@@ -20,14 +20,14 @@ use common::{harness, put_json};
 #[tokio::test]
 async fn an_unknown_field_is_refused_and_named() {
     let h = harness().await;
-    let profile = h.profile("eng", Role::Engineer).await;
+    let profile = h.profile("eng", Seat::Author).await;
     let uri = format!("/v1/profiles/{}", profile.id);
 
     let refused = h
         .error(
             put_json(
                 &uri,
-                serde_json::json!({ "name": "engineer", "agent_kind": "claude_code" }),
+                serde_json::json!({ "name": "author", "agent_kind": "claude_code" }),
             ),
             StatusCode::UNPROCESSABLE_ENTITY,
         )
@@ -43,9 +43,9 @@ async fn an_unknown_field_is_refused_and_named() {
 
     let renamed: ProfileDto = h
         .json(
-            put_json(&uri, serde_json::json!({ "name": "engineer" })),
+            put_json(&uri, serde_json::json!({ "name": "author" })),
             StatusCode::OK,
         )
         .await;
-    assert_eq!(renamed.name, "engineer");
+    assert_eq!(renamed.name, "author");
 }

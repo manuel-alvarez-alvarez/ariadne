@@ -288,7 +288,7 @@ mod tests {
     fn profile(name: &str, agent_kind: Option<AgentKind>) -> ProfileDto {
         ProfileDto {
             model: agent_kind.map(|kind| ariadne_core::models::ModelRef::of(kind).to_string()),
-            ..crate::commands::fixtures::profile(name, ariadne_core::Role::Engineer)
+            ..crate::commands::fixtures::profile(name, ariadne_core::Seat::Author)
         }
     }
 
@@ -375,7 +375,7 @@ mod tests {
     fn a_profile_whose_agent_is_missing_fails_by_name() {
         let checks = profiles(
             &[
-                profile("Engineer", Some(AgentKind::Codex)),
+                profile("Author", Some(AgentKind::Codex)),
                 profile("Reviewer", Some(AgentKind::Codex)),
             ],
             &daemon_sees(&[AgentKind::ClaudeCode]),
@@ -384,22 +384,22 @@ mod tests {
         assert_eq!(checks[0].status, Status::Fail);
         assert!(checks[0].detail.contains("codex"), "{:?}", checks[0]);
         assert!(
-            checks[0].detail.contains("Engineer, Reviewer"),
+            checks[0].detail.contains("Author, Reviewer"),
             "{:?}",
             checks[0]
         );
 
         let listed = [
-            profile("Engineer", Some(AgentKind::Opencode)),
-            profile("Planner", None),
+            profile("Author", Some(AgentKind::Opencode)),
+            profile("Orchestrator", None),
         ];
         let ok = profiles(&listed, &daemon_sees(&[AgentKind::Opencode]));
         assert!(ok.iter().all(|c| c.status == Status::Ok), "{ok:?}");
         assert!(by_name(&ok, "auto").detail.contains("opencode"));
 
-        let bad = profiles(&[profile("Planner", None)], &daemon_sees(&[]));
+        let bad = profiles(&[profile("Orchestrator", None)], &daemon_sees(&[]));
         assert_eq!(bad[0].status, Status::Fail);
-        assert!(bad[0].detail.contains("Planner"), "{:?}", bad[0]);
+        assert!(bad[0].detail.contains("Orchestrator"), "{:?}", bad[0]);
     }
 
     /// The daemon's PATH decides, not the shell's: a binary this terminal can
@@ -409,10 +409,10 @@ mod tests {
     #[test]
     fn availability_is_judged_by_what_the_daemon_sees() {
         let seen = |daemon, client| Availability { daemon, client };
-        let engineer = |kind| [profile("Engineer", Some(kind))];
+        let author = |kind| [profile("Author", Some(kind))];
 
         let stale = profiles(
-            &engineer(AgentKind::Codex),
+            &author(AgentKind::Codex),
             &seen(Some(vec![]), vec![AgentKind::Codex]),
         );
         assert_eq!(stale[0].status, Status::Fail);
@@ -426,7 +426,7 @@ mod tests {
         );
 
         let no_daemon = profiles(
-            &engineer(AgentKind::ClaudeCode),
+            &author(AgentKind::ClaudeCode),
             &seen(None, vec![AgentKind::ClaudeCode]),
         );
         assert_eq!(no_daemon[0].status, Status::Ok);

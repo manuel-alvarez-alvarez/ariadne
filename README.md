@@ -1,7 +1,7 @@
 # Ariadne
 
 A docker-style orchestrator for AI coding agents. A daemon (`ariadned`) breaks
-goals into tasks with a **planner** agent, hands each task to an **engineer**
+goals into tasks with a **orchestrator** agent, hands each task to an **author**
 agent that owns it until merge, and gates merges behind one or more
 **reviewer** agents — all running autonomously in tmux sessions you can attach
 to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
@@ -14,9 +14,9 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
 └─────────┘                              └──────┬───────────────────────┘
      ▲                                          │ spawns (tmux, worktree per task)
      │ MCP (stdio)                              ▼
-     │        ┌─────────┐   ┌──────────┐   ┌──────────┐
-     └─────── │ planner │   │ engineer │   │ reviewer │  · hooks report events
-              └─────────┘   └──────────┘   └──────────┘  · tools via `ariadne mcp serve`
+     │        ┌──────────────┐   ┌────────┐   ┌──────────┐
+     └─────── │ orchestrator │   │ author │   │ reviewer │  · hooks report events
+              └──────────────┘   └────────┘   └──────────┘  · tools via `ariadne mcp serve`
 ```
 
 ## How it works
@@ -24,8 +24,8 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
 1. `ariadne goal create` — you describe a goal, pick the registered
    repositories it works in (`ariadne repo add`), how many reviewer approvals
    a task needs (default 1) and optionally a max task count. The daemon spawns
-   the **planner** in tmux; `ariadne goal attach` drops you into its terminal.
-   `--model` runs that planner on something other than what its
+   the **orchestrator** in tmux; `ariadne goal attach` drops you into its
+   terminal. `--model` runs that orchestrator on something other than what its
    profile is on, and it is the whole choice: a model is spelled
    `<agent>[:<model>]` — the agent CLI that runs it (`claude_code`, `codex`,
    `opencode`) and, after a colon, one model of that CLI (`--model
@@ -35,31 +35,31 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    says how deeply that model reasons — one of the efforts `ariadne models ls`
    lists for it (`--effort xhigh`); left out, the model runs at whatever its
    agent CLI runs it at.
-2. The planner first drafts a spec from the goal text, then asks its
+2. The orchestrator first drafts a spec from the goal text, then asks its
    questions in its terminal and waits — `ariadne goal attach` drops you into
-   that terminal to answer them. A planner waiting on you shows up wherever
-   Ariadne lists what needs attention. It writes the spec the way the
+   that terminal to answer them. An orchestrator waiting on you shows up
+   wherever Ariadne lists what needs attention. It writes the spec the way the
    repository's existing specs are written; where the repository keeps none,
    the path they go in and the format they take are two more things it agrees
    with you first. It asks for an explicit yes on the finished spec before it
    creates any task.
-3. Once the spec is approved, the planner lands it itself, the way the
+3. Once the spec is approved, the orchestrator lands it itself, the way the
    repository takes any other change: on a `direct` repository it commits the
    spec on the base branch of the primary checkout and pushes it; on a
    `pull_request` one it publishes a spec branch from a throwaway worktree,
    opens the request with `gh` or `glab`, answers the comments on it and
    merges it with `--squash`. That procedure is Ariadne's own text, one per
-   merge strategy, and it reaches the planner in its briefing. No task is
-   written until the spec is on the base branch, so every engineer branches
+   merge strategy, and it reaches the orchestrator in its briefing. No task is
+   written until the spec is on the base branch, so every author branches
    off a base that already carries it and every ticket names its merged
    path.
-4. Then the planner creates the tasks through the Ariadne MCP tools
-   (assigning an engineer profile and reviewer profiles per task, with
+4. Then the orchestrator creates the tasks through the Ariadne MCP tools
+   (assigning an author profile and reviewer profiles per task, with
    optional `depends_on` ordering, which is for real dependencies alone).
    Nothing runs while the goal is in `planning` — read the
    tasks and edit what they still need with `ariadne task update` — and it is
-   `finalize_plan` that starts the work. The planner also picks what each of
-   those agents runs on,
+   `finalize_plan` that starts the work. The orchestrator also picks what
+   each of those agents runs on,
    sizing the model and the effort to the task it wrote; the last word is
    yours, with
    `ariadne task update <task-id> --model claude_code:claude-opus-5 --effort
@@ -73,24 +73,24 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    `ariadne models ls` lists for that model, and it belongs to the model it
    runs at: a pin that names a model and no effort runs at the CLI's own
    default, and only a pin left on the profile's own model keeps the profile's
-   effort. `list_models` describes what the planner sizes a task from: each
+   effort. `list_models` describes what the orchestrator sizes a task from: each
    model's tier, a cost and a speed band, what task shapes it is and is not a
    fit for, and what each of its efforts buys — `ariadne models show
    <model>` prints the same card (or, until that lands, `ariadne models ls
    --format json` carries the same fields).
-5. The scheduler takes over: when a task's dependencies are merged it becomes
-   `ready` and an **engineer** is spawned in a dedicated git worktree, on a
+5. The scheduler takes over: when a task's dependencies are finished it becomes
+   `ready` and an **author** is spawned in a dedicated git worktree, on a
    branch named after the task — its title slugged plus a short tail of its
    id, as in `fix-the-landing-briefing-real-fetch-r9jr7c`. It implements,
    commits and calls `request_review` under a summary of what it did, which is
    what the reviewers read first.
 6. **Reviewers** spawn in read-only detached worktrees, inspect the diff and
    `submit_verdict`, approving or requesting changes. Change requests resume
-   the engineer with the feedback; enough approvals move the task to
+   the author with the feedback; enough approvals move the task to
    `approved`.
-7. The task never leaves the engineer that wrote it: it keeps its session and
+7. The task never leaves the author that wrote it: it keeps its session and
    its worktree, and is briefed to land the change with the repository's
-   **landing briefing** — the whole procedure, which the engineer then runs.
+   **landing briefing** — the whole procedure, which the author then runs.
    Profiles own only their system prompts. Ariadne supplies the built-in
    lifecycle prompts for planning, engineering and review sessions.
    The landing briefing is a repository field: it is prefilled from the
@@ -99,8 +99,8 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    can be edited after registration (`--landing-prompt`,
    `--landing-prompt-file`, and `ariadne repo prompt get|set|reset`). It is put
    back on the strategy's default by clearing it (`repo update
-   --reset-landing-prompt`, or `repo prompt reset`). It is what the engineers
-   of that repository run: the spec its planner lands in step 3 goes by the
+   --reset-landing-prompt`, or `repo prompt reset`). It is what the authors
+   of that repository run: the spec its orchestrator lands in step 3 goes by the
    merge strategy alone, whatever this text was rewritten to. What the two
    strategies prefill is:
    - **`direct`** — rebase onto the base, squash into one commit with a
@@ -111,7 +111,7 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
    - **`pull_request`** — rebase once, push the branch, and open a request with
      `gh pr create` or `glab mr create` (whichever the `origin` remote calls
      for), following the repository's own templates; `record_pull_request`
-     tells you where it is. The engineer then waits on it in its own session,
+     tells you where it is. The author then waits on it in its own session,
      polling the forge and sleeping between polls: it answers every comment,
      and a change somebody asks for is made on the same branch and sent through
      the Ariadne reviewers before it is pushed — a published branch is merged
@@ -119,13 +119,13 @@ to at any time. Supports **Claude Code**, **OpenAI Codex CLI** and
      it merges it with `--squash`, fast-forwards the base branch and reports
      the sha.
 8. Worktrees are cleaned up, dependent tasks wake up, and the goal completes
-   when everything is merged.
+   when everything is finished.
 
 Task lifecycle: `pending → ready → in_progress → under_review →
-(changes_requested → in_progress …) → approved → merged`, with
-`cancelled`/`failed` (retryable) escapes. From `approved` the engineer can also
+(changes_requested → in_progress …) → approved → finished`, with
+`cancelled`/`failed` (retryable) escapes. From `approved` the author can also
 `request_review` again, which is how a revision of a published request is
-reviewed. A task that cannot be done as written is the engineer's own
+reviewed. A task that cannot be done as written is the author's own
 `fail_task`, whose reason is what `ariadne task inspect` shows you. Every
 transition is validated against a typed state machine and recorded in an audit
 table.
@@ -137,7 +137,7 @@ sentence, the imperative for an instruction, the active voice, short sentences
 (20 words in a procedure, 25 in a description), one meaning per word, a list
 for a sequence of steps — what an agent misreads least, in the fewest tokens.
 The agents write it too: the session rules every agent receives before its
-first prompt, whatever its role and whatever its profile's prompts say, hold
+first prompt, whatever its seat and whatever its profile's prompts say, hold
 everything it writes to the same English — its turn text and visible
 reasoning, task titles and descriptions, review summaries, verdicts, failure
 reasons, commit subjects and bodies, and pull request text.
@@ -149,12 +149,12 @@ prints the current flags). Hooks installed at spawn time report every
 session/tool event back to the daemon, and each agent's internal session id is
 tracked so sessions can be resumed and attached.
 
-Sessions are long-lived — one engineer per task, one reviewer per task across
-its rounds, one planner per goal — and every resume replays the whole
+Sessions are long-lived — one author per task, one reviewer per task across
+its rounds, one orchestrator per goal — and every resume replays the whole
 transcript as its first prompt. So the daemon compacts each session at every
-hand-off: after the planner finalizes its plan, when the engineer requests a
+hand-off: after the orchestrator finalizes its plan, when the author requests a
 review, and after each verdict a reviewer gives. It types the CLI's own
-`/compact` into the pane once the agent is at its prompt — with a per-role
+`/compact` into the pane once the agent is at its prompt — with a per-seat
 focus for Claude Code, which takes one, saying what to keep — and leaves the
 pane alone until the CLI reports the compaction done (Claude Code's
 `SessionStart` from `compact`, Codex's `PostCompact` hook, OpenCode's
@@ -240,7 +240,7 @@ process wherever `~/.ariadne/install.env` records one — `launchctl kickstart
 Completions are **dynamic**: what the shell sources is a few lines that call
 `ariadne` back on every TAB, so the candidates are the ones the daemon has
 right now — task, goal and session ids with their status and title beside
-them, profile names with their role and model, and the models an agent can be
+them, profile names with their seat and model, and the models an agent can be
 pinned to. They are verb-aware, too: `task retry` offers the failed tasks,
 `session kill` the live sessions, `session resume` the ended ones, `goal rm`
 the goals it will actually delete.
@@ -276,7 +276,7 @@ cargo build --release          # builds `ariadned` and `ariadne`
 
 ariadne daemon start           # unix socket at ~/.ariadne/ariadne.sock
 
-# Planner / Engineer / Reviewer profiles are seeded automatically with no model
+# Orchestrator / Author / Reviewer profiles are seeded with no model
 # of their own: at spawn time the first installed CLI is used, in order
 # claude_code -> codex -> opencode. A repository is registered once and
 # referenced by every goal that works in it (--branch defaults to the
@@ -286,9 +286,9 @@ ariadne goal create --title "Add rate limiting" --repo ~/projects/api
 ariadne goal attach <goal-id>
 
 # only a profile's system prompt is editable; lifecycle prompts come from Ariadne
-ariadne profile prompt get Engineer system > system.md
-ariadne profile prompt set Engineer system --file system.md
-ariadne profile prompt reset Engineer system
+ariadne profile prompt get Author system > system.md
+ariadne profile prompt set Author system --file system.md
+ariadne profile prompt reset Author system
 
 # the repository landing briefing is prefilled from --merge-strategy, or can
 # use custom text; edit it after registration with repo prompt
@@ -312,7 +312,7 @@ ariadne task update <task-id> --effort default  # at whatever the CLI reasons it
 # watch it run
 ariadne attention                      # what is waiting for you, across every goal
 ariadne task ls --goal <goal-id>       # what is going on; -a adds the finished work
-ariadne task attach <task-id>          # engineer terminal (or --role reviewer)
+ariadne task attach <task-id>          # author terminal (or --seat reviewer)
 ariadne attach <id>                    # session, task or goal id
 
 # without attaching to a terminal
@@ -366,7 +366,7 @@ ariadne events -f --goal <goal-id>     # one goal's; also --task, --session, --k
 ariadne events -f --format json        # one JSON object per line, for a pipe
 
 ariadne session logs <session-id> -f   # an agent's terminal, until its session ends
-ariadne task logs <task-id> -f         # the same, found by task (--role reviewer)
+ariadne task logs <task-id> -f         # the same, found by task (--seat reviewer)
 ariadne daemon logs -f                 # the daemon's own log, over the API
 
 ariadne attention --watch              # redrawn whenever something needs you
@@ -393,9 +393,9 @@ cli_bin = "/usr/local/bin/ariadne" # what starts every agent session (`ariadne _
                                    # and their hook and MCP entry point
                                    # (default: sibling of ariadned)
 delete_merged_worktrees = true     # remove task worktrees after merge (default);
-                                   # false keeps them for inspecting merged work
+                                   # false keeps them for inspecting finished work
 delete_merged_branches = true      # only applies when worktrees are deleted too:
-                                   # a kept engineer worktree pins the task branch
+                                   # a kept author worktree pins the task branch
 prevent_sleep = true               # hold a system sleep inhibition while any agent
                                    # session is live, so the box does not idle-sleep
                                    # out from under a working agent (default)

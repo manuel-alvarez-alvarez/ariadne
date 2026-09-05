@@ -1,10 +1,10 @@
 //! What clients hear when a task branch moves.
 //!
-//! Nothing in the store changes when an engineer commits, so the daemon
+//! Nothing in the store changes when an author commits, so the daemon
 //! watches the branch ref itself and publishes `task_branch_updated` off that
-//! watch. `git` is real here: the commits are made in the engineer's worktree
+//! watch. `git` is real here: the commits are made in the author's worktree
 //! by the test, exactly where the agent would have made them. `tmux` is the
-//! stub, so the engineer is a row and a spawn plan rather than a pane.
+//! stub, so the author is a row and a spawn plan rather than a pane.
 
 mod common;
 
@@ -27,7 +27,7 @@ const PATIENCE: Duration = Duration::from_secs(20);
 /// How long the stream is watched for an event that must not be there.
 const SILENCE: Duration = Duration::from_secs(2);
 
-/// A task whose engineer has been spawned: a real repository, a worktree
+/// A task whose author has been spawned: a real repository, a worktree
 /// checked out on the task branch, and the daemon following it.
 ///
 /// The harness is the caller's, so that the tests about what the scheduler
@@ -35,13 +35,13 @@ const SILENCE: Duration = Duration::from_secs(2);
 async fn at_work(h: &Harness) -> (Task, PathBuf, PathBuf) {
     let repo = h.git_repo("repo");
     let cast = h.active_cast().await;
-    h.launcher.spawn_engineer(&cast.task.id).await.unwrap();
+    h.launcher.spawn_author(&cast.task.id).await.unwrap();
     let task = h.store.get_task(&cast.task.id).await.unwrap();
-    let worktree = task.worktree_path.clone().expect("the engineer has a worktree");
+    let worktree = task.worktree_path.clone().expect("the author has a worktree");
     (task, repo, PathBuf::from(worktree))
 }
 
-/// A commit in the engineer's worktree, and the sha it landed as.
+/// A commit in the author's worktree, and the sha it landed as.
 fn commit(worktree: &Path, what: &str) -> String {
     sh(
         worktree,
@@ -193,7 +193,7 @@ async fn a_failed_task_stops_being_followed() {
         !h.launcher.branches.is_watching(&task.id)
     })
     .await;
-    // The worktree is still there: a retry puts the engineer back in it.
+    // The worktree is still there: a retry puts the author back in it.
     assert!(worktree.is_dir());
     h.launcher.watch_task_branches().await.unwrap();
     assert!(

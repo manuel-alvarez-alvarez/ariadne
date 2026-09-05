@@ -37,7 +37,8 @@ pub struct SpawnPlanFile {
     /// Environment variables to set before the exec, as ordered pairs: a JSON
     /// object would reorder them and has nothing to say about a repeated key.
     pub env: Vec<(String, String)>,
-    /// The directory the agent runs in (worktree, or the repo for a planner).
+    /// The directory the agent runs in (worktree, or the repo for an
+    /// orchestrator).
     pub cwd: PathBuf,
 }
 
@@ -100,7 +101,7 @@ mod tests {
                 "--append-system-prompt".into(),
                 // Newlines, quotes and a shell metacharacter: the plan is the
                 // reason none of them need escaping anywhere.
-                "You are an engineer.\n\n\"$(rm -rf /)\" — don't.".into(),
+                "You are an author.\n\n\"$(rm -rf /)\" — don't.".into(),
             ],
             vec![
                 ("ARIADNE_SESSION_ID".into(), "01m0".into()),

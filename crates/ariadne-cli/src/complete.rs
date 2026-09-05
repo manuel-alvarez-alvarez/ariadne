@@ -163,7 +163,7 @@ pub fn retryable_task_ids() -> Vec<CompletionCandidate> {
     by_id("/v1/tasks?status=failed", anything, task_help)
 }
 
-/// What `task cancel` can act on: everything that has not already merged or
+/// What `task cancel` can act on: everything that has not already finished or
 /// been cancelled. Seven statuses against a query that takes one, so the
 /// narrowing is here.
 pub fn cancellable_task_ids() -> Vec<CompletionCandidate> {
@@ -202,7 +202,7 @@ fn session_help(x: &Value) -> String {
     format!(
         "[{}] {} {}",
         s(x, "status"),
-        s(x, "role"),
+        s(x, "seat"),
         s(x, "agent_kind")
     )
 }
@@ -235,7 +235,7 @@ fn session_has_ended(row: &Value) -> bool {
 
 /// Session, task and goal ids (top-level `ariadne attach`), live sessions
 /// first: attaching wants a pane that exists, and the rest of the list is
-/// there because a task or goal id attaches to the session of its role.
+/// there because a task or goal id attaches to the session of its seat.
 ///
 /// The three lists are read together on one round rather than one after
 /// another, so the budget covers the lot.
@@ -270,33 +270,33 @@ fn attach_order(
 
 // ---- profiles, repositories ----------------------------------------------
 
-fn profiles(role: Option<&str>) -> Vec<CompletionCandidate> {
-    let path = match role {
-        Some(r) => format!("/v1/profiles?role={r}"),
+fn profiles(seat: Option<&str>) -> Vec<CompletionCandidate> {
+    let path = match seat {
+        Some(r) => format!("/v1/profiles?seat={r}"),
         None => "/v1/profiles".to_string(),
     };
     fetch(&path)
         .iter()
         .map(|p| {
             let model = p.get("model").and_then(|m| m.as_str()).unwrap_or("auto");
-            candidate(s(p, "name"), format!("{} ({model})", s(p, "role")))
+            candidate(s(p, "name"), format!("{} ({model})", s(p, "seat")))
         })
         .collect()
 }
 
-/// Profile names, any role (profile subcommands).
+/// Profile names, any seat (profile subcommands).
 pub fn profile_names() -> Vec<CompletionCandidate> {
     profiles(None)
 }
 
-/// Planner profile names (`goal create --planner`).
-pub fn planner_profiles() -> Vec<CompletionCandidate> {
-    profiles(Some("planner"))
+/// Orchestrator profile names (`goal create --orchestrator`).
+pub fn orchestrator_profiles() -> Vec<CompletionCandidate> {
+    profiles(Some("orchestrator"))
 }
 
-/// Engineer profile names (`task create --engineer`).
-pub fn engineer_profiles() -> Vec<CompletionCandidate> {
-    profiles(Some("engineer"))
+/// Author profile names (`task create --author`).
+pub fn author_profiles() -> Vec<CompletionCandidate> {
+    profiles(Some("author"))
 }
 
 /// Reviewer profile names (`task create|update --reviewer`).
@@ -784,7 +784,7 @@ mod tests {
     }
 
     fn session(id: &str, status: &str) -> Value {
-        json!({"id": id, "status": status, "role": "engineer", "agent_kind": "codex"})
+        json!({"id": id, "status": status, "seat": "author", "agent_kind": "codex"})
     }
 
     fn goal(id: &str, status: &str) -> Value {
@@ -817,14 +817,14 @@ mod tests {
             task("01PENDING", "pending"),
             task("01WORKING", "in_progress"),
             task("01FAILED", "failed"),
-            task("01MERGED", "merged"),
+            task("01MERGED", "finished"),
             task("01CANCELLED", "cancelled"),
             task("01NONSENSE", "integrating"),
         ];
         assert_eq!(
             kept(&rows, task_is_open),
             ["01PENDING", "01WORKING", "01FAILED"],
-            "a merged or cancelled task is done with, and a status we cannot \
+            "a finished or cancelled task is done with, and a status we cannot \
              read is not guessed at"
         );
     }
@@ -1007,7 +1007,7 @@ mod tests {
     /// ten.
     #[test]
     fn candidates_come_out_newest_first() {
-        let rows = [task("01OLD", "merged"), task("01NEW", "failed")];
+        let rows = [task("01OLD", "finished"), task("01NEW", "failed")];
         assert_eq!(offered(&ids(&rows, task_help)), ["01NEW", "01OLD"]);
         assert_eq!(
             ids(&rows, task_help)[0].get_help().unwrap().to_string(),

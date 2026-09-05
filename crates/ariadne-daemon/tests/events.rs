@@ -14,7 +14,7 @@ use ariadne_api::stream::{DeletedDto, DomainEvent};
 use ariadne_api::tasks::TaskDto;
 use ariadne_api::usage::TokenUsageDto;
 use ariadne_core::{
-    Actor, AgentKind, AttentionReason, GoalStatus, ReviewVerdict, Role, SessionStatus, TaskStatus,
+    Actor, AgentKind, AttentionReason, GoalStatus, ReviewVerdict, Seat, SessionStatus, TaskStatus,
 };
 use ariadne_daemon::bus::{BusEvent, EventBus};
 use ariadne_daemon::http::{self, AppState};
@@ -23,14 +23,14 @@ use ariadne_store::{EventFilter, NewReview, Task};
 
 use common::{Harness, TIMEOUT, expect_sse, get, harness, next_event, next_sse_message, post_json};
 
-/// Hand a task to its engineer, which is the state a live engineer session is
+/// Hand a task to its author, which is the state a live author session is
 /// actually in.
 ///
 /// Attention belongs to an agent somebody is waiting on, and nobody is waiting
-/// on the engineer of a task that has not been started: the ingestion
+/// on the author of a task that has not been started: the ingestion
 /// withholds the flag there, so the tests that assert on one start the work
 /// first.
-async fn hand_to_engineer(h: &Harness, task: &Task) {
+async fn hand_to_author(h: &Harness, task: &Task) {
     for status in [TaskStatus::Ready, TaskStatus::InProgress] {
         h.store
             .transition_task(&task.id, status, Actor::Daemon, None, None)
@@ -104,8 +104,8 @@ async fn http_mutation_emits_a_fat_event() {
         .send(post_json(
             "/v1/profiles",
             serde_json::json!({
-                "name": "rust-engineer",
-                "role": "engineer",
+                "name": "rust-author",
+                "seat": "author",
                 "system_prompt": "You write Rust.",
             }),
         ))
@@ -117,8 +117,8 @@ async fn http_mutation_emits_a_fat_event() {
         unreachable!("matched on kind above");
     };
     // Fat payload: the whole DTO, not just an id to refetch.
-    assert_eq!(profile.name, "rust-engineer");
-    assert_eq!(profile.role, Role::Engineer);
+    assert_eq!(profile.name, "rust-author");
+    assert_eq!(profile.seat, Seat::Author);
     assert_eq!(profile.system_prompt, "You write Rust.");
 }
 
@@ -158,7 +158,7 @@ async fn scheduler_transition_emits_task_updated_without_http() {
     let mut rx = h.bus.subscribe();
 
     // No HTTP involved: the scheduler reconciles the task on its own and
-    // finds its (empty) dependency set merged.
+    // finds its (empty) dependency set finished.
     // No sleep inhibition: a test has no business touching power management.
     let sched = scheduler::start(h.store.clone(), h.launcher.clone(), false);
     sched
@@ -234,7 +234,7 @@ async fn sse_stream_frames_events_and_honours_its_filters() {
     expect_sse(&mut body, "heartbeat").await;
 
     // Out of scope for this goal: must not reach the stream.
-    h.profile("unrelated", Role::Engineer).await;
+    h.profile("unrelated", Seat::Author).await;
     // In scope: a task transition.
     h.store
         .transition_task(&cast.task.id, TaskStatus::Ready, Actor::Daemon, None, None)
@@ -398,8 +398,8 @@ async fn launcher_session_writes_emit_session_events() {
         .session(
             &cast.goal,
             Some(&cast.task),
-            Role::Engineer,
-            &cast.engineer.id,
+            Seat::Author,
+            &cast.author.id,
         )
         .await;
 
@@ -432,13 +432,13 @@ async fn launcher_session_writes_emit_session_events() {
 async fn an_event_from_a_launch_the_session_has_moved_past_changes_nothing() {
     let h = harness().await;
     let cast = h.active_cast().await;
-    hand_to_engineer(&h, &cast.task).await;
+    hand_to_author(&h, &cast.task).await;
     let session = h
         .session(
             &cast.goal,
             Some(&cast.task),
-            Role::Engineer,
-            &cast.engineer.id,
+            Seat::Author,
+            &cast.author.id,
         )
         .await;
     h.store
@@ -491,13 +491,13 @@ async fn an_event_from_a_launch_the_session_has_moved_past_changes_nothing() {
 async fn ingested_events_raise_and_clear_session_attention() {
     let h = harness().await;
     let cast = h.active_cast().await;
-    hand_to_engineer(&h, &cast.task).await;
+    hand_to_author(&h, &cast.task).await;
     let session = h
         .session_on(
             &cast.goal,
             Some(&cast.task),
-            Role::Engineer,
-            &cast.engineer.id,
+            Seat::Author,
+            &cast.author.id,
             AgentKind::Opencode,
         )
         .await;
@@ -577,22 +577,22 @@ async fn ingested_events_raise_and_clear_session_attention() {
 async fn an_idle_report_clears_the_stall_and_the_error_and_nothing_else() {
     let h = harness().await;
     let cast = h.active_cast().await;
-    hand_to_engineer(&h, &cast.task).await;
+    hand_to_author(&h, &cast.task).await;
     let stalled = async || h.store.get_task(&cast.task.id).await.unwrap().is_stalled();
     let claude = h
-        .session(&cast.goal, Some(&cast.task), Role::Engineer, &cast.engineer.id)
+        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
         .await;
     let opencode = h
         .session_on(
             &cast.goal,
             Some(&cast.task),
-            Role::Engineer,
-            &cast.engineer.id,
+            Seat::Author,
+            &cast.author.id,
             AgentKind::Opencode,
         )
         .await;
 
-    // A stalled Claude engineer that answers its nudge: the `stop` ending the
+    // A stalled Claude author that answers its nudge: the `stop` ending the
     // turn is the agent reporting, which is the one thing the flag denied.
     h.raise(&claude, AttentionReason::Stalled).await;
     assert!(stalled().await, "the task says what its agent's flag says");
@@ -643,13 +643,13 @@ async fn an_idle_report_clears_the_stall_and_the_error_and_nothing_else() {
 async fn an_opencode_permission_ask_flags_the_session_as_blocked() {
     let h = harness().await;
     let cast = h.active_cast().await;
-    hand_to_engineer(&h, &cast.task).await;
+    hand_to_author(&h, &cast.task).await;
     let session = h
         .session_on(
             &cast.goal,
             Some(&cast.task),
-            Role::Engineer,
-            &cast.engineer.id,
+            Seat::Author,
+            &cast.author.id,
             AgentKind::Opencode,
         )
         .await;
@@ -778,13 +778,13 @@ async fn an_opencode_permission_ask_flags_the_session_as_blocked() {
 async fn a_claude_notification_flags_the_session_as_blocked() {
     let h = harness().await;
     let cast = h.active_cast().await;
-    hand_to_engineer(&h, &cast.task).await;
+    hand_to_author(&h, &cast.task).await;
     let session = h
         .session(
             &cast.goal,
             Some(&cast.task),
-            Role::Engineer,
-            &cast.engineer.id,
+            Seat::Author,
+            &cast.author.id,
         )
         .await;
     let notification = |notification_type: &str, message: &str| {
@@ -873,19 +873,20 @@ async fn a_claude_notification_flags_the_session_as_blocked() {
 }
 
 /// A question Claude Code puts to the user with `AskUserQuestion` is a wait
-/// nothing announces on its own: the turn goes on running the other tool calls
-/// of the same batch around the blocked one, and the dialog surfaces — half a
-/// minute later — as the `permission_prompt` notification an ordinary approval
-/// fires. The replay below is a planner session of 2026-08-28 as the daemon
-/// recorded it, and every event after the ask used to take the flag back down.
+/// nothing announces on its own: the turn goes on running the other tool
+/// calls of the same batch around the blocked one, and the dialog surfaces —
+/// half a minute later — as the `permission_prompt` notification an ordinary
+/// approval fires. The replay below is an orchestrator session of 2026-08-28
+/// as the daemon recorded it, and every event after the ask used to take the
+/// flag back down.
 #[tokio::test]
 async fn a_pending_question_holds_the_strip_until_it_is_answered() {
     let h = harness().await;
-    // A planner is asking, and its goal is still being planned: exactly the
-    // work the user is waiting on.
+    // An orchestrator is asking, and its goal is still being planned: exactly
+    // the work the user is waiting on.
     let cast = h.cast().await;
     let session = h
-        .session(&cast.goal, None, Role::Planner, &cast.planner.id)
+        .session(&cast.goal, None, Seat::Orchestrator, &cast.orchestrator.id)
         .await;
 
     // The `pre_tool_use` of the call is the first and only word of the ask.
@@ -979,15 +980,15 @@ async fn a_question_comes_down_when_the_turn_or_the_user_moves_on() {
 }
 
 /// A question is a raise like any other, so it asks the same thing first:
-/// whether anybody is still waiting on this agent. A planner whose goal has
-/// left planning is asking about work that is already being done.
+/// whether anybody is still waiting on this agent. An orchestrator whose goal
+/// has left planning is asking about work that is already being done.
 #[tokio::test]
-async fn a_question_from_a_planner_past_planning_raises_nothing() {
+async fn a_question_from_an_orchestrator_past_planning_raises_nothing() {
     let h = harness().await;
     // `active_cast` finalizes the plan: the goal is already active.
     let cast = h.active_cast().await;
     let session = h
-        .session(&cast.goal, None, Role::Planner, &cast.planner.id)
+        .session(&cast.goal, None, Seat::Orchestrator, &cast.orchestrator.id)
         .await;
 
     h.ingest(&session, "pre_tool_use", tool_call("AskUserQuestion"))
@@ -1021,12 +1022,12 @@ async fn a_question_from_a_planner_past_planning_raises_nothing() {
 async fn a_reviewer_that_already_voted_raises_no_attention() {
     let h = harness().await;
     let cast = h.active_cast().await;
-    hand_to_engineer(&h, &cast.task).await;
+    hand_to_author(&h, &cast.task).await;
     h.store
         .transition_task(
             &cast.task.id,
             TaskStatus::UnderReview,
-            Actor::Engineer,
+            Actor::Author,
             None,
             None,
         )
@@ -1035,7 +1036,7 @@ async fn a_reviewer_that_already_voted_raises_no_attention() {
     // Entering review opens the round the verdict belongs to.
     let task = h.store.get_task(&cast.task.id).await.unwrap();
     let session = h
-        .session(&cast.goal, Some(&task), Role::Reviewer, &cast.reviewer.id)
+        .session(&cast.goal, Some(&task), Seat::Reviewer, &cast.reviewer.id)
         .await;
 
     // The round is still waiting on this reviewer: the prompt is raised.
@@ -1083,23 +1084,23 @@ async fn a_reviewer_that_already_voted_raises_no_attention() {
     );
 }
 
-/// Same for a planner once it has finalized its plan: the goal is being
+/// Same for an orchestrator once it has finalized its plan: the goal is being
 /// worked on, so whatever its session asks for is not work anybody is waiting
 /// on.
 #[tokio::test]
-async fn a_planner_past_the_approval_raises_no_attention() {
+async fn an_orchestrator_past_the_approval_raises_no_attention() {
     let h = harness().await;
     // `active_cast` finalizes the plan: the goal is already active.
     let cast = h.active_cast().await;
     let session = h
-        .session(&cast.goal, None, Role::Planner, &cast.planner.id)
+        .session(&cast.goal, None, Seat::Orchestrator, &cast.orchestrator.id)
         .await;
 
     h.ingest(&session, "notification", permission_prompt()).await;
     assert_eq!(
         h.attention(&session).await,
         None,
-        "the plan is finalized and running, so its planner is owed nothing"
+        "the plan is finalized and running, so its orchestrator is owed nothing"
     );
 
     // And the goal status is what makes the difference: back in planning, the
@@ -1147,25 +1148,25 @@ fn reports(source: &str, usage: TokenUsageDto) -> serde_json::Value {
 async fn reported_usage_rolls_up_to_the_task_and_the_goal() {
     let h = harness().await;
     let cast = h.active_cast().await;
-    let engineer = h
-        .session(&cast.goal, Some(&cast.task), Role::Engineer, &cast.engineer.id)
+    let author = h
+        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
         .await;
     let reviewer = h
-        .session(&cast.goal, Some(&cast.task), Role::Reviewer, &cast.reviewer.id)
+        .session(&cast.goal, Some(&cast.task), Seat::Reviewer, &cast.reviewer.id)
         .await;
-    let planner = h
-        .session(&cast.goal, None, Role::Planner, &cast.planner.id)
+    let orchestrator = h
+        .session(&cast.goal, None, Seat::Orchestrator, &cast.orchestrator.id)
         .await;
     let mut rx = h.bus.subscribe();
 
-    h.ingest(&engineer, "stop", reports("/x.jsonl", tokens(100, 80, 10)))
+    h.ingest(&author, "stop", reports("/x.jsonl", tokens(100, 80, 10)))
         .await;
 
     // The rollup rides in all three fat events, since all three are read with
     // it: a client holding a task would otherwise never hear its figures move.
     next_event(&mut rx, |e| {
         matches!(&e.event, DomainEvent::SessionUpdated(s)
-                 if s.id == engineer.id && s.usage == tokens(100, 80, 10))
+                 if s.id == author.id && s.usage == tokens(100, 80, 10))
     })
     .await;
     next_event(&mut rx, |e| {
@@ -1181,24 +1182,24 @@ async fn reported_usage_rolls_up_to_the_task_and_the_goal() {
 
     // The same transcript, further along: the session stands at the second
     // figures, not at the sum of both.
-    h.ingest(&engineer, "stop", reports("/x.jsonl", tokens(150, 120, 30)))
+    h.ingest(&author, "stop", reports("/x.jsonl", tokens(150, 120, 30)))
         .await;
-    let session: SessionDto = h.get(&format!("/v1/sessions/{}", engineer.id)).await;
+    let session: SessionDto = h.get(&format!("/v1/sessions/{}", author.id)).await;
     assert_eq!(session.usage, tokens(150, 120, 30));
 
     // A resumed agent writes a transcript of its own, and that one adds.
-    h.ingest(&engineer, "stop", reports("/y.jsonl", tokens(10, 0, 5)))
+    h.ingest(&author, "stop", reports("/y.jsonl", tokens(10, 0, 5)))
         .await;
-    let session: SessionDto = h.get(&format!("/v1/sessions/{}", engineer.id)).await;
+    let session: SessionDto = h.get(&format!("/v1/sessions/{}", author.id)).await;
     assert_eq!(session.usage, tokens(160, 120, 35));
 
     h.ingest(&reviewer, "stop", reports("/r.jsonl", tokens(20, 10, 4)))
         .await;
-    h.ingest(&planner, "stop", reports("/p.jsonl", tokens(40, 30, 8)))
+    h.ingest(&orchestrator, "stop", reports("/p.jsonl", tokens(40, 30, 8)))
         .await;
 
     let task: TaskDto = h.get(&format!("/v1/tasks/{}", cast.task.id)).await;
-    assert_eq!(task.usage.engineer, tokens(160, 120, 35));
+    assert_eq!(task.usage.author, tokens(160, 120, 35));
     let reviewers = &task.usage.reviewers;
     assert_eq!(reviewers.len(), 1);
     assert_eq!(reviewers[0].profile_id, cast.reviewer.id);
@@ -1207,17 +1208,17 @@ async fn reported_usage_rolls_up_to_the_task_and_the_goal() {
     assert_eq!(
         task.usage.total,
         tokens(180, 130, 39),
-        "the total is its engineer and its reviewers, and nothing else is on the task"
+        "the total is its author and its reviewers, and nothing else is on the task"
     );
 
     let goal: GoalDto = h.get(&format!("/v1/goals/{}", cast.goal.id)).await;
-    assert_eq!(goal.usage.planner, tokens(40, 30, 8));
-    assert_eq!(goal.usage.engineers, tokens(160, 120, 35));
+    assert_eq!(goal.usage.orchestrator, tokens(40, 30, 8));
+    assert_eq!(goal.usage.authors, tokens(160, 120, 35));
     assert_eq!(goal.usage.reviewers, tokens(20, 10, 4));
     assert_eq!(
         goal.usage.total,
         tokens(220, 160, 47),
-        "every session of the goal, the planner's included"
+        "every session of the goal, the orchestrator's included"
     );
 }
 
@@ -1227,15 +1228,15 @@ async fn reported_usage_rolls_up_to_the_task_and_the_goal() {
 async fn a_session_that_has_reported_nothing_reads_as_zeros() {
     let h = harness().await;
     let cast = h.active_cast().await;
-    let engineer = h
-        .session(&cast.goal, Some(&cast.task), Role::Engineer, &cast.engineer.id)
+    let author = h
+        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
         .await;
 
-    let session: SessionDto = h.get(&format!("/v1/sessions/{}", engineer.id)).await;
+    let session: SessionDto = h.get(&format!("/v1/sessions/{}", author.id)).await;
     assert_eq!(session.usage, tokens(0, 0, 0));
     let task: TaskDto = h.get(&format!("/v1/tasks/{}", cast.task.id)).await;
     assert_eq!(task.usage.total, tokens(0, 0, 0));
-    assert_eq!(task.usage.engineer, tokens(0, 0, 0));
+    assert_eq!(task.usage.author, tokens(0, 0, 0));
     let goal: GoalDto = h.get(&format!("/v1/goals/{}", cast.goal.id)).await;
     assert_eq!(goal.usage.total, tokens(0, 0, 0));
 }
@@ -1246,12 +1247,12 @@ async fn a_session_that_has_reported_nothing_reads_as_zeros() {
 async fn a_malformed_report_is_dropped_and_its_event_still_lands() {
     let h = harness().await;
     let cast = h.active_cast().await;
-    let engineer = h
-        .session(&cast.goal, Some(&cast.task), Role::Engineer, &cast.engineer.id)
+    let author = h
+        .session(&cast.goal, Some(&cast.task), Seat::Author, &cast.author.id)
         .await;
 
     h.ingest(
-        &engineer,
+        &author,
         "stop",
         serde_json::json!({
             "hook_event_name": "Stop",
@@ -1260,7 +1261,7 @@ async fn a_malformed_report_is_dropped_and_its_event_still_lands() {
     )
     .await;
 
-    let session: SessionDto = h.get(&format!("/v1/sessions/{}", engineer.id)).await;
+    let session: SessionDto = h.get(&format!("/v1/sessions/{}", author.id)).await;
     assert_eq!(session.usage, tokens(0, 0, 0));
     assert_eq!(
         session.status,
@@ -1270,7 +1271,7 @@ async fn a_malformed_report_is_dropped_and_its_event_still_lands() {
     let events = h
         .store
         .list_events(EventFilter {
-            session_id: Some(engineer.id.clone()),
+            session_id: Some(author.id.clone()),
             task_id: None,
             limit: 50,
             after: None,

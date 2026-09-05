@@ -1,6 +1,6 @@
 //! Agent-session DTOs.
 
-use ariadne_core::{AgentKind, AttentionReason, Role, SessionStatus};
+use ariadne_core::{AgentKind, AttentionReason, Seat, SessionStatus};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -10,9 +10,9 @@ use crate::usage::TokenUsageDto;
 pub struct SessionDto {
     pub id: String,
     pub goal_id: String,
-    /// None = planner session.
+    /// None = orchestrator session.
     pub task_id: Option<String>,
-    pub role: Role,
+    pub seat: Seat,
     pub profile_id: String,
     pub agent_kind: AgentKind,
     /// Model requested at launch; null = the agent CLI's default.
@@ -21,7 +21,8 @@ pub struct SessionDto {
     /// whatever the agent CLI runs it at.
     #[schema(example = "high")]
     pub effort: Option<String>,
-    /// Agent-internal id: claude session uuid / codex thread id / opencode session id.
+    /// Agent-internal id: claude session uuid / codex thread id / opencode
+    /// session id.
     pub internal_session_id: Option<String>,
     pub tmux_session: String,
     pub worktree_path: Option<String>,

@@ -97,7 +97,7 @@ impl Follower {
     /// Where the pane stands: one `tmux` call for both questions a tick has,
     /// since `display-message` fails on a session that is not there exactly as
     /// `has-session` would. The stored status is asked first, and forks
-    /// nothing: tmux names are per (task, role), so a live pane under this
+    /// nothing: tmux names are per (task, seat), so a live pane under this
     /// session's name need not be this session's.
     ///
     /// Nothing that merely failed counts as an answer. `Gone` stops a client

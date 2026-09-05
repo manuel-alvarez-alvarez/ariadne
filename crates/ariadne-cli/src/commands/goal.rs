@@ -22,7 +22,7 @@ use crate::output::{
 
 /// Columns of `goal ls`. `tokens` is what every agent of the goal spent
 /// between them, in over an up arrow and out over a down one, with the share
-/// of the input the prompt cache served; the roles it splits into, and the
+/// of the input the prompt cache served; the seats it splits into, and the
 /// counts to the digit, are in `goal inspect`.
 ///
 /// What the goal is and where it got to stay whatever the terminal's width;
@@ -46,12 +46,12 @@ const INDENT: &str = "\n             ";
 /// most often said on the same line.
 const CREATE_EXAMPLES: &str = "\
 Examples:
-  # a goal in one registered repository, planned on the Planner profile's own model
+  # a goal in one registered repository, planned on the Orchestrator profile's own model
   ariadne goal create --title \"Add rate limiting\" --repo ~/projects/api
 
-  # a planner of your own, on one model of one agent CLI, reasoned deeply
+  # an orchestrator of your own, on one model of one agent CLI, reasoned deeply
   ariadne goal create --title \"Add rate limiting\" --repo ~/projects/api \\
-      --planner Architect --model codex:gpt-5.6-sol --effort xhigh
+      --orchestrator Architect --model codex:gpt-5.6-sol --effort xhigh
 
   # two repositories, and two reviewer approvals before a task may merge
   ariadne goal create --title \"Split the API\" --repo ~/projects/api \\
@@ -63,9 +63,9 @@ pub enum GoalCommand {
     /// Create a goal
     ///
     /// Names what is to be achieved and the registered repositories it is to
-    /// be achieved in, and spawns the planner that breaks it into tasks.
-    /// Nothing runs until the planner finalizes the plan. Prints the new goal
-    /// id.
+    /// be achieved in, and spawns the orchestrator that breaks it into tasks.
+    /// Nothing runs until the orchestrator finalizes the plan. Prints the new
+    /// goal id.
     #[command(after_help = CREATE_EXAMPLES)]
     Create {
         /// Short goal title (what the whole effort is called)
@@ -78,13 +78,14 @@ pub enum GoalCommand {
         /// (`ariadne repo add`); repeatable
         #[arg(long = "repo", required = true, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::repo_ids))]
         repos: Vec<String>,
-        /// Planner profile id or name (default: the built-in Planner profile)
-        #[arg(long, default_value = "Planner", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::planner_profiles))]
-        planner: String,
-        /// What the planner runs on: AGENT[:MODEL] — an agent CLI
+        /// Orchestrator profile id or name (default: the built-in
+        /// Orchestrator profile)
+        #[arg(long, default_value = "Orchestrator", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::orchestrator_profiles))]
+        orchestrator: String,
+        /// What the orchestrator runs on: AGENT[:MODEL] — an agent CLI
         /// (claude_code | codex | opencode) on its own default model, or one
         /// model of it after the colon (codex:gpt-5.3-codex). Default: the
-        /// planner profile's own
+        /// orchestrator profile's own
         #[arg(long, value_name = "MODEL", value_parser = parse_model, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
         model: Option<String>,
         /// The reasoning effort that model is run at: one of the efforts
@@ -140,7 +141,7 @@ pub enum GoalCommand {
         #[arg(short, long)]
         yes: bool,
     },
-    /// Attach to the goal's planner tmux session
+    /// Attach to the goal's orchestrator tmux session
     Attach {
         /// Goal id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
@@ -154,13 +155,13 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
             title,
             description,
             repos,
-            planner,
+            orchestrator,
             model,
             effort,
             approvals,
             max_tasks,
         } => {
-            let planner = resolve::Profiles::new(client).id(&planner).await?;
+            let orchestrator = resolve::Profiles::new(client).id(&orchestrator).await?;
             let goal: GoalDto = client
                 .post_json(
                     "/v1/goals",
@@ -168,7 +169,7 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                         title,
                         description,
                         repository_ids: resolve_repositories(client, &repos).await?,
-                        planner_profile: planner,
+                        orchestrator_profile: orchestrator,
                         max_tasks,
                         required_approvals: approvals,
                         model,
@@ -221,10 +222,10 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
                     ("title", Kv::title(g.title.clone())),
                     ("status", Kv::status(g.status.as_str())),
                     (
-                        "planner",
+                        "orchestrator",
                         profiles
                             .pinned_label(
-                                &g.planner_profile_id,
+                                &g.orchestrator_profile_id,
                                 g.model.as_deref(),
                                 g.effort.as_deref(),
                             )
@@ -303,21 +304,21 @@ pub async fn run(client: &Client, cmd: GoalCommand, format: Format) -> Result<()
     Ok(())
 }
 
-/// What the goal cost, role by role: every session of it summed, then the
-/// planner, its engineers and its reviewers under that.
+/// What the goal cost, seat by seat: every session of it summed, then the
+/// orchestrator, its authors and its reviewers under that.
 ///
-/// By role rather than by profile, the way [`GoalUsageDto`] groups it: a goal
-/// has as many engineers as it has tasks, and at this height the question is
+/// By seat rather than by profile, the way [`GoalUsageDto`] groups it: a goal
+/// has as many authors as it has tasks, and at this height the question is
 /// where the tokens went, not which agent went there. Each of the three lines
-/// is always printed, `0` included — a role a goal has not spent on yet is a
+/// is always printed, `0` included — a seat a goal has not spent on yet is a
 /// figure, not a gap.
 fn usage_lines(g: &GoalDto) -> String {
-    let roles = [
-        ("planner".to_string(), g.usage.planner),
-        ("engineers".to_string(), g.usage.engineers),
+    let seats = [
+        ("orchestrator".to_string(), g.usage.orchestrator),
+        ("authors".to_string(), g.usage.authors),
         ("reviewers".to_string(), g.usage.reviewers),
     ];
-    usage_block(&g.usage.total, &roles, INDENT)
+    usage_block(&g.usage.total, &seats, INDENT)
 }
 
 /// Which of the goals the daemon answered with `goal ls` shows: the ones
@@ -495,15 +496,15 @@ mod tests {
         }
     }
 
-    /// The total first, then where it went: a goal is read by role, since its
-    /// engineers are as many as it has tasks.
+    /// The total first, then where it went: a goal is read by seat, since its
+    /// authors are as many as it has tasks.
     #[test]
-    fn the_block_splits_the_goal_total_by_role() {
+    fn the_block_splits_the_goal_total_by_seat() {
         let g = GoalDto {
             usage: GoalUsageDto {
                 total: usage(12_345_000, 11_000_000, 456_000),
-                planner: usage(345_000, 300_000, 6_000),
-                engineers: usage(10_000_000, 9_000_000, 400_000),
+                orchestrator: usage(345_000, 300_000, 6_000),
+                authors: usage(10_000_000, 9_000_000, 400_000),
                 reviewers: usage(2_000_000, 1_700_000, 50_000),
             },
             ..goal("01GOAL", "Ship the board")
@@ -513,27 +514,27 @@ mod tests {
             [
                 "input    12M  89%",
                 "             output  456k",
-                "             planner    ↑345k ↓6k",
-                "             engineers  ↑10M ↓400k",
-                "             reviewers  ↑2M ↓50k",
+                "             orchestrator  ↑345k ↓6k",
+                "             authors       ↑10M ↓400k",
+                "             reviewers     ↑2M ↓50k",
             ]
             .join("\n")
         );
     }
 
-    /// A goal nobody has run yet spent `0`, and every role says so: a role
+    /// A goal nobody has run yet spent `0`, and every seat says so: a seat
     /// left out of the block would read as one the goal does not have.
     #[test]
-    fn a_goal_that_has_spent_nothing_says_zero_for_every_role() {
+    fn a_goal_that_has_spent_nothing_says_zero_for_every_seat() {
         let g = goal("01GOAL", "Ship the board");
         assert_eq!(
             usage_lines(&g),
             [
                 "input   0  0%",
                 "             output  0",
-                "             planner    ↑0 ↓0",
-                "             engineers  ↑0 ↓0",
-                "             reviewers  ↑0 ↓0",
+                "             orchestrator  ↑0 ↓0",
+                "             authors       ↑0 ↓0",
+                "             reviewers     ↑0 ↓0",
             ]
             .join("\n")
         );

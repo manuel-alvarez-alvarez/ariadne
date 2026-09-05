@@ -17,7 +17,7 @@ use ariadne_api::tasks::{
     ProfileUsageDto, TaskDto, TaskReviewerDto, TaskTransitionDto, TaskUsageDto,
 };
 use ariadne_api::usage::TokenUsageDto;
-use ariadne_core::{Role, TokenUsage};
+use ariadne_core::{Seat, TokenUsage};
 use ariadne_store::{self as store, ProfileUsage, Store, StoreError};
 
 use super::pins::spelled;
@@ -48,7 +48,7 @@ macro_rules! dto {
 
 dto! {
     pub fn profile_dto(p: store::Profile) -> ProfileDto {
-        role: p.role(),
+        seat: p.seat(),
         model: spelled(p.agent_kind(), p.model.as_deref()),
         system_prompt: p.effective_system_prompt().to_string(),
         system_prompt_is_default: p.system_prompt_is_default(),
@@ -81,7 +81,7 @@ dto! {
         repos: repos.into_iter().map(repository_dto).collect(),
         usage: usage,
         .. id, title, description, max_tasks, required_approvals,
-           planner_profile_id, effort, created_at, updated_at
+           orchestrator_profile_id, effort, created_at, updated_at
     }
 
     /// `name` is the reviewer profile's name, which the caller loads.
@@ -91,15 +91,15 @@ dto! {
         .. profile_id, effort
     }
 
-    /// The names come from the caller, which loads them: the engineer's, the
-    /// planner's of the task's goal, and one per reviewer slot in slot order.
-    /// So does `reason`, which only an ended task has.
+    /// The names come from the caller, which loads them: the author's, the
+    /// orchestrator's of the task's goal, and one per reviewer slot in slot
+    /// order. So does `reason`, which only an ended task has.
     fn task_dto(
         t: store::Task,
         reviewers: Vec<(store::TaskReviewer, Option<String>)>,
         depends_on: Vec<String>,
-        engineer_profile_name: Option<String>,
-        planner_profile_name: Option<String>,
+        author_profile_name: Option<String>,
+        orchestrator_profile_name: Option<String>,
         usage: TaskUsageDto,
         reason: Option<String>,
     ) -> TaskDto {
@@ -111,11 +111,11 @@ dto! {
             .map(|(r, name)| task_reviewer_dto(r, name))
             .collect(),
         depends_on: depends_on,
-        engineer_profile_name: engineer_profile_name,
-        planner_profile_name: planner_profile_name,
+        author_profile_name: author_profile_name,
+        orchestrator_profile_name: orchestrator_profile_name,
         usage: usage,
         reason: reason,
-        .. id, goal_id, repo_id, title, description, engineer_profile_id,
+        .. id, goal_id, repo_id, title, description, author_profile_id,
            effort, branch, worktree_path, review_round, merge_commit, pr_url,
            created_at, updated_at
     }
@@ -131,7 +131,7 @@ dto! {
 
     /// `usage` is what this session has spent, which the caller loads.
     fn session_dto(s: store::AgentSession, usage: TokenUsageDto) -> SessionDto {
-        role: s.role(),
+        seat: s.seat(),
         agent_kind: s.agent_kind(),
         status: s.status(),
         attention_reason: s.attention_reason(),
@@ -157,7 +157,8 @@ async fn profile_name(store: &Store, id: &str) -> Option<String> {
 
 /// [`task_dto`] with everything it needs loaded from the store: the reviewer
 /// slots, the dependencies, and the profile names the task's participants are
-/// known by — the engineer's, every reviewer's, and the planner's of its goal.
+/// known by — the author's, every reviewer's, and the orchestrator's of its
+/// goal.
 ///
 /// A name beside every id is what a task is read for: no prompt can teach an
 /// agent to read an id.
@@ -168,13 +169,13 @@ pub async fn task_dto_of(store: &Store, task: store::Task) -> Result<TaskDto, St
         reviewers.push((pin, name));
     }
     let depends_on = store.list_task_dependencies(&task.id).await?;
-    let engineer = profile_name(store, &task.engineer_profile_id).await;
-    let planner_id = store.get_goal(&task.goal_id).await?.planner_profile_id;
-    let planner = profile_name(store, &planner_id).await;
+    let author = profile_name(store, &task.author_profile_id).await;
+    let orchestrator_id = store.get_goal(&task.goal_id).await?.orchestrator_profile_id;
+    let orchestrator = profile_name(store, &orchestrator_id).await;
     let usage = task_usage(store, &task.id, &reviewers).await?;
     let reason = store.ended_reason(&task).await?;
     Ok(task_dto(
-        task, reviewers, depends_on, engineer, planner, usage, reason,
+        task, reviewers, depends_on, author, orchestrator, usage, reason,
     ))
 }
 
@@ -195,12 +196,12 @@ pub async fn goal_dto_of(store: &Store, goal: store::Goal) -> Result<GoalDto, St
     Ok(goal_dto(goal, repos, usage))
 }
 
-/// What a task has spent, arranged the way it is read: the engineer's own,
+/// What a task has spent, arranged the way it is read: the author's own,
 /// one entry per reviewer profile in slot order, and the total of every
 /// session on the task.
 ///
-/// The engineer's is every engineer-role session, not only the profile the
-/// task names today — a task moved to another engineer keeps what the first
+/// The author's is every author-seat session, not only the profile the
+/// task names today — a task moved to another author keeps what the first
 /// one spent, and a total that did not count it would not add up. A reviewer
 /// no longer holding a slot is listed after those that do, for the same
 /// reason.
@@ -211,12 +212,12 @@ async fn task_usage(
 ) -> Result<TaskUsageDto, StoreError> {
     let spent = store.task_usage(task_id).await?;
     let total: TokenUsage = spent.iter().map(|p| p.usage).sum();
-    let engineer: TokenUsage = spent
+    let author: TokenUsage = spent
         .iter()
-        .filter(|p| p.role == Role::Engineer)
+        .filter(|p| p.seat == Seat::Author)
         .map(|p| p.usage)
         .sum();
-    let mut left: Vec<&ProfileUsage> = spent.iter().filter(|p| p.role == Role::Reviewer).collect();
+    let mut left: Vec<&ProfileUsage> = spent.iter().filter(|p| p.seat == Seat::Reviewer).collect();
 
     let mut listed = Vec::new();
     for (slot, name) in reviewers {
@@ -238,28 +239,28 @@ async fn task_usage(
     }
     Ok(TaskUsageDto {
         total: total.into(),
-        engineer: engineer.into(),
+        author: author.into(),
         reviewers: listed,
     })
 }
 
-/// What a goal has spent, by role: its planner, the engineers of its tasks,
+/// What a goal has spent, by seat: its orchestrator, the authors of its tasks,
 /// their reviewers, and the total of all three.
 async fn goal_usage(store: &Store, goal_id: &str) -> Result<GoalUsageDto, StoreError> {
     let spent = store.goal_usage(goal_id).await?;
-    let of = |role: Role| -> TokenUsageDto {
+    let of = |seat: Seat| -> TokenUsageDto {
         spent
             .iter()
-            .filter(|r| r.role == role)
+            .filter(|r| r.seat == seat)
             .map(|r| r.usage)
             .sum::<TokenUsage>()
             .into()
     };
     Ok(GoalUsageDto {
         total: spent.iter().map(|r| r.usage).sum::<TokenUsage>().into(),
-        planner: of(Role::Planner),
-        engineers: of(Role::Engineer),
-        reviewers: of(Role::Reviewer),
+        orchestrator: of(Seat::Orchestrator),
+        authors: of(Seat::Author),
+        reviewers: of(Seat::Reviewer),
     })
 }
 

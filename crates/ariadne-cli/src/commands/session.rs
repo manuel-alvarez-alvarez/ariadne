@@ -11,7 +11,7 @@ use ariadne_api::sessions::{
 };
 use ariadne_api::tasks::TaskDto;
 use ariadne_client::Client;
-use ariadne_core::{AttentionReason, Role, SessionStatus};
+use ariadne_core::{AttentionReason, Seat, SessionStatus};
 
 use super::attention::reason_label;
 use super::follow::{self, Ending, Next};
@@ -42,7 +42,7 @@ const LS: &[Column] = &[
     col("status", UNCAPPED).status(),
     col("attention", UNCAPPED).attention().rank(4),
     col("age", UNCAPPED).rank(3),
-    col("role", UNCAPPED).rank(2),
+    col("seat", UNCAPPED).rank(2),
     col("agent", UNCAPPED).rank(1),
     col("tokens", UNCAPPED).rank(0),
 ];
@@ -58,7 +58,7 @@ Examples:
   ariadne session ls                            # every live session
   ariadne session ls --all --task <task-id>     # that task's, history included
   ariadne session ls --status idle,exited       # named statuses, live or not
-  ariadne session ls --goal <goal-id> --role reviewer
+  ariadne session ls --goal <goal-id> --seat reviewer
 ";
 
 #[derive(Subcommand)]
@@ -78,11 +78,11 @@ pub enum SessionCommand {
         /// comma-separated
         #[arg(long = "status", value_parser = Spelling::<SessionStatus>::new(), value_delimiter = ',')]
         statuses: Vec<SessionStatus>,
-        /// Filter by role, once the rows are here: `GET /v1/sessions` takes
-        /// no role, so this narrows what it answered — as the UI's own role
+        /// Filter by seat, once the rows are here: `GET /v1/sessions` takes
+        /// no seat, so this narrows what it answered — as the UI's own seat
         /// filter does. Composes with the rest: it never widens the list
-        #[arg(long, value_parser = Spelling::<Role>::new())]
-        role: Option<Role>,
+        #[arg(long, value_parser = Spelling::<Seat>::new())]
+        seat: Option<Seat>,
         /// Only sessions the daemon has flagged as needing a human: the
         /// same filter the UI's Attention page is built on
         #[arg(long)]
@@ -145,14 +145,14 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
             task,
             goal,
             statuses,
-            role,
+            seat,
             attention,
             all,
         } => {
             let filtered = goal.is_some()
                 || task.is_some()
                 || !statuses.is_empty()
-                || role.is_some()
+                || seat.is_some()
                 || attention;
             let goal = match goal {
                 Some(goal) => Some(resolve::id(client, Kind::Goal, &goal).await?),
@@ -173,7 +173,7 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
             let sessions: Vec<SessionDto> = client
                 .get_json(&query_path("/v1/sessions", &query)?)
                 .await?;
-            let sessions = visible(sessions, all, &statuses, role);
+            let sessions = visible(sessions, all, &statuses, seat);
             let context = match format {
                 Format::Table => SessionContext::fetch_for(client, &sessions).await,
                 Format::Json => SessionContext::default(),
@@ -190,7 +190,7 @@ pub async fn run(client: &Client, cmd: SessionCommand, format: Format) -> Result
                         s.status.as_str().into(),
                         attention_label(s.attention_reason),
                         age(&s.created_at, now),
-                        s.role.as_str().into(),
+                        s.seat.as_str().into(),
                         s.agent_kind.as_str().into(),
                         usage_cell(&s.usage),
                     ]
@@ -385,20 +385,20 @@ async fn ended(client: &Client, id: &str) -> String {
 /// The default is docker's: live sessions, history behind --all. Named
 /// statuses are that same choice made precisely, so they take over —
 /// `--status exited` that then dropped every row for not being live would
-/// answer nothing. The role narrows whatever those settled on: `GET
+/// answer nothing. The seat narrows whatever those settled on: `GET
 /// /v1/sessions` takes none, so it is applied to the answer rather than asked
 /// for, and so is a second status, since it takes only one.
 fn visible(
     sessions: Vec<SessionDto>,
     all: bool,
     statuses: &[SessionStatus],
-    role: Option<Role>,
+    seat: Option<Seat>,
 ) -> Vec<SessionDto> {
     sessions
         .into_iter()
         .filter(|s| all || !statuses.is_empty() || s.status.is_live())
         .filter(|s| statuses.is_empty() || statuses.contains(&s.status))
-        .filter(|s| role.is_none_or(|r| s.role == r))
+        .filter(|s| seat.is_none_or(|r| s.seat == r))
         .collect()
 }
 
@@ -427,10 +427,10 @@ impl SessionContext {
         }
     }
 
-    /// What one session was run for: its task, or — for a planner session,
-    /// which has none — the goal itself, prefixed so a whole goal is never
-    /// read as a task of that name. An id stands in for a title the daemon did
-    /// not answer with.
+    /// What one session was run for: its task, or — for an orchestrator
+    /// session, which has none — the goal itself, prefixed so a whole goal is
+    /// never read as a task of that name. An id stands in for a title the
+    /// daemon did not answer with.
     fn label(&self, s: &SessionDto) -> String {
         match &s.task_id {
             Some(task) => self
@@ -457,7 +457,7 @@ fn inspect_pairs(s: &SessionDto, profiles: &ProfileNames) -> Vec<(&'static str, 
         ("id", Kv::id(s.id.clone())),
         ("goal", Kv::id(s.goal_id.clone())),
         ("task", Kv::id(dash(s.task_id.as_deref()))),
-        ("role", s.role.as_str().into()),
+        ("seat", s.seat.as_str().into()),
         ("profile", profiles.label(&s.profile_id).into()),
         ("agent", s.agent_kind.as_str().into()),
         // Recorded at launch, so it is what this session runs on even if the
@@ -495,12 +495,12 @@ fn inspect_pairs(s: &SessionDto, profiles: &ProfileNames) -> Vec<(&'static str, 
     ]
 }
 
-/// Whose terminal it is: a session has no title, and the role and the piece
+/// Whose terminal it is: a session has no title, and the seat and the piece
 /// of work it was spawned for are what stand in for one.
 fn what_for(s: &SessionDto) -> String {
     match &s.task_id {
-        Some(task) => format!("{} on task {}", s.role.as_str(), short_id(task)),
-        None => format!("{} of goal {}", s.role.as_str(), short_id(&s.goal_id)),
+        Some(task) => format!("{} on task {}", s.seat.as_str(), short_id(task)),
+        None => format!("{} of goal {}", s.seat.as_str(), short_id(&s.goal_id)),
     }
 }
 
@@ -518,7 +518,7 @@ fn kill_question(s: &SessionDto, subject: &Subject) -> String {
 mod tests {
     use super::*;
 
-    use ariadne_core::Role;
+    use ariadne_core::Seat;
 
     use crate::commands::fixtures::session;
     use crate::output::{View, kv_block};
@@ -538,10 +538,10 @@ mod tests {
         );
     }
 
-    /// The planner runs for the goal itself, and the row says so rather than
-    /// leaving a goal title where every other row carries a task.
+    /// The orchestrator runs for the goal itself, and the row says so rather
+    /// than leaving a goal title where every other row carries a task.
     #[test]
-    fn a_planner_session_is_named_by_its_goal() {
+    fn an_orchestrator_session_is_named_by_its_goal() {
         assert_eq!(
             context().label(&session("01SESS", "01GOAL", None)),
             "goal: Ship the board"
@@ -563,14 +563,14 @@ mod tests {
         );
     }
 
-    /// One session per role and per liveness, as `session ls` receives them
-    /// from the daemon: the planner is running, the engineer has exited.
+    /// One session per seat and per liveness, as `session ls` receives them
+    /// from the daemon: the orchestrator is running, the author has exited.
     fn listed() -> Vec<SessionDto> {
-        let engineer = SessionDto {
+        let author = SessionDto {
             status: SessionStatus::Exited,
             ..session("01ENG", "01GOAL", Some("01TASK"))
         };
-        vec![session("01PLAN", "01GOAL", None), engineer]
+        vec![session("01PLAN", "01GOAL", None), author]
     }
 
     fn ids(sessions: Vec<SessionDto>) -> Vec<String> {
@@ -605,26 +605,26 @@ mod tests {
         );
     }
 
-    /// The role narrows whatever the rest of the flags settled on, and never
-    /// widens it: a finished engineer stays behind --all even when --role
-    /// names engineers.
+    /// The seat narrows whatever the rest of the flags settled on, and never
+    /// widens it: a finished author stays behind --all even when --seat
+    /// names authors.
     #[test]
-    fn a_role_narrows_the_view_it_is_used_with() {
+    fn a_seat_narrows_the_view_it_is_used_with() {
         assert_eq!(
-            ids(visible(listed(), false, &[], Some(Role::Planner))),
+            ids(visible(listed(), false, &[], Some(Seat::Orchestrator))),
             ["01PLAN"]
         );
         assert_eq!(
-            ids(visible(listed(), false, &[], Some(Role::Engineer))),
+            ids(visible(listed(), false, &[], Some(Seat::Author))),
             [] as [String; 0],
-            "the only engineer here has exited"
+            "the only author here has exited"
         );
         assert_eq!(
-            ids(visible(listed(), true, &[], Some(Role::Engineer))),
+            ids(visible(listed(), true, &[], Some(Seat::Author))),
             ["01ENG"]
         );
         assert_eq!(
-            ids(visible(listed(), false, &[], Some(Role::Reviewer))),
+            ids(visible(listed(), false, &[], Some(Seat::Reviewer))),
             [] as [String; 0]
         );
     }

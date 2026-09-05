@@ -541,7 +541,7 @@ mod tests {
 
     /// One assistant message written over two lines (same `message.id`, same
     /// usage, as Claude writes it) and a second message.
-    const CLAUDE: &str = r#"{"type":"user","message":{"role":"user"}}
+    const CLAUDE: &str = r#"{"type":"user","message":{"seat":"user"}}
 {"type":"assistant","message":{"id":"msg_a","usage":{"input_tokens":10,"cache_creation_input_tokens":100,"cache_read_input_tokens":1000,"output_tokens":7}}}
 {"type":"assistant","message":{"id":"msg_a","usage":{"input_tokens":10,"cache_creation_input_tokens":100,"cache_read_input_tokens":1000,"output_tokens":7}}}
 {"type":"assistant","message":{"id":"msg_b","usage":{"input_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":2000,"output_tokens":3}}}

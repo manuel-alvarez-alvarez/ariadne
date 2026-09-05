@@ -1,6 +1,6 @@
 //! Where a task's branch points, followed rather than asked for.
 //!
-//! A commit an engineer makes in its worktree is not a store write: nothing in
+//! A commit an author makes in its worktree is not a store write: nothing in
 //! the database moves, so none of the domain events the bus pump fattens says
 //! that the task's diff against its base is no longer the one a client
 //! fetched. Asking `git rev-parse` for every live task on the scheduler tick
@@ -94,7 +94,7 @@ impl BranchWatchers {
     /// Follow `task`'s branch in `repo`, from wherever it points now.
     ///
     /// Idempotent: a task already followed on the same branch keeps the watch
-    /// it has, so an engineer respawned into the worktree it left does not
+    /// it has, so an author respawned into the worktree it left does not
     /// stack a second one. Nothing is published for where the branch stands at
     /// this moment — only for where it moves next.
     pub fn watch(&self, task: &Task, repo: &Path) {
@@ -149,7 +149,7 @@ struct Followed {
     goal_id: String,
     branch: String,
     /// The repository the branch lives in — the checkout registered with the
-    /// daemon, not the engineer's worktree.
+    /// daemon, not the author's worktree.
     repo: PathBuf,
 }
 
@@ -338,7 +338,7 @@ mod tests {
             title: "work".into(),
             description: String::new(),
             status: "in_progress".into(),
-            engineer_profile_id: "profile-1".into(),
+            author_profile_id: "profile-1".into(),
             agent_kind: None,
             model: None,
             effort: None,

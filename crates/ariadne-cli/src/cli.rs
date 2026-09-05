@@ -27,7 +27,7 @@ Examples:
   ariadne daemon start                     # the daemon everything else talks to
   ariadne repo add ~/projects/api          # register a checkout to work in
   ariadne goal create --title \"Add rate limiting\" --repo ~/projects/api
-  ariadne goal attach <goal-id>            # agree the plan with the planner
+  ariadne goal attach <goal-id>            # agree the plan with the orchestrator
   ariadne attention                        # what is waiting for you, every goal
   ariadne task ls --goal <goal-id>         # the tasks it was broken into
   ariadne attach <id>                      # a session, task or goal id
@@ -53,12 +53,12 @@ Examples:
 
 const PROFILE_EXAMPLES: &str = "\
 Examples:
-  ariadne profile ls --role reviewer
-  ariadne profile create --name Architect --role planner --model codex:gpt-5.3-codex
+  ariadne profile ls --seat reviewer
+  ariadne profile create --name Architect --seat orchestrator --model codex:gpt-5.3-codex
   ariadne profile update Reviewer --model default
-  ariadne profile prompt get Engineer system > system.md  # pipe it out, edit, pipe it back
-  ariadne profile prompt set Engineer system --file system.md
-  ariadne profile prompt reset Engineer system            # back to the role's default
+  ariadne profile prompt get Author system > system.md  # pipe it out, edit, pipe it back
+  ariadne profile prompt set Author system --file system.md
+  ariadne profile prompt reset Author system            # back to the seat's default
 ";
 
 const REPO_EXAMPLES: &str = "\
@@ -77,7 +77,7 @@ const GOAL_EXAMPLES: &str = "\
 Examples:
   ariadne goal create --title \"Add rate limiting\" --repo ~/projects/api
   ariadne goal ls --status planning,active
-  ariadne goal attach <goal-id>            # the planner's terminal
+  ariadne goal attach <goal-id>            # the orchestrator's terminal
   ariadne goal inspect <goal-id>
 ";
 
@@ -86,7 +86,7 @@ Examples:
   ariadne task ls --goal <goal-id>
   ariadne task ls --status in-progress,under-review
   ariadne task inspect <task-id>           # and: diff, reviews, history
-  ariadne task attach <task-id>            # the engineer's terminal
+  ariadne task attach <task-id>            # the author's terminal
 ";
 
 const SESSION_EXAMPLES: &str = "\
@@ -101,9 +101,9 @@ Examples:
 /// What `ariadne attach --help` ends with.
 const ATTACH_EXAMPLES: &str = "\
 Examples:
-  ariadne attach <goal-id>                 # the goal's planner
-  ariadne attach <task-id>                 # the task's engineer
-  ariadne attach <task-id> --role reviewer # its reviewer instead
+  ariadne attach <goal-id>                 # the goal's orchestrator
+  ariadne attach <task-id>                 # the task's author
+  ariadne attach <task-id> --seat reviewer # its reviewer instead
   ariadne attach <session-id>              # that one session
 ";
 
@@ -127,7 +127,7 @@ Exit codes:
     about = "Coding-agent orchestrator CLI",
     long_about = "Coding-agent orchestrator CLI.\n\n\
         Every command here asks the ariadned daemon for something. It plans a \
-        goal with a planner agent, hands each task to an engineer that owns it \
+        goal with an orchestrator agent, hands each task to an author that owns it \
         from its first commit to the merge that lands it, and gates that merge \
         behind reviewer agents. Each of them works in a tmux session `ariadne \
         attach` drops you into, and `ariadne attention` is what says which of \
@@ -253,7 +253,8 @@ pub enum Command {
     ///
     ///   zsh    echo 'source <(COMPLETE=zsh ariadne)' >> ~/.zshrc
     ///
-    ///   fish   ariadne completions fish > ~/.config/fish/completions/ariadne.fish
+    /// fish   ariadne completions fish >
+    /// ~/.config/fish/completions/ariadne.fish
     ///
     /// or let `ariadne completions install` write the same thing for you.
     #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
@@ -302,7 +303,7 @@ pub enum Command {
     },
     /// Manage agent profiles
     ///
-    /// A profile is one agent as it is spawned: the role it plays, what it
+    /// A profile is one agent as it is spawned: the seat it plays, what it
     /// runs on, and the prompts it is briefed and resumed with. Goals and
     /// tasks are assigned to profiles by name, and a change here reaches
     /// every session started after it.
@@ -324,9 +325,9 @@ pub enum Command {
     },
     /// Manage goals
     ///
-    /// A goal is a whole effort. A planner agent breaks it into tasks from
-    /// the goal's own description and starts them; `goal inspect` shows what
-    /// it made of it.
+    /// A goal is a whole effort. An orchestrator agent breaks it into tasks
+    /// from the goal's own description and starts them; `goal inspect` shows
+    /// what it made of it.
     #[command(after_help = GOAL_EXAMPLES)]
     Goal {
         #[command(subcommand)]
@@ -334,7 +335,7 @@ pub enum Command {
     },
     /// Manage tasks
     ///
-    /// A task is one unit of a goal, owned by an engineer agent in a worktree
+    /// A task is one unit of a goal, owned by an author agent in a worktree
     /// of its own from its first commit to the merge that lands it, with
     /// reviewer agents gating that merge. Its diff, its reviews and its
     /// history are all here.
@@ -345,10 +346,10 @@ pub enum Command {
     },
     /// Manage agent sessions
     ///
-    /// A session is one agent in one tmux window: the terminal a planner, an
-    /// engineer or a reviewer is actually working in. They are listed
-    /// docker-style — live ones by default, finished ones behind --all — and
-    /// one that has ended can be revived with the same conversation.
+    /// A session is one agent in one tmux window: the terminal an
+    /// orchestrator, an author or a reviewer is actually working in. They are
+    /// listed docker-style — live ones by default, finished ones behind --all
+    /// — and one that has ended can be revived with the same conversation.
     #[command(after_help = SESSION_EXAMPLES)]
     Session {
         #[command(subcommand)]
@@ -397,10 +398,10 @@ pub enum Command {
         /// Session, task or goal id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::attach_ids))]
         id: String,
-        /// Which agent of that id to attach to (default: engineer for tasks,
-        /// planner for goals; not valid with a session id)
-        #[arg(long, value_parser = values::Spelling::<ariadne_core::Role>::new())]
-        role: Option<ariadne_core::Role>,
+        /// Which agent of that id to attach to (default: author for tasks,
+        /// orchestrator for goals; not valid with a session id)
+        #[arg(long, value_parser = values::Spelling::<ariadne_core::Seat>::new())]
+        seat: Option<ariadne_core::Seat>,
     },
     /// One-time host setup for the coding agents
     Setup {

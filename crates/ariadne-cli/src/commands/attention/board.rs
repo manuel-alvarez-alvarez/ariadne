@@ -14,7 +14,7 @@ use super::{Reason, session_at, session_reason, task_reason};
 use crate::output::{Column, UNCAPPED, age, col, short_id};
 
 /// Columns of one goal's section. Task rows leave `task` empty (their id is
-/// the task); session rows name their role in `title` and the task they were
+/// the task); session rows name their seat in `title` and the task they were
 /// run for here — by its title, the way the UI's strip names it, since a bare
 /// ULID says nothing about which work is blocked.
 ///
@@ -45,7 +45,7 @@ pub struct Group {
     /// outlive its goal falling out of the list.
     pub goal: Option<GoalDto>,
     pub tasks: Vec<AttentionTask>,
-    /// Sessions of this goal that want the user, its planner's included.
+    /// Sessions of this goal that want the user, its orchestrator's included.
     pub sessions: Vec<AttentionSession>,
 }
 
@@ -159,9 +159,9 @@ pub fn rows(
         let s = &item.session;
         vec![
             s.id.clone(),
-            format!("{} session", s.role.as_str()),
+            format!("{} session", s.seat.as_str()),
             item.reason.label().into(),
-            // A planner belongs to no task, and the goal heading above is
+            // An orchestrator belongs to no task, and the goal heading above is
             // already what it is about.
             s.task_id
                 .as_deref()
@@ -177,7 +177,7 @@ pub fn rows(
 mod tests {
     use super::*;
 
-    use ariadne_core::{AttentionReason, Role, TaskStatus};
+    use ariadne_core::{AttentionReason, Seat, TaskStatus};
 
     use crate::commands::attention::reason_label;
     use crate::commands::attention::tests::{dead, flagged, goal, session, task};
@@ -200,13 +200,14 @@ mod tests {
         let ids: Vec<&str> = attention.goals.iter().map(|g| g.goal_id.as_str()).collect();
         assert_eq!(ids, ["01GB", "01GA", "01GONE"]);
         // The count is what the UI's badge shows: three task rows and the one
-        // flagged session, which is a planner's and lands in its goal's group.
+        // flagged session, which is an orchestrator's and lands in its goal's
+        // group.
         assert_eq!(attention.count, 4);
         assert_eq!(
             attention.goals[0].goal.as_ref().map(|g| g.title.as_str()),
             Some("newer")
         );
-        assert_eq!(attention.goals[0].sessions[0].session.role, Role::Planner);
+        assert_eq!(attention.goals[0].sessions[0].session.seat, Seat::Orchestrator);
         assert!(attention.goals[2].goal.is_none());
 
         let quiet = group(vec![goal("01GA", "A")], Vec::new(), Vec::new());
@@ -215,7 +216,7 @@ mod tests {
     }
 
     /// Who is asking and what they were working on: a session row names its
-    /// role and the task by its title — the two things the UI's strip row
+    /// seat and the task by its title — the two things the UI's strip row
     /// leads with, where a ULID named nothing at all. A task row is its own
     /// subject, so the title is the row and the id is beside it.
     #[test]
@@ -231,12 +232,12 @@ mod tests {
         let rows = rows_of(vec![dead("01S1", "01GA", Some("01T9"))]);
         assert_eq!(rows[0][..4], ["01T9", "task 01T9", "failed", "-"]);
         assert_eq!(rows[1][0], "01S1");
-        assert_eq!(rows[1][1], "engineer session");
+        assert_eq!(rows[1][1], "author session");
         assert_eq!(rows[1][2], "disconnected");
         assert_eq!(rows[1][3], "task 01T9");
 
         // A task the list no longer carries: named by its short id rather than
-        // leaving the column empty. A planner belongs to no task at all.
+        // leaving the column empty. An orchestrator belongs to no task at all.
         let rows = rows_of(vec![
             dead("01S1", "01GA", Some("01ARZ3NDEKTSV4RRFFQ69G5FAV")),
             dead("01S2", "01GA", None),

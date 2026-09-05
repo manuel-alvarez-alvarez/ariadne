@@ -29,7 +29,7 @@ pub(super) const SYSTEM: &str = "system";
 ///
 /// The word is optional — a profile has one prompt, so a line that leaves it
 /// out means that one — and it is kept because it is what a briefing named by
-/// mistake is answered on: `engineer-briefing` is Ariadne's own text now, and
+/// mistake is answered on: `author-briefing` is Ariadne's own text now, and
 /// the message is where somebody reads that.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SystemPromptArg;
@@ -91,7 +91,7 @@ pub async fn run(client: &Client, cmd: PromptCommand, format: Format) -> Result<
                     "reset system prompt of {} ({}) to the {} default",
                     p.name,
                     p.id,
-                    p.role.as_str()
+                    p.seat.as_str()
                 )
             })?;
         }
@@ -100,19 +100,19 @@ pub async fn run(client: &Client, cmd: PromptCommand, format: Format) -> Result<
 }
 
 /// What `profile prompt reset` asks before it overwrites: whatever the system
-/// prompt says now is gone, so the question names the role default it is
+/// prompt says now is gone, so the question names the seat default it is
 /// about to be replaced by.
 fn reset_question(profile: &ProfileDto, subject: &Subject) -> String {
     format!(
         "Reset the system prompt of {} to the {} default?",
         subject.named(),
-        profile.role.as_str()
+        profile.seat.as_str()
     )
 }
 
 /// The `system_prompt` field of a create or an update: `--system-prompt` text
 /// as it was typed, `--system-prompt-file`'s contents, or nothing when
-/// neither flag was given — which is what leaves the profile on its role's
+/// neither flag was given — which is what leaves the profile on its seat's
 /// default. Clap keeps the two flags mutually exclusive, so at most one of
 /// them ever carries a value.
 pub fn read_system_prompt(text: Option<String>, file: Option<PathBuf>) -> Result<Option<String>> {
@@ -150,24 +150,24 @@ fn read_content(file: Option<PathBuf>) -> Result<String> {
 mod tests {
     use super::*;
 
-    use ariadne_core::Role;
+    use ariadne_core::Seat;
 
-    fn profile(role: Role) -> ProfileDto {
-        crate::commands::fixtures::profile("Engineer", role)
+    fn profile(seat: Seat) -> ProfileDto {
+        crate::commands::fixtures::profile("Author", seat)
     }
 
     /// The question is the last thing between the caller and a replaced
-    /// prompt, so it names the profile and the role default it goes back to.
+    /// prompt, so it names the profile and the seat default it goes back to.
     #[test]
     fn the_reset_question_names_what_it_is_about_to_replace() {
         let p = ProfileDto {
             id: "01m0prof0000000000000abcde".into(),
-            ..profile(Role::Engineer)
+            ..profile(Seat::Author)
         };
         let subject = Subject::new("profile", &p.name, &p.id);
         assert_eq!(
             reset_question(&p, &subject),
-            "Reset the system prompt of \"Engineer\" (…000abcde) to the engineer default?"
+            "Reset the system prompt of \"Author\" (…000abcde) to the author default?"
         );
     }
 
@@ -198,7 +198,7 @@ mod tests {
     #[test]
     fn the_only_kind_a_line_names_is_the_system_prompt() {
         assert_eq!(parse_prompt_arg(SYSTEM), Ok(SystemPromptArg));
-        for spelling in ["engineer-briefing", "engineer_briefing", "System"] {
+        for spelling in ["author-briefing", "author_briefing", "System"] {
             let err = parse_prompt_arg(spelling).expect_err("a briefing");
             assert!(
                 err.starts_with(&format!("{spelling} is no prompt")),
@@ -210,7 +210,7 @@ mod tests {
 
     /// A create or an update sends the text it was given, the file's contents
     /// where a file was named, and nothing at all where neither flag was —
-    /// which is what leaves the profile on the default of its role.
+    /// which is what leaves the profile on the default of its seat.
     #[test]
     fn a_created_prompt_is_the_text_the_file_or_nothing() {
         let dir = tempfile::tempdir().expect("tempdir");

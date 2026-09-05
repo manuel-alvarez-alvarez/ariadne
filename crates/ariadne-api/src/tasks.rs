@@ -15,16 +15,16 @@ pub struct TaskDto {
     pub title: String,
     pub description: String,
     pub status: TaskStatus,
-    pub engineer_profile_id: String,
-    /// Name of the engineer's profile; None only if that profile is gone.
-    pub engineer_profile_name: Option<String>,
-    /// Name of the planner profile of the task's goal, which wrote the task
-    /// without being a field of it.
-    pub planner_profile_name: Option<String>,
-    /// What the engineer runs on, `<agent_kind>[:<model>]`: the agent CLI and,
+    pub author_profile_id: String,
+    /// Name of the author's profile; None only if that profile is gone.
+    pub author_profile_name: Option<String>,
+    /// Name of the orchestrator profile of the task's goal, which wrote the
+    /// task without being a field of it.
+    pub orchestrator_profile_name: Option<String>,
+    /// What the author runs on, `<agent_kind>[:<model>]`: the agent CLI and,
     /// after a `:`, the model of it (`codex`, `claude_code:claude-opus-5`).
     /// Pinned when the task was created, from the model chosen for it at
-    /// creation or on an edit or, where none was, from the engineer profile —
+    /// creation or on an edit or, where none was, from the author profile —
     /// editing the profile afterwards leaves it alone. None = auto: the first
     /// installed CLI, resolved at spawn time, on its own default model.
     #[schema(example = "claude_code:claude-opus-5")]
@@ -33,7 +33,8 @@ pub struct TaskDto {
     /// whatever the agent CLI runs it at on its own.
     #[schema(example = "xhigh")]
     pub effort: Option<String>,
-    /// Reviewer slots in planner-assigned order, each carrying its own pin.
+    /// Reviewer slots in orchestrator-assigned order, each carrying its own
+    /// pin.
     pub reviewers: Vec<TaskReviewerDto>,
     /// Ids of tasks that must merge before this one starts.
     pub depends_on: Vec<String>,
@@ -44,9 +45,9 @@ pub struct TaskDto {
     pub stalled: bool,
     pub merge_commit: Option<String>,
     /// URL of the pull or merge request the task was published as, once its
-    /// engineer has reported one; None for a task landed directly.
+    /// author has reported one; None for a task landed directly.
     pub pr_url: Option<String>,
-    /// Why a `failed` or `cancelled` task ended — the engineer's own
+    /// Why a `failed` or `cancelled` task ended — the author's own
     /// `fail_task` reason, a dependency that never landed, a cancelled goal.
     /// None for every other status, and for an ending nobody gave a reason
     /// for.
@@ -57,14 +58,14 @@ pub struct TaskDto {
     pub updated_at: String,
 }
 
-/// What a task cost, by who spent it: its engineer, its reviewers one entry
+/// What a task cost, by who spent it: its author, its reviewers one entry
 /// each, and the total of every session on the task.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
 pub struct TaskUsageDto {
-    /// Every session on the task summed, whatever its role.
+    /// Every session on the task summed, whatever its seat.
     pub total: TokenUsageDto,
-    /// The engineer's own, across every run of it.
-    pub engineer: TokenUsageDto,
+    /// The author's own, across every run of it.
+    pub author: TokenUsageDto,
     /// One entry per reviewer profile that has a session on the task, every
     /// review round of it summed, ordered like `reviewers`. A reviewer whose
     /// session has yet to report anything is listed with zeros; one that has
@@ -83,7 +84,7 @@ pub struct ProfileUsageDto {
 
 /// One reviewer slot of a task: which profile reviews it, and what that
 /// reviewer was pinned to run on when the slot was assigned — the profile's
-/// own model, or the one chosen for the slot. Pinned the same way the engineer
+/// own model, or the one chosen for the slot. Pinned the same way the author
 /// is, and read the same way: what a reviewer of this task runs on, not what
 /// its profile says today.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -149,10 +150,10 @@ pub struct CreateTaskRequest {
     /// Id of one of the goal's repositories; may be omitted when the goal
     /// works in exactly one.
     pub repo_id: Option<String>,
-    /// Engineer profile id or unique name.
-    pub engineer_profile: String,
-    /// What the engineer runs on, `<agent_kind>[:<model>]`; omitted (or
-    /// "default") = the engineer profile's own model. Resolved the way
+    /// Author profile id or unique name.
+    pub author_profile: String,
+    /// What the author runs on, `<agent_kind>[:<model>]`; omitted (or
+    /// "default") = the author profile's own model. Resolved the way
     /// [`ReviewerAssignment::model`] is.
     #[serde(default)]
     #[schema(example = "codex:gpt-5.3-codex")]
@@ -175,9 +176,9 @@ pub struct CreateTaskRequest {
 pub struct UpdateTaskRequest {
     pub title: Option<String>,
     pub description: Option<String>,
-    /// What the engineer runs on, `<agent_kind>[:<model>]`: absent leaves the
+    /// What the author runs on, `<agent_kind>[:<model>]`: absent leaves the
     /// task's pins alone, "default" (or the empty string) puts them back on
-    /// the engineer profile's own model as it stands now, and anything else
+    /// the author profile's own model as it stands now, and anything else
     /// pins what it spells. The same clearing word
     /// [`crate::profiles::UpdateProfileRequest::model`] takes.
     #[schema(example = "codex:gpt-5.3-codex")]
@@ -202,11 +203,11 @@ pub struct UpdateTaskRequest {
 pub struct TransitionRequest {
     pub to: TaskStatus,
     pub reason: Option<String>,
-    /// Required when `to` is `merged`.
+    /// Required when `to` is `finished`.
     pub merge_commit: Option<String>,
 }
 
-/// The engineer reporting the pull or merge request it opened for a task, so
+/// The author reporting the pull or merge request it opened for a task, so
 /// the user has somewhere to go and read it: taken off `gh pr create`'s output
 /// and recorded on the task.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

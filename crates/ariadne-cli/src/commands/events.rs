@@ -381,7 +381,7 @@ fn domain_line(event: &DomainEvent) -> Line {
             at: now(),
             kind,
             subject: p.id.clone(),
-            detail: format!("{} ({})", p.name, p.role.as_str()),
+            detail: format!("{} ({})", p.name, p.seat.as_str()),
             session: None,
             status: None,
         },
@@ -421,7 +421,7 @@ fn task_line(kind: String, t: &TaskDto, state: String) -> Line {
 fn session_line(kind: String, s: &SessionDto) -> Line {
     let mut detail = format!(
         "{} {} [{}]",
-        s.role.as_str(),
+        s.seat.as_str(),
         s.agent_kind.as_str(),
         s.status.as_str()
     );
@@ -614,7 +614,7 @@ mod tests {
                 id: "01TR".into(),
                 from_status: "in_progress".into(),
                 to_status: "under_review".into(),
-                actor: "engineer".into(),
+                actor: "author".into(),
                 reason: None,
                 created_at: AT.into(),
             }),
@@ -634,13 +634,13 @@ mod tests {
         );
     }
 
-    /// A session line carries what a session is — role, agent, status — plus
+    /// A session line carries what a session is — seat, agent, status — plus
     /// the one thing that is not in its status: whether it wants a person.
     #[test]
     fn a_session_line_carries_its_attention_beside_its_status() {
         assert_eq!(
             rendered(&domain_line(&DomainEvent::SessionUpdated(session()))),
-            "<time> · session_updated · 01SESS · engineer claude_code [running]"
+            "<time> · session_updated · 01SESS · author claude_code [running]"
         );
         let waiting = SessionDto {
             attention_reason: Some(AttentionReason::WaitingInput),
@@ -648,7 +648,7 @@ mod tests {
         };
         assert_eq!(
             rendered(&domain_line(&DomainEvent::SessionUpdated(waiting))),
-            "<time> · session_updated · 01SESS · engineer claude_code [running] · waiting for input"
+            "<time> · session_updated · 01SESS · author claude_code [running] · waiting for input"
         );
     }
 

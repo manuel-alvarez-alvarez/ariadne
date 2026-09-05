@@ -13,7 +13,7 @@ pub struct RepositoryDto {
     pub description: Option<String>,
     /// How a task lands on `base_branch` here.
     pub merge_strategy: MergeStrategy,
-    /// The landing briefing the engineer of an approved task is handed here:
+    /// The landing briefing the author of an approved task is handed here:
     /// the text set on this repository, or the built-in default of its merge
     /// strategy while it has none of its own.
     pub landing_prompt: String,
@@ -35,7 +35,7 @@ pub struct CreateRepositoryRequest {
     pub description: Option<String>,
     /// Omit for `direct`.
     pub merge_strategy: Option<MergeStrategy>,
-    /// The landing briefing this repository hands its engineer. Omitted or
+    /// The landing briefing this repository hands its author. Omitted or
     /// empty = the built-in default of `merge_strategy`, which
     /// `GET /v1/merge-strategies` hands out for prefilling. A briefing may
     /// use only the placeholders a landing text is rendered with

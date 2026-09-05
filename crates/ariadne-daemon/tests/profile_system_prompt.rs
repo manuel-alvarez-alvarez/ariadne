@@ -1,7 +1,7 @@
 //! Integration tests for the one prompt a profile owns.
 //!
 //! The contract is that a profile carries a system prompt — the default of
-//! its role until somebody writes one, resettable to that default by dropping
+//! its seat until somebody writes one, resettable to that default by dropping
 //! what was written — and carries nothing of the lifecycle around it: the
 //! briefings that start, resume and nudge a session are Ariadne's own, and no
 //! route reads or writes them.
@@ -11,29 +11,29 @@ mod common;
 use axum::http::StatusCode;
 
 use ariadne_api::profiles::ProfileDto;
-use ariadne_core::Role;
+use ariadne_core::Seat;
 use ariadne_store::defaults::{BUILTIN_PROFILES, default_system_prompt};
 
 use common::{get, harness, post, post_json, put_json};
 
-/// A profile is created on the system prompt of its role and stores none of
+/// A profile is created on the system prompt of its seat and stores none of
 /// it; a text given at creation is the profile's own until the reset takes it
 /// back off.
 #[tokio::test]
-async fn a_created_profile_starts_on_the_default_of_its_role() {
+async fn a_created_profile_starts_on_the_default_of_its_seat() {
     let h = harness().await;
 
     let plain: ProfileDto = h
         .json(
             post_json(
                 "/v1/profiles",
-                serde_json::json!({ "name": "rev", "role": "reviewer" }),
+                serde_json::json!({ "name": "rev", "seat": "reviewer" }),
             ),
             StatusCode::CREATED,
         )
         .await;
-    // No system prompt was given, so the role's own is what it runs on.
-    assert_eq!(plain.system_prompt, default_system_prompt(Role::Reviewer));
+    // No system prompt was given, so the seat's own is what it runs on.
+    assert_eq!(plain.system_prompt, default_system_prompt(Seat::Reviewer));
     assert!(plain.system_prompt_is_default);
 
     let own: ProfileDto = h
@@ -42,7 +42,7 @@ async fn a_created_profile_starts_on_the_default_of_its_role() {
                 "/v1/profiles",
                 serde_json::json!({
                     "name": "eng",
-                    "role": "engineer",
+                    "seat": "author",
                     "system_prompt": "You are eng.",
                 }),
             ),
@@ -59,7 +59,7 @@ async fn a_created_profile_starts_on_the_default_of_its_role() {
         )
         .await;
     assert_eq!(reset.id, own.id);
-    assert_eq!(reset.system_prompt, default_system_prompt(Role::Engineer));
+    assert_eq!(reset.system_prompt, default_system_prompt(Seat::Author));
     assert!(reset.system_prompt_is_default);
 }
 
@@ -68,7 +68,7 @@ async fn a_created_profile_starts_on_the_default_of_its_role() {
 #[tokio::test]
 async fn a_system_prompt_is_rewritten_and_reset_by_name() {
     let h = harness().await;
-    h.profile("eng", Role::Engineer).await;
+    h.profile("eng", Seat::Author).await;
 
     let updated: ProfileDto = h
         .json(
@@ -91,7 +91,7 @@ async fn a_system_prompt_is_rewritten_and_reset_by_name() {
             StatusCode::OK,
         )
         .await;
-    assert_eq!(reset.system_prompt, default_system_prompt(Role::Engineer));
+    assert_eq!(reset.system_prompt, default_system_prompt(Seat::Author));
     assert!(reset.system_prompt_is_default);
 }
 
@@ -100,17 +100,17 @@ async fn a_system_prompt_is_rewritten_and_reset_by_name() {
 #[tokio::test]
 async fn no_route_reads_or_writes_a_lifecycle_prompt() {
     let h = harness().await;
-    let engineer = h.profile("eng", Role::Engineer).await;
-    let id = &engineer.id;
+    let author = h.profile("eng", Seat::Author).await;
+    let id = &author.id;
 
     for request in [
         get(&format!("/v1/profiles/{id}/prompts")),
         put_json(
-            &format!("/v1/profiles/{id}/prompts/engineer_briefing"),
+            &format!("/v1/profiles/{id}/prompts/author_briefing"),
             serde_json::json!({ "content": "Do {task_title}." }),
         ),
         post(&format!(
-            "/v1/profiles/{id}/prompts/engineer_briefing/reset"
+            "/v1/profiles/{id}/prompts/author_briefing/reset"
         )),
     ] {
         let (status, _) = h.send(request).await;
@@ -131,24 +131,24 @@ async fn an_unknown_profile_is_a_404_on_the_system_prompt_reset() {
     assert_eq!(err.error.code, "not_found");
 }
 
-/// The planner writes a spec the user approves, lands it, and sizes each slot
-/// it assigns, and all three rules reach a planner nobody has edited: the
-/// text is a constant, never a row, so the seeded Planner and every profile
-/// still on the default answer with the text the code ships today rather than
-/// the one that was current when they were created.
+/// The orchestrator writes a spec the user approves, lands it, and sizes each
+/// slot it assigns, and all three rules reach an orchestrator nobody has
+/// edited: the text is a constant, never a row, so the seeded Orchestrator
+/// and every profile still on the default answer with the text the code ships
+/// today rather than the one that was current when they were created.
 #[tokio::test]
-async fn a_planner_on_the_default_prompt_is_briefed_to_write_a_spec_and_size_its_slots() {
+async fn an_orchestrator_on_the_default_prompt_is_briefed_to_write_a_spec_and_size_its_slots() {
     let h = harness().await;
     let seeded = BUILTIN_PROFILES
         .iter()
-        .find(|b| b.role == Role::Planner)
-        .expect("a Planner is seeded");
+        .find(|b| b.seat == Seat::Orchestrator)
+        .expect("an Orchestrator is seeded");
 
     let fresh: ProfileDto = h
         .json(
             post_json(
                 "/v1/profiles",
-                serde_json::json!({ "name": "plan", "role": "planner" }),
+                serde_json::json!({ "name": "plan", "seat": "orchestrator" }),
             ),
             StatusCode::CREATED,
         )
@@ -157,7 +157,7 @@ async fn a_planner_on_the_default_prompt_is_briefed_to_write_a_spec_and_size_its
     for id in [seeded.id, &fresh.id] {
         let profile: ProfileDto = h.get(&format!("/v1/profiles/{id}")).await;
         assert!(profile.system_prompt_is_default, "{id} was edited");
-        assert_eq!(profile.system_prompt, default_system_prompt(Role::Planner));
+        assert_eq!(profile.system_prompt, default_system_prompt(Seat::Orchestrator));
         for guidance in [
             "Draft a spec: scope, behavior, acceptance criteria.",
             "Ask the user about each unclear point.",
@@ -168,7 +168,7 @@ async fn a_planner_on_the_default_prompt_is_briefed_to_write_a_spec_and_size_its
             "`list_models`",
             "Size each slot",
             "a top effort only where the task earns it",
-            "Keep a reviewer under its engineer",
+            "Keep a reviewer under its author",
             "`best_for`",
             "`cost`",
             "tier: unknown",

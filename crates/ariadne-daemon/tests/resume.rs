@@ -1,6 +1,6 @@
 //! Resuming an agent keeps its session row.
 //!
-//! A task bounced back by its reviewers is the same engineer, in the same
+//! A task bounced back by its reviewers is the same author, in the same
 //! conversation, in the same worktree — so it stays one session however many
 //! rounds it takes, rather than growing a sibling row per round. The same
 //! holds for each reviewer: one session for the whole review.
@@ -17,25 +17,25 @@ mod common;
 use std::path::PathBuf;
 
 use ariadne_api::stream::DomainEvent;
-use ariadne_core::{AgentKind, GoalStatus, PromptKind, Role, SessionStatus, TaskStatus};
+use ariadne_core::{AgentKind, GoalStatus, PromptKind, Seat, SessionStatus, TaskStatus};
 use ariadne_daemon::agents::prompts;
 use ariadne_store::{AgentSession, Task};
 
 use common::{Cast, Harness, harness, next_event, sh};
 
-/// A task with an engineer session that has already run once: a worktree on
+/// A task with an author session that has already run once: a worktree on
 /// disk and a tmux that is no longer alive.
 ///
 /// Its repository is not a git repo, so a fresh spawn cannot get off the
 /// ground here — which is what the fallback tests lean on.
-async fn engineer_session(h: &Harness) -> (Cast, AgentSession) {
+async fn author_session(h: &Harness) -> (Cast, AgentSession) {
     let cast = h.cast().await;
     let session = h
         .session(
             &cast.goal,
             Some(&cast.task),
-            Role::Engineer,
-            &cast.engineer.id,
+            Seat::Author,
+            &cast.author.id,
         )
         .await;
     h.store
@@ -60,7 +60,7 @@ async fn under_review(h: &Harness, model: Option<&str>) -> Cast {
     Cast { task, ..cast }
 }
 
-/// The reviewer bounces the task back and the engineer pushes another commit:
+/// The reviewer bounces the task back and the author pushes another commit:
 /// the task returns to review one round on, one commit ahead.
 async fn next_round(h: &Harness, task: &Task) -> Task {
     let repo_path = PathBuf::from(&h.store.get_repository(&task.repo_id).await.unwrap().path);
@@ -76,7 +76,7 @@ async fn next_round(h: &Harness, task: &Task) -> Task {
     for (to, actor) in [
         (TaskStatus::ChangesRequested, ariadne_core::Actor::Daemon),
         (TaskStatus::InProgress, ariadne_core::Actor::Daemon),
-        (TaskStatus::UnderReview, ariadne_core::Actor::Engineer),
+        (TaskStatus::UnderReview, ariadne_core::Actor::Author),
     ] {
         h.store
             .transition_task(&task.id, to, actor, None, None)
@@ -110,7 +110,7 @@ fn argv_of(h: &Harness, session_id: &str) -> String {
         .join(" ")
 }
 
-/// Which agent and model a session runs on comes off the pin its role
+/// Which agent and model a session runs on comes off the pin its seat
 /// carries — the reviewer slot here — and a profile edited afterwards does not
 /// reach it, on any launch path: not the resume that carries a reviewer into
 /// round two, and not the fresh session a round with nothing to resume gets.
@@ -185,29 +185,29 @@ async fn a_reviewers_pin_outlives_a_profile_edit() {
     );
 }
 
-/// The same for the engineer, whose pin is the task's: the spawn that starts
+/// The same for the author, whose pin is the task's: the spawn that starts
 /// the work and every resume that carries it through review run on the model
 /// the task was created with.
 #[tokio::test]
-async fn an_engineers_pin_outlives_a_profile_edit() {
+async fn an_authors_pin_outlives_a_profile_edit() {
     let h = harness().await;
     let cast = under_review(&h, Some("opus")).await;
     let task = cast.task.clone();
     h.move_profile(
-        &task.engineer_profile_id,
+        &task.author_profile_id,
         Some(AgentKind::Codex),
         Some("sonnet"),
     )
     .await;
 
-    let first = h.launcher.spawn_engineer(&task.id).await.unwrap();
+    let first = h.launcher.spawn_author(&task.id).await.unwrap();
     assert_eq!(first.agent_kind(), AgentKind::ClaudeCode);
     assert_eq!(first.model.as_deref(), Some("opus"));
 
     h.launcher.kill_session(&first.id).await.unwrap();
     let resumed = h
         .launcher
-        .resume_engineer(&task.id, "Round 1: please fix things.")
+        .resume_author(&task.id, "Round 1: please fix things.")
         .await
         .unwrap();
     assert_eq!(resumed.id, first.id, "the resume reused the session");
@@ -219,27 +219,28 @@ async fn an_engineers_pin_outlives_a_profile_edit() {
     );
 }
 
-/// And for the planner, whose pin is the goal's: a respawn after the profile
-/// moved still plans on the agent and model the goal was created with.
+/// And for the orchestrator, whose pin is the goal's: a respawn after the
+/// profile moved still plans on the agent and model the goal was created
+/// with.
 #[tokio::test]
-async fn a_planner_respawn_stays_on_the_goals_pin() {
+async fn an_orchestrator_respawn_stays_on_the_goals_pin() {
     let h = harness().await;
-    let planner = h
-        .profile_on("planner", Role::Planner, Some(AgentKind::ClaudeCode), Some("opus"))
+    let orchestrator = h
+        .profile_on("orchestrator", Seat::Orchestrator, Some(AgentKind::ClaudeCode), Some("opus"))
         .await;
-    let (goal, _repo) = h.goal(&planner).await;
-    let (goal, planner) = (goal.id, planner.id);
+    let (goal, _repo) = h.goal(&orchestrator).await;
+    let (goal, orchestrator) = (goal.id, orchestrator.id);
 
-    let first = h.launcher.spawn_planner(&goal).await.unwrap();
+    let first = h.launcher.spawn_orchestrator(&goal).await.unwrap();
     assert_eq!(first.model.as_deref(), Some("opus"));
 
     h.move_profile(
-        &planner, Some(AgentKind::Codex), Some("sonnet"))
+        &orchestrator, Some(AgentKind::Codex), Some("sonnet"))
         .await;
     h.launcher.kill_session(&first.id).await.unwrap();
 
-    let second = h.launcher.spawn_planner(&goal).await.unwrap();
-    assert_ne!(second.id, first.id, "a planner respawn is a fresh session");
+    let second = h.launcher.spawn_orchestrator(&goal).await.unwrap();
+    assert_ne!(second.id, first.id, "an orchestrator respawn is a fresh session");
     assert_eq!(second.agent_kind(), AgentKind::ClaudeCode);
     assert_eq!(second.model.as_deref(), Some("opus"));
     assert!(
@@ -264,7 +265,7 @@ async fn every_launch_of_a_session_reports_under_a_new_id() {
     let cast = under_review(&h, None).await;
     let task = cast.task.clone();
 
-    let first = h.launcher.spawn_engineer(&task.id).await.unwrap();
+    let first = h.launcher.spawn_author(&task.id).await.unwrap();
     let launch = h.launch_id(&first).await.expect("the launch was named");
     assert!(
         env_of(&h, &first.id).contains(&("ARIADNE_LAUNCH_ID".to_string(), launch.clone())),
@@ -275,7 +276,7 @@ async fn every_launch_of_a_session_reports_under_a_new_id() {
     h.launcher.kill_session(&first.id).await.unwrap();
     let resumed = h
         .launcher
-        .resume_engineer(&task.id, "Round 1: please fix things.")
+        .resume_author(&task.id, "Round 1: please fix things.")
         .await
         .unwrap();
     assert_eq!(resumed.id, first.id, "the resume reused the session");
@@ -290,7 +291,7 @@ async fn every_launch_of_a_session_reports_under_a_new_id() {
 
 /// A pane that outlived the row that owned it costs the next spawn nothing.
 ///
-/// tmux names are derived from the goal, the task and the role, so a role has
+/// tmux names are derived from the goal, the task and the seat, so a seat has
 /// exactly one — and `new-session` refuses a name that is taken *after* the
 /// session row has been written. A pane left behind that way would mint a dead
 /// row per attempt until the spawn budget ran out and the user was told an
@@ -299,16 +300,16 @@ async fn every_launch_of_a_session_reports_under_a_new_id() {
 #[tokio::test]
 async fn a_pane_left_behind_is_taken_rather_than_spawned_around() {
     let h = harness().await;
-    let planner = h.profile("planner", Role::Planner).await;
-    let (goal, _repo) = h.goal(&planner).await;
+    let orchestrator = h.profile("orchestrator", Seat::Orchestrator).await;
+    let (goal, _repo) = h.goal(&orchestrator).await;
 
-    let first = h.launcher.spawn_planner(&goal.id).await.unwrap();
+    let first = h.launcher.spawn_orchestrator(&goal.id).await.unwrap();
     // The agent is in its pane; the row under it is not — the database and
     // the machine disagreeing, which is the whole of the situation.
     h.pane_exists(&first);
     h.set_status(&first, SessionStatus::Exited).await;
 
-    let second = h.launcher.spawn_planner(&goal.id).await.unwrap();
+    let second = h.launcher.spawn_orchestrator(&goal.id).await.unwrap();
     assert_eq!(
         h.killed_panes(),
         vec![first.tmux_session.clone()],
@@ -319,7 +320,7 @@ async fn a_pane_left_behind_is_taken_rather_than_spawned_around() {
     assert_eq!(
         h.sessions_of_goal(&goal.id).await.len(),
         2,
-        "one row per planner that was started, and no row for an attempt that was not"
+        "one row per orchestrator that was started, and no row for an attempt that was not"
     );
 }
 
@@ -346,17 +347,17 @@ async fn a_pin_of_no_model_stays_the_agents_own_default() {
 }
 
 /// The changes-requested bounce, twice over: the task panel's Sessions tab
-/// must still list one engineer, live again, on the same conversation.
+/// must still list one author, live again, on the same conversation.
 #[tokio::test]
-async fn resuming_the_engineer_reuses_its_session_across_review_rounds() {
+async fn resuming_the_author_reuses_its_session_across_review_rounds() {
     let h = harness().await;
-    let (cast, first) = h.resumable_engineer().await;
+    let (cast, first) = h.resumable_author().await;
     let task = cast.task.clone();
 
     for round in 1..=2 {
         let resumed = h
             .launcher
-            .resume_engineer(&task.id, &format!("Round {round}: please fix things."))
+            .resume_author(&task.id, &format!("Round {round}: please fix things."))
             .await
             .unwrap();
         assert_eq!(resumed.id, first.id, "round {round} reused the session");
@@ -376,7 +377,7 @@ async fn resuming_the_engineer_reuses_its_session_across_review_rounds() {
         assert_eq!(
             sessions.len(),
             1,
-            "round {round} left more than one engineer session: {sessions:?}"
+            "round {round} left more than one author session: {sessions:?}"
         );
         // Each relaunch resumed the stored conversation rather than starting
         // one. The plan is where that is written now, one per launch.
@@ -416,13 +417,13 @@ async fn a_launch_hands_tmux_nothing_that_can_outgrow_it() {
     use std::os::unix::fs::PermissionsExt;
 
     let h = harness().await;
-    let (cast, first) = h.resumable_engineer().await;
+    let (cast, first) = h.resumable_author().await;
     let task = cast.task.clone();
     let briefing = "B".repeat(100_000);
 
     let session = h
         .launcher
-        .resume_engineer(&task.id, &briefing)
+        .resume_author(&task.id, &briefing)
         .await
         .unwrap();
     let worktree = session.worktree_path.clone().unwrap();
@@ -478,7 +479,7 @@ async fn a_reviewer_reuses_its_session_across_review_rounds() {
         .resume_reviewer(&task.id, &reviewer, "(unused: no session yet)")
         .await
         .unwrap();
-    assert_eq!(first.role(), Role::Reviewer);
+    assert_eq!(first.seat(), Seat::Reviewer);
     assert_eq!(first.review_round, Some(1));
     assert!(
         !first.tmux_session.ends_with("-r1"),
@@ -491,7 +492,7 @@ async fn a_reviewer_reuses_its_session_across_review_rounds() {
         .expect("claude picks its session uuid at spawn");
 
     // The task leaves review, so the daemon tears the reviewer's tmux down;
-    // then the engineer revises and it comes back for round two.
+    // then the author revises and it comes back for round two.
     h.launcher.kill_session(&first.id).await.unwrap();
     let task = next_round(&h, &task).await;
     assert_eq!(task.review_round, 2);
@@ -529,7 +530,7 @@ async fn a_reviewer_reuses_its_session_across_review_rounds() {
         .sessions_of(&task.id)
         .await
         .into_iter()
-        .filter(|s| s.role() == Role::Reviewer)
+        .filter(|s| s.seat() == Seat::Reviewer)
         .collect();
     assert_eq!(
         sessions.len(),
@@ -575,7 +576,7 @@ async fn a_reviewer_without_an_agent_id_is_spawned_afresh() {
     let cast = under_review(&h, None).await;
     let (task, reviewer) = (cast.task.clone(), cast.reviewer.id.clone());
     let stillborn = h
-        .session(&cast.goal, Some(&task), Role::Reviewer, &reviewer)
+        .session(&cast.goal, Some(&task), Seat::Reviewer, &reviewer)
         .await;
     h.set_status(&stillborn, SessionStatus::Exited).await;
 
@@ -599,12 +600,12 @@ async fn a_reviewer_without_an_agent_id_is_spawned_afresh() {
 #[tokio::test]
 async fn a_relaunch_announces_the_session_as_updated() {
     let h = harness().await;
-    let (cast, first) = h.resumable_engineer().await;
+    let (cast, first) = h.resumable_author().await;
     let task = cast.task.clone();
     let mut rx = h.bus.subscribe();
 
     h.launcher
-        .resume_engineer(&task.id, "fix things")
+        .resume_author(&task.id, "fix things")
         .await
         .unwrap();
 
@@ -633,11 +634,11 @@ async fn reviving_a_session_revives_it_in_place() {
     let h = harness().await;
     let cast = under_review(&h, Some("opus")).await;
     let task = cast.task.clone();
-    let session = h.launcher.spawn_engineer(&task.id).await.unwrap();
+    let session = h.launcher.spawn_author(&task.id).await.unwrap();
     h.launcher.kill_session(&session.id).await.unwrap();
 
     h.move_profile(
-        &task.engineer_profile_id,
+        &task.author_profile_id,
         Some(AgentKind::Codex),
         Some("sonnet"),
     )
@@ -658,22 +659,22 @@ async fn reviving_a_session_revives_it_in_place() {
     );
 }
 
-/// Nothing to resume from: an engineer session that never reported an agent id
+/// Nothing to resume from: an author session that never reported an agent id
 /// is not a conversation, so it is left alone and a fresh spawn is what runs
 /// (which fails here for want of a git repo — the point is the path taken).
 #[tokio::test]
 async fn a_session_without_an_agent_id_is_not_revived() {
     let h = harness().await;
-    let (cast, first) = engineer_session(&h).await;
+    let (cast, first) = author_session(&h).await;
     let task = cast.task.clone();
     h.set_status(&first, SessionStatus::Exited).await;
 
     assert!(
         h.launcher
-            .resume_engineer(&task.id, "carry on")
+            .resume_author(&task.id, "carry on")
             .await
             .is_err(),
-        "there is no repo to spawn a fresh engineer in"
+        "there is no repo to spawn a fresh author in"
     );
     let after = h.store.get_session(&first.id).await.unwrap();
     assert_eq!(
@@ -692,7 +693,7 @@ async fn a_session_without_an_agent_id_is_not_revived() {
 async fn a_session_of_a_finished_goal_is_not_revived() {
     for finished in [GoalStatus::Completed, GoalStatus::Cancelled] {
         let h = harness().await;
-        let (_cast, session) = h.resumable_engineer().await;
+        let (_cast, session) = h.resumable_author().await;
         h.store
             .set_goal_status(&session.goal_id, finished)
             .await

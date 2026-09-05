@@ -1,4 +1,4 @@
-//! What happens to a task once its engineer says it is done: the verdicts, the
+//! What happens to a task once its author says it is done: the verdicts, the
 //! diff they are about, the request it was published as, and the proof that it
 //! landed.
 
@@ -7,7 +7,7 @@ use axum::http::{HeaderMap, StatusCode};
 
 use ariadne_api::reviews::{CreateReviewRequest, ReviewDto};
 use ariadne_api::tasks::{RecordPullRequestRequest, TaskDto};
-use ariadne_core::{AttentionReason, MergeStrategy, Role, TaskStatus};
+use ariadne_core::{AttentionReason, MergeStrategy, Seat, TaskStatus};
 use ariadne_store::{NewReview, Repository, Task};
 
 use super::AppState;
@@ -32,7 +32,7 @@ fn unresolved(e: impl std::fmt::Display) -> ApiError {
 ///
 /// `pull_request` is squashed by the forge, which writes a commit no branch
 /// points at — the task branch is deliberately *not* an ancestor of the base
-/// afterwards. What can be checked here is the other half of the engineer's
+/// afterwards. What can be checked here is the other half of the author's
 /// last step: it fetches and fast-forwards the local base onto the merge, and
 /// the sha it reports has to be on that base branch. Until it is, the change is
 /// not on this machine and the task is not finished. Asking the forge instead
@@ -81,7 +81,7 @@ pub(super) async fn verify_merged(
     Ok(())
 }
 
-/// Record the pull or merge request the engineer opened for a task.
+/// Record the pull or merge request the author opened for a task.
 ///
 /// The URL travels as a tool call, so a published task is either one the UI
 /// and the CLI can point at or one that was never reported.
@@ -90,13 +90,13 @@ pub(super) async fn verify_merged(
 /// merge but a human is exactly what `waiting_user` says, so it goes up here,
 /// on the session that opened it — the pane they answer in, and the one place
 /// the request can be traced back to. It used to be raised by the message the
-/// landing briefing told the engineer to write, and a published task with
+/// landing briefing told the author to write, and a published task with
 /// nothing on the strip is one nobody knows to go and merge.
 ///
 /// It stays up until the user acts: an agent's own events never take
-/// `waiting_user` down (`clear_agent_attention`), and the engineer polling its
+/// `waiting_user` down (`clear_agent_attention`), and the author polling its
 /// request is exactly such an agent. `Scheduler::keep_waiting_user` puts it
-/// back on whatever comes up when that engineer is restarted, which is what
+/// back on whatever comes up when that author is restarted, which is what
 /// makes the two halves one flag rather than two.
 #[utoipa::path(post, path = "/v1/tasks/{id}/pull-request", tag = "tasks",
     request_body = RecordPullRequestRequest,
@@ -104,7 +104,7 @@ pub(super) async fn verify_merged(
     responses(
         (status = 200, body = TaskDto),
         (status = 400, description = "empty URL"),
-        (status = 403, description = "not an engineer session"),
+        (status = 403, description = "not an author session"),
         (status = 409, description = "the task is not approved")
     ))]
 pub async fn record_pull_request(
@@ -115,9 +115,9 @@ pub async fn record_pull_request(
 ) -> ApiResult<Json<TaskDto>> {
     let ctx = call_ctx(&state.store, &headers).await?;
     ensure_task_scope(&ctx, &id)?;
-    let Some(engineer) = ctx.session.filter(|s| s.role() == Role::Engineer) else {
+    let Some(author) = ctx.session.filter(|s| s.seat() == Seat::Author) else {
         return Err(ApiError::forbidden(
-            "only the engineer of a task may record its pull request",
+            "only the author of a task may record its pull request",
         ));
     };
     let task = state.store.get_task(&id).await?;
@@ -137,7 +137,7 @@ pub async fn record_pull_request(
     state.store.set_task_pull_request(&id, url).await?;
     state
         .store
-        .set_session_attention(&engineer.id, AttentionReason::WaitingUser)
+        .set_session_attention(&author.id, AttentionReason::WaitingUser)
         .await?;
     state.notify_scheduler(&id);
     let task = state.store.get_task(&id).await?;
@@ -178,10 +178,11 @@ pub async fn post_review(
         )));
     }
 
-    // Reviewer identity: from the session, or explicit for user-submitted reviews.
+    // Reviewer identity: from the session, or explicit for user-submitted
+    // reviews.
     let reviewer_profile_id = match (&ctx.session, &req.reviewer_profile) {
         (Some(session), _) => {
-            if session.role() != Role::Reviewer {
+            if session.seat() != Seat::Reviewer {
                 return Err(ApiError::forbidden(
                     "only reviewer sessions may submit reviews",
                 ));

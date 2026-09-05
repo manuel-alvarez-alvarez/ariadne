@@ -1,10 +1,11 @@
 //! Integration tests for `GET /v1/sessions/{id}/logs/stream`.
 //!
-//! No tmux needed: every `tmux` here is a stub script. A session pointing at a
-//! name no stub admits to is exactly the "session already over" path — the one
-//! whose framing and lifecycle the acceptance criteria pin down. Following a
-//! live pane is the tailing logic, unit-tested in `log::console`; the one test that
-//! drives a real pane is `#[ignore]`d and asks for real tmux.
+//! No tmux needed: every `tmux` here is a stub script. A session pointing at
+//! a name no stub admits to is exactly the "session already over" path — the
+//! one whose framing and lifecycle the acceptance criteria pin down.
+//! Following a live pane is the tailing logic, unit-tested in `log::console`;
+//! the one test that drives a real pane is `#[ignore]`d and asks for real
+//! tmux.
 
 mod common;
 
@@ -108,7 +109,7 @@ async fn an_exited_session_yields_its_full_log_then_ends() {
     expect_sse(&mut body, "end").await;
 }
 
-/// tmux session names are per (task, role), so another session can hold the
+/// tmux session names are per (task, seat), so another session can hold the
 /// name of one that is over. Asking for the finished session's logs must
 /// yield *its* console log, never the pane the live one is now drawing.
 #[tokio::test]

@@ -1,7 +1,7 @@
 //! Store integration tests against a temp-file SQLite database.
 
 use ariadne_core::{
-    Actor, AgentKind, AttentionReason, GoalStatus, MergeStrategy, ReviewVerdict, Role,
+    Actor, AgentKind, AttentionReason, GoalStatus, MergeStrategy, ReviewVerdict, Seat,
     SessionStatus, TaskStatus, TokenUsage,
 };
 use ariadne_store::defaults::{default_landing_prompt, default_system_prompt};
@@ -13,11 +13,11 @@ async fn test_store() -> (Store, tempfile::TempDir) {
     (store, dir)
 }
 
-async fn seed_profile(store: &Store, name: &str, role: Role) -> Profile {
+async fn seed_profile(store: &Store, name: &str, seat: Seat) -> Profile {
     store
         .create_profile(NewProfile {
             name: name.into(),
-            role,
+            seat,
             agent_kind: Some(AgentKind::ClaudeCode),
             model: None,
             effort: None,
@@ -42,13 +42,13 @@ async fn seed_repository(store: &Store) -> Repository {
         .unwrap()
 }
 
-async fn seed_goal(store: &Store, planner: &Profile, max_tasks: Option<i64>) -> (Goal, Repository) {
+async fn seed_goal(store: &Store, orchestrator: &Profile, max_tasks: Option<i64>) -> (Goal, Repository) {
     let repo = seed_repository(store).await;
     let goal = store
         .create_goal(NewGoal {
             title: "Test goal".into(),
             description: "desc".into(),
-            planner_profile_id: planner.id.clone(),
+            orchestrator_profile_id: orchestrator.id.clone(),
             max_tasks,
             required_approvals: 1,
             repository_ids: vec![repo.id.clone()],
@@ -59,11 +59,12 @@ async fn seed_goal(store: &Store, planner: &Profile, max_tasks: Option<i64>) -> 
     (goal, repo)
 }
 
-/// The ramp almost every test starts on: a fresh database holding one planner
-/// profile, one goal, the repository that goal works in, and one task on it.
+/// The ramp almost every test starts on: a fresh database holding one
+/// orchestrator profile, one goal, the repository that goal works in, and one
+/// task on it.
 struct World {
     store: Store,
-    planner: Profile,
+    orchestrator: Profile,
     goal: Goal,
     repo: Repository,
     task: Task,
@@ -74,12 +75,12 @@ struct World {
 impl World {
     async fn new() -> Self {
         let (store, dir) = test_store().await;
-        let planner = seed_profile(&store, "planner", Role::Planner).await;
-        let (goal, repo) = seed_goal(&store, &planner, None).await;
+        let orchestrator = seed_profile(&store, "orchestrator", Seat::Orchestrator).await;
+        let (goal, repo) = seed_goal(&store, &orchestrator, None).await;
         let task = seed_task(&store, &goal, &repo, vec![]).await;
         Self {
             store,
-            planner,
+            orchestrator,
             goal,
             repo,
             task,
@@ -88,11 +89,11 @@ impl World {
     }
 
     /// A session in this world's goal, on its task unless `task_id` says
-    /// otherwise — a planner's has none.
+    /// otherwise — an orchestrator's has none.
     async fn session(
         &self,
         tmux: &str,
-        role: Role,
+        seat: Seat,
         profile_id: &str,
         task_id: Option<&str>,
     ) -> AgentSession {
@@ -100,7 +101,7 @@ impl World {
             .create_session(NewSession {
                 goal_id: self.goal.id.clone(),
                 task_id: task_id.map(str::to_string),
-                role,
+                seat,
                 profile_id: profile_id.to_string(),
                 agent_kind: AgentKind::ClaudeCode,
                 model: None,
@@ -113,12 +114,12 @@ impl World {
             .unwrap()
     }
 
-    /// The engineer session of this world's task.
-    async fn engineer_session(&self) -> AgentSession {
-        let profile = self.task.engineer_profile_id.clone();
+    /// The author session of this world's task.
+    async fn author_session(&self) -> AgentSession {
+        let profile = self.task.author_profile_id.clone();
         self.session(
             "ariadne-test-eng",
-            Role::Engineer,
+            Seat::Author,
             &profile,
             Some(&self.task.id),
         )
@@ -132,13 +133,13 @@ impl World {
 }
 
 /// The happy path, one move at a time: what a task does between `pending` and
-/// `merged`, and who does each of them.
+/// `finished`, and who does each of them.
 const HAPPY_PATH: [(TaskStatus, Actor); 5] = [
     (TaskStatus::Ready, Actor::Daemon),
     (TaskStatus::InProgress, Actor::Daemon),
-    (TaskStatus::UnderReview, Actor::Engineer),
+    (TaskStatus::UnderReview, Actor::Author),
     (TaskStatus::Approved, Actor::Daemon),
-    (TaskStatus::Merged, Actor::Engineer),
+    (TaskStatus::Finished, Actor::Author),
 ];
 
 /// Walk a task up the happy path from wherever it is to `upto`.
@@ -150,7 +151,7 @@ async fn walk_to(store: &Store, task_id: &str, upto: TaskStatus) -> Task {
         .map_or(0, |at| at + 1);
     let mut task = store.get_task(task_id).await.unwrap();
     for (status, actor) in &HAPPY_PATH[from..] {
-        let merge_commit = (*status == TaskStatus::Merged).then_some("abc123");
+        let merge_commit = (*status == TaskStatus::Finished).then_some("abc123");
         task = store
             .transition_task(task_id, *status, *actor, None, merge_commit)
             .await
@@ -166,13 +167,13 @@ async fn seed_task(store: &Store, goal: &Goal, repo: &Repository, deps: Vec<Stri
     let eng = seed_profile(
         store,
         &format!("eng-{}", ariadne_core::id::new_id()),
-        Role::Engineer,
+        Seat::Author,
     )
     .await;
     let rev = seed_profile(
         store,
         &format!("rev-{}", ariadne_core::id::new_id()),
-        Role::Reviewer,
+        Seat::Reviewer,
     )
     .await;
     store
@@ -181,7 +182,7 @@ async fn seed_task(store: &Store, goal: &Goal, repo: &Repository, deps: Vec<Stri
             repo_id: repo.id.clone(),
             title: "task".into(),
             description: "do things".into(),
-            engineer_profile_id: eng.id,
+            author_profile_id: eng.id,
             pin: None,
             reviewers: vec![ReviewerSlot::of(rev.id)],
             depends_on: deps,
@@ -260,14 +261,14 @@ async fn agent_config_flags_are_replaced_whole() {
 #[tokio::test]
 async fn profile_crud_and_delete_guard() {
     let (store, _dir) = test_store().await;
-    let p = seed_profile(&store, "planner-1", Role::Planner).await;
-    assert_eq!(p.role(), Role::Planner);
+    let p = seed_profile(&store, "orchestrator-1", Seat::Orchestrator).await;
+    assert_eq!(p.seat(), Seat::Orchestrator);
 
     // Unique name enforced.
     let dup = store
         .create_profile(NewProfile {
-            name: "planner-1".into(),
-            role: Role::Planner,
+            name: "orchestrator-1".into(),
+            seat: Seat::Orchestrator,
             agent_kind: Some(AgentKind::Codex),
             model: None,
             effort: None,
@@ -284,7 +285,7 @@ async fn profile_crud_and_delete_guard() {
     ));
 
     // Unreferenced profile deletes fine.
-    let q = seed_profile(&store, "planner-2", Role::Planner).await;
+    let q = seed_profile(&store, "orchestrator-2", Seat::Orchestrator).await;
     store.delete_profile(&q.id).await.unwrap();
     assert!(matches!(
         store.get_profile(&q.id).await,
@@ -384,7 +385,7 @@ async fn repository_crud_and_unique_path_branch() {
 
 /// A goal holds references, not copies: what it lists is whatever the
 /// repositories say right now, and so is what its tasks resolve.
-/// How a repository takes a change is the one thing about it an engineer has
+/// How a repository takes a change is the one thing about it an author has
 /// to be told, and it round-trips like every other field: `direct` unless
 /// somebody said otherwise, and editable either way.
 #[tokio::test]
@@ -440,7 +441,7 @@ async fn a_repository_says_how_a_task_lands_on_it() {
 /// strategy, replaceable with words of its own, and put back on the
 /// strategy's default by clearing it.
 #[tokio::test]
-async fn a_repository_owns_the_briefing_its_engineer_lands_with() {
+async fn a_repository_owns_the_briefing_its_author_lands_with() {
     let (store, _dir) = test_store().await;
 
     // Created with nothing: the default of the strategy is what is in force,
@@ -593,7 +594,7 @@ async fn a_landing_briefing_naming_an_unknown_placeholder_is_refused() {
 #[tokio::test]
 async fn a_goal_reads_its_repositories_live() {
     let (store, _dir) = test_store().await;
-    let planner = seed_profile(&store, "planner", Role::Planner).await;
+    let orchestrator = seed_profile(&store, "orchestrator", Seat::Orchestrator).await;
     let api = seed_repository(&store).await;
     let ui = seed_repository(&store).await;
 
@@ -601,7 +602,7 @@ async fn a_goal_reads_its_repositories_live() {
         .create_goal(NewGoal {
             title: "Two repos".into(),
             description: "desc".into(),
-            planner_profile_id: planner.id.clone(),
+            orchestrator_profile_id: orchestrator.id.clone(),
             max_tasks: None,
             required_approvals: 1,
             // The same repository named twice is one reference.
@@ -640,12 +641,12 @@ async fn a_goal_reads_its_repositories_live() {
 #[tokio::test]
 async fn a_goal_needs_repositories_that_exist() {
     let (store, _dir) = test_store().await;
-    let planner = seed_profile(&store, "planner", Role::Planner).await;
+    let orchestrator = seed_profile(&store, "orchestrator", Seat::Orchestrator).await;
     let repo = seed_repository(&store).await;
     let new_goal = |repository_ids: Vec<String>| NewGoal {
         title: "Goal".into(),
         description: "desc".into(),
-        planner_profile_id: planner.id.clone(),
+        orchestrator_profile_id: orchestrator.id.clone(),
         max_tasks: None,
         required_approvals: 1,
         repository_ids,
@@ -669,8 +670,8 @@ async fn a_goal_needs_repositories_that_exist() {
     // A task can only work in a repository its goal references.
     let goal = store.create_goal(new_goal(vec![repo.id])).await.unwrap();
     let unrelated = seed_repository(&store).await;
-    let eng = seed_profile(&store, "eng", Role::Engineer).await;
-    let rev = seed_profile(&store, "rev", Role::Reviewer).await;
+    let eng = seed_profile(&store, "eng", Seat::Author).await;
+    let rev = seed_profile(&store, "rev", Seat::Reviewer).await;
     assert!(matches!(
         store
             .create_task(NewTask {
@@ -678,7 +679,7 @@ async fn a_goal_needs_repositories_that_exist() {
                 repo_id: unrelated.id,
                 title: "task".into(),
                 description: "do things".into(),
-                engineer_profile_id: eng.id,
+                author_profile_id: eng.id,
                 pin: None,
                 reviewers: vec![ReviewerSlot::of(rev.id)],
                 depends_on: vec![],
@@ -712,8 +713,8 @@ async fn a_repository_a_goal_holds_cannot_be_deleted() {
 #[tokio::test]
 async fn task_branch_is_named_after_the_title() {
     let w = World::new().await;
-    let eng = seed_profile(&w.store, "eng", Role::Engineer).await;
-    let rev = seed_profile(&w.store, "rev", Role::Reviewer).await;
+    let eng = seed_profile(&w.store, "eng", Seat::Author).await;
+    let rev = seed_profile(&w.store, "rev", Seat::Reviewer).await;
     let task = w
         .store
         .create_task(NewTask {
@@ -721,7 +722,7 @@ async fn task_branch_is_named_after_the_title() {
             repo_id: w.repo.id.clone(),
             title: "Fix the landing briefing: real fetch/rebase".into(),
             description: "d".into(),
-            engineer_profile_id: eng.id,
+            author_profile_id: eng.id,
             pin: None,
             reviewers: vec![ReviewerSlot::of(rev.id)],
             depends_on: vec![],
@@ -745,14 +746,14 @@ async fn task_happy_path_to_merged() {
     let t = walk_to(&w.store, &w.task.id, TaskStatus::UnderReview).await;
     assert_eq!(t.review_round, 1, "review round bumps on under_review");
 
-    let t = walk_to(&w.store, &w.task.id, TaskStatus::Merged).await;
-    assert_eq!(t.status(), TaskStatus::Merged);
+    let t = walk_to(&w.store, &w.task.id, TaskStatus::Finished).await;
+    assert_eq!(t.status(), TaskStatus::Finished);
     assert_eq!(t.merge_commit.as_deref(), Some("abc123"));
 
     let audit = w.store.list_task_transitions(&t.id).await.unwrap();
     assert_eq!(audit.len(), 5);
     assert_eq!(audit[0].from_status, "pending");
-    assert_eq!(audit[4].to_status, "merged");
+    assert_eq!(audit[4].to_status, "finished");
 }
 
 #[tokio::test]
@@ -765,8 +766,8 @@ async fn illegal_transitions_are_rejected_and_unaudited() {
         w.store
             .transition_task(
                 &task.id,
-                TaskStatus::Merged,
-                Actor::Engineer,
+                TaskStatus::Finished,
+                Actor::Author,
                 None,
                 Some("x")
             )
@@ -780,11 +781,11 @@ async fn illegal_transitions_are_rejected_and_unaudited() {
             .await,
         Err(StoreError::Transition(_))
     ));
-    // Merged requires a commit.
+    // Finished requires a commit.
     let t = walk_to(&w.store, &task.id, TaskStatus::Approved).await;
     assert!(matches!(
         w.store
-            .transition_task(&t.id, TaskStatus::Merged, Actor::Engineer, None, None)
+            .transition_task(&t.id, TaskStatus::Finished, Actor::Author, None, None)
             .await,
         Err(StoreError::Invalid(_))
     ));
@@ -796,19 +797,19 @@ async fn illegal_transitions_are_rejected_and_unaudited() {
 #[tokio::test]
 async fn max_tasks_is_enforced() {
     let (store, _dir) = test_store().await;
-    let planner = seed_profile(&store, "planner", Role::Planner).await;
-    let (goal, repo) = seed_goal(&store, &planner, Some(1)).await;
+    let orchestrator = seed_profile(&store, "orchestrator", Seat::Orchestrator).await;
+    let (goal, repo) = seed_goal(&store, &orchestrator, Some(1)).await;
     let _t1 = seed_task(&store, &goal, &repo, vec![]).await;
 
-    let eng = seed_profile(&store, "eng-x", Role::Engineer).await;
-    let rev = seed_profile(&store, "rev-x", Role::Reviewer).await;
+    let eng = seed_profile(&store, "eng-x", Seat::Author).await;
+    let rev = seed_profile(&store, "rev-x", Seat::Reviewer).await;
     let t2 = store
         .create_task(NewTask {
             goal_id: goal.id.clone(),
             repo_id: repo.id.clone(),
             title: "too many".into(),
             description: "".into(),
-            engineer_profile_id: eng.id,
+            author_profile_id: eng.id,
             pin: None,
             reviewers: vec![ReviewerSlot::of(rev.id)],
             depends_on: vec![],
@@ -842,7 +843,7 @@ async fn dependencies_gate_and_reject_cycles() {
     ));
 
     // Merge a; b's deps become satisfied.
-    walk_to(store, &a.id, TaskStatus::Merged).await;
+    walk_to(store, &a.id, TaskStatus::Finished).await;
     assert!(store.task_dependencies_merged(&b.id).await.unwrap());
 }
 
@@ -871,14 +872,14 @@ async fn a_dependency_that_ended_unmerged_is_reported_as_blocking() {
         .unwrap();
     assert_eq!(blocked().await, Some(dep.id.clone()), "a failed one is not");
 
-    // Retried, it is on its way again — and merged, it is where the task
+    // Retried, it is on its way again — and finished, it is where the task
     // waiting on it wanted it.
     store
         .transition_task(&dep.id, TaskStatus::Ready, Actor::User, None, None)
         .await
         .unwrap();
     assert_eq!(blocked().await, None, "a retried dependency blocks nothing");
-    walk_to(store, &dep.id, TaskStatus::Merged).await;
+    walk_to(store, &dep.id, TaskStatus::Finished).await;
     assert_eq!(blocked().await, None);
 
     // And a cancelled dependency is as final as a failed one.
@@ -932,7 +933,7 @@ async fn setting_the_dependencies_of_a_ready_task_downgrades_it_with_audit() {
     assert_eq!(audit.len(), 2);
     assert_eq!(audit[1].from_status, "ready");
     assert_eq!(audit[1].to_status, "pending");
-    assert_eq!(audit[1].actor, "planner");
+    assert_eq!(audit[1].actor, "orchestrator");
 
     // Clearing the dependencies of a pending task leaves the status alone.
     store.set_task_dependencies(&task.id, &[]).await.unwrap();
@@ -1033,7 +1034,7 @@ async fn sessions_and_events_round_trip() {
     let w = World::new().await;
     let (store, task) = (&w.store, &w.task);
 
-    let session = w.engineer_session().await;
+    let session = w.author_session().await;
     store
         .set_session_internal_id(&session.id, "uuid-1234")
         .await
@@ -1080,7 +1081,7 @@ async fn every_launch_of_a_session_is_dated() {
     let w = World::new().await;
     let store = &w.store;
 
-    let session = w.engineer_session().await;
+    let session = w.author_session().await;
     assert_eq!(
         session.launched_at, None,
         "a row that was created but never launched is dated by nothing"
@@ -1114,7 +1115,7 @@ async fn every_launch_of_a_session_is_dated() {
 async fn a_session_owes_a_compaction_until_it_is_paid() {
     let w = World::new().await;
     let store = &w.store;
-    let session = w.engineer_session().await;
+    let session = w.author_session().await;
     assert_eq!(
         session.compact_owed_at, None,
         "a fresh session owes nothing"
@@ -1202,7 +1203,7 @@ async fn restarting_a_session_reopens_the_same_row() {
     let w = World::new().await;
     let (store, task) = (&w.store, &w.task);
 
-    let session = w.engineer_session().await;
+    let session = w.author_session().await;
     store
         .set_session_internal_id(&session.id, "uuid-1234")
         .await
@@ -1285,7 +1286,7 @@ async fn session_attention_is_raised_kept_and_cleared() {
     let w = World::new().await;
     let store = &w.store;
 
-    let session = w.engineer_session().await;
+    let session = w.author_session().await;
     let fresh = store.get_session(&session.id).await.unwrap();
     assert_eq!(fresh.attention_reason(), None);
     assert_eq!(fresh.attention_since, None);
@@ -1388,7 +1389,7 @@ async fn session_attention_is_raised_kept_and_cleared() {
 async fn an_agents_own_event_does_not_clear_the_attention_raised_for_the_user() {
     let w = World::new().await;
     let store = &w.store;
-    let session = w.engineer_session().await;
+    let session = w.author_session().await;
 
     // What the agent raised for itself, the agent takes back down.
     store
@@ -1446,7 +1447,7 @@ async fn an_agents_own_event_does_not_clear_the_attention_raised_for_the_user() 
 async fn an_idle_report_clears_only_the_silence_and_the_error() {
     let w = World::new().await;
     let store = &w.store;
-    let session = w.engineer_session().await;
+    let session = w.author_session().await;
     let reason = async || {
         store
             .get_session(&session.id)
@@ -1476,7 +1477,8 @@ async fn an_idle_report_clears_only_the_silence_and_the_error() {
         assert_eq!(reason().await, Some(kept), "{kept:?}");
     }
 
-    // A session with nothing up is a no-op; an id that names none still says so.
+    // A session with nothing up is a no-op; an id that names none still says
+    // so.
     store.clear_session_attention(&session.id).await.unwrap();
     store.clear_attention_after_idle(&session.id).await.unwrap();
     assert!(
@@ -1496,7 +1498,7 @@ async fn an_idle_report_clears_only_the_silence_and_the_error() {
 async fn a_pending_question_is_the_last_word_of_a_sessions_log() {
     let w = World::new().await;
     let store = &w.store;
-    let session = w.engineer_session().await;
+    let session = w.author_session().await;
     let pending = async || {
         store
             .tool_call_is_pending(&session.id, "AskUserQuestion")
@@ -1579,7 +1581,7 @@ async fn a_pending_question_is_the_last_word_of_a_sessions_log() {
 async fn an_agents_own_reason_does_not_replace_the_attention_raised_for_the_user() {
     let w = World::new().await;
     let store = &w.store;
-    let session = w.engineer_session().await;
+    let session = w.author_session().await;
     // Installed after the seeding, so what it holds is this test's writes.
     let mut changes = store.watch_changes().expect("the only watcher");
 
@@ -1667,7 +1669,7 @@ async fn the_review_summary_is_the_reason_of_the_latest_review_request() {
             .transition_task(
                 &task.id,
                 TaskStatus::UnderReview,
-                Actor::Engineer,
+                Actor::Author,
                 Some(summary),
                 None,
             )
@@ -1699,7 +1701,7 @@ async fn the_review_summary_is_the_reason_of_the_latest_review_request() {
 }
 
 /// Why an ended task ended, read off the transition that ended it: the
-/// engineer's own `fail_task` reason, or whatever cancelled it.
+/// author's own `fail_task` reason, or whatever cancelled it.
 ///
 /// Only an ending has one. A task still being worked on carries nothing,
 /// however much has been said in its transitions — a review request's summary
@@ -1720,7 +1722,7 @@ async fn an_ended_task_carries_the_reason_the_transition_that_ended_it_gave() {
         .transition_task(
             &task.id,
             TaskStatus::UnderReview,
-            Actor::Engineer,
+            Actor::Author,
             Some("the first pass, with a test per lane"),
             None,
         )
@@ -1736,7 +1738,7 @@ async fn an_ended_task_carries_the_reason_the_transition_that_ended_it_gave() {
         .transition_task(
             &task.id,
             TaskStatus::Failed,
-            Actor::Engineer,
+            Actor::Author,
             Some("the crate it names was deleted upstream"),
             None,
         )
@@ -1771,19 +1773,19 @@ async fn an_ended_task_carries_the_reason_the_transition_that_ended_it_gave() {
 async fn a_task_is_stalled_while_one_of_its_agents_is() {
     let w = World::new().await;
     let (store, task) = (&w.store, &w.task);
-    let engineer = w.engineer_session().await;
+    let author = w.author_session().await;
     let reviewer = w
         .session(
             "ariadne-test-rev",
-            Role::Reviewer,
-            &w.planner.id.clone(),
+            Seat::Reviewer,
+            &w.orchestrator.id.clone(),
             Some(&task.id),
         )
         .await;
     assert!(!w.task().await.is_stalled());
 
     store
-        .set_session_attention(&engineer.id, AttentionReason::Stalled)
+        .set_session_attention(&author.id, AttentionReason::Stalled)
         .await
         .unwrap();
     assert!(
@@ -1810,7 +1812,7 @@ async fn a_task_is_stalled_while_one_of_its_agents_is() {
 
     // The clear an agent's own event makes ends it, since an agent that is
     // reporting again is not one that stopped working.
-    store.clear_agent_attention(&engineer.id).await.unwrap();
+    store.clear_agent_attention(&author.id).await.unwrap();
     assert!(
         !store.get_task(&task.id).await.unwrap().is_stalled(),
         "an agent that is working again leaves no stall behind"
@@ -1818,22 +1820,22 @@ async fn a_task_is_stalled_while_one_of_its_agents_is() {
 
     // And so does the relaunch that puts a stuck one back on its feet.
     store
-        .set_session_attention(&engineer.id, AttentionReason::Stalled)
+        .set_session_attention(&author.id, AttentionReason::Stalled)
         .await
         .unwrap();
     assert!(store.get_task(&task.id).await.unwrap().is_stalled());
     store
-        .restart_session(&engineer.id, None, None)
+        .restart_session(&author.id, None, None)
         .await
         .unwrap();
     assert!(!store.get_task(&task.id).await.unwrap().is_stalled());
 
-    // A planner has no task to project onto, and says so on its own row.
+    // An orchestrator has no task to project onto, and says so on its own row.
     let alone = w
         .session(
             "ariadne-test-plan",
-            Role::Planner,
-            &w.planner.id.clone(),
+            Seat::Orchestrator,
+            &w.orchestrator.id.clone(),
             None,
         )
         .await;
@@ -1861,7 +1863,7 @@ async fn retiring_a_session_drops_the_prompt_it_can_no_longer_answer() {
     let w = World::new().await;
     let store = &w.store;
 
-    let session = w.engineer_session().await;
+    let session = w.author_session().await;
     store
         .set_session_attention(&session.id, AttentionReason::WaitingPermission)
         .await
@@ -1896,7 +1898,7 @@ async fn retiring_a_session_drops_the_prompt_it_can_no_longer_answer() {
 
     // What a session ended reporting is not a dialog: it stays up, and stays
     // up through a further status write.
-    let failed = w.engineer_session().await;
+    let failed = w.author_session().await;
     store
         .set_session_attention(&failed.id, AttentionReason::AgentError)
         .await
@@ -1923,7 +1925,7 @@ async fn a_prompt_is_only_ever_raised_on_a_session_that_is_still_live() {
 
     // The interleaving spelled out: a caller holding a session it read while
     // it was live, and the retirement landing before it gets to the raise.
-    let session = w.engineer_session().await;
+    let session = w.author_session().await;
     let as_read = store.get_session(&session.id).await.unwrap();
     assert!(as_read.status().is_live());
     store
@@ -1969,7 +1971,7 @@ async fn a_prompt_is_only_ever_raised_on_a_session_that_is_still_live() {
     // And with the two writes actually racing, either order is fine: the
     // raise loses, or it wins and the retirement takes it down after it.
     for _ in 0..5 {
-        let racing = w.engineer_session().await;
+        let racing = w.author_session().await;
         let (retired, raised) = tokio::join!(
             store.set_session_status(&racing.id, SessionStatus::Exited),
             store.set_session_attention(&racing.id, AttentionReason::WaitingInput),
@@ -1995,8 +1997,8 @@ async fn a_prompt_is_only_ever_raised_on_a_session_that_is_still_live() {
 #[tokio::test]
 async fn every_goal_status_round_trips_through_the_database() {
     let (store, _dir) = test_store().await;
-    let planner = seed_profile(&store, "planner", Role::Planner).await;
-    let (goal, _) = seed_goal(&store, &planner, None).await;
+    let orchestrator = seed_profile(&store, "orchestrator", Seat::Orchestrator).await;
+    let (goal, _) = seed_goal(&store, &orchestrator, None).await;
 
     for status in GoalStatus::ALL {
         assert_eq!(
@@ -2015,10 +2017,10 @@ async fn every_goal_status_round_trips_through_the_database() {
 #[tokio::test]
 async fn list_goals_filters_by_any_of_the_given_statuses() {
     let (store, _dir) = test_store().await;
-    let planner = seed_profile(&store, "planner", Role::Planner).await;
-    let (planning, _) = seed_goal(&store, &planner, None).await;
-    let (active, _) = seed_goal(&store, &planner, None).await;
-    let (cancelled, _) = seed_goal(&store, &planner, None).await;
+    let orchestrator = seed_profile(&store, "orchestrator", Seat::Orchestrator).await;
+    let (planning, _) = seed_goal(&store, &orchestrator, None).await;
+    let (active, _) = seed_goal(&store, &orchestrator, None).await;
+    let (cancelled, _) = seed_goal(&store, &orchestrator, None).await;
     store
         .set_goal_status(&active.id, GoalStatus::Active)
         .await
@@ -2073,13 +2075,13 @@ async fn goal_cascade_delete_cleans_children() {
 #[tokio::test]
 async fn a_fresh_database_is_seeded_with_the_built_in_profiles_on_every_default() {
     let (store, _dir) = test_store().await;
-    for (name, role) in [
-        ("Planner", Role::Planner),
-        ("Engineer", Role::Engineer),
-        ("Reviewer", Role::Reviewer),
+    for (name, seat) in [
+        ("Orchestrator", Seat::Orchestrator),
+        ("Author", Seat::Author),
+        ("Reviewer", Seat::Reviewer),
     ] {
         let p = store.get_profile_by_name(name).await.unwrap();
-        assert_eq!(p.role(), role);
+        assert_eq!(p.seat(), seat);
         assert!(p.agent_kind().is_none(), "{name} must have no agent kind");
         assert!(p.model.is_none(), "{name} must have no model");
         assert!(
@@ -2088,12 +2090,12 @@ async fn a_fresh_database_is_seeded_with_the_built_in_profiles_on_every_default(
         );
         assert_eq!(
             p.effective_system_prompt(),
-            default_system_prompt(role),
-            "{name} is briefed with the role default system prompt"
+            default_system_prompt(seat),
+            "{name} is briefed with the seat default system prompt"
         );
         assert!(
             p.effective_system_prompt().contains("Ariadne"),
-            "{name}'s system prompt says what it is the role of"
+            "{name}'s system prompt says what it is the seat of"
         );
     }
 
@@ -2110,11 +2112,11 @@ async fn a_fresh_database_is_seeded_with_the_built_in_profiles_on_every_default(
         "reviewers are told to install what it needs and verify"
     );
     // User edits stick.
-    let engineer = store.get_profile_by_name("Engineer").await.unwrap();
-    assert_eq!(engineer.id, "00000000000000000000000002");
+    let author = store.get_profile_by_name("Author").await.unwrap();
+    assert_eq!(author.id, "00000000000000000000000002");
     store
         .update_profile(
-            &engineer.id,
+            &author.id,
             ProfileUpdate {
                 system_prompt: Some("custom".into()),
                 ..Default::default()
@@ -2122,9 +2124,9 @@ async fn a_fresh_database_is_seeded_with_the_built_in_profiles_on_every_default(
         )
         .await
         .unwrap();
-    let engineer = store.get_profile_by_name("Engineer").await.unwrap();
-    assert_eq!(engineer.system_prompt.as_deref(), Some("custom"));
-    assert_eq!(engineer.effective_system_prompt(), "custom");
+    let author = store.get_profile_by_name("Author").await.unwrap();
+    assert_eq!(author.system_prompt.as_deref(), Some("custom"));
+    assert_eq!(author.effective_system_prompt(), "custom");
 }
 
 /// Whether the schema holds a table of that name, read from the file itself:
@@ -2152,12 +2154,12 @@ async fn built_ins_are_not_recreated_on_reopen() {
     let path = dir.path().join("test.db");
 
     let store = Store::open(&path).await.unwrap();
-    let planner = store.get_profile_by_name("Planner").await.unwrap();
-    store.delete_profile(&planner.id).await.unwrap();
-    let engineer = store.get_profile_by_name("Engineer").await.unwrap();
+    let orchestrator = store.get_profile_by_name("Orchestrator").await.unwrap();
+    store.delete_profile(&orchestrator.id).await.unwrap();
+    let author = store.get_profile_by_name("Author").await.unwrap();
     store
         .update_profile(
-            &engineer.id,
+            &author.id,
             ProfileUpdate {
                 system_prompt: Some("mine".into()),
                 ..Default::default()
@@ -2169,30 +2171,30 @@ async fn built_ins_are_not_recreated_on_reopen() {
 
     let store = Store::open(&path).await.unwrap();
     assert!(matches!(
-        store.get_profile_by_name("Planner").await,
+        store.get_profile_by_name("Orchestrator").await,
         Err(StoreError::NotFound { .. })
     ));
-    let engineer = store.get_profile_by_name("Engineer").await.unwrap();
-    assert_eq!(engineer.system_prompt.as_deref(), Some("mine"));
+    let author = store.get_profile_by_name("Author").await.unwrap();
+    assert_eq!(author.system_prompt.as_deref(), Some("mine"));
 }
 
 #[tokio::test]
-async fn a_new_profile_starts_on_the_role_defaults_and_stores_none_of_them() {
+async fn a_new_profile_starts_on_the_seat_defaults_and_stores_none_of_them() {
     let (store, _dir) = test_store().await;
-    let reviewer = seed_profile(&store, "rev-strict", Role::Reviewer).await;
+    let reviewer = seed_profile(&store, "rev-strict", Seat::Reviewer).await;
 
-    // Its system prompt is the one it was created with, not the role default.
+    // Its system prompt is the one it was created with, not the seat default.
     assert_eq!(
         reviewer.system_prompt.as_deref(),
         Some("You are rev-strict.")
     );
     assert!(!reviewer.system_prompt_is_default());
 
-    // Created without one, it follows its role's instead.
+    // Created without one, it follows its seat's instead.
     let plain = store
         .create_profile(NewProfile {
             name: "rev-plain".into(),
-            role: Role::Reviewer,
+            seat: Seat::Reviewer,
             agent_kind: None,
             model: None,
             effort: None,
@@ -2203,22 +2205,22 @@ async fn a_new_profile_starts_on_the_role_defaults_and_stores_none_of_them() {
     assert!(plain.system_prompt.is_none());
     assert_eq!(
         plain.effective_system_prompt(),
-        default_system_prompt(Role::Reviewer)
+        default_system_prompt(Seat::Reviewer)
     );
 }
 
 /// Setting the system prompt is what writes a text, and resetting is what
-/// takes it away again: what is left over is the role default, which nothing
+/// takes it away again: what is left over is the seat default, which nothing
 /// stores.
 #[tokio::test]
 async fn a_system_prompt_is_stored_only_while_it_is_set_and_a_reset_deletes_it() {
     let (store, _dir) = test_store().await;
-    let engineer = store.get_profile_by_name("Engineer").await.unwrap();
-    assert!(engineer.system_prompt.is_none());
+    let author = store.get_profile_by_name("Author").await.unwrap();
+    assert!(author.system_prompt.is_none());
 
     let updated = store
         .update_profile(
-            &engineer.id,
+            &author.id,
             ProfileUpdate {
                 system_prompt: Some("custom".into()),
                 ..Default::default()
@@ -2230,12 +2232,12 @@ async fn a_system_prompt_is_stored_only_while_it_is_set_and_a_reset_deletes_it()
     assert_eq!(updated.effective_system_prompt(), "custom");
     assert!(!updated.system_prompt_is_default());
 
-    let restored = store.reset_system_prompt(&engineer.id).await.unwrap();
+    let restored = store.reset_system_prompt(&author.id).await.unwrap();
     assert!(restored.system_prompt.is_none());
     assert!(restored.system_prompt_is_default());
     assert_eq!(
         restored.effective_system_prompt(),
-        default_system_prompt(Role::Engineer)
+        default_system_prompt(Seat::Author)
     );
 
     // An unknown profile is a proper error, not a panic.
@@ -2251,14 +2253,14 @@ async fn a_system_prompt_is_stored_only_while_it_is_set_and_a_reset_deletes_it()
 async fn seed_pinned_profile(
     store: &Store,
     name: &str,
-    role: Role,
+    seat: Seat,
     agent_kind: Option<AgentKind>,
     model: Option<&str>,
 ) -> Profile {
     store
         .create_profile(NewProfile {
             name: name.into(),
-            role,
+            seat,
             agent_kind,
             model: model.map(str::to_string),
             effort: None,
@@ -2274,18 +2276,18 @@ async fn seed_pinned_profile(
 #[tokio::test]
 async fn creation_pins_the_agent_and_model_of_every_profile() {
     let (store, _dir) = test_store().await;
-    let planner = seed_pinned_profile(
+    let orchestrator = seed_pinned_profile(
         &store,
-        "planner-pin",
-        Role::Planner,
+        "orchestrator-pin",
+        Seat::Orchestrator,
         Some(AgentKind::ClaudeCode),
         Some("opus"),
     )
     .await;
-    let engineer = seed_pinned_profile(
+    let author = seed_pinned_profile(
         &store,
-        "engineer-pin",
-        Role::Engineer,
+        "author-pin",
+        Seat::Author,
         Some(AgentKind::Codex),
         Some("gpt-5"),
     )
@@ -2293,20 +2295,20 @@ async fn creation_pins_the_agent_and_model_of_every_profile() {
     let reviewer = seed_pinned_profile(
         &store,
         "reviewer-pin",
-        Role::Reviewer,
+        Seat::Reviewer,
         Some(AgentKind::Opencode),
         Some("sonnet"),
     )
     .await;
 
-    let (goal, repo) = seed_goal(&store, &planner, None).await;
+    let (goal, repo) = seed_goal(&store, &orchestrator, None).await;
     let task = store
         .create_task(NewTask {
             goal_id: goal.id.clone(),
             repo_id: repo.id.clone(),
             title: "task".into(),
             description: "do things".into(),
-            engineer_profile_id: engineer.id.clone(),
+            author_profile_id: author.id.clone(),
             pin: None,
             reviewers: vec![ReviewerSlot::of(reviewer.id.clone())],
             depends_on: vec![],
@@ -2326,7 +2328,7 @@ async fn creation_pins_the_agent_and_model_of_every_profile() {
     assert_eq!(pins[0].model.as_deref(), Some("sonnet"));
 
     // Every profile is moved to a different agent and a different model.
-    for profile in [&planner, &engineer, &reviewer] {
+    for profile in [&orchestrator, &author, &reviewer] {
         store
             .update_profile(
                 &profile.id,
@@ -2341,7 +2343,7 @@ async fn creation_pins_the_agent_and_model_of_every_profile() {
     }
     assert_eq!(
         store
-            .get_profile(&engineer.id)
+            .get_profile(&author.id)
             .await
             .unwrap()
             .model
@@ -2368,18 +2370,18 @@ async fn creation_pins_the_agent_and_model_of_every_profile() {
 #[tokio::test]
 async fn auto_and_default_are_pinned_as_such() {
     let (store, _dir) = test_store().await;
-    let planner = seed_pinned_profile(&store, "planner-auto", Role::Planner, None, None).await;
-    let engineer = seed_pinned_profile(&store, "engineer-auto", Role::Engineer, None, None).await;
-    let reviewer = seed_pinned_profile(&store, "reviewer-auto", Role::Reviewer, None, None).await;
+    let orchestrator = seed_pinned_profile(&store, "orchestrator-auto", Seat::Orchestrator, None, None).await;
+    let author = seed_pinned_profile(&store, "author-auto", Seat::Author, None, None).await;
+    let reviewer = seed_pinned_profile(&store, "reviewer-auto", Seat::Reviewer, None, None).await;
 
-    let (goal, repo) = seed_goal(&store, &planner, None).await;
+    let (goal, repo) = seed_goal(&store, &orchestrator, None).await;
     let task = store
         .create_task(NewTask {
             goal_id: goal.id.clone(),
             repo_id: repo.id.clone(),
             title: "task".into(),
             description: "do things".into(),
-            engineer_profile_id: engineer.id.clone(),
+            author_profile_id: author.id.clone(),
             pin: None,
             reviewers: vec![ReviewerSlot::of(reviewer.id.clone())],
             depends_on: vec![],
@@ -2392,7 +2394,7 @@ async fn auto_and_default_are_pinned_as_such() {
     assert_eq!(task.agent_kind(), None);
     assert_eq!(task.model, None);
 
-    for profile in [&planner, &engineer, &reviewer] {
+    for profile in [&orchestrator, &author, &reviewer] {
         store
             .update_profile(
                 &profile.id,
@@ -2422,12 +2424,12 @@ async fn auto_and_default_are_pinned_as_such() {
 #[tokio::test]
 async fn reassigned_reviewers_pin_the_profile_they_are_assigned_from() {
     let (store, _dir) = test_store().await;
-    let planner = seed_pinned_profile(&store, "planner-re", Role::Planner, None, None).await;
-    let engineer = seed_pinned_profile(&store, "engineer-re", Role::Engineer, None, None).await;
+    let orchestrator = seed_pinned_profile(&store, "orchestrator-re", Seat::Orchestrator, None, None).await;
+    let author = seed_pinned_profile(&store, "author-re", Seat::Author, None, None).await;
     let first = seed_pinned_profile(
         &store,
         "reviewer-re-1",
-        Role::Reviewer,
+        Seat::Reviewer,
         Some(AgentKind::ClaudeCode),
         Some("opus"),
     )
@@ -2435,20 +2437,20 @@ async fn reassigned_reviewers_pin_the_profile_they_are_assigned_from() {
     let second = seed_pinned_profile(
         &store,
         "reviewer-re-2",
-        Role::Reviewer,
+        Seat::Reviewer,
         Some(AgentKind::Codex),
         Some("gpt-5"),
     )
     .await;
 
-    let (goal, repo) = seed_goal(&store, &planner, None).await;
+    let (goal, repo) = seed_goal(&store, &orchestrator, None).await;
     let task = store
         .create_task(NewTask {
             goal_id: goal.id.clone(),
             repo_id: repo.id.clone(),
             title: "task".into(),
             description: "do things".into(),
-            engineer_profile_id: engineer.id.clone(),
+            author_profile_id: author.id.clone(),
             pin: None,
             reviewers: vec![ReviewerSlot::of(first.id.clone())],
             depends_on: vec![],
@@ -2504,18 +2506,18 @@ async fn reassigned_reviewers_pin_the_profile_they_are_assigned_from() {
 #[tokio::test]
 async fn a_chosen_pin_is_written_in_place_of_the_profiles() {
     let (store, _dir) = test_store().await;
-    let planner = seed_pinned_profile(
+    let orchestrator = seed_pinned_profile(
         &store,
-        "planner-chosen",
-        Role::Planner,
+        "orchestrator-chosen",
+        Seat::Orchestrator,
         Some(AgentKind::ClaudeCode),
         Some("claude-opus-5"),
     )
     .await;
-    let engineer = seed_pinned_profile(
+    let author = seed_pinned_profile(
         &store,
-        "engineer-chosen",
-        Role::Engineer,
+        "author-chosen",
+        Seat::Author,
         Some(AgentKind::ClaudeCode),
         Some("claude-opus-5"),
     )
@@ -2523,7 +2525,7 @@ async fn a_chosen_pin_is_written_in_place_of_the_profiles() {
     let chosen = seed_pinned_profile(
         &store,
         "reviewer-chosen",
-        Role::Reviewer,
+        Seat::Reviewer,
         Some(AgentKind::ClaudeCode),
         Some("claude-opus-5"),
     )
@@ -2531,7 +2533,7 @@ async fn a_chosen_pin_is_written_in_place_of_the_profiles() {
     let untouched = seed_pinned_profile(
         &store,
         "reviewer-untouched",
-        Role::Reviewer,
+        Seat::Reviewer,
         Some(AgentKind::Opencode),
         Some("ollama/llama3:8b"),
     )
@@ -2542,7 +2544,7 @@ async fn a_chosen_pin_is_written_in_place_of_the_profiles() {
         .create_goal(NewGoal {
             title: "Chosen".into(),
             description: "desc".into(),
-            planner_profile_id: planner.id.clone(),
+            orchestrator_profile_id: orchestrator.id.clone(),
             max_tasks: None,
             required_approvals: 1,
             repository_ids: vec![repo.id.clone()],
@@ -2563,7 +2565,7 @@ async fn a_chosen_pin_is_written_in_place_of_the_profiles() {
             repo_id: repo.id.clone(),
             title: "task".into(),
             description: "do things".into(),
-            engineer_profile_id: engineer.id.clone(),
+            author_profile_id: author.id.clone(),
             pin: Some(AgentPin {
                 agent_kind: AgentKind::Codex,
                 model: Some("gpt-5.6-sol".into()),
@@ -2602,7 +2604,7 @@ async fn a_chosen_pin_is_written_in_place_of_the_profiles() {
         .create_goal(NewGoal {
             title: "Plain".into(),
             description: "desc".into(),
-            planner_profile_id: planner.id.clone(),
+            orchestrator_profile_id: orchestrator.id.clone(),
             max_tasks: None,
             required_approvals: 1,
             repository_ids: vec![repo.id.clone()],
@@ -2619,7 +2621,7 @@ async fn a_chosen_pin_is_written_in_place_of_the_profiles() {
         .create_goal(NewGoal {
             title: "Agent only".into(),
             description: "desc".into(),
-            planner_profile_id: planner.id.clone(),
+            orchestrator_profile_id: orchestrator.id.clone(),
             max_tasks: None,
             required_approvals: 1,
             repository_ids: vec![repo.id.clone()],
@@ -2636,16 +2638,16 @@ async fn a_chosen_pin_is_written_in_place_of_the_profiles() {
 }
 
 /// Editing a pending task moves its pins and puts them back: cleared, they
-/// return to the engineer profile's as it stands at that moment, which is the
+/// return to the author profile's as it stands at that moment, which is the
 /// same rule reassigning a reviewer follows.
 #[tokio::test]
 async fn a_task_pin_can_be_moved_and_cleared_back_to_the_profiles() {
     let (store, _dir) = test_store().await;
-    let planner = seed_pinned_profile(&store, "planner-edit", Role::Planner, None, None).await;
-    let engineer = seed_pinned_profile(
+    let orchestrator = seed_pinned_profile(&store, "orchestrator-edit", Seat::Orchestrator, None, None).await;
+    let author = seed_pinned_profile(
         &store,
-        "engineer-edit",
-        Role::Engineer,
+        "author-edit",
+        Seat::Author,
         Some(AgentKind::ClaudeCode),
         Some("claude-opus-5"),
     )
@@ -2653,19 +2655,19 @@ async fn a_task_pin_can_be_moved_and_cleared_back_to_the_profiles() {
     let reviewer = seed_pinned_profile(
         &store,
         "reviewer-edit",
-        Role::Reviewer,
+        Seat::Reviewer,
         Some(AgentKind::ClaudeCode),
         Some("claude-opus-5"),
     )
     .await;
-    let (goal, repo) = seed_goal(&store, &planner, None).await;
+    let (goal, repo) = seed_goal(&store, &orchestrator, None).await;
     let task = store
         .create_task(NewTask {
             goal_id: goal.id.clone(),
             repo_id: repo.id.clone(),
             title: "task".into(),
             description: "do things".into(),
-            engineer_profile_id: engineer.id.clone(),
+            author_profile_id: author.id.clone(),
             pin: None,
             reviewers: vec![ReviewerSlot::of(&reviewer.id)],
             depends_on: vec![],
@@ -2718,7 +2720,7 @@ async fn a_task_pin_can_be_moved_and_cleared_back_to_the_profiles() {
     // Cleared, the task is back on the profile — the profile as it is now.
     store
         .update_profile(
-            &engineer.id,
+            &author.id,
             ProfileUpdate {
                 agent_kind: Some(Some(AgentKind::Opencode)),
                 model: Some(Some("ollama/llama3:8b".into())),
@@ -2750,7 +2752,7 @@ async fn a_task_pin_can_be_moved_and_cleared_back_to_the_profiles() {
 async fn seed_profile_at(
     store: &Store,
     name: &str,
-    role: Role,
+    seat: Seat,
     agent_kind: Option<AgentKind>,
     model: Option<&str>,
     effort: Option<&str>,
@@ -2758,7 +2760,7 @@ async fn seed_profile_at(
     store
         .create_profile(NewProfile {
             name: name.into(),
-            role,
+            seat,
             agent_kind,
             model: model.map(str::to_string),
             effort: effort.map(str::to_string),
@@ -2776,8 +2778,8 @@ async fn a_profile_keeps_moves_and_clears_the_effort_it_runs_at() {
     let (store, _dir) = test_store().await;
     let profile = seed_profile_at(
         &store,
-        "engineer-effort",
-        Role::Engineer,
+        "author-effort",
+        Seat::Author,
         Some(AgentKind::ClaudeCode),
         Some("claude-opus-5"),
         Some("xhigh"),
@@ -2836,19 +2838,19 @@ async fn a_profile_keeps_moves_and_clears_the_effort_it_runs_at() {
 #[tokio::test]
 async fn creation_pins_the_effort_beside_the_model() {
     let (store, _dir) = test_store().await;
-    let planner = seed_profile_at(
+    let orchestrator = seed_profile_at(
         &store,
-        "planner-effort",
-        Role::Planner,
+        "orchestrator-effort",
+        Seat::Orchestrator,
         Some(AgentKind::ClaudeCode),
         Some("claude-opus-5"),
         Some("high"),
     )
     .await;
-    let engineer = seed_profile_at(
+    let author = seed_profile_at(
         &store,
-        "engineer-effort",
-        Role::Engineer,
+        "author-effort",
+        Seat::Author,
         Some(AgentKind::Codex),
         Some("gpt-5.6-sol"),
         Some("ultra"),
@@ -2857,7 +2859,7 @@ async fn creation_pins_the_effort_beside_the_model() {
     let inherits = seed_profile_at(
         &store,
         "reviewer-inherits",
-        Role::Reviewer,
+        Seat::Reviewer,
         Some(AgentKind::ClaudeCode),
         Some("claude-sonnet-5"),
         Some("low"),
@@ -2866,14 +2868,14 @@ async fn creation_pins_the_effort_beside_the_model() {
     let chosen = seed_profile_at(
         &store,
         "reviewer-chosen",
-        Role::Reviewer,
+        Seat::Reviewer,
         Some(AgentKind::ClaudeCode),
         Some("claude-sonnet-5"),
         Some("low"),
     )
     .await;
 
-    let (goal, repo) = seed_goal(&store, &planner, None).await;
+    let (goal, repo) = seed_goal(&store, &orchestrator, None).await;
     assert_eq!(goal.effort.as_deref(), Some("high"));
 
     let task = store
@@ -2882,7 +2884,7 @@ async fn creation_pins_the_effort_beside_the_model() {
             repo_id: repo.id.clone(),
             title: "task".into(),
             description: "do things".into(),
-            engineer_profile_id: engineer.id.clone(),
+            author_profile_id: author.id.clone(),
             pin: None,
             reviewers: vec![
                 ReviewerSlot::of(&inherits.id),
@@ -3000,8 +3002,8 @@ async fn creation_pins_the_effort_beside_the_model() {
         .create_session(NewSession {
             goal_id: goal.id.clone(),
             task_id: Some(task.id.clone()),
-            role: Role::Engineer,
-            profile_id: engineer.id.clone(),
+            seat: Seat::Author,
+            profile_id: author.id.clone(),
             agent_kind: AgentKind::Codex,
             model: back.model.clone(),
             effort: back.effort.clone(),
@@ -3023,8 +3025,8 @@ async fn creation_pins_the_effort_beside_the_model() {
 #[tokio::test]
 async fn an_override_takes_the_profiles_effort_only_on_the_profiles_model() {
     let (store, _dir) = test_store().await;
-    let planner = seed_profile_at(&store, "planner-rule", Role::Planner, None, None, None).await;
-    let (goal, repo) = seed_goal(&store, &planner, None).await;
+    let orchestrator = seed_profile_at(&store, "orchestrator-rule", Seat::Orchestrator, None, None, None).await;
+    let (goal, repo) = seed_goal(&store, &orchestrator, None).await;
 
     let sol = || Some("gpt-5.6-sol".to_string());
     // Each case is what it is called, the override it writes, and the model
@@ -3081,10 +3083,10 @@ async fn an_override_takes_the_profiles_effort_only_on_the_profiles_model() {
     for (n, (case, pin, model, effort)) in cases.into_iter().enumerate() {
         // A profile apiece: a slot is one row per profile, so every case needs
         // its own pair to pin off.
-        let engineer = seed_profile_at(
+        let author = seed_profile_at(
             &store,
-            &format!("engineer-rule-{n}"),
-            Role::Engineer,
+            &format!("author-rule-{n}"),
+            Seat::Author,
             Some(AgentKind::Codex),
             Some("gpt-5.6-sol"),
             Some("ultra"),
@@ -3093,7 +3095,7 @@ async fn an_override_takes_the_profiles_effort_only_on_the_profiles_model() {
         let reviewer = seed_profile_at(
             &store,
             &format!("reviewer-rule-{n}"),
-            Role::Reviewer,
+            Seat::Reviewer,
             Some(AgentKind::Codex),
             Some("gpt-5.6-sol"),
             Some("ultra"),
@@ -3105,7 +3107,7 @@ async fn an_override_takes_the_profiles_effort_only_on_the_profiles_model() {
                 repo_id: repo.id.clone(),
                 title: case.into(),
                 description: "do things".into(),
-                engineer_profile_id: engineer.id.clone(),
+                author_profile_id: author.id.clone(),
                 pin: pin.clone(),
                 reviewers: vec![ReviewerSlot {
                     profile_id: reviewer.id.clone(),
@@ -3126,8 +3128,8 @@ async fn an_override_takes_the_profiles_effort_only_on_the_profiles_model() {
     // override leaves open.
     let plain = seed_profile_at(
         &store,
-        "engineer-rule-plain",
-        Role::Engineer,
+        "author-rule-plain",
+        Seat::Author,
         Some(AgentKind::Codex),
         Some("gpt-5.6-sol"),
         None,
@@ -3136,7 +3138,7 @@ async fn an_override_takes_the_profiles_effort_only_on_the_profiles_model() {
     let reviewer = seed_profile_at(
         &store,
         "reviewer-rule-plain",
-        Role::Reviewer,
+        Seat::Reviewer,
         Some(AgentKind::Codex),
         Some("gpt-5.6-sol"),
         None,
@@ -3148,7 +3150,7 @@ async fn an_override_takes_the_profiles_effort_only_on_the_profiles_model() {
             repo_id: repo.id.clone(),
             title: "no effort to inherit".into(),
             description: "do things".into(),
-            engineer_profile_id: plain.id.clone(),
+            author_profile_id: plain.id.clone(),
             pin: Some(AgentPin {
                 agent_kind: AgentKind::Codex,
                 model: sol(),
@@ -3258,7 +3260,7 @@ async fn usage_rows_at(path: &std::path::Path) -> i64 {
 #[tokio::test]
 async fn a_source_replaces_its_own_totals_and_sources_add_up() {
     let w = World::new().await;
-    let session = w.engineer_session().await;
+    let session = w.author_session().await;
     // Nothing reported is a zero, not an absence.
     assert_eq!(
         w.store.session_usage(&session.id).await.unwrap(),
@@ -3303,18 +3305,18 @@ async fn a_source_replaces_its_own_totals_and_sources_add_up() {
     assert_eq!(usage_rows(&w._dir).await, 2, "one row per source");
 }
 
-/// What a task spent, by the profile that spent it: its engineer once, and
+/// What a task spent, by the profile that spent it: its author once, and
 /// each reviewer with every round it sat summed into one entry — a reviewer
 /// runs a session per round, and nobody reads them round by round.
 #[tokio::test]
 async fn a_tasks_usage_groups_every_round_of_a_reviewer_together() {
     let w = World::new().await;
-    let engineer = w.engineer_session().await;
+    let author = w.author_session().await;
     let reviewer_id = w.store.list_task_reviewers(&w.task.id).await.unwrap()[0].clone();
     let first_round = w
         .session(
             "rev-round-1",
-            Role::Reviewer,
+            Seat::Reviewer,
             &reviewer_id,
             Some(&w.task.id),
         )
@@ -3322,14 +3324,14 @@ async fn a_tasks_usage_groups_every_round_of_a_reviewer_together() {
     let second_round = w
         .session(
             "rev-round-2",
-            Role::Reviewer,
+            Seat::Reviewer,
             &reviewer_id,
             Some(&w.task.id),
         )
         .await;
 
     for (session, spent) in [
-        (&engineer, usage(100, 80, 10)),
+        (&author, usage(100, 80, 10)),
         (&first_round, usage(20, 10, 4)),
         (&second_round, usage(5, 1, 2)),
     ] {
@@ -3344,12 +3346,12 @@ async fn a_tasks_usage_groups_every_round_of_a_reviewer_together() {
         grouped,
         vec![
             ProfileUsage {
-                role: Role::Engineer,
-                profile_id: w.task.engineer_profile_id.clone(),
+                seat: Seat::Author,
+                profile_id: w.task.author_profile_id.clone(),
                 usage: usage(100, 80, 10),
             },
             ProfileUsage {
-                role: Role::Reviewer,
+                seat: Seat::Reviewer,
                 profile_id: reviewer_id,
                 usage: usage(25, 11, 6),
             },
@@ -3363,34 +3365,34 @@ async fn a_tasks_usage_groups_every_round_of_a_reviewer_together() {
 #[tokio::test]
 async fn a_session_that_has_reported_nothing_reads_as_zeros() {
     let w = World::new().await;
-    let _engineer = w.engineer_session().await;
+    let _author = w.author_session().await;
     let grouped = w.store.task_usage(&w.task.id).await.unwrap();
     assert_eq!(
         grouped,
         vec![ProfileUsage {
-            role: Role::Engineer,
-            profile_id: w.task.engineer_profile_id.clone(),
+            seat: Seat::Author,
+            profile_id: w.task.author_profile_id.clone(),
             usage: TokenUsage::default(),
         }]
     );
 }
 
-/// A goal's usage is grouped by role rather than by profile, and its planner
-/// counts: a planner session belongs to no task, so nothing under a task
-/// would ever have found it.
+/// A goal's usage is grouped by seat rather than by profile, and its
+/// orchestrator counts: an orchestrator session belongs to no task, so
+/// nothing under a task would ever have found it.
 #[tokio::test]
-async fn a_goals_usage_is_grouped_by_role_and_counts_its_planner() {
+async fn a_goals_usage_is_grouped_by_seat_and_counts_its_orchestrator() {
     let w = World::new().await;
-    let planner = w.session("plan", Role::Planner, &w.planner.id, None).await;
-    let engineer = w.engineer_session().await;
+    let orchestrator = w.session("plan", Seat::Orchestrator, &w.orchestrator.id, None).await;
+    let author = w.author_session().await;
     let reviewer_id = w.store.list_task_reviewers(&w.task.id).await.unwrap()[0].clone();
     let reviewer = w
-        .session("rev", Role::Reviewer, &reviewer_id, Some(&w.task.id))
+        .session("rev", Seat::Reviewer, &reviewer_id, Some(&w.task.id))
         .await;
 
     for (session, spent) in [
-        (&planner, usage(40, 30, 8)),
-        (&engineer, usage(100, 80, 10)),
+        (&orchestrator, usage(40, 30, 8)),
+        (&author, usage(100, 80, 10)),
         (&reviewer, usage(20, 10, 4)),
     ] {
         w.store
@@ -3403,16 +3405,16 @@ async fn a_goals_usage_is_grouped_by_role_and_counts_its_planner() {
     assert_eq!(
         grouped,
         vec![
-            RoleUsage {
-                role: Role::Engineer,
+            SeatUsage {
+                seat: Seat::Author,
                 usage: usage(100, 80, 10),
             },
-            RoleUsage {
-                role: Role::Planner,
+            SeatUsage {
+                seat: Seat::Orchestrator,
                 usage: usage(40, 30, 8),
             },
-            RoleUsage {
-                role: Role::Reviewer,
+            SeatUsage {
+                seat: Seat::Reviewer,
                 usage: usage(20, 10, 4),
             },
         ]
@@ -3420,7 +3422,7 @@ async fn a_goals_usage_is_grouped_by_role_and_counts_its_planner() {
     assert_eq!(
         grouped.iter().map(|r| r.usage).sum::<TokenUsage>(),
         usage(160, 120, 22),
-        "the goal's total is every session under it, the planner included"
+        "the goal's total is every session under it, the orchestrator included"
     );
 }
 
@@ -3430,7 +3432,7 @@ async fn a_goals_usage_is_grouped_by_role_and_counts_its_planner() {
 #[tokio::test]
 async fn usage_goes_when_the_session_it_belonged_to_does() {
     let w = World::new().await;
-    let session = w.engineer_session().await;
+    let session = w.author_session().await;
     w.store
         .upsert_session_usage(&session.id, "/x.jsonl", usage(100, 80, 10))
         .await

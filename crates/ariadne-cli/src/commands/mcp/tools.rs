@@ -36,8 +36,8 @@ pub struct TaskIdOpt {
     pub task_id: Option<String>,
 }
 
-/// One reviewer of a task, as a planner names it: the profile that reviews,
-/// and the model and effort this task is worth.
+/// One reviewer of a task, as an orchestrator names it: the profile that
+/// reviews, and the model and effort this task is worth.
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub struct ReviewerReq {
@@ -56,14 +56,14 @@ pub struct ReviewerReq {
 pub struct CreateTaskReq {
     pub title: String,
     pub description: String,
-    /// Engineer profile id or name. It owns the task.
-    pub engineer_profile: String,
-    /// What the engineer runs on, `<agent_kind>[:<model>]` as `list_models`
+    /// Author profile id or name. It owns the task.
+    pub author_profile: String,
+    /// What the author runs on, `<agent_kind>[:<model>]` as `list_models`
     /// spells it. Omit it for the model of the profile.
-    pub engineer_model: Option<String>,
+    pub author_model: Option<String>,
     /// An `efforts[].id` `list_models` lists for that model. Omit it for the
     /// default effort.
-    pub engineer_effort: Option<String>,
+    pub author_effort: Option<String>,
     /// The reviewers of the task, in review order. Name at least one.
     pub reviewers: Vec<ReviewerReq>,
     /// Ids of the tasks that must merge before this one starts.
@@ -78,12 +78,12 @@ pub struct UpdateTaskReq {
     pub task_id: String,
     pub title: Option<String>,
     pub description: Option<String>,
-    /// What the engineer runs on. `default` puts the slot back on the model
+    /// What the author runs on. `default` puts the slot back on the model
     /// of the profile.
-    pub engineer_model: Option<String>,
+    pub author_model: Option<String>,
     /// An `efforts[].id` for that model. `default` puts it back on the
     /// default effort.
-    pub engineer_effort: Option<String>,
+    pub author_effort: Option<String>,
     /// The reviewers, in review order. This list replaces the whole list.
     pub reviewers: Option<Vec<ReviewerReq>>,
     /// The ids of the tasks that must merge first. This list replaces the
@@ -101,8 +101,8 @@ pub struct ListModelsReq {
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 #[schemars(crate = "rmcp::schemars")]
 pub struct ListProfilesReq {
-    /// Filter: planner | engineer | reviewer
-    pub role: Option<String>,
+    /// Filter: orchestrator | author | reviewer
+    pub seat: Option<String>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -150,15 +150,15 @@ pub enum Verdict {
 pub struct SubmitVerdictReq {
     /// approve | request_changes
     pub verdict: Verdict,
-    /// A note on an approval. On a change request, the feedback the engineer
+    /// A note on an approval. On a change request, the feedback the author
     /// starts again on, and required there.
     pub body: Option<String>,
 }
 
 // ---------- helpers ----------
 
-/// The reviewer slot a planner named, as the API takes it: the profile, and
-/// the pin it is to be cut at.
+/// The reviewer slot an orchestrator named, as the API takes it: the profile,
+/// and the pin it is to be cut at.
 fn assignment(reviewer: ReviewerReq) -> ReviewerAssignment {
     ReviewerAssignment {
         profile: reviewer.profile,
@@ -181,7 +181,7 @@ fn of_agent(models: Vec<serde_json::Value>, agent_kind: Option<String>) -> Vec<s
 }
 
 /// The review the daemon records for a verdict, refusing a change request
-/// with nothing in it: the body is what the engineer is resumed with, so a
+/// with nothing in it: the body is what the author is resumed with, so a
 /// round that asks for changes and says nothing asks for nothing.
 fn review_request(verdict: Verdict, body: Option<String>) -> Result<CreateReviewRequest, McpError> {
     let body = body.filter(|b| !b.trim().is_empty());
@@ -189,7 +189,7 @@ fn review_request(verdict: Verdict, body: Option<String>) -> Result<CreateReview
         Verdict::Approve => ReviewVerdict::Approve,
         Verdict::RequestChanges if body.is_none() => {
             return Err(McpError::invalid_params(
-                "request_changes needs a body: the feedback the engineer is resumed with",
+                "request_changes needs a body: the feedback the author is resumed with",
                 None,
             ));
         }
@@ -205,7 +205,7 @@ fn review_request(verdict: Verdict, body: Option<String>) -> Result<CreateReview
 #[tool_router(vis = "pub(super)")]
 impl AriadneMcp {
     #[tool(
-        description = "Read a task: the status, the branch, the dependencies, and the profile names of the engineer, the reviewers and the planner."
+        description = "Read a task: the status, the branch, the dependencies, and the profile names of the author, the reviewers and the orchestrator."
     )]
     async fn get_task(
         &self,
@@ -214,10 +214,10 @@ impl AriadneMcp {
         json_result(self.get(&self.task_path(req.task_id, "")?).await?)
     }
 
-    // ---- planner ----
+    // ---- orchestrator ----
 
     #[tool(
-        description = "Create one task in the goal. Name one engineer profile and at least one reviewer profile. Give each slot the model and the effort this task deserves out of `list_models`. Omit them, and the slot runs the model of its profile. The user can change a slot until the task starts."
+        description = "Create one task in the goal. Name one author profile and at least one reviewer profile. Give each slot the model and the effort this task deserves out of `list_models`. Omit them, and the slot runs the model of its profile. The user can change a slot until the task starts."
     )]
     async fn create_task(
         &self,
@@ -228,9 +228,9 @@ impl AriadneMcp {
             title: req.title,
             description: req.description,
             repo_id: req.repo_id,
-            engineer_profile: req.engineer_profile,
-            model: req.engineer_model,
-            effort: req.engineer_effort,
+            author_profile: req.author_profile,
+            model: req.author_model,
+            effort: req.author_effort,
             reviewers: req.reviewers.into_iter().map(assignment).collect(),
             depends_on: req.depends_on.unwrap_or_default(),
         };
@@ -247,8 +247,8 @@ impl AriadneMcp {
         let body = UpdateTaskRequest {
             title: req.title,
             description: req.description,
-            model: req.engineer_model,
-            effort: req.engineer_effort,
+            model: req.author_model,
+            effort: req.author_effort,
             reviewers: req
                 .reviewers
                 .map(|reviewers| reviewers.into_iter().map(assignment).collect()),
@@ -279,8 +279,8 @@ impl AriadneMcp {
         &self,
         Parameters(req): Parameters<ListProfilesReq>,
     ) -> Result<CallToolResult, McpError> {
-        let path = match req.role {
-            Some(role) => format!("/v1/profiles?role={role}"),
+        let path = match req.seat {
+            Some(seat) => format!("/v1/profiles?seat={seat}"),
             None => "/v1/profiles".to_string(),
         };
         json_result(self.get(&path).await?)
@@ -297,7 +297,7 @@ impl AriadneMcp {
         json_result(self.post(&path, &FinalizePlanRequest {}).await?)
     }
 
-    // ---- engineer ----
+    // ---- author ----
 
     #[tool(
         description = "Submit your task for review. The reviewers read your summary and nothing else: what changed, why, how you verified it."
@@ -335,12 +335,12 @@ impl AriadneMcp {
     #[tool(
         description = "Report the sha your branch landed on its base branch as. This call ends the task."
     )]
-    async fn mark_merged(
+    async fn finish_task(
         &self,
         Parameters(req): Parameters<MarkMergedReq>,
     ) -> Result<CallToolResult, McpError> {
         json_result(
-            self.transition(TaskStatus::Merged, None, Some(req.merge_commit))
+            self.transition(TaskStatus::Finished, None, Some(req.merge_commit))
                 .await?,
         )
     }
@@ -373,7 +373,7 @@ impl AriadneMcp {
     }
 
     #[tool(
-        description = "Give your verdict on the change. Approve it, or request changes. A change request carries the feedback the engineer starts again on."
+        description = "Give your verdict on the change. Approve it, or request changes. A change request carries the feedback the author starts again on."
     )]
     async fn submit_verdict(
         &self,
@@ -386,7 +386,7 @@ impl AriadneMcp {
 }
 
 impl AriadneMcp {
-    /// Move this session's own task, which is the only one an engineer may
+    /// Move this session's own task, which is the only one an author may
     /// move.
     async fn transition(
         &self,
@@ -412,7 +412,7 @@ mod tests {
 
     use ariadne_client::Client;
 
-    use crate::commands::mcp::McpRole;
+    use crate::commands::mcp::McpSeat;
     use crate::commands::mcp::tests::{recording_daemon, recording_daemon_answering, server_at};
 
     /// The schema of one tool, as the agent reading the listing gets it.
@@ -442,15 +442,15 @@ mod tests {
         }
     }
 
-    /// A planner server against a daemon that records what it is sent.
-    fn planner_at(endpoint: &str) -> AriadneMcp {
+    /// An orchestrator server against a daemon that records what it is sent.
+    fn orchestrator_at(endpoint: &str) -> AriadneMcp {
         server_at(
-            McpRole::Planner,
+            McpSeat::Orchestrator,
             Client::resolve(Some(endpoint), None).with_session("01SESSION"),
         )
     }
 
-    /// An engineer submits its work in one request, and the summary travels
+    /// An author submits its work in one request, and the summary travels
     /// as the transition's reason: it is the whole of what the reviewers are
     /// told, so nothing may be written anywhere else for them to have to
     /// find.
@@ -458,7 +458,7 @@ mod tests {
     async fn a_review_request_is_one_transition_carrying_the_summary() {
         let (endpoint, seen) = recording_daemon().await;
         let mcp = server_at(
-            McpRole::Engineer,
+            McpSeat::Author,
             Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
         );
         mcp.request_review(Parameters(RequestReviewReq {
@@ -486,7 +486,7 @@ mod tests {
     async fn giving_a_task_up_records_the_reason_on_it() {
         let (endpoint, seen) = recording_daemon().await;
         let mcp = server_at(
-            McpRole::Engineer,
+            McpSeat::Author,
             Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
         );
         mcp.fail_task(Parameters(FailTaskReq {
@@ -509,7 +509,7 @@ mod tests {
         for empty in ["", "  \n "] {
             let (endpoint, seen) = recording_daemon().await;
             let mcp = server_at(
-                McpRole::Engineer,
+                McpSeat::Author,
                 Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
             );
             let err = mcp
@@ -530,7 +530,7 @@ mod tests {
     async fn reading_a_task_asks_the_daemon_once() {
         let (endpoint, seen) = recording_daemon().await;
         let mcp = server_at(
-            McpRole::Engineer,
+            McpSeat::Author,
             Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
         );
         mcp.get_task(Parameters(TaskIdOpt { task_id: None }))
@@ -553,7 +553,7 @@ mod tests {
         ] {
             let (endpoint, seen) = recording_daemon().await;
             let mcp = server_at(
-                McpRole::Reviewer,
+                McpSeat::Reviewer,
                 Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
             );
             mcp.submit_verdict(Parameters(SubmitVerdictReq {
@@ -573,7 +573,7 @@ mod tests {
         }
     }
 
-    /// The body of a change request is what the engineer is resumed with, so
+    /// The body of a change request is what the author is resumed with, so
     /// one with nothing in it is refused here rather than sent: a round that
     /// asks for changes and says nothing asks for nothing.
     #[tokio::test]
@@ -586,7 +586,7 @@ mod tests {
 
             let (endpoint, seen) = recording_daemon().await;
             let mcp = server_at(
-                McpRole::Reviewer,
+                McpSeat::Reviewer,
                 Client::resolve(Some(&endpoint), None).with_session("01SESSION"),
             );
             mcp.submit_verdict(Parameters(SubmitVerdictReq {
@@ -605,8 +605,8 @@ mod tests {
         assert!(approved.body.is_none());
     }
 
-    /// What a planner may write per slot is the schema an agent reads, and it
-    /// is a pin per slot now: the engineer's model and effort beside its
+    /// What an orchestrator may write per slot is the schema an agent reads,
+    /// and it is a pin per slot now: the author's model and effort beside its
     /// profile, and a reviewer object carrying its own — not the list of bare
     /// profile names those replaced, which an agent that still sent one would
     /// have silently dropped its pins with.
@@ -615,7 +615,7 @@ mod tests {
         for tool in ["create_task", "update_task"] {
             let schema = tool_schema(tool);
             let props = schema["properties"].as_object().expect("properties");
-            for field in ["engineer_model", "engineer_effort", "reviewers"] {
+            for field in ["author_model", "author_effort", "reviewers"] {
                 assert!(props.contains_key(field), "{tool} takes no {field}");
             }
             assert!(
@@ -631,25 +631,25 @@ mod tests {
         }
         assert!(
             tool_schema("create_task")["properties"]
-                .get("engineer_profile")
+                .get("author_profile")
                 .is_some(),
-            "the engineer's profile is still what owns the task"
+            "the author's profile is still what owns the task"
         );
     }
 
-    /// A pin the planner named is the pin the daemon is asked for, slot by
+    /// A pin the orchestrator named is the pin the daemon is asked for, slot by
     /// slot: whatever this passes on is what the task is cut at, and a field
     /// quietly left out here is a task running on something nobody chose.
     #[tokio::test]
-    async fn a_created_task_is_pinned_to_what_the_planner_named() {
+    async fn a_created_task_is_pinned_to_what_the_orchestrator_named() {
         let (endpoint, seen) = recording_daemon().await;
-        planner_at(&endpoint)
+        orchestrator_at(&endpoint)
             .create_task(Parameters(CreateTaskReq {
                 title: "Pin the effort".into(),
                 description: "Beside the model.".into(),
-                engineer_profile: "Engineer".into(),
-                engineer_model: Some("codex:gpt-5.6-sol".into()),
-                engineer_effort: Some("xhigh".into()),
+                author_profile: "Author".into(),
+                author_model: Some("codex:gpt-5.6-sol".into()),
+                author_effort: Some("xhigh".into()),
                 reviewers: vec![ReviewerReq {
                     profile: "Reviewer".into(),
                     model: None,
@@ -666,7 +666,7 @@ mod tests {
         assert_eq!(seen[0].method, "POST");
         assert_eq!(seen[0].path, "/v1/goals/01GOAL/tasks");
         let sent: serde_json::Value = serde_json::from_str(&seen[0].body).expect("json");
-        assert_eq!(sent["engineer_profile"], serde_json::json!("Engineer"));
+        assert_eq!(sent["author_profile"], serde_json::json!("Author"));
         assert_eq!(sent["model"], serde_json::json!("codex:gpt-5.6-sol"));
         assert_eq!(sent["effort"], serde_json::json!("xhigh"));
         assert_eq!(
@@ -681,13 +681,13 @@ mod tests {
     #[tokio::test]
     async fn an_edit_hands_a_slot_back_with_the_word_the_daemon_clears_it_by() {
         let (endpoint, seen) = recording_daemon().await;
-        planner_at(&endpoint)
+        orchestrator_at(&endpoint)
             .update_task(Parameters(UpdateTaskReq {
                 task_id: "01TASK".into(),
                 title: None,
                 description: None,
-                engineer_model: None,
-                engineer_effort: Some("default".into()),
+                author_model: None,
+                author_effort: Some("default".into()),
                 reviewers: Some(vec![ReviewerReq {
                     profile: "Reviewer".into(),
                     model: Some("default".into()),
@@ -711,12 +711,12 @@ mod tests {
         );
     }
 
-    /// The catalog is what a planner sizes a task from, so it reaches it whole
-    /// — what each model is for, and every effort it takes with what that
-    /// effort buys — and an agent kind narrows the answer rather than the
-    /// question, since `GET /v1/models` takes no filter.
+    /// The catalog is what an orchestrator sizes a task from, so it reaches
+    /// it whole — what each model is for, and every effort it takes with what
+    /// that effort buys — and an agent kind narrows the answer rather than
+    /// the question, since `GET /v1/models` takes no filter.
     #[tokio::test]
-    async fn the_catalog_reaches_the_planner_with_the_efforts_on_it() {
+    async fn the_catalog_reaches_the_orchestrator_with_the_efforts_on_it() {
         const CATALOG: &str = r#"[
             {"id": "codex:gpt-5.6-sol", "agent_kind": "codex",
              "description": "frontier", "tier": "frontier", "cost": 4, "speed": 2,
@@ -740,7 +740,7 @@ mod tests {
             (Some("opencode"), vec![]),
         ] {
             let (endpoint, seen) = recording_daemon_answering(CATALOG).await;
-            let answered = planner_at(&endpoint)
+            let answered = orchestrator_at(&endpoint)
                 .list_models(Parameters(ListModelsReq {
                     agent_kind: filter.map(str::to_string),
                 }))

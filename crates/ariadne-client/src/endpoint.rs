@@ -44,11 +44,11 @@ pub struct FileConfig {
     /// ariadned, else "ariadne" on PATH).
     pub cli_bin: Option<String>,
     /// Delete task branches after merge (default true). Only takes effect
-    /// when the worktrees are deleted too: a kept engineer worktree has the
+    /// when the worktrees are deleted too: a kept author worktree has the
     /// task branch checked out, which pins it.
     pub delete_merged_branches: Option<bool>,
     /// Delete task worktrees after merge (default true). Set to false to keep
-    /// them under worktree_root so merged work can be inspected later;
+    /// them under worktree_root so finished work can be inspected later;
     /// cancelled tasks always keep theirs, salvageable work included.
     pub delete_merged_worktrees: Option<bool>,
     /// Keep the machine awake while agent sessions are live (default true).

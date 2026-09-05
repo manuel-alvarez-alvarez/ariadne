@@ -485,7 +485,7 @@ pub fn usage_cell(usage: &TokenUsageDto) -> String {
 /// cell carries it, rather than on a line of its own that would read as a
 /// third figure to add up.
 ///
-/// `breakdown` is who spent it — a goal's roles, a task's agents — each named
+/// `breakdown` is who spent it — a goal's seats, a task's agents — each named
 /// and carrying that same pair exactly; `session inspect` has nobody to break
 /// down and passes none. `indent` is where a continuation line starts:
 /// [`print_kv`] pads its keys, and every line after the first lines up under
@@ -649,16 +649,16 @@ mod tests {
     #[test]
     fn a_status_line_agrees_with_the_table_row_it_echoes() {
         assert_eq!(
-            status_line(false, "task", ID, "merged"),
-            format!("task {ID} is now merged")
+            status_line(false, "task", ID, "finished"),
+            format!("task {ID} is now finished")
         );
-        let painted = status_line(true, "task", ID, "merged");
+        let painted = status_line(true, "task", ID, "finished");
         assert!(
             painted.contains(&style::paint(true, style::ID, ID)),
             "{painted}"
         );
         assert!(
-            painted.contains(&style::paint(true, style::status("merged").0, "✓ merged")),
+            painted.contains(&style::paint(true, style::status("finished").0, "✓ finished")),
             "{painted}"
         );
     }
@@ -791,7 +791,7 @@ mod tests {
             usage_block(
                 &spent,
                 &[
-                    ("engineer".into(), spent),
+                    ("author".into(), spent),
                     ("Reviewer".into(), usage(4_600, 0, 300)),
                 ],
                 "\n",
@@ -799,7 +799,7 @@ mod tests {
             [
                 "input   1.2M  89%",
                 "output   45k",
-                "engineer  ↑1.2M ↓45k",
+                "author    ↑1.2M ↓45k",
                 "Reviewer  ↑4.6k ↓300",
             ]
             .join("\n")

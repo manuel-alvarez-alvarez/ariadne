@@ -14,7 +14,7 @@ use ariadne_api::profiles::ProfileDto;
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::sessions::SessionDto;
 use ariadne_api::tasks::TaskDto;
-use ariadne_core::{AgentKind, GoalStatus, MergeStrategy, Role, SessionStatus, TaskStatus};
+use ariadne_core::{AgentKind, GoalStatus, MergeStrategy, Seat, SessionStatus, TaskStatus};
 
 /// A stamp every fixture is created and updated at, so a rendered row is
 /// reproducible.
@@ -28,7 +28,7 @@ pub fn goal(id: &str, title: &str) -> GoalDto {
         status: GoalStatus::Active,
         max_tasks: None,
         required_approvals: 1,
-        planner_profile_id: "01PROFILE".into(),
+        orchestrator_profile_id: "01PROFILE".into(),
         model: None,
         effort: None,
         repos: Vec::new(),
@@ -47,9 +47,9 @@ pub fn task(id: &str, goal_id: &str) -> TaskDto {
         title: format!("task {id}"),
         description: String::new(),
         status: TaskStatus::InProgress,
-        engineer_profile_id: "01ENG".into(),
-        engineer_profile_name: Some("Engineer".into()),
-        planner_profile_name: Some("Planner".into()),
+        author_profile_id: "01ENG".into(),
+        author_profile_name: Some("Author".into()),
+        orchestrator_profile_name: Some("Orchestrator".into()),
         model: None,
         effort: None,
         reviewers: Vec::new(),
@@ -67,16 +67,16 @@ pub fn task(id: &str, goal_id: &str) -> TaskDto {
     }
 }
 
-/// A running session: an engineer's when it names a task, a planner's when it
-/// does not, and one the daemon has raised no attention flag for.
+/// A running session: an author's when it names a task, an orchestrator's
+/// when it does not, and one the daemon has raised no attention flag for.
 pub fn session(id: &str, goal_id: &str, task_id: Option<&str>) -> SessionDto {
     SessionDto {
         id: id.into(),
         goal_id: goal_id.into(),
         task_id: task_id.map(Into::into),
-        role: match task_id {
-            Some(_) => Role::Engineer,
-            None => Role::Planner,
+        seat: match task_id {
+            Some(_) => Seat::Author,
+            None => Seat::Orchestrator,
         },
         profile_id: "01PROF".into(),
         agent_kind: AgentKind::ClaudeCode,
@@ -97,14 +97,14 @@ pub fn session(id: &str, goal_id: &str, task_id: Option<&str>) -> SessionDto {
 }
 
 /// A profile with a system prompt of its own, on no particular agent.
-pub fn profile(name: &str, role: Role) -> ProfileDto {
+pub fn profile(name: &str, seat: Seat) -> ProfileDto {
     ProfileDto {
         id: format!("01{name}"),
         name: name.into(),
-        role,
+        seat,
         model: None,
         effort: None,
-        system_prompt: "you are an engineer".into(),
+        system_prompt: "you are an author".into(),
         system_prompt_is_default: false,
         created_at: "2026-08-17T08:00:00Z".into(),
         updated_at: "2026-08-17T09:00:00Z".into(),

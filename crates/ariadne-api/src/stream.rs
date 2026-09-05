@@ -31,7 +31,7 @@ pub struct TaskUpdatedDto {
 
 /// Payload of `task_branch_updated`: where a task's branch points now.
 ///
-/// A commit in the engineer's worktree changes nothing in the store, so no
+/// A commit in the author's worktree changes nothing in the store, so no
 /// other event says the task's diff is no longer the one a client fetched.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TaskBranchDto {

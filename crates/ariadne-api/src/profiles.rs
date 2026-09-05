@@ -1,6 +1,6 @@
 //! Profile DTOs.
 
-use ariadne_core::Role;
+use ariadne_core::Seat;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -8,7 +8,7 @@ use utoipa::{IntoParams, ToSchema};
 pub struct ProfileDto {
     pub id: String,
     pub name: String,
-    pub role: Role,
+    pub seat: Seat,
     /// What this profile runs on, `<agent_kind>[:<model>]`: the agent CLI and,
     /// after a `:`, the model of it. None = auto: the first installed agent
     /// CLI (claude_code, then codex, then opencode), resolved at spawn time,
@@ -21,9 +21,9 @@ pub struct ProfileDto {
     #[schema(example = "high")]
     pub effort: Option<String>,
     /// The system prompt this profile is spawned with: the one set on it, or
-    /// the default of its role while it has none of its own.
+    /// the default of its seat while it has none of its own.
     pub system_prompt: String,
-    /// Whether `system_prompt` is that role default rather than a text set on
+    /// Whether `system_prompt` is that seat default rather than a text set on
     /// this profile.
     pub system_prompt_is_default: bool,
     pub created_at: String,
@@ -33,9 +33,9 @@ pub struct ProfileDto {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateProfileRequest {
-    #[schema(example = "rust-engineer")]
+    #[schema(example = "rust-author")]
     pub name: String,
-    pub role: Role,
+    pub seat: Seat,
     /// What this profile runs on, `<agent_kind>[:<model>]` — the agent CLI
     /// and, after a `:`, the model of it: `codex`, `codex:gpt-5.3-codex`,
     /// `opencode:ollama/llama3:8b`. A string naming no agent CLI is refused.
@@ -51,7 +51,7 @@ pub struct CreateProfileRequest {
     #[serde(default)]
     #[schema(example = "high")]
     pub effort: Option<String>,
-    /// Absent or null = the default of the role, which the profile then
+    /// Absent or null = the default of the seat, which the profile then
     /// follows. It is the one prompt a profile owns: the briefings that
     /// start, resume and nudge a session are Ariadne's own.
     #[serde(default)]
@@ -77,13 +77,13 @@ pub struct UpdateProfileRequest {
     /// belonged to the model that was left behind.
     #[schema(example = "high")]
     pub effort: Option<String>,
-    /// New system prompt. Absent = unchanged; putting it back on the role
+    /// New system prompt. Absent = unchanged; putting it back on the seat
     /// default is `POST /v1/profiles/{id}/system-prompt/reset`.
     pub system_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, IntoParams)]
 pub struct ProfileListQuery {
-    /// Filter by role.
-    pub role: Option<Role>,
+    /// Filter by seat.
+    pub seat: Option<Seat>,
 }

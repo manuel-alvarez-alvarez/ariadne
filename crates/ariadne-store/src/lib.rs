@@ -28,7 +28,7 @@ pub use repositories::{NewRepository, RepositoryUpdate};
 pub use reviews::NewReview;
 pub use sessions::{NewSession, SessionFilter};
 pub use tasks::{NewTask, ReviewerSlot, TaskFilter, TaskUpdate};
-pub use usage::{ProfileUsage, RoleUsage};
+pub use usage::{ProfileUsage, SeatUsage};
 
 use std::path::Path;
 use std::sync::{Arc, OnceLock};

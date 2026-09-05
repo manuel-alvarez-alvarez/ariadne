@@ -26,7 +26,7 @@
 use anyhow::{Context, Result};
 use serde_json::json;
 
-use ariadne_core::{AgentKind, Role};
+use ariadne_core::{AgentKind, Seat};
 
 use super::{AgentAdapter, SpawnCtx, SpawnPlan, base_env};
 
@@ -174,7 +174,7 @@ impl AgentAdapter for OpencodeAdapter {
         })
     }
 
-    fn compaction_command(&self, _role: Role) -> Option<String> {
+    fn compaction_command(&self, _seat: Seat) -> Option<String> {
         Some("/compact".into())
     }
 

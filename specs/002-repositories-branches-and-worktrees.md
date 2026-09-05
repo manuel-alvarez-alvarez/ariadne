@@ -20,7 +20,7 @@ task is given, and the worktree each agent stands in.
 ## Scope
 
 In: registering a repository, its base branch and description, the merge
-strategy field, task branch naming, the worktree per role, worktree cleanup,
+strategy field, task branch naming, the worktree per seat, worktree cleanup,
 and the watch on a task branch's head.
 
 Out: what the merge strategy *does* at the end of a task (005), and what an
@@ -40,14 +40,14 @@ agent is briefed with in its worktree (006).
 6. A task branch is named after the task's title — its slug plus a short tail
    of its id, as in `fix-the-landing-briefing-real-fetch-r9jr7c`. Branch names
    carry no `ariadne/` prefix.
-7. An engineer gets a writable worktree of its own, on its task branch, cut
+7. An author gets a writable worktree of its own, on its task branch, cut
    from the base branch of the task's repository.
 8. A reviewer gets a **detached, read-only** worktree pinned to the branch
    under review, and it is refreshed between rounds so each round reads the
    commits that round added.
-9. A planner works in the repository's primary checkout, not a worktree of its
-   own: it is the first repository of its goal.
-10. Worktrees are removed when the work that owned them ends; whether merged
+9. An orchestrator works in the repository's primary checkout, not a worktree
+   of its own: it is the first repository of its goal.
+10. Worktrees are removed when the work that owned them ends; whether finished
     and cancelled work keeps its worktree for inspection is configuration.
 11. The daemon watches each task branch's head and announces a move on the
     event stream, so clients see a commit without polling. The watch is

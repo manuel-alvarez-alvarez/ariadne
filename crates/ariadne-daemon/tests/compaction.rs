@@ -1,12 +1,12 @@
 //! The compaction every agent session is owed at a hand-off, and how it is
 //! paid.
 //!
-//! Three hand-offs owe one: a review requested owes the engineer's, a verdict
-//! given owes the reviewer's, a plan finalized owes the planner's. Paying it
-//! is typing the CLI's `/compact` into a pane that is free — the turn ended,
-//! nothing being typed, no dialog up — and then leaving that pane alone until
-//! the CLI reports the compaction done, or the wait for that runs out. A
-//! resume that becomes due meanwhile goes out after it, once.
+//! Three hand-offs owe one: a review requested owes the author's, a verdict
+//! given owes the reviewer's, a plan finalized owes the orchestrator's.
+//! Paying it is typing the CLI's `/compact` into a pane that is free — the
+//! turn ended, nothing being typed, no dialog up — and then leaving that pane
+//! alone until the CLI reports the compaction done, or the wait for that runs
+//! out. A resume that becomes due meanwhile goes out after it, once.
 //!
 //! The scheduler is started after the seeding, as in the watchdog tests, so
 //! the pass a test asks for is the first one over the state it wrote.
@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use tokio::sync::mpsc::UnboundedSender;
 
-use ariadne_core::{ReviewVerdict, Role, SessionStatus, TaskStatus};
+use ariadne_core::{ReviewVerdict, Seat, SessionStatus, TaskStatus};
 use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_store::{AgentSession, EventFilter, Goal, NewReview, Task};
 
@@ -41,7 +41,7 @@ struct World {
     h: Harness,
     goal: Goal,
     task: Task,
-    engineer: String,
+    author: String,
     reviewer: String,
 }
 
@@ -69,16 +69,16 @@ impl World {
             h,
             goal,
             task: cast.task,
-            engineer: cast.engineer.id,
+            author: cast.author.id,
             reviewer: cast.reviewer.id,
         }
     }
 
-    /// The engineer of the task, at its prompt in a pane the stub answers
+    /// The author of the task, at its prompt in a pane the stub answers
     /// for, with a conversation to resume: what a task under review has.
-    async fn idle_engineer(&self) -> AgentSession {
+    async fn idle_author(&self) -> AgentSession {
         let session = self
-            .session(&self.goal, Some(&self.task), Role::Engineer, &self.engineer)
+            .session(&self.goal, Some(&self.task), Seat::Author, &self.author)
             .await;
         self.make_resumable(&self.task, &session).await;
         self.pane_exists(&session);
@@ -90,7 +90,7 @@ impl World {
     /// round the task is on now — going under review opened it.
     async fn reviewer_that_voted(&self, verdict: ReviewVerdict) -> AgentSession {
         let session = self
-            .session(&self.goal, Some(&self.task), Role::Reviewer, &self.reviewer)
+            .session(&self.goal, Some(&self.task), Seat::Reviewer, &self.reviewer)
             .await;
         self.pane_exists(&session);
         self.set_status(&session, SessionStatus::Idle).await;
@@ -184,38 +184,38 @@ impl Harness {
 
 // -- the three hand-offs ----------------------------------------------------
 
-/// A review requested is the engineer's hand-off: the session owes a
+/// A review requested is the author's hand-off: the session owes a
 /// compaction, and gets it as soon as it is at its prompt — `/compact` with
-/// the engineer's focus, typed and confirmed, and written to its log.
+/// the author's focus, typed and confirmed, and written to its log.
 #[tokio::test]
-async fn a_review_requested_owes_the_engineer_a_compaction() {
+async fn a_review_requested_owes_the_author_a_compaction() {
     let w = World::active().await;
-    let engineer = w.idle_engineer().await;
+    let author = w.idle_author().await;
     w.advance(&w.task, TaskStatus::UnderReview).await;
 
     let sched = w.scheduler();
     sched.task(&w.task);
-    eventually(TIMEOUT, "the engineer to owe a compaction", async || {
-        w.owes_compaction(&engineer).await
+    eventually(TIMEOUT, "the author to owe a compaction", async || {
+        w.owes_compaction(&author).await
     })
     .await;
-    w.compaction_typed(&engineer).await;
+    w.compaction_typed(&author).await;
 
-    let pasted = w.pasted(&engineer);
+    let pasted = w.pasted(&author);
     assert!(
         pasted.contains("/compact Keep the task and the branch."),
-        "the engineer's focus rides on the command: {pasted:?}"
+        "the author's focus rides on the command: {pasted:?}"
     );
     assert!(
         pasted.contains("Keep the open review points."),
         "{pasted:?}"
     );
     assert!(
-        w.enters(&engineer) >= 1,
+        w.enters(&author) >= 1,
         "and the command was submitted, not left in the composer"
     );
     assert!(
-        w.owes_compaction(&engineer).await,
+        w.owes_compaction(&author).await,
         "the debt stands until the CLI says the compaction is done"
     );
 }
@@ -225,36 +225,36 @@ async fn a_review_requested_owes_the_engineer_a_compaction() {
 #[tokio::test]
 async fn a_hand_off_is_paid_once_however_many_passes_see_it() {
     let w = World::active().await;
-    let engineer = w.idle_engineer().await;
+    let author = w.idle_author().await;
     w.advance(&w.task, TaskStatus::UnderReview).await;
 
     let sched = w.scheduler();
     sched.task(&w.task);
-    w.compaction_typed(&engineer).await;
+    w.compaction_typed(&author).await;
 
     // The CLI says it is done; the debt is paid.
-    w.ingest(&engineer, "session_start", compacted()).await;
+    w.ingest(&author, "session_start", compacted()).await;
     eventually(TIMEOUT, "the debt to be paid", async || {
-        !w.owes_compaction(&engineer).await
+        !w.owes_compaction(&author).await
     })
     .await;
     assert_eq!(
-        w.session_status(&engineer).await,
+        w.session_status(&author).await,
         SessionStatus::Idle,
         "a compaction reported done leaves the agent at its prompt, not in a turn"
     );
 
-    // Passes over the same round, with the engineer at its prompt all along.
+    // Passes over the same round, with the author at its prompt all along.
     for _ in 0..3 {
         sched.task(&w.task);
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
     assert!(
-        !w.owes_compaction(&engineer).await,
+        !w.owes_compaction(&author).await,
         "the same hand-off is not owed twice"
     );
     assert_eq!(
-        w.compaction_events(&engineer).await,
+        w.compaction_events(&author).await,
         vec!["compaction"],
         "and nothing more was typed for it"
     );
@@ -291,7 +291,7 @@ async fn a_verdict_given_owes_the_reviewer_a_compaction() {
 #[tokio::test]
 async fn a_reviewer_that_voted_is_ended_only_once_its_compaction_is_done() {
     let w = World::active().await;
-    let _engineer = w.idle_engineer().await;
+    let _author = w.idle_author().await;
     w.advance(&w.task, TaskStatus::UnderReview).await;
     let reviewer = w.reviewer_that_voted(ReviewVerdict::Approve).await;
 
@@ -324,41 +324,41 @@ async fn a_reviewer_that_voted_is_ended_only_once_its_compaction_is_done() {
     .await;
 }
 
-/// A plan finalized is the planner's hand-off: it owes a compaction, is left
-/// up through it, and is let go once it is done.
+/// A plan finalized is the orchestrator's hand-off: it owes a compaction, is
+/// left up through it, and is let go once it is done.
 #[tokio::test]
-async fn a_plan_finalized_owes_the_planner_a_compaction_before_it_is_let_go() {
+async fn a_plan_finalized_owes_the_orchestrator_a_compaction_before_it_is_let_go() {
     let h = harness().await;
-    let (goal, planner_profile) = h.planning_goal().await;
-    let planner = h
-        .session(&goal, None, Role::Planner, &planner_profile.id)
+    let (goal, orchestrator_profile) = h.planning_goal().await;
+    let orchestrator = h
+        .session(&goal, None, Seat::Orchestrator, &orchestrator_profile.id)
         .await;
-    h.pane_exists(&planner);
-    h.set_status(&planner, SessionStatus::Idle).await;
+    h.pane_exists(&orchestrator);
+    h.set_status(&orchestrator, SessionStatus::Idle).await;
     let goal = h.activate(&goal).await;
 
     let sched = Sched(scheduler::start(h.store.clone(), h.launcher.clone(), false));
     sched.goal(&goal);
-    eventually(TIMEOUT, "the planner to owe a compaction", async || {
-        h.owes_compaction(&planner).await
+    eventually(TIMEOUT, "the orchestrator to owe a compaction", async || {
+        h.owes_compaction(&orchestrator).await
     })
     .await;
-    h.compaction_typed(&planner).await;
+    h.compaction_typed(&orchestrator).await;
     assert!(
-        h.pasted(&planner).contains("/compact Keep the goal."),
+        h.pasted(&orchestrator).contains("/compact Keep the goal."),
         "{:?}",
-        h.pasted(&planner)
+        h.pasted(&orchestrator)
     );
     assert!(
-        h.pane_is_alive(&planner),
-        "an idle planner is not ended while it owes a compaction"
+        h.pane_is_alive(&orchestrator),
+        "an idle orchestrator is not ended while it owes a compaction"
     );
 
-    h.ingest(&planner, "session_start", compacted()).await;
+    h.ingest(&orchestrator, "session_start", compacted()).await;
     eventually(
         TIMEOUT,
-        "the planner to be ended after its compaction",
-        async || !h.pane_is_alive(&planner),
+        "the orchestrator to be ended after its compaction",
+        async || !h.pane_is_alive(&orchestrator),
     )
     .await;
 }
@@ -367,11 +367,11 @@ async fn a_plan_finalized_owes_the_planner_a_compaction_before_it_is_let_go() {
 
 /// A session in the middle of a turn owes the compaction all the same, and
 /// is not typed into for it: the debt waits for its prompt. A second
-/// engineer, at its prompt, is the control that says the passes came round.
+/// author, at its prompt, is the control that says the passes came round.
 #[tokio::test]
 async fn a_session_mid_turn_owes_the_compaction_and_is_not_typed_into() {
     let w = World::active().await;
-    let busy = w.idle_engineer().await;
+    let busy = w.idle_author().await;
     w.set_status(&busy, SessionStatus::Running).await;
     w.advance(&w.task, TaskStatus::UnderReview).await;
 
@@ -381,12 +381,12 @@ async fn a_session_mid_turn_owes_the_compaction_and_is_not_typed_into() {
             &w.goal,
             &repo,
             "control",
-            &w.store.get_profile(&w.engineer).await.unwrap(),
+            &w.store.get_profile(&w.author).await.unwrap(),
             &[&w.store.get_profile(&w.reviewer).await.unwrap()],
         )
         .await;
     let control = w
-        .session(&w.goal, Some(&control_task), Role::Engineer, &w.engineer)
+        .session(&w.goal, Some(&control_task), Seat::Author, &w.author)
         .await;
     w.pane_exists(&control);
     w.set_status(&control, SessionStatus::Idle).await;
@@ -421,20 +421,20 @@ async fn a_session_mid_turn_owes_the_compaction_and_is_not_typed_into() {
 /// A dialog only a person may answer is never typed into: the Enter behind
 /// the paste would answer it. Through whole ticks, too: the stale-attention
 /// sweep drops the flags of an agent nobody waits on — and nobody waits on
-/// the engineer of a task under review — but a dialog on a pane the daemon
+/// the author of a task under review — but a dialog on a pane the daemon
 /// is about to type into is not stale, so the flag stands with the debt.
 #[tokio::test]
 async fn a_session_waiting_on_a_person_is_not_typed_into() {
     let w = World::active().await;
-    let engineer = w.idle_engineer().await;
+    let author = w.idle_author().await;
     w.advance(&w.task, TaskStatus::UnderReview).await;
-    w.raise(&engineer, ariadne_core::AttentionReason::WaitingPermission)
+    w.raise(&author, ariadne_core::AttentionReason::WaitingPermission)
         .await;
 
     let sched = w.scheduler();
     sched.task(&w.task);
-    eventually(TIMEOUT, "the engineer to owe a compaction", async || {
-        w.owes_compaction(&engineer).await
+    eventually(TIMEOUT, "the author to owe a compaction", async || {
+        w.owes_compaction(&author).await
     })
     .await;
     // Past the next full tick, which runs every sweep over this session.
@@ -442,10 +442,10 @@ async fn a_session_waiting_on_a_person_is_not_typed_into() {
     sched.task(&w.task);
     tokio::time::sleep(Duration::from_millis(300)).await;
 
-    assert!(w.owes_compaction(&engineer).await);
-    assert_eq!(w.keystrokes(&engineer), 0);
+    assert!(w.owes_compaction(&author).await);
+    assert_eq!(w.keystrokes(&author), 0);
     assert_eq!(
-        w.attention(&engineer).await,
+        w.attention(&author).await,
         Some(ariadne_core::AttentionReason::WaitingPermission),
         "the dialog is still flagged: it is what keeps the pane from being typed into"
     );
@@ -460,29 +460,29 @@ async fn a_session_waiting_on_a_person_is_not_typed_into() {
 #[tokio::test]
 async fn a_cold_start_over_a_hand_off_keeps_the_prompt_and_types_nothing() {
     let w = World::active().await;
-    let engineer = w.idle_engineer().await;
+    let author = w.idle_author().await;
     w.advance(&w.task, TaskStatus::UnderReview).await;
-    w.raise(&engineer, ariadne_core::AttentionReason::WaitingPermission)
+    w.raise(&author, ariadne_core::AttentionReason::WaitingPermission)
         .await;
 
     let _sched = w.scheduler();
     eventually(
         TIMEOUT,
         "the first pass to owe the compaction",
-        async || w.owes_compaction(&engineer).await,
+        async || w.owes_compaction(&author).await,
     )
     .await;
     // Through the next full tick and its compaction pass.
     tokio::time::sleep(Duration::from_secs(scheduler::TICK_SECS + 1)).await;
 
     assert_eq!(
-        w.attention(&engineer).await,
+        w.attention(&author).await,
         Some(ariadne_core::AttentionReason::WaitingPermission),
         "the dialog is still flagged"
     );
-    assert_eq!(w.keystrokes(&engineer), 0, "and nothing was typed into it");
+    assert_eq!(w.keystrokes(&author), 0, "and nothing was typed into it");
     assert!(
-        w.owes_compaction(&engineer).await,
+        w.owes_compaction(&author).await,
         "the debt waits for the answer"
     );
 }
@@ -495,7 +495,7 @@ async fn a_cold_start_over_a_hand_off_keeps_the_prompt_and_types_nothing() {
 #[tokio::test]
 async fn a_compaction_reported_done_before_its_delivery_settles_is_over() {
     let w = World::active().await;
-    let engineer = w.idle_engineer().await;
+    let author = w.idle_author().await;
     w.advance(&w.task, TaskStatus::UnderReview).await;
     // A composer that never lets go keeps the delivery busy for a few
     // seconds of Enters, which is the window the done signal lands in.
@@ -504,12 +504,12 @@ async fn a_compaction_reported_done_before_its_delivery_settles_is_over() {
     let sched = w.scheduler();
     sched.task(&w.task);
     eventually(TIMEOUT, "the compaction to start going in", async || {
-        w.keystrokes(&engineer) > 0
+        w.keystrokes(&author) > 0
     })
     .await;
-    w.ingest(&engineer, "session_start", compacted()).await;
+    w.ingest(&author, "session_start", compacted()).await;
     assert!(
-        !w.owes_compaction(&engineer).await,
+        !w.owes_compaction(&author).await,
         "the done signal pays the debt"
     );
 
@@ -518,16 +518,16 @@ async fn a_compaction_reported_done_before_its_delivery_settles_is_over() {
     eventually(
         TIMEOUT,
         "the delivery to settle and be recorded",
-        async || w.compaction_events(&engineer).await == vec!["compaction"],
+        async || w.compaction_events(&author).await == vec!["compaction"],
     )
     .await;
     assert_eq!(
-        w.attention(&engineer).await,
+        w.attention(&author).await,
         None,
         "a composer read as holding the command is not a stalled agent when the CLI compacted"
     );
 
-    // Nothing lingers: feedback that arrives now reaches the engineer at
+    // Nothing lingers: feedback that arrives now reaches the author at
     // once, which it would not if the pane were still held for a compaction.
     let round = w.store.get_task(&w.task.id).await.unwrap().review_round;
     w.store
@@ -544,7 +544,7 @@ async fn a_compaction_reported_done_before_its_delivery_settles_is_over() {
     sched.task(&w.task);
     eventually(
         TIMEOUT,
-        "the engineer to be resumed with the feedback",
+        "the author to be resumed with the feedback",
         async || w.status(&w.task.id).await == TaskStatus::InProgress,
     )
     .await;
@@ -557,36 +557,36 @@ async fn a_compaction_reported_done_before_its_delivery_settles_is_over() {
 #[tokio::test]
 async fn a_compaction_nobody_reports_done_is_written_off() {
     let w = World::build(harness().compaction_timeout(Duration::from_secs(1)), 1).await;
-    let engineer = w.idle_engineer().await;
+    let author = w.idle_author().await;
     w.advance(&w.task, TaskStatus::UnderReview).await;
 
     let sched = w.scheduler();
     sched.task(&w.task);
-    w.compaction_typed(&engineer).await;
+    w.compaction_typed(&author).await;
 
     eventually(TIMEOUT, "the debt to be written off", async || {
-        !w.owes_compaction(&engineer).await
+        !w.owes_compaction(&author).await
     })
     .await;
     assert_eq!(
-        w.compaction_events(&engineer).await,
+        w.compaction_events(&author).await,
         vec!["compaction", "compaction_failed:timed_out"]
     );
 }
 
-/// Review feedback that becomes due while the engineer is compacting goes
+/// Review feedback that becomes due while the author is compacting goes
 /// out after the compaction, once: the pane is neither killed nor typed
 /// into under it, and the resume that carries the feedback is the first
 /// thing that happens once the CLI reports the compaction done.
 #[tokio::test]
 async fn a_resume_due_during_a_compaction_goes_out_after_it() {
     let w = World::active().await;
-    let engineer = w.idle_engineer().await;
+    let author = w.idle_author().await;
     w.advance(&w.task, TaskStatus::UnderReview).await;
 
     let sched = w.scheduler();
     sched.task(&w.task);
-    w.compaction_typed(&engineer).await;
+    w.compaction_typed(&author).await;
     let launches_before = w.tmux_calls_of("new-session").len();
 
     // The reviewer asks for changes while the compaction runs.
@@ -612,8 +612,8 @@ async fn a_resume_due_during_a_compaction_goes_out_after_it() {
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
     assert!(
-        w.pane_is_alive(&engineer),
-        "the engineer's pane is not killed under its compaction"
+        w.pane_is_alive(&author),
+        "the author's pane is not killed under its compaction"
     );
     assert_eq!(
         w.tmux_calls_of("new-session").len(),
@@ -626,10 +626,10 @@ async fn a_resume_due_during_a_compaction_goes_out_after_it() {
         "the task waits for the pass after the compaction"
     );
 
-    w.ingest(&engineer, "session_start", compacted()).await;
+    w.ingest(&author, "session_start", compacted()).await;
     eventually(
         TIMEOUT,
-        "the engineer to be resumed with the feedback",
+        "the author to be resumed with the feedback",
         async || w.status(&w.task.id).await == TaskStatus::InProgress,
     )
     .await;
@@ -639,7 +639,7 @@ async fn a_resume_due_during_a_compaction_goes_out_after_it() {
         "resumed once, after the compaction"
     );
     assert!(
-        w.launched_at(&engineer).await.is_some(),
+        w.launched_at(&author).await.is_some(),
         "as the same session, relaunched on its compacted conversation"
     );
 }

@@ -22,7 +22,7 @@ async fn models(h: &Harness) -> Vec<ModelDto> {
 }
 
 /// Every curated model is listed under its agent CLI, with everything a
-/// planner sizes a task from and an id that carries the CLI it runs on.
+/// orchestrator sizes a task from and an id that carries the CLI it runs on.
 #[tokio::test]
 async fn every_curated_model_is_listed_as_its_agent_runs_it() {
     let h = harness().await;

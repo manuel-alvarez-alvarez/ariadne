@@ -134,7 +134,7 @@ impl AppState {
     tags(
         (name = "system", description = "Daemon health and metadata"),
         (name = "agents", description = "Per-agent-CLI launch configuration"),
-        (name = "profiles", description = "Agent profiles (role + system prompt + agent CLI)"),
+        (name = "profiles", description = "Agent profiles (seat + system prompt + agent CLI)"),
         (name = "repositories", description = "Git repositories registered with the daemon"),
         (name = "goals", description = "Goals and their plans"),
         (name = "tasks", description = "Tasks, transitions, reviews"),

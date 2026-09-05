@@ -1,16 +1,16 @@
 //! Attach/logs helpers: resolve an Ariadne id to a tmux session and exec.
 //!
 //! The id is a session, task or goal id — a task or goal one resolves to the
-//! session of the wanted role (default engineer for tasks, planner for goals).
-//! With no tmux alive for it, attach revives the most recent matching session
-//! (`POST /v1/sessions/{id}/resume`) and attaches to the fresh tmux that
-//! resumes the same agent conversation.
+//! session of the wanted seat (default author for tasks, orchestrator for
+//! goals). With no tmux alive for it, attach revives the most recent matching
+//! session (`POST /v1/sessions/{id}/resume`) and attaches to the fresh tmux
+//! that resumes the same agent conversation.
 
 use anyhow::{Result, bail};
 
 use ariadne_api::sessions::SessionDto;
 use ariadne_client::{Client, ClientError};
-use ariadne_core::Role;
+use ariadne_core::Seat;
 
 use crate::output::{style, view};
 
@@ -21,31 +21,31 @@ fn hint(message: &str) -> String {
     style::paint(view().color, style::META, message)
 }
 
-/// Sessions matching the id, plus the role to attach to: task first (default
-/// engineer), then goal (default planner).
+/// Sessions matching the id, plus the seat to attach to: task first (default
+/// author), then goal (default orchestrator).
 ///
 /// With no sessions on either side the id itself decides the wording — a task
-/// without sessions used to be reported as a missing *planner* session, and an
-/// id naming nothing at all got the same message as a real task.
+/// without sessions used to be reported as a missing *orchestrator* session,
+/// and an id naming nothing at all got the same message as a real task.
 async fn candidates(
     client: &Client,
     id: &str,
-    role: Option<Role>,
-) -> Result<(Vec<SessionDto>, Role)> {
-    for (query, default) in [("task", Role::Engineer), ("goal", Role::Planner)] {
+    seat: Option<Seat>,
+) -> Result<(Vec<SessionDto>, Seat)> {
+    for (query, default) in [("task", Seat::Author), ("goal", Seat::Orchestrator)] {
         let sessions: Vec<SessionDto> = client
             .get_json(&format!("/v1/sessions?{query}={id}"))
             .await?;
         if !sessions.is_empty() {
-            return Ok((sessions, role.unwrap_or(default)));
+            return Ok((sessions, seat.unwrap_or(default)));
         }
     }
-    for (kind, default) in [("tasks", Role::Engineer), ("goals", Role::Planner)] {
+    for (kind, default) in [("tasks", Seat::Author), ("goals", Seat::Orchestrator)] {
         if found::<serde_json::Value>(client, &format!("/v1/{kind}/{id}"))
             .await?
             .is_some()
         {
-            return Ok((vec![], role.unwrap_or(default)));
+            return Ok((vec![], seat.unwrap_or(default)));
         }
     }
     bail!("no such task, goal or session: {id}")
@@ -74,11 +74,11 @@ fn tmux_alive(name: &str) -> bool {
 }
 
 /// Find the live tmux session for a task or goal.
-pub async fn resolve_tmux(client: &Client, id: &str, role: Option<Role>) -> Result<SessionDto> {
-    let (sessions, wanted) = candidates(client, id, role).await?;
+pub async fn resolve_tmux(client: &Client, id: &str, seat: Option<Seat>) -> Result<SessionDto> {
+    let (sessions, wanted) = candidates(client, id, seat).await?;
     sessions
         .into_iter()
-        .find(|s| s.role == wanted && s.status.is_live() && tmux_alive(&s.tmux_session))
+        .find(|s| s.seat == wanted && s.status.is_live() && tmux_alive(&s.tmux_session))
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "no live {} session found for {id} (is the agent running?)",
@@ -87,13 +87,13 @@ pub async fn resolve_tmux(client: &Client, id: &str, role: Option<Role>) -> Resu
         })
 }
 
-/// No live tmux: revive the most recent resumable session of the wanted role.
-async fn revive(client: &Client, id: &str, role: Option<Role>) -> Result<SessionDto> {
-    let (sessions, wanted) = candidates(client, id, role).await?;
+/// No live tmux: revive the most recent resumable session of the wanted seat.
+async fn revive(client: &Client, id: &str, seat: Option<Seat>) -> Result<SessionDto> {
+    let (sessions, wanted) = candidates(client, id, seat).await?;
     let target = sessions
         .into_iter()
         .rev() // ids are time-sortable: last = most recent
-        .find(|s| s.role == wanted && s.internal_session_id.is_some())
+        .find(|s| s.seat == wanted && s.internal_session_id.is_some())
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "no {} session (live or finished) found for {id} that can be resumed",
@@ -132,7 +132,7 @@ async fn ensure_task_not_finished(client: &Client, id: &str) -> Result<()> {
     use ariadne_api::tasks::TaskDto;
     use ariadne_core::TaskStatus;
     if let Ok(task) = client.get_json::<TaskDto>(&format!("/v1/tasks/{id}")).await
-        && matches!(task.status, TaskStatus::Merged | TaskStatus::Cancelled)
+        && matches!(task.status, TaskStatus::Finished | TaskStatus::Cancelled)
         && task.worktree_path.is_none()
     {
         bail!(
@@ -169,36 +169,36 @@ async fn attach_session(client: &Client, session: SessionDto) -> Result<()> {
     attach_to(&session)
 }
 
-/// Attach to a task or goal id: the live tmux of the wanted role, or the
-/// most recent resumable session of that role revived.
-pub async fn attach(client: &Client, id: &str, role: Option<Role>) -> Result<()> {
-    let session = match resolve_tmux(client, id, role).await {
+/// Attach to a task or goal id: the live tmux of the wanted seat, or the
+/// most recent resumable session of that seat revived.
+pub async fn attach(client: &Client, id: &str, seat: Option<Seat>) -> Result<()> {
+    let session = match resolve_tmux(client, id, seat).await {
         Ok(session) => session,
         Err(_) => {
             ensure_task_not_finished(client, id).await?;
-            revive(client, id, role).await?
+            revive(client, id, seat).await?
         }
     };
     attach_to(&session)
 }
 
 /// `ariadne attach <id>`: session, task or goal id.
-pub async fn attach_any(client: &Client, id: &str, role: Option<Role>) -> Result<()> {
+pub async fn attach_any(client: &Client, id: &str, seat: Option<Seat>) -> Result<()> {
     // Which of the three it is decides everything below, so a short id that
     // names one of each is refused here rather than resolved to whichever
     // list happens to be probed first.
     let id = &crate::commands::resolve::attachable(client, id).await?;
     if let Some(session) = found::<SessionDto>(client, &format!("/v1/sessions/{id}")).await? {
-        if role.is_some() {
+        if seat.is_some() {
             bail!(
-                "--role does not apply to a session id: {id} is already the {} session \
-                 of that agent (pass the task or goal id to pick a role)",
-                session.role.as_str()
+                "--seat does not apply to a session id: {id} is already the {} session \
+                 of that agent (pass the task or goal id to pick a seat)",
+                session.seat.as_str()
             );
         }
         return attach_session(client, session).await;
     }
-    attach(client, id, role).await
+    attach(client, id, seat).await
 }
 
 fn attach_to(session: &SessionDto) -> Result<()> {
@@ -207,7 +207,7 @@ fn attach_to(session: &SessionDto) -> Result<()> {
         hint(&format!(
             "attaching to {} ({} / {})",
             session.tmux_session,
-            session.role.as_str(),
+            session.seat.as_str(),
             session.agent_kind.as_str()
         ))
     );

@@ -1,9 +1,9 @@
-//! What a task wants, by status: an engineer from `ready` to the merge, the
+//! What a task wants, by status: an author from `ready` to the merge, the
 //! reviewers a round is waiting on, and the cleanup its ending owes.
 
 use tracing::{debug, info, warn};
 
-use ariadne_core::{Actor, AttentionReason, GoalStatus, PromptKind, ReviewVerdict, Role, TaskStatus};
+use ariadne_core::{Actor, AttentionReason, GoalStatus, PromptKind, ReviewVerdict, Seat, TaskStatus};
 use ariadne_store::{AgentSession, SessionFilter, Task, TaskFilter};
 
 use crate::agents::prompts;
@@ -19,7 +19,7 @@ impl super::Scheduler {
             return Ok(());
         }
 
-        // The branch is only followed while somebody is working on it. Merged
+        // The branch is only followed while somebody is working on it. Finished
         // and cancelled tasks are let go by the cleanup below, but a failed
         // one keeps its worktree — a user can retry it — and until one does
         // there is nobody committing on its branch to report. Here rather than
@@ -31,13 +31,13 @@ impl super::Scheduler {
 
         // Reviewer sessions only belong to under_review: an agent whose part
         // of the lifecycle has passed is not left running on the task. The
-        // engineer's is not one of them — it holds the worktree from the
+        // author's is not one of them — it holds the worktree from the
         // first commit to the merge.
         if task.status() != TaskStatus::UnderReview {
             self.end_reviewers(&task).await;
         }
         // A task that has left `approved` — landed, or sent back to the
-        // reviewers with a revision — is one whose engineer wants briefing
+        // reviewers with a revision — is one whose author wants briefing
         // again the next time it is approved.
         if task.status() != TaskStatus::Approved {
             self.landing_briefed.remove(&task.id);
@@ -68,7 +68,7 @@ impl super::Scheduler {
                     return Ok(());
                 }
                 if self.store.task_dependencies_merged(&task.id).await? {
-                    info!(task = %task.id, "dependencies merged, task ready");
+                    info!(task = %task.id, "dependencies finished, task ready");
                     self.store
                         .transition_task(&task.id, TaskStatus::Ready, Actor::Daemon, None, None)
                         .await?;
@@ -78,12 +78,12 @@ impl super::Scheduler {
             }
             TaskStatus::Ready => {
                 if self
-                    .live_sessions(&goal.id, Some(&task.id), Role::Engineer)
+                    .live_sessions(&goal.id, Some(&task.id), Seat::Author)
                     .await?
                     .is_empty()
                 {
-                    info!(task = %task.id, "spawning engineer");
-                    self.launcher.spawn_engineer(&task.id).await?;
+                    info!(task = %task.id, "spawning author");
+                    self.launcher.spawn_author(&task.id).await?;
                     self.spawn_failures.remove(&task.id);
                 }
                 self.store
@@ -101,7 +101,7 @@ impl super::Scheduler {
                     .await?;
 
                 // Two hand-offs meet here, and each earns the session that
-                // made it a compaction: the engineer's, which requested this
+                // made it a compaction: the author's, which requested this
                 // review, and every reviewer's whose verdict is in. Owed
                 // before the verdicts are read, so that a round they close
                 // ends the reviewers only once the compaction is done.
@@ -167,7 +167,7 @@ impl super::Scheduler {
                     // on a round that already has one.
                     let mut running = None;
                     for s in &live {
-                        if s.role() == Role::Reviewer
+                        if s.seat() == Seat::Reviewer
                             && s.profile_id == profile_id
                             && self
                                 .launcher
@@ -188,7 +188,7 @@ impl super::Scheduler {
                         prompts::reviewer_resume_briefing(template, &task, summary.as_deref());
                     // A reviewer with no verdict yet is the round's only
                     // reason to still be open, so an idle one is watched the
-                    // same way an engineer is. Reviewers that already voted
+                    // same way an author is. Reviewers that already voted
                     // are not in `pending` and are left to sit: waiting for
                     // the others is not a stall. There is no task-level flag
                     // for this — the session's own is the signal.
@@ -224,8 +224,8 @@ impl super::Scheduler {
                     .store
                     .list_reviews(&task.id, Some(task.review_round))
                     .await?;
-                // Who asked, as the engineer reads it: the reviewer's own name
-                // and role, with the id as the fallback for a profile that has
+                // Who asked, as the author reads it: the reviewer's own name
+                // and seat, with the id as the fallback for a profile that has
                 // since been deleted.
                 let mut feedback: Vec<(String, String)> = Vec::new();
                 for review in reviews
@@ -233,7 +233,7 @@ impl super::Scheduler {
                     .filter(|r| r.verdict() == ReviewVerdict::RequestChanges)
                 {
                     let who = match self.store.get_profile(&review.reviewer_profile_id).await {
-                        Ok(profile) => format!("{} ({})", profile.name, profile.role),
+                        Ok(profile) => format!("{} ({})", profile.name, profile.seat),
                         Err(_) => format!("reviewer {}", review.reviewer_profile_id),
                     };
                     feedback.push((
@@ -241,17 +241,17 @@ impl super::Scheduler {
                         review.body.clone().unwrap_or_else(|| "(no details)".into()),
                     ));
                 }
-                // The engineer's pane is not killed under a compaction: the
+                // The author's pane is not killed under a compaction: the
                 // feedback goes out on the pass after it ends, and the task
                 // waits here for that pass.
-                if let Some(compacting) = self.engineer_compacting(&task).await? {
-                    info!(task = %task.id, session = %compacting.id, "the engineer is compacting its conversation; the review feedback goes out after it");
+                if let Some(compacting) = self.author_compacting(&task).await? {
+                    info!(task = %task.id, session = %compacting.id, "the author is compacting its conversation; the review feedback goes out after it");
                     return Ok(());
                 }
-                info!(task = %task.id, "resuming engineer with review feedback");
+                info!(task = %task.id, "resuming author with review feedback");
                 let template = prompts::template_for(PromptKind::ChangesRequested);
                 self.launcher
-                    .resume_engineer(
+                    .resume_author(
                         &task.id,
                         &prompts::changes_requested_briefing(template, &feedback),
                     )
@@ -262,28 +262,28 @@ impl super::Scheduler {
                     .await?;
             }
             TaskStatus::Approved => {
-                // Landing the change is the engineer's last turn, and the
+                // Landing the change is the author's last turn, and the
                 // session that wrote it is still there to take it: nothing
                 // took the worktree away. What it has not had is the briefing
                 // that says the task is approved and how its repository takes
                 // it, so that goes out once — and from there the turn is
-                // watched like any other. Once its pane is free: an engineer
+                // watched like any other. Once its pane is free: an author
                 // compacting its conversation is briefed on the pass after.
                 if !self.landing_briefed.contains(&task.id)
-                    && let Some(compacting) = self.engineer_compacting(&task).await?
+                    && let Some(compacting) = self.author_compacting(&task).await?
                 {
-                    info!(task = %task.id, session = %compacting.id, "the engineer is compacting its conversation; the landing briefing goes out after it");
+                    info!(task = %task.id, session = %compacting.id, "the author is compacting its conversation; the landing briefing goes out after it");
                     return Ok(());
                 }
                 if self.landing_briefed.insert(task.id.clone()) {
-                    info!(task = %task.id, "approved: briefing the engineer to land it");
-                    self.start_engineer(&task).await?;
+                    info!(task = %task.id, "approved: briefing the author to land it");
+                    self.start_author(&task).await?;
                     self.spawn_failures.remove(&task.id);
                 } else {
                     self.check_stall(&task).await?;
                 }
             }
-            TaskStatus::Merged => {
+            TaskStatus::Finished => {
                 // Post-merge cleanup (idempotent), then wake dependents.
                 // Worktrees and the branch go by default; set
                 // delete_merged_worktrees = false to keep merged work around
@@ -309,7 +309,7 @@ impl super::Scheduler {
         Ok(())
     }
 
-    /// Owe the compactions the review hand-offs earn: the engineer's for
+    /// Owe the compactions the review hand-offs earn: the author's for
     /// requesting the round, and each voting reviewer's for its verdict —
     /// once per round each, since the round is what the hand-off is about.
     async fn owe_review_compactions(
@@ -326,8 +326,8 @@ impl super::Scheduler {
                 ..Default::default()
             })
             .await?;
-        for engineer in live.iter().filter(|s| s.role() == Role::Engineer) {
-            self.owe_compaction(engineer, situation.clone()).await;
+        for author in live.iter().filter(|s| s.seat() == Seat::Author) {
+            self.owe_compaction(author, situation.clone()).await;
         }
         for review in reviews {
             let Some(session_id) = &review.session_id else {
@@ -340,10 +340,10 @@ impl super::Scheduler {
         Ok(())
     }
 
-    /// The task's live engineer session while a compaction is running in
-    /// its pane, if that is where it is: the one moment the engineer is not
+    /// The task's live author session while a compaction is running in
+    /// its pane, if that is where it is: the one moment the author is not
     /// relaunched with what the task has for it.
-    async fn engineer_compacting(&self, task: &Task) -> anyhow::Result<Option<AgentSession>> {
+    async fn author_compacting(&self, task: &Task) -> anyhow::Result<Option<AgentSession>> {
         let live = self
             .store
             .list_sessions(SessionFilter {
@@ -354,7 +354,7 @@ impl super::Scheduler {
             .await?;
         Ok(live
             .into_iter()
-            .find(|s| s.role() == Role::Engineer && self.compaction_in_flight(s)))
+            .find(|s| s.seat() == Seat::Author && self.compaction_in_flight(s)))
     }
 
     /// End the reviewers of a task whose review is over — but not one still
@@ -378,12 +378,12 @@ impl super::Scheduler {
                 return;
             }
         };
-        for reviewer in live.iter().filter(|s| s.role() == Role::Reviewer) {
+        for reviewer in live.iter().filter(|s| s.seat() == Seat::Reviewer) {
             if self.compaction_pending(reviewer) {
                 debug!(task = %task.id, session = %reviewer.id, "the reviewer is left up until the compaction it owes is done");
                 continue;
             }
-            info!(session = %reviewer.id, role = %reviewer.role, "killing session: the reviewers' part of the lifecycle has passed");
+            info!(session = %reviewer.id, seat = %reviewer.seat, "killing session: the reviewers' part of the lifecycle has passed");
             if let Err(e) = self.launcher.kill_session(&reviewer.id).await {
                 warn!(session = %reviewer.id, error = %e, "killing the session failed");
             }
@@ -409,7 +409,7 @@ impl super::Scheduler {
         }
     }
 
-    /// The sessions for this role that are still running — including the ones
+    /// The sessions for this seat that are still running — including the ones
     /// tmux would not answer for.
     ///
     /// Their number decides whether to spawn, so an unanswered question has to
@@ -420,7 +420,7 @@ impl super::Scheduler {
         &self,
         goal_id: &str,
         task_id: Option<&str>,
-        role: Role,
+        seat: Seat,
     ) -> anyhow::Result<Vec<AgentSession>> {
         let sessions = self
             .store
@@ -433,7 +433,7 @@ impl super::Scheduler {
             .await?;
         let mut out = Vec::new();
         for s in sessions {
-            if s.role() == role
+            if s.seat() == seat
                 && self
                     .launcher
                     .tmux
@@ -471,9 +471,9 @@ impl super::Scheduler {
 
     /// The agent a task is waiting on, watched.
     ///
-    /// Whose turn it is, is the engineer's from the first commit to the merge,
-    /// so the engineer is the only role this asks about.
-    /// A task with no live engineer gets one started; one that has
+    /// Whose turn it is, is the author's from the first commit to the merge,
+    /// so the author is the only seat this asks about.
+    /// A task with no live author gets one started; one that has
     /// reported nothing for too long goes under [`Self::check_session_quiet`],
     /// which is one nudge per (status, round), then the user, then a relaunch.
     /// The task shows that stall too, but nothing here writes it: the flag on
@@ -488,9 +488,9 @@ impl super::Scheduler {
                 ..Default::default()
             })
             .await?;
-        let Some(agent) = sessions.iter().find(|s| s.role() == Role::Engineer) else {
-            info!(task = %task.id, "the task is waiting on an engineer and has none live, starting one");
-            if let Err(e) = self.start_engineer(task).await {
+        let Some(agent) = sessions.iter().find(|s| s.seat() == Seat::Author) else {
+            info!(task = %task.id, "the task is waiting on an author and has none live, starting one");
+            if let Err(e) = self.start_author(task).await {
                 // The task still wants this agent and could not get one: the
                 // ended session is the thing the user has to look at.
                 self.flag_last_disconnected(task).await;
@@ -507,18 +507,18 @@ impl super::Scheduler {
             .await
     }
 
-    /// Put the agent a task is waiting on back on it: its engineer, resumed
+    /// Put the agent a task is waiting on back on it: its author, resumed
     /// where its session merely ended and started afresh where there is none.
     ///
     /// Whatever the user is owed comes back up with it
-    /// ([`Self::keep_waiting_user`]): starting the engineer again is the
+    /// ([`Self::keep_waiting_user`]): starting the author again is the
     /// recovery for the agent, and no answer at all to a person who still has
     /// a request to merge.
-    pub(super) async fn start_engineer(&mut self, task: &Task) -> anyhow::Result<()> {
+    pub(super) async fn start_author(&mut self, task: &Task) -> anyhow::Result<()> {
         let instruction = self.resume_text(task).await?;
         let session = self
             .launcher
-            .resume_engineer(&task.id, &instruction)
+            .resume_author(&task.id, &instruction)
             .await?;
         self.keep_waiting_user(&session, None).await
     }
@@ -540,7 +540,7 @@ impl super::Scheduler {
     /// row. The task is the other, and the one that answers where the flag
     /// was already lost — swept aside by a `disconnected` before the resume,
     /// or left on a superseded row: an approved task with a request recorded
-    /// on it has handed the merge to a human, and no restart of its engineer
+    /// on it has handed the merge to a human, and no restart of its author
     /// merges it for them.
     pub(super) async fn keep_waiting_user(
         &self,
@@ -549,14 +549,14 @@ impl super::Scheduler {
     ) -> anyhow::Result<()> {
         let mut owed = carried.is_some_and(|reason| reason.is_for_the_user());
         if !owed
-            && back.role() == Role::Engineer
+            && back.seat() == Seat::Author
             && let Some(task_id) = back.task_id.as_deref()
         {
             let task = self.store.get_task(task_id).await?;
             owed = task.status() == TaskStatus::Approved && task.pr_url.is_some();
         }
         if owed {
-            info!(session = %back.id, role = %back.role, "the agent is back on its feet and the user is still owed, raising it again");
+            info!(session = %back.id, seat = %back.seat, "the agent is back on its feet and the user is still owed, raising it again");
             self.store
                 .set_session_attention(&back.id, AttentionReason::WaitingUser)
                 .await?;
@@ -569,7 +569,7 @@ impl super::Scheduler {
     /// situation, rendered.
     ///
     /// Two situations, and the task's status tells them apart. An approved
-    /// task is one the engineer is landing, and what it is picked up with is
+    /// task is one the author is landing, and what it is picked up with is
     /// the landing briefing — the whole procedure, which is what a session
     /// that ended over it has to be given back. Anything earlier is work in
     /// the worktree, and the resume nudge is what that wants.
@@ -577,7 +577,7 @@ impl super::Scheduler {
         if task.status() == TaskStatus::Approved {
             let repo = self.store.get_repository(&task.repo_id).await?;
             // The landing briefing is the repository's: the text set on it, or
-            // the default of its merge strategy. What reaches the engineer is
+            // the default of its merge strategy. What reaches the author is
             // the procedure that repository lands by.
             return Ok(prompts::landing_briefing(
                 repo.landing_prompt_text(),
@@ -585,11 +585,11 @@ impl super::Scheduler {
                 &repo,
             ));
         }
-        let template = prompts::template_for(PromptKind::EngineerResume);
-        Ok(prompts::engineer_resume_briefing(template, task))
+        let template = prompts::template_for(PromptKind::AuthorResume);
+        Ok(prompts::author_resume_briefing(template, task))
     }
 
-    /// Raise `disconnected` on the engineer session that was last on this
+    /// Raise `disconnected` on the author session that was last on this
     /// task, whatever state it ended in. Best effort: this runs while another
     /// failure is being reported, and adds nothing to it if it fails too.
     async fn flag_last_disconnected(&self, task: &Task) {
@@ -603,8 +603,8 @@ impl super::Scheduler {
         else {
             return;
         };
-        if let Some(previous) = sessions.iter().rev().find(|s| s.role() == Role::Engineer) {
-            warn!(task = %task.id, session = %previous.id, "starting the engineer failed, flagging its last session disconnected");
+        if let Some(previous) = sessions.iter().rev().find(|s| s.seat() == Seat::Author) {
+            warn!(task = %task.id, session = %previous.id, "starting the author failed, flagging its last session disconnected");
             let _ = self
                 .store
                 .set_session_attention(&previous.id, AttentionReason::Disconnected)

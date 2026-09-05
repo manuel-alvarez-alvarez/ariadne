@@ -21,7 +21,7 @@ async fn resolve(store: &Store, spec: &str) -> ApiResult<String> {
 
 /// Create a profile.
 ///
-/// It starts on the system prompt of its role, and it owns no other prompt:
+/// It starts on the system prompt of its seat, and it owns no other prompt:
 /// the briefings that start, resume and nudge a session are Ariadne's own.
 #[utoipa::path(post, path = "/v1/profiles", tag = "profiles",
     request_body = CreateProfileRequest,
@@ -46,7 +46,7 @@ pub async fn create(
         .store
         .create_profile(NewProfile {
             name: req.name,
-            role: req.role,
+            seat: req.seat,
             agent_kind: pin.as_ref().map(|p| p.agent_kind),
             model: pin.as_ref().and_then(|p| p.model.clone()),
             effort: pin.and_then(|p| p.effort),
@@ -64,7 +64,7 @@ pub async fn list(
     State(state): State<AppState>,
     Query(q): Query<ProfileListQuery>,
 ) -> ApiResult<Json<Vec<ProfileDto>>> {
-    let profiles = state.store.list_profiles(q.role).await?;
+    let profiles = state.store.list_profiles(q.seat).await?;
     Ok(Json(profiles.into_iter().map(profile_dto).collect()))
 }
 
@@ -145,7 +145,7 @@ pub async fn delete(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Put the profile's system prompt back on the default of its role.
+/// Put the profile's system prompt back on the default of its seat.
 #[utoipa::path(post, path = "/v1/profiles/{id}/system-prompt/reset", tag = "profiles",
     params(("id" = String, Path, description = "profile id or name")),
     responses((status = 200, body = ProfileDto), (status = 404)))]

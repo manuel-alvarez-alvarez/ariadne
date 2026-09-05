@@ -4,7 +4,7 @@
 //! repos are — an absolute path into a real git work tree, on a branch that
 //! exists and has a commit — that the same checkout is registered once per
 //! base branch, that every write reaches the domain-event stream, and that
-//! the landing briefing it hands its engineer is its own: prefilled from its
+//! the landing briefing it hands its author is its own: prefilled from its
 //! merge strategy, editable, and reset by writing an empty one.
 
 mod common;

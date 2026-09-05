@@ -16,7 +16,7 @@ mod common;
 
 use std::ops::Deref;
 
-use ariadne_core::{Actor, Role, TaskStatus};
+use ariadne_core::{Actor, Seat, TaskStatus};
 use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_store::{Goal, NewTask, ReviewerSlot, Task};
 
@@ -45,12 +45,12 @@ impl World {
     }
 
     async fn on(h: Harness) -> World {
-        let planner = h.profile("planner", Role::Planner).await;
-        let engineer = h.profile("engineer", Role::Engineer).await;
-        let reviewer = h.profile("reviewer", Role::Reviewer).await;
-        let (goal, repo) = h.goal(&planner).await;
+        let orchestrator = h.profile("orchestrator", Seat::Orchestrator).await;
+        let author = h.profile("author", Seat::Author).await;
+        let reviewer = h.profile("reviewer", Seat::Reviewer).await;
+        let (goal, repo) = h.goal(&orchestrator).await;
         let first = h
-            .task_on(&goal, &repo, "Build the engine", &engineer, &[&reviewer])
+            .task_on(&goal, &repo, "Build the engine", &author, &[&reviewer])
             .await;
         let second = h
             .store
@@ -59,7 +59,7 @@ impl World {
                 repo_id: repo.id.clone(),
                 title: "Drive what the engine built".into(),
                 description: "do things".into(),
-                engineer_profile_id: engineer.id.clone(),
+                author_profile_id: author.id.clone(),
                 pin: None,
                 reviewers: vec![ReviewerSlot::of(&reviewer.id)],
                 depends_on: vec![first.id.clone()],
@@ -158,7 +158,7 @@ async fn a_cancelled_dependency_fails_the_task_waiting_on_it() {
     );
 }
 
-/// The failure is the user's to undo: with the dependency retried and merged,
+/// The failure is the user's to undo: with the dependency retried and finished,
 /// retrying the task behind it starts it rather than failing it again.
 #[tokio::test]
 async fn a_task_retried_after_its_dependency_landed_is_not_failed_again() {
@@ -174,7 +174,7 @@ async fn a_task_retried_after_its_dependency_landed_is_not_failed_again() {
     })
     .await;
 
-    // The dependency retried and taken all the way to merged. The scheduler
+    // The dependency retried and taken all the way to finished. The scheduler
     // is running over the same task, so a move it has already made is not a
     // failure of the walk: only the merge at the end of it is this test's.
     w.store
@@ -183,7 +183,7 @@ async fn a_task_retried_after_its_dependency_landed_is_not_failed_again() {
         .unwrap();
     for (status, actor) in [
         (TaskStatus::InProgress, Actor::Daemon),
-        (TaskStatus::UnderReview, Actor::Engineer),
+        (TaskStatus::UnderReview, Actor::Author),
         (TaskStatus::Approved, Actor::Daemon),
     ] {
         let _ = w
@@ -194,8 +194,8 @@ async fn a_task_retried_after_its_dependency_landed_is_not_failed_again() {
     w.store
         .transition_task(
             &w.first.id,
-            TaskStatus::Merged,
-            Actor::Engineer,
+            TaskStatus::Finished,
+            Actor::Author,
             None,
             Some("abc123"),
         )

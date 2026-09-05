@@ -1002,7 +1002,7 @@ mod tests {
 
     /// Every effort an agent CLI accepts says what spending it buys: the
     /// ladder is what the daemon describes an entry's efforts from, so a rung
-    /// missing from it would reach a planner as a bare word.
+    /// missing from it would reach an orchestrator as a bare word.
     #[test]
     fn every_effort_of_every_cli_says_what_it_buys() {
         for kind in AgentKind::ALL {
@@ -1024,9 +1024,9 @@ mod tests {
         assert_eq!(effort_description(AgentKind::Opencode, "high"), None);
     }
 
-    /// Every curated model says what it is for: a tier, bands a planner can
-    /// compare across agent CLIs, and the task shapes it is and is not the
-    /// choice for.
+    /// Every curated model says what it is for: a tier, bands an orchestrator
+    /// can compare across agent CLIs, and the task shapes it is and is not
+    /// the choice for.
     #[test]
     fn every_curated_model_says_what_it_is_for() {
         for kind in AgentKind::ALL {

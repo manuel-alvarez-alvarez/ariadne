@@ -65,7 +65,7 @@ impl Reason {
 /// `taskAttentionReason` in the UI.
 ///
 /// `changes_requested` is deliberately not one of them: the reviewer has
-/// spoken and the daemon resumes the engineer itself, so that task waits on an
+/// spoken and the daemon resumes the author itself, so that task waits on an
 /// agent. A resume that does not happen shows up as the session's own
 /// `disconnected` or `stalled` flag. And `stalled` is checked last because it
 /// is a flag on top of a status — the task's column mirrors any of its
@@ -139,7 +139,7 @@ fn relevant(frame: &SseEvent) -> bool {
 }
 
 /// The heading a goal's table stands under, in `HEADING`'s bold — the same
-/// section-break role it plays in `ariadne doctor`. With colour off it is
+/// section-break seat it plays in `ariadne doctor`. With colour off it is
 /// exactly [`heading`]'s own string, byte for byte.
 fn heading_line(group: &Group, color: bool) -> String {
     style::paint(color, style::HEADING, &heading(group))
@@ -249,7 +249,7 @@ pub(crate) mod tests {
     /// The reasons the UI reports for a task, in its precedence: a stalled
     /// task that also failed is failed, and a healthy task is nobody's
     /// business — including a task on its way out under its own power, whose
-    /// review asked for changes or whose engineer is landing it. Inventing a
+    /// review asked for changes or whose author is landing it. Inventing a
     /// reason there from the bare status is exactly the disagreement with the
     /// UI this list exists not to have.
     #[test]
@@ -259,7 +259,7 @@ pub(crate) mod tests {
         assert_eq!(reason(TaskStatus::Failed, true), Some(Reason::Failed));
         assert_eq!(reason(TaskStatus::InProgress, true), Some(Reason::Stalled));
         assert_eq!(reason(TaskStatus::InProgress, false), None);
-        assert_eq!(reason(TaskStatus::Merged, false), None);
+        assert_eq!(reason(TaskStatus::Finished, false), None);
 
         // Waiting on an agent, not on a person — but a stall on top of either
         // is still a stall.

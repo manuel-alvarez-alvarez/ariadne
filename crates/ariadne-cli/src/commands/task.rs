@@ -92,7 +92,7 @@ Examples:
 pub enum TaskCommand {
     /// Create a task in a goal
     ///
-    /// What the planner does through its MCP tools, from the terminal: the
+    /// What the orchestrator does through its MCP tools, from the terminal: the
     /// task starts out `pending` and is picked up once the goal is active and
     /// the tasks it depends on have merged. Prints the new task id.
     #[command(after_help = CREATE_EXAMPLES)]
@@ -100,19 +100,19 @@ pub enum TaskCommand {
         /// Goal id the task belongs to
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::goal_ids))]
         goal: String,
-        /// Short task title (what the engineer is asked to do)
+        /// Short task title (what the author is asked to do)
         #[arg(long)]
         title: String,
-        /// Task description: the brief the engineer works from
+        /// Task description: the brief the author works from
         #[arg(short = 'd', long, default_value = "", hide_default_value = true)]
         description: String,
-        /// Engineer profile id or name that owns the task
-        #[arg(long, default_value = "Engineer", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::engineer_profiles))]
-        engineer: String,
-        /// What the engineer runs on: AGENT[:MODEL] — an agent CLI
+        /// Author profile id or name that owns the task
+        #[arg(long, default_value = "Author", add = clap_complete::engine::ArgValueCandidates::new(crate::complete::author_profiles))]
+        author: String,
+        /// What the author runs on: AGENT[:MODEL] — an agent CLI
         /// (claude_code | codex | opencode) on its own default model, or one
         /// model of it after the colon (codex:gpt-5.3-codex). Default: the
-        /// engineer profile's own
+        /// author profile's own
         #[arg(long, value_name = "MODEL", value_parser = parse_model, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models))]
         model: Option<String>,
         /// The reasoning effort that model is run at: one of the efforts
@@ -136,9 +136,9 @@ pub enum TaskCommand {
     },
     /// Edit a task that has not started yet
     ///
-    /// Title, description, what the engineer runs on, reviewers and
+    /// Title, description, what the author runs on, reviewers and
     /// dependencies, while the task is still pending or ready — once an
-    /// engineer is on it the daemon refuses the edit. Every flag left out
+    /// author is on it the daemon refuses the edit. Every flag left out
     /// keeps what the task already has; `--reviewer` and `--depends-on`
     /// replace the whole list they name.
     #[command(after_help = UPDATE_EXAMPLES)]
@@ -152,10 +152,10 @@ pub enum TaskCommand {
         /// New description
         #[arg(short = 'd', long)]
         description: Option<String>,
-        /// What the engineer runs on: AGENT[:MODEL] — an agent CLI
+        /// What the author runs on: AGENT[:MODEL] — an agent CLI
         /// (claude_code | codex | opencode) on its own default model, or one
         /// model of it after the colon (codex:gpt-5.3-codex); "default" hands
-        /// it back to the engineer profile's own
+        /// it back to the author profile's own
         #[arg(long, value_name = "MODEL|default", value_parser = parse_model_or_default, add = clap_complete::engine::ArgValueCandidates::new(crate::complete::models_or_default))]
         model: Option<String>,
         /// The reasoning effort that model is run at: one of the efforts
@@ -238,18 +238,18 @@ pub enum TaskCommand {
         /// Task id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
         id: String,
-        /// engineer (default) or reviewer
-        #[arg(long, value_parser = Spelling::<ariadne_core::Role>::new())]
-        role: Option<ariadne_core::Role>,
+        /// author (default) or reviewer
+        #[arg(long, value_parser = Spelling::<ariadne_core::Seat>::new())]
+        seat: Option<ariadne_core::Seat>,
     },
     /// Show recent terminal output of the task's agent
     Logs {
         /// Task id
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::task_ids))]
         id: String,
-        /// engineer (default) or reviewer
-        #[arg(long, value_parser = Spelling::<ariadne_core::Role>::new())]
-        role: Option<ariadne_core::Role>,
+        /// author (default) or reviewer
+        #[arg(long, value_parser = Spelling::<ariadne_core::Seat>::new())]
+        seat: Option<ariadne_core::Seat>,
         /// Keep printing output until the session ends
         #[arg(short, long)]
         follow: bool,
@@ -262,7 +262,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             goal,
             title,
             description,
-            engineer,
+            author,
             model,
             effort,
             reviewers,
@@ -272,7 +272,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
             let goal = resolve::id(client, Kind::Goal, &goal).await?;
             let depends_on = resolve::ids(client, Kind::Task, &depends_on).await?;
             let mut profiles = resolve::Profiles::new(client);
-            let engineer = profiles.id(&engineer).await?;
+            let author = profiles.id(&author).await?;
             let reviewers = resolved_reviewers(&mut profiles, reviewers).await?;
             let repo_id = match repo {
                 Some(spec) => Some(resolve_repo(client, &goal, &spec).await?),
@@ -285,7 +285,7 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                         title,
                         description,
                         repo_id,
-                        engineer_profile: engineer,
+                        author_profile: author,
                         model,
                         effort,
                         reviewers,
@@ -406,13 +406,13 @@ pub async fn run(client: &Client, cmd: TaskCommand, format: Format) -> Result<()
                 Format::Table => pager::page(&pager::diff(&diff, view().color))?,
             }
         }
-        TaskCommand::Attach { id, role } => {
+        TaskCommand::Attach { id, seat } => {
             let id = resolve::id(client, Kind::Task, &id).await?;
-            crate::commands::attach::attach(client, &id, role).await?;
+            crate::commands::attach::attach(client, &id, seat).await?;
         }
-        TaskCommand::Logs { id, role, follow } => {
+        TaskCommand::Logs { id, seat, follow } => {
             let id = resolve::id(client, Kind::Task, &id).await?;
-            let session = crate::commands::attach::resolve_tmux(client, &id, role).await?;
+            let session = crate::commands::attach::resolve_tmux(client, &id, seat).await?;
             crate::commands::session::logs(client, &session.id, follow, format).await?;
         }
     }
@@ -491,7 +491,7 @@ async fn render(
         // would send the reader looking for tasks that are right there.
         match (filtered, all) {
             (true, _) => "no tasks match that filter",
-            (false, true) => "no tasks yet — the planner creates them from a goal",
+            (false, true) => "no tasks yet — the orchestrator creates them from a goal",
             (false, false) => "no tasks under way — finished ones are behind --all",
         },
     )
@@ -524,7 +524,7 @@ fn visible(tasks: Vec<TaskDto>, all: bool, statuses: &[TaskStatus]) -> Vec<TaskD
     let mut tasks: Vec<TaskDto> = tasks
         .into_iter()
         // `--status` is asked of the daemon one at a time; the rest of what it
-        // named is narrowed here, as `session ls --role` has always been.
+        // named is narrowed here, as `session ls --seat` has always been.
         .filter(|t| statuses.is_empty() || statuses.contains(&t.status))
         .filter(|t| all || !statuses.is_empty() || !t.status.is_terminal())
         .collect();
@@ -542,10 +542,10 @@ fn inspect_pairs(t: &TaskDto, profiles: &ProfileNames) -> Vec<(&'static str, Kv)
         ("title", Kv::title(t.title.clone())),
         ("status", Kv::status(t.status.as_str())),
         (
-            "engineer",
+            "author",
             profiles
                 .pinned_label(
-                    &t.engineer_profile_id,
+                    &t.author_profile_id,
                     t.model.as_deref(),
                     t.effort.as_deref(),
                 )
@@ -578,10 +578,10 @@ fn inspect_pairs(t: &TaskDto, profiles: &ProfileNames) -> Vec<(&'static str, Kv)
         ("stalled", yes_no(t.stalled, "no").into()),
         ("merge", dash(t.merge_commit.as_deref()).into()),
         // Why a failed or cancelled task ended, which is the whole of what
-        // the engineer that gave it up said about it.
+        // the author that gave it up said about it.
         ("reason", dash(t.reason.as_deref()).into()),
         // The forge's own link, where the rest of a published task's story
-        // is; only an engineer that opened one reports it.
+        // is; only an author that opened one reports it.
         ("pull_request", dash(t.pr_url.as_deref()).into()),
         ("created", Kv::meta(moment(&t.created_at))),
         ("description", format!("\n---\n{}", t.description).into()),
@@ -589,7 +589,7 @@ fn inspect_pairs(t: &TaskDto, profiles: &ProfileNames) -> Vec<(&'static str, Kv)
 }
 
 /// What the task cost, spender by spender: the total first, then the
-/// engineer and each reviewer under it, named by their profiles.
+/// author and each reviewer under it, named by their profiles.
 ///
 /// Every reviewer slot of the task gets a line, whether or not it has spent
 /// anything: a reviewer missing from the block would read as one the task
@@ -597,7 +597,7 @@ fn inspect_pairs(t: &TaskDto, profiles: &ProfileNames) -> Vec<(&'static str, Kv)
 /// spent on the task without holding a slot any more is listed after them, so
 /// the lines still add up to the total.
 fn usage_lines(t: &TaskDto) -> String {
-    let mut agents: Vec<(String, TokenUsageDto)> = vec![("engineer".into(), t.usage.engineer)];
+    let mut agents: Vec<(String, TokenUsageDto)> = vec![("author".into(), t.usage.author)];
     for r in &t.reviewers {
         let spent = spent_by(t, &r.profile_id).unwrap_or_default();
         agents.push((
@@ -709,17 +709,17 @@ mod tests {
         assert!(block.contains("output  0"), "{block}");
     }
 
-    /// The block is the total and then who spent it: the engineer, and every
+    /// The block is the total and then who spent it: the author, and every
     /// reviewer slot by the name a message addresses it with — including the
     /// one that has never been spawned, which spent `0` rather than nothing
     /// at all.
     #[test]
-    fn the_block_names_the_engineer_and_every_reviewer_of_the_task() {
+    fn the_block_names_the_author_and_every_reviewer_of_the_task() {
         let t = TaskDto {
             reviewers: vec![reviewer("01REV", "Reviewer"), reviewer("01SEC", "Security")],
             usage: TaskUsageDto {
                 total: usage(1_204_567, 1_100_000, 45_300),
-                engineer: usage(1_200_000, 1_100_000, 45_000),
+                author: usage(1_200_000, 1_100_000, 45_000),
                 reviewers: vec![ProfileUsageDto {
                     profile_id: "01REV".into(),
                     profile_name: Some("Reviewer".into()),
@@ -733,7 +733,7 @@ mod tests {
             [
                 "input   1.2M  91%",
                 "              output   45k",
-                "              engineer  ↑1.2M ↓45k",
+                "              author    ↑1.2M ↓45k",
                 "              Reviewer  ↑4.6k ↓300",
                 "              Security  ↑0 ↓0",
             ]
@@ -753,7 +753,7 @@ mod tests {
         let t = TaskDto {
             usage: TaskUsageDto {
                 total: usage(1_000, 0, 100),
-                engineer: usage(600, 0, 60),
+                author: usage(600, 0, 60),
                 reviewers: vec![ProfileUsageDto {
                     profile_id: "01GONE".into(),
                     profile_name: None,
@@ -763,7 +763,7 @@ mod tests {
             ..dto()
         };
         assert!(
-            usage_lines(&t).contains("01GONE    ↑400 ↓40"),
+            usage_lines(&t).contains("01GONE  ↑400 ↓40"),
             "{}",
             usage_lines(&t)
         );

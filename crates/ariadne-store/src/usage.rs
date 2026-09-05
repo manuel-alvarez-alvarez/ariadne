@@ -7,23 +7,23 @@
 //! over those rows, grouped by whatever the reader groups by, and a session
 //! nothing has reported for sums to zero rather than to nothing.
 
-use ariadne_core::{Role, TokenUsage};
+use ariadne_core::{Seat, TokenUsage};
 
 use crate::{Change, Result, Store, now};
 
-/// The usage of one profile in one role — the engineer of a task, or one of
+/// The usage of one profile in one seat — the author of a task, or one of
 /// its reviewers with every round it sat summed together.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProfileUsage {
-    pub role: Role,
+    pub seat: Seat,
     pub profile_id: String,
     pub usage: TokenUsage,
 }
 
-/// The usage of every session of one role, whichever profile ran them.
+/// The usage of every session of one seat, whichever profile ran them.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RoleUsage {
-    pub role: Role,
+pub struct SeatUsage {
+    pub seat: Seat,
     pub usage: TokenUsage,
 }
 
@@ -102,9 +102,9 @@ impl Store {
         Ok(usage_of(sums))
     }
 
-    /// What a task has spent, one entry per `(role, profile)` that has a
-    /// session on it: its engineer, and each reviewer with all its rounds
-    /// summed. Ordered by role and then by profile id, so a reader sees the
+    /// What a task has spent, one entry per `(seat, profile)` that has a
+    /// session on it: its author, and each reviewer with all its rounds
+    /// summed. Ordered by seat and then by profile id, so a reader sees the
     /// same order twice running.
     ///
     /// The join is outer because having spent nothing is not the same as not
@@ -113,45 +113,45 @@ impl Store {
     pub async fn task_usage(&self, task_id: &str) -> Result<Vec<ProfileUsage>> {
         let rows: Vec<(String, String, i64, i64, i64)> =
             sqlx::query_as(sqlx::AssertSqlSafe(format!(
-                "SELECT s.role, s.profile_id, {SUMS}
+                "SELECT s.seat, s.profile_id, {SUMS}
                    FROM agent_sessions s
               LEFT JOIN session_usage u ON u.session_id = s.id
                   WHERE s.task_id = ?
-               GROUP BY s.role, s.profile_id
-               ORDER BY s.role, s.profile_id"
+               GROUP BY s.seat, s.profile_id
+               ORDER BY s.seat, s.profile_id"
             )))
             .bind(task_id)
             .fetch_all(self.r())
             .await?;
         Ok(rows
             .into_iter()
-            .map(|(role, profile_id, input, cached, output)| ProfileUsage {
-                role: role.parse().expect("valid role in db"),
+            .map(|(seat, profile_id, input, cached, output)| ProfileUsage {
+                seat: seat.parse().expect("valid seat in db"),
                 profile_id,
                 usage: usage_of((input, cached, output)),
             })
             .collect())
     }
 
-    /// What a goal has spent, one entry per role that has a session on it —
-    /// its planner, every engineer of its tasks, every reviewer of them.
+    /// What a goal has spent, one entry per seat that has a session on it —
+    /// its orchestrator, every author of its tasks, every reviewer of them.
     /// Outer-joined like [`Store::task_usage`], and for the same reason.
-    pub async fn goal_usage(&self, goal_id: &str) -> Result<Vec<RoleUsage>> {
+    pub async fn goal_usage(&self, goal_id: &str) -> Result<Vec<SeatUsage>> {
         let rows: Vec<(String, i64, i64, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-            "SELECT s.role, {SUMS}
+            "SELECT s.seat, {SUMS}
                FROM agent_sessions s
           LEFT JOIN session_usage u ON u.session_id = s.id
               WHERE s.goal_id = ?
-           GROUP BY s.role
-           ORDER BY s.role"
+           GROUP BY s.seat
+           ORDER BY s.seat"
         )))
         .bind(goal_id)
         .fetch_all(self.r())
         .await?;
         Ok(rows
             .into_iter()
-            .map(|(role, input, cached, output)| RoleUsage {
-                role: role.parse().expect("valid role in db"),
+            .map(|(seat, input, cached, output)| SeatUsage {
+                seat: seat.parse().expect("valid seat in db"),
                 usage: usage_of((input, cached, output)),
             })
             .collect())

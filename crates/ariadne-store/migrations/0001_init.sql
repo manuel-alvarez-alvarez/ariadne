@@ -11,18 +11,18 @@
 --
 -- Ids are lowercase ULIDs (TEXT, 26 chars); timestamps are ISO-8601 UTC TEXT.
 
--- Who an agent session runs as: its role, the CLI and model it is launched
+-- Who an agent session runs as: its seat, the CLI and model it is launched
 -- with, and the system prompt it is briefed with. The briefings that start,
 -- resume and nudge a session belong to no profile: they are built into
 -- Ariadne (`ariadne_store::defaults`) and read from there on every launch.
 --
--- NULL `system_prompt` is the default of the role (see `ariadne_store::
+-- NULL `system_prompt` is the default of the seat (see `ariadne_store::
 -- defaults`); text is what its user wrote instead, which is also what a reset
 -- goes back to by clearing.
 CREATE TABLE profiles (
     id            TEXT PRIMARY KEY,
     name          TEXT NOT NULL UNIQUE,
-    role          TEXT NOT NULL CHECK (role IN ('planner', 'engineer', 'reviewer')),
+    seat          TEXT NOT NULL CHECK (seat IN ('orchestrator', 'author', 'reviewer')),
     -- NULL = auto: resolved at spawn time to the first installed agent CLI
     -- (claude_code, then codex, then opencode).
     agent_kind    TEXT CHECK (agent_kind IN ('claude_code', 'codex', 'opencode')),
@@ -32,7 +32,7 @@ CREATE TABLE profiles (
     -- one of the efforts the model accepts, checked against the catalog
     -- (`GET /v1/models`) when it is written.
     effort        TEXT,
-    -- NULL = the default system prompt of `role`.
+    -- NULL = the default system prompt of `seat`.
     system_prompt TEXT,
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL
@@ -62,7 +62,7 @@ CREATE TABLE repositories (
     updated_at     TEXT NOT NULL,
     merge_strategy TEXT NOT NULL DEFAULT 'direct'
                    CHECK (merge_strategy IN ('direct', 'pull_request')),
-    -- The landing briefing the engineer of an approved task is handed here.
+    -- The landing briefing the author of an approved task is handed here.
     -- NULL = the built-in default of `merge_strategy` (see
     -- `ariadne_store::defaults::default_landing_prompt`), which is also what
     -- a reset goes back to by clearing this column.
@@ -90,7 +90,7 @@ CREATE TABLE goals (
                         CHECK (status IN ('planning', 'active', 'completed', 'cancelled')),
     max_tasks           INTEGER,                -- NULL = unbounded
     required_approvals  INTEGER NOT NULL DEFAULT 1 CHECK (required_approvals >= 1),
-    planner_profile_id  TEXT NOT NULL REFERENCES profiles (id),
+    orchestrator_profile_id  TEXT NOT NULL REFERENCES profiles (id),
     created_at          TEXT NOT NULL,
     updated_at          TEXT NOT NULL,
     agent_kind          TEXT
@@ -116,9 +116,9 @@ CREATE TABLE tasks (
     description         TEXT NOT NULL,
     status              TEXT NOT NULL DEFAULT 'pending'
                         CHECK (status IN ('pending', 'ready', 'in_progress', 'under_review',
-                                          'changes_requested', 'approved', 'merged',
+                                          'changes_requested', 'approved', 'finished',
                                           'cancelled', 'failed')),
-    engineer_profile_id TEXT NOT NULL REFERENCES profiles (id),
+    author_profile_id TEXT NOT NULL REFERENCES profiles (id),
     agent_kind          TEXT CHECK (agent_kind IN ('claude_code', 'codex', 'opencode')),
     model               TEXT,
     effort              TEXT,
@@ -127,7 +127,7 @@ CREATE TABLE tasks (
     review_round        INTEGER NOT NULL DEFAULT 0,
     stalled             INTEGER NOT NULL DEFAULT 0,
     merge_commit        TEXT,
-    -- The pull or merge request the engineer published, where it published one.
+    -- The pull or merge request the author published, where it published one.
     pr_url              TEXT,
     created_at          TEXT NOT NULL,
     updated_at          TEXT NOT NULL
@@ -174,8 +174,8 @@ CREATE INDEX idx_task_deps_on ON task_dependencies (depends_on_task_id);
 CREATE TABLE agent_sessions (
     id                  TEXT PRIMARY KEY,       -- == ARIADNE_SESSION_ID env of the agent
     goal_id             TEXT NOT NULL REFERENCES goals (id) ON DELETE CASCADE,
-    task_id             TEXT REFERENCES tasks (id) ON DELETE CASCADE,  -- NULL = planner
-    role                TEXT NOT NULL CHECK (role IN ('planner', 'engineer', 'reviewer')),
+    task_id             TEXT REFERENCES tasks (id) ON DELETE CASCADE,  -- NULL = orchestrator
+    seat                TEXT NOT NULL CHECK (seat IN ('orchestrator', 'author', 'reviewer')),
     profile_id          TEXT NOT NULL REFERENCES profiles (id),
     agent_kind          TEXT NOT NULL CHECK (agent_kind IN ('claude_code', 'codex', 'opencode')),
     internal_session_id TEXT,                   -- claude session uuid / codex thread_id / opencode session id
@@ -193,7 +193,7 @@ CREATE TABLE agent_sessions (
                                                     'disconnected', 'stalled')),
     attention_since     TEXT,
     model               TEXT,
-    -- Copied off the pin the session's role carries, beside its model.
+    -- Copied off the pin the session's seat carries, beside its model.
     effort              TEXT,
     launched_at         TEXT,
     launch_id           TEXT,                   -- == ARIADNE_LAUNCH_ID env of that run
@@ -263,7 +263,7 @@ CREATE TABLE task_transitions (
     from_status TEXT NOT NULL,
     to_status   TEXT NOT NULL,
     actor       TEXT NOT NULL
-                CHECK (actor IN ('planner', 'engineer', 'reviewer', 'daemon', 'user')),
+                CHECK (actor IN ('orchestrator', 'author', 'reviewer', 'daemon', 'user')),
     reason      TEXT,
     created_at  TEXT NOT NULL
 );

@@ -7,7 +7,7 @@
 use axum::http::HeaderMap;
 
 use ariadne_api::SESSION_HEADER;
-use ariadne_core::{Actor, Role};
+use ariadne_core::{Actor, Seat};
 use ariadne_store::{AgentSession, Store};
 
 use super::error::{ApiError, ApiResult};
@@ -39,10 +39,10 @@ pub async fn call_ctx(store: &Store, headers: &HeaderMap) -> ApiResult<CallCtx> 
         .get_session(session_id)
         .await
         .map_err(|_| ApiError::forbidden(format!("unknown agent session: {session_id}")))?;
-    let actor = match session.role() {
-        Role::Planner => Actor::Planner,
-        Role::Engineer => Actor::Engineer,
-        Role::Reviewer => Actor::Reviewer,
+    let actor = match session.seat() {
+        Seat::Orchestrator => Actor::Orchestrator,
+        Seat::Author => Actor::Author,
+        Seat::Reviewer => Actor::Reviewer,
     };
     Ok(CallCtx {
         actor,
@@ -54,7 +54,7 @@ pub async fn call_ctx(store: &Store, headers: &HeaderMap) -> ApiResult<CallCtx> 
 pub fn ensure_task_scope(ctx: &CallCtx, task_id: &str) -> ApiResult<()> {
     if let Some(session) = &ctx.session
         && session.task_id.as_deref() != Some(task_id)
-        && session.role() != Role::Planner
+        && session.seat() != Seat::Orchestrator
     {
         return Err(ApiError::forbidden(format!(
             "session {} is not assigned to task {task_id}",

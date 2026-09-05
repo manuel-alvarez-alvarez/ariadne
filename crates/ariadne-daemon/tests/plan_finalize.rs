@@ -1,4 +1,4 @@
-//! Integration tests for the one end of a plan: the planner finalizes it.
+//! Integration tests for the one end of a plan: the orchestrator finalizes it.
 //!
 //! The plan is the tasks it wrote, and `finalize` is what hands them out: the
 //! goal goes from `planning` straight to `active` and every task the plan
@@ -18,7 +18,7 @@ use axum::http::StatusCode;
 
 use ariadne_api::error::ErrorBody;
 use ariadne_api::goals::GoalDto;
-use ariadne_core::{GoalStatus, Role, SessionStatus, TaskStatus};
+use ariadne_core::{GoalStatus, Seat, SessionStatus, TaskStatus};
 use ariadne_daemon::attention::work_is_active;
 
 use common::{Cast, Harness, as_session, eventually, harness, post_json};
@@ -30,14 +30,14 @@ fn finalize_uri(cast: &Cast) -> String {
     format!("/v1/goals/{}/finalize", cast.goal.id)
 }
 
-/// A live planner session on the goal, which is what a planner's calls come in
-/// as.
-async fn planner_session(h: &Harness, cast: &Cast) -> ariadne_store::AgentSession {
-    h.session(&cast.goal, None, Role::Planner, &cast.planner.id)
+/// A live orchestrator session on the goal, which is what an orchestrator's
+/// calls come in as.
+async fn orchestrator_session(h: &Harness, cast: &Cast) -> ariadne_store::AgentSession {
+    h.session(&cast.goal, None, Seat::Orchestrator, &cast.orchestrator.id)
         .await
 }
 
-/// The plan finalized by its planner, as the MCP tool finalizes it.
+/// The plan finalized by its orchestrator, as the MCP tool finalizes it.
 async fn finalize(h: &Harness, cast: &Cast, session_id: &str) -> GoalDto {
     h.json(
         as_session(&finalize_uri(cast), session_id, serde_json::json!({})),
@@ -53,15 +53,15 @@ async fn goal_status(h: &Harness, cast: &Cast) -> GoalStatus {
 /// Finalizing is what starts the work: the goal goes active and its tasks are
 /// handed out.
 #[tokio::test]
-async fn the_planner_finalizes_the_plan_and_its_tasks_start() {
+async fn the_orchestrator_finalizes_the_plan_and_its_tasks_start() {
     let h = harness().scheduler().await;
     let cast = h.cast().await;
-    let planner = planner_session(&h, &cast).await;
+    let orchestrator = orchestrator_session(&h, &cast).await;
 
-    let goal = finalize(&h, &cast, &planner.id).await;
+    let goal = finalize(&h, &cast, &orchestrator.id).await;
 
     assert_eq!(goal.status, GoalStatus::Active);
-    eventually(TIMEOUT, "the plan's task to reach an engineer", async || {
+    eventually(TIMEOUT, "the plan's task to reach an author", async || {
         matches!(
             h.status(&cast.task.id).await,
             TaskStatus::Ready | TaskStatus::InProgress
@@ -70,9 +70,9 @@ async fn the_planner_finalizes_the_plan_and_its_tasks_start() {
     .await;
 }
 
-/// The planner's call and nobody else's: the user has nothing to press.
+/// The orchestrator's call and nobody else's: the user has nothing to press.
 #[tokio::test]
-async fn only_the_planner_may_finalize_the_plan() {
+async fn only_the_orchestrator_may_finalize_the_plan() {
     let h = harness().await;
     let cast = h.cast().await;
 
@@ -85,7 +85,7 @@ async fn only_the_planner_may_finalize_the_plan() {
 
     assert_eq!(
         envelope.error.message,
-        "only the planner may finalize the plan"
+        "only the orchestrator may finalize the plan"
     );
     assert_eq!(goal_status(&h, &cast).await, GoalStatus::Planning);
     assert_eq!(
@@ -100,9 +100,9 @@ async fn only_the_planner_may_finalize_the_plan() {
 #[tokio::test]
 async fn a_plan_with_no_tasks_cannot_be_finalized() {
     let h = harness().await;
-    let planner = h.profile("planner", Role::Planner).await;
-    let (goal, _repo) = h.goal(&planner).await;
-    let session = h.session(&goal, None, Role::Planner, &planner.id).await;
+    let orchestrator = h.profile("orchestrator", Seat::Orchestrator).await;
+    let (goal, _repo) = h.goal(&orchestrator).await;
+    let session = h.session(&goal, None, Seat::Orchestrator, &orchestrator.id).await;
 
     let envelope: ErrorBody = h
         .json(
@@ -129,12 +129,12 @@ async fn a_plan_with_no_tasks_cannot_be_finalized() {
 async fn a_plan_is_finalized_only_out_of_planning() {
     let h = harness().await;
     let cast = h.cast().await;
-    let planner = planner_session(&h, &cast).await;
-    finalize(&h, &cast, &planner.id).await;
+    let orchestrator = orchestrator_session(&h, &cast).await;
+    finalize(&h, &cast, &orchestrator.id).await;
 
     let envelope: ErrorBody = h
         .json(
-            as_session(&finalize_uri(&cast), &planner.id, serde_json::json!({})),
+            as_session(&finalize_uri(&cast), &orchestrator.id, serde_json::json!({})),
             StatusCode::CONFLICT,
         )
         .await;
@@ -142,51 +142,51 @@ async fn a_plan_is_finalized_only_out_of_planning() {
     assert_eq!(envelope.error.message, "goal is active, expected planning");
 }
 
-/// The plan is the planner's whole job: while the goal is being planned its
-/// session is the agent work waits on, and finalizing is what ends that.
+/// The plan is the orchestrator's whole job: while the goal is being planned
+/// its session is the agent work waits on, and finalizing is what ends that.
 #[tokio::test]
-async fn a_planner_is_the_agent_work_waits_on_until_it_finalizes() {
+async fn an_orchestrator_is_the_agent_work_waits_on_until_it_finalizes() {
     let h = harness().await;
     let cast = h.cast().await;
-    let planner = planner_session(&h, &cast).await;
+    let orchestrator = orchestrator_session(&h, &cast).await;
 
-    assert!(work_is_active(&h.store, &planner).await);
+    assert!(work_is_active(&h.store, &orchestrator).await);
 
-    finalize(&h, &cast, &planner.id).await;
-    assert!(!work_is_active(&h.store, &planner).await);
+    finalize(&h, &cast, &orchestrator.id).await;
+    assert!(!work_is_active(&h.store, &orchestrator).await);
 }
 
 /// What a reconciliation pass makes of a finalized goal: the plan it was
-/// started for is being worked on, so an idle planner under it is let go —
+/// started for is being worked on, so an idle orchestrator under it is let go —
 /// once the compaction the finalized plan earned it is done, which the CLI
 /// reports as a session start from `compact`.
 #[tokio::test]
-async fn a_scheduler_pass_ends_the_idle_planner_of_an_active_goal() {
+async fn a_scheduler_pass_ends_the_idle_orchestrator_of_an_active_goal() {
     let h = harness().scheduler().await;
     let cast = h.cast().await;
-    let planner = planner_session(&h, &cast).await;
-    h.pane_exists(&planner);
-    h.set_status(&planner, SessionStatus::Idle).await;
-    finalize(&h, &cast, &planner.id).await;
+    let orchestrator = orchestrator_session(&h, &cast).await;
+    h.pane_exists(&orchestrator);
+    h.set_status(&orchestrator, SessionStatus::Idle).await;
+    finalize(&h, &cast, &orchestrator.id).await;
 
     h.notify_goal(&cast.goal.id);
 
-    eventually(TIMEOUT, "the planner to be told to compact", async || {
-        h.pasted(&planner).contains("/compact")
+    eventually(TIMEOUT, "the orchestrator to be told to compact", async || {
+        h.pasted(&orchestrator).contains("/compact")
     })
     .await;
     assert!(
-        !h.killed_panes().contains(&planner.tmux_session),
-        "the planner is not let go under its compaction"
+        !h.killed_panes().contains(&orchestrator.tmux_session),
+        "the orchestrator is not let go under its compaction"
     );
     h.ingest(
-        &planner,
+        &orchestrator,
         "session_start",
         serde_json::json!({"hook_event_name": "SessionStart", "source": "compact"}),
     )
     .await;
-    eventually(TIMEOUT, "the idle planner to be let go", async || {
-        h.killed_panes().contains(&planner.tmux_session)
+    eventually(TIMEOUT, "the idle orchestrator to be let go", async || {
+        h.killed_panes().contains(&orchestrator.tmux_session)
     })
     .await;
 }

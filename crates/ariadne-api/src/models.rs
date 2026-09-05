@@ -10,10 +10,10 @@ use utoipa::ToSchema;
 ///
 /// The id is what a request writes as its `model`, whole. `agent_kind` is the
 /// same fact taken apart, so a picker can group the catalog by CLI without
-/// parsing anything. The rest is what a planner sizes a task from: what this
-/// model is, what it costs and how fast it answers next to every other entry,
-/// the work it is and is not the choice for, and what each of its efforts
-/// buys.
+/// parsing anything. The rest is what an orchestrator sizes a task from: what
+/// this model is, what it costs and how fast it answers next to every other
+/// entry, the work it is and is not the choice for, and what each of its
+/// efforts buys.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ModelDto {
     #[schema(example = "claude_code:claude-fable-5")]

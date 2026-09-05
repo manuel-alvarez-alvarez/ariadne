@@ -87,7 +87,7 @@ impl super::Scheduler {
                         // row's `exited` status on purpose — it stays up until
                         // the agent is resumed or replaced.
                         if attention::work_is_active(&self.store, &session).await {
-                            warn!(session = %session.id, role = %session.role, "agent disconnected with work still active");
+                            warn!(session = %session.id, seat = %session.seat, "agent disconnected with work still active");
                             let _ = self
                                 .store
                                 .set_session_attention(&session.id, AttentionReason::Disconnected)
@@ -113,7 +113,7 @@ impl super::Scheduler {
     /// Take down attention nobody can act on any more.
     ///
     /// A flag raised by an agent event is only ever taken down by another
-    /// one, and a session sitting on a dialog emits nothing: an engineer
+    /// one, and a session sitting on a dialog emits nothing: an author
     /// blocked on a permission prompt whose task then goes under review would
     /// keep asking for the user for ever. Whatever put a flag up, it comes
     /// down once the work it was about stopped being this session's — the
@@ -124,9 +124,9 @@ impl super::Scheduler {
     /// on an answer whatever its row still says. Retiring a session clears
     /// the flag as it goes (`set_session_status`); this is what heals the
     /// rows that were already stale when the daemon started, and it is not
-    /// the same question as the one above — an exited planner of a goal still
-    /// being planned is very much owed, which is what the sweep before this
-    /// one raises as `disconnected`.
+    /// the same question as the one above — an exited orchestrator of a goal
+    /// still being planned is very much owed, which is what the sweep before
+    /// this one raises as `disconnected`.
     ///
     /// One flag stands whatever the work did: a prompt on a live session
     /// that still owes a compaction. The dialog is on the screen whether or
@@ -157,7 +157,7 @@ impl super::Scheduler {
             } else {
                 continue;
             };
-            info!(session = %session.id, role = %session.role, why, "dropping attention");
+            info!(session = %session.id, seat = %session.seat, why, "dropping attention");
             let _ = self.store.clear_session_attention(&session.id).await;
         }
     }

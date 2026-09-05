@@ -151,7 +151,7 @@ pub fn confirm(verb: &str, subject: &Subject, question: &str, yes: bool) -> Resu
 
 /// The one status `GET /v1/tasks` and `GET /v1/sessions` filter by, when the
 /// caller named exactly one: those two endpoints take a single status, so
-/// several are narrowed on the answer instead — as `session ls --role`
+/// several are narrowed on the answer instead — as `session ls --seat`
 /// already is. Asking for the one there is keeps the common filter where it
 /// belongs, at the daemon.
 pub fn one_of<T: Copy>(statuses: &[T]) -> Option<T> {
@@ -204,11 +204,11 @@ impl ProfileNames {
     /// `Name (id) · model @ effort`: the mention, plus the two strings that
     /// say what the agent behind it runs on and how deeply it reasons there.
     ///
-    /// A profile is editable and a pin is not, so the two drift: what a task's
-    /// engineer, a task's reviewer or a goal's planner runs on is the snapshot
-    /// taken when it was assigned, not what the profile says today — and where
-    /// nothing was pinned, whatever the profile says at spawn time, which is
-    /// what "the profile's own" stands for.
+    /// A profile is editable and a pin is not, so the two drift: what a
+    /// task's author, a task's reviewer or a goal's orchestrator runs on is
+    /// the snapshot taken when it was assigned, not what the profile says
+    /// today — and where nothing was pinned, whatever the profile says at
+    /// spawn time, which is what "the profile's own" stands for.
     ///
     /// An effort that was never pinned says nothing at all rather than a word
     /// for it: the model is then run at whatever its agent CLI runs it at, and
@@ -242,8 +242,9 @@ pub fn find_ariadned() -> Result<PathBuf> {
 
 /// A runnable binary of that name on *this shell's* `PATH`.
 ///
-/// [`ariadne_core::probe`] takes the `PATH` as a parameter because the daemon's
-/// is not this one; everything on this side of the wire means the environment's.
+/// [`ariadne_core::probe`] takes the `PATH` as a parameter because the
+/// daemon's is not this one; everything on this side of the wire means the
+/// environment's.
 pub fn on_path(name: &str) -> Option<PathBuf> {
     probe::which(&std::env::var_os("PATH")?, name)
 }
@@ -261,7 +262,7 @@ pub fn query_path(base: &str, query: &impl serde::Serialize) -> Result<String> {
 
 /// The word every `--model` that takes one writes for "pin nothing at all",
 /// which is also how the daemon reads it: `task update --model default` runs
-/// the engineer on whatever its profile is on, and `profile update --model
+/// the author on whatever its profile is on, and `profile update --model
 /// default` puts the profile itself back on auto.
 pub const DEFAULT: &str = "default";
 

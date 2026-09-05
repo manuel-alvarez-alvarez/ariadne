@@ -67,23 +67,23 @@ pub fn render(template: &str, values: &[(&str, &str)]) -> String {
 }
 
 /// System layer: the profile's prompt, as the profile has it — the one set on
-/// it, or the default of its role.
+/// it, or the default of its seat.
 pub fn system_prompt(profile: &Profile) -> String {
     profile.effective_system_prompt().trim().to_string()
 }
 
-/// Initial prompt for a planner session.
+/// Initial prompt for an orchestrator session.
 ///
 /// A repository's description is what its owner wrote it down as, so it goes
 /// into the briefing right after the checkout it describes.
 ///
 /// The briefing also carries the procedure that puts the approved spec on a
-/// base branch, since the planner lands that spec itself. It is the one of
+/// base branch, since the orchestrator lands that spec itself. It is the one of
 /// [`default_spec_landing_prompt`] the goal's first repository calls for —
-/// the checkout the planner is started in, and the one its commands name.
-/// A goal with no repository is not one a planner is ever started for, so
+/// the checkout the orchestrator is started in, and the one its commands name.
+/// A goal with no repository is not one an orchestrator is ever started for, so
 /// what that case renders only has to stay readable, never to work.
-pub fn planner_briefing(template: &str, goal: &Goal, repos: &[Repository]) -> String {
+pub fn orchestrator_briefing(template: &str, goal: &Goal, repos: &[Repository]) -> String {
     let repo_lines = repos
         .iter()
         .map(|r| {
@@ -118,9 +118,9 @@ pub fn planner_briefing(template: &str, goal: &Goal, repos: &[Repository]) -> St
     )
 }
 
-/// How the planner lands the approved spec in `repo`: the procedure of that
-/// repository's merge strategy, with the checkout and the base branch its
-/// commands act on put in.
+/// How the orchestrator lands the approved spec in `repo`: the procedure of
+/// that repository's merge strategy, with the checkout and the base branch
+/// its commands act on put in.
 ///
 /// The text is the code's rather than the repository's
 /// ([`default_spec_landing_prompt`] says why), so nothing is read from the
@@ -140,13 +140,13 @@ fn spec_landing_briefing(repo: Option<&Repository>) -> String {
     )
 }
 
-/// What a planner that has stopped planning is nudged with.
-pub fn planner_resume_briefing(template: &str, goal: &Goal) -> String {
+/// What an orchestrator that has stopped planning is nudged with.
+pub fn orchestrator_resume_briefing(template: &str, goal: &Goal) -> String {
     render(template, &[("goal_title", &goal.title)])
 }
 
-/// Initial prompt for an engineer session.
-pub fn engineer_briefing(
+/// Initial prompt for an author session.
+pub fn author_briefing(
     template: &str,
     task: &Task,
     goal: &Goal,
@@ -180,10 +180,10 @@ pub fn engineer_briefing(
     )
 }
 
-/// What an engineer holding unfinished work is picked up with: the session
+/// What an author holding unfinished work is picked up with: the session
 /// that ended and is started again, and the one that has gone quiet with the
 /// task still open. Both want the same thing said, so both say it here.
-pub fn engineer_resume_briefing(template: &str, task: &Task) -> String {
+pub fn author_resume_briefing(template: &str, task: &Task) -> String {
     render(
         template,
         &[("task_title", &task.title), ("branch", &task.branch)],
@@ -233,7 +233,7 @@ pub fn reviewer_resume_briefing(template: &str, task: &Task, summary: Option<&st
     )
 }
 
-/// Resume prompt for an engineer with a round of requested changes.
+/// Resume prompt for an author with a round of requested changes.
 ///
 /// `feedback` is one entry per source, each a heading naming who asked and
 /// what they wrote: the reviewers of the round, or the people reading a
@@ -247,12 +247,12 @@ pub fn changes_requested_briefing(template: &str, feedback: &[(String, String)])
     render(template, &[("feedback", &items)])
 }
 
-/// What the engineer of an approved task is briefed with: the branch, the base
+/// What the author of an approved task is briefed with: the branch, the base
 /// and the checkout the procedure's commands act on.
 ///
 /// The template is the repository's own ([`Repository::landing_prompt_text`]),
 /// which is the text set on it or the default of its merge strategy — so what
-/// is rendered here is the one procedure the engineer runs, and nothing of the
+/// is rendered here is the one procedure the author runs, and nothing of the
 /// other.
 pub fn landing_briefing(template: &str, task: &Task, repo: &Repository) -> String {
     render(
@@ -280,7 +280,7 @@ mod tests {
             status: "planning".into(),
             max_tasks: Some(4),
             required_approvals: 2,
-            planner_profile_id: "01plannerxxxxxxxxxxxxxxxxx".into(),
+            orchestrator_profile_id: "01orchestratorxxxxxxxxxxxxxxxxx".into(),
             agent_kind: None,
             model: None,
             effort: None,
@@ -310,7 +310,7 @@ mod tests {
             title: "Render prompts from the database".into(),
             description: "Read them from `profile_prompts`.".into(),
             status: "in_progress".into(),
-            engineer_profile_id: "01engineerxxxxxxxxxxxxxxxx".into(),
+            author_profile_id: "01authorxxxxxxxxxxxxxxxx".into(),
             agent_kind: None,
             model: None,
             effort: None,
@@ -390,14 +390,14 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join("\n");
             let rendered = match kind {
-                PromptKind::PlannerBriefing => {
-                    planner_briefing(&template, &goal, std::slice::from_ref(&repo))
+                PromptKind::OrchestratorBriefing => {
+                    orchestrator_briefing(&template, &goal, std::slice::from_ref(&repo))
                 }
-                PromptKind::PlannerResume => planner_resume_briefing(&template, &goal),
-                PromptKind::EngineerBriefing => {
-                    engineer_briefing(&template, &task, &goal, &repo, &[])
+                PromptKind::OrchestratorResume => orchestrator_resume_briefing(&template, &goal),
+                PromptKind::AuthorBriefing => {
+                    author_briefing(&template, &task, &goal, &repo, &[])
                 }
-                PromptKind::EngineerResume => engineer_resume_briefing(&template, &task),
+                PromptKind::AuthorResume => author_resume_briefing(&template, &task),
                 PromptKind::ChangesRequested => changes_requested_briefing(&template, &feedback),
                 PromptKind::ReviewerBriefing => {
                     reviewer_briefing(&template, &task, &goal, &repo, Some("done"))
@@ -441,7 +441,7 @@ mod tests {
         let (task, goal, repo) = (task(), goal(), repo());
         let deps = vec![Task {
             title: "Store: per-profile prompts".into(),
-            status: "merged".into(),
+            status: "finished".into(),
             branch: "store-per-profile-prompts-xxxxxx".into(),
             ..task.clone()
         }];
@@ -482,9 +482,9 @@ mod tests {
         };
         let cases: Vec<Rendering> = vec![
             (
-                PromptKind::PlannerBriefing,
-                planner_briefing(
-                    default(PromptKind::PlannerBriefing),
+                PromptKind::OrchestratorBriefing,
+                orchestrator_briefing(
+                    default(PromptKind::OrchestratorBriefing),
                     &goal,
                     std::slice::from_ref(&repo),
                 ),
@@ -498,14 +498,14 @@ mod tests {
                 ],
             ),
             (
-                PromptKind::PlannerResume,
-                planner_resume_briefing(default(PromptKind::PlannerResume), &goal),
+                PromptKind::OrchestratorResume,
+                orchestrator_resume_briefing(default(PromptKind::OrchestratorResume), &goal),
                 vec![("goal_title", &goal.title)],
             ),
             (
-                PromptKind::EngineerBriefing,
-                engineer_briefing(
-                    default(PromptKind::EngineerBriefing),
+                PromptKind::AuthorBriefing,
+                author_briefing(
+                    default(PromptKind::AuthorBriefing),
                     &task,
                     &goal,
                     &repo,
@@ -524,8 +524,8 @@ mod tests {
                 ],
             ),
             (
-                PromptKind::EngineerResume,
-                engineer_resume_briefing(default(PromptKind::EngineerResume), &task),
+                PromptKind::AuthorResume,
+                author_resume_briefing(default(PromptKind::AuthorResume), &task),
                 vec![("task_title", &task.title), ("branch", &task.branch)],
             ),
             (
@@ -615,30 +615,30 @@ mod tests {
 
     /// And the values themselves are the ones the daemon builds: the lists it
     /// formats, the headings a briefing opens on, and the stand-in for a
-    /// summary an engineer never wrote.
+    /// summary an author never wrote.
     #[test]
     fn the_briefings_carry_the_values_the_daemon_builds() {
         let (task, goal, repo) = (task(), goal(), repo());
         let deps = vec![Task {
             title: "Store: per-profile prompts".into(),
-            status: "merged".into(),
+            status: "finished".into(),
             branch: "store-per-profile-prompts-xxxxxx".into(),
             ..task.clone()
         }];
-        let engineer = engineer_briefing(
-            default(PromptKind::EngineerBriefing),
+        let author = author_briefing(
+            default(PromptKind::AuthorBriefing),
             &task,
             &goal,
             &repo,
             &deps,
         );
-        assert!(engineer.starts_with(&format!("# Task: {}", task.title)));
+        assert!(author.starts_with(&format!("# Task: {}", task.title)));
         assert!(
-            engineer.contains(&format!(
+            author.contains(&format!(
                 "- {} ({}, branch {})",
                 deps[0].title, deps[0].status, deps[0].branch
             )),
-            "{engineer}"
+            "{author}"
         );
 
         let reviewer = reviewer_briefing(
@@ -652,7 +652,7 @@ mod tests {
             "# Review task: {} (round {})",
             task.title, task.review_round
         )));
-        assert!(reviewer.contains("- Engineer's summary: (none provided)"));
+        assert!(reviewer.contains("- Author's summary: (none provided)"));
 
         let feedback = vec![("reviewer 01a".to_string(), "Split it.".to_string())];
         let changes = changes_requested_briefing(default(PromptKind::ChangesRequested), &feedback);
@@ -666,11 +666,11 @@ mod tests {
     }
 
     /// The landing briefing is the repository's: with nothing set on it, the
-    /// default of its merge strategy, which is the whole of what the engineer
+    /// default of its merge strategy, which is the whole of what the author
     /// reads — the branch, the base and the checkout its commands act on, and
     /// one procedure, not two.
     #[test]
-    fn the_repository_says_what_the_engineer_lands_with() {
+    fn the_repository_says_what_the_author_lands_with() {
         let task = task();
         let repo = repo();
         let published_repo = Repository {
@@ -708,11 +708,12 @@ mod tests {
         );
     }
 
-    /// A repository is registered with a description; the planner is told it,
-    /// since it is the one line saying what the checkout is for. A repository
-    /// without one reads exactly as it did before descriptions existed.
+    /// A repository is registered with a description; the orchestrator is
+    /// told it, since it is the one line saying what the checkout is for. A
+    /// repository without one reads exactly as it did before descriptions
+    /// existed.
     #[test]
-    fn the_planner_is_told_what_each_repository_is() {
+    fn the_orchestrator_is_told_what_each_repository_is() {
         let described = Repository {
             path: "/repos/ui".into(),
             description: Some("the web client".into()),
@@ -723,8 +724,8 @@ mod tests {
             description: Some("   ".into()),
             ..repo()
         };
-        let briefing = planner_briefing(
-            default(PromptKind::PlannerBriefing),
+        let briefing = orchestrator_briefing(
+            default(PromptKind::OrchestratorBriefing),
             &goal(),
             &[described, blank, repo()],
         );
@@ -744,15 +745,15 @@ mod tests {
         );
     }
 
-    /// The planner is briefed to land the approved spec the way the
+    /// The orchestrator is briefed to land the approved spec the way the
     /// repository it works in takes any change: the procedure of that
     /// repository's merge strategy, with its checkout and base branch put in.
     ///
-    /// The repository is the goal's first, which is the checkout the planner
-    /// is started in. A goal that works in several is planned from that one,
-    /// so the spec lands there and the commands name it.
+    /// The repository is the goal's first, which is the checkout the
+    /// orchestrator is started in. A goal that works in several is planned
+    /// from that one, so the spec lands there and the commands name it.
     #[test]
-    fn the_planner_lands_the_spec_the_way_its_repository_takes_a_change() {
+    fn the_orchestrator_lands_the_spec_the_way_its_repository_takes_a_change() {
         let goal = goal();
         let direct = repo();
         let published = Repository {
@@ -761,9 +762,9 @@ mod tests {
             merge_strategy: "pull_request".into(),
             ..repo()
         };
-        let template = default(PromptKind::PlannerBriefing);
+        let template = default(PromptKind::OrchestratorBriefing);
 
-        let briefing = planner_briefing(template, &goal, std::slice::from_ref(&direct));
+        let briefing = orchestrator_briefing(template, &goal, std::slice::from_ref(&direct));
         assert!(
             briefing.contains("Commit it on main in /repos/ariadne"),
             "{briefing}"
@@ -772,14 +773,14 @@ mod tests {
 
         // The first repository is the one the spec lands in, whatever the
         // rest of the goal works in.
-        let briefing = planner_briefing(template, &goal, &[published, direct]);
+        let briefing = orchestrator_briefing(template, &goal, &[published, direct]);
         assert!(briefing.contains("gh pr create --base trunk"), "{briefing}");
         assert!(briefing.contains("from /repos/web, your cwd"), "{briefing}");
         assert!(!briefing.contains("Commit it on"), "{briefing}");
         assert!(!briefing.contains('{'), "{briefing}");
     }
 
-    /// A repository's own landing text is its engineers' to run, and it says
+    /// A repository's own landing text is its authors' to run, and it says
     /// nothing about how the spec lands: the spec landing is the code's, off
     /// the merge strategy alone.
     #[test]
@@ -788,8 +789,8 @@ mod tests {
             landing_prompt: Some("Land {branch} onto {base_branch} however you like.".into()),
             ..repo()
         };
-        let briefing = planner_briefing(
-            default(PromptKind::PlannerBriefing),
+        let briefing = orchestrator_briefing(
+            default(PromptKind::OrchestratorBriefing),
             &goal(),
             std::slice::from_ref(&rewritten),
         );
@@ -804,7 +805,7 @@ mod tests {
     /// one all the same reads as a briefing rather than as a broken template.
     #[test]
     fn a_goal_without_a_repository_still_briefs() {
-        let briefing = planner_briefing(default(PromptKind::PlannerBriefing), &goal(), &[]);
+        let briefing = orchestrator_briefing(default(PromptKind::OrchestratorBriefing), &goal(), &[]);
         assert!(
             briefing.contains("Commit it on <base branch> in <repo>"),
             "{briefing}"
@@ -821,14 +822,14 @@ mod tests {
             worktree_path: None,
             ..task()
         };
-        let briefing = engineer_briefing(
-            default(PromptKind::EngineerBriefing),
+        let briefing = author_briefing(
+            default(PromptKind::AuthorBriefing),
             &task,
             &goal,
             &repo,
             &[],
         );
         assert!(briefing.contains("- Worktree (your cwd): <worktree>"));
-        assert!(briefing.contains("- Merged dependencies:\nnone"));
+        assert!(briefing.contains("- Finished dependencies:\nnone"));
     }
 }

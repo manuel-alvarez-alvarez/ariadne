@@ -31,17 +31,17 @@ they describe (003, 004, 005).
 1. Text reaches an agent in four layers, and each rule is stated in exactly
    one of them:
    - the **MCP session rules**, which every session receives before its first
-     prompt, whatever its role: that Ariadne is reached only through its
+     prompt, whatever its seat: that Ariadne is reached only through its
      tools, whether anyone answers a question, how few turns to take, and the
      English to write in (013);
-   - the **system prompt**, which states what a role owes from its first read
+   - the **system prompt**, which states what a seat owes from its first read
      to the call that ends its turn;
    - the **lifecycle briefing**, which carries the values of one goal, task or
      round and whatever is only true of this moment;
    - the **landing briefing**, which carries the procedure that ends a task,
      and belongs to the repository (005).
 2. A profile owns exactly one text: its **system prompt**. It runs on the
-   default of its role until somebody sets one, and a reset drops what was
+   default of its seat until somebody sets one, and a reset drops what was
    set rather than copying a default in.
 3. The lifecycle briefings are Ariadne's own constants, the same for every
    profile, read from the code on every launch and every resume. No route
@@ -88,7 +88,7 @@ they describe (003, 004, 005).
 - Broken template syntax still renders
   (`prompts.rs::broken_syntax_passes_through`,
   `::an_unknown_placeholder_travels_verbatim`).
-- A created profile starts on the default of its role and stores none of it
+- A created profile starts on the default of its seat and stores none of it
   (`profile_system_prompt.rs::a_created_profile_starts_on_the_default_of_its_role`,
   `store.rs::a_new_profile_starts_on_the_role_defaults_and_stores_none_of_them`).
 - A system prompt is stored only while set, and a reset deletes the row

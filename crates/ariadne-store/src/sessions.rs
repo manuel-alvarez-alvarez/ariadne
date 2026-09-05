@@ -1,7 +1,7 @@
 //! Agent-session repository.
 
 use ariadne_core::id::new_id;
-use ariadne_core::{AgentKind, AttentionReason, Role, SessionStatus};
+use ariadne_core::{AgentKind, AttentionReason, Seat, SessionStatus};
 
 use crate::query::Filtered;
 use crate::{AgentSession, Change, Result, Store, not_found, now};
@@ -30,7 +30,7 @@ const NOT_OVER_THE_USER: &str = " AND (attention_reason IS NULL OR attention_rea
 pub struct NewSession {
     pub goal_id: String,
     pub task_id: Option<String>,
-    pub role: Role,
+    pub seat: Seat,
     pub profile_id: String,
     pub agent_kind: AgentKind,
     /// Model to launch with; None = the agent CLI's own default.
@@ -60,7 +60,7 @@ impl Store {
     pub async fn create_session(&self, new: NewSession) -> Result<AgentSession> {
         let id = new_id();
         sqlx::query(
-            "INSERT INTO agent_sessions (id, goal_id, task_id, role, profile_id, agent_kind, model,
+            "INSERT INTO agent_sessions (id, goal_id, task_id, seat, profile_id, agent_kind, model,
                                          effort, tmux_session, worktree_path, review_round, status,
                                          created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?)",
@@ -68,7 +68,7 @@ impl Store {
         .bind(&id)
         .bind(&new.goal_id)
         .bind(&new.task_id)
-        .bind(new.role.as_str())
+        .bind(new.seat.as_str())
         .bind(&new.profile_id)
         .bind(new.agent_kind.as_str())
         .bind(&new.model)

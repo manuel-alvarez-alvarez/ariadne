@@ -1,11 +1,11 @@
 //! What the API says a task's and a goal's agents run on.
 //!
 //! The pins live on `tasks`, `task_reviewers` and `goals`, and the launcher
-//! spawns from them — but a surface that keeps reading the profile still shows
-//! the wrong answer the moment that profile is edited, which is exactly when
-//! the question gets asked. So these check the DTOs the CLI and the web read:
-//! the engineer's pin, one pin per reviewer slot and the planner's, all of them
-//! surviving a profile moved to another agent and another model.
+//! spawns from them — but a surface that keeps reading the profile still
+//! shows the wrong answer the moment that profile is edited, which is exactly
+//! when the question gets asked. So these check the DTOs the CLI and the web
+//! read: the author's pin, one pin per reviewer slot and the orchestrator's,
+//! all of them surviving a profile moved to another agent and another model.
 //!
 //! One field carries the whole choice, `<agent_kind>[:<model>]`, on the way in
 //! and on the way out: an agent CLI on its own is that CLI on its own default
@@ -19,7 +19,7 @@ mod common;
 use ariadne_api::goals::GoalDto;
 use ariadne_api::profiles::ProfileDto;
 use ariadne_api::tasks::TaskDto;
-use ariadne_core::{AgentKind, Role};
+use ariadne_core::{AgentKind, Seat};
 use ariadne_store::{Goal, Profile, ProfileUpdate, Task};
 
 use axum::http::StatusCode;
@@ -39,12 +39,12 @@ struct Seeded {
 async fn profile_at(
     h: &Harness,
     name: &str,
-    role: Role,
+    seat: Seat,
     kind: AgentKind,
     model: &str,
     effort: &str,
 ) -> Profile {
-    let profile = h.profile_on(name, role, Some(kind), Some(model)).await;
+    let profile = h.profile_on(name, seat, Some(kind), Some(model)).await;
     h.store
         .update_profile(
             &profile.id,
@@ -62,19 +62,19 @@ async fn profile_at(
 /// one pinned to a model, one left on the agent's default and on auto. Every
 /// profile then moves, after the goal and the task were created from them.
 async fn seeded(h: &Harness) -> Seeded {
-    let planner = profile_at(
+    let orchestrator = profile_at(
         h,
-        "planner",
-        Role::Planner,
+        "orchestrator",
+        Seat::Orchestrator,
         AgentKind::ClaudeCode,
         "opus",
         "high",
     )
     .await;
-    let engineer = profile_at(
+    let author = profile_at(
         h,
-        "engineer",
-        Role::Engineer,
+        "author",
+        Seat::Author,
         AgentKind::Codex,
         "gpt-5",
         "medium",
@@ -83,22 +83,22 @@ async fn seeded(h: &Harness) -> Seeded {
     let strict = profile_at(
         h,
         "strict",
-        Role::Reviewer,
+        Seat::Reviewer,
         AgentKind::ClaudeCode,
         "sonnet",
         "low",
     )
     .await;
-    let auto = h.profile_on("auto", Role::Reviewer, None, None).await;
+    let auto = h.profile_on("auto", Seat::Reviewer, None, None).await;
 
-    let (goal, repo) = h.goal(&planner).await;
+    let (goal, repo) = h.goal(&orchestrator).await;
     let task = h
-        .task_on(&goal, &repo, "Surfaces", &engineer, &[&strict, &auto])
+        .task_on(&goal, &repo, "Surfaces", &author, &[&strict, &auto])
         .await;
 
     for (profile, kind, model, effort) in [
-        (&planner, AgentKind::Opencode, "grok", "fast"),
-        (&engineer, AgentKind::ClaudeCode, "haiku", "max"),
+        (&orchestrator, AgentKind::Opencode, "grok", "fast"),
+        (&author, AgentKind::ClaudeCode, "haiku", "max"),
         (&strict, AgentKind::Codex, "gpt-5-mini", "minimal"),
         (&auto, AgentKind::Codex, "gpt-5-mini", "minimal"),
     ] {
@@ -123,7 +123,7 @@ async fn seeded(h: &Harness) -> Seeded {
     }
 }
 
-/// Each slot answers for itself: the engineer's pin, and two reviewers moved
+/// Each slot answers for itself: the author's pin, and two reviewers moved
 /// onto the same agent and model still reading back as what each was assigned
 /// with, in review order.
 #[tokio::test]
@@ -159,7 +159,7 @@ async fn a_task_carries_the_pins_its_profiles_no_longer_have() {
 }
 
 #[tokio::test]
-async fn a_goal_carries_the_planner_pin_its_profile_no_longer_has() {
+async fn a_goal_carries_the_orchestrator_pin_its_profile_no_longer_has() {
     let h = harness().await;
     let Seeded { goal, .. } = seeded(&h).await;
 
@@ -187,18 +187,18 @@ async fn the_task_list_carries_the_pins_too() {
 /// The profiles a chosen agent has to overrule: all three on claude_code, all
 /// three on the same model, so nothing below can pass by reading a profile.
 async fn on_claude(h: &Harness) -> (Profile, Profile, Profile, Profile) {
-    let planner = h
+    let orchestrator = h
         .profile_on(
-            "planner",
-            Role::Planner,
+            "orchestrator",
+            Seat::Orchestrator,
             Some(AgentKind::ClaudeCode),
             Some("claude-opus-5"),
         )
         .await;
-    let engineer = h
+    let author = h
         .profile_on(
-            "engineer",
-            Role::Engineer,
+            "author",
+            Seat::Author,
             Some(AgentKind::ClaudeCode),
             Some("claude-opus-5"),
         )
@@ -206,7 +206,7 @@ async fn on_claude(h: &Harness) -> (Profile, Profile, Profile, Profile) {
     let chosen = h
         .profile_on(
             "chosen",
-            Role::Reviewer,
+            Seat::Reviewer,
             Some(AgentKind::ClaudeCode),
             Some("claude-opus-5"),
         )
@@ -214,20 +214,20 @@ async fn on_claude(h: &Harness) -> (Profile, Profile, Profile, Profile) {
     let untouched = h
         .profile_on(
             "untouched",
-            Role::Reviewer,
+            Seat::Reviewer,
             Some(AgentKind::ClaudeCode),
             Some("claude-opus-5"),
         )
         .await;
-    (planner, engineer, chosen, untouched)
+    (orchestrator, author, chosen, untouched)
 }
 
 /// A goal created with an agent and a model of its own plans on them, whatever
-/// the planner profile is on.
+/// the orchestrator profile is on.
 #[tokio::test]
 async fn a_goal_created_with_an_agent_and_a_model_plans_on_them() {
     let h = harness().await;
-    let (planner, ..) = on_claude(&h).await;
+    let (orchestrator, ..) = on_claude(&h).await;
     let repo = h.repository(&h.dir.path().join("repo")).await;
 
     let goal: GoalDto = h
@@ -237,7 +237,7 @@ async fn a_goal_created_with_an_agent_and_a_model_plans_on_them() {
                 serde_json::json!({
                     "title": "Ship it",
                     "repository_ids": [repo.id],
-                    "planner_profile": planner.name,
+                    "orchestrator_profile": orchestrator.name,
                     "model": "codex:gpt-5.3-codex",
                 }),
             ),
@@ -246,7 +246,7 @@ async fn a_goal_created_with_an_agent_and_a_model_plans_on_them() {
         .await;
     assert_eq!(goal.model.as_deref(), Some("codex:gpt-5.3-codex"));
 
-    let session = h.launcher.spawn_planner(&goal.id).await.unwrap();
+    let session = h.launcher.spawn_orchestrator(&goal.id).await.unwrap();
     assert_eq!(session.agent_kind(), AgentKind::Codex);
     assert_eq!(session.model.as_deref(), Some("gpt-5.3-codex"));
     let argv = h.spawn_argv(&session.id);
@@ -256,11 +256,11 @@ async fn a_goal_created_with_an_agent_and_a_model_plans_on_them() {
 
 /// The agent is the choice and the model only narrows it: an agent named on
 /// its own pins that CLI with no model, which is what runs it on its own
-/// default — on a goal, on a task's engineer and on a reviewer slot alike.
+/// default — on a goal, on a task's author and on a reviewer slot alike.
 #[tokio::test]
 async fn an_agent_alone_pins_it_with_no_model_of_its_own() {
     let h = harness().await;
-    let (planner, engineer, chosen, untouched) = on_claude(&h).await;
+    let (orchestrator, author, chosen, untouched) = on_claude(&h).await;
     let repo = h.repository(&h.git_repo("repo")).await;
 
     let goal: GoalDto = h
@@ -270,7 +270,7 @@ async fn an_agent_alone_pins_it_with_no_model_of_its_own() {
                 serde_json::json!({
                     "title": "Ship it",
                     "repository_ids": [repo.id],
-                    "planner_profile": planner.name,
+                    "orchestrator_profile": orchestrator.name,
                     "model": "opencode",
                 }),
             ),
@@ -285,7 +285,7 @@ async fn an_agent_alone_pins_it_with_no_model_of_its_own() {
                 &format!("/v1/goals/{}/tasks", goal.id),
                 serde_json::json!({
                     "title": "Do the thing",
-                    "engineer_profile": engineer.name,
+                    "author_profile": author.name,
                     "model": "codex",
                     "reviewers": [
                         {"profile": chosen.name, "model": "opencode"},
@@ -305,7 +305,7 @@ async fn an_agent_alone_pins_it_with_no_model_of_its_own() {
     );
 
     // And the CLI is spawned with no model of its own to run on.
-    let session = h.launcher.spawn_engineer(&task.id).await.unwrap();
+    let session = h.launcher.spawn_author(&task.id).await.unwrap();
     assert_eq!(session.agent_kind(), AgentKind::Codex);
     assert_eq!(session.model, None);
     let argv = h.spawn_argv(&session.id);
@@ -313,16 +313,16 @@ async fn an_agent_alone_pins_it_with_no_model_of_its_own() {
     assert!(!argv.contains("--model"), "{argv}");
 }
 
-/// A task created with agents runs each of them on its own: the engineer on
+/// A task created with agents runs each of them on its own: the author on
 /// the pair it was given, the reviewer that was given one on that, and the
 /// reviewer that was given none on its profile's.
 #[tokio::test]
 async fn a_task_created_with_agents_runs_each_one_on_its_own() {
     let h = harness().await;
-    let (planner, engineer, chosen, untouched) = on_claude(&h).await;
+    let (orchestrator, author, chosen, untouched) = on_claude(&h).await;
     let repo_path = h.git_repo("repo");
     let repo = h.repository(&repo_path).await;
-    let goal = h.goal_on(&planner, &repo, 1).await;
+    let goal = h.goal_on(&orchestrator, &repo, 1).await;
 
     let task: TaskDto = h
         .json(
@@ -330,7 +330,7 @@ async fn a_task_created_with_agents_runs_each_one_on_its_own() {
                 &format!("/v1/goals/{}/tasks", goal.id),
                 serde_json::json!({
                     "title": "Do the thing",
-                    "engineer_profile": engineer.name,
+                    "author_profile": author.name,
                     "model": "codex:gpt-5.6-sol",
                     "reviewers": [
                         {"profile": chosen.name, "model": "opencode:ollama/llama3:8b"},
@@ -356,7 +356,7 @@ async fn a_task_created_with_agents_runs_each_one_on_its_own() {
         ]
     );
 
-    let session = h.launcher.spawn_engineer(&task.id).await.unwrap();
+    let session = h.launcher.spawn_author(&task.id).await.unwrap();
     assert_eq!(session.agent_kind(), AgentKind::Codex);
     assert_eq!(session.model.as_deref(), Some("gpt-5.6-sol"));
     let session = h
@@ -374,11 +374,11 @@ async fn a_task_created_with_agents_runs_each_one_on_its_own() {
 #[tokio::test]
 async fn an_edit_moves_the_pins_and_default_hands_them_back() {
     let h = harness().await;
-    let (planner, engineer, chosen, _) = on_claude(&h).await;
+    let (orchestrator, author, chosen, _) = on_claude(&h).await;
     let repo = h.repository(&h.dir.path().join("repo")).await;
-    let goal = h.goal_on(&planner, &repo, 1).await;
+    let goal = h.goal_on(&orchestrator, &repo, 1).await;
     let task = h
-        .task_on(&goal, &repo, "Do it", &engineer, &[&chosen])
+        .task_on(&goal, &repo, "Do it", &author, &[&chosen])
         .await;
 
     let moved: TaskDto = h
@@ -424,7 +424,7 @@ async fn an_edit_moves_the_pins_and_default_hands_them_back() {
     // The profiles have moved since the task was cut, and handing the pins
     // back hands back what they are on now.
     h.move_profile(
-        &engineer.id,
+        &author.id,
         Some(AgentKind::Opencode),
         Some("ollama/llama3:8b"),
     )
@@ -456,19 +456,19 @@ async fn an_edit_moves_the_pins_and_default_hands_them_back() {
 
 /// A model is chosen by the CLI that runs it, so a string naming no agent CLI
 /// is refused by name — with the form that would have worked — rather than
-/// placed by guesswork, on a goal, on a task's engineer, on a reviewer slot
+/// placed by guesswork, on a goal, on a task's author, on a reviewer slot
 /// and on an edit alike.
 #[tokio::test]
 async fn a_model_naming_no_agent_is_refused_by_name() {
     let h = harness().await;
-    let (planner, engineer, chosen, _) = on_claude(&h).await;
+    let (orchestrator, author, chosen, _) = on_claude(&h).await;
     let repo = h.repository(&h.dir.path().join("repo")).await;
 
     let goal_with = |pin: serde_json::Value| {
         let mut body = serde_json::json!({
             "title": "Ship it",
             "repository_ids": [repo.id],
-            "planner_profile": planner.name,
+            "orchestrator_profile": orchestrator.name,
         });
         let object = body.as_object_mut().expect("an object");
         for (key, value) in pin.as_object().expect("an object") {
@@ -536,14 +536,14 @@ async fn a_model_naming_no_agent_is_refused_by_name() {
         )
         .await;
 
-    // The same refusal on the way in for a task, engineer and reviewer alike.
+    // The same refusal on the way in for a task, author and reviewer alike.
     let task_with =
         |body: serde_json::Value| post_json(&format!("/v1/goals/{}/tasks", goal.id), body);
     let err = h
         .error(
             task_with(serde_json::json!({
                 "title": "Do the thing",
-                "engineer_profile": engineer.name,
+                "author_profile": author.name,
                 "model": "gpt-5.3-codex",
                 "reviewers": [{"profile": chosen.name}],
             })),
@@ -561,7 +561,7 @@ async fn a_model_naming_no_agent_is_refused_by_name() {
         .error(
             task_with(serde_json::json!({
                 "title": "Do the thing",
-                "engineer_profile": engineer.name,
+                "author_profile": author.name,
                 "reviewers": [{"profile": chosen.name, "model": "o3"}],
             })),
             StatusCode::BAD_REQUEST,
@@ -577,7 +577,7 @@ async fn a_model_naming_no_agent_is_refused_by_name() {
     // the pins back, and anything else has to name the CLI that runs it.
     let stored = h.store.get_goal(&goal.id).await.unwrap();
     let task = h
-        .task_on(&stored, &repo, "Do it", &engineer, &[&chosen])
+        .task_on(&stored, &repo, "Do it", &author, &[&chosen])
         .await;
     let err = h
         .error(
@@ -604,7 +604,7 @@ async fn a_model_naming_no_agent_is_refused_by_name() {
 #[tokio::test]
 async fn a_model_is_stored_as_typed_whatever_the_catalogs_list() {
     let h = harness().await;
-    let (planner, ..) = on_claude(&h).await;
+    let (orchestrator, ..) = on_claude(&h).await;
     let repo = h.repository(&h.dir.path().join("repo")).await;
 
     for model in [
@@ -619,7 +619,7 @@ async fn a_model_is_stored_as_typed_whatever_the_catalogs_list() {
                     serde_json::json!({
                         "title": "Ship it",
                         "repository_ids": [repo.id],
-                        "planner_profile": planner.name,
+                        "orchestrator_profile": orchestrator.name,
                         "model": model,
                     }),
                 ),
@@ -643,8 +643,8 @@ async fn a_profile_is_pinned_and_cleared_by_the_one_field() {
             post_json(
                 "/v1/profiles",
                 serde_json::json!({
-                    "name": "rust-engineer",
-                    "role": "engineer",
+                    "name": "rust-author",
+                    "seat": "author",
                     "model": "codex:gpt-5.3-codex",
                 }),
             ),
@@ -659,7 +659,7 @@ async fn a_profile_is_pinned_and_cleared_by_the_one_field() {
                 "/v1/profiles",
                 serde_json::json!({
                     "name": "no-cli",
-                    "role": "engineer",
+                    "seat": "author",
                     "model": "claude-opus-5",
                 }),
             ),
@@ -717,7 +717,7 @@ async fn a_profile_is_pinned_and_cleared_by_the_one_field() {
 async fn an_effort_is_checked_against_the_model_it_runs_at() {
     let h = harness().await;
     let profile_with = |name: &str, pin: serde_json::Value| {
-        let mut body = serde_json::json!({"name": name, "role": "engineer"});
+        let mut body = serde_json::json!({"name": name, "seat": "author"});
         let object = body.as_object_mut().expect("an object");
         for (key, value) in pin.as_object().expect("an object") {
             object.insert(key.clone(), value.clone());
@@ -855,7 +855,7 @@ async fn an_effort_is_checked_against_the_model_it_runs_at() {
 #[tokio::test]
 async fn a_task_pins_the_effort_beside_the_model_and_moves_with_it() {
     let h = harness().await;
-    let (planner, engineer, chosen, untouched) = on_claude(&h).await;
+    let (orchestrator, author, chosen, untouched) = on_claude(&h).await;
     let repo = h.repository(&h.git_repo("repo")).await;
 
     let goal: GoalDto = h
@@ -865,7 +865,7 @@ async fn a_task_pins_the_effort_beside_the_model_and_moves_with_it() {
                 serde_json::json!({
                     "title": "Ship it",
                     "repository_ids": [repo.id],
-                    "planner_profile": planner.name,
+                    "orchestrator_profile": orchestrator.name,
                     "model": "claude_code:claude-opus-5",
                     "effort": "max",
                 }),
@@ -883,7 +883,7 @@ async fn a_task_pins_the_effort_beside_the_model_and_moves_with_it() {
                 &tasks,
                 serde_json::json!({
                     "title": "Do the thing",
-                    "engineer_profile": engineer.name,
+                    "author_profile": author.name,
                     "model": "claude_code:claude-opus-5",
                     "effort": "xhigh",
                     "reviewers": [
@@ -903,14 +903,14 @@ async fn a_task_pins_the_effort_beside_the_model_and_moves_with_it() {
         "the slot that chose nothing took its profile's, which is on none"
     );
 
-    // A slot's effort is refused the way the engineer's is.
+    // A slot's effort is refused the way the author's is.
     let err = h
         .error(
             post_json(
                 &tasks,
                 serde_json::json!({
                     "title": "Do it deeper",
-                    "engineer_profile": engineer.name,
+                    "author_profile": author.name,
                     "reviewers": [
                         {"profile": chosen.name, "model": "codex:gpt-5.6-luna", "effort": "ultra"},
                     ],
@@ -928,7 +928,7 @@ async fn a_task_pins_the_effort_beside_the_model_and_moves_with_it() {
     );
 
     // The session is opened on what the task was pinned to, effort and all.
-    let session = h.launcher.spawn_engineer(&task.id).await.unwrap();
+    let session = h.launcher.spawn_author(&task.id).await.unwrap();
     assert_eq!(session.model.as_deref(), Some("claude-opus-5"));
     assert_eq!(session.effort.as_deref(), Some("xhigh"));
 
@@ -1015,8 +1015,8 @@ async fn an_effort_of_its_own_is_run_at_the_model_already_pinned() {
             post_json(
                 "/v1/profiles",
                 serde_json::json!({
-                    "name": "rust-engineer",
-                    "role": "engineer",
+                    "name": "rust-author",
+                    "seat": "author",
                     "model": "codex:gpt-5.6-luna",
                     "effort": "max",
                 }),
@@ -1112,7 +1112,7 @@ async fn an_effort_of_its_own_is_run_at_the_model_already_pinned() {
         .json(
             post_json(
                 "/v1/profiles",
-                serde_json::json!({"name": "auto", "role": "reviewer"}),
+                serde_json::json!({"name": "auto", "seat": "reviewer"}),
             ),
             StatusCode::CREATED,
         )
@@ -1141,7 +1141,7 @@ async fn an_effort_of_its_own_is_run_at_the_model_already_pinned() {
 #[tokio::test]
 async fn an_effort_chosen_with_no_model_runs_the_profiles_own_at_it() {
     let h = harness().await;
-    let (planner, engineer, chosen, untouched) = on_claude(&h).await;
+    let (orchestrator, author, chosen, untouched) = on_claude(&h).await;
     let repo = h.repository(&h.dir.path().join("repo")).await;
 
     let goal: GoalDto = h
@@ -1151,7 +1151,7 @@ async fn an_effort_chosen_with_no_model_runs_the_profiles_own_at_it() {
                 serde_json::json!({
                     "title": "Ship it",
                     "repository_ids": [repo.id],
-                    "planner_profile": planner.name,
+                    "orchestrator_profile": orchestrator.name,
                     "effort": "max",
                 }),
             ),
@@ -1168,7 +1168,7 @@ async fn an_effort_chosen_with_no_model_runs_the_profiles_own_at_it() {
                 &tasks,
                 serde_json::json!({
                     "title": "Do the thing",
-                    "engineer_profile": engineer.name,
+                    "author_profile": author.name,
                     "effort": "xhigh",
                     "reviewers": [
                         {"profile": chosen.name, "effort": "low"},
@@ -1198,7 +1198,7 @@ async fn an_effort_chosen_with_no_model_runs_the_profiles_own_at_it() {
                 &tasks,
                 serde_json::json!({
                     "title": "Deeper than it goes",
-                    "engineer_profile": engineer.name,
+                    "author_profile": author.name,
                     "effort": "ultra",
                     "reviewers": [{"profile": chosen.name}],
                 }),
@@ -1216,7 +1216,7 @@ async fn an_effort_chosen_with_no_model_runs_the_profiles_own_at_it() {
 
     // And a profile on auto has no model to run one at.
     let auto = h
-        .profile_on("auto-engineer", Role::Engineer, None, None)
+        .profile_on("auto-author", Seat::Author, None, None)
         .await;
     let err = h
         .error(
@@ -1224,7 +1224,7 @@ async fn an_effort_chosen_with_no_model_runs_the_profiles_own_at_it() {
                 &tasks,
                 serde_json::json!({
                     "title": "Nothing to run it at",
-                    "engineer_profile": auto.name,
+                    "author_profile": auto.name,
                     "effort": "high",
                     "reviewers": [{"profile": chosen.name}],
                 }),

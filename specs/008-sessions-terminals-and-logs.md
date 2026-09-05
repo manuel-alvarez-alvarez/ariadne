@@ -29,17 +29,17 @@ Out: when the daemon decides to type something (009, 010), and what it types
 
 ## Behavior
 
-1. A session belongs to a goal, a role and — for engineers and reviewers — a
+1. A session belongs to a goal, a seat and — for authors and reviewers — a
    task, and holds the tmux session name, the worktree, the agent kind, the
    model and effort it runs on, and its internal agent id.
-2. Sessions are long-lived: one engineer per task, one reviewer per task
-   across its rounds, one planner per goal. Restarting one reopens the same
+2. Sessions are long-lived: one author per task, one reviewer per task
+   across its rounds, one orchestrator per goal. Restarting one reopens the same
    row, and every launch of it is dated and named.
 3. A launch is refused rather than duplicated: a spawn asks first whether the
-   role already has a live session, and counts "tmux could not be asked" as a
+   seat already has a live session, and counts "tmux could not be asked" as a
    yes — a wrong no would put two agents on one piece of work.
 4. tmux session names are stable and short, derived from the goal, the task
-   and the role. A role therefore has one name, and a spawn that finds a pane
+   and the seat. A seat therefore has one name, and a spawn that finds a pane
    still holding it while nothing live claims it takes the name rather than
    failing on it — a leftover pane would otherwise cost every attempt its
    session row.
@@ -86,7 +86,8 @@ Out: when the daemon decides to type something (009, 010), and what it types
   (`session_input.rs::typing_reaches_the_pane_byte_for_byte`), a long paste is
   split into ordered batches (`::a_long_paste_is_split_into_ordered_batches`),
   and a finished or pane-less session refuses
-  (`::a_finished_session_refuses_input`, `::a_session_without_a_pane_refuses_input`).
+  (`::a_finished_session_refuses_input`,
+  `::a_session_without_a_pane_refuses_input`).
 - Typing into a pane takes down what the session was flagged for
   (`session_input.rs::typing_into_a_pane_takes_down_what_the_session_was_flagged_for`).
 - A resize sizes the window and leaves a client free to resize again

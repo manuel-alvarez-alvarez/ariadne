@@ -65,7 +65,7 @@ async fn goal_on(h: &Harness, repository_ids: Vec<&str>) -> GoalDto {
         post_json(
             "/v1/goals",
             serde_json::json!({"title": "Ship it", "repository_ids": repository_ids,
-                               "planner_profile": "Planner"}),
+                               "orchestrator_profile": "Orchestrator"}),
         ),
         StatusCode::CREATED,
     )
@@ -76,7 +76,7 @@ async fn task_in(h: &Harness, goal: &GoalDto) -> TaskDto {
     h.json(
         post_json(
             &format!("/v1/goals/{}/tasks", goal.id),
-            serde_json::json!({"title": "Do the thing", "engineer_profile": "Engineer",
+            serde_json::json!({"title": "Do the thing", "author_profile": "Author",
                                "reviewers": [{"profile": "Reviewer"}]}),
         ),
         StatusCode::CREATED,
@@ -84,7 +84,7 @@ async fn task_in(h: &Harness, goal: &GoalDto) -> TaskDto {
     .await
 }
 
-/// Register a repository, create a goal on it, create a task: the engineer's
+/// Register a repository, create a goal on it, create a task: the author's
 /// worktree is cut from that repository's checkout and base branch.
 #[tokio::test]
 async fn a_task_branches_from_the_repository_its_goal_references() {
@@ -98,7 +98,7 @@ async fn a_task_branches_from_the_repository_its_goal_references() {
     let task = task_in(&h, &goal).await;
     assert_eq!(task.repo_id, registered.id, "the goal has one repository");
 
-    let session = h.launcher.spawn_engineer(&task.id).await.unwrap();
+    let session = h.launcher.spawn_author(&task.id).await.unwrap();
     let worktree = PathBuf::from(session.worktree_path.unwrap());
     assert!(worktree.is_dir(), "the worktree was created");
     assert_eq!(sh(&worktree, "git rev-parse --abbrev-ref HEAD"), task.branch);
@@ -132,7 +132,7 @@ async fn editing_the_base_branch_moves_what_new_tasks_branch_from() {
     assert_eq!(goal.repos[0].base_branch, "main", "the goal moved with it");
 
     let task = task_in(&h, &goal).await;
-    let session = h.launcher.spawn_engineer(&task.id).await.unwrap();
+    let session = h.launcher.spawn_author(&task.id).await.unwrap();
     let worktree = PathBuf::from(session.worktree_path.unwrap());
     assert_eq!(
         sh(&worktree, "git rev-parse HEAD"),
@@ -186,7 +186,7 @@ async fn a_goal_cannot_be_created_on_an_unknown_repository() {
         .error(
             post_json(
                 "/v1/goals",
-                serde_json::json!({"title": "Ship it", "planner_profile": "Planner",
+                serde_json::json!({"title": "Ship it", "orchestrator_profile": "Orchestrator",
                                    "repository_ids": [registered.id, "01nosuchrepository"]}),
             ),
             StatusCode::NOT_FOUND,
@@ -202,7 +202,7 @@ async fn a_goal_cannot_be_created_on_an_unknown_repository() {
     h.error(
         post_json(
             "/v1/goals",
-            serde_json::json!({"title": "Ship it", "planner_profile": "Planner",
+            serde_json::json!({"title": "Ship it", "orchestrator_profile": "Orchestrator",
                                "repository_ids": []}),
         ),
         StatusCode::BAD_REQUEST,

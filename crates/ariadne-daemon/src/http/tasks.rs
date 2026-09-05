@@ -8,7 +8,7 @@ use ariadne_api::tasks::{
     CreateTaskRequest, ReviewerAssignment, TaskDto, TaskListQuery, TaskTransitionDto,
     TransitionRequest, UpdateTaskRequest,
 };
-use ariadne_core::{Actor, Role, TaskStatus};
+use ariadne_core::{Actor, Seat, TaskStatus};
 use ariadne_store::{NewTask, Profile, ReviewerSlot, Store, Task, TaskFilter, TaskUpdate};
 
 use super::AppState;
@@ -18,19 +18,19 @@ use super::landing;
 use super::pins::{self, Repin, Standing};
 use super::caller::{CallCtx, call_ctx, ensure_task_scope};
 
-/// Resolve one profile id-or-name, checking it has `role`: the shape every
+/// Resolve one profile id-or-name, checking it has `seat`: the shape every
 /// profile assignment takes.
 ///
 /// The profile itself rather than its id, because what it is pinned to is what
 /// an effort written with no model beside it is run at.
-async fn resolve_profile(store: &Store, spec: &str, role: Role) -> ApiResult<Profile> {
+async fn resolve_profile(store: &Store, spec: &str, seat: Seat) -> ApiResult<Profile> {
     let p = store.resolve_profile(spec).await?;
-    if p.role() != role {
+    if p.seat() != seat {
         return Err(ApiError::bad_request(format!(
-            "profile {} has role {}, expected {}",
+            "profile {} has seat {}, expected {}",
             p.name,
-            p.role,
-            role.as_str()
+            p.seat,
+            seat.as_str()
         )));
     }
     Ok(p)
@@ -55,7 +55,7 @@ async fn resolve_reviewers(
 ) -> ApiResult<Vec<ReviewerSlot>> {
     let mut slots = Vec::with_capacity(assignments.len());
     for assignment in assignments {
-        let profile = resolve_profile(store, &assignment.profile, Role::Reviewer).await?;
+        let profile = resolve_profile(store, &assignment.profile, Seat::Reviewer).await?;
         slots.push(ReviewerSlot {
             pin: pins::chosen(
                 assignment.model.as_deref(),
@@ -69,7 +69,7 @@ async fn resolve_reviewers(
     Ok(slots)
 }
 
-/// Create a task in a goal (planner via MCP, or the user).
+/// Create a task in a goal (orchestrator via MCP, or the user).
 #[utoipa::path(post, path = "/v1/goals/{goal_id}/tasks", tag = "tasks",
     request_body = CreateTaskRequest,
     params(("goal_id" = String, Path, description = "goal id")),
@@ -81,9 +81,9 @@ pub async fn create(
     Json(req): Json<CreateTaskRequest>,
 ) -> ApiResult<(StatusCode, Json<TaskDto>)> {
     let ctx = call_ctx(&state.store, &headers).await?;
-    if !matches!(ctx.actor, Actor::Planner | Actor::User) {
+    if !matches!(ctx.actor, Actor::Orchestrator | Actor::User) {
         return Err(ApiError::forbidden(
-            "only the planner or the user may create tasks",
+            "only the orchestrator or the user may create tasks",
         ));
     }
     if let Some(session) = &ctx.session
@@ -111,12 +111,12 @@ pub async fn create(
         }
     };
 
-    let engineer = resolve_profile(&state.store, &req.engineer_profile, Role::Engineer).await?;
+    let author = resolve_profile(&state.store, &req.author_profile, Seat::Author).await?;
     let reviewers = resolve_reviewers(&state.store, &req.reviewers).await?;
     let pin = pins::chosen(
         req.model.as_deref(),
         req.effort.as_deref(),
-        standing(&engineer),
+        standing(&author),
     )
     .await?;
 
@@ -127,7 +127,7 @@ pub async fn create(
             repo_id,
             title: req.title,
             description: req.description,
-            engineer_profile_id: engineer.id,
+            author_profile_id: author.id,
             pin,
             reviewers,
             depends_on: req.depends_on,
@@ -171,7 +171,7 @@ pub async fn get(
     Ok(Json(task_dto_of(&state.store, task).await?))
 }
 
-/// Edit a pending/ready task (planner or user).
+/// Edit a pending/ready task (orchestrator or user).
 #[utoipa::path(patch, path = "/v1/tasks/{id}", tag = "tasks",
     request_body = UpdateTaskRequest,
     params(("id" = String, Path, description = "task id")),
@@ -183,9 +183,9 @@ pub async fn update(
     Json(req): Json<UpdateTaskRequest>,
 ) -> ApiResult<Json<TaskDto>> {
     let ctx = call_ctx(&state.store, &headers).await?;
-    if !matches!(ctx.actor, Actor::Planner | Actor::User) {
+    if !matches!(ctx.actor, Actor::Orchestrator | Actor::User) {
         return Err(ApiError::forbidden(
-            "only the planner or the user may edit tasks",
+            "only the orchestrator or the user may edit tasks",
         ));
     }
     let reviewers = match &req.reviewers {
@@ -253,8 +253,8 @@ pub(crate) async fn apply_transition(
     task_id: &str,
     req: TransitionRequest,
 ) -> ApiResult<Task> {
-    // `merged` is never taken on faith.
-    if req.to == TaskStatus::Merged {
+    // `finished` is never taken on faith.
+    if req.to == TaskStatus::Finished {
         let task = state.store.get_task(task_id).await?;
         let repo = state.store.get_repository(&task.repo_id).await?;
         landing::verify_merged(state, &task, &repo, req.merge_commit.as_deref()).await?;

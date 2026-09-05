@@ -5,7 +5,7 @@
 use std::str::FromStr;
 
 use ariadne_core::{
-    AgentKind, AttentionReason, GoalStatus, MergeStrategy, ReviewVerdict, Role, SessionStatus,
+    AgentKind, AttentionReason, GoalStatus, MergeStrategy, ReviewVerdict, Seat, SessionStatus,
     TaskStatus,
 };
 
@@ -41,14 +41,14 @@ macro_rules! enum_columns {
 }
 
 enum_columns! {
-    Profile { role: Role, agent_kind: [AgentKind] }
+    Profile { seat: Seat, agent_kind: [AgentKind] }
     AgentConfig { agent_kind: AgentKind }
     Repository { merge_strategy: MergeStrategy }
     Goal { status: GoalStatus, agent_kind: [AgentKind] }
     Task { status: TaskStatus, agent_kind: [AgentKind] }
     TaskReviewer { agent_kind: [AgentKind] }
     AgentSession {
-        role: Role,
+        seat: Seat,
         agent_kind: AgentKind,
         status: SessionStatus,
         attention_reason: [AttentionReason],
@@ -60,7 +60,7 @@ enum_columns! {
 pub struct Profile {
     pub id: String,
     pub name: String,
-    pub role: String,
+    pub seat: String,
     /// NULL = auto-resolve at spawn time (first installed agent CLI).
     pub agent_kind: Option<String>,
     pub model: Option<String>,
@@ -68,7 +68,7 @@ pub struct Profile {
     /// the agent CLI runs it at on its own.
     pub effort: Option<String>,
     /// The system prompt set on this profile, or NULL while it runs on the
-    /// default of its role. Read through [`Profile::effective_system_prompt`],
+    /// default of its seat. Read through [`Profile::effective_system_prompt`],
     /// which is what the agent is spawned with.
     pub system_prompt: Option<String>,
     pub created_at: String,
@@ -77,13 +77,13 @@ pub struct Profile {
 
 impl Profile {
     /// The system prompt this profile is spawned with: the one set on it, or
-    /// the default of its role.
+    /// the default of its seat.
     pub fn effective_system_prompt(&self) -> &str {
         self.system_prompt
             .as_deref()
-            .unwrap_or_else(|| default_system_prompt(self.role()))
+            .unwrap_or_else(|| default_system_prompt(self.seat()))
     }
-    /// Whether [`Profile::effective_system_prompt`] is that role default rather
+    /// Whether [`Profile::effective_system_prompt`] is that seat default rather
     /// than a text set on this profile.
     pub fn system_prompt_is_default(&self) -> bool {
         self.system_prompt.is_none()
@@ -127,7 +127,7 @@ pub struct Repository {
     pub merge_strategy: String,
     /// The landing briefing set on this repository, or NULL while it runs on
     /// the built-in default of its merge strategy. Read through
-    /// [`Repository::landing_prompt_text`], which is what the engineer of an
+    /// [`Repository::landing_prompt_text`], which is what the author of an
     /// approved task is briefed with.
     pub landing_prompt: Option<String>,
     pub created_at: String,
@@ -135,7 +135,7 @@ pub struct Repository {
 }
 
 impl Repository {
-    /// The landing briefing this repository hands its engineer: the text set
+    /// The landing briefing this repository hands its author: the text set
     /// on it, or the built-in default of its merge strategy.
     pub fn landing_prompt_text(&self) -> &str {
         self.landing_prompt
@@ -208,13 +208,13 @@ pub struct Goal {
     pub status: String,
     pub max_tasks: Option<i64>,
     pub required_approvals: i64,
-    pub planner_profile_id: String,
-    /// Agent CLI the planner of this goal runs on, snapshotted from the
+    pub orchestrator_profile_id: String,
+    /// Agent CLI the orchestrator of this goal runs on, snapshotted from the
     /// profile when the goal was created. None = auto. Editing the profile
     /// afterwards leaves it alone.
     pub agent_kind: Option<String>,
-    /// Model the planner of this goal runs on, snapshotted like `agent_kind`.
-    /// None = the agent CLI's own default.
+    /// Model the orchestrator of this goal runs on, snapshotted like
+    /// `agent_kind`. None = the agent CLI's own default.
     pub model: Option<String>,
     /// Effort that model is run at, snapshotted like `model`. None = whatever
     /// the agent CLI runs it at.
@@ -231,12 +231,12 @@ pub struct Task {
     pub title: String,
     pub description: String,
     pub status: String,
-    pub engineer_profile_id: String,
-    /// Agent CLI the engineer of this task runs on, snapshotted from the
+    pub author_profile_id: String,
+    /// Agent CLI the author of this task runs on, snapshotted from the
     /// profile when the task was created. None = auto. Editing the profile
     /// afterwards leaves it alone.
     pub agent_kind: Option<String>,
-    /// Model the engineer of this task runs on, snapshotted like
+    /// Model the author of this task runs on, snapshotted like
     /// `agent_kind`. None = the agent CLI's own default.
     pub model: Option<String>,
     /// Effort that model is run at, snapshotted like `model`. None = whatever
@@ -248,7 +248,7 @@ pub struct Task {
     pub stalled: i64,
     pub merge_commit: Option<String>,
     /// URL of the pull or merge request this task was published as, once its
-    /// engineer has reported one. None for a task landed directly.
+    /// author has reported one. None for a task landed directly.
     pub pr_url: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -266,7 +266,7 @@ impl Task {
 pub struct TaskReviewer {
     pub task_id: String,
     pub profile_id: String,
-    /// Planner-assigned order, 0-based.
+    /// Orchestrator-assigned order, 0-based.
     pub position: i64,
     /// Agent CLI this reviewer runs on, snapshotted from the profile when the
     /// slot was created. None = auto.
@@ -284,11 +284,11 @@ pub struct AgentSession {
     pub id: String,
     pub goal_id: String,
     pub task_id: Option<String>,
-    pub role: String,
+    pub seat: String,
     pub profile_id: String,
     pub agent_kind: String,
     /// Model this session runs on. None = the CLI's own default. Taken from
-    /// the pin its role carries — the task, the reviewer slot, the goal — when
+    /// the pin its seat carries — the task, the reviewer slot, the goal — when
     /// the session is created and never rewritten, so neither a profile edit
     /// nor a resume moves a running conversation onto another model.
     pub model: Option<String>,

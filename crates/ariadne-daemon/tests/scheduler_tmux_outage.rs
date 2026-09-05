@@ -6,7 +6,7 @@
 //! agent beside it — are worse than waiting for the next tick. The liveness
 //! sweep already leaves such rows alone; this pins the other half, since a
 //! preserved row plus a "no live sessions" reading is exactly how one task
-//! ends up with two engineers.
+//! ends up with two authors.
 //!
 //! The same goes for the watchdog over an agent that has reported nothing:
 //! what it does at the first threshold turns on what the pane is drawing, and
@@ -16,14 +16,14 @@ mod common;
 
 use std::time::Duration;
 
-use ariadne_core::{Actor, Role, SessionStatus, TaskStatus};
+use ariadne_core::{Actor, Seat, SessionStatus, TaskStatus};
 use ariadne_daemon::scheduler::{self, SchedEvent};
 use ariadne_store::AgentSession;
 
 use common::{Cast, Harness, harness};
 
 /// Everything one of these tests works on: an active goal with a task on it,
-/// an engineer already sitting in a pane, and a daemon whose `tmux` binary is
+/// an author already sitting in a pane, and a daemon whose `tmux` binary is
 /// not there — so every question about that pane comes back unanswered rather
 /// than answered "no", which is what a machine briefly out of process slots
 /// looks like from here.
@@ -34,8 +34,8 @@ async fn world() -> (Harness, Cast, AgentSession) {
         .session(
             &cast.goal,
             Some(&cast.task),
-            Role::Engineer,
-            &cast.engineer.id,
+            Seat::Author,
+            &cast.author.id,
         )
         .await;
     (h, cast, session)
@@ -121,7 +121,7 @@ async fn a_silent_agent_whose_pane_cannot_be_read_is_left_for_the_next_pass() {
     );
 
     // tmux comes back, and the pane it could not answer for is still holding
-    // the instruction the launch put there — as the engineer's resume template
+    // the instruction the launch put there — as the author's resume template
     // words it.
     h.composer_keeps(r#"Continue "task" on"#);
     tmux_comes_back(&h);

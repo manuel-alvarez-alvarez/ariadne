@@ -105,12 +105,12 @@ async fn an_unknown_agent_kind_is_refused_by_name() {
 #[tokio::test]
 async fn a_launch_takes_its_flags_from_the_agent_config() {
     let h = harness().await;
-    let (cast, _) = h.resumable_engineer().await;
+    let (cast, _) = h.resumable_author().await;
     let task = cast.task.id;
 
     let session = h
         .launcher
-        .resume_engineer(&task, "Round 1: please fix things.")
+        .resume_author(&task, "Round 1: please fix things.")
         .await
         .unwrap();
     let argv = h.spawn_argv(&session.id);
@@ -132,7 +132,7 @@ async fn a_launch_takes_its_flags_from_the_agent_config() {
         .await;
     let session = h
         .launcher
-        .resume_engineer(&task, "Round 2: please fix things.")
+        .resume_author(&task, "Round 2: please fix things.")
         .await
         .unwrap();
     let argv = h.spawn_argv(&session.id);

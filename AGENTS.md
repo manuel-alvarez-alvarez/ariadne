@@ -1,9 +1,9 @@
 # AGENTS.md
 
 Ariadne is a docker-style orchestrator for AI coding agents: a daemon
-(`ariadned`) that breaks goals into tasks and runs planner, engineer and
-reviewer agents on them until each one is merged, a CLI (`ariadne`) that drives
-it, and a desktop app. What it is and how it is used is
+(`ariadned`) that breaks goals into tasks and runs orchestrator, author and
+reviewer agents on them until each one is finished, a CLI (`ariadne`) that
+drives it, and a desktop app. What it is and how it is used is
 [`README.md`](README.md).
 
 The conventions for changing it are split by area. This file holds what applies

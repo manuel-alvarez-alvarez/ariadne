@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use ariadne_core::{AgentKind, Role};
+use ariadne_core::{AgentKind, Seat};
 use ariadne_daemon::agents::{SpawnCtx, adapter_for};
 
 /// The context the launcher assembles for `kind`: the flags are the ones the
@@ -25,7 +25,7 @@ fn ctx_with_flags(run_dir: PathBuf, extra_flags: Vec<String>) -> SpawnCtx {
         launch_id: "01launchxxxxxxxxxxxxxxxxxx".into(),
         goal_id: "01goalxxxxxxxxxxxxxxxxxxxx".into(),
         task_id: Some("01taskxxxxxxxxxxxxxxxxxxxx".into()),
-        role: Role::Engineer,
+        seat: Seat::Author,
         run_dir,
         cwd: PathBuf::from("/tmp/worktree"),
         socket_path: PathBuf::from("/tmp/ariadne.sock"),
@@ -268,7 +268,7 @@ fn base_env_carries_session_context() {
     assert_eq!(env["ARIADNE_SESSION_ID"], "01sessionxxxxxxxxxxxxxxxxx");
     assert_eq!(env["ARIADNE_GOAL_ID"], "01goalxxxxxxxxxxxxxxxxxxxx");
     assert_eq!(env["ARIADNE_TASK_ID"], "01taskxxxxxxxxxxxxxxxxxxxx");
-    assert_eq!(env["ARIADNE_ROLE"], "engineer");
+    assert_eq!(env["ARIADNE_SEAT"], "author");
     assert_eq!(env["ARIADNE_SOCKET"], "/tmp/ariadne.sock");
 }
 

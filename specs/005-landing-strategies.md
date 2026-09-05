@@ -20,10 +20,10 @@ run by the agent that wrote the change.
 
 In: the two merge strategies, the landing briefing a repository carries, the
 `direct` and `pull_request` procedures, merge verification, published-request
-handling, and the planner's spec landing.
+handling, and the orchestrator's spec landing.
 
 Out: who approves the change (004), and the state machine around `approved`
-and `merged` (001).
+and `finished` (001).
 
 ## Behavior
 
@@ -37,12 +37,12 @@ and `merged` (001).
    `{repo_path}`.
 3. Changing a repository's strategy does not overwrite a landing briefing
    somebody wrote.
-4. An approved task is landed by its own engineer, in the session and worktree
-   it already holds. There is no separate integrator role.
+4. An approved task is landed by its own author, in the session and worktree
+   it already holds. There is no separate integrator seat.
 5. `direct`: rebase the task branch onto the base, squash it into one commit
    with a Conventional Commits subject, fast-forward the base branch in the
-   primary checkout, push where there is a remote, then `mark_merged` with the
-   base branch's sha. The push comes before `mark_merged`, because that call
+   primary checkout, push where there is a remote, then `finish_task` with the
+   base branch's sha. The push comes before `finish_task`, because that call
    ends the task and the cleanup behind it takes the worktree.
 6. `pull_request`: rebase once — the only rebase — push the branch, and open
    the request with `gh` (github.com) or `glab` (GitLab), whichever the
@@ -50,20 +50,20 @@ and `merged` (001).
    URL is recorded with `record_pull_request`.
 7. A published branch only grows: no amend, no rebase, no forced push. A base
    that has moved is merged in and pushed plainly.
-8. The engineer waits on its own published request in its own session, polling
+8. The author waits on its own published request in its own session, polling
    the forge and sleeping between polls, capped at five minutes a call so the
    session keeps reporting activity (009). It answers every comment, and a
    change somebody asks for is made on the branch and put through the Ariadne
    reviewers before it is pushed (004).
 9. Once the request is approved and green it is merged with `--squash`, the
    base branch is fast-forwarded in the primary checkout, and the sha is
-   reported with `mark_merged`. A request closed unmerged ends the task with
+   reported with `finish_task`. A request closed unmerged ends the task with
    `fail_task`.
 10. The daemon accepts a merge sha only after verifying it with
     `git merge-base --is-ancestor`: a merge that never happened is refused.
 11. The forge is read off the `origin` remote at landing time rather than
     configured anywhere, so the answer cannot go stale.
-12. The planner lands its approved spec by the same strategies, with a
+12. The orchestrator lands its approved spec by the same strategies, with a
     procedure of Ariadne's own (003): `direct` commits it on the base branch of
     the primary checkout after checking that checkout is on the base branch;
     `pull_request` holds the spec branch in a throwaway worktree, sees the
@@ -72,14 +72,14 @@ and `merged` (001).
 
 ## Acceptance criteria
 
-- An approved task is landed by its own engineer
-  (`landing_lifecycle.rs::an_approved_task_is_landed_by_its_own_engineer`) and
+- An approved task is landed by its own author
+  (`landing_lifecycle.rs::an_approved_task_is_landed_by_its_own_author`) and
   is briefed with the repository's own landing text
-  (`::an_approved_engineer_is_briefed_with_the_repositorys_own_landing_text`).
+  (`::an_approved_author_is_briefed_with_the_repositorys_own_landing_text`).
 - A merge that never happened is refused
   (`landing_lifecycle.rs::a_merge_that_never_happened_is_refused`), and a
-  squashed request lands on the sha the engineer fast-forwarded to
-  (`::a_squashed_request_lands_on_the_sha_the_engineer_fast_forwarded_to`).
+  squashed request lands on the sha the author fast-forwarded to
+  (`::a_squashed_request_lands_on_the_sha_the_author_fast_forwarded_to`).
 - A new repository lands by its strategy's briefing unless it was given one
   (`repositories.rs::a_new_repository_lands_by_its_strategys_briefing_unless_it_was_given_one`),
   the briefing survives a strategy change
@@ -88,8 +88,8 @@ and `merged` (001).
   (`::a_landing_briefing_with_an_unknown_placeholder_is_a_400`).
 - Each strategy's briefing is one procedure and nothing of the other
   (`defaults.rs::each_landing_briefing_is_one_strategy_and_nothing_of_the_other`),
-  and nothing the engineer still has to run comes after `mark_merged`
-  (`defaults.rs::nothing_the_engineer_still_has_to_run_comes_after_the_call_that_ends_the_task`).
+  and nothing the author still has to run comes after `finish_task`
+  (`defaults.rs::nothing_the_author_still_has_to_run_comes_after_the_call_that_ends_the_task`).
 - The spec landing names no task tool
   (`defaults.rs::a_spec_landing_names_no_task_tool`) and lands the way the
   repository takes a change

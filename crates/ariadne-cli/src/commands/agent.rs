@@ -25,7 +25,7 @@ const EMPTY: &str = "-";
 ///
 /// The flags belong to the agent kind, not to the persona: every profile that
 /// runs on that CLI is spawned and resumed with them, and an edit lands on the
-/// next launch. `ariadne profile` is the other half — the model, the role and
+/// next launch. `ariadne profile` is the other half — the model, the seat and
 /// the prompts one agent runs with.
 #[derive(Subcommand)]
 pub enum AgentCommand {

@@ -8,10 +8,10 @@
 //! back by dropping what was set — nothing is ever copied into the database,
 //! so rewriting a text here reaches every profile that never edited it. A
 //! repository's landing briefing works the same way, off its merge strategy
-//! rather than a role ([`default_landing_prompt`]).
+//! rather than a seat ([`default_landing_prompt`]).
 //!
 //! Each rule is written once, in the layer it belongs to. A system prompt
-//! states what a role owes, from its first read to the call that ends its
+//! states what a seat owes, from its first read to the call that ends its
 //! turn. A briefing template carries the values of one goal, task or round and
 //! whatever is only true of this moment — a new round's feedback, the landing
 //! procedure — and nothing of the playbook that already reached the agent. A
@@ -19,60 +19,60 @@
 //! session is told alike — that Ariadne is reached through its MCP tools, whom
 //! a question reaches, and how few turns to take — is the MCP server's
 //! `instructions`, which every session already receives, and appears in no
-//! prompt here. What each role does when it cannot go on is one line of its
-//! own: the planner asks the user, the engineer gives the task up, the
+//! prompt here. What each seat does when it cannot go on is one line of its
+//! own: the orchestrator asks the user, the author gives the task up, the
 //! reviewer asks for changes.
 //!
 //! Every text here is written in ASD-STE100 Simplified Technical English: one
 //! instruction to a sentence, the imperative for an instruction, the active
 //! voice, sentences that stay short, one meaning per word, a list for a
 //! sequence of steps. It is what an agent misreads least and pays fewest
-//! tokens for, and each playbook holds the agent to it in turn — the planner
-//! for its task descriptions, the engineer for its summaries, commit text and
-//! failure reasons, the reviewer for its verdicts. That the rule holds for
-//! every role, and for every word an agent writes, is the MCP server's
-//! session rules to say, so `STE` is all a text here spells.
+//! tokens for, and each playbook holds the agent to it in turn — the
+//! orchestrator for its task descriptions, the author for its summaries,
+//! commit text and failure reasons, the reviewer for its verdicts. That the
+//! rule holds for every seat, and for every word an agent writes, is the MCP
+//! server's session rules to say, so `STE` is all a text here spells.
 //!
 //! The texts are kept small on purpose, and `size_caps_hold` below is what
 //! keeps them that way; `every_default_text_is_simplified_technical_english`
 //! is what keeps the sentences short.
 
-use ariadne_core::{MergeStrategy, PromptKind, Role};
+use ariadne_core::{MergeStrategy, PromptKind, Seat};
 
-/// A profile Ariadne seeds into an empty database: one per role, on the
+/// A profile Ariadne seeds into an empty database: one per seat, on the
 /// auto-resolved agent CLI (no agent kind, no model) and on the default system
-/// prompt of its role. The ids are fixed so they stay recognizable; deleting a
+/// prompt of its seat. The ids are fixed so they stay recognizable; deleting a
 /// built-in is allowed and permanent.
 pub struct BuiltinProfile {
     pub id: &'static str,
     pub name: &'static str,
-    pub role: Role,
+    pub seat: Seat,
 }
 
 pub const BUILTIN_PROFILES: [BuiltinProfile; 3] = [
     BuiltinProfile {
         id: "00000000000000000000000001",
-        name: "Planner",
-        role: Role::Planner,
+        name: "Orchestrator",
+        seat: Seat::Orchestrator,
     },
     BuiltinProfile {
         id: "00000000000000000000000002",
-        name: "Engineer",
-        role: Role::Engineer,
+        name: "Author",
+        seat: Seat::Author,
     },
     BuiltinProfile {
         id: "00000000000000000000000003",
         name: "Reviewer",
-        role: Role::Reviewer,
+        seat: Seat::Reviewer,
     },
 ];
 
-/// The system prompt a profile of `role` runs on while it has none of its own.
-pub fn default_system_prompt(role: Role) -> &'static str {
-    match role {
-        Role::Planner => PLANNER_SYSTEM_PROMPT,
-        Role::Engineer => ENGINEER_SYSTEM_PROMPT,
-        Role::Reviewer => REVIEWER_SYSTEM_PROMPT,
+/// The system prompt a profile of `seat` runs on while it has none of its own.
+pub fn default_system_prompt(seat: Seat) -> &'static str {
+    match seat {
+        Seat::Orchestrator => ORCHESTRATOR_SYSTEM_PROMPT,
+        Seat::Author => AUTHOR_SYSTEM_PROMPT,
+        Seat::Reviewer => REVIEWER_SYSTEM_PROMPT,
     }
 }
 
@@ -80,10 +80,10 @@ pub fn default_system_prompt(role: Role) -> &'static str {
 /// briefed with, the same for every profile.
 pub fn default_prompt_text(kind: PromptKind) -> &'static str {
     match kind {
-        PromptKind::PlannerBriefing => PLANNER_BRIEFING,
-        PromptKind::PlannerResume => PLANNER_RESUME,
-        PromptKind::EngineerBriefing => ENGINEER_BRIEFING,
-        PromptKind::EngineerResume => ENGINEER_RESUME,
+        PromptKind::OrchestratorBriefing => ORCHESTRATOR_BRIEFING,
+        PromptKind::OrchestratorResume => ORCHESTRATOR_RESUME,
+        PromptKind::AuthorBriefing => AUTHOR_BRIEFING,
+        PromptKind::AuthorResume => AUTHOR_RESUME,
         PromptKind::ChangesRequested => CHANGES_REQUESTED,
         PromptKind::ReviewerBriefing => REVIEWER_BRIEFING,
         PromptKind::ReviewerResume => REVIEWER_RESUME,
@@ -92,10 +92,10 @@ pub fn default_prompt_text(kind: PromptKind) -> &'static str {
 
 /// The landing briefing a repository on `strategy` runs on while it has none
 /// of its own: the whole procedure of that strategy, which is what its
-/// engineer is handed once the task is approved.
+/// author is handed once the task is approved.
 ///
 /// One text per strategy rather than one with two halves: a repository lands
-/// one way, so the engineer reads the procedure it runs and nothing of the
+/// one way, so the author reads the procedure it runs and nothing of the
 /// other. A repository may be given a text of its own instead
 /// ([`Repository::landing_prompt_text`](crate::Repository::landing_prompt_text)),
 /// and clearing it puts this back in force.
@@ -106,21 +106,21 @@ pub fn default_landing_prompt(strategy: MergeStrategy) -> &'static str {
     }
 }
 
-/// How the planner puts the approved spec on the base branch of a repository
-/// on `strategy`: the procedure its briefing carries, which is the landing an
-/// engineer runs, written for the one thing the planner lands.
+/// How the orchestrator puts the approved spec on the base branch of a
+/// repository on `strategy`: the procedure its briefing carries, which is the
+/// landing an author runs, written for the one thing the orchestrator lands.
 ///
 /// The spec reaches the repository the same way every other change does, so a
 /// repository that takes changes through a request takes the spec through one
 /// too. What differs from [`default_landing_prompt`] is who runs it and what
-/// it lands. The planner holds no task, so no `mark_merged` and no
+/// it lands. The orchestrator holds no task, so no `finish_task` and no
 /// `fail_task` end it; it works in the primary checkout rather than a
 /// worktree of its own, so a published spec gets a throwaway worktree and the
 /// checkout it was started in stays on the base branch — another goal may be
 /// landing a task in that same checkout meanwhile.
 ///
 /// This text is the code's, not the repository's: a repository holds one
-/// landing text, and it is the one its engineers run. A repository that
+/// landing text, and it is the one its authors run. A repository that
 /// rewrote that text still lands its spec the way its merge strategy says.
 pub fn default_spec_landing_prompt(strategy: MergeStrategy) -> &'static str {
     match strategy {
@@ -129,23 +129,24 @@ pub fn default_spec_landing_prompt(strategy: MergeStrategy) -> &'static str {
     }
 }
 
-/// Planner persona and playbook, and the one place `finalize_plan` is
-/// explained: it starts every task at once, and the planner makes that call
-/// itself once the plan is written.
+/// Orchestrator persona and playbook, and the one place `finalize_plan` is
+/// explained: it starts every task at once, and the orchestrator makes that
+/// call itself once the plan is written.
 ///
 /// The playbook is spec-driven: the goal becomes a written spec the user
 /// approves, and only then a plan. A repository that already keeps specs says
-/// what one looks like, and the planner writes the next one the same way; a
-/// repository with none has that settled with the user once, beside the path
-/// they go in, so the format is the user's choice rather than whatever this
-/// planner happened to write. So the planner talks to the user, which no
-/// other role does — it writes one question in its turn text and waits for
-/// the answer in the terminal, and the daemon holds its quiet nudge back
-/// while a session waits on an answer. The planner then lands the approved
-/// spec itself, with the procedure its briefing carries, so the spec is on
-/// the base branch before the first engineer branches off it: every task can
-/// name the merged path, and none of them waits on a task that writes it.
-const PLANNER_SYSTEM_PROMPT: &str = r#"You plan an Ariadne goal into an approved spec, then into a few small tasks. Never write code.
+/// what one looks like, and the orchestrator writes the next one the same
+/// way; a repository with none has that settled with the user once, beside
+/// the path they go in, so the format is the user's choice rather than
+/// whatever this orchestrator happened to write. So the orchestrator talks to
+/// the user, which no other seat does — it writes one question in its turn
+/// text and waits for the answer in the terminal, and the daemon holds its
+/// quiet nudge back while a session waits on an answer. The orchestrator then
+/// lands the approved spec itself, with the procedure its briefing carries,
+/// so the spec is on the base branch before the first author branches off it:
+/// every task can name the merged path, and none of them waits on a task that
+/// writes it.
+const ORCHESTRATOR_SYSTEM_PROMPT: &str = r#"You plan an Ariadne goal into an approved spec, then into a few small tasks. Never write code.
 
 1. Read the goal. Explore its repositories.
 2. Draft a spec: scope, behavior, acceptance criteria.
@@ -153,14 +154,14 @@ const PLANNER_SYSTEM_PROMPT: &str = r#"You plan an Ariadne goal into an approved
 4. Revise the spec after each answer. Ask again until the user writes an explicit yes. Create no task before it.
 5. Find the folder the repository keeps specs or docs in. Follow the format of the specs there. Where the repository has none, agree a path and a format with the user.
 6. Land the spec with the landing procedure in your briefing. Create no task before it merges.
-7. Call `create_task` per task: small, mergeable alone, one repository. Write the ticket in STE: context, what to do, what not to touch, acceptance criteria. Name the merged spec path in each ticket. Name an engineer and one or more reviewers from `list_profiles`. Add `depends_on` only for a real dependency. The rest run together: keep them off the same code.
-8. Size each slot from `list_models`: shape from `best_for` and `avoid_for`, risk from `cost`, routine from `speed`, effort from its description. Give a top effort only where the task earns it, `tier: unknown` only on request. Keep a reviewer under its engineer. Else the profile's own.
+7. Call `create_task` per task: small, mergeable alone, one repository. Write the ticket in STE: context, what to do, what not to touch, acceptance criteria. Name the merged spec path in each ticket. Name an author and one or more reviewers from `list_profiles`. Add `depends_on` only for a real dependency. The rest run together: keep them off the same code.
+8. Size each slot from `list_models`: shape from `best_for` and `avoid_for`, risk from `cost`, routine from `speed`, effort from its description. Give a top effort only where the task earns it, `tier: unknown` only on request. Keep a reviewer under its author. Else the profile's own.
 9. Call `finalize_plan` once you write the whole plan. It starts every task and ends planning. Call it no earlier."#;
 
-/// Engineer persona and playbook: what it may touch, what it writes, and the
+/// Author persona and playbook: what it may touch, what it writes, and the
 /// one place `request_review` is explained. Landing is its own too, but the
 /// procedure belongs to the briefing that knows which repository this is.
-const ENGINEER_SYSTEM_PROMPT: &str = r#"You own one Ariadne task, from its first commit to its merge. Work only in your worktree, on your task branch. Commit nothing generated or unrelated.
+const AUTHOR_SYSTEM_PROMPT: &str = r#"You own one Ariadne task, from its first commit to its merge. Work only in your worktree, on your task branch. Commit nothing generated or unrelated.
 
 1. Read the task and its acceptance criteria. Where you cannot do it as written, call `fail_task` with the reason in STE.
 2. Implement that task and no more. Refactor nothing on the way. Obey the repository's conventions: `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`. Make small commits, their text in STE. Keep tests and linters green. Add the tests the task asks for.
@@ -172,20 +173,20 @@ const ENGINEER_SYSTEM_PROMPT: &str = r#"You own one Ariadne task, from its first
 /// stated: one per round, through `submit_verdict`.
 const REVIEWER_SYSTEM_PROMPT: &str = r#"You review one round of one Ariadne task. An approval gates the merge: approve only what you would merge yourself. Your detached worktree holds the branch, read-only: do not edit, commit, amend or branch.
 
-1. Read the task, its acceptance criteria and the engineer's summary. Call `get_diff` for the change. Read the code around it.
+1. Read the task, its acceptance criteria and the author's summary. Call `get_diff` for the change. Read the code around it.
 2. Verify the change here. Install what it needs. Build, test and lint in this worktree, never another.
 3. Judge the change on the task and no more: correctness, edge cases, error handling, conventions, tests, clarity. Where something blocks the review, request changes and name it.
 4. Call `submit_verdict` once per round. It is the verdict, and nothing else counts. Approve with a note on what you checked. Or request changes: a list of files and functions, each must-fix or optional. Write the verdict in STE."#;
 
-/// Initial briefing of a planner session: the goal, the numbers a plan has to
-/// fit inside, and the procedure that puts the approved spec on the base
-/// branch.
+/// Initial briefing of an orchestrator session: the goal, the numbers a plan
+/// has to fit inside, and the procedure that puts the approved spec on the
+/// base branch.
 ///
 /// The landing is rendered from the merge strategy of the goal's first
-/// repository, which is the checkout the planner is started in and where its
-/// spec lands ([`default_spec_landing_prompt`]). It is a value the daemon
+/// repository, which is the checkout the orchestrator is started in and where
+/// its spec lands ([`default_spec_landing_prompt`]). It is a value the daemon
 /// fills in rather than prose here, because the two strategies share no step.
-const PLANNER_BRIEFING: &str = r#"# Goal: {goal_title}
+const ORCHESTRATOR_BRIEFING: &str = r#"# Goal: {goal_title}
 
 {goal_description}
 
@@ -198,21 +199,22 @@ const PLANNER_BRIEFING: &str = r#"# Goal: {goal_title}
 
 {spec_landing}"#;
 
-/// What a planner that has gone quiet is picked up with. The goal is still in
-/// planning, so it stands in one of the phases of planning, and the nudge
-/// fits them all: a spec the user has not approved yet wants that
+/// What an orchestrator that has gone quiet is picked up with. The goal is
+/// still in planning, so it stands in one of the phases of planning, and the
+/// nudge fits them all: a spec the user has not approved yet wants that
 /// conversation carried on — a revision, the next question, an answer waited
 /// for — and an approved one wants the landing and then the tasks. Which of
-/// them the planner owes is the playbook's to say, and only the planner knows
-/// where it got to: a spec already on the base branch is one `git log` away.
-/// A nudge that named `finalize_plan` alone would push it to plan a spec
-/// nobody agreed to; one that named a question alone would push it to ask
-/// again over an answer it has. The goal itself the session has read already.
-const PLANNER_RESUME: &str = r#"Continue "{goal_title}" where it stands. Without an explicit yes on the spec, stay in the spec conversation. With one, land the spec and create the tasks that are left, then call `finalize_plan`."#;
+/// them the orchestrator owes is the playbook's to say, and only the
+/// orchestrator knows where it got to: a spec already on the base branch is
+/// one `git log` away. A nudge that named `finalize_plan` alone would push it
+/// to plan a spec nobody agreed to; one that named a question alone would
+/// push it to ask again over an answer it has. The goal itself the session
+/// has read already.
+const ORCHESTRATOR_RESUME: &str = r#"Continue "{goal_title}" where it stands. Without an explicit yes on the spec, stay in the spec conversation. With one, land the spec and create the tasks that are left, then call `finalize_plan`."#;
 
-/// Initial briefing of an engineer session: the task, and the values its
+/// Initial briefing of an author session: the task, and the values its
 /// commands act on.
-const ENGINEER_BRIEFING: &str = r#"# Task: {task_title}
+const AUTHOR_BRIEFING: &str = r#"# Task: {task_title}
 
 {task_description}
 
@@ -221,23 +223,23 @@ const ENGINEER_BRIEFING: &str = r#"# Task: {task_title}
 - Worktree (your cwd): {worktree_path}
 - Branch: {branch} onto {base_branch}, merge strategy {merge_strategy}
 - Repo: {repo_path}
-- Merged dependencies:
+- Finished dependencies:
 {dependencies}"#;
 
-/// What an engineer holding unfinished work is picked up with, in both
+/// What an author holding unfinished work is picked up with, in both
 /// situations there are: a session that ended and is being started again, and
 /// one that is merely sitting idle with the task still open. Neither wants the
 /// task read out to it again — it is in the worktree it is standing in.
-const ENGINEER_RESUME: &str = r#"Continue "{task_title}" on {branch}. `git status` and `git log` say what the last session left. Work until the task is complete and verified."#;
+const AUTHOR_RESUME: &str = r#"Continue "{task_title}" on {branch}. `git status` and `git log` say what the last session left. Work until the task is complete and verified."#;
 
-/// Resume briefing of an engineer with a round of requested changes, wherever
+/// Resume briefing of an author with a round of requested changes, wherever
 /// they were written.
 ///
 /// One round can come from the reviewers Ariadne started, and one from the
 /// people reading a published pull or merge request; `{feedback}` carries
 /// whichever it is, each entry under a heading naming who wrote it. What to do
-/// with a verdict is the engineer's playbook to say, not this text's; what
-/// this text says is what this round asks of the engineer, and a point it
+/// with a verdict is the author's playbook to say, not this text's; what
+/// this text says is what this round asks of the author, and a point it
 /// will not act on is answered as surely as one it will.
 const CHANGES_REQUESTED: &str = r#"A review requests changes.
 
@@ -245,11 +247,12 @@ const CHANGES_REQUESTED: &str = r#"A review requests changes.
 
 Answer every point. Where you disagree, say why the code stays."#;
 
-/// What the engineer of an approved task in a `direct` repository is briefed
-/// with, unless the repository was given a landing briefing of its own: rebase, squash, fast-forward, so the base branch grows one commit per
-/// task and its history stays linear.
+/// What the author of an approved task in a `direct` repository is briefed
+/// with, unless the repository was given a landing briefing of its own:
+/// rebase, squash, fast-forward, so the base branch grows one commit per task
+/// and its history stays linear.
 ///
-/// The push comes before `mark_merged` because that call ends the task, and
+/// The push comes before `finish_task` because that call ends the task, and
 /// the cleanup behind it takes the worktree the push would have run from.
 const LANDING_DIRECT: &str = r#"# Land task: {task_title}
 
@@ -259,10 +262,10 @@ Approved. Squash {branch} onto {base_branch} in {repo_path}. `<remote>` is what 
 2. `git rebase {base_branch}` in your worktree. Conflicts are yours.
 3. `git reset --soft {base_branch} && git commit`. One commit lands. Give it a Conventional Commits subject and a body: what changed and why.
 4. `git -C {repo_path} merge --ff-only {branch}`. Refused because the base moved: back to step 1.
-5. `git -C {repo_path} push <remote> {base_branch}`. Push first: `mark_merged` ends the task and the cleanup takes your worktree.
-6. `mark_merged` with `git -C {repo_path} rev-parse {base_branch}`."#;
+5. `git -C {repo_path} push <remote> {base_branch}`. Push first: `finish_task` ends the task and the cleanup takes your worktree.
+6. `finish_task` with `git -C {repo_path} rev-parse {base_branch}`."#;
 
-/// What the engineer of an approved task in a `pull_request` repository is
+/// What the author of an approved task in a `pull_request` repository is
 /// briefed with, unless the repository was given one of its own: publish it,
 /// then see it through in this session.
 ///
@@ -288,20 +291,20 @@ Approved. Publish {branch} against {base_branch}. `<remote>` is what `git -C {re
 2. `git push -u <remote> {branch}`. Then `gh pr create --base {base_branch}` or `glab mr create --target-branch {base_branch}`. Title it by the repository's commit conventions. Fill its template. Call `record_pull_request` with the URL.
 3. Poll it and its comments (`gh pr view`, `glab mr view`). `sleep 300` between polls, never longer in one call. Never end your turn while it is open.
 4. Answer every comment. Commit a change on {branch}. Put it through `request_review`. Push it once approved. A published branch only grows: no `commit --amend`, no rebase, no forced push. If it stops merging cleanly, `git merge --no-edit <remote>/{base_branch}` and push plainly.
-5. Merged: `gh pr merge --squash` or `glab mr merge --squash`. In {repo_path}, fetch and `git merge --ff-only <remote>/{base_branch}`. Then `mark_merged` with `git rev-parse {base_branch}`. Closed unmerged: `fail_task` with that."#;
+5. Finished: `gh pr merge --squash` or `glab mr merge --squash`. In {repo_path}, fetch and `git merge --ff-only <remote>/{base_branch}`. Then `finish_task` with `git rev-parse {base_branch}`. Closed unmerged: `fail_task` with that."#;
 
-/// What the planner of an approved spec runs in a `direct` repository: the
-/// spec is a commit on the base branch of the checkout the planner works in,
-/// and a push where that checkout has a remote.
+/// What the orchestrator of an approved spec runs in a `direct` repository:
+/// the spec is a commit on the base branch of the checkout the orchestrator
+/// works in, and a push where that checkout has a remote.
 ///
 /// No branch, no rebase and no squash, which is the whole of what the
-/// engineer's `direct` landing does before it commits: one file lands, on a
+/// author's `direct` landing does before it commits: one file lands, on a
 /// checkout nothing else is writing to while the goal is in planning.
 ///
-/// It opens on a check the engineer's landing has no use for. That checkout
+/// It opens on a check the author's landing has no use for. That checkout
 /// is the user's own, and the commit goes on whatever branch it is standing
 /// on: a checkout parked somewhere else would take the spec with it, quietly.
-/// The engineer never runs that risk — every commit of a task is made in a
+/// The author never runs that risk — every commit of a task is made in a
 /// worktree of its own, and its `--ff-only` merge fails loudly instead.
 const SPEC_LANDING_DIRECT: &str = r#"## Land the spec
 
@@ -312,18 +315,18 @@ Commit it on {base_branch} in {repo_path}, your cwd. `<remote>` is what `git rem
 3. Write the spec file. Add it and commit it. Give the commit a Conventional Commits subject and a body: what the spec covers.
 4. `git push <remote> {base_branch}`, where there is a remote. Leave {repo_path} on {base_branch}."#;
 
-/// What the planner of an approved spec runs in a `pull_request` repository:
-/// the same request the engineers open, seen through in this session, since
-/// nothing plans further until the spec is on the base branch.
+/// What the orchestrator of an approved spec runs in a `pull_request`
+/// repository: the same request the authors open, seen through in this
+/// session, since nothing plans further until the spec is on the base branch.
 ///
 /// The branch lives in a throwaway worktree rather than in the checkout the
-/// planner stands in. That checkout is the repository's primary one: another
-/// goal's engineer fast-forwards its base branch there, and a checkout parked
-/// on a spec branch refuses that merge. `git worktree` is what lets the
-/// planner hold a branch without moving it.
+/// orchestrator stands in. That checkout is the repository's primary one:
+/// another goal's author fast-forwards its base branch there, and a checkout
+/// parked on a spec branch refuses that merge. `git worktree` is what lets
+/// the orchestrator hold a branch without moving it.
 ///
 /// The waiting is a poll and sleep loop, and the sleep is capped at five
-/// minutes for the daemon's sake, as the engineer's is: a session that has
+/// minutes for the daemon's sake, as the author's is: a session that has
 /// reported nothing for `QUIET_FLAG_SECS` (600 s) is flagged as stalled, while
 /// every poll counts as activity.
 const SPEC_LANDING_PULL_REQUEST: &str = r#"## Land the spec
@@ -347,10 +350,10 @@ const REVIEWER_BRIEFING: &str = r#"# Review task: {task_title} (round {review_ro
 - Goal: {goal_title}
 - Branch: {branch} onto {base_branch}
 - Repo: {repo_path}
-- Engineer's summary: {summary}"#;
+- Author's summary: {summary}"#;
 
 /// What a reviewer that owes a verdict is picked up with, in both situations
-/// there are: a later round, where the engineer revised the change under its
+/// there are: a later round, where the author revised the change under its
 /// worktree, and a round it has simply gone quiet in. Either way the diff it
 /// last read may be stale and the verdict is still outstanding.
 const REVIEWER_RESUME: &str = r#"Round {review_round} of "{task_title}" needs your verdict. {branch} can carry new commits: read it again with `get_diff`.
@@ -430,15 +433,15 @@ mod tests {
     use super::*;
 
     /// Every default text there is, named as the test failures name it: the
-    /// system prompt of each role, the template of each prompt kind, and the
+    /// system prompt of each seat, the template of each prompt kind, and the
     /// landing briefing of each merge strategy.
     fn all_defaults() -> Vec<(String, &'static str)> {
-        Role::ALL
+        Seat::ALL
             .into_iter()
-            .map(|role| {
+            .map(|seat| {
                 (
-                    format!("{} system prompt", role.as_str()),
-                    default_system_prompt(role),
+                    format!("{} system prompt", seat.as_str()),
+                    default_system_prompt(seat),
                 )
             })
             .chain(
@@ -485,7 +488,7 @@ mod tests {
     ///
     /// Their history is a long creep and one cut. A system prompt went from
     /// 900 to 1050 (when *not* to end planning), to 1200 (whom to write to),
-    /// to 1400 (how the planner asks), to 1900 (sizing a task's model
+    /// to 1400 (how the orchestrator asks), to 1900 (sizing a task's model
     /// and effort): every step a part of the lifecycle nothing else states.
     /// Then every text was rewritten to say the same rules in fewer words —
     /// short imperatives, no restated rationale, no rule stated in two layers
@@ -496,7 +499,7 @@ mod tests {
     /// What is left is rules and the commands that carry them out. The one
     /// cap above its old aim is the published landing, at 1300 for 1200: two
     /// forges spell `pr create`, `pr view` and `pr merge` differently, and
-    /// those six spellings are ~90 characters an engineer on either forge
+    /// those six spellings are ~90 characters an author on either forge
     /// needs in front of it. Moving a cap is a decision to argue for, never a
     /// way round a failing assertion.
     ///
@@ -504,7 +507,7 @@ mod tests {
     /// which costs a sentence break where a semicolon used to join two
     /// instructions, and pays for it in two ways. The two lines telling an
     /// agent not to ask went, since the session rules already say it. And
-    /// the English a role writes its own texts in is said on the instruction
+    /// the English a seat writes its own texts in is said on the instruction
     /// that writes them — `fail_task` with the reason in STE, commits whose
     /// text is in STE — rather than in a step of its own. The whole is 5825
     /// characters for the 5828 it was.
@@ -515,37 +518,38 @@ mod tests {
     /// back at 1067 for 1078. The caps came down to what the rewrite fits
     /// in, the published landing's excepted.
     ///
-    /// Then the planner became spec-driven, and its playbook grew five phases
-    /// no other role has: a spec drafted from the goal, a question asked of
-    /// the user, an explicit yes waited for, a folder found for the spec file,
-    /// and a first task that commits it. That is 1409 characters for 922, and
-    /// the one cap of the three system prompts became one per role — 1450 for
-    /// the planner, and the 950 the engineer and the reviewer already fit in,
-    /// which a shared cap of 1450 would have let them creep into. The planner
-    /// resume grew with it, from 90 to 178: a nudge that fits both phases
-    /// names what each one wants, so the briefing kinds are 1160 for 1080.
+    /// Then the orchestrator became spec-driven, and its playbook grew five
+    /// phases no other seat has: a spec drafted from the goal, a question
+    /// asked of the user, an explicit yes waited for, a folder found for the
+    /// spec file, and a first task that commits it. That is 1409 characters
+    /// for 922, and the one cap of the three system prompts became one per
+    /// seat — 1450 for the orchestrator, and the 950 the author and the
+    /// reviewer already fit in, which a shared cap of 1450 would have let
+    /// them creep into. The orchestrator resume grew with it, from 90 to 178:
+    /// a nudge that fits both phases names what each one wants, so the
+    /// briefing kinds are 1160 for 1080.
     ///
-    /// Then the planner landed that spec itself, and the task that used to
-    /// commit it went. Its playbook paid almost nothing for the trade — a
+    /// Then the orchestrator landed that spec itself, and the task that used
+    /// to commit it went. Its playbook paid almost nothing for the trade — a
     /// step that lands the spec for a step that created a task for it — and
     /// the cost is a second pair of landing texts, one per merge strategy,
-    /// which the planner briefing carries as a value. They are the shorter
-    /// pair, at 1464 for the engineers' 2123: the planner holds no task, so
-    /// no tool call ends either one, and the `direct` spec landing is a
-    /// commit and a push with no branch to rebase or squash. They are capped
-    /// apart from the engineers', since the two pairs grow for different
+    /// which the orchestrator briefing carries as a value. They are the
+    /// shorter pair, at 1464 for the authors' 2123: the orchestrator holds no
+    /// task, so no tool call ends either one, and the `direct` spec landing
+    /// is a commit and a push with no branch to rebase or squash. They are
+    /// capped apart from the authors', since the two pairs grow for different
     /// reasons. The templates paid 33 characters for them: the token the
-    /// planner briefing carries the procedure in, and the landing the nudge
-    /// names beside the tasks, which is 1188 for 1155.
+    /// orchestrator briefing carries the procedure in, and the landing the
+    /// nudge names beside the tasks, which is 1188 for 1155.
     ///
-    /// The planner's own cap then went to 1500, for one rule stated nowhere
-    /// else: a repository that keeps no specs has the format of the first one
-    /// agreed with the user, beside the path it goes in. A spec the planner
-    /// lands is a file the repository keeps, so what it looks like is the
-    /// user's call once rather than this planner's each time. That is 1451
-    /// characters for 1409, and the step that used to say where the spec file
-    /// is written paid part of it back: the landing writes that file, so the
-    /// playbook stopped saying it twice.
+    /// The orchestrator's own cap then went to 1500, for one rule stated
+    /// nowhere else: a repository that keeps no specs has the format of the
+    /// first one agreed with the user, beside the path it goes in. A spec the
+    /// orchestrator lands is a file the repository keeps, so what it looks
+    /// like is the user's call once rather than this orchestrator's each
+    /// time. That is 1451 characters for 1409, and the step that used to say
+    /// where the spec file is written paid part of it back: the landing
+    /// writes that file, so the playbook stopped saying it twice.
     #[test]
     fn size_caps_hold() {
         const KIND_TOTAL: usize = 1200;
@@ -553,14 +557,15 @@ mod tests {
         const SPEC_LANDING_TOTAL: usize = 1500;
         const GRAND_TOTAL: usize = 8000;
 
-        // A cap per role, not one for the three: the planner alone carries the
-        // spec conversation, and the two that never grew stay where they were.
-        let system_cap = |role: Role| match role {
-            Role::Planner => 1500,
-            Role::Engineer | Role::Reviewer => 950,
+        // A cap per seat, not one for the three: the orchestrator alone
+        // carries the spec conversation, and the two that never grew stay
+        // where they were.
+        let system_cap = |seat: Seat| match seat {
+            Seat::Orchestrator => 1500,
+            Seat::Author | Seat::Reviewer => 950,
         };
         let cap = |kind: PromptKind| match kind {
-            PromptKind::PlannerResume | PromptKind::EngineerResume | PromptKind::ReviewerResume => {
+            PromptKind::OrchestratorResume | PromptKind::AuthorResume | PromptKind::ReviewerResume => {
                 200
             }
             _ => 300,
@@ -578,14 +583,14 @@ mod tests {
             println!("{:5}  {name}", text.len());
         }
 
-        for role in Role::ALL {
-            let text = default_system_prompt(role);
+        for seat in Seat::ALL {
+            let text = default_system_prompt(seat);
             assert!(
-                text.len() <= system_cap(role),
+                text.len() <= system_cap(seat),
                 "the {} system prompt is {} characters, over its {}",
-                role.as_str(),
+                seat.as_str(),
                 text.len(),
-                system_cap(role)
+                system_cap(seat)
             );
         }
 
@@ -724,31 +729,31 @@ mod tests {
         }
     }
 
-    /// A rule that holds for one role is stated in that role's prompt, and
-    /// only there: the reviewer's verdict rule and the engineer's ownership
+    /// A rule that holds for one seat is stated in that seat's prompt, and
+    /// only there: the reviewer's verdict rule and the author's ownership
     /// of the landing are what the other prompts are free of.
     #[test]
-    fn a_role_rule_is_stated_in_its_own_prompt_alone() {
+    fn a_seat_rule_is_stated_in_its_own_prompt_alone() {
         for (owner, rule) in [
-            (Role::Reviewer, "It is the verdict, and nothing else counts"),
-            (Role::Engineer, "Ariadne briefs you to land it"),
-            (Role::Planner, "It starts every task and ends planning"),
+            (Seat::Reviewer, "It is the verdict, and nothing else counts"),
+            (Seat::Author, "Ariadne briefs you to land it"),
+            (Seat::Orchestrator, "It starts every task and ends planning"),
         ] {
-            for role in Role::ALL {
-                let prompt = default_system_prompt(role);
+            for seat in Seat::ALL {
+                let prompt = default_system_prompt(seat);
                 assert_eq!(
                     prompt.matches(rule).count(),
-                    usize::from(role == owner),
+                    usize::from(seat == owner),
                     "the {} prompt and \"{rule}\"",
-                    role.as_str()
+                    seat.as_str()
                 );
             }
         }
     }
 
-    /// A round of requested changes asks the engineer for two things, and
+    /// A round of requested changes asks the author for two things, and
     /// the briefing that carries the feedback is where both are asked: every
-    /// point answered, and, for a point the engineer will not act on, why the
+    /// point answered, and, for a point the author will not act on, why the
     /// code stays as it is. A briefing that asked only for the answers would
     /// read as leave to drop the rest in silence.
     #[test]
@@ -765,17 +770,17 @@ mod tests {
         }
     }
 
-    /// `mark_merged` is the end of the task: the daemon cleans the worktree up
-    /// behind it and the session can go with it. So whatever the engineer still
+    /// `finish_task` is the end of the task: the daemon cleans the worktree up
+    /// behind it and the session can go with it. So whatever the author still
     /// has to run has to come first — the push of the base branch above all,
     /// which is the one step whose absence leaves the commit on this machine
     /// alone with nothing left to notice.
     #[test]
-    fn nothing_the_engineer_still_has_to_run_comes_after_the_call_that_ends_the_task() {
+    fn nothing_the_author_still_has_to_run_comes_after_the_call_that_ends_the_task() {
         for strategy in MergeStrategy::ALL {
             let text = default_landing_prompt(strategy);
             let ends = text
-                .find("`mark_merged`")
+                .find("`finish_task`")
                 .unwrap_or_else(|| panic!("the {} never ends the task", landing_name(strategy)));
             for command in [
                 "git -C {repo_path} push",
@@ -788,7 +793,7 @@ mod tests {
                 if let Some(at) = text.find(command) {
                     assert!(
                         at < ends,
-                        "the {} runs {command} after mark_merged",
+                        "the {} runs {command} after finish_task",
                         landing_name(strategy)
                     );
                 }
@@ -804,7 +809,7 @@ mod tests {
 
     /// Each landing briefing is the procedure of one merge strategy, whole,
     /// and carries nothing of the other: the repository is on one strategy, so
-    /// the engineer has neither a section to skip nor a choice to make.
+    /// the author has neither a section to skip nor a choice to make.
     #[test]
     fn each_landing_briefing_is_one_strategy_and_nothing_of_the_other() {
         let direct = default_landing_prompt(MergeStrategy::Direct);
@@ -817,7 +822,7 @@ mod tests {
             "merge --ff-only {branch}",
             "git -C {repo_path} push <remote> {base_branch}",
             "Conventional Commits",
-            "`mark_merged`",
+            "`finish_task`",
         ] {
             assert!(direct.contains(step), "the direct briefing has no {step}");
         }
@@ -832,7 +837,7 @@ mod tests {
             "glab mr view",
             "glab mr merge",
             "record_pull_request",
-            "`mark_merged`",
+            "`finish_task`",
         ] {
             assert!(
                 published.contains(step),
@@ -840,7 +845,7 @@ mod tests {
             );
         }
 
-        // The wait is a poll loop in the engineer's own session, and the cap
+        // The wait is a poll loop in the author's own session, and the cap
         // on one sleep is what keeps the daemon from relaunching it mid-wait.
         assert!(published.contains("sleep 300"));
         assert!(published.contains("never longer in one call"));
@@ -877,8 +882,8 @@ mod tests {
     /// one of them.
     ///
     /// The landing briefings count as one place between them all: a
-    /// repository has one merge strategy, and a session has one role, so the
-    /// engineer of a task is handed one of them and the planner of a goal
+    /// repository has one merge strategy, and a session has one seat, so the
+    /// author of a task is handed one of them and the orchestrator of a goal
     /// another. No session ever reads two.
     #[test]
     fn each_rule_is_stated_in_exactly_one_briefing() {
@@ -932,31 +937,31 @@ mod tests {
         }
 
         // A spec landing is nobody's to edit, so no save-time check reads it.
-        // What it may name is what the planner briefing puts in: the checkout
-        // and the base branch, and neither of the values a task has.
+        // What it may name is what the orchestrator briefing puts in: the
+        // checkout and the base branch, and neither of the values a task has.
         for strategy in MergeStrategy::ALL {
             let text = default_spec_landing_prompt(strategy);
             for name in ["task_title", "branch"] {
                 assert!(
                     !text.contains(&format!("{{{name}}}")),
-                    "the {} names {{{name}}}, which a planner has no value for",
+                    "the {} names {{{name}}}, which an orchestrator has no value for",
                     spec_landing_name(strategy)
                 );
             }
         }
     }
 
-    /// The planner playbook is spec-driven, and the order of its phases is
+    /// The orchestrator playbook is spec-driven, and the order of its phases is
     /// the playbook: the goal is read, a spec is drafted from it, every
     /// unclear point is asked about one question at a time, the user says an
     /// explicit yes, a folder and a format are found for the spec, the spec
     /// is written and landed, and
-    /// only then are the tasks written. A phase out of order is a planner
+    /// only then are the tasks written. A phase out of order is an orchestrator
     /// that writes tickets off a spec nobody agreed to, or tickets that name
-    /// a path no engineer will find on its base branch.
+    /// a path no author will find on its base branch.
     #[test]
-    fn the_planner_playbook_orders_the_spec_phases_before_the_tasks() {
-        let prompt = default_system_prompt(Role::Planner);
+    fn the_orchestrator_playbook_orders_the_spec_phases_before_the_tasks() {
+        let prompt = default_system_prompt(Seat::Orchestrator);
         let mut at = 0;
         for phase in [
             "Read the goal. Explore its repositories.",
@@ -976,7 +981,7 @@ mod tests {
         ] {
             let found = prompt[at..]
                 .find(phase)
-                .unwrap_or_else(|| panic!("the planner prompt has no \"{phase}\" after {at}"));
+                .unwrap_or_else(|| panic!("the orchestrator prompt has no \"{phase}\" after {at}"));
             at += found + phase.len();
         }
 
@@ -984,30 +989,30 @@ mod tests {
         assert!(prompt.contains("Create no task before it."), "{prompt}");
     }
 
-    /// A planner is nudged in the phase its goal stands in. Planning is a
+    /// An orchestrator is nudged in the phase its goal stands in. Planning is a
     /// spec conversation and then a breakdown, so the nudge names what each
     /// phase wants: a resume that asked for tasks and `finalize_plan` alone
-    /// would push a planner past a spec the user never approved.
+    /// would push an orchestrator past a spec the user never approved.
     #[test]
-    fn the_planner_nudge_fits_the_spec_conversation_and_the_breakdown() {
-        let resume = default_prompt_text(PromptKind::PlannerResume);
+    fn the_orchestrator_nudge_fits_the_spec_conversation_and_the_breakdown() {
+        let resume = default_prompt_text(PromptKind::OrchestratorResume);
         for phase in [
             "Without an explicit yes on the spec, stay in the spec conversation",
             "land the spec and create the tasks that are left, then call `finalize_plan`",
         ] {
-            assert!(resume.contains(phase), "the planner resume and \"{phase}\"");
+            assert!(resume.contains(phase), "the orchestrator resume and \"{phase}\"");
         }
     }
 
-    /// `finalize_plan` is what the planner calls once the plan is written,
-    /// and it is the only call there is about a plan:
-    /// every planner default names it, and a default naming any other would
-    /// be briefing an agent to make a call the daemon does not answer.
+    /// `finalize_plan` is what the orchestrator calls once the plan is
+    /// written, and it is the only call there is about a plan: every
+    /// orchestrator default names it, and a default naming any other would be
+    /// briefing an agent to make a call the daemon does not answer.
     #[test]
-    fn the_planner_is_briefed_with_finalize_plan_and_no_other_plan_call() {
+    fn the_orchestrator_is_briefed_with_finalize_plan_and_no_other_plan_call() {
         for text in [
-            default_system_prompt(Role::Planner),
-            default_prompt_text(PromptKind::PlannerResume),
+            default_system_prompt(Seat::Orchestrator),
+            default_prompt_text(PromptKind::OrchestratorResume),
         ] {
             assert!(text.contains("`finalize_plan`"), "{text}");
         }
@@ -1025,18 +1030,18 @@ mod tests {
         }
     }
 
-    /// The planner lands its spec, and still none of its own texts names a
+    /// The orchestrator lands its spec, and still none of its own texts names a
     /// forge or a strategy: which way a repository takes a change is the
     /// repository's `merge_strategy` to say, and the procedure reaches the
-    /// planner as a value its briefing carries
+    /// orchestrator as a value its briefing carries
     /// ([`default_spec_landing_prompt`]). A playbook that spelled out one of
     /// the two landings would be a second copy of that knowledge, going stale
-    /// on its own, and a planner running it in the wrong repository.
+    /// on its own, and an orchestrator running it in the wrong repository.
     #[test]
-    fn the_planner_is_told_nothing_of_forges_or_landing() {
-        let planner = std::iter::once(default_system_prompt(Role::Planner))
+    fn the_orchestrator_is_told_nothing_of_forges_or_landing() {
+        let orchestrator = std::iter::once(default_system_prompt(Seat::Orchestrator))
             .chain(
-                PromptKind::for_role(Role::Planner)
+                PromptKind::for_seat(Seat::Orchestrator)
                     .iter()
                     .map(|kind| default_prompt_text(*kind)),
             )
@@ -1055,15 +1060,15 @@ mod tests {
             "merge request",
             "merge_strategy",
         ] {
-            assert!(!planner.contains(forge), "the planner prompts name {forge}");
+            assert!(!orchestrator.contains(forge), "the orchestrator prompts name {forge}");
         }
     }
 
-    /// The planner lands the spec the way its repository takes any change,
+    /// The orchestrator lands the spec the way its repository takes any change,
     /// and no further: a `direct` repository takes a commit on its base
-    /// branch, a `pull_request` one takes a published request the planner
+    /// branch, a `pull_request` one takes a published request the orchestrator
     /// then merges. Both leave the primary checkout on the base branch, which
-    /// another goal's engineer fast-forwards there.
+    /// another goal's author fast-forwards there.
     #[test]
     fn the_spec_lands_the_way_its_repository_takes_a_change() {
         let direct = default_spec_landing_prompt(MergeStrategy::Direct);
@@ -1081,7 +1086,7 @@ mod tests {
             "{published}"
         );
         // The branch it publishes is held by a worktree of its own: the
-        // checkout the planner stands in is the repository's primary one.
+        // checkout the orchestrator stands in is the repository's primary one.
         assert!(published.contains("git worktree add"), "{published}");
 
         for text in [direct, published] {
@@ -1093,16 +1098,16 @@ mod tests {
         }
     }
 
-    /// Nothing in a spec landing is a call: the planner holds no task, so the
-    /// tools that move one along are not its to make. An engineer ends its
-    /// landing with `mark_merged`; the planner ends its own by going on to
-    /// write the tasks.
+    /// Nothing in a spec landing is a call: the orchestrator holds no task,
+    /// so the tools that move one along are not its to make. An author ends
+    /// its landing with `finish_task`; the orchestrator ends its own by going
+    /// on to write the tasks.
     #[test]
     fn a_spec_landing_names_no_task_tool() {
         for strategy in MergeStrategy::ALL {
             let text = default_spec_landing_prompt(strategy);
             for call in [
-                "mark_merged",
+                "finish_task",
                 "record_pull_request",
                 "request_review",
                 "fail_task",
@@ -1116,17 +1121,17 @@ mod tests {
         }
     }
 
-    /// Three roles, three built-in profiles: one for each, and the ids stay
+    /// Three seats, three built-in profiles: one for each, and the ids stay
     /// what they have always been.
     #[test]
-    fn one_builtin_profile_is_seeded_per_role() {
-        assert_eq!(BUILTIN_PROFILES.len(), Role::ALL.len());
-        for role in Role::ALL {
+    fn one_builtin_profile_is_seeded_per_seat() {
+        assert_eq!(BUILTIN_PROFILES.len(), Seat::ALL.len());
+        for seat in Seat::ALL {
             assert_eq!(
-                BUILTIN_PROFILES.iter().filter(|b| b.role == role).count(),
+                BUILTIN_PROFILES.iter().filter(|b| b.seat == seat).count(),
                 1,
                 "one {} is seeded",
-                role.as_str()
+                seat.as_str()
             );
         }
     }

@@ -13,7 +13,7 @@ use ariadne_api::goals::GoalDto;
 use ariadne_api::repositories::RepositoryDto;
 use ariadne_api::stream::DomainEvent;
 use ariadne_api::tasks::TaskDto;
-use ariadne_core::Role;
+use ariadne_core::Seat;
 use ariadne_store::AgentSession;
 
 use common::{Harness, delete, get, harness, next_event, post, post_json};
@@ -36,7 +36,7 @@ async fn goal(h: &Harness, name: &str) -> GoalDto {
         post_json(
             "/v1/goals",
             serde_json::json!({"title": "Ship it", "repository_ids": [registered.id],
-                               "planner_profile": "Planner"}),
+                               "orchestrator_profile": "Orchestrator"}),
         ),
         StatusCode::CREATED,
     )
@@ -47,7 +47,7 @@ async fn task_in(h: &Harness, goal: &GoalDto) -> TaskDto {
     h.json(
         post_json(
             &format!("/v1/goals/{}/tasks", goal.id),
-            serde_json::json!({"title": "Do the thing", "engineer_profile": "Engineer",
+            serde_json::json!({"title": "Do the thing", "author_profile": "Author",
                                "reviewers": [{"profile": "Reviewer"}]}),
         ),
         StatusCode::CREATED,
@@ -65,14 +65,14 @@ async fn cancel(h: &Harness, goal: &GoalDto) -> GoalDto {
 
 /// A live session on a goal, with a pane the stub tmux answers for.
 async fn live_session(h: &Harness, goal: &GoalDto) -> AgentSession {
-    let planner = h.profile("leftover planner", Role::Planner).await;
+    let orchestrator = h.profile("leftover orchestrator", Seat::Orchestrator).await;
     let goal = h.store.get_goal(&goal.id).await.unwrap();
     let session = h
         .session_named(
             &goal,
             None,
-            Role::Planner,
-            &planner.id,
+            Seat::Orchestrator,
+            &orchestrator.id,
             &ariadne_daemon::tmux::session_name(&goal.id, None, "pla", None),
         )
         .await;

@@ -7,7 +7,7 @@
 
 use tracing::{info, warn};
 
-use ariadne_core::{Actor, AttentionReason, Role, SessionStatus, TaskStatus};
+use ariadne_core::{Actor, AttentionReason, Seat, SessionStatus, TaskStatus};
 use ariadne_store::AgentSession;
 
 use super::{QUIET_FLAG_SECS, QUIET_NUDGE_SECS, QUIET_RELAUNCH_SECS, SPAWN_RETRY_BUDGET};
@@ -21,7 +21,7 @@ use super::{QUIET_FLAG_SECS, QUIET_NUDGE_SECS, QUIET_RELAUNCH_SECS, SPAWN_RETRY_
 #[derive(Debug, Default)]
 pub(super) struct Quiet {
     /// The status and round the two steps below were taken in: the task's for
-    /// an engineer or a reviewer, the goal's for a planner.
+    /// an author or a reviewer, the goal's for an orchestrator.
     pub(super) situation: (String, i64),
     /// Whether the one nudge for that situation has been spent.
     pub(super) nudged: bool,
@@ -129,7 +129,7 @@ impl super::Scheduler {
             if std::mem::replace(&mut done.flagged, true) {
                 return Ok(());
             }
-            warn!(session = %session.id, role = %session.role, quiet_secs, "the agent has reported nothing, flagging for user attention");
+            warn!(session = %session.id, seat = %session.seat, quiet_secs, "the agent has reported nothing, flagging for user attention");
             self.store
                 .set_session_attention(&session.id, AttentionReason::Stalled)
                 .await?;
@@ -156,12 +156,12 @@ impl super::Scheduler {
         }
         self.quiet.entry(session.id.clone()).or_default().nudged = true;
         if enter {
-            info!(session = %session.id, role = %session.role, quiet_secs, "the agent's composer is still holding its instruction, pressing Enter into the pane");
+            info!(session = %session.id, seat = %session.seat, quiet_secs, "the agent's composer is still holding its instruction, pressing Enter into the pane");
             // Spent whether or not tmux took it: a pane that refused the
             // keystroke this pass will refuse the next.
             return self.launcher.tmux.send_enter(&session.tmux_session).await;
         }
-        info!(session = %session.id, role = %session.role, quiet_secs, "nudging idle agent");
+        info!(session = %session.id, seat = %session.seat, quiet_secs, "nudging idle agent");
         // Spent as the delivery goes out, and off the loop: a pane that takes
         // the nudge and will not submit it is raised for the user rather than
         // nudged again, and one tmux would not take at all gives the nudge
@@ -208,16 +208,16 @@ impl super::Scheduler {
     /// The relaunch is spent out of a budget for the same reason a spawn is:
     /// an agent that goes quiet, is put back and goes quiet again is not one
     /// more relaunch away from working, so [`SPAWN_RETRY_BUDGET`] of them is
-    /// what there is and a task whose agent will not run is failed rather than
-    /// restarted for ever. A planner has no task to fail — its own flag is
-    /// what is left, and it stands.
+    /// what there is and a task whose agent will not run is failed rather
+    /// than restarted for ever. An orchestrator has no task to fail — its own
+    /// flag is what is left, and it stands.
     ///
-    /// An engineer is started the way a task with no live engineer is started
-    /// — [`Self::start_engineer`], which renders what it is picked up with, the
-    /// landing briefing included where the task is approved. A planner and a
-    /// reviewer have no such path: they are revived with the resume the caller
-    /// already rendered, through the same `revive_session` a message addressed
-    /// to a dead agent takes.
+    /// An author is started the way a task with no live author is started —
+    /// [`Self::start_author`], which renders what it is picked up with, the
+    /// landing briefing included where the task is approved. An orchestrator
+    /// and a reviewer have no such path: they are revived with the resume the
+    /// caller already rendered, through the same `revive_session` a message
+    /// addressed to a dead agent takes.
     ///
     /// What the user is owed outlives the relaunch: whatever this session was
     /// carrying for them goes back on whatever came back up
@@ -237,7 +237,7 @@ impl super::Scheduler {
         done.flagged = false;
         let spent = done.relaunches;
         if spent >= SPAWN_RETRY_BUDGET {
-            warn!(session = %session.id, role = %session.role, relaunches = spent - 1, "the agent went quiet again after every relaunch");
+            warn!(session = %session.id, seat = %session.seat, relaunches = spent - 1, "the agent went quiet again after every relaunch");
             let Some(task_id) = session.task_id.clone() else {
                 return Ok(());
             };
@@ -258,14 +258,14 @@ impl super::Scheduler {
                 .await;
             return Ok(());
         }
-        info!(session = %session.id, role = %session.role, relaunch = spent, "the agent has reported nothing for too long, relaunching it");
+        info!(session = %session.id, seat = %session.seat, relaunch = spent, "the agent has reported nothing for too long, relaunching it");
         let carried = session.attention_reason();
         self.launcher.kill_session(&session.id).await?;
         if let Some(task_id) = session.task_id.clone()
-            && session.role() == Role::Engineer
+            && session.seat() == Seat::Author
         {
             let task = self.store.get_task(&task_id).await?;
-            self.start_engineer(&task).await?;
+            self.start_author(&task).await?;
         } else {
             self.launcher
                 .revive_session(&session.id, Some(revival))
@@ -276,12 +276,12 @@ impl super::Scheduler {
     }
 
     /// The session the agent came back as: the same row wherever it was
-    /// resumed, and the one the role is live in when the relaunch had to
+    /// resumed, and the one the seat is live in when the relaunch had to
     /// spawn afresh instead. The row that was killed is the answer of last
     /// resort — a relaunch that left nothing running is not a row to lose the
     /// flag over.
     async fn relaunched_session(&self, session: &AgentSession) -> AgentSession {
-        self.live_sessions(&session.goal_id, session.task_id.as_deref(), session.role())
+        self.live_sessions(&session.goal_id, session.task_id.as_deref(), session.seat())
             .await
             .ok()
             .and_then(|mut live| live.pop())

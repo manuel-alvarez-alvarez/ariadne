@@ -1,7 +1,7 @@
 //! Profile repository.
 
 use ariadne_core::id::new_id;
-use ariadne_core::{AgentKind, Role};
+use ariadne_core::{AgentKind, Seat};
 
 use crate::defaults::BUILTIN_PROFILES;
 use crate::query::Filtered;
@@ -10,13 +10,13 @@ use crate::{Change, Profile, Result, Store, StoreError, now};
 #[derive(Debug, Clone)]
 pub struct NewProfile {
     pub name: String,
-    pub role: Role,
+    pub seat: Seat,
     /// None = auto: resolved at spawn time to the first installed agent CLI.
     pub agent_kind: Option<AgentKind>,
     pub model: Option<String>,
     /// None = whatever the agent CLI runs that model at.
     pub effort: Option<String>,
-    /// None = the default of the role, which the profile then follows.
+    /// None = the default of the seat, which the profile then follows.
     pub system_prompt: Option<String>,
 }
 
@@ -30,13 +30,13 @@ pub struct ProfileUpdate {
     /// Some(None) clears back to whatever the agent CLI runs the model at.
     pub effort: Option<Option<String>>,
     /// Some = the new text; None leaves whatever the profile has. Putting it
-    /// back on the role default is [`Store::reset_system_prompt`].
+    /// back on the seat default is [`Store::reset_system_prompt`].
     pub system_prompt: Option<String>,
 }
 
 impl Store {
     /// Seed the built-in profiles into an empty database, on the system
-    /// prompts of their roles, so a rewritten default reaches them without any
+    /// prompts of their seats, so a rewritten default reaches them without any
     /// database being touched.
     ///
     /// Emptiness is the only trigger: once a database has profiles, deleting
@@ -52,12 +52,12 @@ impl Store {
         let ts = now();
         for builtin in &BUILTIN_PROFILES {
             sqlx::query(
-                "INSERT INTO profiles (id, name, role, agent_kind, model, system_prompt, created_at, updated_at)
+                "INSERT INTO profiles (id, name, seat, agent_kind, model, system_prompt, created_at, updated_at)
                  VALUES (?, ?, ?, NULL, NULL, NULL, ?, ?)",
             )
             .bind(builtin.id)
             .bind(builtin.name)
-            .bind(builtin.role.as_str())
+            .bind(builtin.seat.as_str())
             .bind(&ts)
             .bind(&ts)
             .execute(&mut *tx)
@@ -67,19 +67,19 @@ impl Store {
         Ok(())
     }
 
-    /// Create a profile on the system prompt of its role: nothing of its own
+    /// Create a profile on the system prompt of its seat: nothing of its own
     /// is stored, so the default it runs on stays the one in the code.
     pub async fn create_profile(&self, new: NewProfile) -> Result<Profile> {
         let id = new_id();
         let ts = now();
         sqlx::query(
-            "INSERT INTO profiles (id, name, role, agent_kind, model, effort, system_prompt,
+            "INSERT INTO profiles (id, name, seat, agent_kind, model, effort, system_prompt,
                                    created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&new.name)
-        .bind(new.role.as_str())
+        .bind(new.seat.as_str())
         .bind(new.agent_kind.map(|k| k.as_str()))
         .bind(&new.model)
         .bind(&new.effort)
@@ -110,9 +110,9 @@ impl Store {
         }
     }
 
-    pub async fn list_profiles(&self, role: Option<Role>) -> Result<Vec<Profile>> {
+    pub async fn list_profiles(&self, seat: Option<Seat>) -> Result<Vec<Profile>> {
         Filtered::new("profiles")
-            .maybe(" AND role = ?", role.map(|r| r.as_str()))
+            .maybe(" AND seat = ?", seat.map(|r| r.as_str()))
             .fetch(self, " ORDER BY name", &[])
             .await
     }
@@ -147,7 +147,7 @@ impl Store {
         Ok(profile)
     }
 
-    /// Put the profile's system prompt back on the default of its role, by
+    /// Put the profile's system prompt back on the default of its seat, by
     /// dropping the text set on it: what is left is the default itself.
     pub async fn reset_system_prompt(&self, profile_id: &str) -> Result<Profile> {
         self.get_profile(profile_id).await?;
@@ -166,8 +166,8 @@ impl Store {
     pub async fn delete_profile(&self, id: &str) -> Result<()> {
         self.get_profile(id).await?;
         let (goals, tasks, reviews, sessions): (i64, i64, i64, i64) = sqlx::query_as(
-            "SELECT (SELECT COUNT(*) FROM goals WHERE planner_profile_id = ?1),
-                    (SELECT COUNT(*) FROM tasks WHERE engineer_profile_id = ?1),
+            "SELECT (SELECT COUNT(*) FROM goals WHERE orchestrator_profile_id = ?1),
+                    (SELECT COUNT(*) FROM tasks WHERE author_profile_id = ?1),
                     (SELECT COUNT(*) FROM task_reviewers WHERE profile_id = ?1),
                     (SELECT COUNT(*) FROM agent_sessions WHERE profile_id = ?1)",
         )

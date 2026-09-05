@@ -32,7 +32,7 @@ use ariadne_api::SESSION_HEADER;
 use ariadne_api::error::ErrorBody;
 use ariadne_api::stream::DomainEvent;
 use ariadne_core::{
-    Actor, AgentKind, AttentionReason, GoalStatus, Role, SessionStatus, TaskStatus,
+    Actor, AgentKind, AttentionReason, GoalStatus, Seat, SessionStatus, TaskStatus,
 };
 use ariadne_daemon::branch::BranchWatchers;
 use ariadne_daemon::bus::{BusEvent, EventBus};
@@ -585,28 +585,28 @@ pub struct Cast {
     pub goal: Goal,
     pub task: Task,
     pub repo: Repository,
-    pub planner: Profile,
-    pub engineer: Profile,
+    pub orchestrator: Profile,
+    pub author: Profile,
     pub reviewer: Profile,
 }
 
 impl Harness {
-    pub async fn profile(&self, name: &str, role: Role) -> Profile {
-        self.profile_on(name, role, Some(AgentKind::ClaudeCode), None)
+    pub async fn profile(&self, name: &str, seat: Seat) -> Profile {
+        self.profile_on(name, seat, Some(AgentKind::ClaudeCode), None)
             .await
     }
 
     pub async fn profile_on(
         &self,
         name: &str,
-        role: Role,
+        seat: Seat,
         agent_kind: Option<AgentKind>,
         model: Option<&str>,
     ) -> Profile {
         self.store
             .create_profile(NewProfile {
                 name: name.into(),
-                role,
+                seat,
                 agent_kind,
                 model: model.map(str::to_string),
                 effort: None,
@@ -633,7 +633,7 @@ impl Harness {
     }
 
     /// A registered repository at `path`, which need not exist: only the tests
-    /// that spawn an engineer ever have git look at it.
+    /// that spawn an author ever have git look at it.
     pub async fn repository(&self, path: &Path) -> Repository {
         self.store
             .create_repository(NewRepository {
@@ -648,24 +648,24 @@ impl Harness {
     }
 
     /// A goal still in planning, on a repository of its own.
-    pub async fn goal(&self, planner: &Profile) -> (Goal, Repository) {
-        self.goal_needing(planner, 1).await
+    pub async fn goal(&self, orchestrator: &Profile) -> (Goal, Repository) {
+        self.goal_needing(orchestrator, 1).await
     }
 
     /// The same, for a goal that wants `approvals` of them: a round that one
     /// verdict does not close is where a reviewer sits with its work done.
-    async fn goal_needing(&self, planner: &Profile, approvals: i64) -> (Goal, Repository) {
+    async fn goal_needing(&self, orchestrator: &Profile, approvals: i64) -> (Goal, Repository) {
         let repo = self.repository(&self.at("repo")).await;
-        let goal = self.goal_on(planner, &repo, approvals).await;
+        let goal = self.goal_on(orchestrator, &repo, approvals).await;
         (goal, repo)
     }
 
-    pub async fn goal_on(&self, planner: &Profile, repo: &Repository, approvals: i64) -> Goal {
+    pub async fn goal_on(&self, orchestrator: &Profile, repo: &Repository, approvals: i64) -> Goal {
         self.store
             .create_goal(NewGoal {
                 title: "Ship the UI".into(),
                 description: "desc".into(),
-                planner_profile_id: planner.id.clone(),
+                orchestrator_profile_id: orchestrator.id.clone(),
                 max_tasks: None,
                 required_approvals: approvals,
                 repository_ids: vec![repo.id.clone()],
@@ -681,7 +681,7 @@ impl Harness {
         goal: &Goal,
         repo: &Repository,
         title: &str,
-        engineer: &Profile,
+        author: &Profile,
         reviewers: &[&Profile],
     ) -> Task {
         self.store
@@ -690,7 +690,7 @@ impl Harness {
                 repo_id: repo.id.clone(),
                 title: title.into(),
                 description: "do things".into(),
-                engineer_profile_id: engineer.id.clone(),
+                author_profile_id: author.id.clone(),
                 pin: None,
                 reviewers: reviewers.iter().map(|p| ReviewerSlot::of(&p.id)).collect(),
                 depends_on: vec![],
@@ -700,11 +700,11 @@ impl Harness {
     }
 
     /// A goal still in planning, with a repository behind it and nothing else:
-    /// no task, so nothing but the planner is under reconciliation.
+    /// no task, so nothing but the orchestrator is under reconciliation.
     pub async fn planning_goal(&self) -> (Goal, Profile) {
-        let planner = self.profile("planner", Role::Planner).await;
-        let (goal, _repo) = self.goal(&planner).await;
-        (goal, planner)
+        let orchestrator = self.profile("orchestrator", Seat::Orchestrator).await;
+        let (goal, _repo) = self.goal(&orchestrator).await;
+        (goal, orchestrator)
     }
 
     /// A goal in planning with one task on it, and the three profiles behind
@@ -731,25 +731,25 @@ impl Harness {
         model: Option<&str>,
         approvals: i64,
     ) -> Cast {
-        let planner = self
-            .profile_on("planner", Role::Planner, agent_kind, model)
+        let orchestrator = self
+            .profile_on("orchestrator", Seat::Orchestrator, agent_kind, model)
             .await;
-        let engineer = self
-            .profile_on("engineer", Role::Engineer, agent_kind, model)
+        let author = self
+            .profile_on("author", Seat::Author, agent_kind, model)
             .await;
         let reviewer = self
-            .profile_on("reviewer", Role::Reviewer, agent_kind, model)
+            .profile_on("reviewer", Seat::Reviewer, agent_kind, model)
             .await;
-        let (goal, repo) = self.goal_needing(&planner, approvals).await;
+        let (goal, repo) = self.goal_needing(&orchestrator, approvals).await;
         let task = self
-            .task_on(&goal, &repo, "task", &engineer, &[&reviewer])
+            .task_on(&goal, &repo, "task", &author, &[&reviewer])
             .await;
         Cast {
             goal,
             task,
             repo,
-            planner,
-            engineer,
+            orchestrator,
+            author,
             reviewer,
         }
     }
@@ -801,37 +801,37 @@ impl Harness {
             .unwrap()
     }
 
-    /// A live session of `role`, as the launcher would have created it.
+    /// A live session of `seat`, as the launcher would have created it.
     pub async fn session(
         &self,
         goal: &Goal,
         task: Option<&Task>,
-        role: Role,
+        seat: Seat,
         profile_id: &str,
     ) -> AgentSession {
         let tmux = session_name(
             &goal.id,
             task.map(|t| t.id.as_str()),
-            role.as_str(),
+            seat.as_str(),
             Some(&profile_id[profile_id.len() - 4..]),
         );
-        self.session_named(goal, task, role, profile_id, &tmux)
+        self.session_named(goal, task, seat, profile_id, &tmux)
             .await
     }
 
-    /// A planner session on a goal of its own, bound to the tmux session
+    /// An orchestrator session on a goal of its own, bound to the tmux session
     /// `tmux_name`: the least a test that only cares about one pane needs.
     pub async fn lone_session(&self, tmux_name: &str) -> AgentSession {
         // Everything named after the pane, so that a test wanting two of them
         // gets two of each rather than a conflict on the second.
-        let planner = self
-            .profile(&format!("planner-{tmux_name}"), Role::Planner)
+        let orchestrator = self
+            .profile(&format!("orchestrator-{tmux_name}"), Seat::Orchestrator)
             .await;
         let repo = self
             .repository(&self.at(&format!("repo-{tmux_name}")))
             .await;
-        let goal = self.goal_on(&planner, &repo, 1).await;
-        self.session_named(&goal, None, Role::Planner, &planner.id, tmux_name)
+        let goal = self.goal_on(&orchestrator, &repo, 1).await;
+        self.session_named(&goal, None, Seat::Orchestrator, &orchestrator.id, tmux_name)
             .await
     }
 
@@ -841,17 +841,17 @@ impl Harness {
         &self,
         goal: &Goal,
         task: Option<&Task>,
-        role: Role,
+        seat: Seat,
         profile_id: &str,
         agent_kind: AgentKind,
     ) -> AgentSession {
         let tmux = session_name(
             &goal.id,
             task.map(|t| t.id.as_str()),
-            role.as_str(),
+            seat.as_str(),
             Some(&profile_id[profile_id.len() - 4..]),
         );
-        self.new_session(goal, task, role, profile_id, &tmux, agent_kind)
+        self.new_session(goal, task, seat, profile_id, &tmux, agent_kind)
             .await
     }
 
@@ -859,14 +859,14 @@ impl Harness {
         &self,
         goal: &Goal,
         task: Option<&Task>,
-        role: Role,
+        seat: Seat,
         profile_id: &str,
         tmux_session: &str,
     ) -> AgentSession {
         self.new_session(
             goal,
             task,
-            role,
+            seat,
             profile_id,
             tmux_session,
             AgentKind::ClaudeCode,
@@ -878,7 +878,7 @@ impl Harness {
         &self,
         goal: &Goal,
         task: Option<&Task>,
-        role: Role,
+        seat: Seat,
         profile_id: &str,
         tmux_session: &str,
         agent_kind: AgentKind,
@@ -892,7 +892,7 @@ impl Harness {
             .create_session(NewSession {
                 goal_id: goal.id.clone(),
                 task_id: task.map(|t| t.id.clone()),
-                role,
+                seat,
                 profile_id: profile_id.to_string(),
                 agent_kind,
                 model: None,
@@ -932,17 +932,17 @@ impl Harness {
             .unwrap();
     }
 
-    /// A task whose engineer session has already run once: a worktree on disk,
+    /// A task whose author session has already run once: a worktree on disk,
     /// an agent conversation to resume, and a pane that is no longer alive.
     /// What the launcher relaunches when the reviewers bounce a task back.
-    pub async fn resumable_engineer(&self) -> (Cast, AgentSession) {
+    pub async fn resumable_author(&self) -> (Cast, AgentSession) {
         let cast = self.cast().await;
         let session = self
             .session(
                 &cast.goal,
                 Some(&cast.task),
-                Role::Engineer,
-                &cast.engineer.id,
+                Seat::Author,
+                &cast.author.id,
             )
             .await;
         self.make_resumable(&cast.task, &session).await;
@@ -970,7 +970,7 @@ impl Harness {
         for (status, actor) in [
             (TaskStatus::Ready, Actor::Daemon),
             (TaskStatus::InProgress, Actor::Daemon),
-            (TaskStatus::UnderReview, Actor::Engineer),
+            (TaskStatus::UnderReview, Actor::Author),
         ] {
             self.store
                 .transition_task(&task.id, status, actor, None, None)
@@ -1105,8 +1105,8 @@ impl Harness {
         self.store.get_task(task_id).await.unwrap().status()
     }
 
-    /// Every session a goal has ever had, live or not — a planner's included,
-    /// which is the one no task lists.
+    /// Every session a goal has ever had, live or not — an orchestrator's
+    /// included, which is the one no task lists.
     pub async fn sessions_of_goal(&self, goal_id: &str) -> Vec<AgentSession> {
         self.store
             .list_sessions(SessionFilter {
@@ -1128,16 +1128,16 @@ impl Harness {
             .unwrap()
     }
 
-    /// The session of `role` that is up on the task, if there is one.
+    /// The session of `seat` that is up on the task, if there is one.
     ///
     /// `running` rather than merely live: a row is created before its agent is
     /// launched, and a test that reads what an agent was started with has to
     /// wait for the launch that wrote it down.
-    pub async fn running_session(&self, task_id: &str, role: Role) -> Option<AgentSession> {
+    pub async fn running_session(&self, task_id: &str, seat: Seat) -> Option<AgentSession> {
         self.sessions_of(task_id)
             .await
             .into_iter()
-            .find(|s| s.role() == role && s.status() == SessionStatus::Running)
+            .find(|s| s.seat() == seat && s.status() == SessionStatus::Running)
     }
 
     // -- the clock ----------------------------------------------------------

@@ -1,13 +1,13 @@
 //! The compaction every agent session is owed at a hand-off.
 //!
-//! A session is long-lived — one engineer per task, one reviewer per task
-//! across its rounds, one planner per goal — and every resume of it replays
-//! the whole transcript as the first prompt: `claude --resume`, `codex
-//! resume`, `opencode --session` and the quiet watchdog's relaunch alike.
-//! Nothing shortens that transcript but the CLI's own compaction, and the CLI
-//! only runs it on its own near the context limit. So the daemon asks for
-//! one at every hand-off, which is where the conversation so far has served
-//! its purpose: a plan finalized, a review requested, a verdict given.
+//! A session is long-lived — one author per task, one reviewer per task
+//! across its rounds, one orchestrator per goal — and every resume of it
+//! replays the whole transcript as the first prompt: `claude --resume`,
+//! `codex resume`, `opencode --session` and the quiet watchdog's relaunch
+//! alike. Nothing shortens that transcript but the CLI's own compaction, and
+//! the CLI only runs it on its own near the context limit. So the daemon asks
+//! for one at every hand-off, which is where the conversation so far has
+//! served its purpose: a plan finalized, a review requested, a verdict given.
 //!
 //! The debt is written on the row (`compact_owed_at`, see
 //! [`Store::owe_compaction`]) by the reconcile pass that sees the hand-off,
@@ -110,7 +110,7 @@ impl super::Scheduler {
             .insert(session.id.clone(), situation.clone());
         match self.store.owe_compaction(&session.id).await {
             Ok(true) => {
-                info!(session = %session.id, role = %session.role, status = %situation.0, round = situation.1, "the hand-off is made; the session owes a compaction of its conversation")
+                info!(session = %session.id, seat = %session.seat, status = %situation.0, round = situation.1, "the hand-off is made; the session owes a compaction of its conversation")
             }
             Ok(false) => {}
             Err(e) => {
@@ -192,7 +192,7 @@ impl super::Scheduler {
         if let Some((waited, owed_for, settled)) = running {
             // Whatever the row says, a wait that has run out is over.
             if waited >= self.launcher.cfg.compaction_timeout {
-                warn!(session = %session.id, role = %session.role, "the agent never reported its compaction done; giving up waiting for it");
+                warn!(session = %session.id, seat = %session.seat, "the agent never reported its compaction done; giving up waiting for it");
                 self.compacting.remove(&session.id);
                 if session.compact_owed_at.as_deref() == Some(owed_for.as_str()) {
                     self.write_off_compaction(session, "timed_out").await;
@@ -211,7 +211,7 @@ impl super::Scheduler {
             // Paid — the CLI said so through the ingestion path — or never
             // owed. Whatever was being waited on is over.
             if self.compacting.remove(&session.id).is_some() {
-                info!(session = %session.id, role = %session.role, "the compaction is done; the pane is free again");
+                info!(session = %session.id, seat = %session.seat, "the compaction is done; the pane is free again");
             }
             return;
         };
@@ -220,7 +220,7 @@ impl super::Scheduler {
                 // The record is of a debt since paid; this is a new one.
                 self.compacting.remove(&session.id);
             } else if !session.status().is_live() {
-                warn!(session = %session.id, role = %session.role, "the session ended while its compaction ran; the debt stands for its next run");
+                warn!(session = %session.id, seat = %session.seat, "the session ended while its compaction ran; the debt stands for its next run");
                 self.compacting.remove(&session.id);
                 return;
             } else {
@@ -233,7 +233,7 @@ impl super::Scheduler {
             return;
         }
         if owed_for_too_long(&owed_at) {
-            warn!(session = %session.id, role = %session.role, "the compaction it owes never got to run; writing it off");
+            warn!(session = %session.id, seat = %session.seat, "the compaction it owes never got to run; writing it off");
             self.write_off_compaction(session, "never_started").await;
             return;
         }
@@ -241,7 +241,7 @@ impl super::Scheduler {
             debug!(session = %session.id, ?why, "the session owes a compaction, but its pane is not free for one");
             return;
         }
-        let Some(command) = adapter_for(session.agent_kind()).compaction_command(session.role())
+        let Some(command) = adapter_for(session.agent_kind()).compaction_command(session.seat())
         else {
             warn!(session = %session.id, agent = %session.agent_kind, "this agent CLI's compaction cannot be started from outside; the debt is written off");
             self.write_off_compaction(session, "unsupported").await;
@@ -257,7 +257,7 @@ impl super::Scheduler {
             self.write_off_compaction(session, "refused").await;
             return;
         }
-        info!(session = %session.id, role = %session.role, %command, "typing the compaction into the agent's pane");
+        info!(session = %session.id, seat = %session.seat, %command, "typing the compaction into the agent's pane");
         self.typing.insert(session.id.clone());
         // Protected from here: a CLI with little to summarise can report the
         // compaction done before the keystrokes have settled.
@@ -306,7 +306,7 @@ impl super::Scheduler {
         if session.compact_owed_at.as_deref() != Some(&report.owed_at) {
             self.compacting.remove(&session.id);
             self.compaction_refused.remove(&session.id);
-            info!(session = %session.id, role = %session.role, outcome = ?report.outcome, "the compaction was reported done before its delivery settled; the pane is free again");
+            info!(session = %session.id, seat = %session.seat, outcome = ?report.outcome, "the compaction was reported done before its delivery settled; the pane is free again");
             if report.outcome != DeliveryOutcome::Refused {
                 self.record_compaction(
                     &session,
@@ -319,7 +319,7 @@ impl super::Scheduler {
         }
         match report.outcome {
             DeliveryOutcome::Confirmed => {
-                info!(session = %session.id, role = %session.role, "the agent is compacting its conversation; nothing goes into its pane until it is done");
+                info!(session = %session.id, seat = %session.seat, "the agent is compacting its conversation; nothing goes into its pane until it is done");
                 self.compaction_refused.remove(&session.id);
                 if let Some(running) = self.compacting.get_mut(&session.id) {
                     running.settled = true;
@@ -444,7 +444,7 @@ mod tests {
             id: "01session".into(),
             goal_id: "01goal".into(),
             task_id: Some("01task".into()),
-            role: "engineer".into(),
+            seat: "author".into(),
             profile_id: "01profile".into(),
             agent_kind: "claude_code".into(),
             model: None,

@@ -18,7 +18,7 @@
 use anyhow::{Context, Result};
 use serde_json::json;
 
-use ariadne_core::{AgentKind, Role};
+use ariadne_core::{AgentKind, Seat};
 
 use super::{AgentAdapter, SpawnCtx, SpawnPlan, base_env, compaction_focus, env_json};
 
@@ -137,8 +137,8 @@ impl AgentAdapter for ClaudeAdapter {
         })
     }
 
-    fn compaction_command(&self, role: Role) -> Option<String> {
-        Some(format!("/compact {}", compaction_focus(role)))
+    fn compaction_command(&self, seat: Seat) -> Option<String> {
+        Some(format!("/compact {}", compaction_focus(seat)))
     }
 
     fn compaction_done(&self, kind: &str, payload: &serde_json::Value) -> bool {

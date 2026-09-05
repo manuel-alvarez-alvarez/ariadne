@@ -5,7 +5,7 @@ use super::*;
 
 use clap::FromArgMatches;
 
-use ariadne_core::{AgentKind, GoalStatus, MergeStrategy, Role, SessionStatus, TaskStatus};
+use ariadne_core::{AgentKind, GoalStatus, MergeStrategy, Seat, SessionStatus, TaskStatus};
 
 use crate::commands::models::ModelsCommand;
 use crate::commands::profile::PromptCommand;
@@ -351,15 +351,15 @@ fn a_filter_takes_only_the_values_the_daemon_knows() {
     assert!(msg.contains("completed"), "the refusal lists the real ones");
 
     let Command::Session {
-        command: SessionCommand::Ls { role, .. },
-    } = parse(&["ariadne", "session", "ls", "--role", "reviewer"]).command
+        command: SessionCommand::Ls { seat, .. },
+    } = parse(&["ariadne", "session", "ls", "--seat", "reviewer"]).command
     else {
         panic!("session ls");
     };
-    assert_eq!(role, Some(Role::Reviewer));
+    assert_eq!(seat, Some(Seat::Reviewer));
     assert!(
-        try_parse(&["ariadne", "session", "ls", "--role", "critic"]).is_err(),
-        "an unknown role is a usage error"
+        try_parse(&["ariadne", "session", "ls", "--seat", "critic"]).is_err(),
+        "an unknown seat is a usage error"
     );
 
     let Command::Task {
@@ -371,7 +371,7 @@ fn a_filter_takes_only_the_values_the_daemon_knows() {
     assert_eq!(statuses, [TaskStatus::Approved]);
     assert!(
         try_parse(&["ariadne", "task", "ls", "--status", "integrating"]).is_err(),
-        "and the status a task was landed from by a fourth role is gone"
+        "and the status a task was landed from by a fourth seat is gone"
     );
 }
 
@@ -449,11 +449,11 @@ fn task_statuses(values: &[&str]) -> Vec<TaskStatus> {
 }
 
 /// What each agent runs on is chosen on the way in, as one string: `--model`
-/// for the planner and the engineer, `--reviewer PROFILE=MODEL` per reviewer
+/// for the orchestrator and the author, `--reviewer PROFILE=MODEL` per reviewer
 /// slot, and every spelling lands in the field the request is built from.
 #[test]
 fn a_model_can_be_chosen_for_every_agent_on_the_line() {
-    let planner = |args: &[&str]| {
+    let orchestrator = |args: &[&str]| {
         let mut argv = vec![
             "ariadne", "goal", "create", "--title", "Ship it", "--repo", "01REPO",
         ];
@@ -467,21 +467,21 @@ fn a_model_can_be_chosen_for_every_agent_on_the_line() {
         model
     };
     assert_eq!(
-        planner(&["--model", "codex:gpt-5.3-codex"]).as_deref(),
+        orchestrator(&["--model", "codex:gpt-5.3-codex"]).as_deref(),
         Some("codex:gpt-5.3-codex")
     );
     assert_eq!(
-        planner(&["--model", "codex"]).as_deref(),
+        orchestrator(&["--model", "codex"]).as_deref(),
         Some("codex"),
         "an agent CLI on its own runs it on its own default model"
     );
     assert_eq!(
-        planner(&[]),
+        orchestrator(&[]),
         None,
-        "and nothing at all is the planner profile's own"
+        "and nothing at all is the orchestrator profile's own"
     );
     assert_eq!(
-        planner(&["--model", "claude-code"]).as_deref(),
+        orchestrator(&["--model", "claude-code"]).as_deref(),
         Some("claude_code"),
         "the hyphenated spelling names the same CLI, and travels as the daemon \
          spells it"
@@ -539,7 +539,7 @@ fn a_model_can_be_chosen_for_every_agent_on_the_line() {
     assert_eq!(
         edited(&["--model", "default"]).as_deref(),
         Some("default"),
-        "\"default\" hands the task back to its engineer profile's pin"
+        "\"default\" hands the task back to its author profile's pin"
     );
     assert_eq!(
         edited(&["--model", "claude-code"]).as_deref(),
@@ -588,8 +588,8 @@ fn an_effort_can_be_chosen_beside_every_model() {
         "create",
         "--name",
         "eng",
-        "--role",
-        "engineer",
+        "--seat",
+        "author",
         "--model",
         "claude_code:claude-opus-5",
         "--effort",
@@ -733,8 +733,8 @@ fn a_model_naming_no_agent_is_a_usage_error() {
             "create",
             "--name",
             "eng",
-            "--role",
-            "engineer",
+            "--seat",
+            "author",
             "--model",
             "gpt-5.3-codex",
         ],
@@ -1062,8 +1062,8 @@ fn a_prompt_line_takes_the_profile_and_the_system_prompt() {
     };
     for verb in ["get", "set", "reset"] {
         for argv in [
-            vec!["ariadne", "profile", "prompt", verb, "Engineer"],
-            vec!["ariadne", "profile", "prompt", verb, "Engineer", "system"],
+            vec!["ariadne", "profile", "prompt", verb, "Author"],
+            vec!["ariadne", "profile", "prompt", verb, "Author", "system"],
         ] {
             let Command::Profile {
                 command: ProfileCommand::Prompt { command },
@@ -1071,20 +1071,20 @@ fn a_prompt_line_takes_the_profile_and_the_system_prompt() {
             else {
                 panic!("profile prompt {verb}");
             };
-            assert_eq!(profile(command), "Engineer");
+            assert_eq!(profile(command), "Author");
         }
         let err = try_parse(&[
             "ariadne",
             "profile",
             "prompt",
             verb,
-            "Engineer",
-            "engineer-briefing",
+            "Author",
+            "author-briefing",
         ])
         .map(|_| ())
         .expect_err("a briefing")
         .to_string();
-        assert!(err.contains("engineer-briefing is no prompt"), "{err}");
+        assert!(err.contains("author-briefing is no prompt"), "{err}");
     }
 
     let Command::Profile {
@@ -1092,7 +1092,7 @@ fn a_prompt_line_takes_the_profile_and_the_system_prompt() {
             ProfileCommand::Prompt {
                 command: PromptCommand::Reset { yes, .. },
             },
-    } = parse(&["ariadne", "profile", "prompt", "reset", "Engineer", "-y"]).command
+    } = parse(&["ariadne", "profile", "prompt", "reset", "Author", "-y"]).command
     else {
         panic!("profile prompt reset");
     };
@@ -1122,7 +1122,7 @@ fn a_profile_takes_its_system_prompt_as_text_or_as_a_file() {
         "ariadne",
         "profile",
         "update",
-        "Engineer",
+        "Author",
         "--system-prompt-file",
         "/tmp/c.md",
     ])
@@ -1149,7 +1149,7 @@ fn a_profile_takes_its_system_prompt_as_text_or_as_a_file() {
             "ariadne",
             "profile",
             "update",
-            "Engineer",
+            "Author",
             "--system-prompt",
             "You are...",
             "--system-prompt-file",
@@ -1183,7 +1183,7 @@ fn try_create(args: &[&str]) -> Result<(), clap::Error> {
 /// A `profile create` line with everything it needs, plus `args`.
 fn create_argv<'a>(args: &[&'a str]) -> Vec<&'a str> {
     let mut argv = vec![
-        "ariadne", "profile", "create", "--name", "X", "--role", "engineer",
+        "ariadne", "profile", "create", "--name", "X", "--seat", "author",
     ];
     argv.extend_from_slice(args);
     argv

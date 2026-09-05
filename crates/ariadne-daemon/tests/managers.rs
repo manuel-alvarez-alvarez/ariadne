@@ -34,7 +34,7 @@ async fn git_worktree_lifecycle_and_merge_verification() {
     let (dir, repo) = toy_repo();
     let git = GitManager;
 
-    // Engineer worktree on a new branch.
+    // Author worktree on a new branch.
     let wt = dir.path().join("wt-eng");
     git.add_worktree(&repo, &wt, "fix-the-widget-aaa111", "main")
         .await
@@ -76,7 +76,7 @@ async fn git_worktree_lifecycle_and_merge_verification() {
             .unwrap()
     );
 
-    // Merge in the primary checkout (what the engineer agent will do).
+    // Merge in the primary checkout (what the author agent will do).
     sh(&repo, "git merge -q --no-ff fix-the-widget-aaa111 -m merge");
     assert!(
         git.is_ancestor(&repo, "fix-the-widget-aaa111", "main")
@@ -131,7 +131,7 @@ async fn reviewer_worktree_refresh_between_rounds() {
         "r1"
     );
 
-    // Round 2: engineer pushes more commits; reviewer worktree is refreshed.
+    // Round 2: author pushes more commits; reviewer worktree is refreshed.
     sh(&wt, "echo r2 > file.txt && git add . && git commit -qm r2");
     git.checkout_detached(&wt_rev, "fix-the-widget-aaa111")
         .await
@@ -415,12 +415,12 @@ fn session_names_are_stable_and_short() {
     let goal = "01m02trjnexw78vdrftjs6gk44";
     let task = "01m02trjp2sf4mb93vc5dm7hk9";
     assert_eq!(
-        session_name(goal, None, "planner", None),
-        "ariadne-tjs6gk44-pla"
+        session_name(goal, None, "orchestrator", None),
+        "ariadne-tjs6gk44-orc"
     );
     assert_eq!(
-        session_name(goal, Some(task), "engineer", None),
-        "ariadne-tjs6gk44-c5dm7hk9-eng"
+        session_name(goal, Some(task), "author", None),
+        "ariadne-tjs6gk44-c5dm7hk9-aut"
     );
     // Reviewers are told apart by profile, not by round: one name for all of
     // a reviewer's rounds on a task.

@@ -1,5 +1,5 @@
 ---
-id: engineering-and-review-rounds
+id: authoring-and-review-rounds
 status: current
 updated: 2026-09-04
 areas: [daemon, store, prompts]
@@ -11,14 +11,14 @@ tests:
   - crates/ariadne-store/tests/store.rs
 ---
 
-# Engineering and review rounds
+# Authoring and review rounds
 
 What happens between a task becoming `ready` and being `approved`: one
-engineer, one or more reviewers, and as many rounds as the change needs.
+author, one or more reviewers, and as many rounds as the change needs.
 
 ## Scope
 
-In: the engineer session and what it owns, `request_review`, reviewer
+In: the author session and what it owns, `request_review`, reviewer
 sessions, the verdict per round, how a round closes, and how the two sides
 are resumed between rounds.
 
@@ -27,14 +27,14 @@ Out: the transition table itself (001), the landing that follows approval
 
 ## Behavior
 
-1. A `ready` task gets one engineer session, in its own worktree on its own
+1. A `ready` task gets one author session, in its own worktree on its own
    branch, and moves to `in_progress`.
-2. The task never leaves that engineer: the same session and worktree carry it
+2. The task never leaves that author: the same session and worktree carry it
    from the first commit through every review round to the merge.
-3. The engineer implements only its task, obeys the repository's conventions
+3. The author implements only its task, obeys the repository's conventions
    files, keeps tests and linters green, and writes no authorship or tool
    trailer in its commits.
-4. A task the engineer cannot do as written ends with its own `fail_task` and
+4. A task the author cannot do as written ends with its own `fail_task` and
    the reason on the task.
 5. `request_review` moves the task to `under_review` and carries one short
    summary — what changed, why, and how it was verified. That summary is what
@@ -49,28 +49,29 @@ Out: the transition table itself (001), the landing that follows approval
    for changes moves the task to `changes_requested`, whatever else the round
    holds. Otherwise, approvals of the round are counted and the task is
    `approved` once they reach the goal's `required_approvals`.
-9. A `changes_requested` task resumes its engineer with the round's feedback,
+9. A `changes_requested` task resumes its author with the round's feedback,
    under a heading naming who wrote each point — the Ariadne reviewers, or the
-   people on a published request (005). The engineer answers every point and
+   people on a published request (005). The author answers every point and
    says why where the code stays.
 10. A reviewer that has already voted this round is nobody's blocker: no
     attention is raised on it and no session is started for it.
-11. An engineer whose task is under review is likewise not the agent the work
+11. An author whose task is under review is likewise not the agent the work
     is waiting on (009).
 
 ## Acceptance criteria
 
-- A spawned engineer is briefed from the built-in template, word for word
-  (`prompts.rs::a_spawned_engineer_is_briefed_from_the_builtin_template`,
+- A spawned author is briefed from the built-in template, word for word
+  (`prompts.rs::a_spawned_author_is_briefed_from_the_builtin_template`,
   `::a_spawn_assembles_the_default_briefing_word_for_word`).
 - A resume and a review round assemble word for word
   (`prompts.rs::a_resume_and_a_review_round_assemble_word_for_word`), and the
   reviewer is briefed with the summary review was requested with
   (`::a_reviewer_is_briefed_with_the_summary_review_was_requested_with`).
-- The engineer keeps one session across review rounds
-  (`resume.rs::resuming_the_engineer_reuses_its_session_across_review_rounds`),
-  and so does each reviewer (`::a_reviewer_reuses_its_session_across_review_rounds`);
-  a reviewer with no agent id is spawned afresh
+- The author keeps one session across review rounds
+  (`resume.rs::resuming_the_author_reuses_its_session_across_review_rounds`),
+  and so does each reviewer
+  (`::a_reviewer_reuses_its_session_across_review_rounds`); a reviewer with no
+  agent id is spawned afresh
   (`::a_reviewer_without_an_agent_id_is_spawned_afresh`).
 - One verdict per reviewer per round is recorded
   (`store.rs::one_review_verdict_per_round`).
@@ -85,5 +86,5 @@ Out: the transition table itself (001), the landing that follows approval
 
 `crates/ariadne-daemon/src/scheduler/tasks.rs`,
 `crates/ariadne-daemon/src/launcher.rs`,
-`crates/ariadne-store/src/defaults.rs` (`ENGINEER_*`, `REVIEWER_*`,
+`crates/ariadne-store/src/defaults.rs` (`AUTHOR_*`, `REVIEWER_*`,
 `CHANGES_REQUESTED`).

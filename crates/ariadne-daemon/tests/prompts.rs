@@ -12,7 +12,7 @@
 //! No tmux and no agent CLI: `tmux` is a stub that records the commands the
 //! launcher issues, and the rendered briefing is read back from the session's
 //! spawn plan — tmux is handed `ariadne _spawn <plan>` and nothing of the
-//! briefing itself. `git` is real — spawning an engineer creates its worktree.
+//! briefing itself. `git` is real — spawning an author creates its worktree.
 
 mod common;
 
@@ -22,11 +22,11 @@ use ariadne_store::defaults::default_prompt_text;
 
 use common::{Cast, Harness, harness};
 
-/// What the engineer requested review with, and what it wrote afterwards:
+/// What the author requested review with, and what it wrote afterwards:
 /// the briefing has to carry the first and never the second.
 const SUMMARY: &str = "Rendered the board from the store, with a test per lane.";
 
-/// A task ready for its engineer to be spawned, in a real repo.
+/// A task ready for its author to be spawned, in a real repo.
 async fn seeded(h: &Harness) -> Cast {
     h.git_repo("repo");
     h.cast().await
@@ -51,14 +51,14 @@ fn default_for(kind: PromptKind) -> String {
 /// placeholders and all — and nowhere else: a briefing in the tmux command
 /// line is what the plan file exists to prevent, whatever its size.
 #[tokio::test]
-async fn a_spawned_engineer_is_briefed_from_the_builtin_template() {
+async fn a_spawned_author_is_briefed_from_the_builtin_template() {
     let h = harness().await;
     let cast = seeded(&h).await;
 
-    let session = h.launcher.spawn_engineer(&cast.task.id).await.unwrap();
+    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
     let task = h.store.get_task(&cast.task.id).await.unwrap();
-    let briefing = prompts::engineer_briefing(
-        prompts::template_for(PromptKind::EngineerBriefing),
+    let briefing = prompts::author_briefing(
+        prompts::template_for(PromptKind::AuthorBriefing),
         &task,
         &cast.goal,
         &cast.repo,
@@ -86,7 +86,7 @@ async fn a_spawned_engineer_is_briefed_from_the_builtin_template() {
             .join("system-prompt.md"),
     )
     .unwrap();
-    assert_eq!(system, "You are engineer.");
+    assert_eq!(system, "You are author.");
 }
 
 /// The code's text is what reaches the agent, without anything having been
@@ -97,10 +97,10 @@ async fn a_spawn_assembles_the_default_briefing_word_for_word() {
     let h = harness().await;
     let cast = seeded(&h).await;
 
-    let session = h.launcher.spawn_engineer(&cast.task.id).await.unwrap();
+    let session = h.launcher.spawn_author(&cast.task.id).await.unwrap();
     let task = h.store.get_task(&cast.task.id).await.unwrap();
     let expected = fill(
-        &default_for(PromptKind::EngineerBriefing),
+        &default_for(PromptKind::AuthorBriefing),
         &[
             ("task_title", &task.title),
             ("task_description", &task.description),
@@ -123,8 +123,8 @@ async fn a_spawn_assembles_the_default_briefing_word_for_word() {
     // The same text is what the assembler answers on its own, so nothing
     // between the two decorates it.
     assert_eq!(
-        prompts::engineer_briefing(
-            &default_for(PromptKind::EngineerBriefing),
+        prompts::author_briefing(
+            &default_for(PromptKind::AuthorBriefing),
             &task,
             &h.store.get_goal(&task.goal_id).await.unwrap(),
             &cast.repo,
@@ -135,7 +135,7 @@ async fn a_spawn_assembles_the_default_briefing_word_for_word() {
 }
 
 /// The other two assemblies an agent meets, pinned the same way: what an
-/// engineer holding unfinished work is picked up with, and what a reviewer
+/// author holding unfinished work is picked up with, and what a reviewer
 /// owing a verdict is.
 #[tokio::test]
 async fn a_resume_and_a_review_round_assemble_word_for_word() {
@@ -144,12 +144,12 @@ async fn a_resume_and_a_review_round_assemble_word_for_word() {
     let task = h.store.get_task(&cast.task.id).await.unwrap();
 
     assert_eq!(
-        prompts::engineer_resume_briefing(
-            &default_for(PromptKind::EngineerResume),
+        prompts::author_resume_briefing(
+            &default_for(PromptKind::AuthorResume),
             &task,
         ),
         fill(
-            &default_for(PromptKind::EngineerResume),
+            &default_for(PromptKind::AuthorResume),
             &[("task_title", &task.title), ("branch", &task.branch)],
         )
     );
@@ -182,11 +182,11 @@ async fn a_resume_and_a_review_round_assemble_word_for_word() {
     );
 }
 
-/// The `{summary}` a reviewer is briefed with is the one the engineer
+/// The `{summary}` a reviewer is briefed with is the one the author
 /// requested review with — the round's own record of it — and not whatever
-/// the engineer happened to say last.
+/// the author happened to say last.
 ///
-/// The two are only the same until the engineer writes anything else: a
+/// The two are only the same until the author writes anything else: a
 /// "thanks, will do" posted after the request would otherwise be what the
 /// reviewers, and the people reading a published request, are handed as the
 /// summary of the change.
@@ -195,9 +195,9 @@ async fn a_reviewer_is_briefed_with_the_summary_review_was_requested_with() {
     let h = harness().await;
     let cast = seeded(&h).await;
     let task = &cast.task;
-    // The engineer's worktree is what creates the branch the reviewer's is
+    // The author's worktree is what creates the branch the reviewer's is
     // cut from.
-    h.launcher.spawn_engineer(&task.id).await.unwrap();
+    h.launcher.spawn_author(&task.id).await.unwrap();
 
     for status in [TaskStatus::Ready, TaskStatus::InProgress] {
         h.store
@@ -209,7 +209,7 @@ async fn a_reviewer_is_briefed_with_the_summary_review_was_requested_with() {
         .transition_task(
             &task.id,
             TaskStatus::UnderReview,
-            Actor::Engineer,
+            Actor::Author,
             Some(SUMMARY),
             None,
         )
@@ -240,7 +240,7 @@ async fn a_reviewer_is_briefed_with_the_summary_review_was_requested_with() {
         "the review-round briefing, assembled: {:?}",
         plan.argv
     );
-    // The summary is what the engineer requested review with, undecorated:
+    // The summary is what the author requested review with, undecorated:
     // it is the whole of what the reviewer is told.
     assert!(!expected.contains("Review requested:"));
 }

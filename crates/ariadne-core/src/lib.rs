@@ -50,7 +50,12 @@ macro_rules! wire_enum {
 }
 pub(crate) use wire_enum;
 
-/// The role an agent plays in the orchestration.
+/// Where an agent sits: the orchestrator of a goal, or the author or a
+/// reviewer of one task.
+///
+/// A seat is a position, not an identity. Every agent below the orchestrator
+/// is generic, and what it can do comes from the skills it loads; the seat is
+/// only what the state machine and the launcher need to know about it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(
@@ -59,20 +64,20 @@ pub(crate) use wire_enum;
     value(rename_all = "kebab-case")
 )]
 #[serde(rename_all = "snake_case")]
-pub enum Role {
-    Planner,
-    Engineer,
+pub enum Seat {
+    Orchestrator,
+    Author,
     Reviewer,
 }
 
-wire_enum! { Role, "role", [
-    Planner = "planner",
-    Engineer = "engineer",
+wire_enum! { Seat, "seat", [
+    Orchestrator = "orchestrator",
+    Author = "author",
     Reviewer = "reviewer",
 ]}
 
 /// How a repository takes the change a task lands on its base branch: the one
-/// thing about a repository the engineer that finishes a task has to be told,
+/// thing about a repository the author that finishes a task has to be told,
 /// since the commands it runs at the end differ entirely between the two.
 ///
 /// Which forge a published request goes to is *not* here: `origin` says
@@ -122,8 +127,8 @@ impl MergeStrategy {
 }
 
 /// A lifecycle briefing of Ariadne's own: one of the texts an agent is
-/// started, resumed or nudged with. Each kind belongs to the role that
-/// receives it (see [`PromptKind::roles`]), and its text is a constant of the
+/// started, resumed or nudged with. Each kind belongs to the seat that
+/// receives it (see [`PromptKind::seats`]), and its text is a constant of the
 /// code — no profile carries one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
@@ -134,16 +139,16 @@ impl MergeStrategy {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum PromptKind {
-    /// Initial briefing of a planner session.
-    PlannerBriefing,
-    /// What a planner that has stopped planning is nudged with.
-    PlannerResume,
-    /// Initial briefing of an engineer session.
-    EngineerBriefing,
-    /// What an engineer with unfinished work is picked up with, whether its
+    /// Initial briefing of an orchestrator session.
+    OrchestratorBriefing,
+    /// What an orchestrator that has stopped planning is nudged with.
+    OrchestratorResume,
+    /// Initial briefing of an author session.
+    AuthorBriefing,
+    /// What an author with unfinished work is picked up with, whether its
     /// session ended or is merely sitting idle.
-    EngineerResume,
-    /// Engineer resume briefing carrying a round of requested changes, from
+    AuthorResume,
+    /// Author resume briefing carrying a round of requested changes, from
     /// the reviewers or from the people on a published request.
     ChangesRequested,
     /// Initial briefing of a reviewer session.
@@ -153,37 +158,37 @@ pub enum PromptKind {
 }
 
 wire_enum! { PromptKind, "prompt kind", [
-    PlannerBriefing = "planner_briefing",
-    PlannerResume = "planner_resume",
-    EngineerBriefing = "engineer_briefing",
-    EngineerResume = "engineer_resume",
+    OrchestratorBriefing = "orchestrator_briefing",
+    OrchestratorResume = "orchestrator_resume",
+    AuthorBriefing = "author_briefing",
+    AuthorResume = "author_resume",
     ChangesRequested = "changes_requested",
     ReviewerBriefing = "reviewer_briefing",
     ReviewerResume = "reviewer_resume",
 ]}
 
 impl PromptKind {
-    /// The roles briefed with this prompt.
-    pub fn roles(&self) -> &'static [Role] {
+    /// The seats briefed with this prompt.
+    pub fn seats(&self) -> &'static [Seat] {
         match self {
-            PromptKind::PlannerBriefing | PromptKind::PlannerResume => &[Role::Planner],
-            PromptKind::EngineerBriefing
-            | PromptKind::EngineerResume
-            | PromptKind::ChangesRequested => &[Role::Engineer],
-            PromptKind::ReviewerBriefing | PromptKind::ReviewerResume => &[Role::Reviewer],
+            PromptKind::OrchestratorBriefing | PromptKind::OrchestratorResume => &[Seat::Orchestrator],
+            PromptKind::AuthorBriefing
+            | PromptKind::AuthorResume
+            | PromptKind::ChangesRequested => &[Seat::Author],
+            PromptKind::ReviewerBriefing | PromptKind::ReviewerResume => &[Seat::Reviewer],
         }
     }
 
-    /// The prompts a session of `role` is briefed with, in briefing order.
-    pub fn for_role(role: Role) -> &'static [PromptKind] {
-        match role {
-            Role::Planner => &[PromptKind::PlannerBriefing, PromptKind::PlannerResume],
-            Role::Engineer => &[
-                PromptKind::EngineerBriefing,
-                PromptKind::EngineerResume,
+    /// The prompts a session of `seat` is briefed with, in briefing order.
+    pub fn for_seat(seat: Seat) -> &'static [PromptKind] {
+        match seat {
+            Seat::Orchestrator => &[PromptKind::OrchestratorBriefing, PromptKind::OrchestratorResume],
+            Seat::Author => &[
+                PromptKind::AuthorBriefing,
+                PromptKind::AuthorResume,
                 PromptKind::ChangesRequested,
             ],
-            Role::Reviewer => &[PromptKind::ReviewerBriefing, PromptKind::ReviewerResume],
+            Seat::Reviewer => &[PromptKind::ReviewerBriefing, PromptKind::ReviewerResume],
         }
     }
 
@@ -196,7 +201,7 @@ impl PromptKind {
     /// Adding a value to a builder means adding its name here.
     pub fn placeholders(&self) -> &'static [&'static str] {
         match self {
-            PromptKind::PlannerBriefing => &[
+            PromptKind::OrchestratorBriefing => &[
                 "goal_title",
                 "goal_description",
                 "repositories",
@@ -204,14 +209,14 @@ impl PromptKind {
                 "required_approvals",
                 // The procedure that puts the approved spec on the base
                 // branch, rendered from the merge strategy of the repository
-                // the planner works in: the two strategies share no step, so
-                // the briefing carries the one that repository runs.
+                // the orchestrator works in: the two strategies share no
+                // step, so the briefing carries the one that repository runs.
                 "spec_landing",
             ],
-            // A nudge says what is waiting and nothing else: the planner it
-            // reaches has read the goal already.
-            PromptKind::PlannerResume => &["goal_title"],
-            PromptKind::EngineerBriefing => &[
+            // A nudge says what is waiting and nothing else: the orchestrator
+            // it reaches has read the goal already.
+            PromptKind::OrchestratorResume => &["goal_title"],
+            PromptKind::AuthorBriefing => &[
                 "task_title",
                 "task_description",
                 "goal_title",
@@ -226,7 +231,7 @@ impl PromptKind {
                 "merge_strategy",
                 "dependencies",
             ],
-            PromptKind::EngineerResume => &["task_title", "branch"],
+            PromptKind::AuthorResume => &["task_title", "branch"],
             PromptKind::ChangesRequested => &["feedback"],
             PromptKind::ReviewerBriefing => &[
                 "task_title",
@@ -408,7 +413,7 @@ impl AgentKind {
     }
 }
 
-/// Roughly what a model is, as a picker and a planner compare models: the
+/// Roughly what a model is, as a picker and an orchestrator compare models: the
 /// capability class it belongs to, across every agent CLI at once.
 ///
 /// One ladder for the whole catalog, so a claude_code entry and a codex entry
@@ -451,12 +456,13 @@ wire_enum! { ModelTier, "model tier", [
 )]
 #[serde(rename_all = "snake_case")]
 pub enum GoalStatus {
-    /// Planner session active; tasks being defined, and nothing running yet.
+    /// Orchestrator session active; tasks being defined, and nothing running
+    /// yet.
     Planning,
-    /// Plan finalized by the planner, once the user validated it in the goal
-    /// thread; tasks executing.
+    /// Plan finalized by the orchestrator, once the user validated it in the
+    /// goal thread; tasks executing.
     Active,
-    /// All tasks merged (or goal-level completion recorded).
+    /// All tasks finished (or goal-level completion recorded).
     Completed,
     Cancelled,
 }
@@ -596,7 +602,7 @@ wire_enum! { ReviewVerdict, "review verdict", [
 mod tests {
     use super::*;
 
-    /// Every kind briefs at least one role, is listed among that role's
+    /// Every kind briefs at least one seat, is listed among that seat's
     /// prompts, and is reachable from `ALL` by the name it is stored under:
     /// the three lists are one set read three ways, and a kind missing from
     /// any of them is a briefing nothing can render.
@@ -605,23 +611,23 @@ mod tests {
         use std::str::FromStr;
 
         for kind in PromptKind::ALL {
-            let roles = kind.roles();
-            assert!(!roles.is_empty(), "{} belongs to no role", kind.as_str());
-            for role in roles {
+            let seats = kind.seats();
+            assert!(!seats.is_empty(), "{} belongs to no seat", kind.as_str());
+            for seat in seats {
                 assert!(
-                    PromptKind::for_role(*role).contains(&kind),
+                    PromptKind::for_seat(*seat).contains(&kind),
                     "{} is not among the {} prompts",
                     kind.as_str(),
-                    role.as_str()
+                    seat.as_str()
                 );
             }
-            for role in Role::ALL.into_iter().filter(|r| !roles.contains(r)) {
-                assert!(!PromptKind::for_role(role).contains(&kind));
+            for seat in Seat::ALL.into_iter().filter(|r| !seats.contains(r)) {
+                assert!(!PromptKind::for_seat(seat).contains(&kind));
             }
             assert_eq!(PromptKind::from_str(kind.as_str()), Ok(kind));
         }
-        for role in Role::ALL {
-            for kind in PromptKind::for_role(role) {
+        for seat in Seat::ALL {
+            for kind in PromptKind::for_seat(seat) {
                 assert!(
                     PromptKind::ALL.contains(kind),
                     "{} is not in ALL",
@@ -649,12 +655,12 @@ mod tests {
 
     #[test]
     fn a_typo_is_refused_with_the_token_and_the_allowed_set() {
-        let err = PromptKind::EngineerBriefing
+        let err = PromptKind::AuthorBriefing
             .validate_template("# {task_titel}\n\n{task_description}")
             .unwrap_err();
         assert_eq!(err.unknown, ["task_titel"]);
         let message = err.to_string();
-        assert!(message.contains("engineer_briefing"), "{message}");
+        assert!(message.contains("author_briefing"), "{message}");
         assert!(message.contains("{task_titel}"), "{message}");
         assert!(message.contains("{task_title}"), "{message}");
         assert!(message.contains("{dependencies}"), "{message}");
@@ -676,7 +682,7 @@ mod tests {
     #[test]
     fn a_placeholder_of_another_kind_is_unknown_here() {
         assert!(
-            PromptKind::PlannerBriefing
+            PromptKind::OrchestratorBriefing
                 .validate_template("Plan {goal_title} for {task_title}.")
                 .is_err()
         );
@@ -711,7 +717,7 @@ mod tests {
             r"printf '%s' {} \;",
         ] {
             assert_eq!(
-                PromptKind::EngineerBriefing.validate_template(template),
+                PromptKind::AuthorBriefing.validate_template(template),
                 Ok(()),
                 "refused text that renders as itself: {template}"
             );
@@ -723,7 +729,7 @@ mod tests {
     #[test]
     fn a_template_may_use_none_of_its_placeholders() {
         assert_eq!(
-            PromptKind::EngineerResume.validate_template("Carry on."),
+            PromptKind::AuthorResume.validate_template("Carry on."),
             Ok(())
         );
         assert_eq!(

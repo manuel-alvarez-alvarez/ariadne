@@ -70,12 +70,12 @@ pub async fn ingest(
     // A report from a process the session has moved past changes nothing.
     //
     // A relaunch puts a new agent under the same row, and the agent it
-    // replaced still has its exit hook to fire — half a second later, with the
-    // same ARIADNE_SESSION_ID and, on a resumed conversation, the same
+    // replaced still has its exit hook to fire — half a second later, with
+    // the same ARIADNE_SESSION_ID and, on a resumed conversation, the same
     // internal id. Read as the live agent's, that report retires a session
-    // whose pane is up and working: the goal then wants a planner it already
-    // has, the spawn collides with the tmux name the pane holds, and the row
-    // is left `exited` while its agent goes on writing to it.
+    // whose pane is up and working: the goal then wants an orchestrator it
+    // already has, the spawn collides with the tmux name the pane holds, and
+    // the row is left `exited` while its agent goes on writing to it.
     //
     // The launch each of them carries is what tells them apart. Only a
     // mismatch is refused: an agent started before the daemon named launches
@@ -125,7 +125,7 @@ pub async fn ingest(
     let compacted =
         crate::agents::adapter_for(session.agent_kind()).compaction_done(&req.kind, &req.payload);
     if compacted && state.store.clear_compaction_owed(&session.id).await? {
-        tracing::info!(session = %session.id, role = %session.role, "the agent compacted its conversation; the compaction it owed is paid");
+        tracing::info!(session = %session.id, seat = %session.seat, "the agent compacted its conversation; the compaction it owed is paid");
     }
 
     // Track liveness from lifecycle events (never resurrect ended sessions).
@@ -173,7 +173,7 @@ pub async fn ingest(
     //
     // Raising it asks one thing more: whether anybody is still waiting on
     // this agent. A reviewer's approval dialog after it has voted, or a
-    // planner's after the goal left planning, is nobody's to answer — the
+    // orchestrator's after the goal left planning, is nobody's to answer — the
     // event is recorded and the status still follows it, only the flag is
     // withheld. Whether the session is still live enough to be asking is a
     // second condition, and one this handler deliberately does not test

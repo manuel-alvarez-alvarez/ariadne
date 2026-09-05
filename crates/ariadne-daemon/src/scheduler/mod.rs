@@ -26,7 +26,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
-use ariadne_core::{GoalStatus, Role};
+use ariadne_core::{GoalStatus, Seat};
 use ariadne_store::{SessionFilter, Store, TaskFilter};
 
 use crate::launcher::Launcher;
@@ -72,7 +72,7 @@ pub const TICK_SECS: u64 = 5;
 /// that one which never will is still noticed within a tick or two.
 pub const START_GRACE_SECS: i64 = 30;
 /// Spawn attempts before the daemon stops trying: per task, after which it is
-/// failed, and per goal, after which its planner is left alone.
+/// failed, and per goal, after which its orchestrator is left alone.
 pub const SPAWN_RETRY_BUDGET: u32 = 3;
 /// How long a session may report nothing before it is nudged: told to get on
 /// with the work in front of it, or given the Enter its composer is waiting
@@ -91,7 +91,7 @@ pub const QUIET_NUDGE_SECS: i64 = 180;
 ///
 /// Ten minutes. Unlike the nudge this one is spent whatever the pane says, so
 /// it has to clear the longest wait an agent is *told* to take: the landing
-/// briefing sends an engineer to `sleep` at most five minutes at a time while
+/// briefing sends an author to `sleep` at most five minutes at a time while
 /// it waits for a pull request to be merged, and this is twice that. A flag
 /// raised over a tool call that ran longer still is not the end of anything —
 /// the agent's next event takes it down again.
@@ -113,7 +113,7 @@ pub const COMPACTION_OWED_FOR_SECS: i64 = 600;
 /// under them. The flag has a floor of its own — it is spent whatever the
 /// pane is doing, so it has to clear the longest wait an agent is *told* to
 /// take, which is the five-minute `sleep` the landing briefing sends an
-/// engineer to while a pull request waits to be merged. Checked here rather
+/// author to while a pull request waits to be merged. Checked here rather
 /// than in a test, so that a number edited into the wrong order does not
 /// build.
 const _: () = assert!(
@@ -132,15 +132,16 @@ const _: () = assert!(
 pub struct Scheduler {
     store: Store,
     launcher: Arc<Launcher>,
-    /// Spawn failures per task, and per goal whose planner will not start, by
-    /// the id of whichever it is — the two never collide, and what a failure
-    /// means is the same either way (in-memory: resets on daemon restart,
-    /// which is fine — a restart is exactly when a retry is warranted).
+    /// Spawn failures per task, and per goal whose orchestrator will not
+    /// start, by the id of whichever it is — the two never collide, and what
+    /// a failure means is the same either way (in-memory: resets on daemon
+    /// restart, which is fine — a restart is exactly when a retry is
+    /// warranted).
     spawn_failures: HashMap<String, u32>,
     /// What the quiet-clock watchdog has done about each session it has had
     /// to act on, by session id (in memory like the map above).
     quiet: HashMap<String, Quiet>,
-    /// Tasks whose engineer has been handed the landing briefing, by task id.
+    /// Tasks whose author has been handed the landing briefing, by task id.
     /// In memory like the maps above: what it prevents is briefing the same
     /// approved task twice while the daemon that approved it is running, and
     /// a daemon that restarts over an approved task wants to say it again.
@@ -238,10 +239,11 @@ impl Scheduler {
     /// the tick are the only callers, and what they do about a failure is say
     /// so — and, for a task, count it against the spawn-retry budget, since a
     /// task whose agent will not start is what that budget is for. A goal
-    /// spends the same budget on its planner, but counts it where the spawn
-    /// fails rather than here: a goal reconciliation has other ways to fail —
-    /// a store that would not answer, a nudge that went nowhere — and none of
-    /// them says anything about whether a planner can be started.
+    /// spends the same budget on its orchestrator, but counts it where the
+    /// spawn fails rather than here: a goal reconciliation has other ways to
+    /// fail — a store that would not answer, a nudge that went nowhere — and
+    /// none of them says anything about whether an orchestrator can be
+    /// started.
     async fn reconcile(&mut self, target: Target<'_>) {
         let failed = match target {
             Target::Goal(id) => self.reconcile_goal(id).await.err(),
@@ -260,13 +262,13 @@ impl Scheduler {
     }
 
     /// Kill the live sessions a filter names — all of them, or only those of
-    /// one role.
+    /// one seat.
     ///
     /// Failures are logged and otherwise swallowed: reconciliation carries on
     /// for the rest of the sessions, and the next tick asks again — but a
     /// session that will not die has to be visible, or the only symptom is a
     /// machine that never sleeps.
-    async fn kill_sessions(&self, filter: SessionFilter, role: Option<Role>, why: &str) {
+    async fn kill_sessions(&self, filter: SessionFilter, seat: Option<Seat>, why: &str) {
         let sessions = match self.store.list_sessions(filter).await {
             Ok(sessions) => sessions,
             Err(e) => {
@@ -275,10 +277,10 @@ impl Scheduler {
             }
         };
         for session in sessions {
-            if role.is_some_and(|wanted| session.role() != wanted) {
+            if seat.is_some_and(|wanted| session.seat() != wanted) {
                 continue;
             }
-            info!(session = %session.id, role = %session.role, why, "killing session");
+            info!(session = %session.id, seat = %session.seat, why, "killing session");
             if let Err(e) = self.launcher.kill_session(&session.id).await {
                 warn!(session = %session.id, error = %e, "killing the session failed");
             }

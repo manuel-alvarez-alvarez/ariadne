@@ -243,10 +243,10 @@ pub async fn logs(
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DebugSpawnRequest {
-    pub role: ariadne_core::Role,
+    pub seat: ariadne_core::Seat,
     pub goal_id: Option<String>,
     pub task_id: Option<String>,
-    /// Reviewer profile (id or name) when role = reviewer.
+    /// Reviewer profile (id or name) when seat = reviewer.
     pub profile: Option<String>,
 }
 
@@ -256,22 +256,22 @@ pub async fn debug_spawn(
     State(state): State<AppState>,
     Json(req): Json<DebugSpawnRequest>,
 ) -> ApiResult<Json<SessionDto>> {
-    use ariadne_core::Role;
+    use ariadne_core::Seat;
     let launcher = &state.launcher;
-    let session = match req.role {
-        Role::Planner => {
+    let session = match req.seat {
+        Seat::Orchestrator => {
             let goal = req
                 .goal_id
                 .ok_or_else(|| ApiError::bad_request("goal_id required"))?;
-            launcher.spawn_planner(&goal).await
+            launcher.spawn_orchestrator(&goal).await
         }
-        Role::Engineer => {
+        Seat::Author => {
             let task = req
                 .task_id
                 .ok_or_else(|| ApiError::bad_request("task_id required"))?;
-            launcher.spawn_engineer(&task).await
+            launcher.spawn_author(&task).await
         }
-        Role::Reviewer => {
+        Seat::Reviewer => {
             let task = req
                 .task_id
                 .ok_or_else(|| ApiError::bad_request("task_id required"))?;

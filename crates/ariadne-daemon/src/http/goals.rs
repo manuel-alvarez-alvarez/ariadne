@@ -6,7 +6,7 @@ use serde::Deserialize;
 use utoipa::IntoParams;
 
 use ariadne_api::goals::{CreateGoalRequest, FinalizePlanRequest, GoalDto};
-use ariadne_core::{GoalStatus, Role};
+use ariadne_core::{GoalStatus, Seat};
 use ariadne_store::{Goal, NewGoal, SessionFilter, Store, TaskFilter};
 
 use super::AppState;
@@ -42,8 +42,8 @@ impl GoalListQuery {
     }
 }
 
-/// Create a goal on registered repositories; the planner session is spawned
-/// by the scheduler once agent execution lands.
+/// Create a goal on registered repositories; the orchestrator session is
+/// spawned by the scheduler once agent execution lands.
 ///
 /// The repos are referenced, not copied: whatever `POST /v1/repositories`
 /// validated about a checkout holds for every goal that names it, and an edit
@@ -53,7 +53,7 @@ impl GoalListQuery {
     responses(
         (status = 201, body = GoalDto),
         (status = 400),
-        (status = 404, description = "no such repository or planner profile")
+        (status = 404, description = "no such repository or orchestrator profile")
     ))]
 pub async fn create(
     State(state): State<AppState>,
@@ -65,14 +65,14 @@ pub async fn create(
     // Refused before anything is looked up: a model that names no agent CLI is
     // a fact about the request, not about the profiles it names. The effort
     // beside it is checked below, since an effort written on its own is run at
-    // whatever the planner profile is on.
+    // whatever the orchestrator profile is on.
     pins::readable(req.model.as_deref())?;
 
-    let planner = state.store.resolve_profile(&req.planner_profile).await?;
-    if planner.role() != Role::Planner {
+    let orchestrator = state.store.resolve_profile(&req.orchestrator_profile).await?;
+    if orchestrator.seat() != Seat::Orchestrator {
         return Err(ApiError::bad_request(format!(
-            "profile {} has role {}, expected planner",
-            planner.name, planner.role
+            "profile {} has seat {}, expected orchestrator",
+            orchestrator.name, orchestrator.seat
         )));
     }
     // Resolved here as well as in the store, so an unknown id is a 404 about
@@ -84,8 +84,8 @@ pub async fn create(
         req.model.as_deref(),
         req.effort.as_deref(),
         Standing {
-            agent_kind: planner.agent_kind(),
-            model: planner.model.as_deref(),
+            agent_kind: orchestrator.agent_kind(),
+            model: orchestrator.model.as_deref(),
         },
     )
     .await?;
@@ -95,14 +95,14 @@ pub async fn create(
         .create_goal(NewGoal {
             title: req.title,
             description: req.description,
-            planner_profile_id: planner.id,
+            orchestrator_profile_id: orchestrator.id,
             max_tasks: req.max_tasks,
             required_approvals: req.required_approvals.unwrap_or(1),
             repository_ids: req.repository_ids,
             pin,
         })
         .await?;
-    // The scheduler spawns the planner session for goals in planning.
+    // The scheduler spawns the orchestrator session for goals in planning.
     state.notify_scheduler_goal(&goal.id);
     Ok((StatusCode::CREATED, to_dto(&state.store, goal).await?))
 }
@@ -206,7 +206,8 @@ pub async fn delete(
 }
 
 /// Finalize the plan: goal moves planning -> active and its tasks start. The
-/// planner's call alone, and there is nothing left for the user to approve.
+/// orchestrator's call alone, and there is nothing left for the user to
+/// approve.
 #[utoipa::path(post, path = "/v1/goals/{id}/finalize", tag = "goals",
     request_body = FinalizePlanRequest,
     params(("id" = String, Path, description = "goal id")),
@@ -218,9 +219,9 @@ pub async fn finalize(
     Json(_req): Json<FinalizePlanRequest>,
 ) -> ApiResult<Json<GoalDto>> {
     let ctx = call_ctx(&state.store, &headers).await?;
-    if ctx.actor != ariadne_core::Actor::Planner {
+    if ctx.actor != ariadne_core::Actor::Orchestrator {
         return Err(ApiError::forbidden(
-            "only the planner may finalize the plan",
+            "only the orchestrator may finalize the plan",
         ));
     }
     let goal = state.store.get_goal(&id).await?;

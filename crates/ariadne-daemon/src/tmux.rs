@@ -159,7 +159,7 @@ impl TmuxManager {
     /// Whether the session might still be there, with "could not ask" folded
     /// into "yes".
     ///
-    /// For deciding whether to *create* something — a second agent for a role
+    /// For deciding whether to *create* something — a second agent for a seat
     /// that may already have one — where a wrong "no" duplicates work that is
     /// already under way, while a wrong "yes" costs a scheduler tick that does
     /// nothing and asks again a few seconds later.
@@ -467,20 +467,20 @@ pub(crate) fn tail(id: &str) -> &str {
 /// Build the canonical tmux session name for an agent session.
 ///
 /// The name is the session's identity for its whole life, so it names what
-/// does not change: the goal, the task, the role — and, for a reviewer, which
+/// does not change: the goal, the task, the seat — and, for a reviewer, which
 /// reviewer (`suffix`), since a task can have several and each keeps one
 /// session across every review round.
 pub fn session_name(
     goal_id: &str,
     task_id: Option<&str>,
-    role: &str,
+    seat: &str,
     suffix: Option<&str>,
 ) -> String {
     let mut name = format!("ariadne-{}", tail(goal_id));
     if let Some(task) = task_id {
         name.push_str(&format!("-{}", tail(task)));
     }
-    name.push_str(&format!("-{}", &role[..3.min(role.len())]));
+    name.push_str(&format!("-{}", &seat[..3.min(seat.len())]));
     if let Some(suffix) = suffix {
         name.push_str(&format!("-{suffix}"));
     }

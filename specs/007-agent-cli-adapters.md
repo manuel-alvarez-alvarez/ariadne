@@ -41,7 +41,7 @@ Out: which model to pick (011), and what the session is briefed with (006).
    model for Claude, as a config override for Codex, and as the agent's
    variant for OpenCode.
 6. Every session is launched with its Ariadne identity in the environment —
-   session, goal, role and task — which is what the MCP server and the hook
+   session, goal, seat and task — which is what the MCP server and the hook
    sink read to act as that session.
 7. Hooks installed at spawn time report every session and tool event back to
    the daemon, and each CLI's internal session id is tracked so a session can

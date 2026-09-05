@@ -2,7 +2,7 @@
 //! a tmux process.
 //!
 //! A launch is refused rather than duplicated. Every spawn asks first whether
-//! the role already has a live session, and counts "tmux could not be asked"
+//! the seat already has a live session, and counts "tmux could not be asked"
 //! as a yes: a wrong no puts two agents on one piece of work, where a wrong
 //! yes costs a scheduler tick that asks again.
 
@@ -14,7 +14,7 @@ use anyhow::{Context, Result, anyhow};
 
 use ariadne_core::spawn_plan::SpawnPlanFile;
 use ariadne_core::{
-    AgentKind, AttentionReason, PromptKind, Role, SessionStatus, TaskStatus, probe,
+    AgentKind, AttentionReason, PromptKind, Seat, SessionStatus, TaskStatus, probe,
 };
 use ariadne_store::{
     AgentSession, NewSession, Profile, Repository, SessionFilter, Store, Task, TaskFilter,
@@ -59,7 +59,7 @@ pub struct Launcher {
     pub tmux: TmuxManager,
     pub git: GitManager,
     /// The task branches whose head the daemon is following, so that a commit
-    /// an engineer makes reaches the clients watching its diff.
+    /// an author makes reaches the clients watching its diff.
     pub branches: BranchWatchers,
 }
 
@@ -110,9 +110,10 @@ impl Launcher {
     /// CLI (claude_code, then codex, then opencode) when the pin is auto.
     ///
     /// The pin is the one taken from the profile when the work was defined —
-    /// the task's for an engineer, the reviewer slot's for a reviewer, the
-    /// goal's for a planner — never the profile as it reads now. `owner` names
-    /// the row it came from, for the error a missing CLI raises.
+    /// the task's for an author, the reviewer slot's for a reviewer, the
+    /// goal's for an orchestrator — never the profile as it reads now.
+    /// `owner` names the row it came from, for the error a missing CLI
+    /// raises.
     fn resolve_agent_kind(&self, pinned: Option<AgentKind>, owner: &str) -> Result<AgentKind> {
         match pinned {
             Some(kind) => Ok(kind),
@@ -124,8 +125,8 @@ impl Launcher {
         }
     }
 
-    /// Refuse to double-spawn: one live session per (task, role) —
-    /// per (task, role, profile) for reviewers.
+    /// Refuse to double-spawn: one live session per (task, seat) —
+    /// per (task, seat, profile) for reviewers.
     ///
     /// A pane tmux will not answer for counts as live. This is the last guard
     /// before a second agent starts working on somebody else's task, and the
@@ -136,7 +137,7 @@ impl Launcher {
         &self,
         goal_id: &str,
         task_id: Option<&str>,
-        role: Role,
+        seat: Seat,
         profile_id: Option<&str>,
     ) -> Result<()> {
         let live = self
@@ -149,13 +150,13 @@ impl Launcher {
             })
             .await?;
         for s in live {
-            if s.role() == role
-                && (role != Role::Reviewer || profile_id.is_none_or(|p| p == s.profile_id))
+            if s.seat() == seat
+                && (seat != Seat::Reviewer || profile_id.is_none_or(|p| p == s.profile_id))
                 && self.tmux.has_session_or_unknown(&s.tmux_session).await
             {
                 return Err(anyhow!(
                     "a live {} session already exists: {} (tmux {})",
-                    role.as_str(),
+                    seat.as_str(),
                     s.id,
                     s.tmux_session
                 ));
@@ -166,7 +167,7 @@ impl Launcher {
 
     /// Take the tmux name the session about to be created will run under.
     ///
-    /// A name is derived from the goal, the task and the role, so a role has
+    /// A name is derived from the goal, the task and the seat, so a seat has
     /// exactly one of them: a pane still holding it when
     /// [`Self::assert_no_live_session`] has just found nothing live belongs to
     /// a session the database has already retired. That is the daemon and the
@@ -178,7 +179,7 @@ impl Launcher {
     ///
     /// The leftover pane is therefore killed rather than worked around: what
     /// goes is an agent nothing in the database is waiting on, and what is
-    /// kept is the one name its role has. A tmux that will not answer is left
+    /// kept is the one name its seat has. A tmux that will not answer is left
     /// alone, here as everywhere — the spawn behind this fails the way it
     /// always did, and the next pass asks again.
     async fn claim_pane(&self, name: &str) -> Result<()> {
@@ -300,7 +301,7 @@ impl Launcher {
     /// to reach the next launch, whichever path that launch comes down.
     ///
     /// The model and the effort it runs at are the opposite: they are the ones
-    /// the session was created with, off the pin its role carries, and no
+    /// the session was created with, off the pin its seat carries, and no
     /// launch of that session ever moves either. Editing a profile is meant to
     /// steer the work defined after it, not to switch the model out from under
     /// a conversation already running.
@@ -319,7 +320,7 @@ impl Launcher {
             launch_id: ariadne_core::id::new_id(),
             goal_id: session.goal_id.clone(),
             task_id: session.task_id.clone(),
-            role: session.role(),
+            seat: session.seat(),
             run_dir: self.run_dir(&session.id),
             cwd,
             socket_path: self.cfg.socket_path.clone(),
@@ -469,19 +470,19 @@ impl Launcher {
         Ok(())
     }
 
-    /// The session of `role` on this task there is something to resume, and the
+    /// The session of `seat` on this task there is something to resume, and the
     /// agent conversation it left behind: the most recent one with a captured
     /// internal id.
     ///
     /// Codex and opencode report theirs from a hook, so a session that never
     /// got going may have none, and that is nothing to resume — the caller
     /// spawns afresh instead. `profile_id` tells a task's reviewers apart,
-    /// which is the only thing that does; every other role has one session per
+    /// which is the only thing that does; every other seat has one session per
     /// task.
     async fn resumable_session(
         &self,
         task_id: &str,
-        role: Role,
+        seat: Seat,
         profile_id: Option<&str>,
     ) -> Result<Option<(AgentSession, String)>> {
         let found = self
@@ -494,7 +495,7 @@ impl Launcher {
             .into_iter()
             .rev()
             .find(|s| {
-                s.role() == role
+                s.seat() == seat
                     && profile_id.is_none_or(|wanted| s.profile_id == wanted)
                     && s.internal_session_id.is_some()
             });
@@ -538,7 +539,7 @@ impl Launcher {
     /// the other road (`restart_session` clears the row it relaunches); this
     /// is for the fresh spawn that supersedes a row instead of reviving it.
     ///
-    /// "Replaces" is the identity a spawn is refused for: the role on this
+    /// "Replaces" is the identity a spawn is refused for: the seat on this
     /// goal and task, and for a reviewer the profile too, since a task's
     /// reviewers are siblings that only their profile tells apart.
     async fn clear_superseded_attention(&self, session: &AgentSession) {
@@ -556,8 +557,8 @@ impl Launcher {
         for previous in siblings {
             if previous.id != session.id
                 && previous.task_id == session.task_id
-                && previous.role() == session.role()
-                && (previous.role() != Role::Reviewer || previous.profile_id == session.profile_id)
+                && previous.seat() == session.seat()
+                && (previous.seat() != Seat::Reviewer || previous.profile_id == session.profile_id)
                 && previous.attention_reason().is_some()
             {
                 tracing::info!(
@@ -570,15 +571,15 @@ impl Launcher {
         }
     }
 
-    /// Spawn the planner for a goal (cwd = first repo).
-    pub async fn spawn_planner(&self, goal_id: &str) -> Result<AgentSession> {
+    /// Spawn the orchestrator for a goal (cwd = first repo).
+    pub async fn spawn_orchestrator(&self, goal_id: &str) -> Result<AgentSession> {
         let goal = self.store.get_goal(goal_id).await?;
         let repos = self.store.list_goal_repositories(goal_id).await?;
         let repo = repos.first().context("goal has no repos")?;
-        let profile = self.store.get_profile(&goal.planner_profile_id).await?;
-        self.assert_no_live_session(goal_id, None, Role::Planner, None)
+        let profile = self.store.get_profile(&goal.orchestrator_profile_id).await?;
+        self.assert_no_live_session(goal_id, None, Seat::Orchestrator, None)
             .await?;
-        let tmux_session = session_name(&goal.id, None, "planner", None);
+        let tmux_session = session_name(&goal.id, None, "orchestrator", None);
         self.claim_pane(&tmux_session).await?;
 
         let session = self
@@ -586,7 +587,7 @@ impl Launcher {
             .create_session(NewSession {
                 goal_id: goal.id.clone(),
                 task_id: None,
-                role: Role::Planner,
+                seat: Seat::Orchestrator,
                 profile_id: profile.id.clone(),
                 agent_kind: self
                     .resolve_agent_kind(goal.agent_kind(), &format!("goal {}", goal.id))?,
@@ -599,8 +600,8 @@ impl Launcher {
             .await?;
 
         let system = prompts::system_prompt(&profile);
-        let template = prompts::template_for(PromptKind::PlannerBriefing);
-        let briefing = prompts::planner_briefing(template, &goal, &repos);
+        let template = prompts::template_for(PromptKind::OrchestratorBriefing);
+        let briefing = prompts::orchestrator_briefing(template, &goal, &repos);
         self.spawn(&session, PathBuf::from(&repo.path), system, briefing)
             .await?;
         self.store
@@ -609,25 +610,25 @@ impl Launcher {
             .map_err(Into::into)
     }
 
-    /// Spawn the engineer for a task: worktree + branch + session.
-    pub async fn spawn_engineer(&self, task_id: &str) -> Result<AgentSession> {
+    /// Spawn the author for a task: worktree + branch + session.
+    pub async fn spawn_author(&self, task_id: &str) -> Result<AgentSession> {
         let task = self.store.get_task(task_id).await?;
         let goal = self.store.get_goal(&task.goal_id).await?;
         let repo = self.store.get_repository(&task.repo_id).await?;
-        let profile = self.store.get_profile(&task.engineer_profile_id).await?;
-        self.assert_no_live_session(&goal.id, Some(task_id), Role::Engineer, None)
+        let profile = self.store.get_profile(&task.author_profile_id).await?;
+        self.assert_no_live_session(&goal.id, Some(task_id), Seat::Author, None)
             .await?;
-        let tmux_session = session_name(&goal.id, Some(&task.id), "engineer", None);
+        let tmux_session = session_name(&goal.id, Some(&task.id), "author", None);
         self.claim_pane(&tmux_session).await?;
 
-        let worktree = self.engineer_worktree(&task, &repo, None).await?;
+        let worktree = self.author_worktree(&task, &repo, None).await?;
 
         let session = self
             .store
             .create_session(NewSession {
                 goal_id: goal.id.clone(),
                 task_id: Some(task.id.clone()),
-                role: Role::Engineer,
+                seat: Seat::Author,
                 profile_id: profile.id.clone(),
                 agent_kind: self
                     .resolve_agent_kind(task.agent_kind(), &format!("task {}", task.id))?,
@@ -646,8 +647,8 @@ impl Launcher {
             deps.push(self.store.get_task(&dep_id).await?);
         }
         let system = prompts::system_prompt(&profile);
-        let template = prompts::template_for(PromptKind::EngineerBriefing);
-        let briefing = prompts::engineer_briefing(template, &task, &goal, &repo, &deps);
+        let template = prompts::template_for(PromptKind::AuthorBriefing);
+        let briefing = prompts::author_briefing(template, &task, &goal, &repo, &deps);
         self.spawn(&session, worktree, system, briefing).await?;
         self.store
             .get_session(&session.id)
@@ -655,15 +656,15 @@ impl Launcher {
             .map_err(Into::into)
     }
 
-    /// The engineer's worktree, checked out on the task branch: created on the
+    /// The author's worktree, checked out on the task branch: created on the
     /// first spawn, and created again whenever it has been cleaned up under a
     /// task that is still going. Nobody else ever holds the branch — the
-    /// engineer keeps it from the first commit to the merge.
+    /// author keeps it from the first commit to the merge.
     ///
-    /// `keep` is the tree a resumed engineer was working in — kept while it is
+    /// `keep` is the tree a resumed author was working in — kept while it is
     /// still on disk, since an agent is put back where it left off rather than
     /// beside it. A fresh spawn passes `None` and gets the canonical path.
-    async fn engineer_worktree(
+    async fn author_worktree(
         &self,
         task: &Task,
         repo: &Repository,
@@ -743,7 +744,7 @@ impl Launcher {
                     task_id
                 )
             })?;
-        self.assert_no_live_session(&goal.id, Some(task_id), Role::Reviewer, Some(&profile.id))
+        self.assert_no_live_session(&goal.id, Some(task_id), Seat::Reviewer, Some(&profile.id))
             .await?;
         let tmux_session = session_name(
             &goal.id,
@@ -759,7 +760,7 @@ impl Launcher {
             .create_session(NewSession {
                 goal_id: goal.id.clone(),
                 task_id: Some(task.id.clone()),
-                role: Role::Reviewer,
+                seat: Seat::Reviewer,
                 profile_id: profile.id.clone(),
                 agent_kind: self.resolve_agent_kind(
                     slot.agent_kind(),
@@ -804,7 +805,7 @@ impl Launcher {
         let profile = self.store.get_profile(profile_id).await?;
 
         let Some((previous, internal)) = self
-            .resumable_session(&task.id, Role::Reviewer, Some(&profile.id))
+            .resumable_session(&task.id, Seat::Reviewer, Some(&profile.id))
             .await?
         else {
             return self.spawn_reviewer(task_id, profile_id).await;
@@ -827,19 +828,19 @@ impl Launcher {
             .await
     }
 
-    /// Resume the engineer's previous agent session with a new instruction,
+    /// Resume the author's previous agent session with a new instruction,
     /// relaunching the very same session — row, id and tmux name — so a task
-    /// bounced through several review rounds keeps one engineer session rather
+    /// bounced through several review rounds keeps one author session rather
     /// than one per round (spawn afresh if there is nothing to resume).
-    pub async fn resume_engineer(&self, task_id: &str, instruction: &str) -> Result<AgentSession> {
+    pub async fn resume_author(&self, task_id: &str, instruction: &str) -> Result<AgentSession> {
         let task = self.store.get_task(task_id).await?;
-        let profile = self.store.get_profile(&task.engineer_profile_id).await?;
+        let profile = self.store.get_profile(&task.author_profile_id).await?;
 
         let Some((previous, internal)) = self
-            .resumable_session(&task.id, Role::Engineer, None)
+            .resumable_session(&task.id, Seat::Author, None)
             .await?
         else {
-            return self.spawn_engineer(task_id).await;
+            return self.spawn_author(task_id).await;
         };
         // The tree it was working in, from the task or from the session's own
         // row, and a new one in its place where it is no longer on disk.
@@ -849,7 +850,7 @@ impl Launcher {
             .or_else(|| previous.worktree_path.clone())
             .map(PathBuf::from);
         let repo = self.store.get_repository(&task.repo_id).await?;
-        let worktree = self.engineer_worktree(&task, &repo, keep).await?;
+        let worktree = self.author_worktree(&task, &repo, keep).await?;
         if self.tmux.has_session(&previous.tmux_session).await {
             self.tmux.kill_session(&previous.tmux_session).await.ok();
         }
@@ -909,14 +910,14 @@ impl Launcher {
             )
         })?;
         let profile = self.store.get_profile(&previous.profile_id).await?;
-        let role = previous.role();
+        let seat = previous.seat();
 
-        let cwd = match role {
-            Role::Planner => {
+        let cwd = match seat {
+            Seat::Orchestrator => {
                 let repos = self.store.list_goal_repositories(&previous.goal_id).await?;
                 PathBuf::from(&repos.first().context("goal has no repos")?.path)
             }
-            Role::Engineer | Role::Reviewer => PathBuf::from(
+            Seat::Author | Seat::Reviewer => PathBuf::from(
                 previous
                     .worktree_path
                     .clone()
@@ -981,13 +982,13 @@ impl Launcher {
         Ok(())
     }
 
-    /// Cleanup after a merged/cancelled task: kill sessions, remove worktrees,
-    /// optionally delete the branch.
-    /// Idempotent: safe to call repeatedly on the same task.
+    /// Cleanup after a finished/cancelled task: kill sessions, remove
+    /// worktrees, optionally delete the branch. Idempotent: safe to call
+    /// repeatedly on the same task.
     ///
     /// `remove_worktrees = false` keeps the worktrees on disk (and therefore
-    /// also the branch — the engineer worktree has it checked out, which pins
-    /// it) so merged or cancelled work can be inspected later.
+    /// also the branch — the author worktree has it checked out, which pins
+    /// it) so finished or cancelled work can be inspected later.
     pub async fn cleanup_task(
         &self,
         task_id: &str,
@@ -1046,7 +1047,7 @@ impl Launcher {
         }
         self.git.prune_worktrees(&repo_path).await.ok();
         if delete_branch
-            && task.status() == TaskStatus::Merged
+            && task.status() == TaskStatus::Finished
             && self
                 .git
                 .branch_exists(&repo_path, &task.branch)

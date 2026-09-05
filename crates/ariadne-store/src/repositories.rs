@@ -14,7 +14,7 @@ pub struct NewRepository {
     pub description: Option<String>,
     /// How a task lands on `base_branch` here.
     pub merge_strategy: MergeStrategy,
-    /// The landing briefing this repository hands its engineer. None, or a
+    /// The landing briefing this repository hands its author. None, or a
     /// text with nothing in it, is the built-in default of `merge_strategy`.
     pub landing_prompt: Option<String>,
 }

@@ -80,12 +80,12 @@ impl Kind {
         let f = |key: &str| field(v, key);
         let (label, alias) = match self {
             Self::Goal | Self::Task => (f("title"), None),
-            Self::Session => (format!("{} session ({})", f("role"), f("status")), None),
+            Self::Session => (format!("{} session ({})", f("seat"), f("status")), None),
             Self::Repo => (
                 format!("{} [{}]", f("path"), f("base_branch")),
                 Some(f("path")),
             ),
-            Self::Profile => (format!("{} ({})", f("name"), f("role")), Some(f("name"))),
+            Self::Profile => (format!("{} ({})", f("name"), f("seat")), Some(f("name"))),
         };
         Row {
             id: f("id"),
@@ -222,8 +222,8 @@ pub fn row(id: impl Into<String>, label: impl Into<String>) -> Row {
 
 /// The profiles the arguments of one command name.
 ///
-/// A profile is named by its name as often as by its id — `--planner`,
-/// `--engineer`, a `--reviewer`'s half — so the list is what all of them are
+/// A profile is named by its name as often as by its id — `--orchestrator`,
+/// `--author`, a `--reviewer`'s half — so the list is what all of them are
 /// matched against, read once however many there are and not at all when
 /// every one of them is already a whole id.
 pub enum Profiles<'a> {
@@ -547,14 +547,14 @@ mod tests {
                 },
                 Row {
                     id: "01m0prof0000000000000fghjk".into(),
-                    label: "My Engineer (engineer)".into(),
-                    alias: Some("My Engineer".into()),
+                    label: "My Author (author)".into(),
+                    alias: Some("My Author".into()),
                 },
             ],
         ))
     }
 
-    /// `--planner`, `--engineer`, a `--reviewer`'s half: all documented as
+    /// `--orchestrator`, `--author`, a `--reviewer`'s half: all documented as
     /// taking an id or a name, and the daemon's own lookup is exact — so the
     /// short and upper-cased spellings are resolved here or not at all.
     #[tokio::test]
@@ -565,7 +565,7 @@ mod tests {
             "01m0prof0000000000000abcde"
         );
         assert_eq!(
-            profiles.id("my engineer").await.expect("a name, any case"),
+            profiles.id("my author").await.expect("a name, any case"),
             "01m0prof0000000000000fghjk"
         );
         assert_eq!(
@@ -593,7 +593,7 @@ mod tests {
         assert_eq!(row.label, "Wire the screen");
         assert_eq!(row.alias, None);
 
-        let profile = serde_json::json!({"id": "01m0p", "name": "Reviewer", "role": "reviewer"});
+        let profile = serde_json::json!({"id": "01m0p", "name": "Reviewer", "seat": "reviewer"});
         let row = Kind::Profile.row(&profile);
         assert_eq!(row.label, "Reviewer (reviewer)");
         assert_eq!(row.alias.as_deref(), Some("Reviewer"));

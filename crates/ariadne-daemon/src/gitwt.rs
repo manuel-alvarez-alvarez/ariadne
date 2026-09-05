@@ -32,7 +32,7 @@ impl GitManager {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
 
-    /// Create an engineer worktree on `branch` (created at `base` when new).
+    /// Create an author worktree on `branch` (created at `base` when new).
     pub async fn add_worktree(
         &self,
         repo: &Path,
@@ -172,7 +172,7 @@ impl GitManager {
     }
 
     /// True when `ancestor` is reachable from `descendant` — the merge
-    /// verification used before accepting `mark_merged`.
+    /// verification used before accepting `finish_task`.
     pub async fn is_ancestor(&self, repo: &Path, ancestor: &str, descendant: &str) -> Result<bool> {
         let output = Command::new("git")
             .arg("-C")

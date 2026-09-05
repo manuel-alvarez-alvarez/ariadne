@@ -10,7 +10,7 @@ use serde_json::json;
 
 use ariadne_api::profiles::{CreateProfileRequest, ProfileDto, UpdateProfileRequest};
 use ariadne_client::{Client, ClientError};
-use ariadne_core::Role;
+use ariadne_core::Seat;
 
 use super::resolve::{self, Kind};
 use super::{
@@ -24,14 +24,14 @@ use crate::output::{
 
 use prompts::{SYSTEM, SystemPromptArg, parse_prompt_arg, read_system_prompt};
 
-/// Columns of `profile ls`. A profile is its name and its role; how old it is
+/// Columns of `profile ls`. A profile is its name and its seat; how old it is
 /// is the least of what one asks a profile, and the effort goes before the
 /// model it belongs to — on a narrow terminal, what an agent runs on is the
 /// half worth keeping.
 const LS: &[Column] = &[
     col("id", UNCAPPED).id(),
     col("name", 32).title(),
-    col("role", UNCAPPED).rank(4),
+    col("seat", UNCAPPED).rank(4),
     col("model", 32).rank(3),
     col("effort", UNCAPPED).rank(2),
     col("age", UNCAPPED).rank(1),
@@ -43,7 +43,7 @@ pub enum ProfileCommand {
     ///
     /// The system prompt is the one prompt a profile owns: give it with
     /// `--system-prompt <text>` or `--system-prompt-file <path>`, or leave
-    /// both out to start on the default of the role. The briefings that
+    /// both out to start on the default of the seat. The briefings that
     /// start, resume and nudge a session are Ariadne's own and belong to no
     /// profile.
     ///
@@ -54,8 +54,8 @@ pub enum ProfileCommand {
         #[arg(long)]
         name: String,
         /// What this profile is spawned as
-        #[arg(long, value_parser = Spelling::<Role>::new())]
-        role: Role,
+        #[arg(long, value_parser = Spelling::<Seat>::new())]
+        seat: Seat,
         /// What this profile runs on: AGENT[:MODEL] — an agent CLI
         /// (claude_code | codex | opencode) on its own default model, or one
         /// model of it after the colon (codex:gpt-5.3-codex). Omit for auto:
@@ -76,9 +76,9 @@ pub enum ProfileCommand {
     },
     /// List profiles
     Ls {
-        /// Filter by role
-        #[arg(long, value_parser = Spelling::<Role>::new())]
-        role: Option<Role>,
+        /// Filter by seat
+        #[arg(long, value_parser = Spelling::<Seat>::new())]
+        seat: Option<Seat>,
     },
     /// Show a profile (by id or name)
     Inspect {
@@ -166,7 +166,7 @@ pub enum PromptCommand {
         #[arg(long)]
         file: Option<PathBuf>,
     },
-    /// Put the system prompt back to the default of the profile's role
+    /// Put the system prompt back to the default of the profile's seat
     Reset {
         /// Profile id or name
         #[arg(add = clap_complete::engine::ArgValueCandidates::new(crate::complete::profile_names))]
@@ -184,14 +184,14 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
     match cmd {
         ProfileCommand::Create {
             name,
-            role,
+            seat,
             model,
             effort,
             system_prompt,
             system_prompt_file,
         } => {
             // A prompt nobody wrote is not sent at all: what the profile then
-            // runs on is the default of its role, which is where it stays
+            // runs on is the default of its seat, which is where it stays
             // until somebody writes one.
             let system_prompt = read_system_prompt(system_prompt, system_prompt_file)?;
             let profile: ProfileDto = client
@@ -199,7 +199,7 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
                     "/v1/profiles",
                     &CreateProfileRequest {
                         name,
-                        role,
+                        seat,
                         model,
                         effort,
                         system_prompt,
@@ -208,9 +208,9 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
                 .await?;
             print_written(&profile, format)?;
         }
-        ProfileCommand::Ls { role } => {
-            let path = match role {
-                Some(r) => format!("/v1/profiles?role={}", r.as_str()),
+        ProfileCommand::Ls { seat } => {
+            let path = match seat {
+                Some(r) => format!("/v1/profiles?seat={}", r.as_str()),
                 None => "/v1/profiles".to_string(),
             };
             let profiles: Vec<ProfileDto> = client.get_json(&path).await?;
@@ -223,7 +223,7 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
                     vec![
                         p.id.clone(),
                         p.name.clone(),
-                        p.role.as_str().into(),
+                        p.seat.as_str().into(),
                         model_label(p.model.as_deref()),
                         effort_label(p.effort.as_deref()),
                         age(&p.created_at, now),
@@ -238,7 +238,7 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
                 print_kv(&[
                     ("id", Kv::id(p.id.clone())),
                     ("name", Kv::title(p.name.clone())),
-                    ("role", p.role.as_str().into()),
+                    ("seat", p.seat.as_str().into()),
                     ("model", model_label(p.model.as_deref()).into()),
                     ("effort", effort_label(p.effort.as_deref()).into()),
                     ("created", Kv::meta(moment(&p.created_at))),
@@ -293,7 +293,7 @@ pub async fn run(client: &Client, cmd: ProfileCommand, format: Format) -> Result
 }
 
 /// A profile by id or name — the lookup every prompt command starts with: it
-/// is what tells a kind from a kind of another role, and what puts a name
+/// is what tells a kind from a kind of another seat, and what puts a name
 /// beside the id in the output.
 ///
 /// A name and a whole id are what `/v1/profiles/{id}` itself resolves, so
@@ -341,11 +341,11 @@ fn print_written(p: &ProfileDto, format: Format) -> Result<()> {
 }
 
 /// What `profile rm` asks before it deletes: the id alone does not say which
-/// agent setup is about to go, so the question names the profile and its role.
+/// agent setup is about to go, so the question names the profile and its seat.
 fn rm_question(p: &ProfileDto, subject: &Subject) -> String {
     format!(
         "Delete the {} profile {}?",
-        p.role.as_str(),
+        p.seat.as_str(),
         subject.named()
     )
 }
@@ -379,7 +379,7 @@ mod tests {
 
     fn update(system_prompt: Option<&str>, file: Option<&str>) -> ProfileCommand {
         ProfileCommand::Update {
-            id: "Engineer".into(),
+            id: "Author".into(),
             name: None,
             model: None,
             effort: None,
@@ -413,17 +413,17 @@ mod tests {
     }
 
     /// The question is the last thing between the caller and a deleted
-    /// profile, so it says which one by name and role, not by the id typed.
+    /// profile, so it says which one by name and seat, not by the id typed.
     #[test]
-    fn the_rm_question_names_the_profile_and_its_role() {
+    fn the_rm_question_names_the_profile_and_its_seat() {
         let p = ProfileDto {
             id: "01m0prof0000000000000abcde".into(),
-            ..super::super::fixtures::profile("Engineer", Role::Engineer)
+            ..super::super::fixtures::profile("Author", Seat::Author)
         };
         let subject = Subject::new("profile", &p.name, &p.id);
         assert_eq!(
             rm_question(&p, &subject),
-            "Delete the engineer profile \"Engineer\" (…000abcde)?"
+            "Delete the author profile \"Author\" (…000abcde)?"
         );
         // A profile pinned to nothing runs on the first installed CLI; one
         // that is pinned shows the whole string it was pinned with.

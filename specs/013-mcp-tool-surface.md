@@ -12,36 +12,36 @@ tests:
 # MCP tool surface
 
 The only way an agent reaches Ariadne: a stdio MCP server, started per
-session, that serves the tools of that session's role and nothing else.
+session, that serves the tools of that session's seat and nothing else.
 
 ## Scope
 
-In: the server's identity and instructions, the tools of each role, role
+In: the server's identity and instructions, the tools of each seat, seat
 filtering, session scoping, and how a refusal reads.
 
-Out: what an agent is told to do with each tool — that is the role's playbook
+Out: what an agent is told to do with each tool — that is the seat's playbook
 (003, 004, 005).
 
 ## Behavior
 
 1. `ariadne mcp serve` is spawned by the agent CLI with a config generated at
-   session spawn. It reads its identity from the environment — session, role,
+   session spawn. It reads its identity from the environment — session, seat,
    goal and, for a task session, the task — and proxies to the daemon's REST
    API with a session header, so the daemon enforces the scoping itself.
 2. The server's instructions, which every session receives before its first
    prompt, say what this session is and carry the session rules that hold for
-   every role alike (006).
-3. Whether anyone answers a question is the one rule picked by role: the
-   planner's user answers in the terminal, one question at a time, and the
-   planner then waits; an engineer or reviewer works alone and does not ask.
-4. Tools are filtered by role both in the listing and on the call, so a tool a
-   role may not use is one it never sees:
-   - **planner**: `get_task`, `create_task`, `update_task`, `list_models`,
+   every seat alike (006).
+3. Whether anyone answers a question is the one rule picked by seat: the
+   orchestrator's user answers in the terminal, one question at a time, and the
+   orchestrator then waits; an author or reviewer works alone and does not ask.
+4. Tools are filtered by seat both in the listing and on the call, so a tool a
+   seat may not use is one it never sees:
+   - **orchestrator**: `get_task`, `create_task`, `update_task`, `list_models`,
      `list_profiles`, `finalize_plan`
-   - **engineer**: `get_task`, `request_review`, `fail_task`, `mark_merged`,
+   - **author**: `get_task`, `request_review`, `fail_task`, `finish_task`,
      `record_pull_request`
    - **reviewer**: `get_task`, `get_diff`, `submit_verdict`
-5. A call to a tool outside the role's list is refused by name rather than
+5. A call to a tool outside the seat's list is refused by name rather than
    forwarded.
 6. A tool with no task in scope takes the session's own task, and refuses with
    an instruction to pass one where there is neither.
@@ -54,14 +54,15 @@ Out: what an agent is told to do with each tool — that is the role's playbook
 
 ## Acceptance criteria
 
-- Every role has the tools its playbook names and no others
+- Every seat has the tools its playbook names and no others
   (`mcp.rs::every_role_has_the_tools_its_playbook_names_and_no_others`), and
   every allowed tool is one the router actually serves
   (`::every_allowed_tool_is_one_the_router_serves`).
 - Every session is told how Ariadne is reached
-  (`mcp.rs::every_session_is_told_how_ariadne_is_reached`), only the planner is
-  told to ask (`::only_the_planner_is_told_to_ask`), and no session is told of a
-  conversation (`::no_session_is_told_of_a_conversation`).
+  (`mcp.rs::every_session_is_told_how_ariadne_is_reached`), only the
+  orchestrator is told to ask (`::only_the_orchestrator_is_told_to_ask`), and
+  no session is told of a conversation
+  (`::no_session_is_told_of_a_conversation`).
 - The shared rules stay small (`mcp.rs::the_shared_rules_stay_small`).
 - Every text the server hands an agent — instructions and tool descriptions —
   is Simplified Technical English

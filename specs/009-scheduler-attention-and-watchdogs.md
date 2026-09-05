@@ -32,10 +32,10 @@ Out: what a resumed agent is told (006), and the compaction a hand-off owes
 2. Every rule is idempotent — read the state, compare with what is wanted, act
    — so a pass that arrives late does what the state says now, never a replay
    of what it missed.
-3. A goal in `planning` wants one live planner; a goal past it wants that
-   planner compacted and then let go. A task wants an engineer from `ready` to
-   the merge, the reviewers a round is waiting on, and the cleanup its ending
-   owes (001, 004).
+3. A goal in `planning` wants one live orchestrator; a goal past it wants that
+   orchestrator compacted and then let go. A task wants an author from `ready`
+   to the merge, the reviewers a round is waiting on, and the cleanup its
+   ending owes (001, 004).
 4. One clock governs a quiet agent: how long since the session was heard from
    at all. On that clock sit a nudge, then the user, then the pane killed and
    the agent put back on its feet — at 180 s, 600 s and 1800 s
@@ -50,9 +50,9 @@ Out: what a resumed agent is told (006), and the compaction a hand-off owes
    pass.
 7. Attention on a session means a human must act, and it is raised only while
    the work that session was started for is still its own to do. A reviewer
-   that has voted, an engineer whose task is under review and a planner whose
-   goal has left planning are agents nobody is waiting on, whatever their pane
-   shows.
+   that has voted, an author whose task is under review and an orchestrator
+   whose goal has left planning are agents nobody is waiting on, whatever their
+   pane shows.
 8. A session waiting on a person is never nudged and never relaunched: the
    quiet is the point.
 9. An agent that reported an error is left alone rather than nudged over it.
@@ -65,7 +65,7 @@ Out: what a resumed agent is told (006), and the compaction a hand-off owes
 12. When tmux cannot be reached, a pass neither spawns nor fails anything: a
     silent agent whose pane cannot be read is left for the next pass.
 13. A task that could never be started fails with the reason on it, and a
-    planner that can never be started gives up with exactly one alarm.
+    orchestrator that can never be started gives up with exactly one alarm.
 14. A goal whose tasks have all landed is completed; a session that outlived
     its completed goal is killed.
 15. A pass that has three agents to nudge does not wait on the keystrokes:
@@ -73,10 +73,11 @@ Out: what a resumed agent is told (006), and the compaction a hand-off owes
 
 ## Acceptance criteria
 
-- An idle planner, reviewer or engineer past the threshold is raised on its
-  session (`scheduler_attention.rs::a_planner_idle_past_the_threshold_is_raised_on_its_session`,
+- An idle orchestrator, reviewer or author past the threshold is raised on its
+  session
+  (`scheduler_attention.rs::an_orchestrator_idle_past_the_threshold_is_raised_on_its_session`,
   `::a_reviewer_idle_past_the_threshold_is_raised_on_its_session`,
-  `::an_engineer_stall_flags_the_task_and_its_session`).
+  `::an_author_stall_flags_the_task_and_its_session`).
 - An idle agent is nudged once for the situation it went quiet in
   (`::an_idle_agent_is_nudged_once_for_the_situation_it_went_quiet_in`), a
   composer still holding its instruction gets the Enter alone

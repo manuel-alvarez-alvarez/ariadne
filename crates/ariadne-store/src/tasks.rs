@@ -18,8 +18,8 @@ pub struct NewTask {
     pub repo_id: String,
     pub title: String,
     pub description: String,
-    pub engineer_profile_id: String,
-    /// What the engineer is pinned to run on. None = the engineer profile's
+    pub author_profile_id: String,
+    /// What the author is pinned to run on. None = the author profile's
     /// own agent, model and effort.
     pub pin: Option<AgentPin>,
     /// The reviewer slots to cut, in review order; at least one.
@@ -51,8 +51,8 @@ impl ReviewerSlot {
 pub struct TaskUpdate {
     pub title: Option<String>,
     pub description: Option<String>,
-    /// What the engineer runs on: `Some(Some(pin))` moves it there,
-    /// `Some(None)` puts it back on the engineer profile's agent, model and
+    /// What the author runs on: `Some(Some(pin))` moves it there,
+    /// `Some(None)` puts it back on the author profile's agent, model and
     /// effort as they stand now, None leaves the task's pins alone.
     pub pin: Option<Option<AgentPin>>,
     /// The effort alone, for an edit that leaves the model where it is:
@@ -145,7 +145,8 @@ fn slug(title: &str) -> String {
 
 impl Store {
     /// Create a task in `pending`. Enforces the goal's `max_tasks`, validates
-    /// reviewers are non-empty and deps belong to the same goal and are acyclic.
+    /// reviewers are non-empty and deps belong to the same goal and are
+    /// acyclic.
     pub async fn create_task(&self, new: NewTask) -> Result<Task> {
         if new.reviewers.is_empty() {
             return Err(StoreError::Invalid(
@@ -185,17 +186,17 @@ impl Store {
             }
         }
 
-        // The engineer's agent, model and effort are copied onto the task here
+        // The author's agent, model and effort are copied onto the task here
         // and never re-read: editing the profile later must not move a task
         // that is already defined, let alone one mid-flight. A task created
         // with a model of its own is pinned to that instead.
-        let engineer: Profile =
-            Self::fetch_by_in_tx(&mut tx, "profile", "profiles", &new.engineer_profile_id).await?;
-        let (agent_kind, model, effort) = AgentPin::or_profile(new.pin.as_ref(), &engineer);
+        let author: Profile =
+            Self::fetch_by_in_tx(&mut tx, "profile", "profiles", &new.author_profile_id).await?;
+        let (agent_kind, model, effort) = AgentPin::or_profile(new.pin.as_ref(), &author);
 
         sqlx::query(
             "INSERT INTO tasks (id, goal_id, repo_id, title, description, status,
-                                engineer_profile_id, agent_kind, model, effort, branch,
+                                author_profile_id, agent_kind, model, effort, branch,
                                 created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)",
         )
@@ -204,7 +205,7 @@ impl Store {
         .bind(&repo.id)
         .bind(&new.title)
         .bind(&new.description)
-        .bind(&new.engineer_profile_id)
+        .bind(&new.author_profile_id)
         .bind(&agent_kind)
         .bind(&model)
         .bind(&effort)
@@ -226,7 +227,7 @@ impl Store {
         Ok(task)
     }
 
-    /// Replace the dependency set of a task (planner, pre-start only).
+    /// Replace the dependency set of a task (orchestrator, pre-start only).
     pub async fn set_task_dependencies(&self, task_id: &str, depends_on: &[String]) -> Result<()> {
         let mut tx = self.w().begin().await?;
         // Status is validated on the row inside the write transaction: a check
@@ -250,7 +251,7 @@ impl Store {
                     &mut tx,
                     &task,
                     TaskStatus::Pending,
-                    Actor::Planner,
+                    Actor::Orchestrator,
                     Some("dependencies changed"),
                     None,
                 )
@@ -265,7 +266,8 @@ impl Store {
         Ok(())
     }
 
-    /// Validate deps exist, belong to `goal_id`, and introduce no cycle; insert them.
+    /// Validate deps exist, belong to `goal_id`, and introduce no cycle;
+    /// insert them.
     async fn insert_dependencies(
         tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
         goal_id: &str,
@@ -357,7 +359,7 @@ impl Store {
         let title = update.title.unwrap_or(task.title);
         let description = update.description.unwrap_or(task.description);
         // A pin the caller did not touch stays exactly as it was written;
-        // clearing one reads the engineer profile again, so what comes back is
+        // clearing one reads the author profile again, so what comes back is
         // what that profile is on now rather than what it was on at creation.
         let (agent_kind, model, effort) = match &update.pin {
             // The model stands, so an effort of its own moves alone: what it
@@ -368,10 +370,10 @@ impl Store {
                 update.effort.clone().unwrap_or_else(|| task.effort.clone()),
             ),
             Some(pin) => {
-                let engineer: Profile =
-                    Self::fetch_by_in_tx(&mut tx, "profile", "profiles", &task.engineer_profile_id)
+                let author: Profile =
+                    Self::fetch_by_in_tx(&mut tx, "profile", "profiles", &task.author_profile_id)
                         .await?;
-                AgentPin::or_profile(pin.as_ref(), &engineer)
+                AgentPin::or_profile(pin.as_ref(), &author)
             }
         };
         sqlx::query(
@@ -453,9 +455,9 @@ impl Store {
         let from = task.status();
         check_transition(from, to, actor)?;
 
-        if to == TaskStatus::Merged && merge_commit.is_none() {
+        if to == TaskStatus::Finished && merge_commit.is_none() {
             return Err(StoreError::Invalid(
-                "merged transition requires a merge commit".into(),
+                "finished transition requires a merge commit".into(),
             ));
         }
 
@@ -516,11 +518,11 @@ impl Store {
         .await?)
     }
 
-    /// The summary the engineer asked for review with, for the round that is
+    /// The summary the author asked for review with, for the round that is
     /// open now: the reason of the most recent `under_review` transition.
     ///
     /// The round records it because the round is what it belongs to. Read off
-    /// the conversation it would be whatever the engineer happened to write
+    /// the conversation it would be whatever the author happened to write
     /// last, and what the reviewers are handed has to be what it submitted.
     pub async fn review_summary(&self, task_id: &str) -> Result<Option<String>> {
         Ok(sqlx::query_scalar::<_, Option<String>>(
@@ -539,7 +541,7 @@ impl Store {
     /// transition that put it into `failed` or `cancelled`.
     ///
     /// The status is the fact and the transition is the words, so this is
-    /// where the two are put back together — what an engineer's `fail_task`
+    /// where the two are put back together — what an author's `fail_task`
     /// said, what a dependency that never landed said, what cancelled the
     /// goal. Read off the audit row that recorded it rather than kept in a
     /// column of its own, which would be a second copy to drift.
@@ -563,7 +565,7 @@ impl Store {
         .flatten())
     }
 
-    /// Reviewer profile ids in planner-assigned order.
+    /// Reviewer profile ids in orchestrator-assigned order.
     pub async fn list_task_reviewers(&self, task_id: &str) -> Result<Vec<String>> {
         Ok(sqlx::query_scalar(
             "SELECT profile_id FROM task_reviewers WHERE task_id = ? ORDER BY position",
@@ -624,12 +626,12 @@ impl Store {
         .await?)
     }
 
-    /// True when every dependency of the task is merged.
+    /// True when every dependency of the task is finished.
     pub async fn task_dependencies_merged(&self, task_id: &str) -> Result<bool> {
         let unmerged: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM task_dependencies td
              JOIN tasks dep ON dep.id = td.depends_on_task_id
-             WHERE td.task_id = ? AND dep.status <> 'merged'",
+             WHERE td.task_id = ? AND dep.status <> 'finished'",
         )
         .bind(task_id)
         .fetch_one(self.r())
@@ -675,7 +677,7 @@ impl Store {
     /// Record the pull or merge request a task was published as.
     ///
     /// The URL is the whole of it: nothing polls the request but the
-    /// engineer's own session, and the URL is what the UI and the CLI show.
+    /// author's own session, and the URL is what the UI and the CLI show.
     pub async fn set_task_pull_request(&self, task_id: &str, url: &str) -> Result<()> {
         let n = sqlx::query("UPDATE tasks SET pr_url = ?, updated_at = ? WHERE id = ?")
             .bind(url)
@@ -709,8 +711,8 @@ impl Store {
     /// decided by the session's attention. The task's column is this
     /// projection of it, written by every write that can change what a
     /// session's attention says and by nothing else, so the two cannot drift
-    /// apart. A planner's session has no task to project onto and carries its
-    /// stall on its own row alone.
+    /// apart. An orchestrator's session has no task to project onto and
+    /// carries its stall on its own row alone.
     pub(crate) async fn sync_task_stall(&self, session_id: &str) -> Result<()> {
         let task_id: Option<String> =
             sqlx::query_scalar("SELECT task_id FROM agent_sessions WHERE id = ?")
