@@ -64,6 +64,22 @@ fn tool_call(tool_name: &str) -> serde_json::Value {
     })
 }
 
+/// How many events of `kind` this session has reported.
+async fn recorded(h: &Harness, session: &ariadne_store::AgentSession, kind: &str) -> usize {
+    h.store
+        .list_events(EventFilter {
+            session_id: Some(session.id.clone()),
+            task_id: None,
+            limit: 50,
+            after: None,
+        })
+        .await
+        .unwrap()
+        .iter()
+        .filter(|e| e.kind == kind)
+        .count()
+}
+
 async fn notifications_recorded(h: &Harness, session_id: &str) -> usize {
     h.store
         .list_events(EventFilter {
@@ -399,6 +415,72 @@ async fn launcher_session_writes_emit_session_events() {
     assert_eq!(dto.id, session.id);
     assert_eq!(dto.status, SessionStatus::Exited);
     assert!(dto.ended_at.is_some());
+}
+
+/// A relaunch starts a new agent under the same session row, and the agent it
+/// replaced still has its exit hook to fire: for half a second the daemon
+/// hears from two processes under one ARIADNE_SESSION_ID, on a resumed
+/// conversation even under one internal id. The launch each of them reports is
+/// the only thing that says which is in the pane.
+///
+/// So the dead one's word moves nothing. Believed, its `session_end` retires a
+/// session whose agent is working — and the goal then spends its spawn budget
+/// replacing an agent it already has, on a tmux name that pane still holds.
+/// The event is recorded all the same: it is what happened, it is simply no
+/// longer news about the pane.
+#[tokio::test]
+async fn an_event_from_a_launch_the_session_has_moved_past_changes_nothing() {
+    let h = harness().await;
+    let cast = h.active_cast().await;
+    hand_to_engineer(&h, &cast.task).await;
+    let session = h
+        .session(
+            &cast.goal,
+            Some(&cast.task),
+            Role::Engineer,
+            &cast.engineer.id,
+        )
+        .await;
+    h.store
+        .set_session_launch(&session.id, "01launchtwoxxxxxxxxxxxxxxx")
+        .await
+        .unwrap();
+    h.set_status(&session, SessionStatus::Running).await;
+
+    // The agent that was killed, still going through its exit: a dialog it
+    // will never be answered on, and the end of a process nobody is watching.
+    h.ingest_from(
+        &session,
+        "01launchonexxxxxxxxxxxxxxx",
+        "notification",
+        permission_prompt(),
+    )
+    .await;
+    assert_eq!(h.attention(&session).await, None);
+    h.ingest_from(
+        &session,
+        "01launchonexxxxxxxxxxxxxxx",
+        "session_end",
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(h.session_status(&session).await, SessionStatus::Running);
+    assert_eq!(
+        recorded(&h, &session, "session_end").await,
+        1,
+        "the event still landed"
+    );
+
+    // The agent that is actually in the pane, saying the same words.
+    h.ingest_from(
+        &session,
+        "01launchtwoxxxxxxxxxxxxxxx",
+        "session_end",
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(h.session_status(&session).await, SessionStatus::Exited);
+    assert_eq!(recorded(&h, &session, "session_end").await, 2);
 }
 
 /// Attention rides the same ingestion path as liveness: an agent that reports

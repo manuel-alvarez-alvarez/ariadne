@@ -312,6 +312,11 @@ pub struct AgentSession {
     /// When this session's agent process was last started. Every launch moves
     /// it, so it dates the run the session is in rather than the row.
     pub launched_at: Option<String>,
+    /// Which launch that is: a fresh id per agent process, carried by the
+    /// process itself (`ARIADNE_LAUNCH_ID`) so that what it reports can be
+    /// told from what the process it replaced is still reporting. None where
+    /// the session has never been launched.
+    pub launch_id: Option<String>,
     /// When this session was last found to owe a compaction of its agent
     /// conversation, or None where nothing is owed: set at every hand-off
     /// and cleared once the compaction is done or given up on.

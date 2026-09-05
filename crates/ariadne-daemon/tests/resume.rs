@@ -98,6 +98,11 @@ fn pipes(h: &Harness) -> Vec<String> {
     h.tmux_calls_of("pipe-pane")
 }
 
+/// The environment the launcher wrote into a session's spawn plan.
+fn env_of(h: &Harness, session_id: &str) -> Vec<(String, String)> {
+    h.spawn_plan(session_id).expect("a spawn plan").env
+}
+
 fn argv_of(h: &Harness, session_id: &str) -> String {
     h.spawn_plan(session_id)
         .expect("a spawn plan")
@@ -241,6 +246,80 @@ async fn a_planner_respawn_stays_on_the_goals_pin() {
         argv_of(&h, &second.id)
             .contains("--model opus"),
         "the respawn read the profile instead of the goal's pin"
+    );
+}
+
+/// Every launch of a session reports under a name of its own.
+///
+/// The row is the same one on a resume — the same conversation, the same
+/// worktree — so a report carrying its id says nothing about *which* agent
+/// sent it. Between the kill and the pane that replaces it, two of them can:
+/// the one being torn down has its exit hook still to fire, and on a resumed
+/// conversation even its internal id is the same. The launch is what tells
+/// them apart, so it is fresh per process, written to the row before tmux is
+/// asked for a pane, and carried by the agent in its environment.
+#[tokio::test]
+async fn every_launch_of_a_session_reports_under_a_new_id() {
+    let h = harness().await;
+    let cast = under_review(&h, None).await;
+    let task = cast.task.clone();
+
+    let first = h.launcher.spawn_engineer(&task.id).await.unwrap();
+    let launch = h.launch_id(&first).await.expect("the launch was named");
+    assert!(
+        env_of(&h, &first.id).contains(&("ARIADNE_LAUNCH_ID".to_string(), launch.clone())),
+        "the agent carries the launch it runs under: {:?}",
+        env_of(&h, &first.id)
+    );
+
+    h.launcher.kill_session(&first.id).await.unwrap();
+    let resumed = h
+        .launcher
+        .resume_engineer(&task.id, "Round 1: please fix things.")
+        .await
+        .unwrap();
+    assert_eq!(resumed.id, first.id, "the resume reused the session");
+
+    let relaunch = h.launch_id(&resumed).await.expect("the launch was named");
+    assert_ne!(relaunch, launch, "a launch of its own");
+    assert!(
+        env_of(&h, &resumed.id).contains(&("ARIADNE_LAUNCH_ID".to_string(), relaunch)),
+        "the resumed agent carries the new one"
+    );
+}
+
+/// A pane that outlived the row that owned it costs the next spawn nothing.
+///
+/// tmux names are derived from the goal, the task and the role, so a role has
+/// exactly one — and `new-session` refuses a name that is taken *after* the
+/// session row has been written. A pane left behind that way would mint a dead
+/// row per attempt until the spawn budget ran out and the user was told an
+/// agent that could have started would not. Nothing live claims that pane, so
+/// the spawn takes its name.
+#[tokio::test]
+async fn a_pane_left_behind_is_taken_rather_than_spawned_around() {
+    let h = harness().await;
+    let planner = h.profile("planner", Role::Planner).await;
+    let (goal, _repo) = h.goal(&planner).await;
+
+    let first = h.launcher.spawn_planner(&goal.id).await.unwrap();
+    // The agent is in its pane; the row under it is not — the database and
+    // the machine disagreeing, which is the whole of the situation.
+    h.pane_exists(&first);
+    h.set_status(&first, SessionStatus::Exited).await;
+
+    let second = h.launcher.spawn_planner(&goal.id).await.unwrap();
+    assert_eq!(
+        h.killed_panes(),
+        vec![first.tmux_session.clone()],
+        "the leftover pane was taken"
+    );
+    assert_eq!(second.tmux_session, first.tmux_session);
+    assert_eq!(h.session_status(&second).await, SessionStatus::Running);
+    assert_eq!(
+        h.sessions_of_goal(&goal.id).await.len(),
+        2,
+        "one row per planner that was started, and no row for an attempt that was not"
     );
 }
 

@@ -18,6 +18,10 @@ use ariadne_core::{AgentKind, Role};
 pub struct SpawnCtx {
     /// Ariadne agent-session id (becomes ARIADNE_SESSION_ID).
     pub session_id: String,
+    /// This launch of that session (becomes ARIADNE_LAUNCH_ID): fresh for
+    /// every process started under the row, so that what this agent reports
+    /// is told apart from what the agent it replaces is still reporting.
+    pub launch_id: String,
     pub goal_id: String,
     pub task_id: Option<String>,
     pub role: Role,
@@ -129,6 +133,7 @@ pub fn detect_first_available() -> Option<AgentKind> {
 pub fn base_env(ctx: &SpawnCtx) -> Vec<(String, String)> {
     let mut env = vec![
         ("ARIADNE_SESSION_ID".into(), ctx.session_id.clone()),
+        ("ARIADNE_LAUNCH_ID".into(), ctx.launch_id.clone()),
         ("ARIADNE_GOAL_ID".into(), ctx.goal_id.clone()),
         ("ARIADNE_ROLE".into(), ctx.role.as_str().to_string()),
         (

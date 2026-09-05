@@ -1019,6 +1019,41 @@ impl Harness {
         );
     }
 
+    /// The same event, reported by a named launch of that session: what every
+    /// agent the daemon starts sends, and the only thing that tells the agent
+    /// in the pane from the one it replaced.
+    pub async fn ingest_from(
+        &self,
+        session: &AgentSession,
+        launch: &str,
+        kind: &str,
+        payload: serde_json::Value,
+    ) {
+        let (status, body) = self
+            .send(post_json(
+                "/internal/agent-events",
+                serde_json::json!({
+                    "session_id": session.id,
+                    "launch": launch,
+                    "agent_kind": session.agent_kind,
+                    "kind": kind,
+                    "payload": payload,
+                }),
+            ))
+            .await;
+        assert_eq!(
+            status,
+            StatusCode::ACCEPTED,
+            "{kind}: {}",
+            String::from_utf8_lossy(&body)
+        );
+    }
+
+    /// The launch this session's row is currently answering for.
+    pub async fn launch_id(&self, session: &AgentSession) -> Option<String> {
+        self.store.get_session(&session.id).await.unwrap().launch_id
+    }
+
     /// Raise a flag on a session, the way the ingestion or a sweep would.
     pub async fn raise(&self, session: &AgentSession, reason: AttentionReason) {
         self.store
@@ -1068,6 +1103,18 @@ impl Harness {
 
     pub async fn status(&self, task_id: &str) -> TaskStatus {
         self.store.get_task(task_id).await.unwrap().status()
+    }
+
+    /// Every session a goal has ever had, live or not — a planner's included,
+    /// which is the one no task lists.
+    pub async fn sessions_of_goal(&self, goal_id: &str) -> Vec<AgentSession> {
+        self.store
+            .list_sessions(SessionFilter {
+                goal_id: Some(goal_id.to_string()),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
     }
 
     /// Every session a task has ever had, live or not.

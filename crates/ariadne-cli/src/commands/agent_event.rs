@@ -15,6 +15,10 @@ use ariadne_client::Client;
 use ariadne_core::AgentKind;
 
 const SESSION_ENV: &str = "ARIADNE_SESSION_ID";
+/// The launch of that session this process is: set beside [`SESSION_ENV`] on
+/// every agent the daemon starts, and reported back so that the daemon can
+/// tell a live agent's events from the last words of the one it replaced.
+const LAUNCH_ENV: &str = "ARIADNE_LAUNCH_ID";
 
 pub async fn run(kind: AgentKind, json: Option<String>) {
     // Never propagate failures to the calling hook.
@@ -58,6 +62,7 @@ async fn forward(agent_kind: AgentKind, json: Option<String>) {
             "/internal/agent-events",
             &IngestEventRequest {
                 session_id,
+                launch: std::env::var(LAUNCH_ENV).ok().filter(|id| !id.is_empty()),
                 agent_kind,
                 kind: event_kind,
                 payload,

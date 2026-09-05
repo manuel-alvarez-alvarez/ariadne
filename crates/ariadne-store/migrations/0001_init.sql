@@ -163,6 +163,14 @@ CREATE INDEX idx_task_deps_on ON task_dependencies (depends_on_task_id);
 -- `launched_at` is when this run of the agent process started — not the row's
 -- `created_at`, and not the `last_activity_at` the agent moves — since a
 -- session is relaunched under its own id on every resume.
+--
+-- `launch_id` names that run. A relaunch kills a pane and starts another under
+-- the same row, so for a moment two processes share one ARIADNE_SESSION_ID:
+-- the one being torn down still has its exit hook to fire, and the report of
+-- it would otherwise land on the process that replaced it and retire a session
+-- that is running. Every launch is given a fresh id, the agent carries it in
+-- ARIADNE_LAUNCH_ID, and an event that names another one is a dead process
+-- talking.
 CREATE TABLE agent_sessions (
     id                  TEXT PRIMARY KEY,       -- == ARIADNE_SESSION_ID env of the agent
     goal_id             TEXT NOT NULL REFERENCES goals (id) ON DELETE CASCADE,
@@ -188,6 +196,7 @@ CREATE TABLE agent_sessions (
     -- Copied off the pin the session's role carries, beside its model.
     effort              TEXT,
     launched_at         TEXT,
+    launch_id           TEXT,                   -- == ARIADNE_LAUNCH_ID env of that run
     -- When the daemon last decided this session owes a compaction of its
     -- agent conversation — set at every hand-off (a plan finalized, a review
     -- requested, a verdict given) and cleared once the CLI reports the

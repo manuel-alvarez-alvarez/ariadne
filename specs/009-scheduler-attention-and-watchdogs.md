@@ -1,7 +1,7 @@
 ---
 id: scheduler-attention-and-watchdogs
 status: current
-updated: 2026-09-04
+updated: 2026-09-05
 areas: [daemon]
 commits: [f68b8ec1, 506e9d76, 7add2a61]
 tests:
@@ -40,7 +40,9 @@ Out: what a resumed agent is told (006), and the compaction a hand-off owes
    at all. On that clock sit a nudge, then the user, then the pane killed and
    the agent put back on its feet — at 180 s, 600 s and 1800 s
    (`QUIET_NUDGE_SECS`, `QUIET_FLAG_SECS`, `QUIET_RELAUNCH_SECS`), reconciled
-   on a 5 s tick, with a 30 s grace before a starting session is swept.
+   on a 5 s tick, with a 30 s grace before a starting session is swept. The
+   agent that comes back is the one the row belongs to from then on: the exit
+   the killed one is still to report changes nothing (008, 012).
 5. What the nudge *is* the pane decides, so the composer is read before one is
    spent: an instruction still sitting unsent gets the Enter alone, and an
    agent mid-turn is not nudged at all.

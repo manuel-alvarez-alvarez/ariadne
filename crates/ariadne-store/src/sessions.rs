@@ -316,6 +316,27 @@ impl Store {
         self.publish_session_update(id).await
     }
 
+    /// Name the launch this session is about to make, before the process
+    /// exists to report anything.
+    ///
+    /// Written on the way into every launch rather than on the way out,
+    /// because what it settles is which of two processes the row belongs to:
+    /// a relaunch kills one agent and starts another under the same session
+    /// id, and between the kill and the new pane the old one still has its
+    /// exit hook to fire. From this write on, that report names a launch the
+    /// row has moved past — see [`Store::mark_session_launched`] for the
+    /// stamp that follows once the process is up.
+    pub async fn set_session_launch(&self, id: &str, launch_id: &str) -> Result<()> {
+        self.write_session(
+            id,
+            sqlx::query("UPDATE agent_sessions SET launch_id = ? WHERE id = ?")
+                .bind(launch_id)
+                .bind(id),
+        )
+        .await?;
+        self.publish_session_update(id).await
+    }
+
     /// Stamp the moment this session's agent process was started. Every
     /// launch overwrites it, resumes included: what a watcher asks of the
     /// column is whether *this* run has got going.

@@ -1,7 +1,7 @@
 ---
 id: http-api-events-and-usage
 status: current
-updated: 2026-09-04
+updated: 2026-09-05
 areas: [api, daemon]
 commits: [d94042f4, 481a405d, 224370f4]
 tests:
@@ -53,14 +53,21 @@ Out: the CLI that consumes this (014) and the desktop app that consumes it
    stall and the error and nothing else, and a question is held until it is
    answered or the turn moves on. A malformed report is dropped and its event
    still lands.
-9. Token usage is reported per session and per source, and a source replaces
-   its own totals rather than adding to them. Usage rolls up to the task and
-   the goal; every round of one reviewer groups together; a session that has
-   reported nothing reads as zeros; and usage goes when its session does.
-10. The daemon's own log is served both as a snapshot (with a tail limit) and
+9. An event is believed about the pane only where it comes from the launch the
+   session is on (008): a relaunched agent shares its session id — and, on a
+   resumed conversation, its internal id — with the process it replaced, whose
+   exit is still to report. A report from the launch before is recorded and
+   changes nothing, since believing it would retire a session whose agent is
+   working. An agent that names no launch is believed, having none to
+   disagree with.
+10. Token usage is reported per session and per source, and a source replaces
+    its own totals rather than adding to them. Usage rolls up to the task and
+    the goal; every round of one reviewer groups together; a session that has
+    reported nothing reads as zeros; and usage goes when its session does.
+11. The daemon's own log is served both as a snapshot (with a tail limit) and
     as a stream that opens with a snapshot and follows with deltas, from a
     ring buffer that evicts its oldest lines.
-11. `doctor` reports the environment the daemon actually runs in — its own
+12. `doctor` reports the environment the daemon actually runs in — its own
     paths, the agent CLIs and tools a session and a published task need, and a
     worktree root it cannot write.
 
@@ -87,6 +94,9 @@ Out: the CLI that consumes this (014) and the desktop app that consumes it
   `::a_claude_notification_flags_the_session_as_blocked`).
 - A malformed usage report is dropped and its event still lands
   (`events.rs::a_malformed_report_is_dropped_and_its_event_still_lands`).
+- An event from a launch the session has moved past is recorded and changes
+  nothing
+  (`events.rs::an_event_from_a_launch_the_session_has_moved_past_changes_nothing`).
 - Usage rolls up to the task and the goal
   (`events.rs::reported_usage_rolls_up_to_the_task_and_the_goal`,
   `store.rs::a_tasks_usage_groups_every_round_of_a_reviewer_together`,

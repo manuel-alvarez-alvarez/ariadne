@@ -164,6 +164,37 @@ impl Launcher {
         Ok(())
     }
 
+    /// Take the tmux name the session about to be created will run under.
+    ///
+    /// A name is derived from the goal, the task and the role, so a role has
+    /// exactly one of them: a pane still holding it when
+    /// [`Self::assert_no_live_session`] has just found nothing live belongs to
+    /// a session the database has already retired. That is the daemon and the
+    /// machine disagreeing, and tmux is the half that cannot be talked round —
+    /// `new-session` refuses a duplicate name, and it refuses it *after* the
+    /// session row was written, so every attempt leaves another dead row
+    /// behind until the spawn budget runs out and the user is told an agent
+    /// that could have started will not.
+    ///
+    /// The leftover pane is therefore killed rather than worked around: what
+    /// goes is an agent nothing in the database is waiting on, and what is
+    /// kept is the one name its role has. A tmux that will not answer is left
+    /// alone, here as everywhere — the spawn behind this fails the way it
+    /// always did, and the next pass asks again.
+    async fn claim_pane(&self, name: &str) -> Result<()> {
+        if !self.tmux.has_session(name).await {
+            return Ok(());
+        }
+        tracing::warn!(
+            tmux = %name,
+            "a pane still holds the name this session needs and no live session claims it; killing it"
+        );
+        self.tmux
+            .kill_session(name)
+            .await
+            .with_context(|| format!("claiming the tmux session {name}"))
+    }
+
     /// Coding-agent TUIs show a one-time directory-trust dialog for unknown
     /// folders — and every worktree is a fresh folder. Watch the pane and
     /// accept the (pre-selected "yes") dialog with Enter.
@@ -283,6 +314,9 @@ impl Launcher {
         let agent = self.store.get_agent_config(session.agent_kind()).await?;
         Ok(SpawnCtx {
             session_id: session.id.clone(),
+            // Minted here, once per launch: the row is told it in
+            // [`Self::launch`], before the pane it belongs to exists.
+            launch_id: ariadne_core::id::new_id(),
             goal_id: session.goal_id.clone(),
             task_id: session.task_id.clone(),
             role: session.role(),
@@ -301,7 +335,14 @@ impl Launcher {
     /// Shared launch tail for fresh spawns and resumes: persist the internal
     /// session id, start the tmux process, mark the session running and watch
     /// for the directory-trust dialog.
-    async fn launch(&self, session: &AgentSession, plan: SpawnPlan) -> Result<()> {
+    ///
+    /// `launch_id` is what this run of the agent will report under, and the
+    /// row is given it before tmux is asked for a pane. Both halves of that
+    /// order matter on a relaunch, where one process is being torn down as
+    /// another starts under the same session id: written any later, the new
+    /// agent's first events would name a launch the row had not heard of;
+    /// written any earlier, the old agent's last ones would still count.
+    async fn launch(&self, session: &AgentSession, plan: SpawnPlan, launch_id: &str) -> Result<()> {
         if let Some(internal) = &plan.internal_session_id {
             self.store
                 .set_session_internal_id(&session.id, internal)
@@ -315,6 +356,9 @@ impl Launcher {
         // there (codex does not).
         std::fs::create_dir_all(self.run_dir(&session.id)).context("creating session run dir")?;
         let spawn = self.tmux_spawn(session, plan.argv, env, plan.cwd)?;
+        self.store
+            .set_session_launch(&session.id, launch_id)
+            .await?;
         self.tmux
             .new_session(&spawn)
             .await
@@ -420,7 +464,7 @@ impl Launcher {
             .spawn_ctx(session, cwd, system_prompt, initial_prompt)
             .await?;
         let plan = adapter_for(session.agent_kind()).plan_spawn(&ctx)?;
-        self.launch(session, plan).await?;
+        self.launch(session, plan, &ctx.launch_id).await?;
         self.clear_superseded_attention(session).await;
         Ok(())
     }
@@ -478,7 +522,7 @@ impl Launcher {
             .spawn_ctx(session, cwd, prompts::system_prompt(profile), String::new())
             .await?;
         let plan = adapter_for(session.agent_kind()).plan_resume(&ctx, internal, instruction)?;
-        self.launch(session, plan).await?;
+        self.launch(session, plan, &ctx.launch_id).await?;
         self.store
             .get_session(&session.id)
             .await
@@ -534,6 +578,8 @@ impl Launcher {
         let profile = self.store.get_profile(&goal.planner_profile_id).await?;
         self.assert_no_live_session(goal_id, None, Role::Planner, None)
             .await?;
+        let tmux_session = session_name(&goal.id, None, "planner", None);
+        self.claim_pane(&tmux_session).await?;
 
         let session = self
             .store
@@ -546,7 +592,7 @@ impl Launcher {
                     .resolve_agent_kind(goal.agent_kind(), &format!("goal {}", goal.id))?,
                 model: goal.model.clone(),
                 effort: goal.effort.clone(),
-                tmux_session: session_name(&goal.id, None, "planner", None),
+                tmux_session,
                 worktree_path: None,
                 review_round: None,
             })
@@ -571,6 +617,8 @@ impl Launcher {
         let profile = self.store.get_profile(&task.engineer_profile_id).await?;
         self.assert_no_live_session(&goal.id, Some(task_id), Role::Engineer, None)
             .await?;
+        let tmux_session = session_name(&goal.id, Some(&task.id), "engineer", None);
+        self.claim_pane(&tmux_session).await?;
 
         let worktree = self.engineer_worktree(&task, &repo, None).await?;
 
@@ -585,7 +633,7 @@ impl Launcher {
                     .resolve_agent_kind(task.agent_kind(), &format!("task {}", task.id))?,
                 model: task.model.clone(),
                 effort: task.effort.clone(),
-                tmux_session: session_name(&goal.id, Some(&task.id), "engineer", None),
+                tmux_session,
                 worktree_path: Some(worktree.display().to_string()),
                 review_round: None,
             })
@@ -697,6 +745,13 @@ impl Launcher {
             })?;
         self.assert_no_live_session(&goal.id, Some(task_id), Role::Reviewer, Some(&profile.id))
             .await?;
+        let tmux_session = session_name(
+            &goal.id,
+            Some(&task.id),
+            "reviewer",
+            Some(tail(&profile.id)),
+        );
+        self.claim_pane(&tmux_session).await?;
 
         let worktree = self.reviewer_worktree(&task, &profile.id).await?;
         let session = self
@@ -712,12 +767,7 @@ impl Launcher {
                 )?,
                 model: slot.model.clone(),
                 effort: slot.effort.clone(),
-                tmux_session: session_name(
-                    &goal.id,
-                    Some(&task.id),
-                    "reviewer",
-                    Some(tail(&profile.id)),
-                ),
+                tmux_session,
                 worktree_path: Some(worktree.display().to_string()),
                 review_round: Some(task.review_round),
             })

@@ -1,10 +1,11 @@
 ---
 id: sessions-terminals-and-logs
 status: current
-updated: 2026-09-04
+updated: 2026-09-05
 areas: [daemon, store]
 commits: [e4816cf6, 39937143]
 tests:
+  - crates/ariadne-daemon/tests/resume.rs
   - crates/ariadne-daemon/tests/session_logs.rs
   - crates/ariadne-daemon/tests/session_input.rs
   - crates/ariadne-daemon/tests/session_resize.rs
@@ -33,29 +34,36 @@ Out: when the daemon decides to type something (009, 010), and what it types
    model and effort it runs on, and its internal agent id.
 2. Sessions are long-lived: one engineer per task, one reviewer per task
    across its rounds, one planner per goal. Restarting one reopens the same
-   row, and every launch of it is dated.
+   row, and every launch of it is dated and named.
 3. A launch is refused rather than duplicated: a spawn asks first whether the
    role already has a live session, and counts "tmux could not be asked" as a
    yes — a wrong no would put two agents on one piece of work.
 4. tmux session names are stable and short, derived from the goal, the task
-   and the role.
-5. A session's output is served as a log: a snapshot of the grid the pane
+   and the role. A role therefore has one name, and a spawn that finds a pane
+   still holding it while nothing live claims it takes the name rather than
+   failing on it — a leftover pane would otherwise cost every attempt its
+   session row.
+5. The name of a launch is what the agent it started reports under
+   (`ARIADNE_LAUNCH_ID`), and it is written to the row before the pane exists:
+   a relaunch has two processes under one session id for as long as the one it
+   replaced takes to exit, and only this tells their reports apart (012).
+6. A session's output is served as a log: a snapshot of the grid the pane
    draws against, then deltas as it writes. A resize under the stream is
    reported as a new grid, and output in flight is replaced rather than
    reordered.
-6. Output is withheld once the pane stops answering, and tmux being
+7. Output is withheld once the pane stops answering, and tmux being
    unreachable does not end a session. A pane that cannot be measured or
    captured is not reported as finished.
-7. An exited session serves its full log and then ends the stream, and ignores
+8. An exited session serves its full log and then ends the stream, and ignores
    a pane that later took over its name.
-8. A client may type into a live pane. The bytes reach the pane verbatim,
+9. A client may type into a live pane. The bytes reach the pane verbatim,
    control bytes included, and a long paste is split into ordered batches. A
    finished session, or one with no pane, refuses input.
-9. Typing into a pane takes down whatever the session was flagged for: an
+10. Typing into a pane takes down whatever the session was flagged for: an
    answer is an answer, whoever gave it.
-10. A client may resize a pane within bounds; a size outside them is rejected
+11. A client may resize a pane within bounds; a size outside them is rejected
     before tmux sees it, and a finished or pane-less session refuses.
-11. Everything the daemon types is delivered under confirmation: the pane is
+12. Everything the daemon types is delivered under confirmation: the pane is
     read back, and an Enter that was swallowed is pressed again until the
     message goes. A message that never submits is never called delivered, and
     an instruction still sitting in the composer raises the session.
@@ -95,7 +103,10 @@ Out: when the daemon decides to type something (009, 010), and what it types
   (`::tmux_session_lifecycle`, `::tmux_runs_a_plan_no_command_line_could_carry`).
 - Restarting a session reopens the same row
   (`store.rs::restarting_a_session_reopens_the_same_row`), and every launch is
-  dated (`::every_launch_of_a_session_is_dated`).
+  dated (`::every_launch_of_a_session_is_dated`) and reports under a name of
+  its own (`resume.rs::every_launch_of_a_session_reports_under_a_new_id`).
+- A pane left behind is taken rather than spawned around
+  (`resume.rs::a_pane_left_behind_is_taken_rather_than_spawned_around`).
 
 ## Sources
 

@@ -458,6 +458,7 @@ mod tests {
             attention_since: None,
             last_activity_at: None,
             launched_at: None,
+            launch_id: None,
             compact_owed_at: Some("2026-08-30T10:00:00.000Z".into()),
             created_at: "2026-08-30T09:00:00.000Z".into(),
             ended_at: None,

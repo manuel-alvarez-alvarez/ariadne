@@ -22,6 +22,7 @@ fn ctx(run_dir: PathBuf, kind: AgentKind) -> SpawnCtx {
 fn ctx_with_flags(run_dir: PathBuf, extra_flags: Vec<String>) -> SpawnCtx {
     SpawnCtx {
         session_id: "01sessionxxxxxxxxxxxxxxxxx".into(),
+        launch_id: "01launchxxxxxxxxxxxxxxxxxx".into(),
         goal_id: "01goalxxxxxxxxxxxxxxxxxxxx".into(),
         task_id: Some("01taskxxxxxxxxxxxxxxxxxxxx".into()),
         role: Role::Engineer,

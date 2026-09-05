@@ -23,6 +23,11 @@ pub struct AgentEventDto {
 pub struct IngestEventRequest {
     /// ARIADNE_SESSION_ID of the reporting agent.
     pub session_id: String,
+    /// ARIADNE_LAUNCH_ID of the agent process reporting: which launch of that
+    /// session this is. Absent from an agent started before the daemon began
+    /// naming them, which is a report nothing is concluded from.
+    #[serde(default)]
+    pub launch: Option<String>,
     pub agent_kind: AgentKind,
     /// Normalized event kind.
     pub kind: String,

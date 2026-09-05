@@ -67,6 +67,32 @@ pub async fn ingest(
         })
         .await?;
 
+    // A report from a process the session has moved past changes nothing.
+    //
+    // A relaunch puts a new agent under the same row, and the agent it
+    // replaced still has its exit hook to fire — half a second later, with the
+    // same ARIADNE_SESSION_ID and, on a resumed conversation, the same
+    // internal id. Read as the live agent's, that report retires a session
+    // whose pane is up and working: the goal then wants a planner it already
+    // has, the spawn collides with the tmux name the pane holds, and the row
+    // is left `exited` while its agent goes on writing to it.
+    //
+    // The launch each of them carries is what tells them apart. Only a
+    // mismatch is refused: an agent started before the daemon named launches
+    // reports none, and a row that has not been launched under this daemon
+    // has none to compare with — neither is a dead process talking, and both
+    // are believed. The event itself is kept either way; what it says about
+    // the pane is simply no longer news.
+    if let (Some(reported), Some(current)) = (&req.launch, &session.launch_id)
+        && reported != current
+    {
+        tracing::debug!(
+            session = %session.id, kind = %req.kind, launch = %reported,
+            "ignoring an event from a launch this session has moved past"
+        );
+        return Ok(StatusCode::ACCEPTED);
+    }
+
     // Capture the agent-internal session id as soon as an event carries it.
     if session.internal_session_id.is_none()
         && let Some(internal) = extract_internal_id(req.agent_kind, &req.payload)
