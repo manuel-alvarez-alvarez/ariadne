@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.0](https://github.com/manuel-alvarez-alvarez/ariadne/compare/v0.5.0...v0.6.0) (2026-09-05)
+
+
+### Features
+
+* **install:** register Ariadne Desktop with GNOME on Linux ([b5624be](https://github.com/manuel-alvarez-alvarez/ariadne/commit/b5624beb0bd67dd41944b0ffd1f3cd6eec022444))
+
+
+### Bug Fixes
+
+* **ui:** stop the EGL abort on Linux ([666ca40](https://github.com/manuel-alvarez-alvarez/ariadne/commit/666ca403b0846ea4cef4fe2571765675c6d2fa51))
+
 ## [0.5.0](https://github.com/manuel-alvarez-alvarez/ariadne/compare/v0.4.0...v0.5.0) (2026-09-03)
 
 
