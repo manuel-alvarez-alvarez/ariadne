@@ -95,6 +95,9 @@ ui_locations() {
     _data_dir="${XDG_DATA_HOME:-$HOME/.local/share}"
     ARIADNE_BASH_COMPLETION="$_data_dir/bash-completion/completions/ariadne"
     ARIADNE_ZSH_COMPLETION="$_data_dir/zsh/site-functions/_ariadne"
+    ARIADNE_DESKTOP_ID="dev.ariadne.ui"
+    ARIADNE_DESKTOP_ENTRY="$_data_dir/applications/$ARIADNE_DESKTOP_ID.desktop"
+    ARIADNE_ICON_BASE="$_data_dir/icons/hicolor"
     ARIADNE_BASHRC="$HOME/.bashrc"
     ARIADNE_ZSHRC="${ZDOTDIR:-$HOME}/.zshrc"
 }

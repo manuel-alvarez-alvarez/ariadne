@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Ariadne installer: installs the binaries, registers the daemon as a user
 # service (launchd on macOS, systemd --user on Linux), installs bash/zsh
-# completions, installs the "Ariadne Desktop" app, and has the user trust
-# Ariadne's Codex hooks.
+# completions, installs the "Ariadne Desktop" app - registering it with
+# GNOME on Linux - and has the user trust Ariadne's Codex hooks.
 #
 # The binaries and the app come from a GitHub release by default, and from a
 # local build with --build-from-source. Release assets are unsigned; what they
@@ -196,6 +196,75 @@ install_app_bundle() {
     esac
 }
 
+# Extracts the icon bundled in an AppImage into $2. --appimage-extract needs
+# no FUSE, unlike running the AppImage itself. Best-effort: returns 1 and
+# copies nothing if extraction fails or no icon is found inside.
+extract_appimage_icon() {
+    local appimage="$1" dest="$2" extract_root icon
+    extract_root="$(mktemp -d "${TMPDIR:-/tmp}/ariadne-appimage-icon.XXXXXX")"
+    if ! ( cd "$extract_root" && run_logged "$appimage" --appimage-extract ); then
+        rm -rf "$extract_root"
+        return 1
+    fi
+    # A missing squashfs-root (an AppImage runtime that behaves unexpectedly)
+    # would make `find` fail; every step here is best-effort, so none of it
+    # is allowed to take the installer down with it.
+    icon="$(find "$extract_root/squashfs-root" -maxdepth 1 -name '*.png' -print -quit 2>/dev/null)" || true
+    if [ -z "$icon" ]; then
+        icon="$(find "$extract_root/squashfs-root/usr/share/icons" -name '*.png' -print -quit 2>/dev/null)" || true
+    fi
+    [ -n "$icon" ] && { cp "$icon" "$dest" || true; }
+    rm -rf "$extract_root"
+    [ -n "$icon" ] && [ -f "$dest" ]
+}
+
+# The "<width>x<height>" a PNG's own header reports, for picking its hicolor
+# theme subdirectory. Falls back to 256x256 when it cannot be read.
+icon_size() {
+    local dims
+    # `file` missing entirely is as harmless as it not recognizing the image:
+    # either way this falls back to the default size, not to a dead install.
+    dims="$(file -b "$1" 2>/dev/null | sed -n 's/.*, \([0-9][0-9]*\) x \([0-9][0-9]*\).*/\1x\2/p')" || true
+    printf '%s' "${dims:-256x256}"
+}
+
+# Registers "Ariadne Desktop" with GNOME (and anything else reading the
+# freedesktop menu/icon specs): a .desktop entry pointing at $APP_PATH, plus
+# $1 installed as its icon under the hicolor theme. $1 may be empty or
+# missing - the entry still works, just with no icon. Sets ARIADNE_DESKTOP_ICON
+# to where the icon landed, or "" if none was installed.
+install_desktop_entry() {
+    local icon_src="$1" size
+    mkdir -p "$(dirname "$ARIADNE_DESKTOP_ENTRY")"
+    cat > "$ARIADNE_DESKTOP_ENTRY" <<EOF
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=$APP_NAME
+Comment=A docker-style orchestrator for AI coding agents
+Exec="$APP_PATH" %U
+Icon=$ARIADNE_DESKTOP_ID
+Terminal=false
+Categories=Development;
+EOF
+
+    ARIADNE_DESKTOP_ICON=""
+    if [ -n "$icon_src" ] && [ -f "$icon_src" ]; then
+        size="$(icon_size "$icon_src")"
+        ARIADNE_DESKTOP_ICON="$ARIADNE_ICON_BASE/$size/apps/$ARIADNE_DESKTOP_ID.png"
+        mkdir -p "$(dirname "$ARIADNE_DESKTOP_ICON")"
+        cp "$icon_src" "$ARIADNE_DESKTOP_ICON"
+    fi
+
+    # Neither tool is required; GNOME picks new entries and icons up on its
+    # own eventually, these just make it immediate. Missing or failing is
+    # never a reason to fail the install.
+    command -v update-desktop-database > /dev/null 2>&1 \
+        && run_logged update-desktop-database "$(dirname "$ARIADNE_DESKTOP_ENTRY")" || true
+    command -v gtk-update-icon-cache > /dev/null 2>&1 \
+        && run_logged gtk-update-icon-cache -f -t "$ARIADNE_ICON_BASE" || true
+}
+
 # What is being installed and where it comes from, for the plan, the header
 # and the summary. Deciding the target now keeps an unsupported machine from
 # getting as far as a plan it could never carry out.
@@ -232,6 +301,7 @@ if [ "$WITH_UI" = 1 ]; then
     else
         plan_add "Installing $APP_NAME"
     fi
+    [ "$OS" = Linux ] && plan_add "Registering $APP_NAME with GNOME"
 fi
 [ "$WITH_COMPLETIONS" = 1 ] && plan_add "Registering shell completions"
 if [ "$WITH_SERVICE" = 1 ]; then
@@ -345,6 +415,7 @@ fi
 # the only thing we ask for.
 APP_PATH=""
 APP_STATE="not installed (--no-ui)"
+ARIADNE_DESKTOP_ICON=""
 if [ "$WITH_UI" = 1 ] && [ "$BUILD_FROM_SOURCE" = 0 ]; then
     step_begin
     case "$OS" in
@@ -405,6 +476,55 @@ elif [ "$WITH_UI" = 1 ]; then
         install_app_bundle "$APP_BUNDLE"
         APP_STATE="$(ui_tilde "$APP_PATH")"
         step_ok "$(ui_tilde "$APP_PATH")"
+    fi
+fi
+
+# --- GNOME desktop entry (Linux only) ---------------------------------------------
+GNOME_STATE=""
+if [ "$WITH_UI" = 1 ] && [ "$OS" = Linux ]; then
+    step_begin
+    if [ -n "$APP_PATH" ]; then
+        # Cross-run idempotency, the same way OLD_PREFIX works for the
+        # binaries: an icon size that changed since the last run would
+        # otherwise leave the old one behind alongside the new one.
+        OLD_DESKTOP_ICON=""
+        if [ -f "$ARIADNE_MANIFEST" ]; then
+            # shellcheck disable=SC1090
+            OLD_DESKTOP_ICON="$(. "$ARIADNE_MANIFEST" && echo "${ARIADNE_DESKTOP_ICON:-}")"
+        fi
+
+        ICON_TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ariadne-icon.XXXXXX")"
+        ICON_SRC=""
+        case "$APP_BUNDLE" in
+            *.AppImage)
+                # $APP_PATH, not $APP_BUNDLE: install_app_bundle already made
+                # it executable (mode 755), which a freshly downloaded asset
+                # is not guaranteed to be.
+                extract_appimage_icon "$APP_PATH" "$ICON_TMP_DIR/icon.png" \
+                    && ICON_SRC="$ICON_TMP_DIR/icon.png"
+                ;;
+        esac
+        if [ -z "$ICON_SRC" ] && [ -f "$APP_SRC_DIR/src-tauri/icons/icon.png" ]; then
+            ICON_SRC="$APP_SRC_DIR/src-tauri/icons/icon.png"
+        fi
+
+        install_desktop_entry "$ICON_SRC"
+        rm -rf "$ICON_TMP_DIR"
+
+        if [ -n "$OLD_DESKTOP_ICON" ] && [ "$OLD_DESKTOP_ICON" != "$ARIADNE_DESKTOP_ICON" ]; then
+            rm -f "$OLD_DESKTOP_ICON"
+        fi
+
+        if [ -n "$ARIADNE_DESKTOP_ICON" ]; then
+            GNOME_STATE="$(ui_tilde "$ARIADNE_DESKTOP_ENTRY")"
+            step_ok "$GNOME_STATE"
+        else
+            GNOME_STATE="$(ui_tilde "$ARIADNE_DESKTOP_ENTRY") - no icon found"
+            step_ok "no icon found"
+        fi
+    else
+        GNOME_STATE="not registered - $APP_NAME was not installed"
+        step_skip "$APP_NAME was not installed"
     fi
 fi
 
@@ -546,6 +666,13 @@ ARIADNE_UNIT="$ARIADNE_UNIT"
 EOF
 # Absent when the app was skipped; uninstall.sh then has nothing to remove.
 [ -n "$APP_PATH" ] && printf 'ARIADNE_APP="%s"\n' "$APP_PATH" >> "$ARIADNE_MANIFEST"
+# Absent unless this run registered the GNOME entry; the icon line is only
+# added once one was actually found and installed.
+if [ -n "$GNOME_STATE" ] && [ -n "$APP_PATH" ] && [ "$OS" = Linux ]; then
+    printf 'ARIADNE_DESKTOP_ENTRY="%s"\n' "$ARIADNE_DESKTOP_ENTRY" >> "$ARIADNE_MANIFEST"
+    [ -n "$ARIADNE_DESKTOP_ICON" ] \
+        && printf 'ARIADNE_DESKTOP_ICON="%s"\n' "$ARIADNE_DESKTOP_ICON" >> "$ARIADNE_MANIFEST"
+fi
 step_ok
 
 # --- checkup ----------------------------------------------------------------------------
@@ -588,6 +715,7 @@ else
     ui_field "completions" "not installed (--no-completions)"
 fi
 ui_field "desktop app" "$APP_STATE"
+[ -n "$GNOME_STATE" ] && ui_field "gnome entry" "$GNOME_STATE"
 [ "$WITH_CODEX_HOOKS" = 1 ] && ui_field "codex hooks" "$CODEX_STATE"
 ui_field "checkup" "ariadne doctor - $DOCTOR_STATE"
 ui_field "manifest" "$(ui_tilde "$ARIADNE_MANIFEST")"

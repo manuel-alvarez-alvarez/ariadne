@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Ariadne uninstaller: removes the daemon service, binaries, shell completions
-# and the "Ariadne Desktop" app installed by scripts/install.sh (locations
-# read from ~/.ariadne/install.env). Data (~/.ariadne: database, worktrees, logs) is
-# kept unless --purge is given.
+# and the "Ariadne Desktop" app - and its GNOME entry and icon, on Linux -
+# installed by scripts/install.sh (locations read from ~/.ariadne/install.env).
+# Data (~/.ariadne: database, worktrees, logs) is kept unless --purge is given.
 #
 # Idempotent: safe to run when partially or not installed.
 #
@@ -59,6 +59,9 @@ ARIADNE_PREFIX="$PREFIX"
 # Only ever set by the manifest: an install that skipped the desktop app - and
 # any manifest written before it existed - leaves nothing to remove.
 ARIADNE_APP=""
+# Only ever set by the manifest: the icon's path carries its size, so unlike
+# the entry itself (a fixed path from ui_locations) it cannot be guessed.
+ARIADNE_DESKTOP_ICON=""
 MANIFEST_FOUND=0
 if [ -f "$ARIADNE_MANIFEST" ]; then
     MANIFEST_FOUND=1
@@ -73,6 +76,7 @@ SERVICE_DESC="$(ui_service_desc "none on $OS")"
 plan_add "Stopping and removing the daemon service ($SERVICE_DESC)"
 plan_add "Removing binaries from $(ui_tilde "$ARIADNE_PREFIX")"
 [ -n "$ARIADNE_APP" ] && plan_add "Removing $(ui_tilde "$ARIADNE_APP")"
+[ "$OS" = Linux ] && plan_add "Removing the GNOME entry"
 plan_add "Removing shell completions"
 plan_add "Removing the install manifest"
 [ "$PURGE" = 1 ] && plan_add "Deleting $(ui_tilde "$ARIADNE_HOME") (database, worktrees, run dirs, logs)"
@@ -121,6 +125,22 @@ if [ -n "$ARIADNE_APP" ]; then
     fi
 fi
 
+# --- gnome desktop entry (Linux only) ----------------------------------------------
+GNOME_ENTRY_REMOVED=0
+if [ "$OS" = Linux ]; then
+    step_begin
+    if [ -e "$ARIADNE_DESKTOP_ENTRY" ] || { [ -n "$ARIADNE_DESKTOP_ICON" ] && [ -e "$ARIADNE_DESKTOP_ICON" ]; }; then
+        GNOME_ENTRY_REMOVED=1
+    fi
+    rm -f "$ARIADNE_DESKTOP_ENTRY"
+    [ -n "$ARIADNE_DESKTOP_ICON" ] && rm -f "$ARIADNE_DESKTOP_ICON"
+    if [ "$GNOME_ENTRY_REMOVED" = 1 ]; then
+        step_ok
+    else
+        step_skip "nothing to remove"
+    fi
+fi
+
 # --- completions ------------------------------------------------------------------
 step_begin
 rm -f "$ARIADNE_BASH_COMPLETION" "$ARIADNE_ZSH_COMPLETION"
@@ -153,6 +173,7 @@ else
     ui_field "binaries" "none found in $(ui_tilde "$ARIADNE_PREFIX")"
 fi
 [ "$APP_REMOVED" = 1 ] && ui_field "desktop app" "removed ($(ui_tilde "$ARIADNE_APP"))"
+[ "$GNOME_ENTRY_REMOVED" = 1 ] && ui_field "gnome entry" "removed"
 ui_field "completions" "removed (rc blocks stripped, new shells only)"
 if [ "$PURGE" = 1 ]; then
     ui_field "data" "$(ui_tilde "$ARIADNE_HOME") deleted"
