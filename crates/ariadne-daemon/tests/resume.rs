@@ -294,7 +294,20 @@ async fn every_launch_of_a_session_reports_under_a_new_id() {
 #[tokio::test]
 async fn a_pane_left_behind_is_taken_rather_than_spawned_around() {
     let h = harness().await;
-    let (goal, _repo) = h.goal().await;
+    let repo = h.repository(&h.at("repo")).await;
+    // Pinned rather than left on `auto`: resolving `auto` asks PATH for a
+    // coding-agent CLI, and a machine without one — every CI runner — fails
+    // the spawn before this test reaches what it is about.
+    let goal = h
+        .goal_on(
+            &repo,
+            Some(ariadne_store::AgentPin {
+                agent_kind: AgentKind::ClaudeCode,
+                model: None,
+                effort: None,
+            }),
+        )
+        .await;
 
     let first = h.launcher.spawn_orchestrator(&goal.id).await.unwrap();
     // The agent is in its pane; the row under it is not — the database and

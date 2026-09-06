@@ -668,9 +668,25 @@ impl Harness {
     }
 
     /// A goal still in planning, on a repository of its own.
+    ///
+    /// Pinned to an agent CLI, as [`Self::cast_reviewed_by`] pins its own: a
+    /// goal left on `auto` is resolved by asking PATH for a coding-agent CLI,
+    /// so an unpinned one turns every spawn in the test into a question about
+    /// what happens to be installed on the machine running it. No test here is
+    /// about that resolution, and a machine without `claude` — every CI runner
+    /// — failed the spawn before the test reached what it was about.
     pub async fn goal(&self) -> (Goal, Repository) {
         let repo = self.repository(&self.at("repo")).await;
-        let goal = self.goal_on(&repo, None).await;
+        let goal = self
+            .goal_on(
+                &repo,
+                Some(AgentPin {
+                    agent_kind: AgentKind::ClaudeCode,
+                    model: None,
+                    effort: None,
+                }),
+            )
+            .await;
         (goal, repo)
     }
 
